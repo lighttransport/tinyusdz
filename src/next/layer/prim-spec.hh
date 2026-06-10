@@ -136,36 +136,25 @@ public:
   ValueStorage();
   ~ValueStorage();
 
-  /// Allocate space and return offset
-  uint32_t allocate(size_t size, size_t alignment = 8);
-
   /// Store a value and return its offset
   uint32_t store(const Value& value);
+  uint32_t store(Value&& value);
 
   /// Get value at offset
   const Value* get(uint32_t offset) const;
   Value* get(uint32_t offset);
 
-  /// Get raw pointer at offset
-  const void* raw(uint32_t offset) const;
-  void* raw(uint32_t offset);
+  /// Number of stored values
+  size_t count() const { return values_.size(); }
 
-  /// Current used size
-  size_t size() const { return used_; }
-
-  /// Total capacity
-  size_t capacity() const { return data_.size(); }
-
-  /// Reserve capacity
-  void reserve(size_t bytes);
+  /// Approximate memory usage in bytes
+  size_t memory_usage() const;
 
   /// Clear all storage
   void clear();
 
 private:
-  std::vector<uint8_t> data_;
-  size_t used_ = 0;
-  std::vector<Value> values_;  // Value objects (may reference data_)
+  std::vector<Value> values_;
 };
 
 /// TimeSampleStorage - stores time samples with value deduplication

@@ -66,6 +66,26 @@ bool IsAtOrUnder(const std::string &child, const std::string &base) {
          child.compare(0, base.size(), base) == 0 && child[base.size()] == '/';
 }
 
+// One level of arc expansion, linked up the C++ call stack (OpenUSD
+// PcpPrimIndex_StackFrame analogue). Replaces the per-arc copied
+// std::set<std::string> cycle keys: cycle detection walks the chain comparing
+// (stack_idx, site), and depth gives the max-depth backstop for free. The
+// `site` pointer targets a string that outlives the recursion (a Src member or
+// a ProcessArc local).
+struct ExpansionFrame {
+  uint32_t stack_idx;
+  const std::string *site;
+  const ExpansionFrame *prev;
+  uint32_t depth;  // number of frames above the seed (seed == 0)
+
+  bool Contains(uint32_t stack, const std::string &s) const {
+    for (const ExpansionFrame *f = this; f; f = f->prev) {
+      if (f->stack_idx == stack && *f->site == s) return true;
+    }
+    return false;
+  }
+};
+
 }  // namespace
 
 struct Cache::Impl {
@@ -395,7 +415,7 @@ struct Cache::Impl {
   // collects specialize-derived opinions (globally weakest). A specialize arc
   // (and its entire subtree) routes into `spec_out`.
   void ProcessArc(const Src &src, const CompositionArc &arc, ArcType kind,
-                  const std::set<std::string> &cycle, std::vector<Src> *out,
+                  const ExpansionFrame *frame, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const std::vector<uint32_t> &chain, std::string *warn,
@@ -428,13 +448,28 @@ struct Cache::Impl {
       }
     }
 
-    const std::string key = layer_stacks[arc_stack_idx].identifier + ":" + arc_site;
-    if (cycle.count(key)) {
-      if (err) *err += "Composition cycle detected at arc: " + key + "\n";
+    if (frame && frame->Contains(arc_stack_idx, arc_site)) {
+      if (err) {
+        *err += "Composition cycle detected at arc: " +
+                layer_stacks[arc_stack_idx].identifier + ":" + arc_site + "\n";
+      }
       return;
     }
-    if (cycle.size() >= options.max_depth) {
+    if (frame && frame->depth + 1 >= options.max_depth) {
       if (err) *err += "Composition max depth exceeded\n";
+      return;
+    }
+    // A same-stack arc that targets a namespace ANCESTOR of its own source site
+    // grafts the source under itself: the composed namespace grows without
+    // bound (e.g. `def "A" { def "B" (references = </A>) {} }`). The frame
+    // chain cannot see this (each child prim starts a fresh expansion), so
+    // reject it here.
+    if (arc_stack_idx == src.stack_idx && arc_site != src.site &&
+        IsAtOrUnder(src.site, arc_site)) {
+      if (err) {
+        *err += "Composition cycle detected: arc at " + src.site +
+                " targets ancestor " + arc_site + "\n";
+      }
       return;
     }
 
@@ -463,11 +498,10 @@ struct Cache::Impl {
         if (FindSpecs(layer_stacks[as], arc_site).empty()) continue;
         Src implied = arc_src;
         implied.stack_idx = as;
-        std::set<std::string> ic = cycle;
-        ic.insert(layer_stacks[as].identifier + ":" + arc_site);
         std::vector<uint32_t> ichain{as};
-        ExpandArcs(implied, std::move(ic), target, spec_out, sels, ichain, warn,
-                   err);
+        const ExpansionFrame iframe{as, &arc_site, frame,
+                                    frame ? frame->depth + 1 : 0};
+        ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
       }
     }
 
@@ -475,15 +509,15 @@ struct Cache::Impl {
     std::vector<uint32_t> child_chain = chain;
     if (arc_stack_idx != src.stack_idx) child_chain.push_back(arc_stack_idx);
 
-    std::set<std::string> child_cycle = cycle;
-    child_cycle.insert(key);
-    ExpandArcs(arc_src, std::move(child_cycle), target, spec_out, sels,
-               child_chain, warn, err);
+    const ExpansionFrame cframe{arc_stack_idx, &arc_site, frame,
+                                frame ? frame->depth + 1 : 0};
+    ExpandArcs(arc_src, &cframe, target, spec_out, sels, child_chain, warn,
+               err);
   }
 
   // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
   // references > payloads; specializes routed to `spec_out` (globally weakest).
-  void ExpandArcs(const Src &src, std::set<std::string> cycle,
+  void ExpandArcs(const Src &src, const ExpansionFrame *frame,
                   std::vector<Src> *out, std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const std::vector<uint32_t> &chain, std::string *warn,
@@ -504,7 +538,7 @@ struct Cache::Impl {
 
       // Inherits (stronger than references).
       for (const std::string &s : spec->meta().inherits) {
-        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, cycle,
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
                    out, spec_out, sels, chain, warn, err);
       }
 
@@ -526,10 +560,9 @@ struct Cache::Impl {
                 src.map, NamespaceMapping{"/__self__", src.site});
             vsrc.offset = src.offset;
             vsrc.arc_kind = ArcType::Variant;
-            std::set<std::string> vc = cycle;
-            vc.insert(vid + ":/__self__");
-            ExpandArcs(vsrc, std::move(vc), out, spec_out, sels, chain, warn,
-                       err);
+            const ExpansionFrame vframe{cstack, &vsrc.site, frame,
+                                        frame ? frame->depth + 1 : 0};
+            ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
           }
           // Inline opinions (properties/relationships on the host prim itself).
           if (!vd->properties.empty() || !vd->relationships.empty()) {
@@ -544,7 +577,7 @@ struct Cache::Impl {
       // References.
       for (const std::string &ref_str : spec->meta().references) {
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                   cycle, out, spec_out, sels, chain, warn, err);
+                   frame, out, spec_out, sels, chain, warn, err);
       }
 
       // Payloads (deferrable, weaker than references).
@@ -557,7 +590,7 @@ struct Cache::Impl {
             continue;  // deferred: contributes no opinions.
           }
           deferred_payload_prims.erase(root_prim_path);
-          ProcessArc(src, arc, ArcType::Payload, cycle, out, spec_out, sels,
+          ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                      chain, warn, err);
         }
       }
@@ -565,7 +598,7 @@ struct Cache::Impl {
       // Specializes (globally weakest; routed into spec_out by ProcessArc).
       for (const std::string &s : spec->meta().specializes) {
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                   cycle, out, spec_out, sels, chain, warn, err);
+                   frame, out, spec_out, sels, chain, warn, err);
       }
     }
   }
@@ -577,13 +610,12 @@ struct Cache::Impl {
     // Variant selections accumulated across the prim's sources (cross-source).
     std::map<std::string, std::string> sels;
     for (const Src &s : base) {
-      std::set<std::string> cycle;
-      cycle.insert(layer_stacks[s.stack_idx].identifier + ":" + s.site);
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
       std::vector<uint32_t> chain{s.stack_idx};
-      ExpandArcs(s, std::move(cycle), tgt, &spec, &sels, chain, warn, err);
+      const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
+      ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
@@ -597,40 +629,61 @@ struct Cache::Impl {
   // expands that child's own arcs. Cached per path.
   const std::vector<Src> &SourcesForPath(const Path &path, std::string *warn,
                                          std::string *err) {
-    const std::string key = path.str();
-    auto it = sources_cache.find(key);
-    if (it != sources_cache.end()) return it->second;
+    {
+      auto it = sources_cache.find(path.str());
+      if (it != sources_cache.end()) return it->second;
+    }
 
-    std::vector<Src> base;
-    Path parent = path.parent();
-    const bool parent_is_root =
-        parent.is_root() || parent.empty() || parent.str() == "/";
-    if (parent_is_root) {
-      Src s;
-      s.stack_idx = 0;
-      s.site = key;
-      base.push_back(std::move(s));
-    } else {
-      const std::vector<Src> &psrc = SourcesForPath(parent, warn, err);
-      const std::string cn = path.name();
-      base.reserve(psrc.size());
-      for (const Src &ps : psrc) {
-        // Variant sources are inline opinions on the prim itself; they do not
-        // (yet) carry child prims, so they don't propagate to children.
-        if (ps.variant) continue;
-        Src c;
-        c.stack_idx = ps.stack_idx;
-        c.site = ps.site + "/" + cn;
-        c.map = ps.map;
-        c.offset = ps.offset;
-        c.arc_kind = ps.arc_kind;
-        base.push_back(std::move(c));
+    // Collect the uncached ancestor chain (leaf -> topmost uncached), then
+    // expand top-down, so a pathologically deep query path walks a loop instead
+    // of the C++ stack.
+    std::vector<Path> pending;
+    {
+      Path cur = path;
+      for (;;) {
+        pending.push_back(cur);
+        Path parent = cur.parent();
+        if (parent.is_root() || parent.empty() || parent.str() == "/") break;
+        if (sources_cache.count(parent.str())) break;
+        cur = parent;
       }
     }
 
-    std::vector<Src> expanded = ExpandList(base, warn, err);
-    auto res = sources_cache.emplace(key, std::move(expanded));
-    return res.first->second;
+    for (size_t i = pending.size(); i-- > 0;) {
+      const Path &p = pending[i];
+      const std::string key = p.str();
+
+      std::vector<Src> base;
+      Path parent = p.parent();
+      const bool parent_is_root =
+          parent.is_root() || parent.empty() || parent.str() == "/";
+      if (parent_is_root) {
+        Src s;
+        s.stack_idx = 0;
+        s.site = key;
+        base.push_back(std::move(s));
+      } else {
+        const std::vector<Src> &psrc = sources_cache[parent.str()];
+        const std::string cn = p.name();
+        base.reserve(psrc.size());
+        for (const Src &ps : psrc) {
+          // Variant sources are inline opinions on the prim itself; they do not
+          // (yet) carry child prims, so they don't propagate to children.
+          if (ps.variant) continue;
+          Src c;
+          c.stack_idx = ps.stack_idx;
+          c.site = ps.site + "/" + cn;
+          c.map = ps.map;
+          c.offset = ps.offset;
+          c.arc_kind = ps.arc_kind;
+          base.push_back(std::move(c));
+        }
+      }
+
+      std::vector<Src> expanded = ExpandList(base, warn, err);
+      sources_cache[key] = std::move(expanded);
+    }
+    return sources_cache[path.str()];
   }
 
   // --- value resolution ---------------------------------------------------
@@ -764,8 +817,18 @@ struct Cache::Impl {
   // `src_path` is where composition opinions are gathered; `out_path` is where
   // the composed prim is placed (differs when a relocate renames it).
   void BuildStageRec(const Path &src_path, const Path &out_path, Layer *out,
-                     uint32_t parent_idx, bool is_root, std::string *warn,
-                     std::string *err) {
+                     uint32_t parent_idx, bool is_root, uint32_t depth,
+                     std::string *warn, std::string *err) {
+    // Namespace-depth backstop: an arc-induced namespace that keeps growing
+    // (e.g. an ancestor cycle a stronger check missed) must surface as an
+    // error, never as C++ stack exhaustion.
+    if (depth > options.max_namespace_depth) {
+      if (err) {
+        *err += "BuildStage max namespace depth exceeded at: " +
+                out_path.str() + "\n";
+      }
+      return;
+    }
     const std::vector<Src> &srcs = SourcesForPath(src_path, warn, err);
 
     PrimSpec spec(out_path.name());
@@ -805,7 +868,8 @@ struct Cache::Impl {
       } else {
         child_out = out_path.append_child(cn);
       }
-      BuildStageRec(child_src, child_out, out, idx, /*is_root=*/false, warn, err);
+      BuildStageRec(child_src, child_out, out, idx, /*is_root=*/false,
+                    depth + 1, warn, err);
     }
   }
 
@@ -825,7 +889,7 @@ struct Cache::Impl {
     }
     for (const std::string &nm : root_names) {
       BuildStageRec(Path("/" + nm), Path("/" + nm), out.get(), 0,
-                    /*is_root=*/true, warn, err);
+                    /*is_root=*/true, /*depth=*/1, warn, err);
     }
 
     out->finalize();

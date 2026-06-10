@@ -613,8 +613,13 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "apiSchemas") {
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          // Schema names are authored as quoted strings (`"PhysicsRigidBodyAPI"`);
+          // accept bare identifiers too. expect() consumes even on mismatch, so
+          // Check the token type first.
           std::string schema;
-          if (lexer_->expect(TokenType::Identifier, schema)) {
+          if (Check(TokenType::String)
+                  ? lexer_->expect(TokenType::String, schema)
+                  : lexer_->expect(TokenType::Identifier, schema)) {
             prim->meta().apiSchemas.push_back(schema);
           }
           Match(TokenType::Comma);
@@ -633,8 +638,13 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       // variantSets = ["setName1", "setName2"]
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          // expect() consumes even on mismatch, so dispatch on the peeked type
+          // (the old `expect(String) || expect(Identifier)` dropped identifier
+          // names by consuming them in the failed String branch).
           std::string vs_name;
-          if (lexer_->expect(TokenType::String, vs_name) || lexer_->expect(TokenType::Identifier, vs_name)) {
+          if (Check(TokenType::String)
+                  ? lexer_->expect(TokenType::String, vs_name)
+                  : lexer_->expect(TokenType::Identifier, vs_name)) {
             prim->meta().variantSets.emplace_back();
             prim->meta().variantSets.back().name = vs_name;
           }
