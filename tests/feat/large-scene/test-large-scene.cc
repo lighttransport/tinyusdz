@@ -75,8 +75,34 @@ int main(int argc, char **argv) {
     if (m) CHECK((*m)->type_name() == "Mesh", "/P/M is a Mesh");
   }
 
+  // --- Scenario 2: list-op reference merge across sublayers + sublayer-compose
+  // on a referenced asset (the ALab shot pattern). ---
+  {
+    const char *multi = "tests/feat/large-scene/fixture/multi/root.usda";
+    LargeSceneLoadOptions o2;
+    o2.payload_mode = LargeSceneLoadOptions::PayloadMode::LoadAll;
+    o2.allow_parent_relative_paths = true;
+    LargeSceneLoader l2;
+    std::string w2, e2;
+    if (!l2.Load(multi, o2, &w2, &e2)) {
+      std::cerr << "multi load failed: " << e2 << "\n";
+      ++g_failures;
+    } else {
+      // Two sublayers each prepend a reference to /P. Both must compose
+      // (list-op accumulation), so /P has content from BOTH assets:
+      //   /P/MA  -- from asset_a.usda, whose geometry is aggregated through its
+      //             OWN subLayers (tests sublayer-compose on a reference).
+      //   /P/MB  -- from asset_b.usda (the WEAKER sublayer's reference, which
+      //             was previously dropped before list-op merging).
+      CHECK(bool(l2.stage().GetPrimAtPath(Path("/P/MA", ""))),
+            "/P/MA (referenced asset's own subLayers composed)");
+      CHECK(bool(l2.stage().GetPrimAtPath(Path("/P/MB", ""))),
+            "/P/MB (weaker sublayer's reference merged via list-op)");
+    }
+  }
+
   if (g_failures == 0) {
-    std::cout << "Cross-directory cwp-anchoring test passed.\n";
+    std::cout << "Large-scene composition tests passed.\n";
     return 0;
   }
   std::cerr << g_failures << " check(s) failed.\n";

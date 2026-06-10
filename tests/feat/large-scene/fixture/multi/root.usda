@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    doc = """List-op reference merge across sublayers + sublayer-compose on a
+    referenced asset. Two sublayers each `prepend references` to /P; both must
+    compose (USD list-op accumulation), so /P gets content from BOTH assets.
+    asset_a.usda aggregates its geometry through its OWN subLayers, which must
+    be composed when it is pulled in as a reference."""
+    subLayers = [
+        @a.usda@,
+        @b.usda@
+    ]
+)
+
+over "P"
+{
+}

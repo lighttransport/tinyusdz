@@ -169,6 +169,17 @@ structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
 **~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
 deferred proxy geometry on demand.
 
+**ALab** (`ALab/entry.usda`, the `mk020_0281` shot) composes **3,293 prims /
+1,271 deferred geometry payloads in ~120 MiB**; the set asset alone
+(`entity/alab_set01/alab_set01.usda`) composes **3,251 prims / 1,264 payloads**.
+ALab's asset-centric structure needed three further composition fixes (§3.4):
+(a) composing a *referenced/payload* layer's own subLayers — ALab entity files
+just sublayer their department layers, so without this the referenced content is
+empty; (b) accumulating `references`/`payload` **list-ops** across a sublayer
+stack — a shot's department layers each `prepend references` to `/root`, and only
+the strongest survived before; (c) marking a referenced prim as having specs when
+it has children (so a reference target that is just a parent of geometry expands).
+
 ---
 
 ## 3. Roadmap (remaining implementation)
@@ -256,7 +267,32 @@ honoring `mmap_zero_copy` against a file-backed mmap, non-copying
 on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
 Stage.
 
-### 3.4 Smaller items
+### 3.4 Asset-centric composition (ALab) — FIXED
+
+ALab loads assets via subLayer-aggregated entity files and layers shots from
+many department sublayers. Three fixes make it compose:
+- **Compose a referenced/payload layer's own subLayers**
+  (`src/pcp/layer-registry.cc`, `LayerRegistry::GetOrLoad`): when a
+  reference/payload target aggregates its prims through its own `subLayers` (the
+  ALab entity pattern), compose them after load — otherwise the referenced
+  content is empty. Mirrors the LIVRPS `LoadAsset`.
+- **`references`/`payload` list-op accumulation across sublayers**
+  (`src/composition.cc`, `CombinePrimSpecRec`): these are list-ops, so opinions
+  from each layer in a sublayer stack accumulate (USD prepend/append) rather than
+  the stronger whole-value winning. A shot whose department layers each
+  `prepend references` to `/root` now keeps them all. The newly-introduced arcs
+  are anchored to the layer that authored them (generalizing the over+def
+  cwp rule to def+def).
+- **Child-bearing reference targets expand** (`src/composition-graph.cc`,
+  `GatherComposedChildNames`): a reference target that authors no props/metas of
+  its own but has children (a parent of geometry) is no longer skipped during
+  namespace expansion.
+
+Regression: `feat-large-scene` scenario 2 (`fixture/multi/`) covers all three —
+two sublayers each `prepend references` to `/P`, one asset aggregating geometry
+through its own subLayers; both `/P/MA` and `/P/MB` must reconstruct.
+
+### 3.5 Smaller items
 
 - **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
   bytes; authored `extentsHint` would let it bound by world-space coverage, but
