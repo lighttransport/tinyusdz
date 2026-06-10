@@ -38,12 +38,15 @@ import path from 'node:path';
 
 function parseArgs(argv) {
   const a = {
-    assets: '/mnt/nvme02/work/usd/assets',
+    assets: process.env.USD_WG_ASSETS_DIR || '/mnt/nvme02/work/usd/assets',
     tusdcat: process.env.TUSDCAT_PATH || './build/tusdcat',
     mode: 'load',
     timeout: 30000,
     jobs: Math.max(1, (os.cpus()?.length || 4) - 1),
     includeMtlx: false,
+    // Regression gate: exit non-zero if (FAIL + CRASH) exceeds this. Default
+    // off (report only); CI passes e.g. `--max-fail 0`.
+    maxFail: Infinity,
     out: 'tests/asset-parse-results',
     // Compare mode: cross-check each asset against the OpenUSD reference
     // (`usdcat`) and diff tinyusdz's re-serialization against it (`tusddiff`).
@@ -61,6 +64,7 @@ function parseArgs(argv) {
       case '--timeout': a.timeout = parseInt(val(), 10); break;
       case '--jobs': a.jobs = parseInt(val(), 10); break;
       case '--include-mtlx': a.includeMtlx = true; break;
+      case '--max-fail': a.maxFail = parseInt(val(), 10); break;
       case '--out': a.out = val(); break;
       case '--compare': a.compare = true; break;
       case '--usdcat': a.usdcat = val(); break;
@@ -295,6 +299,17 @@ async function main() {
   const a = parseArgs(process.argv);
   const flag = a.mode === 'flatten' ? '-f' : '-l';
 
+  // Graceful skip when the asset corpus is not present (e.g. CI without the
+  // usd-wg/assets checkout). Exit 0 so it does not fail a regression run.
+  try {
+    const st = await fs.stat(a.assets);
+    if (!st.isDirectory()) throw new Error('not a directory');
+  } catch {
+    console.log(`SKIPPED: usd-wg asset corpus not found at ${a.assets} ` +
+      `(set USD_WG_ASSETS_DIR or pass --assets).`);
+    process.exit(0);
+  }
+
   // binary present?
   try { await fs.access(a.tusdcat); }
   catch { console.error(`tusdcat not found at ${a.tusdcat}. Build it (ninja tusdcat) or pass --tusdcat.`); process.exit(2); }
@@ -480,6 +495,17 @@ async function main() {
   top('warning categories', warnCats);
   top('error categories', errCats);
   console.log(`\nWrote ${path.join(a.out, 'summary.md')}, results.tsv, summary.json`);
+
+  // Regression gate.
+  if (Number.isFinite(a.maxFail)) {
+    const hard = (totals.FAIL || 0) + (totals.CRASH || 0);
+    if (hard > a.maxFail) {
+      console.error(`\nREGRESSION: ${hard} FAIL+CRASH > --max-fail ${a.maxFail} ` +
+        `(mode ${a.mode}). See ${path.join(a.out, 'summary.md')}.`);
+      process.exit(1);
+    }
+    console.log(`Regression gate OK: ${hard} FAIL+CRASH <= --max-fail ${a.maxFail}.`);
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
