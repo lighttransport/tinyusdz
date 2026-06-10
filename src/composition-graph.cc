@@ -660,7 +660,9 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
         continue;
       }
 
-      if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+      if (!ValidateAndNormalizeAssetPath(
+              asset_path_str, &asset_path_str,
+              _ctx->_options.allow_parent_relative_paths)) {
         if (_ctx->_options.error_when_asset_not_found) {
           if (err) {
             *err = fmt::format("Unsafe asset path in reference: {}",
@@ -854,7 +856,9 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
           }
         }
       } else {
-        if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+        if (!ValidateAndNormalizeAssetPath(
+                asset_path_str, &asset_path_str,
+                _ctx->_options.allow_parent_relative_paths)) {
           if (_ctx->_options.error_when_asset_not_found) {
             if (err) {
               *err = fmt::format("Unsafe asset path in payload: {}",
@@ -1326,6 +1330,10 @@ nonstd::expected<CompositionGraph, std::string> CompositionGraph::Compose(
   graph._ctx._resolver = &resolver;
   graph._ctx._options = options;
 
+  // Route referenced/payload layer loads through the optional parse-once seam.
+  graph._ctx.load_layer_fn = options.load_layer_fn;
+  graph._ctx.load_layer_userdata = options.load_layer_userdata;
+
   // Store a copy of the root layer so it outlives the graph
   // (caller's Layer may go out of scope after Compose returns)
   auto root_copy = std::make_unique<Layer>(root_layer);
@@ -1595,7 +1603,8 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
   if (asset_path_str.empty()) {
     return nonstd::make_unexpected("Empty asset path in deferred payload");
   }
-  if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str)) {
+  if (!ValidateAndNormalizeAssetPath(asset_path_str, &asset_path_str,
+                                     _ctx._options.allow_parent_relative_paths)) {
     return nonstd::make_unexpected("Unsafe asset path in deferred payload");
   }
 

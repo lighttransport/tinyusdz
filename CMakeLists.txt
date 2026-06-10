@@ -523,6 +523,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
     ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
     ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
@@ -2054,6 +2055,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
+  add_subdirectory(examples/large-scene-load)
   #if (TINYUSDZ_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
