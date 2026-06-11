@@ -677,6 +677,12 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
   tinyusdz::PayloadCompositionOptions payload_options;
   payload_options.allow_parent_relative_paths = true;
 
+  // Parse each referenced file once across the whole fixed-point loop; all
+  // arcs to the same file share one copy of the heavy attribute data (COW).
+  std::map<std::string, Layer> layer_cache;
+  references_options.layer_cache = &layer_cache;
+  payload_options.layer_cache = &layer_cache;
+
   if (!src_layer.metas().subLayers.empty()) {
     Layer tmp;
     if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
