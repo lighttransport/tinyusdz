@@ -8,7 +8,7 @@
 //
 // Results land in window.__usdzBench = { ready|error, timings, stats, gpu }.
 
-import { convertFolderToUSDZ, loadWasm } from './src/usdzconvert.js';
+import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm } from './src/usdzconvert.js';
 import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
 const statusEl = document.getElementById('status');
@@ -58,25 +58,35 @@ async function main() {
   const resize = Number(params.get('resize') || 0);
   const textureFormat = params.get('textureFormat') || 'keep';
   const codec = params.get('codec') || 'wasm';
+  const pipeline = params.get('pipeline') || 'memory';  // memory | stream
   const wasm64 = params.get('wasm64') !== '0';
   const concurrency = Number(params.get('concurrency') || 8);
   const jpegQuality = Number(params.get('jpegQuality') || 90);
-  const reencode = params.get('reencode') !== '0';
+  // keep + no resize = passthrough (otherwise 'keep' would still re-encode).
+  const reencode = params.get('reencode') === '0' ? false
+      : !(textureFormat === 'keep' && resize <= 0);
 
   const timings = {};
   const gpu = webglRenderer();
   status(`gpu: ${gpu}`);
 
-  // 1. Folder "upload": fetch the scene file set into memory.
+  // 1. Manifest; for the in-memory pipeline, fetch the whole scene up front
+  //    (folder-upload simulation). The stream pipeline fetches lazily instead.
   let t = performance.now();
   status(`fetching manifest ${manifestUrl} ...`);
   const manifest = await (await fetch(manifestUrl)).json();
-  status(`fetching ${manifest.length} file(s) ...`);
-  const { map: assetMap, bytes: sceneBytes } = await fetchAll(
-      manifest, 16,
-      (done, total, b) => status(`  fetched ${done}/${total} (${(b / 1e6).toFixed(0)} MB)`));
+  let assetMap = null;
+  let sceneBytes = 0;
+  if (pipeline !== 'stream') {
+    status(`fetching ${manifest.length} file(s) ...`);
+    const fetched = await fetchAll(
+        manifest, 16,
+        (done, total, b) => status(`  fetched ${done}/${total} (${(b / 1e6).toFixed(0)} MB)`));
+    assetMap = fetched.map;
+    sceneBytes = fetched.bytes;
+    status(`scene in memory: ${manifest.length} files, ${(sceneBytes / 1e6).toFixed(1)} MB`);
+  }
   timings.fetchMs = performance.now() - t;
-  status(`scene in memory: ${manifest.length} files, ${(sceneBytes / 1e6).toFixed(1)} MB (${timings.fetchMs.toFixed(0)} ms)`);
 
   // 2. WASM init.
   t = performance.now();
@@ -87,42 +97,90 @@ async function main() {
 
   // 3. Convert (compose/flatten + textures + usdz pack).
   const tp = codec === 'browser' ? createBrowserTextureProcessor({ concurrency }) : null;
-  t = performance.now();
-  const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+  const convertOpts = {
     rootPath,
     maxTextureSize: resize,
     textureFormat,
     jpegQuality,
     reencode,
     textureProcessor: tp ? tp.processor : undefined,
-    textureConcurrency: tp ? tp.concurrency : 0,
+    textureConcurrency: tp ? tp.concurrency : (pipeline === 'stream' ? 4 : 0),
     log: (m) => { if ((lines.length % 25) === 0) status(String(m)); },
-  });
+  };
+  t = performance.now();
+  let usdz = null, stats, usdzBytes = 0;
+  if (pipeline === 'stream') {
+    // Lazy source over HTTP: textures fetched -> processed -> zip-appended ->
+    // released; only USD layers enter the wasm cache. A real app would point
+    // the sink at a File System Access stream; the bench collects chunks and
+    // only concatenates when the result is small enough to reload-validate
+    // (a multi-GB output exceeds Chrome's single-ArrayBuffer cap).
+    const byKey = new Map(manifest.map((e) => [e.key, e.url]));
+    const source = {
+      keys: [...byKey.keys()],
+      fetch: async (key) => {
+        const res = await fetch(byKey.get(key));
+        if (!res.ok) throw new Error(`fetch ${byKey.get(key)}: HTTP ${res.status}`);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        sceneBytes += buf.length;
+        return buf;
+      },
+    };
+    const chunks = [];
+    const zipSink = { write: (c) => { usdzBytes += c.length; chunks.push(c.slice ? c.slice() : new Uint8Array(c)); } };
+    ({ stats } = await convertSourceToUSDZStreaming(native, source, { ...convertOpts, zipSink }));
+    const kValidatableBytes = wasm64 ? 4e9 : 800e6;  // reload copies into the wasm heap
+    if (usdzBytes <= kValidatableBytes) {
+      usdz = new Uint8Array(usdzBytes);
+      let pos = 0;
+      for (const c of chunks) { usdz.set(c, pos); pos += c.length; }
+    }
+    chunks.length = 0;
+  } else {
+    ({ usdz, stats } = await convertFolderToUSDZ(native, assetMap, convertOpts));
+    usdzBytes = usdz.length;
+  }
   timings.convertMs = performance.now() - t;
-  status(`converted: ${usdz.length} bytes (${timings.convertMs.toFixed(0)} ms)`);
+  status(`converted: ${usdzBytes} bytes (${timings.convertMs.toFixed(0)} ms)`);
 
-  // 4. Validate: re-load the produced USDZ with a fresh loader instance.
+  // wasm heap high-water (post-convert committed size) + JS heap (Chrome).
+  const wasmHeapBytes = (() => {
+    try { return native.HEAPU8 ? Number(native.HEAPU8.length) : 0; } catch (_) { return 0; }
+  })();
+  const jsHeapBytes = (performance.memory && performance.memory.usedJSHeapSize) || 0;
+  status(`wasm heap: ${(wasmHeapBytes / 1e6).toFixed(0)} MB, js heap: ${(jsHeapBytes / 1e6).toFixed(0)} MB`);
+
+  // 4. Validate: re-load the produced USDZ with a fresh loader instance
+  //    (skipped when the output is too large to copy into this wasm heap).
   t = performance.now();
   let validate = { ok: false };
-  try {
-    const usd = new native.TinyUSDZLoaderNative();
-    validate.ok = usd.loadAsLayerFromBinary(usdz, 'bench.usdz');
-    if (!validate.ok) validate.error = String(usd.error());
-    usd.delete();
-  } catch (err) {
-    validate.error = String(err && err.message ? err.message : err);
+  if (!usdz) {
+    validate = { ok: true, skipped: true };
+    status('validate: skipped (output exceeds in-heap reload size)');
+  } else {
+    try {
+      const usd = new native.TinyUSDZLoaderNative();
+      validate.ok = usd.loadAsLayerFromBinary(usdz, 'bench.usdz');
+      if (!validate.ok) validate.error = String(usd.error());
+      usd.delete();
+    } catch (err) {
+      validate.error = String(err && err.message ? err.message : err);
+    }
+    status(`validate(reload usdz): ${validate.ok ? 'OK' : 'FAIL ' + (validate.error || '')}`);
   }
   timings.validateMs = performance.now() - t;
-  status(`validate(reload usdz): ${validate.ok ? 'OK' : 'FAIL ' + (validate.error || '')}`);
 
   window.__usdzBench = {
     ready: true,
     gpu,
     codec,
+    pipeline,
     wasm64,
     sceneFiles: manifest.length,
     sceneBytes,
-    usdzBytes: usdz.length,
+    usdzBytes,
+    wasmHeapBytes,
+    jsHeapBytes,
     timings,
     textureStats: tp ? tp.stats() : null,
     stats,
