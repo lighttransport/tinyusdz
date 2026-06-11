@@ -532,6 +532,10 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
           resizeColorspace: resizeCsFor(e.name),
+          // This is the single-usdz low-heap repack path: keep the
+          // scanline-streamed PNG transcoder (slower, but the whole image
+          // never lands in the wasm heap).
+          lowMemory: 1,
         });
         if (res && res.success) {
           reencoded++;

@@ -799,6 +799,22 @@ if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
 endif()
 
+# Image decode/resize/encode TUs are the hot path of texture re-encode (USDZ
+# conversion of large scenes). MinSizeRel/-Oz builds (e.g. the wasm targets)
+# cripple them (PNG transcode drops to ~2 MP/s), for a few hundred KB of code
+# size: compile just these TUs at -O3 regardless of build type.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/image-loader.cc       # stb_image decode
+    ${PROJECT_SOURCE_DIR}/src/image-writer.cc       # stb_image_write / fpng entry
+    ${PROJECT_SOURCE_DIR}/src/image-util.cc         # stb_image_resize
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc # streaming PNG transcode/resize
+    ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc # ResizeImage
+    ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp     # fpng PNG encoder
+    ${PROJECT_SOURCE_DIR}/src/external/miniz.c      # zlib inflate/deflate (PNG transcode)
+    PROPERTIES COMPILE_OPTIONS "-O3")
+endif()
+
 # fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
 # there is no SSE2/scalar code path, so for sse2/scalar we skip compiling fpnge
 # and let PNG encoding fall back to the portable fpng encoder.
