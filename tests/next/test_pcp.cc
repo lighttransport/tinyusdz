@@ -1147,6 +1147,66 @@ static void test_implied_intermediate() {
 // FU10/FU12: end-to-end one-call composition from real USDA files, with a
 // cross-file reference (exercises reader arc-metadata parsing + registry +
 // namespace mapping).
+// Phase 7 S5: cross-layer list-op merging (apply_list_ops). A `delete` in the
+// stronger (root) layer removes an arc contributed by a weaker sublayer, and a
+// bare/explicit list in the stronger layer replaces the weaker one. With the
+// flag off, both arcs compose (legacy strong-first concatenation).
+static void test_cross_layer_listops() {
+  std::cout << "test_cross_layer_listops..." << std::endl;
+  const std::string sub = "/tmp/next_pcp_lo_sub.usda";
+  const std::string root = "/tmp/next_pcp_lo_root.usda";
+  {
+    std::ofstream f(sub);
+    f << "#usda 1.0\n"
+         "def \"P\" (\n    references = </Lib/A>\n)\n{\n}\n"
+         "def \"Q\" (\n    references = </Lib/A>\n)\n{\n}\n";
+  }
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\n(\n    subLayers = [@next_pcp_lo_sub.usda@]\n)\n"
+         // P: delete the weak </Lib/A> and prepend </Lib/B>.
+         "def \"P\" (\n    delete references = </Lib/A>\n"
+         "    prepend references = </Lib/B>\n)\n{\n}\n"
+         // Q: bare (explicit) list -> replaces the weak </Lib/A> with </Lib/B>.
+         "def \"Q\" (\n    references = </Lib/B>\n)\n{\n}\n"
+         "def Scope \"Lib\"\n{\n"
+         "    def Mesh \"A\" { custom int fromA = 1 }\n"
+         "    def Sphere \"B\" { custom int fromB = 2 }\n}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+
+  auto compose = [&](bool flag, const char *prim) -> std::pair<bool, bool> {
+    pcp::CompositionOptions opts;
+    opts.apply_list_ops = flag;
+    Stage stage;
+    std::string w, e;
+    bool ok = pcp::ComposeStageFromFile(root, resolver, &stage, opts, &w, &e);
+    assert(ok && "ComposeStageFromFile failed");
+    UsdPrim p = stage.GetPrimAtPath(prim);
+    assert(p.IsValid());
+    return {p.GetPropertyValue("fromA") != nullptr,
+            p.GetPropertyValue("fromB") != nullptr};
+  };
+
+  // Flag OFF: both arcs compose -> both fromA and fromB present.
+  auto p_off = compose(false, "/P");
+  assert(p_off.first && p_off.second && "default: weak+strong arcs both compose");
+  auto q_off = compose(false, "/Q");
+  assert(q_off.first && q_off.second);
+
+  // Flag ON: P deletes </Lib/A> -> fromA gone; Q explicit-replaces -> fromA gone.
+  auto p_on = compose(true, "/P");
+  assert(!p_on.first && p_on.second && "delete must drop the weak arc cross-layer");
+  auto q_on = compose(true, "/Q");
+  assert(!q_on.first && q_on.second && "explicit list must replace the weak arc");
+
+  std::remove(sub.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_compose_from_file() {
   std::cout << "test_compose_from_file..." << std::endl;
 
@@ -1885,6 +1945,7 @@ int main() {
   test_parallel_prewarm();
   test_cross_source_variant();
   test_implied_intermediate();
+  test_cross_layer_listops();
   test_compose_from_file();
   test_sublayer_stack_composition();
   test_sublayer_cycle_and_depth();
