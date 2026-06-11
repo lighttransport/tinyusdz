@@ -2787,34 +2787,13 @@ bool RenderSceneConverter::ConvertMesh(
       (mesh.subdivisionScheme.get_value() !=
        GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
 
-  // Subdivision eligibility checks (the refinement itself happens after the
-  // UV primvars are gathered, so they can refine in lockstep).
-  if (want_subdivision) {
-    if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name) ||
-        mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
-      PUSH_ERROR_AND_RETURN(
-          "Subdivision is not yet supported for meshes with authored tangent "
-          "or binormal primvars in Tydra conversion.");
-    }
-
-    if (mesh.has_primvar("skel:jointIndices") ||
-        mesh.has_primvar("skel:jointWeights")) {
-      PUSH_ERROR_AND_RETURN(
-          "Subdivision is not yet supported for skinned meshes in Tydra "
-          "conversion.");
-    }
-
-    if (!blendshapes.empty()) {
-      PUSH_ERROR_AND_RETURN(
-          "Subdivision is not yet supported for meshes with BlendShapes in "
-          "Tydra conversion.");
-    }
-
-    if (mesh.has_primvar("normals") || mesh.normals.authored()) {
-      PUSH_WARN(
-          "Subdivision currently ignores authored normals and recomputes "
-          "normals from the subdivided topology.");
-    }
+  // Authored normals cannot survive refinement meaningfully; they are
+  // recomputed from the subdivided topology.
+  if (want_subdivision &&
+      (mesh.has_primvar("normals") || mesh.normals.authored())) {
+    PUSH_WARN(
+        "Subdivision currently ignores authored normals and recomputes "
+        "normals from the subdivided topology.");
   }
 
 
@@ -3085,26 +3064,96 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // Apply subdivision: geometry plus the gathered UV and display primvars,
-  // which refine in lockstep through tinysubdiv (faceVarying channels
-  // through the seam-split fvar path, vertex/varying as per-point primvars,
-  // uniform via face_source replication, constant untouched).
+  // Gather tangent/binormal primvars (validated against the base topology)
+  // so they refine through subdivision with the geometry.
+  //
+  if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
+    GeomPrimvar pvar;
+
+    if (!GetGeomPrimvar(env.stage, &mesh,
+                        env.mesh_config.default_tangents_primvar_name, &pvar,
+                        &_err, &_warn)) {
+      return false;
+    }
+
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, env.mesh_config.default_tangents_primvar_name,
+                           num_vertices, num_faces, num_face_vertex_indices,
+                           dst.tangents, &_err, env.timecode, env.tinterp,
+                           &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
+
+  if (mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
+    GeomPrimvar pvar;
+
+    if (!GetGeomPrimvar(env.stage, &mesh,
+                        env.mesh_config.default_binormals_primvar_name, &pvar,
+                        &_err, &_warn)) {
+      return false;
+    }
+
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, env.mesh_config.default_binormals_primvar_name,
+                           num_vertices, num_faces, num_face_vertex_indices,
+                           dst.binormals, &_err, env.timecode, env.tinterp,
+                           &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
+
+  // Refined skin weights / blendshape offsets produced by the subdivision
+  // block below and consumed by the skinning / BlendShape conversion steps.
+  std::vector<int> subdiv_skin_joint_indices;
+  std::vector<float> subdiv_skin_joint_weights;
+  bool subdiv_skin_refined = false;
+  // Per BlendShape: compacted (refined point indices, xyz offsets).
+  std::map<const BlendShape *,
+           std::pair<std::vector<uint32_t>, std::vector<float>>>
+      subdiv_bs_offsets;
+
+  //
+  // Apply subdivision: geometry plus the gathered UV, display, tangent,
+  // skin-weight and blendshape-offset primvars, which refine in lockstep
+  // through tinysubdiv (faceVarying channels through the seam-split fvar
+  // path, vertex/varying as per-point primvars, uniform via face_source
+  // replication, constant untouched).
   //
   if (want_subdivision) {
     std::vector<float> control_points(dst.points.size() * 3);
     memcpy(control_points.data(), dst.points.data(),
            dst.points.size() * sizeof(value::float3));
 
-    // Float-typed attributes that refine with the geometry.
+    // Float-typed attributes that refine with the geometry. Direction-like
+    // attributes (tangents/binormals) are renormalized after refinement.
     std::vector<VertexAttribute *> subdiv_attrs;
+    std::vector<uint8_t> subdiv_attr_normalize;
     for (auto &uv : uvAttrs) {
       subdiv_attrs.push_back(&uv.second);
+      subdiv_attr_normalize.push_back(0);
     }
     if (!vcolor.get_data().empty()) {
       subdiv_attrs.push_back(&vcolor);
+      subdiv_attr_normalize.push_back(0);
     }
     if (!vopacity.get_data().empty()) {
       subdiv_attrs.push_back(&vopacity);
+      subdiv_attr_normalize.push_back(0);
+    }
+    if (!dst.tangents.get_data().empty()) {
+      subdiv_attrs.push_back(&dst.tangents);
+      subdiv_attr_normalize.push_back(1);
+    }
+    if (!dst.binormals.get_data().empty()) {
+      subdiv_attrs.push_back(&dst.binormals);
+      subdiv_attr_normalize.push_back(1);
     }
 
     // Floats per item, for the float32 formats tinysubdiv refines.
@@ -3125,11 +3174,14 @@ bool RenderSceneConverter::ConvertMesh(
 
     std::vector<tsd::FVarChannelView> fvar_channels;
     std::vector<VertexAttribute *> fvar_attrs;
+    std::vector<uint8_t> fvar_normalize;
     std::vector<tsd::VertexPrimvarView> vertex_primvars;
     std::vector<VertexAttribute *> vertex_attrs;
+    std::vector<uint8_t> vertex_normalize;
     std::vector<VertexAttribute *> uniform_attrs;
 
-    for (VertexAttribute *vattr : subdiv_attrs) {
+    for (size_t ai = 0; ai < subdiv_attrs.size(); ai++) {
+      VertexAttribute *vattr = subdiv_attrs[ai];
       const uint32_t components = attr_components(*vattr);
       if (components == 0 || vattr->element_size() != 1 ||
           !vattr->indices.empty()) {
@@ -3146,6 +3198,7 @@ bool RenderSceneConverter::ConvertMesh(
         ch.stride = components;
         fvar_channels.push_back(ch);
         fvar_attrs.push_back(vattr);
+        fvar_normalize.push_back(subdiv_attr_normalize[ai]);
       } else if (vattr->variability == VertexVariability::Vertex ||
                  vattr->variability == VertexVariability::Varying) {
         tsd::VertexPrimvarView pv;
@@ -3154,10 +3207,154 @@ bool RenderSceneConverter::ConvertMesh(
         pv.varying = (vattr->variability == VertexVariability::Varying);
         vertex_primvars.push_back(pv);
         vertex_attrs.push_back(vattr);
+        vertex_normalize.push_back(subdiv_attr_normalize[ai]);
       } else if (vattr->variability == VertexVariability::Uniform) {
         uniform_attrs.push_back(vattr);
       }
       // Constant: unaffected by refinement.
+    }
+
+    //
+    // Skin weights: expand the sparse per-vertex (jointIndex, weight) pairs
+    // into dense per-joint columns over the joints actually used, refine
+    // them like any other per-point primvar, then re-sparsify back to the
+    // authored influence count below.
+    //
+    const bool has_skin = mesh.has_primvar("skel:jointIndices") &&
+                          mesh.has_primvar("skel:jointWeights");
+    std::vector<int> skin_used_joints;          // dense column -> joint id
+    std::vector<std::vector<float>> skin_chan;  // per-channel column data
+    uint32_t skin_K = 0;
+    const size_t skin_channel_begin = vertex_primvars.size();
+    if (has_skin) {
+      GeomPrimvar ji;
+      GeomPrimvar jw;
+      if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointIndices", &ji, &_err) ||
+          !GetGeomPrimvar(env.stage, &mesh, "skel:jointWeights", &jw, &_err)) {
+        return false;
+      }
+      skin_K = ji.get_elementSize();
+      if (skin_K == 0 || skin_K != jw.get_elementSize()) {
+        PUSH_ERROR_AND_RETURN(
+            "`elementSize` of skel:jointIndices/skel:jointWeights must be "
+            "equal and non-zero.");
+      }
+      std::vector<int> jidx;
+      std::vector<float> jwts;
+      if (!ji.flatten_with_indices(env.timecode, &jidx, env.tinterp) ||
+          !jw.flatten_with_indices(env.timecode, &jwts, env.tinterp)) {
+        PUSH_ERROR_AND_RETURN(
+            "Failed to flatten skel:jointIndices/skel:jointWeights.");
+      }
+      if (jidx.size() != jwts.size() ||
+          jidx.size() != size_t(num_vertices) * skin_K) {
+        PUSH_ERROR_AND_RETURN(
+            "skel:jointIndices/skel:jointWeights must hold elementSize "
+            "entries per vertex.");
+      }
+
+      std::map<int, uint32_t> joint_column;
+      for (size_t i = 0; i < jidx.size(); i++) {
+        if (jwts[i] == 0.0f) {
+          continue;
+        }
+        if (jidx[i] < 0) {
+          PUSH_ERROR_AND_RETURN("Negative index in skel:jointIndices.");
+        }
+        if (joint_column.emplace(jidx[i], uint32_t(skin_used_joints.size()))
+                .second) {
+          skin_used_joints.push_back(jidx[i]);
+        }
+      }
+      // Bound the dense expansion (memory: refined_points * used_joints).
+      constexpr size_t kMaxSubdivSkinJoints = 256;
+      if (skin_used_joints.size() > kMaxSubdivSkinJoints) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Subdivision of skinned meshes supports up to {} distinct "
+            "influencing joints, but the mesh uses {}.",
+            kMaxSubdivSkinJoints, skin_used_joints.size()));
+      }
+
+      const size_t J = skin_used_joints.size();
+      const bool skin_varying =
+          (jw.get_interpolation() == Interpolation::Varying);
+      // Pack columns into stride-4 channels (the dense matrix is row-major
+      // per point, so each channel gets its own contiguous buffer).
+      const size_t num_chan = (J + 3) / 4;
+      skin_chan.resize(num_chan);
+      for (size_t c = 0; c < num_chan; c++) {
+        const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+        skin_chan[c].assign(size_t(num_vertices) * stride, 0.0f);
+      }
+      for (uint32_t v = 0; v < num_vertices; v++) {
+        for (uint32_t k = 0; k < skin_K; k++) {
+          const float w = jwts[size_t(v) * skin_K + k];
+          if (w == 0.0f) {
+            continue;
+          }
+          const uint32_t col = joint_column[jidx[size_t(v) * skin_K + k]];
+          const size_t c = col / 4;
+          const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+          skin_chan[c][size_t(v) * stride + (col % 4)] += w;
+        }
+      }
+      for (size_t c = 0; c < num_chan; c++) {
+        tsd::VertexPrimvarView pv;
+        pv.values = skin_chan[c].data();
+        pv.stride = uint32_t(std::min<size_t>(4, J - c * 4));
+        pv.varying = skin_varying;
+        vertex_primvars.push_back(pv);
+      }
+    }
+
+    //
+    // BlendShape point offsets: subdivision is linear in the point data, so
+    // refining the (densified) offset field with the same smooth weights
+    // yields exactly the offsets of the refined blended mesh.
+    //
+    std::vector<const BlendShape *> bs_refined;
+    std::vector<std::vector<float>> bs_dense;
+    const size_t bs_channel_begin = vertex_primvars.size();
+    for (const auto &bs_it : blendshapes) {
+      const BlendShape *bs = bs_it.second;
+      if (!bs) {
+        continue;
+      }
+      std::vector<int> bs_indices;
+      std::vector<value::vector3f> bs_point_offsets;
+      std::vector<value::vector3f> bs_normal_offsets;
+      bs->pointIndices.get_value(&bs_indices);
+      bs->offsets.get_value(&bs_point_offsets);
+      bs->normalOffsets.get_value(&bs_normal_offsets);
+      if (bs_indices.empty() || bs_point_offsets.size() != bs_indices.size()) {
+        continue;  // the BlendShape conversion step warns and skips these
+      }
+      if (!bs_normal_offsets.empty()) {
+        PUSH_WARN(fmt::format(
+            "BlendShape `{}` normalOffsets are ignored under subdivision "
+            "(normals are recomputed from the refined topology).",
+            bs->name));
+      }
+      std::vector<float> dense(size_t(num_vertices) * 3, 0.0f);
+      for (size_t i = 0; i < bs_indices.size(); i++) {
+        if (bs_indices[i] < 0 || uint32_t(bs_indices[i]) >= num_vertices) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "pointIndices[{}] {} in BlendShape `{}` is out of range.", i,
+              bs_indices[i], bs->name));
+        }
+        dense[size_t(bs_indices[i]) * 3 + 0] = bs_point_offsets[i][0];
+        dense[size_t(bs_indices[i]) * 3 + 1] = bs_point_offsets[i][1];
+        dense[size_t(bs_indices[i]) * 3 + 2] = bs_point_offsets[i][2];
+      }
+      bs_dense.push_back(std::move(dense));
+      bs_refined.push_back(bs);
+    }
+    for (const std::vector<float> &dense : bs_dense) {
+      tsd::VertexPrimvarView pv;
+      pv.values = dense.data();
+      pv.stride = 3;
+      pv.varying = false;  // offsets follow the surface (smooth weights)
+      vertex_primvars.push_back(pv);
     }
 
     tsd::RefinedMesh refined;
@@ -3179,19 +3376,119 @@ bool RenderSceneConverter::ConvertMesh(
     dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
     subdiv_face_source = std::move(refined.face_source);
 
+    // Renormalizes direction-like refined tuples (first 3 components).
+    auto renormalize3 = [](std::vector<float> &vals, uint32_t stride) {
+      if (stride < 3) {
+        return;
+      }
+      for (size_t i = 0; i + stride <= vals.size(); i += stride) {
+        const float len =
+            std::sqrt(vals[i] * vals[i] + vals[i + 1] * vals[i + 1] +
+                      vals[i + 2] * vals[i + 2]);
+        if (len > 0.0f) {
+          vals[i] /= len;
+          vals[i + 1] /= len;
+          vals[i + 2] /= len;
+        }
+      }
+    };
+
     // Write refined values back (faceVarying: per refined corner;
     // vertex/varying: per refined point).
     for (size_t i = 0; i < fvar_attrs.size(); i++) {
-      const std::vector<float> &vals = refined.fvar[i];
+      std::vector<float> vals = refined.fvar[i];
+      if (fvar_normalize[i]) {
+        renormalize3(vals, attr_components(*fvar_attrs[i]));
+      }
       fvar_attrs[i]->get_data().resize(vals.size() * sizeof(float));
       memcpy(fvar_attrs[i]->get_data().data(), vals.data(),
              vals.size() * sizeof(float));
     }
     for (size_t i = 0; i < vertex_attrs.size(); i++) {
-      const std::vector<float> &vals = refined.vertex_primvars[i];
+      std::vector<float> vals = refined.vertex_primvars[i];
+      if (vertex_normalize[i]) {
+        renormalize3(vals, attr_components(*vertex_attrs[i]));
+      }
       vertex_attrs[i]->get_data().resize(vals.size() * sizeof(float));
       memcpy(vertex_attrs[i]->get_data().data(), vals.data(),
              vals.size() * sizeof(float));
+    }
+
+    const size_t refined_points = dst.points.size();
+
+    // Re-sparsify refined skin weights: per refined point, clamp negative
+    // (smooth) contributions, keep the strongest K influences, renormalize.
+    if (has_skin) {
+      const size_t J = skin_used_joints.size();
+      subdiv_skin_joint_indices.assign(refined_points * skin_K, 0);
+      subdiv_skin_joint_weights.assign(refined_points * skin_K, 0.0f);
+      std::vector<float> top_w(skin_K, 0.0f);
+      std::vector<uint32_t> top_j(skin_K, 0);
+      for (size_t v = 0; v < refined_points && J > 0; v++) {
+        // Top-K selection over the dense per-joint weights.
+        const uint32_t K = skin_K;
+        uint32_t used = 0;
+        for (uint32_t col = 0; col < J; col++) {
+          const size_t c = col / 4;
+          const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+          float w = refined.vertex_primvars[skin_channel_begin + c]
+                           [v * stride + (col % 4)];
+          if (w <= 0.0f) {
+            continue;  // clamp slight negative smooth overshoot
+          }
+          // Insertion into the descending top-K list.
+          uint32_t pos = used < K ? used : K;
+          while (pos > 0 && top_w[pos - 1] < w) {
+            if (pos < K) {
+              top_w[pos] = top_w[pos - 1];
+              top_j[pos] = top_j[pos - 1];
+            }
+            pos--;
+          }
+          if (pos < K) {
+            top_w[pos] = w;
+            top_j[pos] = col;
+            if (used < K) {
+              used++;
+            }
+          }
+        }
+        float sum = 0.0f;
+        for (uint32_t k = 0; k < used; k++) {
+          sum += top_w[k];
+        }
+        if (sum > 0.0f) {
+          for (uint32_t k = 0; k < used; k++) {
+            subdiv_skin_joint_indices[v * skin_K + k] =
+                skin_used_joints[top_j[k]];
+            subdiv_skin_joint_weights[v * skin_K + k] = top_w[k] / sum;
+          }
+        }
+      }
+      subdiv_skin_refined = true;
+    }
+
+    // Compact refined blendshape offsets: refinement weights are affine
+    // combinations of parent values, so points outside a shape's support
+    // stay exactly zero and can be dropped.
+    for (size_t i = 0; i < bs_refined.size(); i++) {
+      const std::vector<float> &vals =
+          refined.vertex_primvars[bs_channel_begin + i];
+      std::vector<uint32_t> indices;
+      std::vector<float> offsets;
+      for (size_t v = 0; v < refined_points; v++) {
+        const float x = vals[3 * v];
+        const float y = vals[3 * v + 1];
+        const float z = vals[3 * v + 2];
+        if (x != 0.0f || y != 0.0f || z != 0.0f) {
+          indices.push_back(uint32_t(v));
+          offsets.push_back(x);
+          offsets.push_back(y);
+          offsets.push_back(z);
+        }
+      }
+      subdiv_bs_offsets[bs_refined[i]] = {std::move(indices),
+                                          std::move(offsets)};
     }
     // Uniform (per-face) attributes replicate through face_source.
     for (VertexAttribute *vattr : uniform_attrs) {
@@ -3264,50 +3561,6 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //TUSDZ_LOG_I("done uvAttr");
-
-  if (!subdivision_applied &&
-      mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
-    GeomPrimvar pvar;
-
-    if (!GetGeomPrimvar(env.stage, &mesh,
-                        env.mesh_config.default_tangents_primvar_name, &pvar,
-                        &_err, &_warn)) {
-      return false;
-    }
-
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, env.mesh_config.default_tangents_primvar_name,
-                           num_vertices, num_faces, num_face_vertex_indices,
-                           dst.tangents, &_err, env.timecode, env.tinterp,
-                           &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
-    }
-  }
-
-  if (!subdivision_applied &&
-      mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
-    GeomPrimvar pvar;
-
-    if (!GetGeomPrimvar(env.stage, &mesh,
-                        env.mesh_config.default_binormals_primvar_name, &pvar,
-                        &_err, &_warn)) {
-      return false;
-    }
-
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, env.mesh_config.default_binormals_primvar_name,
-                           num_vertices, num_faces, num_face_vertex_indices,
-                           dst.binormals, &_err, env.timecode, env.tinterp,
-                           &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
-    }
-  }
 
   // displayColor/displayOpacity were gathered above (and refined when
   // subdivision ran); single constant values become the mesh-level color.
@@ -3947,8 +4200,15 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: Validate jointIndex.
 
-    dst.joint_and_weights.jointIndices = jointIndicesArray;
-    dst.joint_and_weights.jointWeights = jointWeightsArray;
+    if (subdivision_applied && subdiv_skin_refined) {
+      // Weights were refined through subdivision (dense per-joint columns,
+      // re-sparsified to elementSize influences per refined point).
+      dst.joint_and_weights.jointIndices = std::move(subdiv_skin_joint_indices);
+      dst.joint_and_weights.jointWeights = std::move(subdiv_skin_joint_weights);
+    } else {
+      dst.joint_and_weights.jointIndices = jointIndicesArray;
+      dst.joint_and_weights.jointWeights = jointWeightsArray;
+    }
     dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
 
     // Helper lambda to round up bone count to standard GPU skinning values
@@ -4234,6 +4494,28 @@ bool RenderSceneConverter::ConvertMesh(
     shapeTarget.abs_path = bs_path;
     shapeTarget.prim_name = bs->name;
     shapeTarget.display_name = bs->metas().has_displayName() ? bs->metas().get_displayName() : "";
+
+    if (subdivision_applied) {
+      // Offsets were refined through subdivision (exact: refinement is
+      // linear in the point data). normalOffsets were dropped with a
+      // warning; normals are recomputed from the refined topology.
+      auto sit = subdiv_bs_offsets.find(bs);
+      if (sit == subdiv_bs_offsets.end()) {
+        PUSH_WARN(fmt::format(
+            "`pointIndices` in BlendShape `{}` is not authored or empty. "
+            "Skipping.",
+            bs->name));
+        continue;
+      }
+      shapeTarget.pointIndices = std::move(sit->second.first);
+      const std::vector<float> &flat = sit->second.second;
+      shapeTarget.pointOffsets.resize(flat.size() / 3);
+      memcpy(shapeTarget.pointOffsets.data(), flat.data(),
+             flat.size() * sizeof(float));
+      dst.targets[bs->name] = shapeTarget;
+      DCOUT("Converted refined blendshape target: " << bs->name);
+      continue;
+    }
 
     if (vertex_indices.empty()) {
       PUSH_WARN(
