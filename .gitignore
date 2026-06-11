@@ -376,6 +376,9 @@ CMakeUserPresets.json
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
 !tests/usda/validation/valid/*.usda
+# Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
+# top-level usdcat round-trip compare which globs only tests/usda/*.usda).
+!tests/usda/composition/listop-xlayer-*.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda

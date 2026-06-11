@@ -1,0 +1,8 @@
+#usda 1.0
+# Weak sublayer for listop-xlayer-delete-000: contributes a reference that the
+# stronger root layer deletes (see the root file).
+def "P" (
+    references = </Lib/A>
+)
+{
+}
