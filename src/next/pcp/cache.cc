@@ -17,18 +17,32 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
-// Serializes the engine's shared mutable state so the Cache is safe to use
-// (ComputePrimIndex / BuildStage / queries / payload edits) from multiple
-// threads. Recursive because some entry points call others (e.g. LoadPayload ->
-// ComputePrimIndex). Compiles to nothing in non-threaded builds.
-#define NEXT_PCP_LOCK(m) std::lock_guard<std::recursive_mutex> _pcp_lk(m)
-#else
-#define NEXT_PCP_LOCK(m) (void)0
 #endif
 
 namespace tinyusdz {
 namespace next {
 namespace pcp {
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+// Serializes the Cache's shared mutable state so it is safe to use
+// (ComputePrimIndex / BuildStage / queries / payload edits) from multiple
+// threads. Compiles to nothing in non-threaded builds.
+//
+// Phase 9 (F6) dropped the original *recursive* mutex: public entry points now
+// take the lock exactly once and delegate to lock-free `*_locked` internals, so
+// no public method re-enters the lock. Define TINYUSDZ_NEXT_RECURSIVE_LOCK to
+// fall back to the re-entrant recursive mutex -- a bring-up escape hatch for the
+// wider fine-locking work (TINYUSDZ_NEXT_FINE_LOCKS) should a new re-entrant
+// path ever be introduced.
+#if defined(TINYUSDZ_NEXT_RECURSIVE_LOCK)
+using PcpMutex = std::recursive_mutex;
+#else
+using PcpMutex = std::mutex;
+#endif
+#define NEXT_PCP_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
+#else
+#define NEXT_PCP_LOCK(m) (void)0
+#endif
 
 namespace {
 
@@ -96,7 +110,7 @@ struct Cache::Impl {
                                     // at the *main* Impl's registry (parse-once
                                     // shared across the parallel build).
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::recursive_mutex api_mu_;  // guards all shared state below
+  mutable PcpMutex api_mu_;  // guards all shared state below (F6: non-recursive)
 
   // --- parallel-build worker hooks (see PrewarmPrimIndices) ---------------
   // When set, RegisterInstance stashes its (instanceable, key) into
@@ -835,9 +849,18 @@ struct Cache::Impl {
 
   // --- ComputePrimIndex ---------------------------------------------------
 
+  // Public entry: takes the lock once, then runs the lock-free worker.
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err) {
     NEXT_PCP_LOCK(api_mu_);
+    return ComputePrimIndex_locked(prim_path, warn, err);
+  }
+
+  // Assumes api_mu_ is already held. Internal callers (LoadPayload /
+  // UnloadPayload / the serial PrewarmPrimIndices path) use this directly so the
+  // lock is never re-entered (F6: the mutex is non-recursive).
+  const PrimIndex *ComputePrimIndex_locked(const Path &prim_path,
+                                           std::string *warn, std::string *err) {
     const std::string key = prim_path.str();
     auto it = index_cache.find(key);
     if (it != index_cache.end()) return it->second.get();
@@ -1167,7 +1190,7 @@ struct Cache::Impl {
       }
     }
 #endif
-    for (const Path &p : paths) ComputePrimIndex(p, warn, err);
+    for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
     return true;
   }
 
@@ -1196,6 +1219,11 @@ struct Cache::Impl {
 
   void Invalidate(const Path &prim_path) {
     NEXT_PCP_LOCK(api_mu_);
+    Invalidate_locked(prim_path);
+  }
+
+  // Assumes api_mu_ is already held (called by LoadPayload / UnloadPayload).
+  void Invalidate_locked(const Path &prim_path) {
     const std::string base = prim_path.str();
     std::set<std::string> to_drop;
 
@@ -1247,20 +1275,20 @@ struct Cache::Impl {
     } else {
       load_rules_.LoadWithoutDescendants(prim_path.str());
     }
-    Invalidate(prim_path);
-    ComputePrimIndex(prim_path, warn, err);  // recompose now.
+    Invalidate_locked(prim_path);
+    ComputePrimIndex_locked(prim_path, warn, err);  // recompose now.
     return true;
   }
 
   bool UnloadPayload(const Path &prim_path) {
     NEXT_PCP_LOCK(api_mu_);
     load_rules_.Unload(prim_path.str());
-    Invalidate(prim_path);
+    Invalidate_locked(prim_path);
     // Recompose so the deferred-payload set (and HasDeferredPayload) reflects
     // the unload immediately -- Invalidate() drops the deferred entries under
     // the path, and ExpandArcs repopulates them on the next composition.
     std::string warn, err;
-    ComputePrimIndex(prim_path, &warn, &err);
+    ComputePrimIndex_locked(prim_path, &warn, &err);
     return true;
   }
 
