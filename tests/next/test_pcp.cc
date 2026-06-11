@@ -1280,6 +1280,52 @@ static void test_cross_layer_listops() {
   auto q_on = compose(exp, true, "/Q");
   assert(!q_on.first && q_on.second && "explicit list must replace the weak arc");
 
+  // Empty explicit list: still authored, and must clear weaker references.
+  const std::string empty_sub = "/tmp/next_pcp_empty_explicit_sub.usda";
+  const std::string empty_root = "/tmp/next_pcp_empty_explicit_root.usda";
+  {
+    std::ofstream f(empty_sub);
+    f << "#usda 1.0\n"
+         "def \"E\" (\n"
+         "    references = </Lib/A>\n"
+         ")\n"
+         "{\n"
+         "}\n"
+         "def Scope \"Lib\"\n"
+         "{\n"
+         "    def Mesh \"A\" { custom int fromA = 1 }\n"
+         "}\n";
+  }
+  {
+    std::ofstream f(empty_root);
+    f << "#usda 1.0\n"
+         "(\n"
+         "    subLayers = [@next_pcp_empty_explicit_sub.usda@]\n"
+         ")\n"
+         "def \"E\" (\n"
+         "    references = []\n"
+         ")\n"
+         "{\n"
+         "}\n";
+  }
+  AssetResolver empty_resolver;
+  empty_resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions empty_opts;
+  empty_opts.apply_list_ops = true;
+  Stage empty_stage;
+  std::string empty_warn, empty_err;
+  bool empty_ok = pcp::ComposeStageFromFile(
+      empty_root, empty_resolver, &empty_stage, empty_opts, &empty_warn,
+      &empty_err);
+  if (!empty_ok) std::cout << "  [diag] err=" << empty_err << std::endl;
+  assert(empty_ok);
+  UsdPrim e = empty_stage.GetPrimAtPath("/E");
+  assert(e.IsValid());
+  assert(e.GetPropertyValue("fromA") == nullptr &&
+         "empty explicit list must clear weaker references");
+  std::remove(empty_sub.c_str());
+  std::remove(empty_root.c_str());
+
   std::cout << "  OK" << std::endl;
 }
 

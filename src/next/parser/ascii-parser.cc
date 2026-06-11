@@ -622,8 +622,9 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   // arc vector honoring the list-op qualifier (explicit/bare replaces, prepend
   // front, append/reorder back, delete removes) -- the within-spec effective
   // list. ALSO record the raw qualifier into the spec's ArcEdit (Phase 7 S5),
-  // which cross-layer composition (apply_list_ops) and the writer consume; the
-  // edit block is only allocated when a non-bare qualifier is involved.
+  // which cross-layer composition (apply_list_ops) and the writer consume. Even
+  // a bare empty list (`references = []`) is authored and must replace weaker
+  // opinions.
   auto ReadArcList = [this, &ReadArcRef, &SelectArc, &SelectEdit](
                          PrimSpecMeta& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
@@ -641,34 +642,32 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
 
     // Record the list-op edit first (copies items for non-bare qualifiers).
-    if (qual != ArcQual::Explicit || meta.arc_edits()) {
-      ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
-      switch (qual) {
-        case ArcQual::Explicit:
-          e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
-          e.authored = true;
-          break;
-        case ArcQual::Prepend:
-          e.authored = true;
-          e.is_explicit = false;
-          e.prepended.insert(e.prepended.end(), items.begin(), items.end());
-          break;
-        case ArcQual::Append:
-          e.authored = true;
-          e.is_explicit = false;
-          e.appended.insert(e.appended.end(), items.begin(), items.end());
-          break;
-        case ArcQual::Delete:
-          e.authored = true;
-          e.is_explicit = false;
-          e.deleted.insert(e.deleted.end(), items.begin(), items.end());
-          break;
-        case ArcQual::Reorder:
-          e.authored = true;
-          e.is_explicit = false;
-          e.ordered.insert(e.ordered.end(), items.begin(), items.end());
-          break;
-      }
+    ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
+    switch (qual) {
+      case ArcQual::Explicit:
+        e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+        e.authored = true;
+        break;
+      case ArcQual::Prepend:
+        e.authored = true;
+        e.is_explicit = false;
+        e.prepended.insert(e.prepended.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Append:
+        e.authored = true;
+        e.is_explicit = false;
+        e.appended.insert(e.appended.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Delete:
+        e.authored = true;
+        e.is_explicit = false;
+        e.deleted.insert(e.deleted.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Reorder:
+        e.authored = true;
+        e.is_explicit = false;
+        e.ordered.insert(e.ordered.end(), items.begin(), items.end());
+        break;
     }
 
     std::vector<std::string>* target = &SelectArc(meta, field);
