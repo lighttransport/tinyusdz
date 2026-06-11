@@ -7,6 +7,7 @@
 
 #include "unit-tydra-subdivision.h"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -262,7 +263,7 @@ def Xform "Root"
   }
 }
 
-void tydra_subdivision_rejects_facevarying_uv_test(void) {
+void tydra_subdivision_refines_facevarying_uv_test(void) {
   const std::string usda = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
@@ -297,8 +298,124 @@ def Xform "Root"
   tinyusdz::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("UV primvars") != std::string::npos);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+
+  const auto &mesh = scene.meshes[0];
+  auto tc = mesh.texcoords.find(0);
+  TEST_CHECK(tc != mesh.texcoords.end());
+  if (tc == mesh.texcoords.end()) {
+    return;
+  }
+
+  const auto &uv = tc->second;
+  const size_t n = uv.vertex_count();
+  TEST_CHECK(n > 4);  // refined beyond the 4 authored corners
+  const float *vals = reinterpret_cast<const float *>(uv.buffer());
+
+  // All refined UVs stay inside the [0,1]^2 chart hull (affine combinations
+  // of the corner values).
+  bool in_hull = true;
+  for (size_t i = 0; i < n * 2; i++) {
+    in_hull &= (vals[i] >= -1e-5f) && (vals[i] <= 1.0f + 1e-5f);
+  }
+  TEST_CHECK(in_hull);
+
+  // cornersPlus1 (USD default) pins the 4 chart corners exactly.
+  const float corners[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+  for (const auto &c : corners) {
+    bool found = false;
+    for (size_t i = 0; i < n && !found; i++) {
+      found = (vals[2 * i] == c[0]) && (vals[2 * i + 1] == c[1]);
+    }
+    TEST_CHECK(found);
+  }
+
+  // The chart center refines to (0.5, 0.5) for a single quad.
+  bool found_center = false;
+  for (size_t i = 0; i < n && !found_center; i++) {
+    found_center = (std::fabs(vals[2 * i] - 0.5f) < 1e-6f) &&
+                   (std::fabs(vals[2 * i + 1] - 0.5f) < 1e-6f);
+  }
+  TEST_CHECK(found_center);
+}
+
+void tydra_subdivision_refines_uv_seam_test(void) {
+  // Two quads with a UV seam between them (separate islands): the refined
+  // mesh must keep the seam (UVs from both islands present, none blended
+  // across the 0.6 gap between island ranges [0,0.4] and [0.6,1.0]).
+  const std::string usda = R"usda(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Mesh "Mesh"
+    {
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 4, 3,
+            1, 2, 5, 4
+        ]
+        point3f[] points = [
+            (0, 0, 0),
+            (1, 0, 0),
+            (2, 0, 0),
+            (0, 1, 0),
+            (1, 1, 0),
+            (2, 1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+
+        texCoord2f[] primvars:st = [
+            (0, 0), (0.4, 0), (0.4, 0.4), (0, 0.4),
+            (0.6, 0.6), (1, 0.6), (1, 1), (0.6, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+}
+)usda";
+
+  tinyusdz::tydra::RenderScene scene;
+  std::string err;
+  bool ret = ConvertSceneWithSubdivision(usda, 2, &scene, &err);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+
+  const auto &mesh = scene.meshes[0];
+  auto tc = mesh.texcoords.find(0);
+  TEST_CHECK(tc != mesh.texcoords.end());
+  if (tc == mesh.texcoords.end()) {
+    return;
+  }
+
+  const auto &uv = tc->second;
+  const size_t n = uv.vertex_count();
+  TEST_CHECK(n > 8);
+  const float *vals = reinterpret_cast<const float *>(uv.buffer());
+
+  // No refined U value may land strictly inside the inter-island gap
+  // (0.4, 0.6): that would mean values were blended across the seam.
+  bool island0 = false;
+  bool island1 = false;
+  bool blended = false;
+  for (size_t i = 0; i < n; i++) {
+    const float u = vals[2 * i];
+    island0 |= (u <= 0.4f + 1e-6f);
+    island1 |= (u >= 0.6f - 1e-6f);
+    blended |= (u > 0.4f + 1e-4f) && (u < 0.6f - 1e-4f);
+  }
+  TEST_CHECK(island0);
+  TEST_CHECK(island1);
+  TEST_CHECK(!blended);
 }
 
 void tydra_subdivision_multiple_material_subsets_disjoint_test(void) {

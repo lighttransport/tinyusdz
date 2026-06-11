@@ -34,7 +34,11 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
                     const std::vector<float> &points_xyz,
                     const std::vector<uint32_t> &faceVertexCounts,
                     const std::vector<uint32_t> &faceVertexIndices,
-                    RefinedMesh *out, std::string *err) {
+                    const FVarChannelView *fvar_channels,
+                    uint32_t num_fvar_channels,
+                    const VertexPrimvarView *vertex_primvars,
+                    uint32_t num_vertex_primvars, RefinedMesh *out,
+                    std::string *err) {
   Options options;
   options.level = level;
 
@@ -114,8 +118,49 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
     view.num_holes = uint32_t(hole_indices.size());
   }
 
+  // Stamp the mesh's authored faceVaryingLinearInterpolation on every
+  // channel (it is a mesh-level attribute in USD).
+  FVarLinearInterpolation fvar_mode = FVarLinearInterpolation::CornersPlus1;
+  {
+    GeomMesh::FaceVaryingLinearInterpolation usd_mode =
+        GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1;
+    const auto &animatable = mesh.faceVaryingLinearInterpolation.get_value();
+    if (animatable.has_default()) {
+      animatable.get_default(&usd_mode);
+    }
+    switch (usd_mode) {
+      case GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1:
+        fvar_mode = FVarLinearInterpolation::CornersPlus1;
+        break;
+      case GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2:
+        fvar_mode = FVarLinearInterpolation::CornersPlus2;
+        break;
+      case GeomMesh::FaceVaryingLinearInterpolation::CornersOnly:
+        fvar_mode = FVarLinearInterpolation::CornersOnly;
+        break;
+      case GeomMesh::FaceVaryingLinearInterpolation::Boundaries:
+        fvar_mode = FVarLinearInterpolation::Boundaries;
+        break;
+      case GeomMesh::FaceVaryingLinearInterpolation::
+          FaceVaryingLinearInterpolationNone:
+        fvar_mode = FVarLinearInterpolation::None;
+        break;
+      case GeomMesh::FaceVaryingLinearInterpolation::All:
+        fvar_mode = FVarLinearInterpolation::All;
+        break;
+    }
+  }
+  std::vector<FVarChannelView> channels(
+      fvar_channels, fvar_channels + num_fvar_channels);
+  for (FVarChannelView &ch : channels) {
+    ch.interpolation = fvar_mode;
+  }
+
   std::string tsd_err;
-  const Result r = Refine(view, options, out, &tsd_err);
+  const Result r =
+      Refine(view, channels.empty() ? nullptr : channels.data(),
+             num_fvar_channels, vertex_primvars, num_vertex_primvars, options,
+             out, &tsd_err);
   if (r != Result::Success) {
     if (err) {
       (*err) += "tinysubdiv refinement failed (";

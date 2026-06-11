@@ -2782,10 +2782,14 @@ bool RenderSceneConverter::ConvertMesh(
   // Base-face id per refined face when subdivision is applied (used to
   // remap GeomSubset face indices).
   std::vector<uint32_t> subdiv_face_source;
+  const bool want_subdivision =
+      (env.mesh_config.subdivision_level > 0) &&
+      (mesh.subdivisionScheme.get_value() !=
+       GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
 
-  if (env.mesh_config.subdivision_level > 0 &&
-      mesh.subdivisionScheme.get_value() !=
-          GeomMesh::SubdivisionScheme::SubdivisionSchemeNone) {
+  // Subdivision eligibility checks (the refinement itself happens after the
+  // UV primvars are gathered, so they can refine in lockstep).
+  if (want_subdivision) {
     if (mesh.has_primvar("displayColor") ||
         mesh.has_primvar("displayOpacity")) {
       PUSH_ERROR_AND_RETURN(
@@ -2818,28 +2822,6 @@ bool RenderSceneConverter::ConvertMesh(
           "Subdivision currently ignores authored normals and recomputes "
           "normals from the subdivided topology.");
     }
-
-    std::vector<float> control_points(dst.points.size() * 3);
-    memcpy(control_points.data(), dst.points.data(),
-           dst.points.size() * sizeof(value::float3));
-
-    tsd::RefinedMesh refined;
-    std::string subdiv_err;
-    if (!tsd::RefineGeomMesh(mesh, env.mesh_config.subdivision_level,
-                             control_points, dst.usdFaceVertexCounts,
-                             dst.usdFaceVertexIndices, &refined,
-                             &subdiv_err)) {
-      PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
-    }
-
-    dst.points.resize(refined.points.size() / 3);
-    memcpy(dst.points.data(), refined.points.data(),
-           refined.points.size() * sizeof(float));
-    dst.usdFaceVertexCounts = std::move(refined.face_vertex_counts);
-    dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
-    subdiv_face_source = std::move(refined.face_source);
-
-    subdivision_applied = true;
   }
 
 
@@ -2922,49 +2904,6 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: Ensure prim_name is unique.
     dst.material_subsetMap[ms.prim_name] = ms;
-  }
-
-  // Remap material subset face indices onto the refined mesh: a base face
-  // maps to every refined face whose face_source points back at it. The
-  // remapped ids land in `triangulatedIndices` (the effective index set);
-  // the triangulation pass below remaps them again when enabled.
-  if (subdivision_applied && !dst.material_subsetMap.empty()) {
-    // Invert face_source: base face -> contiguous run of refined faces.
-    std::vector<uint32_t> counts(src_num_faces, 0);
-    for (uint32_t srcf : subdiv_face_source) {
-      if (srcf >= src_num_faces) {
-        PUSH_ERROR_AND_RETURN("Subdivision produced invalid face provenance.");
-      }
-      counts[srcf]++;
-    }
-    std::vector<uint32_t> offsets(size_t(src_num_faces) + 1, 0);
-    for (uint32_t f = 0; f < src_num_faces; f++) {
-      offsets[f + 1] = offsets[f] + counts[f];
-    }
-    std::vector<uint32_t> refined_ids(subdiv_face_source.size());
-    {
-      std::vector<uint32_t> cursor(offsets.begin(), offsets.end() - 1);
-      for (uint32_t rf = 0; rf < uint32_t(subdiv_face_source.size()); rf++) {
-        refined_ids[cursor[subdiv_face_source[rf]]++] = rf;
-      }
-    }
-
-    for (auto &sit : dst.material_subsetMap) {
-      std::vector<int> remapped;
-      for (int src_face : sit.second.usdIndices) {
-        if (src_face < 0 || uint32_t(src_face) >= src_num_faces) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "MaterialSubset `{}` face index {} exceeds source face count "
-              "{}.",
-              sit.first, src_face, src_num_faces));
-        }
-        for (uint32_t k = offsets[uint32_t(src_face)];
-             k < offsets[uint32_t(src_face) + 1]; k++) {
-          remapped.push_back(int(refined_ids[k]));
-        }
-      }
-      sit.second.triangulatedIndices = std::move(remapped);
-    }
   }
 
   uint32_t num_vertices = uint32_t(dst.points.size());
@@ -3110,10 +3049,155 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (subdivision_applied && !uvAttrs.empty()) {
-    PUSH_ERROR_AND_RETURN(
-        "Subdivision is not yet supported for meshes requiring UV primvars in "
-        "Tydra conversion.");
+  //
+  // Apply subdivision: geometry plus the gathered UV primvars, which refine
+  // in lockstep through tinysubdiv (faceVarying channels through the
+  // seam-split fvar path, vertex/varying as per-point primvars, uniform via
+  // face_source replication, constant untouched).
+  //
+  if (want_subdivision) {
+    std::vector<float> control_points(dst.points.size() * 3);
+    memcpy(control_points.data(), dst.points.data(),
+           dst.points.size() * sizeof(value::float3));
+
+    std::vector<tsd::FVarChannelView> uv_fvar_channels;
+    std::vector<uint32_t> uv_fvar_slots;
+    std::vector<tsd::VertexPrimvarView> uv_vertex_primvars;
+    std::vector<uint32_t> uv_vertex_slots;
+    std::vector<uint32_t> uv_uniform_slots;
+
+    for (auto &uv : uvAttrs) {
+      VertexAttribute &vattr = uv.second;
+      if (vattr.format != VertexAttributeFormat::Vec2 ||
+          vattr.element_size() != 1 || !vattr.indices.empty()) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Subdivision requires flattened Vec2 texcoord primvars "
+            "(texcoord `{}`).",
+            vattr.name));
+      }
+      if (vattr.variability == VertexVariability::FaceVarying) {
+        tsd::FVarChannelView ch;
+        ch.values = reinterpret_cast<const float *>(vattr.get_data().data());
+        ch.num_values = uint32_t(vattr.vertex_count());
+        ch.indices = nullptr;  // flattened; seams recovered by value equality
+        ch.stride = 2;
+        uv_fvar_channels.push_back(ch);
+        uv_fvar_slots.push_back(uv.first);
+      } else if (vattr.variability == VertexVariability::Vertex ||
+                 vattr.variability == VertexVariability::Varying) {
+        tsd::VertexPrimvarView pv;
+        pv.values = reinterpret_cast<const float *>(vattr.get_data().data());
+        pv.stride = 2;
+        pv.varying = (vattr.variability == VertexVariability::Varying);
+        uv_vertex_primvars.push_back(pv);
+        uv_vertex_slots.push_back(uv.first);
+      } else if (vattr.variability == VertexVariability::Uniform) {
+        uv_uniform_slots.push_back(uv.first);
+      }
+      // Constant: unaffected by refinement.
+    }
+
+    tsd::RefinedMesh refined;
+    std::string subdiv_err;
+    if (!tsd::RefineGeomMesh(
+            mesh, env.mesh_config.subdivision_level, control_points,
+            dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
+            uv_fvar_channels.empty() ? nullptr : uv_fvar_channels.data(),
+            uint32_t(uv_fvar_channels.size()),
+            uv_vertex_primvars.empty() ? nullptr : uv_vertex_primvars.data(),
+            uint32_t(uv_vertex_primvars.size()), &refined, &subdiv_err)) {
+      PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
+    }
+
+    dst.points.resize(refined.points.size() / 3);
+    memcpy(dst.points.data(), refined.points.data(),
+           refined.points.size() * sizeof(float));
+    dst.usdFaceVertexCounts = std::move(refined.face_vertex_counts);
+    dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
+    subdiv_face_source = std::move(refined.face_source);
+
+    // Write refined UVs back (faceVarying: per refined corner; vertex/
+    // varying: per refined point).
+    for (size_t i = 0; i < uv_fvar_slots.size(); i++) {
+      VertexAttribute &vattr = uvAttrs[uv_fvar_slots[i]];
+      const std::vector<float> &vals = refined.fvar[i];
+      vattr.get_data().resize(vals.size() * sizeof(float));
+      memcpy(vattr.get_data().data(), vals.data(),
+             vals.size() * sizeof(float));
+    }
+    for (size_t i = 0; i < uv_vertex_slots.size(); i++) {
+      VertexAttribute &vattr = uvAttrs[uv_vertex_slots[i]];
+      const std::vector<float> &vals = refined.vertex_primvars[i];
+      vattr.get_data().resize(vals.size() * sizeof(float));
+      memcpy(vattr.get_data().data(), vals.data(),
+             vals.size() * sizeof(float));
+    }
+    // Uniform (per-face) UVs replicate through face_source.
+    for (uint32_t slot : uv_uniform_slots) {
+      VertexAttribute &vattr = uvAttrs[slot];
+      const float *src_vals =
+          reinterpret_cast<const float *>(vattr.get_data().data());
+      std::vector<float> vals(subdiv_face_source.size() * 2);
+      for (size_t rf = 0; rf < subdiv_face_source.size(); rf++) {
+        vals[2 * rf] = src_vals[2 * subdiv_face_source[rf]];
+        vals[2 * rf + 1] = src_vals[2 * subdiv_face_source[rf] + 1];
+      }
+      vattr.get_data().resize(vals.size() * sizeof(float));
+      memcpy(vattr.get_data().data(), vals.data(),
+             vals.size() * sizeof(float));
+    }
+
+    subdivision_applied = true;
+
+    // Remap material subset face indices onto the refined mesh: a base face
+    // maps to every refined face whose face_source points back at it. The
+    // remapped ids land in `triangulatedIndices` (the effective index set);
+    // the triangulation pass below remaps them again when enabled.
+    if (!dst.material_subsetMap.empty()) {
+      // Invert face_source: base face -> contiguous run of refined faces.
+      std::vector<uint32_t> counts(src_num_faces, 0);
+      for (uint32_t srcf : subdiv_face_source) {
+        if (srcf >= src_num_faces) {
+          PUSH_ERROR_AND_RETURN(
+              "Subdivision produced invalid face provenance.");
+        }
+        counts[srcf]++;
+      }
+      std::vector<uint32_t> offsets(size_t(src_num_faces) + 1, 0);
+      for (uint32_t f = 0; f < src_num_faces; f++) {
+        offsets[f + 1] = offsets[f] + counts[f];
+      }
+      std::vector<uint32_t> refined_ids(subdiv_face_source.size());
+      {
+        std::vector<uint32_t> cursor(offsets.begin(), offsets.end() - 1);
+        for (uint32_t rf = 0; rf < uint32_t(subdiv_face_source.size());
+             rf++) {
+          refined_ids[cursor[subdiv_face_source[rf]]++] = rf;
+        }
+      }
+
+      for (auto &sit : dst.material_subsetMap) {
+        std::vector<int> remapped;
+        for (int src_face : sit.second.usdIndices) {
+          if (src_face < 0 || uint32_t(src_face) >= src_num_faces) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "MaterialSubset `{}` face index {} exceeds source face count "
+                "{}.",
+                sit.first, src_face, src_num_faces));
+          }
+          for (uint32_t k = offsets[uint32_t(src_face)];
+               k < offsets[uint32_t(src_face) + 1]; k++) {
+            remapped.push_back(int(refined_ids[k]));
+          }
+        }
+        sit.second.triangulatedIndices = std::move(remapped);
+      }
+    }
+
+    // Refresh topology-derived counts for the refined mesh.
+    num_vertices = uint32_t(dst.points.size());
+    num_faces = uint32_t(dst.usdFaceVertexCounts.size());
+    num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
   }
 
   //TUSDZ_LOG_I("done uvAttr");
