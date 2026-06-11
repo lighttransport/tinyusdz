@@ -999,5 +999,54 @@ std::string FindFile(const std::string &filename,
   return std::string();
 }
 
+std::vector<std::string> AssetPathSuffixCandidates(
+    const std::string &asset_path) {
+  std::vector<std::string> candidates;
+
+  if (asset_path.empty()) {
+    return candidates;
+  }
+
+  std::string p = asset_path;
+  std::replace(p.begin(), p.end(), '\\', '/');
+
+  // Strip a Windows drive prefix(e.g. "F:")
+  if ((p.size() >= 2) &&
+      (((p[0] >= 'A') && (p[0] <= 'Z')) || ((p[0] >= 'a') && (p[0] <= 'z'))) &&
+      (p[1] == ':')) {
+    p = p.substr(2);
+  }
+
+  // Strip leading '/', './' and '../' runs.
+  size_t pos = 0;
+  while (pos < p.size()) {
+    if (p[pos] == '/') {
+      pos++;
+    } else if (p.compare(pos, 2, "./") == 0) {
+      pos += 2;
+    } else if (p.compare(pos, 3, "../") == 0) {
+      pos += 3;
+    } else {
+      break;
+    }
+  }
+  p = p.substr(pos);
+
+  // Emit progressively shorter suffixes, longest first, down to the basename.
+  while (p.size()) {
+    if (p != asset_path) {
+      candidates.push_back(p);
+    }
+
+    size_t slash_loc = p.find('/');
+    if (slash_loc == std::string::npos) {
+      break;
+    }
+    p = p.substr(slash_loc + 1);
+  }
+
+  return candidates;
+}
+
 }  // namespace io
 }  // namespace tinyusdz
