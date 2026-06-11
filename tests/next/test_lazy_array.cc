@@ -9,6 +9,8 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -281,6 +283,51 @@ int main() {
     assert(oout.size() == fout.size());
     std::cout << "  owned facade path matches (passthrough="
               << ostats.arrays_passed_through << ")" << std::endl;
+  }
+
+  // ---- 8.3: mmap-backed CrateDataSource ------------------------------------
+  {
+    const char* path = "/tmp/next_lazy_mmap.usdc";
+    {
+      std::ofstream f(path, std::ios::binary);
+      f.write(reinterpret_cast<const char*>(buf.data()),
+              static_cast<std::streamsize>(buf.size()));
+    }
+
+    // Default load path memory-maps the file. Lazy values read straight from
+    // the mapping; their CrateDataSource reports is_mmapped().
+    USDCLoadResult lm = LoadUSDCFromFile(path);
+    assert(lm.success);
+    const PrimSpec* mps = lm.stage.GetRootLayer()->prim_at_path("/Mesh1");
+    assert(mps);
+    const Value* mpv = mps->property_value("points");
+    assert(mpv && mpv->is_lazy());
+    assert(mpv->lazy_ref()->source->is_mmapped() &&
+           "default file load should be mmap-backed");
+    const std::vector<float>* mpa = mpv->as_float_array();
+    assert(mpa && mpa->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) assert((*mpa)[i] == points[i]);
+    // The mapping must outlive the reader: a lazy value materialized after the
+    // load (above) already proved the shared_ptr keeps the mapping alive.
+    std::cout << "  file load is mmap-backed and materializes correctly"
+              << std::endl;
+
+    // Opting out falls back to an owned heap buffer (not mmapped), same data.
+    USDCLoadOptions opt;
+    opt.crate_options.use_mmap = false;
+    USDCLoadResult lo = LoadUSDCFromFile(path, opt);
+    assert(lo.success);
+    const Value* opv =
+        lo.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(opv && opv->is_lazy());
+    assert(!opv->lazy_ref()->source->is_mmapped() &&
+           "use_mmap=false must use the owned buffer");
+    const std::vector<float>* opa = opv->as_float_array();
+    assert(opa && *opa == *mpa);
+    std::cout << "  use_mmap=false falls back to owned buffer, same data"
+              << std::endl;
+
+    std::remove(path);
   }
 
   std::cout << "All lazy array tests passed!" << std::endl;

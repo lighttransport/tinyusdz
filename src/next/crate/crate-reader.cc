@@ -66,6 +66,10 @@ private:
   // Parse from a moved-in owned buffer (shared by Read / ReadOwned / ReadFile).
   CrateReadResult ReadFromString(std::string&& bytes);
 
+  // Parse against an already-installed source_ (owned buffer or mmap backing).
+  // Resets all parse tables first; assumes source_ is non-null.
+  CrateReadResult ParseFromSource();
+
   // Parsing methods
   bool ReadBootstrap();
   bool ReadTOC();
@@ -996,6 +1000,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 // ============================================================
 
 CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
+  // Adopt the input bytes by MOVE — a single in-heap copy of the file. Lazy
+  // array Values reference this buffer after Read() returns (they hold a
+  // shared_ptr to the source); reader_ reads from it so ValueRep file offsets
+  // stay consistent.
+  source_ = CrateDataSource::Adopt(std::move(bytes), CrateVersion{});
+  return ParseFromSource();
+}
+
+CrateReadResult CrateReader::Impl::ParseFromSource() {
   result_ = CrateReadResult();
   tokens_.clear();
   string_indices_.clear();
@@ -1005,16 +1018,11 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
   paths_.clear();
   fieldset_cache_.clear();
 
-  if (bytes.size() < kCrateBootstrapSize) {
+  if (!source_ || source_->size() < kCrateBootstrapSize) {
     AddError("Invalid input data");
     return std::move(result_);
   }
 
-  // Adopt the input bytes by MOVE — a single in-heap copy of the file. Lazy
-  // array Values reference this buffer after Read() returns (they hold a
-  // shared_ptr to the source); reader_ reads from it so ValueRep file offsets
-  // stay consistent.
-  source_ = CrateDataSource::Adopt(std::move(bytes), CrateVersion{});
   reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
 
   // Parse in order
@@ -1054,6 +1062,16 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  // Phase 8.3: prefer a read-only memory map of the file -- no in-heap copy of
+  // the crate, and lazy values read straight from the mapping. Falls back to
+  // the owned-buffer path below when mmap is disabled, unavailable, or fails.
+  if (options_.use_mmap) {
+    if (auto src = CrateDataSource::MmapFile(filename)) {
+      source_ = std::move(src);
+      return ParseFromSource();
+    }
+  }
+
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
     CrateReadResult result;

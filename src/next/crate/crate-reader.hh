@@ -47,6 +47,13 @@ struct CrateReadOptions {
   /// instead of eagerly decoding them (low-memory load/compose/write path).
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
+
+  /// When reading from a file path, memory-map the crate read-only instead of
+  /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
+  /// path automatically when mmap is unavailable (non-posix / WASM) or the
+  /// mapping fails. The mapping stays alive as long as any lazy value (or the
+  /// reader) references it. Set false to force the owned-buffer path.
+  bool use_mmap = true;
 };
 
 /// Error from crate reading
