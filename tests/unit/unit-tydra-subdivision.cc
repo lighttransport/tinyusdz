@@ -899,8 +899,10 @@ def Xform "Root"
   TEST_CHECK(scene.meshes[0].material_subsetMap.size() == 1);
 }
 
-void tydra_subdivision_rejects_display_color_test(void) {
-  const std::string usda = R"usda(#usda 1.0
+void tydra_subdivision_refines_display_color_test(void) {
+  // Constant displayColor passes through to the mesh-level color; a
+  // "vertex" displayColor refines per refined point. Both must convert.
+  const std::string usda_constant = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
 )
@@ -925,14 +927,75 @@ def Xform "Root"
 }
 )usda";
 
-  tinyusdz::tydra::RenderScene scene;
-  std::string err;
-  bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("displayColor") != std::string::npos);
+  {
+    tinyusdz::tydra::RenderScene scene;
+    std::string err;
+    bool ret = ConvertSceneWithSubdivision(usda_constant, 1, &scene, &err);
+    TEST_CHECK(ret);
+    if (!ret || scene.meshes.empty()) {
+      TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+      return;
+    }
+    const auto &mesh = scene.meshes[0];
+    TEST_CHECK(std::fabs(mesh.displayColor[0] - 1.0f) < 1e-6f);
+    TEST_CHECK(std::fabs(mesh.displayColor[1]) < 1e-6f);
+    TEST_CHECK(std::fabs(mesh.displayColor[2]) < 1e-6f);
+  }
+
+  const std::string usda_vertex = R"usda(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Mesh "Mesh"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (-1, -1, 0),
+            ( 1, -1, 0),
+            ( 1,  1, 0),
+            (-1,  1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+        color3f[] primvars:displayColor = [
+            (0.2, 0.2, 0.2),
+            (0.2, 0.2, 0.2),
+            (0.2, 0.2, 0.2),
+            (0.2, 0.2, 0.2)
+        ] (
+            interpolation = "vertex"
+        )
+    }
+}
+)usda";
+
+  {
+    tinyusdz::tydra::RenderScene scene;
+    std::string err;
+    bool ret = ConvertSceneWithSubdivision(usda_vertex, 1, &scene, &err);
+    TEST_CHECK(ret);
+    if (!ret || scene.meshes.empty()) {
+      TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+      return;
+    }
+    const auto &mesh = scene.meshes[0];
+    // Vertex colors refined to one value per refined point; the constant
+    // 0.2 field stays exactly constant (partition of unity).
+    TEST_CHECK(mesh.vertex_colors.vertex_count() == mesh.points.size());
+    const float *vals =
+        reinterpret_cast<const float *>(mesh.vertex_colors.buffer());
+    bool all_const = true;
+    for (size_t i = 0; i < mesh.vertex_colors.vertex_count() * 3; i++) {
+      all_const &= std::fabs(vals[i] - 0.2f) < 1e-6f;
+    }
+    TEST_CHECK(all_const);
+  }
 }
 
-void tydra_subdivision_rejects_display_opacity_test(void) {
+void tydra_subdivision_refines_display_opacity_test(void) {
   const std::string usda = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
@@ -961,8 +1024,12 @@ def Xform "Root"
   tinyusdz::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("displayOpacity") != std::string::npos);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(std::fabs(scene.meshes[0].displayOpacity - 0.5f) < 1e-6f);
 }
 
 void tydra_subdivision_rejects_tangents_test(void) {

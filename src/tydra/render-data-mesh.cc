@@ -2790,13 +2790,6 @@ bool RenderSceneConverter::ConvertMesh(
   // Subdivision eligibility checks (the refinement itself happens after the
   // UV primvars are gathered, so they can refine in lockstep).
   if (want_subdivision) {
-    if (mesh.has_primvar("displayColor") ||
-        mesh.has_primvar("displayOpacity")) {
-      PUSH_ERROR_AND_RETURN(
-          "Subdivision is not yet supported for meshes with authored "
-          "`displayColor` or `displayOpacity` primvars in Tydra conversion.");
-    }
-
     if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name) ||
         mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
       PUSH_ERROR_AND_RETURN(
@@ -3050,49 +3043,119 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // Apply subdivision: geometry plus the gathered UV primvars, which refine
-  // in lockstep through tinysubdiv (faceVarying channels through the
-  // seam-split fvar path, vertex/varying as per-point primvars, uniform via
-  // face_source replication, constant untouched).
+  // Gather displayColor/displayOpacity primvars (validated against the base
+  // topology) so they can refine through subdivision together with the
+  // geometry and UVs. Without subdivision they convert exactly as before.
+  //
+  constexpr auto kDisplayColor = "displayColor";
+  constexpr auto kDisplayOpacity = "displayOpacity";
+  VertexAttribute vcolor;
+  VertexAttribute vopacity;
+  if (mesh.has_primvar(kDisplayColor)) {
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err,
+                        &_warn)) {
+      return false;
+    }
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces,
+                           num_face_vertex_indices, vcolor, &_err,
+                           env.timecode, env.tinterp, &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
+  if (mesh.has_primvar(kDisplayOpacity)) {
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err,
+                        &_warn)) {
+      return false;
+    }
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces,
+                           num_face_vertex_indices, vopacity, &_err,
+                           env.timecode, env.tinterp, &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
+
+  //
+  // Apply subdivision: geometry plus the gathered UV and display primvars,
+  // which refine in lockstep through tinysubdiv (faceVarying channels
+  // through the seam-split fvar path, vertex/varying as per-point primvars,
+  // uniform via face_source replication, constant untouched).
   //
   if (want_subdivision) {
     std::vector<float> control_points(dst.points.size() * 3);
     memcpy(control_points.data(), dst.points.data(),
            dst.points.size() * sizeof(value::float3));
 
-    std::vector<tsd::FVarChannelView> uv_fvar_channels;
-    std::vector<uint32_t> uv_fvar_slots;
-    std::vector<tsd::VertexPrimvarView> uv_vertex_primvars;
-    std::vector<uint32_t> uv_vertex_slots;
-    std::vector<uint32_t> uv_uniform_slots;
-
+    // Float-typed attributes that refine with the geometry.
+    std::vector<VertexAttribute *> subdiv_attrs;
     for (auto &uv : uvAttrs) {
-      VertexAttribute &vattr = uv.second;
-      if (vattr.format != VertexAttributeFormat::Vec2 ||
-          vattr.element_size() != 1 || !vattr.indices.empty()) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Subdivision requires flattened Vec2 texcoord primvars "
-            "(texcoord `{}`).",
-            vattr.name));
+      subdiv_attrs.push_back(&uv.second);
+    }
+    if (!vcolor.get_data().empty()) {
+      subdiv_attrs.push_back(&vcolor);
+    }
+    if (!vopacity.get_data().empty()) {
+      subdiv_attrs.push_back(&vopacity);
+    }
+
+    // Floats per item, for the float32 formats tinysubdiv refines.
+    auto attr_components = [](const VertexAttribute &a) -> uint32_t {
+      switch (a.format) {
+        case VertexAttributeFormat::Float:
+          return 1;
+        case VertexAttributeFormat::Vec2:
+          return 2;
+        case VertexAttributeFormat::Vec3:
+          return 3;
+        case VertexAttributeFormat::Vec4:
+          return 4;
+        default:
+          return 0;
       }
-      if (vattr.variability == VertexVariability::FaceVarying) {
+    };
+
+    std::vector<tsd::FVarChannelView> fvar_channels;
+    std::vector<VertexAttribute *> fvar_attrs;
+    std::vector<tsd::VertexPrimvarView> vertex_primvars;
+    std::vector<VertexAttribute *> vertex_attrs;
+    std::vector<VertexAttribute *> uniform_attrs;
+
+    for (VertexAttribute *vattr : subdiv_attrs) {
+      const uint32_t components = attr_components(*vattr);
+      if (components == 0 || vattr->element_size() != 1 ||
+          !vattr->indices.empty()) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Subdivision requires flattened float1/2/3/4 primvars with "
+            "elementSize 1 (primvar `{}`).",
+            vattr->name));
+      }
+      if (vattr->variability == VertexVariability::FaceVarying) {
         tsd::FVarChannelView ch;
-        ch.values = reinterpret_cast<const float *>(vattr.get_data().data());
-        ch.num_values = uint32_t(vattr.vertex_count());
+        ch.values = reinterpret_cast<const float *>(vattr->get_data().data());
+        ch.num_values = uint32_t(vattr->vertex_count());
         ch.indices = nullptr;  // flattened; seams recovered by value equality
-        ch.stride = 2;
-        uv_fvar_channels.push_back(ch);
-        uv_fvar_slots.push_back(uv.first);
-      } else if (vattr.variability == VertexVariability::Vertex ||
-                 vattr.variability == VertexVariability::Varying) {
+        ch.stride = components;
+        fvar_channels.push_back(ch);
+        fvar_attrs.push_back(vattr);
+      } else if (vattr->variability == VertexVariability::Vertex ||
+                 vattr->variability == VertexVariability::Varying) {
         tsd::VertexPrimvarView pv;
-        pv.values = reinterpret_cast<const float *>(vattr.get_data().data());
-        pv.stride = 2;
-        pv.varying = (vattr.variability == VertexVariability::Varying);
-        uv_vertex_primvars.push_back(pv);
-        uv_vertex_slots.push_back(uv.first);
-      } else if (vattr.variability == VertexVariability::Uniform) {
-        uv_uniform_slots.push_back(uv.first);
+        pv.values = reinterpret_cast<const float *>(vattr->get_data().data());
+        pv.stride = components;
+        pv.varying = (vattr->variability == VertexVariability::Varying);
+        vertex_primvars.push_back(pv);
+        vertex_attrs.push_back(vattr);
+      } else if (vattr->variability == VertexVariability::Uniform) {
+        uniform_attrs.push_back(vattr);
       }
       // Constant: unaffected by refinement.
     }
@@ -3102,10 +3165,10 @@ bool RenderSceneConverter::ConvertMesh(
     if (!tsd::RefineGeomMesh(
             mesh, env.mesh_config.subdivision_level, control_points,
             dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
-            uv_fvar_channels.empty() ? nullptr : uv_fvar_channels.data(),
-            uint32_t(uv_fvar_channels.size()),
-            uv_vertex_primvars.empty() ? nullptr : uv_vertex_primvars.data(),
-            uint32_t(uv_vertex_primvars.size()), &refined, &subdiv_err)) {
+            fvar_channels.empty() ? nullptr : fvar_channels.data(),
+            uint32_t(fvar_channels.size()),
+            vertex_primvars.empty() ? nullptr : vertex_primvars.data(),
+            uint32_t(vertex_primvars.size()), &refined, &subdiv_err)) {
       PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
     }
 
@@ -3116,34 +3179,34 @@ bool RenderSceneConverter::ConvertMesh(
     dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
     subdiv_face_source = std::move(refined.face_source);
 
-    // Write refined UVs back (faceVarying: per refined corner; vertex/
-    // varying: per refined point).
-    for (size_t i = 0; i < uv_fvar_slots.size(); i++) {
-      VertexAttribute &vattr = uvAttrs[uv_fvar_slots[i]];
+    // Write refined values back (faceVarying: per refined corner;
+    // vertex/varying: per refined point).
+    for (size_t i = 0; i < fvar_attrs.size(); i++) {
       const std::vector<float> &vals = refined.fvar[i];
-      vattr.get_data().resize(vals.size() * sizeof(float));
-      memcpy(vattr.get_data().data(), vals.data(),
+      fvar_attrs[i]->get_data().resize(vals.size() * sizeof(float));
+      memcpy(fvar_attrs[i]->get_data().data(), vals.data(),
              vals.size() * sizeof(float));
     }
-    for (size_t i = 0; i < uv_vertex_slots.size(); i++) {
-      VertexAttribute &vattr = uvAttrs[uv_vertex_slots[i]];
+    for (size_t i = 0; i < vertex_attrs.size(); i++) {
       const std::vector<float> &vals = refined.vertex_primvars[i];
-      vattr.get_data().resize(vals.size() * sizeof(float));
-      memcpy(vattr.get_data().data(), vals.data(),
+      vertex_attrs[i]->get_data().resize(vals.size() * sizeof(float));
+      memcpy(vertex_attrs[i]->get_data().data(), vals.data(),
              vals.size() * sizeof(float));
     }
-    // Uniform (per-face) UVs replicate through face_source.
-    for (uint32_t slot : uv_uniform_slots) {
-      VertexAttribute &vattr = uvAttrs[slot];
+    // Uniform (per-face) attributes replicate through face_source.
+    for (VertexAttribute *vattr : uniform_attrs) {
+      const uint32_t components = attr_components(*vattr);
       const float *src_vals =
-          reinterpret_cast<const float *>(vattr.get_data().data());
-      std::vector<float> vals(subdiv_face_source.size() * 2);
+          reinterpret_cast<const float *>(vattr->get_data().data());
+      std::vector<float> vals(subdiv_face_source.size() * components);
       for (size_t rf = 0; rf < subdiv_face_source.size(); rf++) {
-        vals[2 * rf] = src_vals[2 * subdiv_face_source[rf]];
-        vals[2 * rf + 1] = src_vals[2 * subdiv_face_source[rf] + 1];
+        for (uint32_t c = 0; c < components; c++) {
+          vals[components * rf + c] =
+              src_vals[components * subdiv_face_source[rf] + c];
+        }
       }
-      vattr.get_data().resize(vals.size() * sizeof(float));
-      memcpy(vattr.get_data().data(), vals.data(),
+      vattr->get_data().resize(vals.size() * sizeof(float));
+      memcpy(vattr->get_data().data(), vals.data(),
              vals.size() * sizeof(float));
     }
 
@@ -3246,25 +3309,9 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  constexpr auto kDisplayColor = "displayColor";
-  if (!subdivision_applied && mesh.has_primvar(kDisplayColor)) {
-    GeomPrimvar pvar;
-
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err, &_warn)) {
-      return false;
-    }
-
-    VertexAttribute vcolor;
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces,
-                           num_face_vertex_indices, vcolor, &_err, env.timecode,
-                           env.tinterp, &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
-    }
-
+  // displayColor/displayOpacity were gathered above (and refined when
+  // subdivision ran); single constant values become the mesh-level color.
+  if (!vcolor.get_data().empty()) {
     if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) &&
         (vcolor.stride_bytes() == 3 * 4)) {
       memcpy(&dst.displayColor, vcolor.data.data(), vcolor.stride_bytes());
@@ -3273,24 +3320,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  constexpr auto kDisplayOpacity = "displayOpacity";
-  if (!subdivision_applied && mesh.has_primvar(kDisplayOpacity)) {
-    GeomPrimvar pvar;
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err, &_warn)) {
-      return false;
-    }
-
-    VertexAttribute vopacity;
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces,
-                           num_face_vertex_indices, vopacity, &_err,
-                           env.timecode, env.tinterp, &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
-    }
-
+  if (!vopacity.get_data().empty()) {
     if ((vopacity.elementSize == 1) && (vopacity.vertex_count() == 1) &&
         (vopacity.stride_bytes() == 4)) {
       memcpy(&dst.displayOpacity, vopacity.data.data(),
