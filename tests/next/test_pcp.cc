@@ -1599,9 +1599,46 @@ static void test_typed_composition_issues() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 9 F5: the per-prim ComputePrimIndex prototype grouping must be
+// independent of the order in which prims are computed. /World/Inst1 and
+// /World/Inst2 share an instance key; whichever is computed first, the
+// deterministic prototype is the lexicographically-smallest path (Inst1).
+static void test_prototype_order_independent() {
+  std::cout << "test_prototype_order_independent..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  auto compute_in_order = [&](const std::vector<std::string> &order) {
+    auto root = BuildRootLayer();
+    auto opened = pcp::Cache::Open(resolver, root);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    for (const std::string &p : order) {
+      cache.ComputePrimIndex(Path(p), &warn, &err);
+    }
+    // Both instances must agree on the prototype, and it must be the min path.
+    Path p1 = cache.GetPrototype(Path("/World/Inst1"));
+    Path p2 = cache.GetPrototype(Path("/World/Inst2"));
+    assert(p1 == p2 && "Inst1/Inst2 must share a prototype");
+    assert(p1 == Path("/World/Inst1") &&
+           "prototype must be the lexicographically-smallest member");
+    // Exactly one is the prototype (Inst1), the other an instance (Inst2).
+    assert(!cache.IsInstance(Path("/World/Inst1")));
+    assert(cache.IsInstance(Path("/World/Inst2")));
+    return p1.str();
+  };
+
+  // Compute Inst2 before Inst1, and vice versa: same result either way.
+  std::string a = compute_in_order({"/World/Inst2", "/World/Inst1"});
+  std::string b = compute_in_order({"/World/Inst1", "/World/Inst2"});
+  assert(a == b && "prototype choice must not depend on computation order");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
+  test_prototype_order_independent();
   test_build_stage();
   test_invalidate();
   test_ancestral_compute();
