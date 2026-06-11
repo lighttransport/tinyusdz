@@ -55,6 +55,54 @@ float ChaikinChildEdgeSharpness(float edge_sharpness,
   return IsSharp(s) ? s : 0.0f;
 }
 
+void DeriveChildSharpness(const Topology &parent_topo,
+                          const std::vector<float> &parent_edge_sharp,
+                          const std::vector<float> &parent_vert_sharp,
+                          const Topology &child_topo, CreasingMethod method,
+                          std::vector<float> *child_edge_sharp,
+                          std::vector<float> *child_vert_sharp) {
+  const uint32_t pV = parent_topo.num_points;
+  const uint32_t pE = parent_topo.num_edges;
+  const bool chaikin = (method == CreasingMethod::Chaikin);
+
+  child_edge_sharp->assign(child_topo.num_edges, 0.0f);
+  for (uint32_t e = 0; e < child_topo.num_edges; e++) {
+    const uint32_t a = child_topo.edge_verts[2 * e];  // a < b
+    const uint32_t b = child_topo.edge_verts[2 * e + 1];
+    if (a >= pV || b < pV || b >= pV + pE) {
+      continue;  // not a half of a parent edge
+    }
+    const uint32_t pe = b - pV;
+    const float ps = parent_edge_sharp[pe];
+    if (!IsSharp(ps)) {
+      continue;
+    }
+    if (!chaikin) {
+      (*child_edge_sharp)[e] = DecrementSharpness(ps);
+    } else {
+      const uint32_t begin = parent_topo.vert_edge_offsets[a];
+      const uint32_t end = parent_topo.vert_edge_offsets[a + 1];
+      const uint32_t valence = end - begin;
+      float stack[32];
+      std::vector<float> heap;
+      float *incident = stack;
+      if (valence > 32) {
+        heap.resize(valence);
+        incident = heap.data();
+      }
+      for (uint32_t i = 0; i < valence; i++) {
+        incident[i] = parent_edge_sharp[parent_topo.vert_edges[begin + i]];
+      }
+      (*child_edge_sharp)[e] = ChaikinChildEdgeSharpness(ps, valence, incident);
+    }
+  }
+
+  child_vert_sharp->assign(child_topo.num_points, 0.0f);
+  for (uint32_t v = 0; v < pV; v++) {
+    (*child_vert_sharp)[v] = DecrementSharpness(parent_vert_sharp[v]);
+  }
+}
+
 namespace {
 
 // Vertex-vertex subdivision rule, matching Sdc::Crease semantics.

@@ -13,7 +13,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace corpus {
@@ -275,22 +277,97 @@ inline Mesh CubeWithHoles() {
   return m;
 }
 
-// 2x2 quad grid with a per-corner UV channel containing a seam between the
-// left and right column of faces (two UV islands).
-inline Mesh UVSeamGrid() {
-  Mesh m = QuadGrid(2, 2, "uv_seam_grid");
-  m.fvar_uv.reserve(m.face_vertex_indices.size() * 2);
-  for (size_t f = 0; f < m.face_vertex_counts.size(); f++) {
-    const float u_off = (f % 2 == 0) ? 0.0f : 0.55f;  // island per column
-    const float v_off = (f / 2 == 0) ? 0.0f : 0.45f;
-    // 4 corners per quad in (x, y) param order.
-    const float us[4] = {0.0f, 0.4f, 0.4f, 0.0f};
-    const float vs[4] = {0.0f, 0.0f, 0.4f, 0.4f};
-    for (int k = 0; k < 4; k++) {
-      m.fvar_uv.push_back(u_off + us[k]);
-      m.fvar_uv.push_back(v_off + vs[k]);
+// Shared helper: assign indexed UVs where each face belongs to an island
+// and values are shared per (island, vertex). Adjacent faces in the same
+// island are continuous; island borders become seams.
+inline void AssignIslandUVs(Mesh *m, const std::vector<uint32_t> &face_island,
+                            float island_u_offset) {
+  std::map<std::pair<uint32_t, uint32_t>, uint32_t> value_ids;
+  m->fvar_uv.clear();
+  m->fvar_indices.clear();
+  size_t corner = 0;
+  for (size_t f = 0; f < m->face_vertex_counts.size(); f++) {
+    const uint32_t island = face_island[f];
+    for (uint32_t k = 0; k < m->face_vertex_counts[f]; k++, corner++) {
+      const uint32_t v = m->face_vertex_indices[corner];
+      const auto key = std::make_pair(island, v);
+      auto it = value_ids.find(key);
+      if (it == value_ids.end()) {
+        const uint32_t id = uint32_t(m->fvar_uv.size() / 2);
+        value_ids.emplace(key, id);
+        // Distinct, irregular values per (island, vertex).
+        m->fvar_uv.push_back(island_u_offset * float(island) +
+                             0.13f * float(v) + 0.01f * float(v % 3));
+        m->fvar_uv.push_back(0.21f * float(v) + 0.07f * float(island));
+        m->fvar_indices.push_back(id);
+      } else {
+        m->fvar_indices.push_back(it->second);
+      }
     }
   }
+}
+
+// 3x3 quad grid with two UV islands split down the middle column of edges
+// (seam between face columns 0..1).
+inline Mesh UVSeamGrid() {
+  Mesh m = QuadGrid(3, 3, "uv_seam_grid");
+  std::vector<uint32_t> island(m.face_vertex_counts.size());
+  for (size_t f = 0; f < island.size(); f++) {
+    island[f] = (f % 3 <= 1) ? 0 : 1;  // columns 0,1 vs column 2
+  }
+  AssignIslandUVs(&m, island, 2.0f);
+  return m;
+}
+
+// Cube unwrapped into 2 UV islands of 3 faces each (seams on a closed mesh).
+inline Mesh UVCube() {
+  Mesh m = Cube();
+  m.name = "uv_cube";
+  AssignIslandUVs(&m, {0, 0, 0, 1, 1, 1}, 3.0f);
+  return m;
+}
+
+// 2x2 quad grid with a seam on the lower half of the middle column only:
+// the seam terminates at the interior center vertex (a "dart").
+inline Mesh UVDartGrid() {
+  Mesh m = QuadGrid(2, 2, "uv_dart_grid");
+  // Faces: 0 = bottom-left, 1 = bottom-right, 2 = top-left, 3 = top-right.
+  // Bottom faces get separate islands; top faces share island 0 so the
+  // seam between faces 0|1 ends at the center vertex (id 4).
+  std::map<std::pair<uint32_t, uint32_t>, uint32_t> value_ids;
+  const uint32_t face_island[4] = {0, 1, 0, 0};
+  m.fvar_uv.clear();
+  m.fvar_indices.clear();
+  size_t corner = 0;
+  for (size_t f = 0; f < 4; f++) {
+    for (uint32_t k = 0; k < 4; k++, corner++) {
+      const uint32_t v = m.face_vertex_indices[corner];
+      // Vertices on the seam (1 only -- the bottom middle) differ per
+      // island; the center vertex 4 shares one value (dart point).
+      const uint32_t island = (v == 1) ? face_island[f] : 0;
+      const auto key = std::make_pair(island, v);
+      auto it = value_ids.find(key);
+      if (it == value_ids.end()) {
+        const uint32_t id = uint32_t(m.fvar_uv.size() / 2);
+        value_ids.emplace(key, id);
+        m.fvar_uv.push_back(2.0f * float(island) + 0.17f * float(v));
+        m.fvar_uv.push_back(0.23f * float(v) + 0.05f * float(island));
+        m.fvar_indices.push_back(id);
+      } else {
+        m.fvar_indices.push_back(it->second);
+      }
+    }
+  }
+  return m;
+}
+
+// Creased cube with UV islands: exercises crease/fvar interaction.
+inline Mesh UVCreasedCube() {
+  Mesh m = UVCube();
+  m.name = "uv_creased_cube";
+  m.crease_indices = {2, 3, 5, 4, 2};
+  m.crease_lengths = {5};
+  m.crease_sharpnesses = {1.8f};
   return m;
 }
 
