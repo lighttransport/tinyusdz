@@ -1557,8 +1557,51 @@ static void test_reference_chain_at_max_depth() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 7 E4: typed composition diagnostics. Asserts that the same
+// ancestor-reference cycle that fills `err` also surfaces a typed ArcCycle
+// issue, that issues are recorded even with err==nullptr, and that
+// ClearCompositionIssues drops them.
+static void test_typed_composition_issues() {
+  std::cout << "test_typed_composition_issues..." << std::endl;
+  using EC = pcp::Cache::ErrorCode;
+
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("A", "Xform");
+    lb.begin_prim("B", "");
+    lb.current()->meta().references.push_back("</A>");  // ancestor cycle
+    lb.end_prim();
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  // Build with err==nullptr: typed issues must still accumulate.
+  Stage stage;
+  assert(cache.BuildStage(&stage, nullptr, nullptr));
+  const auto &issues = cache.GetCompositionIssues();
+  bool saw_cycle = false;
+  for (const auto &iss : issues) {
+    if (iss.code == EC::ArcCycle) {
+      saw_cycle = true;
+      assert(!iss.message.empty() && !iss.site.empty());
+    }
+  }
+  assert(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
+
+  cache.ClearCompositionIssues();
+  assert(cache.GetCompositionIssues().empty() && "Clear must drop issues");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
+  test_typed_composition_issues();
   test_build_stage();
   test_invalidate();
   test_ancestral_compute();
