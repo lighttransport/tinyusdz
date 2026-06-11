@@ -246,6 +246,14 @@ void CatmarkRefineValues(const Topology &topo, const uint32_t *parent_fvi,
     const float *pv = &values[size_t(v) * stride];
     float *dst = &vert_child[size_t(v) * stride];
 
+    if (valence == 0) {
+      // Unreferenced point: pass through.
+      for (uint32_t c = 0; c < stride; c++) {
+        dst[c] = pv[c];
+      }
+      return;
+    }
+
     // Gather parent and child (decayed) sharpness around the vertex.
     // kMaxFaceDegree bounds nothing here -- valence is unbounded -- so use
     // a small stack buffer with heap fallback.

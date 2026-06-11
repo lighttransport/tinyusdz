@@ -213,6 +213,17 @@ void LinearFVarRefineTri(const Topology &topo, const float *corner_values,
                          uint32_t stride, const Options &opts,
                          float *child_corner_values);
 
+// Bakes the level-0 sharpness state (matching OpenSubdiv's
+// TopologyRefinerFactory): authored creases and corners, boundary edges to
+// infinite, "edgeAndCorner" corner pinning, and -- for catmark/loop with
+// boundary "none" -- tagging boundary-incident faces as holes.
+// `hole`/`any_hole` may be null when hole tagging is not needed.
+void BakeLevel0Sharpness(const MeshView &mesh, const Options &options,
+                         const Topology &topo, const CreaseEdges &creases,
+                         std::vector<float> *edge_sharp,
+                         std::vector<float> *vert_sharp,
+                         std::vector<uint8_t> *hole, bool *any_hole);
+
 // Derives child-level sharpness from a parent level: a child edge is a half
 // of parent edge pe iff it connects a vertex child (< parentV) to pe's edge
 // child; halves decay (uniform decrement or Chaikin at the shared parent

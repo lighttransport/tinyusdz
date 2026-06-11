@@ -643,6 +643,118 @@ void test_loop_edge_smooth_rule() {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Limit surface
+// ---------------------------------------------------------------------------
+
+void test_limit_regular_interior_mask() {
+  // Regular interior catmark vertex (valence 4): limit = the classic
+  // uniform B-spline mask (16 V + 4 sum(E) + sum(F)) / 36 at the final level.
+  corpus::Mesh m = corpus::QuadGrid(4, 4, "qg");
+  Options opts;
+  opts.level = 1;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &refined, &err) == Result::Success);
+
+  RefinedMesh snapped = refined;
+  Result r = SnapToLimit(ToView(m), opts, &snapped, &err);
+  CHECK_MSG(r == Result::Success, err);
+
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(refined.face_vertex_counts.data(),
+                      uint32_t(refined.face_vertex_counts.size()),
+                      refined.face_vertex_indices.data(),
+                      uint32_t(refined.face_vertex_indices.size()),
+                      uint32_t(refined.points.size() / 3), &topo,
+                      nullptr) == Result::Success);
+  // Find an interior valence-4 vertex of the refined level.
+  bool tested = false;
+  for (uint32_t v = 0; v < topo.num_points && !tested; v++) {
+    const uint32_t valence =
+        topo.vert_edge_offsets[v + 1] - topo.vert_edge_offsets[v];
+    if (topo.vert_is_boundary[v] || valence != 4) {
+      continue;
+    }
+    tested = true;
+    for (int c = 0; c < 3; c++) {
+      float acc = 16.0f / 36.0f * refined.points[v * 3 + size_t(c)];
+      for (uint32_t i = topo.vert_edge_offsets[v];
+           i < topo.vert_edge_offsets[v + 1]; i++) {
+        const uint32_t e = topo.vert_edges[i];
+        const uint32_t other = (topo.edge_verts[2 * e] == v)
+                                   ? topo.edge_verts[2 * e + 1]
+                                   : topo.edge_verts[2 * e];
+        acc += 4.0f / 36.0f * refined.points[other * 3 + size_t(c)];
+      }
+      for (uint32_t i = topo.vert_face_offsets[v];
+           i < topo.vert_face_offsets[v + 1]; i++) {
+        const uint32_t f = topo.vert_faces[i];
+        // Diagonal vertex of the quad.
+        const uint32_t begin = topo.face_offsets[f];
+        uint32_t k = 0;
+        while (refined.face_vertex_indices[begin + k] != v) {
+          k++;
+        }
+        const uint32_t diag =
+            refined.face_vertex_indices[begin + ((k + 2) % 4)];
+        acc += 1.0f / 36.0f * refined.points[diag * 3 + size_t(c)];
+      }
+      CHECK(std::fabs(snapped.points[v * 3 + size_t(c)] - acc) < 1e-5f);
+    }
+  }
+  CHECK(tested);
+}
+
+void test_limit_corner_pinned() {
+  corpus::Mesh m = corpus::Cube();
+  m.corner_indices = {3};
+  m.corner_sharpnesses = {10.0f};
+  Options opts;
+  opts.level = 2;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &refined, &err) == Result::Success);
+  RefinedMesh snapped = refined;
+  CHECK(SnapToLimit(ToView(m), opts, &snapped, &err) == Result::Success);
+  for (int c = 0; c < 3; c++) {
+    CHECK(snapped.points[3 * 3 + size_t(c)] == m.points[3 * 3 + size_t(c)]);
+  }
+}
+
+void test_limit_bilinear_identity() {
+  corpus::Mesh m = corpus::Cube();
+  Options opts;
+  opts.scheme = Scheme::Bilinear;
+  opts.level = 1;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &refined, &err) == Result::Success);
+  RefinedMesh snapped = refined;
+  CHECK(SnapToLimit(ToView(m), opts, &snapped, &err) == Result::Success);
+  CHECK(snapped.points == refined.points);
+}
+
+void test_limit_normals_unit_length() {
+  corpus::Mesh m = corpus::CreasedCube(2.0f, "creased");
+  Options opts;
+  opts.level = 2;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &refined, &err) == Result::Success);
+  std::vector<float> normals;
+  Result r = ComputeLimitNormals(ToView(m), opts, refined, &normals, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(normals.size() == refined.points.size());
+  for (size_t v = 0; v < normals.size() / 3; v++) {
+    const float len = std::sqrt(normals[3 * v] * normals[3 * v] +
+                                normals[3 * v + 1] * normals[3 * v + 1] +
+                                normals[3 * v + 2] * normals[3 * v + 2]);
+    CHECK(std::fabs(len - 1.0f) < 1e-3f);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Determinism (serial vs parallel)
 // ---------------------------------------------------------------------------
@@ -881,6 +993,12 @@ int main() {
   TEST(test_loop_rejects_non_tris);
   TEST(test_loop_regular_vertex_weights);
   TEST(test_loop_edge_smooth_rule);
+
+  // Limit surface
+  TEST(test_limit_regular_interior_mask);
+  TEST(test_limit_corner_pinned);
+  TEST(test_limit_bilinear_identity);
+  TEST(test_limit_normals_unit_length);
 
   // Topology
   TEST(test_topology_cube);
