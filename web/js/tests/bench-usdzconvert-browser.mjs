@@ -48,9 +48,14 @@ function parseArgs(argv = process.argv.slice(2)) {
       pendingDir = null;
     }
     else if (a === '--case') {
-      const [codec, textureFormat, resize] = argv[++i].split(':');
-      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be browser|wasm (got ${codec})`);
-      opts.cases.push({ codec, textureFormat: textureFormat || 'keep', resize: Number(resize || 0) });
+      // codec:format:resize. codec may carry a "stream-" prefix to use the
+      // lazy streaming pipeline (textures fetched/processed/zip-appended one
+      // at a time) instead of the in-memory folder upload.
+      let [codec, textureFormat, resize] = argv[++i].split(':');
+      let pipeline = 'memory';
+      if (codec.startsWith('stream-')) { pipeline = 'stream'; codec = codec.slice(7); }
+      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be [stream-]browser|wasm (got ${codec})`);
+      opts.cases.push({ codec, pipeline, textureFormat: textureFormat || 'keep', resize: Number(resize || 0) });
     }
     else if (a === '--out') opts.out = path.resolve(argv[++i]);
     else if (a === '--port') opts.port = Number(argv[++i]);
@@ -81,7 +86,9 @@ function printHelp() {
 
 Options:
   --scene <dir> --root <rel>   Scene folder + root USD (repeatable, in pairs)
-  --case codec:fmt:resize      browser|wasm : png|jpeg|keep : N (repeatable)
+  --case codec:fmt:resize      [stream-]browser|wasm : png|jpeg|keep : N
+                               (repeatable; "stream-" prefix = lazy streaming
+                               pipeline; keep:0 = passthrough)
                                default: wasm/browser x png/jpeg @1024
   --hw                         ANGLE/Vulkan GPU path; run under xvfb-run -a
   --sw                         Force true-headless SwiftShader
@@ -196,6 +203,7 @@ async function runCase(browser, baseUrl, manifestUrl, scene, kase, opts) {
       resize: String(kase.resize || 0),
       textureFormat: kase.textureFormat,
       codec: kase.codec,
+      pipeline: kase.pipeline || 'memory',
       wasm64: opts.wasm64 ? '1' : '0',
       concurrency: String(opts.concurrency),
       jpegQuality: String(opts.jpegQuality),
@@ -271,7 +279,7 @@ async function main() {
       console.log(`\n== ${sceneName} (${manifest.length} files) root=${scene.root}`);
 
       for (const kase of opts.cases) {
-        const label = `${kase.codec}:${kase.textureFormat}:${kase.resize}`;
+        const label = `${kase.pipeline === 'stream' ? 'stream-' : ''}${kase.codec}:${kase.textureFormat}:${kase.resize}`;
         process.stdout.write(`  ...   ${label}`);
         // eslint-disable-next-line no-await-in-loop
         const res = await runCase(browser, baseUrl, manifestUrl, scene, kase, opts);
@@ -280,8 +288,9 @@ async function main() {
           const t = res.timings || {};
           const tex = res.textureStats;
           console.log(`\r  OK    ${label}  fetch=${fmtMs(t.fetchMs)} wasm=${fmtMs(t.wasmInitMs)} ` +
-            `convert=${fmtMs(t.convertMs)} validate=${fmtMs(t.validateMs)}${res.validate?.ok ? '' : ' [RELOAD FAIL]'} ` +
-            `out=${(res.usdzBytes / 1e6).toFixed(0)}MB` +
+            `convert=${fmtMs(t.convertMs)} validate=${fmtMs(t.validateMs)}${res.validate?.skipped ? ' [validate skipped]' : (res.validate?.ok ? '' : ' [RELOAD FAIL]')} ` +
+            `out=${(res.usdzBytes / 1e6).toFixed(0)}MB ` +
+            `wasmHeap=${(res.wasmHeapBytes / 1e6 || 0).toFixed(0)}MB jsHeap=${(res.jsHeapBytes / 1e6 || 0).toFixed(0)}MB` +
             (tex ? `  [tex: ${tex.processed} dec=${fmtMs(tex.decodeMs)} raster=${fmtMs(tex.rasterMs)} enc=${fmtMs(tex.encodeMs)}]` : ''));
         } else {
           console.log(`\r  FAIL  ${label}: ${res.error}`);
@@ -297,12 +306,13 @@ async function main() {
   const jsonPath = path.join(opts.out, 'summary.json');
   fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), rows }, null, 2));
   const tsvPath = path.join(opts.out, 'summary.tsv');
-  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\tusdzBytes\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
+  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tpipeline\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\tusdzBytes\twasmHeapBytes\tjsHeapBytes\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
     ...rows.map((r) => [
-      r.ok ? 'PASS' : 'FAIL', r.mode, r.scene, r.codec, r.textureFormat, r.resize,
+      r.ok ? 'PASS' : 'FAIL', r.mode, r.scene, r.pipeline || 'memory', r.codec, r.textureFormat, r.resize,
       r.gpu || '', Math.round(r.timings?.fetchMs ?? -1), Math.round(r.timings?.wasmInitMs ?? -1),
       Math.round(r.timings?.convertMs ?? -1), Math.round(r.timings?.validateMs ?? -1),
-      r.usdzBytes ?? '', r.textureStats?.processed ?? '',
+      r.usdzBytes ?? '', r.wasmHeapBytes ?? '', r.jsHeapBytes ?? '',
+      r.textureStats?.processed ?? '',
       Math.round(r.textureStats?.decodeMs ?? -1), Math.round(r.textureStats?.rasterMs ?? -1),
       Math.round(r.textureStats?.encodeMs ?? -1), r.error || '',
     ].join('\t')),
