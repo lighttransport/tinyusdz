@@ -545,6 +545,11 @@ struct Cache::Impl {
       v.erase(std::remove(v.begin(), v.end(), prim_path), v.end());
       const bool was_prototype = (it->first == prim_path);
       if (was_prototype || v.empty()) {
+        // The group's prototype is gone: orphan the remaining siblings so their
+        // prototype_of doesn't dangle to a dropped prototype. They re-group on
+        // the next recomposition. (Without this, IsInstance/GetPrototype could
+        // report a removed prototype after invalidating its subtree.)
+        for (const std::string &m : v) prototype_of.erase(m);
         for (auto kit = prototype_by_key.begin(); kit != prototype_by_key.end();) {
           if (kit->second == it->first) kit = prototype_by_key.erase(kit);
           else ++kit;
