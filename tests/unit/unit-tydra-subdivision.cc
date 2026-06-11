@@ -64,7 +64,7 @@ def Xform "Root"
         int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
         int[] faceVertexIndices = [
             0, 1, 2, 3,
-            4, 5, 6, 7,
+            7, 6, 5, 4,
             0, 4, 5, 1,
             1, 5, 6, 2,
             2, 6, 7, 3,
@@ -540,12 +540,15 @@ def Xform "Root"
     return;
   }
 
-  TEST_CHECK(tri->second.indices().size() == 4);
+  // Bilinear splits an n-gon into n quads (OpenSubdiv semantics): the
+  // triangle becomes 3 quads (6 triangles after triangulation) and the quad
+  // becomes 4 quads (8 triangles).
+  TEST_CHECK(tri->second.indices().size() == 6);
   TEST_CHECK(quad->second.indices().size() == 8);
   TEST_CHECK(tri->second.indices().front() == 0);
-  TEST_CHECK(tri->second.indices().back() == 3);
-  TEST_CHECK(quad->second.indices().front() == 4);
-  TEST_CHECK(quad->second.indices().back() == 11);
+  TEST_CHECK(tri->second.indices().back() == 5);
+  TEST_CHECK(quad->second.indices().front() == 6);
+  TEST_CHECK(quad->second.indices().back() == 13);
 }
 
 void tydra_subdivision_level_zero_keeps_base_mesh_test(void) {

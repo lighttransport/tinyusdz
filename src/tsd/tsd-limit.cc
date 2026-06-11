@@ -53,8 +53,23 @@ Result BuildFinalLevelState(const MeshView &mesh, const Options &options,
                             std::string *err) {
   const bool loop = (options.scheme == Scheme::Loop);
 
+  // The limit entry points take raw MeshViews; validate exactly like
+  // Refine() before touching any authored arrays.
+  Result r = ValidateInput(mesh, nullptr, 0, nullptr, 0, options, err);
+  if (r != Result::Success) {
+    return r;
+  }
+  if (loop) {
+    for (uint32_t f = 0; f < mesh.num_faces; f++) {
+      if (mesh.face_vertex_counts[f] != 3) {
+        return Fail(Result::InvalidTopology, err,
+                    "Loop scheme requires an all-triangle mesh.");
+      }
+    }
+  }
+
   CreaseEdges creases;
-  Result r = CanonicalizeCreases(mesh, &creases, err);
+  r = CanonicalizeCreases(mesh, &creases, err);
   if (r != Result::Success) {
     return r;
   }
