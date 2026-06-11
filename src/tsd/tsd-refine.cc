@@ -332,7 +332,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
         }
         r = BuildFVarSplitLevel0(topo, fvc.data(), fvi.data(),
                                  fvar_channels[c], edge_sharp, vert_sharp,
-                                 &fvar_split[c], err);
+                                 options, &fvar_split[c], err);
         if (r != Result::Success) {
           return r;
         }

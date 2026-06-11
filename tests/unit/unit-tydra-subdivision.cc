@@ -1215,6 +1215,61 @@ def Xform "Root"
   TEST_CHECK(found_blend);
 }
 
+void tydra_subdivision_rejects_skin_element_size_before_refine_test(void) {
+  const std::string usda = R"usda(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Mesh "Mesh"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (-1, -1, 0),
+            ( 1, -1, 0),
+            ( 1,  1, 0),
+            (-1,  1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+
+        int[] primvars:skel:jointIndices = [
+            0, 1,
+            1, 0,
+            1, 0,
+            0, 1
+        ] (
+            interpolation = "vertex"
+            elementSize = 2
+        )
+
+        float[] primvars:skel:jointWeights = [
+            1.0, 0.0,
+            1.0, 0.0,
+            1.0, 0.0,
+            1.0, 0.0
+        ] (
+            interpolation = "vertex"
+            elementSize = 2
+        )
+    }
+}
+)usda";
+
+  tinyusdz::Stage stage = LoadStageFromString(usda);
+  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  env.mesh_config.subdivision_level = 1;
+  env.mesh_config.max_skin_elementSize = 1;
+
+  tinyusdz::tydra::RenderScene scene;
+  tinyusdz::tydra::RenderSceneConverter converter;
+  const bool ret = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(!ret);
+  TEST_CHECK(converter.GetError().find("elementSize") != std::string::npos);
+}
+
 void tydra_subdivision_refines_blendshape_test(void) {
   // Subdivision is linear in the point data, so subdividing the blended
   // mesh must equal subdividing the base mesh and applying the refined

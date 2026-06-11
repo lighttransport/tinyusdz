@@ -43,6 +43,24 @@ inline VRule DetermineVertexRule(float vert_sharpness,
   return (sharp_edge_count == 2) ? VRule::Crease : VRule::Smooth;
 }
 
+Result CheckChildCaps(const Topology &topo, const std::vector<uint32_t> &fvi,
+                      const Options &options, std::string *err) {
+  const bool loop = (options.scheme == Scheme::Loop);
+  const uint64_t child_points =
+      loop ? (uint64_t(topo.num_points) + topo.num_edges)
+           : (uint64_t(topo.num_points) + topo.num_edges + topo.num_faces);
+  const uint64_t child_faces =
+      loop ? (uint64_t(topo.num_faces) * 4) : uint64_t(fvi.size());
+  const uint64_t child_corners = child_faces * (loop ? 3 : 4);
+  if (child_points > options.max_vertices ||
+      child_faces > options.max_faces || child_points > 0xFFFFFFFFull ||
+      child_corners > 0xFFFFFFFFull) {
+    return Fail(Result::LimitExceeded, err,
+                "limit topology rebuild exceeds max_vertices/max_faces caps.");
+  }
+  return Result::Success;
+}
+
 // Re-runs the topology/sharpness pipeline of Refine() (values are not
 // computed) and returns the FINAL level's topology, face-vertex indices and
 // sharpness arrays.
@@ -106,6 +124,11 @@ Result BuildFinalLevelState(const MeshView &mesh, const Options &options,
 
     if (lvl == options.level) {
       break;
+    }
+
+    r = CheckChildCaps(*topo, fvi, options, err);
+    if (r != Result::Success) {
+      return r;
     }
 
     ChildTopo child;
@@ -305,9 +328,6 @@ Result SnapToLimit(const MeshView &base_mesh, const Options &options,
     return Fail(Result::InvalidArgument, err,
                 "SnapToLimit requires options.level >= 1.");
   }
-  if (options.scheme == Scheme::Bilinear) {
-    return Result::Success;  // bilinear limit == refined mesh
-  }
 
   Topology topo;
   std::vector<uint32_t> fvi;
@@ -322,6 +342,9 @@ Result SnapToLimit(const MeshView &base_mesh, const Options &options,
     return Fail(Result::InvalidArgument, err,
                 "RefinedMesh does not match base_mesh refined to "
                 "options.level.");
+  }
+  if (options.scheme == Scheme::Bilinear) {
+    return Result::Success;  // bilinear limit == refined mesh
   }
 
   const bool loop = (options.scheme == Scheme::Loop);

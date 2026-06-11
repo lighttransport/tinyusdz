@@ -9,6 +9,7 @@
 // (M3).
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include "tsd-internal.hh"
@@ -17,6 +18,94 @@ namespace tinyusdz {
 namespace tsd {
 
 namespace {
+
+inline uint64_t Mix64(uint64_t x) {
+  x ^= x >> 30;
+  x *= 0xbf58476d1ce4e5b9ull;
+  x ^= x >> 27;
+  x *= 0x94d049bb133111ebull;
+  x ^= x >> 31;
+  return x;
+}
+
+struct TupleKey {
+  std::array<uint32_t, 4> bits{{0, 0, 0, 0}};
+};
+
+class TupleInterner {
+ public:
+  bool Init(uint32_t stride, uint32_t expected) {
+    stride_ = stride;
+    uint64_t cap = 16;
+    while (cap < uint64_t(expected) * 2) {
+      cap <<= 1;
+      if (cap > (1ull << 33)) {
+        return false;
+      }
+    }
+    slots_.assign(size_t(cap), kInvalidIndex);
+    keys_.clear();
+    keys_.reserve(expected);
+    mask_ = cap - 1;
+    return true;
+  }
+
+  uint32_t Intern(const float *tuple) {
+    TupleKey key;
+    std::memcpy(key.bits.data(), tuple, sizeof(float) * stride_);
+    uint64_t h = 0x9e3779b97f4a7c15ull;
+    for (uint32_t c = 0; c < stride_; c++) {
+      h = Mix64(h ^ key.bits[c]);
+    }
+    for (;;) {
+      const size_t slot = size_t(h & mask_);
+      const uint32_t id = slots_[slot];
+      if (id == kInvalidIndex) {
+        const uint32_t new_id = uint32_t(keys_.size());
+        keys_.push_back(key);
+        slots_[slot] = new_id;
+        return new_id;
+      }
+      if (Equal(keys_[id], key)) {
+        return id;
+      }
+      h++;
+    }
+  }
+
+ private:
+  bool Equal(const TupleKey &a, const TupleKey &b) const {
+    for (uint32_t c = 0; c < stride_; c++) {
+      if (a.bits[c] != b.bits[c]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  uint32_t stride_ = 0;
+  uint64_t mask_ = 0;
+  std::vector<uint32_t> slots_;
+  std::vector<TupleKey> keys_;
+};
+
+Result CheckSplitChildCaps(const Topology &topo, const Options &opts,
+                           std::string *err) {
+  const bool loop = (opts.scheme == Scheme::Loop);
+  const uint64_t child_points =
+      loop ? (uint64_t(topo.num_points) + topo.num_edges)
+           : (uint64_t(topo.num_points) + topo.num_edges + topo.num_faces);
+  const uint64_t child_faces =
+      loop ? (uint64_t(topo.num_faces) * 4)
+           : uint64_t(topo.face_offsets[topo.num_faces]);
+  const uint64_t child_corners = child_faces * (loop ? 3 : 4);
+  if (child_points > opts.max_vertices || child_faces > opts.max_faces ||
+      child_points > 0xFFFFFFFFull || child_corners > 0xFFFFFFFFull) {
+    return Fail(Result::LimitExceeded, err,
+                "fvar split refinement exceeds max_vertices/max_faces caps.");
+  }
+  return Result::Success;
+}
 
 // Union-find over face corners.
 struct UnionFind {
@@ -64,7 +153,8 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
                             const FVarChannelView &channel,
                             const std::vector<float> &geo_edge_sharp,
                             const std::vector<float> &geo_vert_sharp,
-                            FVarSplitState *state, std::string *err) {
+                            const Options &opts, FVarSplitState *state,
+                            std::string *err) {
   const uint32_t num_corners = geo_topo.face_offsets[geo_topo.num_faces];
   const uint32_t stride = channel.stride;
   const FVarLinearInterpolation mode = channel.interpolation;
@@ -79,24 +169,14 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
       vid[i] = channel.indices[i];
     }
   } else {
-    // Hash bitwise tuples to ids.
-    std::vector<uint32_t> order(num_corners);
-    for (uint32_t i = 0; i < num_corners; i++) {
-      order[i] = i;
+    // Hash bitwise tuples to ids. This preserves the old memcmp semantics,
+    // including signed-zero and NaN payload distinctions.
+    TupleInterner interner;
+    if (!interner.Init(stride, num_corners)) {
+      return Fail(Result::LimitExceeded, err, "fvar tuple table too large.");
     }
-    const float *vals = channel.values;
-    std::sort(order.begin(), order.end(), [&](uint32_t x, uint32_t y) {
-      return memcmp(&vals[size_t(x) * stride], &vals[size_t(y) * stride],
-                    sizeof(float) * stride) < 0;
-    });
-    uint32_t next_id = 0;
     for (uint32_t i = 0; i < num_corners; i++) {
-      if (i && memcmp(&vals[size_t(order[i]) * stride],
-                      &vals[size_t(order[i - 1]) * stride],
-                      sizeof(float) * stride) != 0) {
-        next_id++;
-      }
-      vid[order[i]] = next_id;
+      vid[i] = interner.Intern(&channel.values[size_t(i) * stride]);
     }
   }
 
@@ -133,6 +213,10 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
       class_id[root] = num_split++;
     }
     class_id[i] = class_id[root];
+  }
+  if (num_split > opts.max_vertices || geo_topo.num_faces > opts.max_faces) {
+    return Fail(Result::LimitExceeded, err,
+                "fvar split mesh exceeds max_vertices/max_faces caps.");
   }
 
   state->stride = stride;
@@ -316,10 +400,14 @@ Result RefineFVarSplitOnce(FVarSplitState *state, const Options &opts,
   const uint32_t stride = state->stride;
   const bool loop = (opts.scheme == Scheme::Loop);
 
+  Result r = CheckSplitChildCaps(topo, opts, err);
+  if (r != Result::Success) {
+    return r;
+  }
+
   ChildTopo child;
-  Result r = loop
-                 ? BuildChildTopologyTri(topo, state->fvi.data(), &child, err)
-                 : BuildChildTopologyQuad(topo, state->fvi.data(), &child, err);
+  r = loop ? BuildChildTopologyTri(topo, state->fvi.data(), &child, err)
+           : BuildChildTopologyQuad(topo, state->fvi.data(), &child, err);
   if (r != Result::Success) {
     return r;
   }

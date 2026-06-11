@@ -20,6 +20,8 @@
 //
 // Mesh conversion routines split from render-data.cc
 //
+#include <algorithm>
+#include <limits>
 #include <numeric>
 #include <set>
 
@@ -99,6 +101,14 @@ namespace tydra {
 namespace {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
+
+bool SizeToU32(size_t n, uint32_t *out) {
+  if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
+    return false;
+  }
+  *out = uint32_t(n);
+  return true;
+}
 
 
 
@@ -2777,7 +2787,10 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  const uint32_t src_num_faces = uint32_t(dst.usdFaceVertexCounts.size());
+  uint32_t src_num_faces = 0;
+  if (!SizeToU32(dst.usdFaceVertexCounts.size(), &src_num_faces)) {
+    PUSH_ERROR_AND_RETURN("Mesh face count exceeds 32-bit index space.");
+  }
   bool subdivision_applied{false};
   // Base-face id per refined face when subdivision is applied (used to
   // remap GeomSubset face indices).
@@ -2878,9 +2891,14 @@ bool RenderSceneConverter::ConvertMesh(
     dst.material_subsetMap[ms.prim_name] = ms;
   }
 
-  uint32_t num_vertices = uint32_t(dst.points.size());
-  uint32_t num_faces = uint32_t(dst.usdFaceVertexCounts.size());
-  uint32_t num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
+  uint32_t num_vertices = 0;
+  uint32_t num_faces = 0;
+  uint32_t num_face_vertex_indices = 0;
+  if (!SizeToU32(dst.points.size(), &num_vertices) ||
+      !SizeToU32(dst.usdFaceVertexCounts.size(), &num_faces) ||
+      !SizeToU32(dst.usdFaceVertexIndices.size(), &num_face_vertex_indices)) {
+    PUSH_ERROR_AND_RETURN("Mesh counts exceed 32-bit index space.");
+  }
 
   //
   // List up texcoords in this mesh.
@@ -3193,7 +3211,10 @@ bool RenderSceneConverter::ConvertMesh(
       if (vattr->variability == VertexVariability::FaceVarying) {
         tsd::FVarChannelView ch;
         ch.values = reinterpret_cast<const float *>(vattr->get_data().data());
-        ch.num_values = uint32_t(vattr->vertex_count());
+        if (!SizeToU32(vattr->vertex_count(), &ch.num_values)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Subdivision primvar `{}` exceeds 32-bit value count.", vattr->name));
+        }
         ch.indices = nullptr;  // flattened; seams recovered by value equality
         ch.stride = components;
         fvar_channels.push_back(ch);
@@ -3233,11 +3254,36 @@ bool RenderSceneConverter::ConvertMesh(
           !GetGeomPrimvar(env.stage, &mesh, "skel:jointWeights", &jw, &_err)) {
         return false;
       }
+      if (!ji.has_interpolation() || !jw.has_interpolation()) {
+        PUSH_ERROR_AND_RETURN(
+            "`skel:jointIndices`/`skel:jointWeights` primvars must author "
+            "`interpolation` metadata.");
+      }
+      if ((ji.get_interpolation() != Interpolation::Vertex) &&
+          (ji.get_interpolation() != Interpolation::Varying)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`skel:jointIndices` primvar must use `vertex` or `varying` "
+            "interpolation before subdivision, but got `{}`.",
+            to_string(ji.get_interpolation())));
+      }
+      if ((jw.get_interpolation() != Interpolation::Vertex) &&
+          (jw.get_interpolation() != Interpolation::Varying)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`skel:jointWeights` primvar must use `vertex` or `varying` "
+            "interpolation before subdivision, but got `{}`.",
+            to_string(jw.get_interpolation())));
+      }
       skin_K = ji.get_elementSize();
       if (skin_K == 0 || skin_K != jw.get_elementSize()) {
         PUSH_ERROR_AND_RETURN(
             "`elementSize` of skel:jointIndices/skel:jointWeights must be "
             "equal and non-zero.");
+      }
+      if (skin_K > env.mesh_config.max_skin_elementSize) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`elementSize` {} of skel:jointIndices/skel:jointWeights too "
+            "large for subdivision. Max allowed is {}.",
+            skin_K, env.mesh_config.max_skin_elementSize));
       }
       std::vector<int> jidx;
       std::vector<float> jwts;
@@ -3246,14 +3292,20 @@ bool RenderSceneConverter::ConvertMesh(
         PUSH_ERROR_AND_RETURN(
             "Failed to flatten skel:jointIndices/skel:jointWeights.");
       }
-      if (jidx.size() != jwts.size() ||
-          jidx.size() != size_t(num_vertices) * skin_K) {
+      size_t expected_skin_count = 0;
+      if (!safe::mul(size_t(num_vertices), size_t(skin_K),
+                     &expected_skin_count)) {
+        PUSH_ERROR_AND_RETURN("skel:jointIndices/skel:jointWeights size overflow.");
+      }
+      if (jidx.size() != jwts.size() || jidx.size() != expected_skin_count) {
         PUSH_ERROR_AND_RETURN(
             "skel:jointIndices/skel:jointWeights must hold elementSize "
             "entries per vertex.");
       }
 
-      std::map<int, uint32_t> joint_column;
+      constexpr size_t kMaxSubdivSkinJoints = 256;
+      tinyusdz::HashMap<int, uint32_t> joint_column;
+      joint_column.reserve(std::min<size_t>(jidx.size(), kMaxSubdivSkinJoints));
       for (size_t i = 0; i < jidx.size(); i++) {
         if (jwts[i] == 0.0f) {
           continue;
@@ -3261,13 +3313,19 @@ bool RenderSceneConverter::ConvertMesh(
         if (jidx[i] < 0) {
           PUSH_ERROR_AND_RETURN("Negative index in skel:jointIndices.");
         }
-        if (joint_column.emplace(jidx[i], uint32_t(skin_used_joints.size()))
-                .second) {
+        const auto inserted =
+            joint_column.emplace(jidx[i], uint32_t(skin_used_joints.size()));
+        if (inserted.second) {
+          if (skin_used_joints.size() >= kMaxSubdivSkinJoints) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Subdivision of skinned meshes supports up to {} distinct "
+                "influencing joints.",
+                kMaxSubdivSkinJoints));
+          }
           skin_used_joints.push_back(jidx[i]);
         }
       }
       // Bound the dense expansion (memory: refined_points * used_joints).
-      constexpr size_t kMaxSubdivSkinJoints = 256;
       if (skin_used_joints.size() > kMaxSubdivSkinJoints) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Subdivision of skinned meshes supports up to {} distinct "
@@ -3284,7 +3342,11 @@ bool RenderSceneConverter::ConvertMesh(
       skin_chan.resize(num_chan);
       for (size_t c = 0; c < num_chan; c++) {
         const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
-        skin_chan[c].assign(size_t(num_vertices) * stride, 0.0f);
+        size_t channel_count = 0;
+        if (!safe::mul(size_t(num_vertices), size_t(stride), &channel_count)) {
+          PUSH_ERROR_AND_RETURN("Subdivision skin channel size overflow.");
+        }
+        skin_chan[c].assign(channel_count, 0.0f);
       }
       for (uint32_t v = 0; v < num_vertices; v++) {
         for (uint32_t k = 0; k < skin_K; k++) {
@@ -3292,7 +3354,11 @@ bool RenderSceneConverter::ConvertMesh(
           if (w == 0.0f) {
             continue;
           }
-          const uint32_t col = joint_column[jidx[size_t(v) * skin_K + k]];
+          const auto col_it = joint_column.find(jidx[size_t(v) * skin_K + k]);
+          if (col_it == joint_column.end()) {
+            PUSH_ERROR_AND_RETURN("Internal error: missing subdivision skin joint column.");
+          }
+          const uint32_t col = col_it->second;
           const size_t c = col / 4;
           const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
           skin_chan[c][size_t(v) * stride + (col % 4)] += w;
@@ -3359,13 +3425,19 @@ bool RenderSceneConverter::ConvertMesh(
 
     tsd::RefinedMesh refined;
     std::string subdiv_err;
+    uint32_t subdiv_fvar_count = 0;
+    uint32_t subdiv_vertex_pv_count = 0;
+    if (!SizeToU32(fvar_channels.size(), &subdiv_fvar_count) ||
+        !SizeToU32(vertex_primvars.size(), &subdiv_vertex_pv_count)) {
+      PUSH_ERROR_AND_RETURN("Subdivision primvar channel count exceeds 32-bit index space.");
+    }
     if (!tsd::RefineGeomMesh(
             mesh, env.mesh_config.subdivision_level, control_points,
             dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             fvar_channels.empty() ? nullptr : fvar_channels.data(),
-            uint32_t(fvar_channels.size()),
+            subdiv_fvar_count,
             vertex_primvars.empty() ? nullptr : vertex_primvars.data(),
-            uint32_t(vertex_primvars.size()), &refined, &subdiv_err)) {
+            subdiv_vertex_pv_count, &refined, &subdiv_err)) {
       PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
     }
 
@@ -3396,22 +3468,30 @@ bool RenderSceneConverter::ConvertMesh(
     // Write refined values back (faceVarying: per refined corner;
     // vertex/varying: per refined point).
     for (size_t i = 0; i < fvar_attrs.size(); i++) {
-      std::vector<float> vals = refined.fvar[i];
+      std::vector<float> vals = std::move(refined.fvar[i]);
       if (fvar_normalize[i]) {
         renormalize3(vals, attr_components(*fvar_attrs[i]));
       }
-      fvar_attrs[i]->get_data().resize(vals.size() * sizeof(float));
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN("Subdivision faceVarying primvar byte size overflow.");
+      }
+      fvar_attrs[i]->get_data().resize(bytes);
       memcpy(fvar_attrs[i]->get_data().data(), vals.data(),
-             vals.size() * sizeof(float));
+             bytes);
     }
     for (size_t i = 0; i < vertex_attrs.size(); i++) {
-      std::vector<float> vals = refined.vertex_primvars[i];
+      std::vector<float> vals = std::move(refined.vertex_primvars[i]);
       if (vertex_normalize[i]) {
         renormalize3(vals, attr_components(*vertex_attrs[i]));
       }
-      vertex_attrs[i]->get_data().resize(vals.size() * sizeof(float));
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN("Subdivision vertex primvar byte size overflow.");
+      }
+      vertex_attrs[i]->get_data().resize(bytes);
       memcpy(vertex_attrs[i]->get_data().data(), vals.data(),
-             vals.size() * sizeof(float));
+             bytes);
     }
 
     const size_t refined_points = dst.points.size();
@@ -3420,8 +3500,12 @@ bool RenderSceneConverter::ConvertMesh(
     // (smooth) contributions, keep the strongest K influences, renormalize.
     if (has_skin) {
       const size_t J = skin_used_joints.size();
-      subdiv_skin_joint_indices.assign(refined_points * skin_K, 0);
-      subdiv_skin_joint_weights.assign(refined_points * skin_K, 0.0f);
+      size_t skin_out_count = 0;
+      if (!safe::mul(refined_points, size_t(skin_K), &skin_out_count)) {
+        PUSH_ERROR_AND_RETURN("Refined skin output size overflow.");
+      }
+      subdiv_skin_joint_indices.assign(skin_out_count, 0);
+      subdiv_skin_joint_weights.assign(skin_out_count, 0.0f);
       std::vector<float> top_w(skin_K, 0.0f);
       std::vector<uint32_t> top_j(skin_K, 0);
       for (size_t v = 0; v < refined_points && J > 0; v++) {
@@ -3458,10 +3542,11 @@ bool RenderSceneConverter::ConvertMesh(
           sum += top_w[k];
         }
         if (sum > 0.0f) {
+          const size_t dst_base = v * size_t(skin_K);
           for (uint32_t k = 0; k < used; k++) {
-            subdiv_skin_joint_indices[v * skin_K + k] =
+            subdiv_skin_joint_indices[dst_base + k] =
                 skin_used_joints[top_j[k]];
-            subdiv_skin_joint_weights[v * skin_K + k] = top_w[k] / sum;
+            subdiv_skin_joint_weights[dst_base + k] = top_w[k] / sum;
           }
         }
       }
@@ -3495,16 +3580,27 @@ bool RenderSceneConverter::ConvertMesh(
       const uint32_t components = attr_components(*vattr);
       const float *src_vals =
           reinterpret_cast<const float *>(vattr->get_data().data());
-      std::vector<float> vals(subdiv_face_source.size() * components);
+      size_t value_count = 0;
+      if (!safe::mul(subdiv_face_source.size(), size_t(components),
+                     &value_count)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision uniform primvar value count overflow.");
+      }
+      std::vector<float> vals(value_count);
       for (size_t rf = 0; rf < subdiv_face_source.size(); rf++) {
+        const size_t dst_base = rf * size_t(components);
+        const size_t src_base = size_t(components) * subdiv_face_source[rf];
         for (uint32_t c = 0; c < components; c++) {
-          vals[components * rf + c] =
-              src_vals[components * subdiv_face_source[rf] + c];
+          vals[dst_base + c] = src_vals[src_base + c];
         }
       }
-      vattr->get_data().resize(vals.size() * sizeof(float));
-      memcpy(vattr->get_data().data(), vals.data(),
-             vals.size() * sizeof(float));
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision uniform primvar byte size overflow.");
+      }
+      vattr->get_data().resize(bytes);
+      memcpy(vattr->get_data().data(), vals.data(), bytes);
     }
 
     subdivision_applied = true;
@@ -3555,9 +3651,11 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     // Refresh topology-derived counts for the refined mesh.
-    num_vertices = uint32_t(dst.points.size());
-    num_faces = uint32_t(dst.usdFaceVertexCounts.size());
-    num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
+    if (!SizeToU32(dst.points.size(), &num_vertices) ||
+        !SizeToU32(dst.usdFaceVertexCounts.size(), &num_faces) ||
+        !SizeToU32(dst.usdFaceVertexIndices.size(), &num_face_vertex_indices)) {
+      PUSH_ERROR_AND_RETURN("Refined mesh counts exceed 32-bit index space.");
+    }
   }
 
   //TUSDZ_LOG_I("done uvAttr");

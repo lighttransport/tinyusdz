@@ -263,7 +263,8 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
                             const FVarChannelView &channel,
                             const std::vector<float> &geo_edge_sharp,
                             const std::vector<float> &geo_vert_sharp,
-                            FVarSplitState *state, std::string *err);
+                            const Options &opts, FVarSplitState *state,
+                            std::string *err);
 
 // Refines one smooth fvar channel one level. When `more_levels` is false the
 // child topology/sharpness are not rebuilt (only values + fvi advance).
