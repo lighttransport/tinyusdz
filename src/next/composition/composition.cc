@@ -213,8 +213,8 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
   }
 
   // Copy metadata fields
-  if (!source.meta().doc.empty() && target.meta().doc.empty()) {
-    target.meta().doc = source.meta().doc;
+  if (!source.meta().doc().empty() && target.meta().doc().empty()) {
+    target.meta().doc() = source.meta().doc();
   }
   if (source.meta().active != target.meta().active) {
     target.meta().active = source.meta().active;
@@ -281,7 +281,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   prim.meta().payloads.clear();
   prim.meta().inherits.clear();
   prim.meta().specializes.clear();
-  prim.meta().variantSets.clear();
+  prim.meta().variantSets().clear();
   prim.meta().variantSelection.clear();
 }
 
@@ -383,7 +383,7 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
   // back to the legacy single-string `variantSelection` if that is unset.
   VariantSelection legacy = ParseVariantSelection(prim.meta().variantSelection);
 
-  for (const auto& vs : prim.meta().variantSets) {
+  for (const auto& vs : prim.meta().variantSets()) {
     std::string chosen = vs.selected;
     if (chosen.empty() && vs.name == legacy.variant_set) {
       chosen = legacy.variant_name;
@@ -403,8 +403,8 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
           for (const auto& target : targets) prim.add_relationship(rel_name, target);
         }
       }
-      if (!variant.doc.empty() && prim.meta().doc.empty()) {
-        prim.meta().doc = variant.doc;
+      if (!variant.doc.empty() && prim.meta().doc().empty()) {
+        prim.meta().doc() = variant.doc;
       }
       break;
     }
@@ -566,7 +566,7 @@ void FlattenLayer(Layer& layer) {
     meta.inherits.clear();
     meta.specializes.clear();
     meta.variantSelection.clear();
-    meta.variantSets.clear();
+    meta.variantSets().clear();
   }
 }
 
@@ -610,7 +610,7 @@ bool HasCompositionArcs(const PrimSpec& prim) {
          !meta.inherits.empty() ||
          !meta.specializes.empty() ||
          !meta.variantSelection.empty() ||
-         !meta.variantSets.empty();
+         !meta.variantSets().empty();
 }
 
 }  // namespace next

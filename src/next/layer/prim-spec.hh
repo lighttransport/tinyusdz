@@ -74,39 +74,6 @@ struct VariantData;
 struct VariantSetData;
 class Layer;  // for VariantData::content (variant subtree)
 
-/// PrimSpec metadata
-struct PrimSpecMeta {
-  bool active = true;
-  bool hidden = false;
-  bool instanceable = false;  // when true (with arcs), the prim is an instance
-  // When non-empty (set by composition), this prim is an instance whose children
-  // are provided by the prototype prim at this path (no duplicated subtree).
-  std::string instance_prototype;
-  std::string doc;
-  std::string comment;
-  std::vector<std::string> apiSchemas;
-
-  // Composition arcs (stored as paths for lazy resolution)
-  std::vector<std::string> references;
-  std::vector<std::string> payloads;
-  std::vector<std::string> inherits;
-  std::vector<std::string> specializes;
-  std::string variantSelection;  // legacy single "variantSet=selection"
-  // Multiple variant selections (set -> selection); composed in addition to the
-  // legacy single field.
-  std::vector<std::pair<std::string, std::string>> variantSelections;
-
-  // Variant set definitions
-  std::vector<VariantSetData> variantSets;
-
-  // Relocates: namespace renames (absolute source path -> absolute target path).
-  std::vector<std::pair<std::string, std::string>> relocates;
-
-  // Layer offset (applied at evaluation time)
-  // First = offset, Second = scale. Default: (0, 1)
-  std::pair<double, double> layer_offset = {0.0, 1.0};
-};
-
 /// Variant data - properties and prims inside a single variant option
 struct VariantData {
   std::string name;
@@ -127,6 +94,139 @@ struct VariantSetData {
   std::string name;
   std::string selected;  // selected variant name for this set ("" = none)
   std::vector<VariantData> variants;
+};
+
+/// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
+/// (no docs / variants / relocates / apiSchemas / instancing). Held behind a
+/// lazily-allocated unique_ptr on PrimSpecMeta so an ordinary prim pays only 8
+/// pointer bytes instead of ~190 bytes of empty std::string / std::vector
+/// heads (Phase 8.1 footprint split).
+struct PrimSpecMetaExt {
+  std::string doc;
+  std::string comment;
+  // When non-empty (set by composition), this prim is an instance whose
+  // children come from the prototype prim at this path (no duplicated subtree).
+  std::string instance_prototype;
+  std::vector<std::string> apiSchemas;
+  // Variant set definitions.
+  std::vector<VariantSetData> variantSets;
+  // Multiple variant selections (set -> selection); composed in addition to the
+  // legacy single `variantSelection` field on PrimSpecMeta.
+  std::vector<std::pair<std::string, std::string>> variantSelections;
+  // Relocates: namespace renames (absolute source path -> absolute target path).
+  std::vector<std::pair<std::string, std::string>> relocates;
+};
+
+/// PrimSpec metadata. Hot fields (flags, the four composition-arc lists, the
+/// legacy single variant selection, and the layer offset) are inline; cold
+/// fields live in a lazily-allocated PrimSpecMetaExt. The cold-field accessors
+/// keep the old names, so call sites change only by gaining `()`. Const reads
+/// never allocate (return a shared empty); mutable access allocates the ext on
+/// first touch. Copyable with a deep copy of the ext.
+struct PrimSpecMeta {
+  bool active = true;
+  bool hidden = false;
+  bool instanceable = false;  // when true (with arcs), the prim is an instance
+
+  // Composition arcs (stored as paths for lazy resolution).
+  std::vector<std::string> references;
+  std::vector<std::string> payloads;
+  std::vector<std::string> inherits;
+  std::vector<std::string> specializes;
+
+  // Legacy single "variantSet=selection" (kept inline; the plural list of
+  // selections lives in the ext).
+  std::string variantSelection;
+
+  // Layer offset (applied at evaluation time). First = offset, second = scale.
+  std::pair<double, double> layer_offset = {0.0, 1.0};
+
+  PrimSpecMeta() = default;
+  PrimSpecMeta(PrimSpecMeta &&) = default;
+  PrimSpecMeta &operator=(PrimSpecMeta &&) = default;
+  PrimSpecMeta(const PrimSpecMeta &o) { *this = o; }
+  PrimSpecMeta &operator=(const PrimSpecMeta &o) {
+    active = o.active;
+    hidden = o.hidden;
+    instanceable = o.instanceable;
+    references = o.references;
+    payloads = o.payloads;
+    inherits = o.inherits;
+    specializes = o.specializes;
+    variantSelection = o.variantSelection;
+    layer_offset = o.layer_offset;
+    ext_ = o.ext_ ? std::unique_ptr<PrimSpecMetaExt>(
+                        new PrimSpecMetaExt(*o.ext_))
+                  : nullptr;
+    return *this;
+  }
+
+  bool has_ext() const { return ext_ != nullptr; }
+  void ensure_ext() {
+    if (!ext_) ext_.reset(new PrimSpecMetaExt());
+  }
+  const PrimSpecMetaExt *ext() const { return ext_.get(); }
+
+  const std::string &doc() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->doc : kEmpty;
+  }
+  std::string &doc() {
+    ensure_ext();
+    return ext_->doc;
+  }
+  const std::string &comment() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->comment : kEmpty;
+  }
+  std::string &comment() {
+    ensure_ext();
+    return ext_->comment;
+  }
+  const std::string &instance_prototype() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->instance_prototype : kEmpty;
+  }
+  std::string &instance_prototype() {
+    ensure_ext();
+    return ext_->instance_prototype;
+  }
+  const std::vector<std::string> &apiSchemas() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->apiSchemas : kEmpty;
+  }
+  std::vector<std::string> &apiSchemas() {
+    ensure_ext();
+    return ext_->apiSchemas;
+  }
+  const std::vector<VariantSetData> &variantSets() const {
+    static const std::vector<VariantSetData> kEmpty;
+    return ext_ ? ext_->variantSets : kEmpty;
+  }
+  std::vector<VariantSetData> &variantSets() {
+    ensure_ext();
+    return ext_->variantSets;
+  }
+  const std::vector<std::pair<std::string, std::string>> &variantSelections()
+      const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->variantSelections : kEmpty;
+  }
+  std::vector<std::pair<std::string, std::string>> &variantSelections() {
+    ensure_ext();
+    return ext_->variantSelections;
+  }
+  const std::vector<std::pair<std::string, std::string>> &relocates() const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->relocates : kEmpty;
+  }
+  std::vector<std::pair<std::string, std::string>> &relocates() {
+    ensure_ext();
+    return ext_->relocates;
+  }
+
+ private:
+  std::unique_ptr<PrimSpecMetaExt> ext_;
 };
 
 /// Value storage block

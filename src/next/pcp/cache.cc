@@ -146,7 +146,7 @@ struct Cache::Impl {
     relocates_map.clear();
     for (const auto &lp : layer_stacks[0].layers) {
       for (const PrimSpec &ps : lp->prims()) {
-        for (const auto &r : ps.meta().relocates) {
+        for (const auto &r : ps.meta().relocates()) {
           relocates_map[r.first] = r.second;
         }
       }
@@ -345,7 +345,7 @@ struct Cache::Impl {
           Compositor::ParseVariantSelection(spec.meta().variantSelection);
       if (!s.variant_set.empty()) sels->emplace(s.variant_set, s.variant_name);
     }
-    for (const auto &sel : spec.meta().variantSelections) {
+    for (const auto &sel : spec.meta().variantSelections()) {
       sels->emplace(sel.first, sel.second);
     }
   }
@@ -364,7 +364,7 @@ struct Cache::Impl {
       const PrimSpec &spec,
       const std::map<std::string, std::string> &sels) const {
     std::vector<SelectedVariant> out;
-    for (const VariantSetData &vss : spec.meta().variantSets) {
+    for (const VariantSetData &vss : spec.meta().variantSets()) {
       auto sit = sels.find(vss.name);
       if (sit == sels.end()) continue;  // no selection for this set
       for (const VariantData &vd : vss.variants) {
@@ -622,7 +622,7 @@ struct Cache::Impl {
 
       // Variants (weaker than inherits, stronger than references). For each
       // selected variant, graft its inline opinions and/or its content subtree.
-      if (!spec->meta().variantSets.empty()) {
+      if (!spec->meta().variantSets().empty()) {
         for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
           const VariantData *vd = sv.vd;
           // Subtree content: model as a reference-style Variant source into the
@@ -924,7 +924,7 @@ struct Cache::Impl {
     {
       auto pit = prototype_of.find(out_path.str());
       if (pit != prototype_of.end() && pit->second != out_path.str()) {
-        spec.meta().instance_prototype = pit->second;
+        spec.meta().instance_prototype() = pit->second;
         is_instance = true;
       }
     }

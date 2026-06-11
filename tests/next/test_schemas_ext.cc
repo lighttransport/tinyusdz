@@ -99,8 +99,8 @@ static Stage MakeARStage() {
   // AR API schemas on a regular prim
   layer.begin_prim("WithAnchorAPI", "Xform");
   auto* spec = layer.current();
-  spec->meta().apiSchemas.push_back("ARAnchorAPI");
-  spec->meta().apiSchemas.push_back("ARImagingAPI");
+  spec->meta().apiSchemas().push_back("ARAnchorAPI");
+  spec->meta().apiSchemas().push_back("ARImagingAPI");
   layer.end_prim();
 
   layer.finalize();
@@ -164,22 +164,22 @@ static Stage MakePhysicsStage() {
 
   // Applied API schemas on Xform
   layer.begin_prim("RigidBody", "Xform");
-  { auto* s = layer.current(); s->meta().apiSchemas.push_back("PhysicsRigidBodyAPI"); }
+  { auto* s = layer.current(); s->meta().apiSchemas().push_back("PhysicsRigidBodyAPI"); }
   layer.add_property("physics:rigidBodyEnabled", Value(true));
   layer.end_prim();
 
   layer.begin_prim("Collider", "Xform");
-  { auto* s = layer.current(); s->meta().apiSchemas.push_back("PhysicsCollisionAPI"); }
+  { auto* s = layer.current(); s->meta().apiSchemas().push_back("PhysicsCollisionAPI"); }
   layer.add_property("physics:collisionEnabled", Value(true));
   layer.end_prim();
 
   layer.begin_prim("Mat", "Xform");
-  { auto* s = layer.current(); s->meta().apiSchemas.push_back("PhysicsMaterialAPI"); }
+  { auto* s = layer.current(); s->meta().apiSchemas().push_back("PhysicsMaterialAPI"); }
   layer.add_property("physics:staticFriction", Value(0.5f));
   layer.end_prim();
 
   layer.begin_prim("Mass", "Xform");
-  { auto* s = layer.current(); s->meta().apiSchemas.push_back("PhysicsMassAPI"); }
+  { auto* s = layer.current(); s->meta().apiSchemas().push_back("PhysicsMassAPI"); }
   layer.add_property("physics:mass", Value(10.0f));
   layer.end_prim();
 

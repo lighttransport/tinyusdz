@@ -244,7 +244,7 @@ static void test_variants() {
     small.name = "small";
     small.properties.emplace_back("radius", Value(0.5));
     vsd.variants.push_back(std::move(small));
-    shape.meta().variantSets.push_back(std::move(vsd));
+    shape.meta().variantSets().push_back(std::move(vsd));
     shape.meta().variantSelection = "shapeVariant=big";
     layer.add_prim(std::move(shape));
   }
@@ -258,7 +258,7 @@ static void test_variants() {
   CHECK(PropOf(*out, "/Shape", "color") != nullptr,
         "variant-only 'color' applied from selected variant 'big'");
   const PrimSpec* shape = out->prim_at_path("/Shape");
-  CHECK(shape && shape->meta().variantSets.empty() &&
+  CHECK(shape && shape->meta().variantSets().empty() &&
             shape->meta().variantSelection.empty(),
         "variant set/selection cleared after flatten");
 }
@@ -273,11 +273,11 @@ static void test_variants_multiset() {
     lod.name = "lod"; lod.selected = "high";
     { VariantData v; v.name = "high"; v.properties.emplace_back("subdiv", Value(int32_t(2))); lod.variants.push_back(std::move(v)); }
     { VariantData v; v.name = "low";  v.properties.emplace_back("subdiv", Value(int32_t(0))); lod.variants.push_back(std::move(v)); }
-    p.meta().variantSets.push_back(std::move(lod));
+    p.meta().variantSets().push_back(std::move(lod));
     VariantSetData shade;
     shade.name = "shading"; shade.selected = "red";
     { VariantData v; v.name = "red"; v.properties.emplace_back("tint", Value(std::string("r"))); shade.variants.push_back(std::move(v)); }
-    p.meta().variantSets.push_back(std::move(shade));
+    p.meta().variantSets().push_back(std::move(shade));
     layer.add_prim(std::move(p));
   }
   layer.finalize();
@@ -301,7 +301,7 @@ static void test_variant_subprim() {
     VariantSetData vsd;
     vsd.name = "geo";
     vsd.selected = "hi";  // no property variants — only child prims
-    root.meta().variantSets.push_back(std::move(vsd));
+    root.meta().variantSets().push_back(std::move(vsd));
     layer.add_prim(std::move(root));
   }
   {  // selected variant's child (+ a grandchild) live under the holder path
@@ -342,7 +342,7 @@ static void test_variant_roundtrip() {
     VariantSetData vsd;
     vsd.name = "geo";
     vsd.selected = "hi";
-    root.meta().variantSets.push_back(std::move(vsd));
+    root.meta().variantSets().push_back(std::move(vsd));
     layer.add_prim(std::move(root));
   }
   {  // variant holder + child prim (a normal layer prim at the bracketed path)
@@ -368,7 +368,7 @@ static void test_variant_roundtrip() {
   CHECK(rr.success, "re-read succeeds");
   const Layer* l2 = rr.stage.GetRootLayer();
   const PrimSpec* root2 = l2 ? l2->prim_at_path("/Root") : nullptr;
-  CHECK(root2 && !root2->meta().variantSets.empty(),
+  CHECK(root2 && !root2->meta().variantSets().empty(),
         "variant set + selection survived the unflattened write");
   CHECK(l2 && l2->prim_at_path("/Root/{geo=hi}/Body") != nullptr,
         "variant child prim survived in the layer");

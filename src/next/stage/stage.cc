@@ -185,9 +185,9 @@ UsdPrim UsdPrim::GetParent() const {
 
 // For instance proxies, children are provided by the prototype prim's subtree.
 const PrimSpec* UsdPrim::ChildSourceSpec() const {
-  if (spec_ && layer_ && !spec_->meta().instance_prototype.empty()) {
+  if (spec_ && layer_ && !spec_->meta().instance_prototype().empty()) {
     const PrimSpec* proto =
-        layer_->prim_at_path(Path(spec_->meta().instance_prototype));
+        layer_->prim_at_path(Path(spec_->meta().instance_prototype()));
     if (proto) return proto;
   }
   return spec_;
