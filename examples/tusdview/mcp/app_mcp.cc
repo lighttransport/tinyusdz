@@ -76,7 +76,36 @@ json App::mcpSceneInfo(const json&, std::string&) {
   out["aabb_min"] = arr3(draw_.aabbMin);
   out["aabb_max"] = arr3(draw_.aabbMax);
   if (draw_.truncated) out["truncated"] = true;
+  if (loaded_.comp.composed) {
+    out["composed"] = true;
+    out["deferred_payload_count"] = loaded_.comp.deferred.size();
+    json deferred = json::array();
+    for (const auto& d : loaded_.comp.deferred) {
+      deferred.push_back(json{{"prim", d.primPath}, {"asset", d.assetPath}});
+    }
+    out["deferred_payloads"] = deferred;
+  }
   return out;
+}
+
+json App::mcpLoadPayloads(const json& args, std::string& err) {
+  if (!loaded_.comp.composed) {
+    err = "load_payloads: scene was not composed (no deferred payloads)";
+    return json::object();
+  }
+  std::set<std::string> add;
+  if (args.contains("paths") && args["paths"].is_array() && !args["paths"].empty()) {
+    for (const auto& p : args["paths"]) {
+      if (p.is_string()) add.insert(p.get<std::string>());
+    }
+  } else {
+    for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+  }
+  if (add.empty()) {
+    return json{{"started", false}, {"reason", "no deferred payloads"}};
+  }
+  startRecomposeAsync(add);  // async; client polls get_scene_info
+  return json{{"started", true}, {"count", add.size()}};
 }
 
 json App::mcpGetFocusedPrim(const json&, std::string&) {
@@ -106,6 +135,40 @@ json App::mcpViewport(const json& args, std::string& err) {
     } else {
       err = "no scene bounds to fit";
     }
+  } else if (op == "home") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+  } else if (op == "isometric") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+  } else if (op == "front") {
+    camera_.setPreset(CameraViewPreset::Front);
+  } else if (op == "back") {
+    camera_.setPreset(CameraViewPreset::Back);
+  } else if (op == "right") {
+    camera_.setPreset(CameraViewPreset::Right);
+  } else if (op == "left") {
+    camera_.setPreset(CameraViewPreset::Left);
+  } else if (op == "top") {
+    camera_.setPreset(CameraViewPreset::Top);
+  } else if (op == "bottom") {
+    camera_.setPreset(CameraViewPreset::Bottom);
+  } else if (op == "bookmark_save") {
+    const int slot = args.value("slot", 1) - 1;
+    if (slot < 0 || slot >= 3) {
+      err = "bookmark_save: slot must be 1..3";
+      return json::object();
+    }
+    gui_.saveCameraBookmark(slot);
+  } else if (op == "bookmark_load") {
+    const int slot = args.value("slot", 1) - 1;
+    if (slot < 0 || slot >= 3) {
+      err = "bookmark_load: slot must be 1..3";
+      return json::object();
+    }
+    if (!gui_.loadCameraBookmark(slot)) {
+      err = "bookmark_load: slot is empty";
+      return json::object();
+    }
   } else if (op == "set") {
     light3d::Vec3 tgt = camera_.target();
     if (args.contains("target") && args["target"].is_array() &&
@@ -118,7 +181,8 @@ json App::mcpViewport(const json& args, std::string& err) {
                      args.value("pitch", camera_.pitch()),
                      args.value("distance", camera_.distance()));
   } else {
-    err = "viewport: unknown op '" + op + "' (orbit|pan|dolly|fit|set)";
+    err = "viewport: unknown op '" + op +
+          "' (orbit|pan|dolly|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
     return json::object();
   }
   // Return the resulting camera state.
