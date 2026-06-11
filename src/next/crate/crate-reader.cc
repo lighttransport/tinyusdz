@@ -2096,6 +2096,23 @@ bool CrateReader::Impl::BuildStage() {
       }
     };
 
+    // Phase 7 S5: decode a `<arc>_listOp` companion token[] (marker-delimited
+    // prepend/append/delete/order sublists) into an ArcEdit.
+    auto decode_arc_listop = [&](const Value& v, ArcEdit& e) {
+      const std::vector<std::string>* arr = v.as_token_array();
+      if (!arr) return;
+      e.is_explicit = false;
+      std::vector<std::string>* cur = nullptr;
+      for (const std::string& s : *arr) {
+        if (s == "\x01P") cur = &e.prepended;
+        else if (s == "\x01A") cur = &e.appended;
+        else if (s == "\x01D") cur = &e.deleted;
+        else if (s == "\x01O") cur = &e.ordered;
+        else if (s == "\x01N") cur = nullptr;
+        else if (cur) cur->push_back(s);
+      }
+    };
+
     // Add properties and extract composition arcs / metadata into PrimSpecMeta
     for (auto& field : entry.fields) {
       if (field.first == "typeName" || field.first == "specifier") continue;
@@ -2139,6 +2156,23 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (field.first == "specializes") {
           append_token_list(field.second, ps->meta().specializes, "specializes");
+          continue;
+        }
+        if (field.first == "references_listOp") {
+          decode_arc_listop(field.second, ps->meta().ensure_arc_edits().references);
+          continue;
+        }
+        if (field.first == "payload_listOp") {
+          decode_arc_listop(field.second, ps->meta().ensure_arc_edits().payloads);
+          continue;
+        }
+        if (field.first == "inherits_listOp") {
+          decode_arc_listop(field.second, ps->meta().ensure_arc_edits().inherits);
+          continue;
+        }
+        if (field.first == "specializes_listOp") {
+          decode_arc_listop(field.second,
+                            ps->meta().ensure_arc_edits().specializes);
           continue;
         }
         if (field.first == "variantSelection") {

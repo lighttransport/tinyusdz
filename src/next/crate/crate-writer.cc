@@ -1692,10 +1692,38 @@ private:
       };
 
       // Composition arcs + list metadata as token[] fields (full round-trip).
+      // The token[] carries the within-spec effective (composed) list.
       add_token_array_field("references", prim.meta().references);
       add_token_array_field("payload", prim.meta().payloads);
       add_token_array_field("inherits", prim.meta().inherits);
       add_token_array_field("specializes", prim.meta().specializes);
+
+      // Phase 7 S5: when an arc field carries a non-bare list-op qualifier,
+      // also emit a companion `<arc>_listOp` token[] preserving the authored
+      // prepend/append/delete/order sublists (marker-delimited). Absent =>
+      // the token[] above is an explicit (bare) list. Next-private fields;
+      // unknown fields are ignored by other readers.
+      const ArcListOpEdits* edits = prim.meta().arc_edits();
+      auto add_arc_listop = [&](const char* base, const ArcEdit* e) {
+        if (!e || e->is_explicit) return;
+        std::vector<std::string> enc;
+        auto section = [&](const char* marker,
+                           const std::vector<std::string>& items) {
+          if (items.empty()) return;
+          enc.push_back(marker);
+          enc.insert(enc.end(), items.begin(), items.end());
+        };
+        section("\x01P", e->prepended);
+        section("\x01A", e->appended);
+        section("\x01D", e->deleted);
+        section("\x01O", e->ordered);
+        if (enc.empty()) enc.push_back("\x01N");  // non-explicit, no items
+        add_token_array_field(std::string(base) + "_listOp", enc);
+      };
+      add_arc_listop("references", edits ? &edits->references : nullptr);
+      add_arc_listop("payload", edits ? &edits->payloads : nullptr);
+      add_arc_listop("inherits", edits ? &edits->inherits : nullptr);
+      add_arc_listop("specializes", edits ? &edits->specializes : nullptr);
       if (!prim.meta().comment().empty()) {
         add_string_field("comment", prim.meta().comment());
       }
