@@ -592,13 +592,33 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   // List-op qualifier applied to an arc list (prepend/append/delete/explicit).
   enum class ArcQual { Explicit, Prepend, Append, Delete, Reorder };
 
-  // Read the bracketed (or single) arc references, then merge into `target`
-  // honoring the list-op qualifier: explicit (bare) replaces the list, prepend
-  // inserts at the front, append/reorder push to the back, delete removes. This
-  // matches AOUSD list-op semantics for opinions authored within a single spec
-  // (cross-layer-stack merging is still strongest-first append in composition).
-  auto ReadArcList = [this, &ReadArcRef](std::vector<std::string>* target,
-                                         ArcQual qual) {
+  enum class ArcField { References, Payloads, Inherits, Specializes };
+  auto SelectArc = [](PrimSpecMeta& meta,
+                      ArcField f) -> std::vector<std::string>& {
+    switch (f) {
+      case ArcField::References: return meta.references;
+      case ArcField::Payloads: return meta.payloads;
+      case ArcField::Inherits: return meta.inherits;
+      default: return meta.specializes;
+    }
+  };
+  auto SelectEdit = [](ArcListOpEdits& e, ArcField f) -> ArcEdit& {
+    switch (f) {
+      case ArcField::References: return e.references;
+      case ArcField::Payloads: return e.payloads;
+      case ArcField::Inherits: return e.inherits;
+      default: return e.specializes;
+    }
+  };
+
+  // Read the bracketed (or single) arc references, then merge into the inline
+  // arc vector honoring the list-op qualifier (explicit/bare replaces, prepend
+  // front, append/reorder back, delete removes) -- the within-spec effective
+  // list. ALSO record the raw qualifier into the spec's ArcEdit (Phase 7 S5),
+  // which cross-layer composition (apply_list_ops) and the writer consume; the
+  // edit block is only allocated when a non-bare qualifier is involved.
+  auto ReadArcList = [this, &ReadArcRef, &SelectArc, &SelectEdit](
+                         PrimSpecMeta& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Match(TokenType::OpenBracket)) {
       while (!Check(TokenType::CloseBracket) && !AtEnd()) {
@@ -613,6 +633,33 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       if (ReadArcRef(&ref)) items.push_back(ref);
     }
 
+    // Record the list-op edit first (copies items for non-bare qualifiers).
+    if (qual != ArcQual::Explicit || meta.arc_edits()) {
+      ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
+      switch (qual) {
+        case ArcQual::Explicit:
+          e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+          break;
+        case ArcQual::Prepend:
+          e.is_explicit = false;
+          e.prepended.insert(e.prepended.end(), items.begin(), items.end());
+          break;
+        case ArcQual::Append:
+          e.is_explicit = false;
+          e.appended.insert(e.appended.end(), items.begin(), items.end());
+          break;
+        case ArcQual::Delete:
+          e.is_explicit = false;
+          e.deleted.insert(e.deleted.end(), items.begin(), items.end());
+          break;
+        case ArcQual::Reorder:
+          e.is_explicit = false;
+          e.ordered.insert(e.ordered.end(), items.begin(), items.end());
+          break;
+      }
+    }
+
+    std::vector<std::string>* target = &SelectArc(meta, field);
     switch (qual) {
       case ArcQual::Explicit:
         *target = std::move(items);
@@ -691,13 +738,13 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBracket);
       }
     } else if (key == "references") {
-      ReadArcList(&prim->meta().references, arc_qual);
+      ReadArcList(prim->meta(), ArcField::References, arc_qual);
     } else if (key == "payload") {
-      ReadArcList(&prim->meta().payloads, arc_qual);
+      ReadArcList(prim->meta(), ArcField::Payloads, arc_qual);
     } else if (key == "inherits") {
-      ReadArcList(&prim->meta().inherits, arc_qual);
+      ReadArcList(prim->meta(), ArcField::Inherits, arc_qual);
     } else if (key == "specializes") {
-      ReadArcList(&prim->meta().specializes, arc_qual);
+      ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "variantSets") {
       // variantSets = ["setName1", "setName2"]
       if (Match(TokenType::OpenBracket)) {

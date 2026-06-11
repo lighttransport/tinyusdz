@@ -96,11 +96,39 @@ struct VariantSetData {
   std::vector<VariantData> variants;
 };
 
+/// One composition-arc field's list-op edits, exactly as authored (Phase 7 S5,
+/// AOUSD §10.3.2). `is_explicit` marks a bare `references = [...]` (or an
+/// explicit op), in which case the effective items are the inline arc vector on
+/// PrimSpecMeta; otherwise the effective list is composed from the prepend /
+/// append / delete / order lists. Kept so composition can merge a site's specs
+/// across the layer stack and the writer can re-emit the original qualifier.
+struct ArcEdit {
+  bool is_explicit = true;  // bare list (the common case)
+  std::vector<std::string> prepended;
+  std::vector<std::string> appended;
+  std::vector<std::string> deleted;
+  std::vector<std::string> ordered;
+
+  bool has_qualifiers() const {
+    return !is_explicit || !prepended.empty() || !appended.empty() ||
+           !deleted.empty() || !ordered.empty();
+  }
+};
+
+/// Per-arc-type list-op edits for one PrimSpec (lazily allocated; only prims
+/// that author a non-bare arc qualifier pay for it).
+struct ArcListOpEdits {
+  ArcEdit references;
+  ArcEdit payloads;
+  ArcEdit inherits;
+  ArcEdit specializes;
+};
+
 /// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
-/// (no docs / variants / relocates / apiSchemas / instancing). Held behind a
-/// lazily-allocated unique_ptr on PrimSpecMeta so an ordinary prim pays only 8
-/// pointer bytes instead of ~190 bytes of empty std::string / std::vector
-/// heads (Phase 8.1 footprint split).
+/// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
+/// Held behind a lazily-allocated unique_ptr on PrimSpecMeta so an ordinary
+/// prim pays only 8 pointer bytes instead of ~190 bytes of empty std::string /
+/// std::vector heads (Phase 8.1 footprint split).
 struct PrimSpecMetaExt {
   std::string doc;
   std::string comment;
@@ -115,6 +143,20 @@ struct PrimSpecMetaExt {
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Relocates: namespace renames (absolute source path -> absolute target path).
   std::vector<std::pair<std::string, std::string>> relocates;
+  // Arc list-op qualifiers (Phase 7 S5); null unless authored.
+  std::unique_ptr<ArcListOpEdits> arc_edits;
+
+  PrimSpecMetaExt() = default;
+  PrimSpecMetaExt(const PrimSpecMetaExt &o)
+      : doc(o.doc),
+        comment(o.comment),
+        instance_prototype(o.instance_prototype),
+        apiSchemas(o.apiSchemas),
+        variantSets(o.variantSets),
+        variantSelections(o.variantSelections),
+        relocates(o.relocates),
+        arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
+  PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
 };
 
 /// PrimSpec metadata. Hot fields (flags, the four composition-arc lists, the
@@ -166,6 +208,17 @@ struct PrimSpecMeta {
     if (!ext_) ext_.reset(new PrimSpecMetaExt());
   }
   const PrimSpecMetaExt *ext() const { return ext_.get(); }
+
+  // Arc list-op edits (Phase 7 S5). Const returns null when none authored (the
+  // inline arc vectors are then implicit explicit lists); mutable allocates.
+  const ArcListOpEdits *arc_edits() const {
+    return ext_ ? ext_->arc_edits.get() : nullptr;
+  }
+  ArcListOpEdits &ensure_arc_edits() {
+    ensure_ext();
+    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
+    return *ext_->arc_edits;
+  }
 
   const std::string &doc() const {
     static const std::string kEmpty;
