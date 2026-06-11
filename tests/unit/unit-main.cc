@@ -23,7 +23,7 @@
 #include "unit-png-stream.h"
 #include "unit-imageproc.h"
 #include "unit-tydra.h"
-// unit-tydra-subdivision.h disabled during tsd migration (restored in M6)
+#include "unit-tydra-subdivision.h"
 #include "unit-dedup.h"
 #include "unit-path.h"
 #include "unit-crate-writer.h"
@@ -142,25 +142,25 @@ TEST_LIST = {
   { "usdpreviewsurface_displacement_test", usdpreviewsurface_displacement_test },
   { "usduvtexture_uvset_test", usduvtexture_uvset_test },
   { "openpbr_opacity_precedence_test", openpbr_opacity_precedence_test },
-  // (tsd migration, M6) { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
-  // (tsd migration, M6) { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
-  // (tsd migration, M6) { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
-  // (tsd migration, M6) { "tydra_subdivision_remaps_material_subset_faces_test", tydra_subdivision_remaps_material_subset_faces_test },
-  // (tsd migration, M6) { "tydra_subdivision_multiple_material_subsets_disjoint_test", tydra_subdivision_multiple_material_subsets_disjoint_test },
-  // (tsd migration, M6) { "tydra_subdivision_level2_subset_remap_test", tydra_subdivision_level2_subset_remap_test },
-  // (tsd migration, M6) { "tydra_subdivision_loop_subset_remap_test", tydra_subdivision_loop_subset_remap_test },
-  // (tsd migration, M6) { "tydra_subdivision_bilinear_mixed_topology_subset_test", tydra_subdivision_bilinear_mixed_topology_subset_test },
-  // (tsd migration, M6) { "tydra_subdivision_level_zero_keeps_base_mesh_test", tydra_subdivision_level_zero_keeps_base_mesh_test },
-  // (tsd migration, M6) { "tydra_subdivision_scheme_none_ignores_requested_level_test", tydra_subdivision_scheme_none_ignores_requested_level_test },
-  // (tsd migration, M6) { "tydra_subdivision_subset_with_multiple_source_faces_test", tydra_subdivision_subset_with_multiple_source_faces_test },
-  // (tsd migration, M6) { "tydra_subdivision_incomplete_partition_warns_but_converts_test", tydra_subdivision_incomplete_partition_warns_but_converts_test },
-  // (tsd migration, M6) { "tydra_subdivision_recomputes_authored_normals_with_warning_test", tydra_subdivision_recomputes_authored_normals_with_warning_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_facevarying_uv_test", tydra_subdivision_rejects_facevarying_uv_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_display_color_test", tydra_subdivision_rejects_display_color_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_display_opacity_test", tydra_subdivision_rejects_display_opacity_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
-  // (tsd migration, M6) { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
+  { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
+  { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
+  { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
+  { "tydra_subdivision_remaps_material_subset_faces_test", tydra_subdivision_remaps_material_subset_faces_test },
+  { "tydra_subdivision_multiple_material_subsets_disjoint_test", tydra_subdivision_multiple_material_subsets_disjoint_test },
+  { "tydra_subdivision_level2_subset_remap_test", tydra_subdivision_level2_subset_remap_test },
+  { "tydra_subdivision_loop_subset_remap_test", tydra_subdivision_loop_subset_remap_test },
+  { "tydra_subdivision_bilinear_mixed_topology_subset_test", tydra_subdivision_bilinear_mixed_topology_subset_test },
+  { "tydra_subdivision_level_zero_keeps_base_mesh_test", tydra_subdivision_level_zero_keeps_base_mesh_test },
+  { "tydra_subdivision_scheme_none_ignores_requested_level_test", tydra_subdivision_scheme_none_ignores_requested_level_test },
+  { "tydra_subdivision_subset_with_multiple_source_faces_test", tydra_subdivision_subset_with_multiple_source_faces_test },
+  { "tydra_subdivision_incomplete_partition_warns_but_converts_test", tydra_subdivision_incomplete_partition_warns_but_converts_test },
+  { "tydra_subdivision_recomputes_authored_normals_with_warning_test", tydra_subdivision_recomputes_authored_normals_with_warning_test },
+  { "tydra_subdivision_rejects_facevarying_uv_test", tydra_subdivision_rejects_facevarying_uv_test },
+  { "tydra_subdivision_rejects_display_color_test", tydra_subdivision_rejects_display_color_test },
+  { "tydra_subdivision_rejects_display_opacity_test", tydra_subdivision_rejects_display_opacity_test },
+  { "tydra_subdivision_rejects_tangents_test", tydra_subdivision_rejects_tangents_test },
+  { "tydra_subdivision_rejects_binormals_test", tydra_subdivision_rejects_binormals_test },
+  { "tydra_subdivision_rejects_skinning_test", tydra_subdivision_rejects_skinning_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },
