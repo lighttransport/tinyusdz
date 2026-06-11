@@ -523,6 +523,111 @@ static void test_payload_in_instance() {
 
 // Phase 3: inherits + specializes, with LIVRPS strength
 // (Local > Inherit > Reference > Payload > Specialize).
+// Phase 7 (E3): a transitive specialize chain P -> _B -> _C must compose every
+// link's opinions, with the most-local (P) winning and the chain reaching the
+// weakest (_C). Specialize is globally weakest, but still composes.
+static void test_specialize_chain() {
+  std::cout << "test_specialize_chain..." << std::endl;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("_C", "Scope");          // weakest in the chain
+    lb.add_property("cOnly", Value(30.0f));
+    lb.add_property("val", Value(3.0f));
+    lb.end_prim();
+    lb.begin_prim("_B", "Scope");
+    lb.current()->meta().specializes.push_back("</_C>");
+    lb.add_property("bOnly", Value(20.0f));
+    lb.add_property("val", Value(2.0f));
+    lb.end_prim();
+    lb.begin_prim("P", "Scope");
+    lb.current()->meta().specializes.push_back("</_B>");
+    lb.add_property("pOnly", Value(10.0f));
+    lb.add_property("val", Value(1.0f));
+    lb.end_prim();
+    lb.finalize();
+  }
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim p = stage.GetPrimAtPath("/P");
+  assert(p.IsValid());
+  auto fval = [&](const char *n) -> float {
+    const Value *v = p.GetPropertyValue(n);
+    assert(v && "missing composed property");
+    const float *f = v->as_float();
+    assert(f);
+    return *f;
+  };
+  assert(fval("val") == 1.0f && "local opinion must win over the chain");
+  assert(fval("pOnly") == 10.0f);
+  assert(fval("bOnly") == 20.0f && "direct specialize opinion must compose");
+  assert(fval("cOnly") == 30.0f && "transitive specialize chain must compose");
+  std::cout << "  OK" << std::endl;
+}
+
+// Phase 7 (S5): an arc authored identically in the root and a sublayer expands
+// twice by default; with CompositionOptions::apply_list_ops it is de-duplicated
+// and expands once (fewer PrimIndex nodes), without changing composed values.
+static void test_cross_layer_arc_dedup() {
+  std::cout << "test_cross_layer_arc_dedup..." << std::endl;
+  const std::string sub = "/tmp/next_pcp_listop_sub.usda";
+  {
+    std::ofstream f(sub);
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"Dup\" (\n        references = [</Lib/Model>]\n    )\n    {\n"
+         "    }\n}\n";
+  }
+  auto root_layer = std::make_shared<Layer>();
+  {
+    root_layer->meta().subLayers.push_back("next_pcp_listop_sub.usda");
+    LayerBuilder rb(*root_layer);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("Dup", "");  // same site as the sublayer, same reference
+    rb.current()->meta().references.push_back("</Lib/Model>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.begin_prim("Lib", "Scope");
+    rb.begin_prim("Model", "Mesh");
+    rb.add_property("size", Value::MakeFloat3(1, 1, 1));
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  std::string w, e;
+
+  auto node_count = [&](bool flag) -> int {
+    pcp::CompositionOptions opts;
+    opts.apply_list_ops = flag;
+    auto opened = pcp::Cache::Open(resolver, root_layer,
+                                   "/tmp/next_pcp_listop_root.usda", opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    const pcp::PrimIndex *idx =
+        cache.ComputePrimIndex(Path("/World/Dup"), &w, &e);
+    assert(idx);
+    // The reference resolves either way: the composed type is still "Mesh".
+    Stage stage;
+    assert(cache.BuildStage(&stage, &w, &e));
+    assert(stage.GetPrimAtPath("/World/Dup").GetTypeName() == "Mesh");
+    return idx->GetNodeCount();
+  };
+
+  int without = node_count(false);
+  int with = node_count(true);
+  assert(with < without && "apply_list_ops must drop the duplicate arc node");
+  std::remove(sub.c_str());
+  std::cout << "  OK (" << without << " -> " << with << " nodes)" << std::endl;
+}
+
 static void test_inherits_specializes() {
   std::cout << "test_inherits_specializes..." << std::endl;
   AssetResolver resolver;
@@ -1694,6 +1799,8 @@ int main() {
   test_typed_composition_issues();
   test_prototype_order_independent();
   test_compose_prim_lazy();
+  test_specialize_chain();
+  test_cross_layer_arc_dedup();
   test_build_stage();
   test_invalidate();
   test_ancestral_compute();
