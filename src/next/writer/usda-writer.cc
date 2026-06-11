@@ -270,27 +270,35 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
 
   if (has_paren_meta) {
     os << " (\n";
-    // Write composition arcs in paren section
-    if (!meta.references.empty()) {
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "prepend references = [\n";
-      for (const auto& ref : meta.references) {
-        WriteIndent(os, depth + 2, opts.indent);
-        os << "@" << ref << "@,\n";
+    // Write composition arcs in paren section, re-emitting the authored list-op
+    // qualifier (Phase 7 S5): a bare/explicit list as `references = [...]`,
+    // otherwise the prepend/append/delete sublists. With no recorded edit the
+    // inline list is an implicit explicit (bare) list.
+    const ArcListOpEdits* edits = meta.arc_edits();
+    auto write_arc = [&](const char* field, const std::vector<std::string>& inl,
+                         const ArcEdit* e) {
+      auto emit = [&](const char* qual, const std::vector<std::string>& items) {
+        if (items.empty()) return;
+        WriteIndent(os, depth + 1, opts.indent);
+        os << qual << field << " = [\n";
+        for (const auto& a : items) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "@" << a << "@,\n";
+        }
+        WriteIndent(os, depth + 1, opts.indent);
+        os << "]\n";
+      };
+      if (!e || e->is_explicit) {
+        emit("", inl);  // bare/explicit list
+      } else {
+        emit("prepend ", e->prepended);
+        emit("append ", e->appended);
+        emit("delete ", e->deleted);
       }
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "]\n";
-    }
-    if (!meta.payloads.empty()) {
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "prepend payload = [\n";
-      for (const auto& payload : meta.payloads) {
-        WriteIndent(os, depth + 2, opts.indent);
-        os << "@" << payload << "@,\n";
-      }
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "]\n";
-    }
+    };
+    write_arc("references", meta.references,
+              edits ? &edits->references : nullptr);
+    write_arc("payload", meta.payloads, edits ? &edits->payloads : nullptr);
     WriteIndent(os, depth, opts.indent);
     os << ")";
   }
