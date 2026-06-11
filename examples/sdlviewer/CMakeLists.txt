@@ -23,9 +23,6 @@ if(EMSCRIPTEN)
       CACHE INTERNAL "" FORCE)
 endif()
 
-# Use embedded version of OpenSubdiv code by default
-set(osd_DIR ${PROJECT_SOURCE_DIR}/../../src/osd)
-
 # imgui_sdl requires C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

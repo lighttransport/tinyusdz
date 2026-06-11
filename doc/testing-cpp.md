@@ -124,7 +124,8 @@ CMake registers these tests when the corresponding targets are built (most in th
 | `feat-mtlx-parse`, `feat-mtlx-import`, `feat-mtlx-export` | Feature tests | `build/feat-mtlx-*` |
 | `feat-mtlx-grouped-params` | Feature test (needs `TINYUSDZ_WITH_JSON`) | `build/feat-mtlx-grouped-params` |
 | `feat-variant-converter`, `feat-variant-applier` | Feature tests | `build/feat-variant-*` |
-| `feat-subdiv-compare` | Feature test (only when `TINYUSDZ_WITH_OPENSUBDIV`) | `build/feat-subdiv-compare` |
+| `feat-subdiv` | Feature test (tinysubdiv) | `build/feat-subdiv` |
+| `feat-subdiv-verify` | Feature test (only when `TINYUSDZ_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
 | `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
 | `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
 | `mcp-test` | MCP server unit test (only when `TINYUSDZ_WITH_MCP_SERVER`) | `build/mcp-test` |
@@ -248,8 +249,8 @@ Major source groups in `tests/unit/` (see `tests/unit/CMakeLists.txt` for the fu
 - Core parsing and value handling: `unit-ascii-parse`, `unit-value-types`, `unit-customdata`, `unit-primvar`, `unit-timesamples`, `unit-fp-parse-print`, `unit-minijson`, `unit-strutil`, `unit-math`, `unit-xform`, `unit-half-roundtrip`
 - Scene graph and composition: `unit-stage`, `unit-composition`, `unit-composition-arcs`, `unit-composition-graph`, `unit-layer`, `unit-primspec`, `unit-prim-api`, `unit-prim-reconstruct`
 - Reader/writer coverage: `unit-usda-reader`, `unit-usdc-reader`, `unit-usdc-reconstruct`, `unit-usda-writer`, `unit-usda-roundtrip`, `unit-usdz-writer`, `unit-usdc-writer`, `unit-crate-writer`, `unit-usd-validation`
-- Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`, `unit-tydra-subdivision`, `unit-materialx`
-- Subdivision: `unit-subdiv-tinyusdz`
+- Tydra coverage: `unit-tydra`, `unit-tydra-renderscene`, `unit-tydra-shader`, `unit-materialx`
+- Subdivision: `feat-subdiv` (tinysubdiv feature test under tests/feat/subdiv)
 - Physics / simulation: `unit-physics`, `unit-ik`, `unit-rb-collision`, `unit-rb-dynamics`
 - Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-tiny-hashmap`, `unit-handle-allocator`, `unit-ioutil`, `unit-pathutil`, `unit-pprint`
 - PXR compat API: `unit-pxr-compat-api` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)

@@ -176,28 +176,11 @@ option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
 
-set(TINYUSDZ_DEFAULT_WITH_OPENSUBDIV OFF)
-set(TINYUSDZ_DEFAULT_WITH_TINYSUBDIV ON)
-
-option(
-  TINYUSDZ_WITH_OPENSUBDIV
-  "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  ${TINYUSDZ_DEFAULT_WITH_OPENSUBDIV})
-# Use embedded version of OpenSubdiv code by default
-set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
-
-option(
-  TINYUSDZ_WITH_TINYSUBDIV
-  "Build with TinyUSDZ's own dependency-free subdivision surface library (Catmull-Clark, Loop, Bilinear)"
-  ${TINYUSDZ_DEFAULT_WITH_TINYSUBDIV})
-
-# Mutual exclusivity check
-if(TINYUSDZ_WITH_OPENSUBDIV AND TINYUSDZ_WITH_TINYSUBDIV)
-  message(FATAL_ERROR
-          "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and "
-          "TINYUSDZ_WITH_TINYSUBDIV. TinySubdiv is the default backend; "
-          "disable one subdivision backend before configuring.")
-endif()
+# Subdivision surfaces: tinysubdiv (src/tsd) is always built (dependency-free).
+# Optional verification of tsd against an OpenSubdiv source checkout:
+option(TINYUSDZ_TSD_VERIFY_WITH_OSD
+       "Build tsd vs OpenSubdiv verification test (requires OpenSubdiv_ROOT)" OFF)
+set(OpenSubdiv_ROOT "" CACHE PATH "Path to OpenSubdiv source checkout (no pre-build required)")
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
@@ -1032,157 +1015,12 @@ if(TINYUSDZ_WITH_QJS)
   )
 endif(TINYUSDZ_WITH_QJS)
 
-if(TINYUSDZ_WITH_OPENSUBDIV)
-
-  # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
-  function(ADD_OSD_LIB)
-
-    #set(NO_TUTORIALS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_EXAMPLES
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_REGRESSION
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_DOC
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OMP
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_TBB
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_CUDA
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OPENCL
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OPENGL
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_TESTS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_GLTESTS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_GLFW
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_PTEX
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-
-    # CMakeLists of OSD package is problematic, so provide our own one.
-    list(
-      APPEND
-      OSD_FAR_SOURCES
-      ${osd_DIR}/opensubdiv/far/bilinearPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/catmarkPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/error.cpp
-      ${osd_DIR}/opensubdiv/far/loopPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/patchBasis.cpp
-      ${osd_DIR}/opensubdiv/far/patchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/patchDescriptor.cpp
-      ${osd_DIR}/opensubdiv/far/patchMap.cpp
-      ${osd_DIR}/opensubdiv/far/patchTable.cpp
-      ${osd_DIR}/opensubdiv/far/patchTableFactory.cpp
-      ${osd_DIR}/opensubdiv/far/ptexIndices.cpp
-      ${osd_DIR}/opensubdiv/far/stencilTable.cpp
-      ${osd_DIR}/opensubdiv/far/stencilTableFactory.cpp
-      ${osd_DIR}/opensubdiv/far/stencilBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/topologyDescriptor.cpp
-      ${osd_DIR}/opensubdiv/far/topologyRefiner.cpp
-      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp)
-
-    # CPU only
-    list(
-      APPEND
-      OSD_OSD_SOURCES
-      ${osd_DIR}/opensubdiv/osd/cpuEvaluator.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuKernel.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuPatchTable.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp)
-
-    list(APPEND OSD_SDC_SOURCES ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
-         ${osd_DIR}/opensubdiv/sdc/crease.cpp)
-
-    list(
-      APPEND
-      OSD_VTR_SOURCES
-      ${osd_DIR}/opensubdiv/vtr/fvarLevel.cpp
-      ${osd_DIR}/opensubdiv/vtr/fvarRefinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/level.cpp
-      ${osd_DIR}/opensubdiv/vtr/quadRefinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/refinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
-      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp)
-
-    #add_library(osd_cpu_static ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    #target_include_directories(osd_cpu_static PRIVATE ${osd_DIR})
-
-    #if (TINYUSDZ_BUILD_SHARED_LIBS)
-    #  add_library(osd_cpu_shared SHARED ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    #  target_include_directories(osd_cpu_shared PRIVATE ${osd_DIR})
-    #endif()
-
-    #if (MSVC)
-    #  if (TINYUSDZ_CXX_MP_FLAG)
-    #    target_compile_options(osd_cpu_static PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-    #    if (TINYUSDZ_BUILD_SHARED_LIBS)
-    #      target_compile_options(osd_cpu_shared PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-    #    endif()
-    #  endif()
-    #endif()
-
-    # Build as Object Library(non archival collections)
-    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    target_include_directories(osd_cpu PRIVATE ${osd_DIR})
-    set_target_properties(osd_cpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    
-    # primarily for Visual Studio Solution Explorer.
-    set_target_properties(osd_cpu PROPERTIES FOLDER "osd")
-    
-
-    #set(TINYUSDZ_OSD_SOURCES ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-
-  endfunction()
-
-  add_osd_lib()
-
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
-  # Archive the OpenSubdiv object files directly into tinyusdz_static
-  # so downstream targets (tusdcat, examples, tests) don't need a
-  # separate osd_cpu dependency.
-  list(APPEND TINYUSDZ_EXT_SOURCES $<TARGET_OBJECTS:osd_cpu>)
-
-endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-if(TINYUSDZ_WITH_TINYSUBDIV)
-  message(STATUS "Using TinyUSDZ's own subdivision surface library")
-
-  # Add our subdivision library sources
-  list(APPEND TINYUSDZ_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/subdivision.cc
-    ${PROJECT_SOURCE_DIR}/src/subdiv-tinyusdz.cc
-  )
-
-  # primvar-interpolation.hh is header-only, no .cc needed
-
-elseif(TINYUSDZ_WITH_OPENSUBDIV)
-  # Standalone TinySubdiv library for unit tests / comparison tools when
-  # the main library is built with the OpenSubdiv backend instead.
-  # No symbol conflict because tinyusdz_static omits subdivision.cc.
-  add_library(tinyusdz_subdiv STATIC
-    ${PROJECT_SOURCE_DIR}/sandbox/subdiv/subdivision.cc)
-  target_include_directories(tinyusdz_subdiv PUBLIC
-    ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
-  add_sanitizers(tinyusdz_subdiv)
-endif(TINYUSDZ_WITH_TINYSUBDIV)
+# tinysubdiv (tsd): dependency-free subdivision surface library, always built.
+list(APPEND TINYUSDZ_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
+)
 
 if(TINYUSDZ_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -1598,12 +1436,6 @@ endif()
 #                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
 #endif(TINYUSDZ_WITH_ALAC_AUDIO)
 #
-#if(TINYUSDZ_WITH_OPENSUBDIV)
-#  target_include_directories(tinyusdz_object PRIVATE ${osd_DIR})
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-#endif(TINYUSDZ_WITH_OPENSUBDIV)
-#
 #if(NOT TINYUSDZ_CXX_EXCEPTIONS)
 #  if(MSVC)
 #    target_compile_options(tinyusdz_object PUBLIC /EHs-c-)
@@ -1854,17 +1686,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_QJS")
   endif(TINYUSDZ_WITH_QJS)
 
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-  if(TINYUSDZ_WITH_TINYSUBDIV)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_TINYSUBDIV")
-  endif(TINYUSDZ_WITH_TINYSUBDIV)
-
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
@@ -2096,16 +1917,6 @@ if(TINYUSDZ_BUILD_BENCHMARKS)
   target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET}
                         PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
-                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-  if(TINYUSDZ_WITH_TINYSUBDIV)
-    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
-                               PRIVATE "TINYUSDZ_USE_TINYSUBDIV")
-  endif(TINYUSDZ_WITH_TINYSUBDIV)
-
 endif(TINYUSDZ_BUILD_BENCHMARKS)
 
 # [VisualStudio]
@@ -2139,11 +1950,6 @@ if(TINYUSDZ_BUILD_TESTS)
                                     ${PROJECT_SOURCE_DIR}/tests)
   target_link_libraries(${TINYUSDZ_TEST_TARGET}
                         PRIVATE ${TINYUSDZ_TARGET_STATIC})
-
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_TEST_TARGET}
-                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
 
   #
   # unit tester
@@ -2445,18 +2251,52 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
-  # Subdivision comparison (TinySubdiv vs OpenSubdiv)
+  # tinysubdiv (tsd) feature tests
   #
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    add_executable(feat-subdiv-compare
-      tests/feat/subdiv-compare/subdiv-compare.cc)
-    add_sanitizers(feat-subdiv-compare)
-    target_link_libraries(feat-subdiv-compare PRIVATE
-      tinyusdz_subdiv ${TINYUSDZ_TARGET_STATIC})
-    target_include_directories(feat-subdiv-compare PRIVATE
+  add_executable(feat-subdiv tests/feat/subdiv/test-subdiv.cc)
+  add_sanitizers(feat-subdiv)
+  target_link_libraries(feat-subdiv PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_include_directories(feat-subdiv PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  add_test(NAME feat-subdiv COMMAND feat-subdiv
+           WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+  # Opt-in: verify tsd against an OpenSubdiv source checkout.
+  # The required sdc/vtr/far sources are compiled directly from
+  # ${OpenSubdiv_ROOT}; no pre-built OpenSubdiv needed.
+  if(TINYUSDZ_TSD_VERIFY_WITH_OSD)
+    if(NOT OpenSubdiv_ROOT)
+      message(FATAL_ERROR
+              "TINYUSDZ_TSD_VERIFY_WITH_OSD requires OpenSubdiv_ROOT to point "
+              "to an OpenSubdiv source checkout.")
+    endif()
+    add_library(tsd_osd_ref STATIC
+      ${OpenSubdiv_ROOT}/opensubdiv/sdc/typeTraits.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/sdc/crease.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/fvarLevel.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/fvarRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/level.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/quadRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/refinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/sparseSelector.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/triRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/error.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyDescriptor.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyRefiner.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyRefinerFactory.cpp)
+    target_include_directories(tsd_osd_ref SYSTEM PUBLIC ${OpenSubdiv_ROOT})
+    target_compile_features(tsd_osd_ref PUBLIC cxx_std_14)
+    set_target_properties(tsd_osd_ref PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_sanitizers(tsd_osd_ref)
+
+    add_executable(feat-subdiv-verify tests/feat/subdiv/subdiv-verify-osd.cc)
+    add_sanitizers(feat-subdiv-verify)
+    target_link_libraries(feat-subdiv-verify PRIVATE
+      tsd_osd_ref ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-subdiv-verify PRIVATE
       ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-subdiv-compare COMMAND feat-subdiv-compare
+    add_test(NAME feat-subdiv-verify COMMAND feat-subdiv-verify
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(feat-subdiv-verify PROPERTIES LABELS "osd-verify")
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

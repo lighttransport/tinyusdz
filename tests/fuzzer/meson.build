@@ -213,15 +213,6 @@ executable('fuzz_stb_image',
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
-executable('fuzz_subdiv_tinyusdz',
-  'subdiv_tinyusdz_fuzzmain.cc',
-  '../../src/subdivision.cc',
-  install: true,
-  include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1',
-              '-DTINYUSDZ_WITH_TINYSUBDIV'],
-  link_args : '-fsanitize=address,fuzzer' )
-
 executable('fuzz_lz4_null_deref',
   'lz4_null_deref_fuzzmain.cc',
   '../../src/lz4/lz4.c',

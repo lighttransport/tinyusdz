@@ -169,7 +169,7 @@ cd python && python3 -m pytest tests/ -q
 - `TINYUSDZ_WITH_TYDRA=ON` - Tydra framework (default ON)
 - `TINYUSDZ_WITH_EXR=ON` - EXR/HDR texture support
 - `TINYUSDZ_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
-- `TINYUSDZ_WITH_OPENSUBDIV=ON` - Subdivision surfaces
+- `TINYUSDZ_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
 
 ## Testing
 

@@ -29,7 +29,6 @@ opt_audio = get_option('audio')
 opt_zstd = get_option('zstd')
 opt_pxr_compat_api = get_option('pxr_compat_api')
 opt_usdfbx = get_option('usdfbx')
-opt_opensubdiv = get_option('opensubdiv')
 opt_meshopt = get_option('meshopt')
 opt_alac_audio = get_option('alac_audio')
 opt_mcp_server = get_option('mcp_server')
@@ -86,9 +85,6 @@ if opt_tydra
 endif
 if opt_zstd
   tinyusdz_defines += '-DTINYUSDZ_WITH_ZSTD_COMPRESSION'
-endif
-if opt_opensubdiv
-  tinyusdz_defines += '-DTINYUSDZ_WITH_OPENSUBDIV'
 endif
 if opt_meshopt
   tinyusdz_defines += '-DTINYUSDZ_WITH_MESHOPT'
@@ -514,54 +510,14 @@ if (opt_exr or get_option('usdmtlx')) and not opt_system_zlib
 endif
 
 # ============================================================================
-# OpenSubdiv sources
+# tinysubdiv (tsd) sources — dependency-free subdivision surfaces, always built
 # ============================================================================
 
-osd_inc = []
-if opt_opensubdiv
-  osd_dir = 'src/osd'
-  tinyusdz_sources += files('src/subdiv.cc')
-  osd_sources = files(
-    osd_dir / 'opensubdiv/far/bilinearPatchBuilder.cpp',
-    osd_dir / 'opensubdiv/far/catmarkPatchBuilder.cpp',
-    osd_dir / 'opensubdiv/far/error.cpp',
-    osd_dir / 'opensubdiv/far/loopPatchBuilder.cpp',
-    osd_dir / 'opensubdiv/far/patchBasis.cpp',
-    osd_dir / 'opensubdiv/far/patchBuilder.cpp',
-    osd_dir / 'opensubdiv/far/patchDescriptor.cpp',
-    osd_dir / 'opensubdiv/far/patchMap.cpp',
-    osd_dir / 'opensubdiv/far/patchTable.cpp',
-    osd_dir / 'opensubdiv/far/patchTableFactory.cpp',
-    osd_dir / 'opensubdiv/far/ptexIndices.cpp',
-    osd_dir / 'opensubdiv/far/stencilTable.cpp',
-    osd_dir / 'opensubdiv/far/stencilTableFactory.cpp',
-    osd_dir / 'opensubdiv/far/stencilBuilder.cpp',
-    osd_dir / 'opensubdiv/far/topologyDescriptor.cpp',
-    osd_dir / 'opensubdiv/far/topologyRefiner.cpp',
-    osd_dir / 'opensubdiv/far/topologyRefinerFactory.cpp',
-    osd_dir / 'opensubdiv/osd/cpuEvaluator.cpp',
-    osd_dir / 'opensubdiv/osd/cpuKernel.cpp',
-    osd_dir / 'opensubdiv/osd/cpuPatchTable.cpp',
-    osd_dir / 'opensubdiv/osd/cpuVertexBuffer.cpp',
-    osd_dir / 'opensubdiv/sdc/typeTraits.cpp',
-    osd_dir / 'opensubdiv/sdc/crease.cpp',
-    osd_dir / 'opensubdiv/vtr/fvarLevel.cpp',
-    osd_dir / 'opensubdiv/vtr/fvarRefinement.cpp',
-    osd_dir / 'opensubdiv/vtr/level.cpp',
-    osd_dir / 'opensubdiv/vtr/quadRefinement.cpp',
-    osd_dir / 'opensubdiv/vtr/refinement.cpp',
-    osd_dir / 'opensubdiv/vtr/sparseSelector.cpp',
-    osd_dir / 'opensubdiv/vtr/triRefinement.cpp',
-  )
-
-  osd_lib = static_library('tinyusdz_osd',
-    osd_sources,
-    include_directories: include_directories('src/osd'),
-    pic: true,
-  )
-  extra_link_libs += osd_lib
-  osd_inc = [include_directories('src/osd')]
-endif
+tinyusdz_sources += files(
+  'src/tsd/tsd-validate.cc',
+  'src/tsd/tsd-topology.cc',
+  'src/tsd/tsd-refine.cc',
+)
 
 # ============================================================================
 # WAMR sources
@@ -661,7 +617,7 @@ endif
 # Main static library
 # ============================================================================
 
-all_inc = [tinyusdz_inc] + osd_inc + wamr_inc
+all_inc = [tinyusdz_inc] + wamr_inc
 if opt_geogram
   all_inc += include_directories('src/external/geogram')
 endif

@@ -9,7 +9,6 @@ mkdir ${builddir}
 cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DTINYUSDZ_WITH_OPENSUBDIV=0 \
   -DTINYUSDZ_WITH_AUDIO=0 \
   -DTINYUSDZ_WITH_EXR=0 \
   -DTINYUSDZ_WITH_MODULE_USDA_READER=1 \
