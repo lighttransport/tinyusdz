@@ -100,11 +100,13 @@ Landed so far:
   `ExpandArcs` composes each arc field once across the site via `MergeArcField`
   (AOUSD SdfListOp weakest→strongest: explicit-replace / prepend / append /
   delete / dedup), in LIVRPS order. The USDA writer re-emits the authored
-  qualifier (was always `prepend`). Tests: specialize chain, cross-layer
-  delete + explicit-replace, writer fidelity. **Deferred:** crate reader/writer
-  list-op mapping (the crate ListOp arrives already flattened — needs an
-  upstream ListOp `Value` variant; USDC arcs are treated as explicit
-  cross-layer). doc/pcp.md has the implementation-status note + relocates scope.
+  qualifier (was always `prepend`), and the crate (USDC) writer/reader preserve
+  it via a companion `<arc>_listOp` token[] field (the flat token[] still
+  carries the within-spec effective list, so the change is additive). Tests:
+  specialize chain, cross-layer delete + explicit-replace, USDA writer fidelity,
+  USDC edit round-trip. doc/pcp.md has the implementation-status note +
+  relocates scope. Remaining knob: whether to default `apply_list_ops` on after
+  a corpus review.
 - **Phase 10 (M9)** — `Cache::ComposePrim(path)` composes (and caches) one prim
   on first access, reusing BuildStageRec's SourcesForPath + ComposeInto step
   without materializing the whole stage; `ComposedChildNames(path)` for lazy
@@ -120,11 +122,17 @@ Landed so far:
   by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
   `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
 
-Remaining follow-up: crate-side list-op fidelity (reader/writer mapping of
-crate ListOp sublists — needs an upstream ListOp `Value` variant), and
-deciding whether to default `apply_list_ops` on after a corpus review. The
-core 10-phase roadmap is otherwise complete. The sections below are the
-original spec.
+`apply_list_ops` stays **default OFF (opt-in)**. Corpus-diff review (594 files;
+418 compose under both flag states, 176 fail identically regardless of the flag):
+**0 files differ in flattened output and 0 change compose success** — flipping
+the default is regression-free, but the corpus has **no file combining
+subLayers + arcs**, so it gives no positive coverage of the cross-layer
+explicit-replace/delete behavior the flag changes (that path is validated only
+by `test_cross_layer_listops`). Since defaulting it on would shift a common-case
+semantic (a bare arc list in a stronger layer replacing a weaker one) with no
+real cross-layer asset to confirm expectations, it remains opt-in pending
+cross-layer fixtures / a pxrUSD comparison. **The 10-phase roadmap is
+complete.** The sections below are the original spec.
 
 Goals, in priority order:
 

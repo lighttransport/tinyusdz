@@ -125,9 +125,11 @@ strong-to-weak list of arcs.
 > arc in two sublayers expands twice (redundant nodes, same values). With
 > `CompositionOptions::apply_list_ops` (opt-in), composition instead merges each
 > arc field once across the site weakest→strongest per AOUSD SdfListOp rules
-> (explicit-replace / prepend / append / delete / dedup), in LIVRPS order.
-> *Remaining:* the crate (USDC) reader/writer still flatten list-ops (USDC arcs
-> are treated as explicit cross-layer), pending an upstream ListOp value type.
+> (explicit-replace / prepend / append / delete / dedup), in LIVRPS order. The
+> crate (USDC) writer/reader preserve the qualifier via a companion
+> `<arc>_listOp` token[] field (the flat token[] carries the within-spec
+> effective list). *Remaining knob:* whether to default `apply_list_ops` on
+> after a corpus review.
 >
 > **Relocates scope (next).** Relocates are applied as a *same-parent namespace
 > rename only*: a composed source `/A/B` may be renamed to `/A/C` (same parent
