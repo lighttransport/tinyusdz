@@ -227,6 +227,12 @@ endif()
 option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next (experimental; excluded from main regression)" OFF)
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
+    # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
+    # would compile those out and make the tests vacuous. Re-enable asserts for
+    # everything defined below (directory-scoped; -UNDEBUG is appended after the
+    # build-type flags so it wins). The library above keeps its NDEBUG/-O flags.
+    add_compile_options(-UNDEBUG)
+
     add_executable(test_tinyusdz_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_next.cc
     )
