@@ -700,11 +700,60 @@ void test_roundtrip_half_arrays() {
   std::cout << "  half array roundtrip passed!\n\n";
 }
 
+// Phase 7 S5: arc list-op qualifiers survive a USDC write -> read cycle via the
+// companion `<arc>_listOp` token[] fields. The within-spec effective list (the
+// `references` token[]) and the ArcEdit (prepend/append/delete) both round-trip.
+void test_roundtrip_arc_listops() {
+  std::cout << "Testing arc list-op crate roundtrip...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Scope");
+  // Within-spec effective list (= prepend B), plus the raw edit: prepend </B>,
+  // delete </A>.
+  b.current()->meta().references.push_back("</B>");
+  {
+    ArcEdit& e = b.current()->meta().ensure_arc_edits().references;
+    e.is_explicit = false;
+    e.prepended.push_back("</B>");
+    e.deleted.push_back("</A>");
+  }
+  // A bare (explicit) inherits list must NOT gain a companion field.
+  b.current()->meta().inherits.push_back("</_class_X>");
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of arc list-ops failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+  assert(p);
+
+  // The within-spec effective list round-trips.
+  assert(p->meta().references.size() == 1 && p->meta().references[0] == "</B>");
+  // The non-explicit edit round-trips.
+  const ArcListOpEdits* ed = p->meta().arc_edits();
+  assert(ed && "references edit must survive the crate roundtrip");
+  assert(!ed->references.is_explicit);
+  assert(ed->references.prepended.size() == 1 &&
+         ed->references.prepended[0] == "</B>");
+  assert(ed->references.deleted.size() == 1 &&
+         ed->references.deleted[0] == "</A>");
+  // Bare inherits: no companion field, so its edit stays explicit (default).
+  assert(ed->inherits.is_explicit && ed->inherits.prepended.empty());
+  std::cout << "  arc list-op crate roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
   try {
     test_half_conversion();
+    test_roundtrip_arc_listops();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
