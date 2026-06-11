@@ -68,12 +68,13 @@ struct CompositionOptions {
   bool detect_instances = true;    // group instanceable prims into prototypes.
 
   // Phase 7 (S5): apply cross-layer list-op merging when gathering a site's
-  // composition arcs. With this off (default), each spec's arcs are expanded
-  // independently (an arc authored identically in two sublayers expands twice).
-  // With it on, identical arcs across the site's specs are de-duplicated so the
-  // arc is expanded once. (Full cross-layer prepend/append/delete/explicit
-  // semantics over a ListOp representation is a further step.)
-  bool apply_list_ops = false;
+  // composition arcs. Default ON (AOUSD-conformant): each arc field is composed
+  // once across the site's specs weakest->strongest per SdfListOp rules
+  // (explicit-replace / prepend / append / delete / dedup) -- validated to match
+  // pxrUSD's flatten on cross-layer delete/explicit cases. Set false for the
+  // legacy behavior (each spec's arcs expanded independently, i.e. strong-first
+  // concatenation; an identically-authored arc in two sublayers expands twice).
+  bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
