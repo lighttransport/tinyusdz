@@ -38,8 +38,6 @@ option('module_usdc_writer', type: 'boolean', value: true,
 # -- Optional features (default OFF) --
 option('usdfbx', type: 'boolean', value: false,
        description: 'Build with usdFbx support (import FBX)')
-option('opensubdiv', type: 'boolean', value: false,
-       description: 'Build with OpenSubdiv support')
 option('meshopt', type: 'boolean', value: false,
        description: 'Build with meshoptimizer support')
 option('alac_audio', type: 'boolean', value: false,
