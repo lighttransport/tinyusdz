@@ -96,6 +96,10 @@ struct UsdzConvertOptions {
   // unmodified textures are copied through byte-for-byte.
   bool reencode{true};
 
+  // Worker threads for texture decode/resize/encode. 0 = auto
+  // (hardware_concurrency), 1 = sequential.
+  int num_threads{0};
+
   // Output container format (USDZ, USDC, or USDA).
   OutputFormat output_format{OutputFormat::USDZ};
 

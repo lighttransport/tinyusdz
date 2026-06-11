@@ -74,6 +74,10 @@ Convert options:
                            (-o); falls back to buffering otherwise.
   --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
+  --texture-codec <wasm|js>  Texture pipeline: wasm (default, sequential) or
+                           js (PNG via worker_threads pool + pngjs/node zlib,
+                           parallel; non-PNG falls back to wasm)
+  --texture-jobs <N>       Worker threads for --texture-codec js (default: cores-1)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
   -h, --help               Show this help
@@ -117,6 +121,11 @@ function parseArgs() {
     // (or --no-stream-write) disables it.
     streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
+    // 'wasm' (default): textures go through the single-threaded WASM
+    // convertImage. 'js': PNG work runs on a worker_threads pool (pngjs +
+    // node:zlib), in parallel; non-PNG textures still fall back to WASM.
+    textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'wasm',
+    textureJobs: 0,  // 0 = cpu count - 1
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -143,6 +152,8 @@ function parseArgs() {
     else if (a === '--no-stream-textures') o.streamTextures = false;
     else if (a === '--stream-write') o.streamWrite = true;
     else if (a === '--no-stream-write') o.streamWrite = false;
+    else if (a === '--texture-codec') o.textureCodec = args[++i];
+    else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -286,29 +297,50 @@ async function main() {
       }
     : undefined;
 
-  const { usdz, streamedToSink, stats } = await convertFolderToUSDZ(native, assetMap, {
-    rootPath: rootRel,
-    maxTextureSize: o.resize,
-    resizeColorspace: o.resizeColorspace,
-    targetTextureBytes: o.targetSize,
-    fitStrategy: o.fitStrategy,
-    fitMinTextureSize: o.fitMinSize,
-    fitMinQuality: o.fitMinQuality,
-    reencode: o.reencode,
-    textureFormat: o.textureFormat,
-    rootLayerFormat: o.rootLayerFormat,
-    arkitCompatible: o.arkitCompatible,
-    flatten: o.flatten,
-    pngEncoder: o.pngEncoder,
-    jpegQuality: o.jpegQuality,
-    maxUsdcMb: o.maxUsdcMb,
-    maxMemMb: o.maxMemMb,
-    pipeline: o.pipeline,
-    streamTextures: o.streamTextures,
-    streamWrite: o.streamWrite,
-    zipSink,
-    log,
-  });
+  // --texture-codec js: PNG decode/resize/encode on a worker_threads pool
+  // (pngjs + node:zlib), parallel across textures. Non-PNG inputs fall back
+  // to the WASM convertImage path inside convertFolderToUSDZ.
+  let texturePool = null;
+  if (o.textureCodec === 'js') {
+    const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
+    texturePool = createNodeTextureProcessor({ concurrency: o.textureJobs || 0 });
+    log(`texture codec: js (${texturePool.concurrency} worker(s))`);
+  } else if (o.textureCodec && o.textureCodec !== 'wasm') {
+    console.error(`--texture-codec must be wasm or js (got '${o.textureCodec}')`);
+    process.exit(1);
+  }
+
+  let convertResult;
+  try {
+    convertResult = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: rootRel,
+      maxTextureSize: o.resize,
+      resizeColorspace: o.resizeColorspace,
+      targetTextureBytes: o.targetSize,
+      fitStrategy: o.fitStrategy,
+      fitMinTextureSize: o.fitMinSize,
+      fitMinQuality: o.fitMinQuality,
+      reencode: o.reencode,
+      textureFormat: o.textureFormat,
+      rootLayerFormat: o.rootLayerFormat,
+      arkitCompatible: o.arkitCompatible,
+      flatten: o.flatten,
+      pngEncoder: o.pngEncoder,
+      jpegQuality: o.jpegQuality,
+      maxUsdcMb: o.maxUsdcMb,
+      maxMemMb: o.maxMemMb,
+      pipeline: o.pipeline,
+      streamTextures: o.streamTextures,
+      streamWrite: o.streamWrite,
+      textureProcessor: texturePool ? texturePool.processor : undefined,
+      textureConcurrency: texturePool ? texturePool.concurrency : 0,
+      zipSink,
+      log,
+    });
+  } finally {
+    if (texturePool) texturePool.destroy();
+  }
+  const { usdz, streamedToSink, stats } = convertResult;
 
   const statLine = `root: ${stats.rootPath}, textures: ${stats.textures}, ` +
     `resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
