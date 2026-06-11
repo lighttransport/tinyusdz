@@ -184,6 +184,60 @@ static void test_compute_prim_index() {
   std::cout << "  OK" << std::endl;
 }
 
+// Phase 10: Cache::ComposePrim lazily composes one prim (reusing the same
+// source-merge as BuildStage) and must agree with the eagerly-built stage on
+// type, properties, and child names -- without ever calling BuildStage.
+static void test_compose_prim_lazy() {
+  std::cout << "test_compose_prim_lazy..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  // Reference stage built eagerly.
+  auto root_a = BuildRootLayer();
+  auto oa = pcp::Cache::Open(resolver, root_a);
+  assert(oa);
+  pcp::Cache eager = std::move(*oa);
+  Stage stage;
+  assert(eager.BuildStage(&stage, &warn, &err));
+
+  // Lazy cache: never BuildStage'd.
+  auto root_b = BuildRootLayer();
+  auto ob = pcp::Cache::Open(resolver, root_b);
+  assert(ob);
+  pcp::Cache lazy = std::move(*ob);
+
+  // /World/A: type "Mesh" + "size" both come through the reference, lazily.
+  const PrimSpec *a = lazy.ComposePrim(Path("/World/A"), &warn, &err);
+  assert(a && "ComposePrim(/World/A) failed");
+  UsdPrim sa = stage.GetPrimAtPath("/World/A");
+  assert(a->type_name() == sa.GetTypeName() && a->type_name() == "Mesh");
+  assert((a->property_value("size") != nullptr) ==
+         (sa.GetPropertyValue("size") != nullptr));
+  assert(a->property_value("size") != nullptr);
+
+  // /World/A/Inner: a child reached through the reference composes lazily too.
+  const PrimSpec *inner = lazy.ComposePrim(Path("/World/A/Inner"), &warn, &err);
+  assert(inner && inner->type_name() == "Sphere");
+
+  // Composed child names match the eager stage for this non-instance prim.
+  std::vector<std::string> kids =
+      lazy.ComposedChildNames(Path("/World/A"), &warn, &err);
+  bool has_inner = false;
+  for (const std::string &k : kids) if (k == "Inner") has_inner = true;
+  assert(has_inner && "ComposedChildNames missed the referenced child");
+
+  // Caching: a second compose returns the same borrowed pointer.
+  assert(lazy.ComposePrim(Path("/World/A"), &warn, &err) == a);
+  // A path with no opinions composes to nullptr.
+  assert(lazy.ComposePrim(Path("/Nope"), &warn, &err) == nullptr);
+
+  // Invalidate drops the lazily-composed spec (recompose yields a fresh ptr).
+  lazy.Invalidate(Path("/World/A"));
+  const PrimSpec *a2 = lazy.ComposePrim(Path("/World/A"), &warn, &err);
+  assert(a2 && a2 != a && "Invalidate must drop the composed spec");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_build_stage() {
   std::cout << "test_build_stage..." << std::endl;
   AssetResolver resolver;
@@ -1639,6 +1693,7 @@ int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
   test_prototype_order_independent();
+  test_compose_prim_lazy();
   test_build_stage();
   test_invalidate();
   test_ancestral_compute();
