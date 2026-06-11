@@ -5599,6 +5599,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::ReferencesCompositionOptions references_options;
     references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    references_options.layer_cache = &compose_layer_cache_;
     // InPlace: consumes layer_ (no internal arcs) instead of holding the
     // input + output copies concurrently — halves the peak of the pass.
     if (!tinyusdz::CompositeReferencesInPlace(resolver,
@@ -5639,6 +5640,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::PayloadCompositionOptions payload_options;
     payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    payload_options.layer_cache = &compose_layer_cache_;
     if (!tinyusdz::CompositePayloadInPlace(resolver,
             std::make_unique<tinyusdz::Layer>(std::move(layer_)),
             &composed_layer_, &warn_, &error_, payload_options)) {
@@ -5799,6 +5801,7 @@ class TinyUSDZLoaderNative {
 
   void clearAssets() {
     em_resolver_.clear();
+    compose_layer_cache_.clear();
   }
 
   /// Free the pre-composition source layer. After composition converges the
@@ -5831,6 +5834,7 @@ class TinyUSDZLoaderNative {
     // Clear layers
     layer_ = tinyusdz::Layer();
     composed_layer_ = tinyusdz::Layer();
+    compose_layer_cache_.clear();
 
     // Clear USDZ asset
     usdz_asset_ = tinyusdz::USDZAsset();
@@ -6827,6 +6831,12 @@ class TinyUSDZLoaderNative {
     payload_options.allow_parent_relative_paths =
         allow_parent_relative_asset_paths_;
 
+    // Parse each referenced file once across the whole fixed-point loop; all
+    // arcs to the same file share one copy of the heavy attribute data (COW).
+    std::map<std::string, tinyusdz::Layer> layer_cache;
+    references_options.layer_cache = &layer_cache;
+    payload_options.layer_cache = &layer_cache;
+
     // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
     // fixed point. Each Composite* moves the prior layer into the next.
     {
@@ -7633,6 +7643,9 @@ class TinyUSDZLoaderNative {
   // WASM: the EM resolver is a sandboxed cache (FILESYSTEM=0), so there is no
   // real directory to traverse out of, and USD `../foo.usd` refs are common.
   bool allow_parent_relative_asset_paths_{true};
+  // Parsed-layer cache shared across the JS-driven composeReferences/
+  // composePayload fixed-point loop (cleared by clearAssets()/reset()).
+  std::map<std::string, tinyusdz::Layer> compose_layer_cache_;
 
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine

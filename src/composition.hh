@@ -100,6 +100,15 @@ struct ReferencesCompositionOptions {
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
   bool allow_parent_relative_paths{false};
+
+  // Optional cache of parsed referenced layers (keyed internally by resolved
+  // path + resolution context). Each referenced file is parsed once and its
+  // Layer copied per arc — with the copy-on-write value storage, every
+  // referencing prim then SHARES one copy of the heavy attribute arrays
+  // (UE-export scenes reference the same mesh files thousands of times).
+  // Owned by the caller and typically kept alive across the whole fixed-point
+  // composition loop. nullptr = parse per arc (legacy behavior).
+  std::map<std::string, Layer> *layer_cache{nullptr};
 };
 
 struct PayloadCompositionOptions {
@@ -122,6 +131,9 @@ struct PayloadCompositionOptions {
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
   bool allow_parent_relative_paths{false};
+
+  // See ReferencesCompositionOptions::layer_cache.
+  std::map<std::string, Layer> *layer_cache{nullptr};
 
   ///
   /// Lazy payload loading policy.

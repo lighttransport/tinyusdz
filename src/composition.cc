@@ -391,7 +391,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                const bool error_when_asset_not_found,
                const bool error_when_unsupported_fileformat,
                const bool allow_parent_relative_paths, std::string *warn,
-               std::string *err) {
+               std::string *err,
+               std::map<std::string, Layer> *layer_cache = nullptr) {
   if (!dst_layer) {
     PUSH_ERROR_AND_RETURN(
         "[Internal error]. `dst_layer` output arg is nullptr.");
@@ -475,8 +476,30 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     resolver.add_search_path(base_dir);
   }
 
+  // Parsed-layer cache: keyed by the resolved path plus the resolution
+  // context that gets stamped into the loaded prims (the search paths; the
+  // working path is derived from the resolved file's own directory and is
+  // context-independent). On a hit the Layer COPY shares all heavy attribute
+  // payloads via the copy-on-write value storage.
+  std::string layer_cache_key;
+  bool layer_from_cache = false;
+  Layer cached_layer_local;
+  if (layer_cache) {
+    layer_cache_key = resolved_path;
+    for (const auto &sp : resolver.search_paths()) {
+      layer_cache_key += '\n';
+      layer_cache_key += sp;
+    }
+    auto it = layer_cache->find(layer_cache_key);
+    if (it != layer_cache->end()) {
+      cached_layer_local = it->second;  // COW copy
+      layer_from_cache = true;
+    }
+  }
+
   Asset asset;
-  if (!resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
+  if (!layer_from_cache &&
+      !resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Failed to open asset `{}`.", resolved_path));
   }
@@ -490,6 +513,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   DCOUT("Opened resolved assst: " << resolved_path
                                   << ", asset_path: " << asset_path);
 
+  if (!layer_from_cache) {
   if (IsBuiltinFileFormat(asset_path)) {
     if (IsUSDFileFormat(asset_path) || IsMtlxFileFormat(asset_path)) {
       // ok
@@ -522,11 +546,15 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
   }
 
-  Layer layer;
+  }  // !layer_from_cache (format checks)
+
+  Layer layer = std::move(cached_layer_local);
   std::string _warn;
   std::string _err;
 
-  if (IsUSDFileFormat(asset_path)) {
+  if (layer_from_cache) {
+    // parsed + sublayer-composited copy from the cache; skip the parse.
+  } else if (IsUSDFileFormat(asset_path)) {
     // Pass the RESOLVED (anchored) path so the loaded layer's prims are stamped
     // with the resolved directory as their current-working-path. Using the
     // authored (relative) asset_path here would lose the parent-directory
@@ -588,7 +616,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   // OpenChessSet's *_payload.usd / *.usd), compose those subLayers here so the
   // target's prims are present before the "no prims" check below (matching
   // OpenUSD). Sublayers are resolved relative to this asset's directory.
-  if (IsUSDFileFormat(asset_path) && !layer.metas().subLayers.empty()) {
+  if (!layer_from_cache && IsUSDFileFormat(asset_path) &&
+      !layer.metas().subLayers.empty()) {
     layer.set_asset_resolution_state(
         base_dir.empty() ? resolver.current_working_path() : base_dir,
         resolver.search_paths());
@@ -605,6 +634,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to composite subLayers of `{}`", asset_path));
     }
     layer = std::move(sublayer_composited);
+  }
+
+  if (layer_cache && !layer_from_cache) {
+    // Cache the parsed (and sublayer-composited) layer; later arcs to the
+    // same file take a COW copy instead of re-parsing.
+    (*layer_cache)[layer_cache_key] = layer;
   }
 
   if (_warn.size()) {
@@ -1267,7 +1302,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1380,7 +1416,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1535,7 +1572,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1636,7 +1674,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
