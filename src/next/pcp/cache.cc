@@ -1380,6 +1380,10 @@ struct Cache::Impl {
       if (IsAtOrUnder(it->first, base)) it = composed_children_.erase(it);
       else ++it;
     }
+    // Diagnostics are a per-edit-cycle log: an invalidation begins a fresh
+    // accumulation (matches GetCompositionIssues' contract; also bounds growth
+    // across repeated recompositions). Issues are global, not path-keyed.
+    issues_.clear();
   }
 
   void InvalidateLayer(const std::string &layer_id) {
@@ -1397,6 +1401,7 @@ struct Cache::Impl {
     spec_cache_.clear();
     composed_cache_.clear();  // Phase 10: composed specs read from these sources.
     composed_children_.clear();
+    issues_.clear();  // fresh diagnostics for the recomposition.
     reg_->Drop(layer_id);
   }
 
@@ -1442,6 +1447,7 @@ struct Cache::Impl {
     instances_by_prototype.clear();
     composed_cache_.clear();  // Phase 10
     composed_children_.clear();
+    issues_.clear();  // fresh diagnostics for the recomposition.
   }
 };
 
@@ -1577,9 +1583,9 @@ std::vector<Path> Cache::GetDeferredPayloadPaths() const {
   return out;
 }
 
-const std::vector<Cache::CompositionIssue> &Cache::GetCompositionIssues() const {
+std::vector<Cache::CompositionIssue> Cache::GetCompositionIssues() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
-  return impl_->issues_;
+  return impl_->issues_;  // copy out under the lock (see header)
 }
 void Cache::ClearCompositionIssues() {
   NEXT_PCP_WRITE_LOCK(impl_->api_mu_);

@@ -73,10 +73,13 @@ class Cache {
     std::string message;
   };
 
-  /// All composition issues accumulated since Open (or the last Clear /
-  /// Invalidate). Populated regardless of whether an `err` pointer was passed,
-  /// so callers can inspect typed codes even with `err == nullptr`.
-  const std::vector<CompositionIssue> &GetCompositionIssues() const;
+  /// All composition issues accumulated since Open (or the last
+  /// ClearCompositionIssues / Invalidate / InvalidateLayer / SetLoadRules).
+  /// Populated regardless of whether an `err` pointer was passed, so callers
+  /// can inspect typed codes even with `err == nullptr`. Returned by value: a
+  /// borrowed reference could dangle if a concurrent compose appended to the
+  /// log under TINYUSDZ_NEXT_FINE_LOCKS.
+  std::vector<CompositionIssue> GetCompositionIssues() const;
 
   /// Drop all accumulated composition issues.
   void ClearCompositionIssues();
