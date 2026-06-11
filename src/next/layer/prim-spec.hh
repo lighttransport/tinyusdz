@@ -103,6 +103,7 @@ struct VariantSetData {
 /// append / delete / order lists. Kept so composition can merge a site's specs
 /// across the layer stack and the writer can re-emit the original qualifier.
 struct ArcEdit {
+  bool authored = false;     // true when this arc field authored list-op edits.
   bool is_explicit = true;  // bare list (the common case)
   std::vector<std::string> prepended;
   std::vector<std::string> appended;
@@ -110,8 +111,11 @@ struct ArcEdit {
   std::vector<std::string> ordered;
 
   bool has_qualifiers() const {
-    return !is_explicit || !prepended.empty() || !appended.empty() ||
-           !deleted.empty() || !ordered.empty();
+    return authored && (!is_explicit || !prepended.empty() || !appended.empty() ||
+           !deleted.empty() || !ordered.empty());
+  }
+  bool has_authored_opinion() const {
+    return authored;
   }
 };
 

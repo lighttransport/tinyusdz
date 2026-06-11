@@ -288,7 +288,7 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
         WriteIndent(os, depth + 1, opts.indent);
         os << "]\n";
       };
-      if (!e || e->is_explicit) {
+      if (!e || !e->authored || e->is_explicit) {
         emit("", inl);  // bare/explicit list
       } else {
         emit("prepend ", e->prepended);
@@ -299,6 +299,9 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
     write_arc("references", meta.references,
               edits ? &edits->references : nullptr);
     write_arc("payload", meta.payloads, edits ? &edits->payloads : nullptr);
+    write_arc("inherits", meta.inherits, edits ? &edits->inherits : nullptr);
+    write_arc("specializes", meta.specializes,
+              edits ? &edits->specializes : nullptr);
     WriteIndent(os, depth, opts.indent);
     os << ")";
   }
