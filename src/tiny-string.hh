@@ -5,7 +5,13 @@
 /// Simple but fast string library.
 ///
 
+#pragma once
+
 #include <vector>
+#include <cstddef>
+#include <cstdint>   // SIZE_MAX / UINT64_C used by std::hash<tstring_view>
+#include <functional>
+#include <ostream>
 #include <string>
 #include <memory>
 #include <cstdlib>
@@ -164,11 +170,10 @@ struct tstring_view {
  public:
 
   constexpr tstring_view() {}
-  ~tstring_view() {
-    _s = nullptr;
-  }
+  // No user-provided destructor: a view owns nothing, and a trivial dtor keeps
+  // tstring_view trivially copyable and avoids -Wdeprecated-copy.
 
-  tstring_view(const char *s) { 
+  tstring_view(const char *s) {
     _len = strlen(s);    
     _s = s;
   }
@@ -184,30 +189,65 @@ struct tstring_view {
   tstring_view(const tstring &s) : tstring_view(s.c_str()) { 
   }
 
-  bool operator==(const tstring_view &rhs) {
+  bool operator==(const tstring_view &rhs) const {
     if (_len != rhs.size()) {
       return false;
     }
-
+    const char *rs = rhs.c_str();
     for (size_t i = 0; i < _len; i++) {
-      if (_s[i] != rhs.c_str()[i]) {
+      if (_s[i] != rs[i]) {
         return false;
       }
-    }   
-    
+    }
     return true;
   }
 
-  bool operator!=(const tstring_view &rhs) {
+  bool operator!=(const tstring_view &rhs) const {
     return !(*this == rhs);
+  }
+
+  // Lexicographic ordering (byte-wise), for use in ordered containers.
+  bool operator<(const tstring_view &rhs) const {
+    const size_t n = (_len < rhs._len) ? _len : rhs._len;
+    const char *rs = rhs.c_str();
+    for (size_t i = 0; i < n; i++) {
+      const unsigned char a = static_cast<unsigned char>(_s[i]);
+      const unsigned char b = static_cast<unsigned char>(rs[i]);
+      if (a != b) {
+        return a < b;
+      }
+    }
+    return _len < rhs._len;
   }
 
   const char *c_str() const {
     return _s;
   }
 
+  // NOTE: a tstring_view obtained as a *slice* of a larger buffer is NOT
+  // guaranteed to be NUL-terminated at c_str()[size()]. Use size()-aware
+  // operations (==, <, starts_with, ...). Do not hand c_str() to length-
+  // agnostic C functions (strlen, printf("%s"), std::string(const char*));
+  // build an owned copy with tinyusdz::to_string(view) instead.
+  const char *data() const {
+    return _s;
+  }
+
+  bool empty() const {
+    return _len == 0;
+  }
+
   size_t size() const {
     return _len;
+  }
+
+  // Implicit owning copy to std::string. This is a migration-compatibility
+  // convenience so a view can be passed where a std::string is expected
+  // (constructors, concatenation, ostream, map keys). It ALLOCATES — hot paths
+  // should use the size-aware view operations (==, <, starts_with, ...) which
+  // do not convert. Safe for interior slices (uses size, not NUL-termination).
+  operator std::string() const {
+    return _s ? std::string(_s, _len) : std::string();
   }
 
   // C++20-like API
@@ -273,39 +313,35 @@ struct tstring_view {
     return true;
   }
 
-  bool contains( const char *s) const {
-    size_t s_size = strlen(s);
-    if (s_size == 0) {
+  // Size-aware substring search (checks every candidate position, unlike a
+  // first-char-only scan). `s` need not be NUL-terminated; `n` is its length.
+  bool contains(const char *s, size_t n) const {
+    if (n == 0) {
       return false;
     }
-
-    if (_len < s_size) {
+    if (_len < n) {
       return false;
     }
-
-    size_t i_s{0};
-    for (size_t i = 0; i < _len; i++) {
-      if (_s[i] == s[0]) {
-        i_s = i;
-        break;
+    for (size_t i = 0; i + n <= _len; i++) {
+      size_t j = 0;
+      for (; j < n; j++) {
+        if (_s[i + j] != s[j]) {
+          break;
+        }
+      }
+      if (j == n) {
+        return true;
       }
     }
-
-    if (_len < i_s + s_size) {
-      return false; 
-    }
-
-    for (size_t i = i_s; i < i_s + s_size; i++) {
-      if (_s[i] != s[i - i_s]) {
-        return false;
-      }
-    }   
-
-    return true;
+    return false;
   }
 
-  bool contains( const tstring_view &sv) const {
-    return contains(sv.c_str());
+  bool contains(const char *s) const {
+    return contains(s, strlen(s));
+  }
+
+  bool contains(const tstring_view &sv) const {
+    return contains(sv.c_str(), sv.size());
   }
 
  private:
@@ -313,6 +349,62 @@ struct tstring_view {
   const char *_s{nullptr}; // end with '\0'
   size_t _len{0};
 };
+
+// Comparisons against const char* / std::string in both operand orders.
+// (view == "x" and view == std::string already work via the implicit
+// tstring_view constructors; these add the left-hand-side forms and !=.)
+// Exact-match overloads in both operand orders. With the implicit
+// operator std::string() above these are required to keep comparisons
+// unambiguous (an exact overload outranks both the implicit string->view and
+// view->string conversions).
+inline bool operator==(const tstring_view &a, const char *b) { return a == tstring_view(b); }
+inline bool operator==(const char *a, const tstring_view &b) { return tstring_view(a) == b; }
+inline bool operator!=(const tstring_view &a, const char *b) { return !(a == tstring_view(b)); }
+inline bool operator!=(const char *a, const tstring_view &b) { return !(tstring_view(a) == b); }
+inline bool operator==(const tstring_view &a, const std::string &b) { return a == tstring_view(b); }
+inline bool operator==(const std::string &a, const tstring_view &b) { return tstring_view(a) == b; }
+inline bool operator!=(const tstring_view &a, const std::string &b) { return !(a == tstring_view(b)); }
+inline bool operator!=(const std::string &a, const tstring_view &b) { return !(tstring_view(a) == b); }
+inline bool operator<(const tstring_view &a, const std::string &b) { return a < tstring_view(b); }
+inline bool operator<(const std::string &a, const tstring_view &b) { return tstring_view(a) < b; }
+inline bool operator<(const tstring_view &a, const char *b) { return a < tstring_view(b); }
+inline bool operator<(const char *a, const tstring_view &b) { return tstring_view(a) < b; }
+
+// Owning copy of a view (use when a NUL-terminated std::string is required,
+// e.g. passing a slice view to a C API or storing it).
+inline std::string to_string(const tstring_view &v) {
+  return std::string(v.c_str(), v.size());
+}
+
+// Stream + concatenation as non-template overloads. std::string's operator+/<<
+// are function templates, so template deduction (which ignores the implicit
+// std::string conversion) would otherwise reject a tstring_view operand.
+inline std::ostream &operator<<(std::ostream &os, const tstring_view &v) {
+  return os.write(v.c_str(), static_cast<std::streamsize>(v.size()));
+}
+inline std::string operator+(const std::string &a, const tstring_view &b) {
+  std::string s(a);
+  s.append(b.c_str(), b.size());
+  return s;
+}
+inline std::string operator+(const tstring_view &a, const std::string &b) {
+  std::string s;
+  s.reserve(a.size() + b.size());
+  s.append(a.c_str(), a.size());
+  s.append(b);
+  return s;
+}
+inline std::string operator+(const char *a, const tstring_view &b) {
+  std::string s(a);
+  s.append(b.c_str(), b.size());
+  return s;
+}
+inline std::string operator+(const tstring_view &a, const char *b) {
+  std::string s;
+  s.append(a.c_str(), a.size());
+  s.append(b);
+  return s;
+}
 
 // Simple std::ostringstream like class
 class tostringstream
@@ -386,3 +478,36 @@ bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::m
 }
 
 } // namespace tinyusdz
+
+namespace std {
+
+// Hash a tstring_view by its bytes (FNV-1a), so views can key unordered
+// containers. Equal byte sequences hash equally regardless of origin buffer.
+// Uses 64-bit FNV-1a on 64-bit size_t platforms and 32-bit FNV-1a on 32-bit
+// size_t platforms (e.g. wasm32). The 64-bit constant 0xCBF29CE484222325
+// (= 14695981039346656037) does NOT fit in a 32-bit size_t, so it must not
+// be used as-is on 32-bit platforms (suppresses -Wconstant-conversion).
+template <>
+struct hash<tinyusdz::tstring_view> {
+  size_t operator()(const tinyusdz::tstring_view &v) const noexcept {
+#if SIZE_MAX >= UINT64_C(0xFFFFFFFFFFFFFFFF)
+    // 64-bit FNV-1a
+    constexpr size_t kFnvOffsetBasis = static_cast<size_t>(UINT64_C(0xCBF29CE484222325));
+    constexpr size_t kFnvPrime = static_cast<size_t>(UINT64_C(0x100000001B3));
+#else
+    // 32-bit FNV-1a
+    constexpr size_t kFnvOffsetBasis = static_cast<size_t>(0x811C9DC5);
+    constexpr size_t kFnvPrime = static_cast<size_t>(0x01000193);
+#endif
+    size_t h = kFnvOffsetBasis;
+    const char *p = v.c_str();
+    const size_t n = v.size();
+    for (size_t i = 0; i < n; i++) {
+      h ^= static_cast<unsigned char>(p[i]);
+      h *= kFnvPrime;
+    }
+    return h;
+  }
+};
+
+}  // namespace std

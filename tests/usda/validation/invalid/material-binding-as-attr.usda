@@ -1,0 +1,19 @@
+#usda 1.0
+# EXPECT: shade.material.binding
+(
+    doc = "material:binding authored as an attribute instead of a relationship. Expect ERROR shade.material.binding (shade group)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "geom"
+    {
+        # `material:binding` must be a relationship, not an attribute.
+        custom token material:binding = "/World/mat"
+    }
+
+    def Material "mat"
+    {
+    }
+}

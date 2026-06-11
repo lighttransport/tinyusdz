@@ -32,6 +32,9 @@ constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 // MaterialX node definition IDs (as used in info:id attribute)
 constexpr auto kNdOpenPbrSurfaceSurfaceshader = "ND_open_pbr_surface_surfaceshader";
 constexpr auto kNdStandardSurfaceSurfaceshader = "ND_standard_surface_surfaceshader";
+// MaterialX's UsdPreviewSurface node definition — same inputs as the native
+// UsdPreviewSurface, so it is reconstructed into a UsdPreviewSurface value.
+constexpr auto kNdUsdPreviewSurfaceSurfaceshader = "ND_UsdPreviewSurface_surfaceshader";
 
 // MaterialX Light Shader Nodes
 constexpr auto kMtlxUniformEdf = "uniform_edf";
@@ -228,7 +231,11 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> subsurface{0.0f};
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
       value::color3f{1.0f, 1.0f, 1.0f}};
-  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{1.0f};
+  // Autodesk standard_surface defines subsurface_radius as color3 (per-channel
+  // mean free path), so accept color3f — authoring it as such must not fail the
+  // whole shader reconstruction.
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{
+      value::color3f{1.0f, 1.0f, 1.0f}};
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
 

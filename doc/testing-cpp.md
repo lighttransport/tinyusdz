@@ -40,6 +40,14 @@ Relevant options in the current build configuration:
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
+> **Scope:** The experimental `next` module (`src/next/`, `tinyusdz_next`) and
+> its tests under `tests/next/` are **not** part of this regression suite. They
+> are a standalone CMake project, are not built by the main `build/` (so they do
+> not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
+> treat `next` results as part of the regression gate. See
+> [Experimental `next` library tests](#experimental-next-library-tests) for how
+> to build and run them on demand.
+
 The full regression pass has two parts:
 
 1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
@@ -152,6 +160,65 @@ ctest -R roundtrip --output-on-failure
 
 # Exclude benchmark-labeled tests
 ctest --output-on-failure -LE benchmark
+```
+
+## Regression Test Procedure
+
+Use this procedure for merge-level validation, release checks, and refactor hardening:
+
+### 1) CTest matrix (native)
+
+```bash
+cd build
+
+# Native regression gate for parser/roundtrip/unit/feature tests
+ctest --output-on-failure
+
+# Optional focused subsets
+ctest -R unit --output-on-failure
+ctest -R roundtrip --output-on-failure
+ctest -R feat --output-on-failure
+```
+
+### 2) Feature binaries (target-level)
+
+Run feature targets directly when an individual behavior needs isolation:
+
+```bash
+./build/feat-mtlx-parse
+./build/feat-mtlx-import
+./build/feat-mtlx-export
+./build/feat-variant-converter
+./build/feat-variant-applier
+./build/feat-mtlx-grouped-params
+```
+
+### 3) WASM regression checks
+
+For web changes, build and validate the WebAssembly tree:
+
+```bash
+cd web
+emcmake cmake -S . -B build
+cmake --build web/build -j16
+ctest --test-dir web/build --output-on-failure
+```
+
+If your local web build does not register ctest targets, use the web package checks documented by the web frontend pipeline as the functional equivalent.
+
+### 4) Roundtrip comparison against Pixar USD
+
+These checks catch cross-version serialization or compatibility drift:
+
+```bash
+# Batch script for broad coverage
+USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+  bash tests/run-usdcat-compare.sh
+
+# Per-file diff for regression investigation
+node tests/compare-usda.js --detailed-diff \
+  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  tests/usda/somefile.usda
 ```
 
 `bench-parse-opt` is intentionally split into two profiles:
@@ -317,7 +384,7 @@ python3 tests/usdc-writer/usdc-writer-runner.py \
 
 ### tusddiff
 
-`tusddiff` is the Layer-level diff tool built from `examples/usddiff/`. It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DTINYUSDZ_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
 
 ```bash
 # Text diff
@@ -388,6 +455,37 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 ```
 
 ## Standalone and Manual Targets
+
+### Experimental `next` library tests
+
+`next` (`src/next/`, library `tinyusdz_next`) is an **experimental, under-construction**
+rewrite of the core with a new modular architecture. It is intentionally kept
+out of the main regression suite:
+
+- It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
+  `project()`), *not* added by the top-level `CMakeLists.txt`. The default
+  `build/` therefore does not compile it, and none of its tests appear in the
+  `build/` `ctest` run or the Pixar comparison runner.
+- Its tests are gated behind `TINYUSDZ_NEXT_BUILD_TESTS` (**OFF by default**).
+- Treat its results as informational only — **not** a merge/regression gate.
+  Do not wire `next` into the full regression gate until the suite is hardened.
+
+Build and run them on demand in a separate build directory:
+
+```bash
+# Configure the standalone next project with its tests enabled.
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+```
+
+> **Caveat — use a Debug build.** The `tests/next/` programs validate via bare
+> `assert()`. Under `NDEBUG` (i.e. `Release`/`RelWithDebInfo`) `assert(expr)`
+> does not evaluate `expr`, so these tests check nothing — and any side effect
+> placed inside an `assert()` is silently dropped (this previously caused a
+> null-dereference SIGSEGV in `test_usdc_roundtrip` when the `toc`-populating
+> `ParseUSDCBinary()` call was compiled out). Build with `-DCMAKE_BUILD_TYPE=Debug`
+> for meaningful validation, and keep side-effecting calls out of `assert()`.
 
 ### CMake targets not in ctest
 
@@ -582,3 +680,4 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
+- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).

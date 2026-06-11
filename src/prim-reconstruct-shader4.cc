@@ -92,13 +92,15 @@ static bool ParsePrimvarReaderResult(
     std::set<std::string> &table,
     std::pair<const std::string, Property> &prop,
     PrimvarReaderT *preader,
+    bool strict_type_check,
     std::string *err) {
   if (prop.first != "outputs:result" || table.count("outputs:result")) {
     return false;
   }
 
   auto ret = ParseShaderOutputTerminalAttribute(
-      table, prop.first, prop.second, "outputs:result", preader->result);
+      table, prop.first, prop.second, "outputs:result", preader->result,
+      strict_type_check);
   if (ret.code == ParseResult::ResultCode::Success) {
     return true;
   }
@@ -131,14 +133,14 @@ static bool ReconstructPrimvarReaderShaderImpl(
 {
   (void)spec;
   (void)references;
-  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
+    PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
                    preader->fallback)
     PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    if (ParsePrimvarReaderResult(table, prop, preader, err)) {
+    if (ParsePrimvarReaderResult(table, prop, preader,
+                                 options.strict_shader_type_check, err)) {
       continue;
     }
     ADD_PROPERTY(table, prop, PrimvarReaderT, preader->props)

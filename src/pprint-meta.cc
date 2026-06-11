@@ -394,8 +394,41 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   if (meta.has_apiSchemas()) {
     auto schemas = meta.get_apiSchemas();
 
-    // Check if there are any schemas (known or unknown) to print
-    if (schemas.names.size() || schemas.unknownSchemas.size()) {
+    if (schemas.explicitlyEmpty) {
+      // Authored as `apiSchemas = None` (explicit empty list). pxrUSD preserves
+      // this; reproduce it verbatim.
+      ss << pprint::Indent(indent) << "apiSchemas = None\n";
+    } else if (!schemas.authoredOps.empty()) {
+      // Emit the authored SdfTokenListOp verbatim. A single prim may carry
+      // multiple ops (e.g. `delete` + `prepend`); pxrUSD prints them in a
+      // canonical qualifier order, so match that for a stable round-trip.
+      const ListEditQual kOrder[] = {
+          ListEditQual::ResetToExplicit,  // explicit (unqualified) first
+          ListEditQual::Delete, ListEditQual::Add,
+          ListEditQual::Prepend, ListEditQual::Append, ListEditQual::Order};
+      for (ListEditQual qual : kOrder) {
+        for (const auto &op : schemas.authoredOps) {
+          if (op.first != qual) continue;
+          const std::string qualStr = to_string(qual);
+          ss << pprint::Indent(indent);
+          if (!qualStr.empty()) {
+            ss << qualStr << " ";
+          }
+          ss << "apiSchemas = [";
+          bool first = true;
+          for (const auto &item : op.second) {
+            if (!first) ss << ", ";
+            first = false;
+            ss << "\"" << item.first;  // schema name (raw)
+            if (!item.second.empty()) {
+              ss << ":" << item.second;  // instance name
+            }
+            ss << "\"";
+          }
+          ss << "]\n";
+        }
+      }
+    } else if (schemas.names.size() || schemas.unknownSchemas.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
          << " apiSchemas = [";
 
@@ -1128,6 +1161,12 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emi
     ss << pprint::Indent(indent);
     if (emit_type_name) {
       ss << meta.type_name() << " ";
+    }
+    // Dictionary keys may contain characters that are not valid in a bare
+    // identifier (e.g. namespaced keys like `rtx:sceneDb:ambientLightIntensity`).
+    // Quote them so the emitted USDA round-trips (matches pxrUSD behavior).
+    if (!isValidIdentifier(name)) {
+      name = quote(name);
     }
     ss << name << " = "
        << pprint_value(meta.get_raw_value()) << "\n";

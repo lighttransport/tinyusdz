@@ -10,10 +10,31 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <cstring>
+
+// -Wnrvo only exists on newer Clang. Apple clang, the Android NDK toolchain,
+// and older clang don't know the group and would error out under
+// -Werror=-Wunknown-warning-option, so only ignore it where it is recognized.
+#if defined(__clang__) && defined(__has_warning)
+#  if __has_warning("-Wnrvo")
+#    pragma clang diagnostic ignored "-Wnrvo"
+#  endif
+#endif
 
 namespace tinyusdz {
 namespace subdiv {
+
+// Adjacency dedup during topology build keeps each vertex's neighbor list in
+// insertion order (bit-exact with the previous linear-scan behavior) while
+// bounding worst-case cost. Small lists (the common low-valence case) use a
+// cheap linear scan with no extra allocation; once a vertex's list crosses this
+// threshold (degenerate / crafted meshes where one vertex is shared by a huge
+// number of faces) it is promoted to a hash set so membership stays O(1). This
+// caps BuildTopology at O(face-verts) and removes the O(F^2) blowup a malicious
+// mesh could otherwise trigger.
+static constexpr size_t kAdjPromoteThreshold = 64;
 
 // ============================================================================
 // HalfEdgeMesh Implementation
@@ -138,6 +159,48 @@ SubdivResult CatmullClarkSubdivider::BuildTopology(
   vertex_info.clear();
   vertex_info.resize(num_verts);
 
+  // Auxiliary membership sets, populated lazily only for high-valence vertices
+  // (see kAdjPromoteThreshold). Absent for the common low-valence case, so
+  // normal meshes pay no extra memory.
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t>> face_promoted;
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t>> vert_promoted;
+  std::unordered_map<uint32_t, std::unordered_set<uint64_t>> edge_promoted;
+
+  auto add_u32 = [](std::vector<uint32_t>& vec,
+                    std::unordered_map<uint32_t, std::unordered_set<uint32_t>>& promo,
+                    uint32_t owner, uint32_t value) {
+    auto it = promo.find(owner);
+    if (it != promo.end()) {
+      if (it->second.insert(value).second) vec.push_back(value);
+      return;
+    }
+    for (uint32_t e : vec) { if (e == value) return; }
+    vec.push_back(value);
+    if (vec.size() >= kAdjPromoteThreshold) {
+      auto& s = promo[owner];
+      s.reserve(vec.size() * 2);
+      for (uint32_t e : vec) s.insert(e);
+    }
+  };
+
+  auto add_edge = [](std::vector<EdgeKey>& vec,
+                     std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& promo,
+                     uint32_t owner, const EdgeKey& e) {
+    const uint64_t key = (uint64_t(e.v0) << 32) | uint64_t(e.v1);
+    auto it = promo.find(owner);
+    if (it != promo.end()) {
+      if (it->second.insert(key).second) vec.push_back(e);
+      return;
+    }
+    for (const auto& ee : vec) { if (ee == e) return; }
+    vec.push_back(e);
+    if (vec.size() >= kAdjPromoteThreshold) {
+      auto& s = promo[owner];
+      s.reserve(vec.size() * 2);
+      for (const auto& ee : vec) s.insert((uint64_t(ee.v0) << 32) | uint64_t(ee.v1));
+    }
+  };
+
   // Build adjacency information
   uint32_t idx_offset = 0;
   for (uint32_t face_idx = 0; face_idx < mesh.GetNumFaces(); ++face_idx) {
@@ -149,38 +212,17 @@ SubdivResult CatmullClarkSubdivider::BuildTopology(
       uint32_t v_next = mesh.face_vertex_indices[idx_offset + (i + 1) % count];
 
       // Add face adjacency
-      if (std::find(vertex_info[v_curr].adjacent_faces.begin(),
-                    vertex_info[v_curr].adjacent_faces.end(),
-                    face_idx) == vertex_info[v_curr].adjacent_faces.end()) {
-        vertex_info[v_curr].adjacent_faces.push_back(face_idx);
-      }
+      add_u32(vertex_info[v_curr].adjacent_faces, face_promoted, v_curr, face_idx);
 
       // Add vertex adjacency
-      if (std::find(vertex_info[v_curr].adjacent_vertices.begin(),
-                    vertex_info[v_curr].adjacent_vertices.end(),
-                    v_prev) == vertex_info[v_curr].adjacent_vertices.end()) {
-        vertex_info[v_curr].adjacent_vertices.push_back(v_prev);
-      }
-      if (std::find(vertex_info[v_curr].adjacent_vertices.begin(),
-                    vertex_info[v_curr].adjacent_vertices.end(),
-                    v_next) == vertex_info[v_curr].adjacent_vertices.end()) {
-        vertex_info[v_curr].adjacent_vertices.push_back(v_next);
-      }
+      add_u32(vertex_info[v_curr].adjacent_vertices, vert_promoted, v_curr, v_prev);
+      add_u32(vertex_info[v_curr].adjacent_vertices, vert_promoted, v_curr, v_next);
 
       // Add edge adjacency
-      EdgeKey edge_prev(v_curr, v_prev);
-      EdgeKey edge_next(v_curr, v_next);
-
-      if (std::find(vertex_info[v_curr].adjacent_edges.begin(),
-                    vertex_info[v_curr].adjacent_edges.end(),
-                    edge_prev) == vertex_info[v_curr].adjacent_edges.end()) {
-        vertex_info[v_curr].adjacent_edges.push_back(edge_prev);
-      }
-      if (std::find(vertex_info[v_curr].adjacent_edges.begin(),
-                    vertex_info[v_curr].adjacent_edges.end(),
-                    edge_next) == vertex_info[v_curr].adjacent_edges.end()) {
-        vertex_info[v_curr].adjacent_edges.push_back(edge_next);
-      }
+      add_edge(vertex_info[v_curr].adjacent_edges, edge_promoted, v_curr,
+               EdgeKey(v_curr, v_prev));
+      add_edge(vertex_info[v_curr].adjacent_edges, edge_promoted, v_curr,
+               EdgeKey(v_curr, v_next));
     }
     idx_offset += count;
   }
@@ -188,7 +230,11 @@ SubdivResult CatmullClarkSubdivider::BuildTopology(
   // Compute valence and mark boundaries
   for (uint32_t v = 0; v < num_verts; ++v) {
     vertex_info[v].valence = static_cast<uint32_t>(vertex_info[v].adjacent_vertices.size());
-    vertex_info[v].is_boundary = mesh.vertex_on_boundary[v];
+    // Guard against a HalfEdgeMesh built without ConvertToHalfEdgeMesh() (which
+    // is what sizes vertex_on_boundary): treat missing entries as non-boundary
+    // instead of reading out of bounds.
+    vertex_info[v].is_boundary =
+        (v < mesh.vertex_on_boundary.size()) && bool(mesh.vertex_on_boundary[v]);
   }
 
   return SubdivResult(true);
@@ -508,6 +554,27 @@ SubdivResult LoopSubdivider::BuildTopology(
   vertex_info.clear();
   vertex_info.resize(num_verts);
 
+  // See kAdjPromoteThreshold: lazy per-vertex membership set for high-valence
+  // vertices only, so adjacency build stays O(face-verts) without O(F^2) blowup.
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t>> vert_promoted;
+
+  auto add_u32 = [](std::vector<uint32_t>& vec,
+                    std::unordered_map<uint32_t, std::unordered_set<uint32_t>>& promo,
+                    uint32_t owner, uint32_t value) {
+    auto it = promo.find(owner);
+    if (it != promo.end()) {
+      if (it->second.insert(value).second) vec.push_back(value);
+      return;
+    }
+    for (uint32_t e : vec) { if (e == value) return; }
+    vec.push_back(value);
+    if (vec.size() >= kAdjPromoteThreshold) {
+      auto& s = promo[owner];
+      s.reserve(vec.size() * 2);
+      for (uint32_t e : vec) s.insert(e);
+    }
+  };
+
   // Build adjacency
   uint32_t idx_offset = 0;
   for (uint32_t face_idx = 0; face_idx < mesh.GetNumFaces(); ++face_idx) {
@@ -519,16 +586,8 @@ SubdivResult LoopSubdivider::BuildTopology(
       uint32_t v_next = mesh.face_vertex_indices[idx_offset + (i + 1) % count];
 
       // Add vertex adjacency
-      if (std::find(vertex_info[v_curr].adjacent_vertices.begin(),
-                    vertex_info[v_curr].adjacent_vertices.end(),
-                    v_prev) == vertex_info[v_curr].adjacent_vertices.end()) {
-        vertex_info[v_curr].adjacent_vertices.push_back(v_prev);
-      }
-      if (std::find(vertex_info[v_curr].adjacent_vertices.begin(),
-                    vertex_info[v_curr].adjacent_vertices.end(),
-                    v_next) == vertex_info[v_curr].adjacent_vertices.end()) {
-        vertex_info[v_curr].adjacent_vertices.push_back(v_next);
-      }
+      add_u32(vertex_info[v_curr].adjacent_vertices, vert_promoted, v_curr, v_prev);
+      add_u32(vertex_info[v_curr].adjacent_vertices, vert_promoted, v_curr, v_next);
     }
     idx_offset += count;
   }
@@ -536,7 +595,11 @@ SubdivResult LoopSubdivider::BuildTopology(
   // Compute valence and mark boundaries
   for (uint32_t v = 0; v < num_verts; ++v) {
     vertex_info[v].valence = static_cast<uint32_t>(vertex_info[v].adjacent_vertices.size());
-    vertex_info[v].is_boundary = mesh.vertex_on_boundary[v];
+    // Guard against a HalfEdgeMesh built without ConvertToHalfEdgeMesh() (which
+    // is what sizes vertex_on_boundary): treat missing entries as non-boundary
+    // instead of reading out of bounds.
+    vertex_info[v].is_boundary =
+        (v < mesh.vertex_on_boundary.size()) && bool(mesh.vertex_on_boundary[v]);
   }
 
   return SubdivResult(true);

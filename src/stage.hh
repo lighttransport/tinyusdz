@@ -4,14 +4,18 @@
 // Stage: Similar to Scene or Scene graph
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include "nonstd/expected.hpp"
 
 #include "composition.hh"
 #include "core/instance-key.hh"  // InstanceKey, InstanceKeyHasher
 #include "core/prim.hh"          // Prim class (transitively: path, prim-enums, prim-metas)
+#include "crate-format.hh"       // PathHasher / PathKeyEqual for _prim_path_cache
 #include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
 #include "handle-allocator.hh"   // HandleAllocator
 
@@ -20,6 +24,10 @@ namespace tinyusdz {
 // Forward declarations for mmap zero-copy support
 class MMapArrayTable;
 class MMapDataSource;
+struct StageMMapFileOwner;
+namespace io {
+struct MMapFileHandle;
+}
 
 using StageMetas = LayerMetas;
 
@@ -382,8 +390,13 @@ class Stage {
   mutable std::string _warn;
 
   // Cached prim path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable tinyusdz::HashMap<std::string, const Prim *> _prim_path_cache;
+  // key : Path (the prim part is used to match; the Path is owned by the
+  // cache, avoiding the per-lookup std::string allocation that would result
+  // from passing tstring_view as a key to a HashMap<std::string, ...>).
+  // See concern #1 in review.md.
+  mutable tinyusdz::HashMap<Path, const Prim *, tinyusdz::crate::PathHasher,
+                            tinyusdz::crate::PathKeyEqual>
+      _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
@@ -395,13 +408,33 @@ class Stage {
 
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
 
+  // Guards the lazy lookup caches (_prim_path_cache / _prim_id_cache and their
+  // _dirty / _prim_id_dirty flags) so the `const` GetPrimAtPath() /
+  // find_prim_by_prim_id() are safe under concurrent readers (e.g. a shared
+  // Stage queried from multiple threads). shared_ptr keeps Stage
+  // copyable/movable; the _root_nodes Prim tree is read lock-free during the
+  // walk. Reset (not shared) in Stage's copy paths.
+  //
+  // NOTE: this member is *unconditional* (not gated on TINYUSDZ_ENABLE_THREAD)
+  // on purpose. TINYUSDZ_ENABLE_THREAD is PRIVATE to the library target, so
+  // gating a member of this *public* header would make sizeof(Stage) differ
+  // between the library and its consumers (ODR violation / stack corruption).
+  // Only the locking in stage.cc is gated; the lone mutex alloc per Stage is
+  // negligible since Stages are not created in bulk.
+  std::shared_ptr<std::mutex> _cache_mu{std::make_shared<std::mutex>()};
+
   // mmap zero-copy support (optional, set by USDC reader)
   std::unique_ptr<MMapArrayTable> _mmap_table;
   std::unique_ptr<MMapDataSource> _mmap_source;
+  std::unique_ptr<StageMMapFileOwner> _mmap_file_owner;
+  std::unique_ptr<std::vector<uint8_t>> _mmap_buffer_owner;
 
  public:
   void set_mmap_table(MMapArrayTable &&table);
   void set_mmap_source(const MMapDataSource &src);
+  bool adopt_mmap_file(io::MMapFileHandle &&handle);
+  bool adopt_mmap_buffer(std::vector<uint8_t> &&buffer);
+  void clear_mmap_data();
   const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
   const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
   bool has_mmap_zero_copy() const;

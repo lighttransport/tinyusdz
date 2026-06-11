@@ -15,6 +15,75 @@ namespace tinyusdz {
 namespace next {
 
 // ============================================================
+// IEEE 754 half (float16) <-> float32 conversion
+// ============================================================
+//
+// Crate stores half/half2/half3/half4/quath as packed uint16 components. The
+// next Value model has no 16-bit storage, so half arrays materialize into a
+// float buffer (widening is exact) and re-encode by narrowing back to half
+// (round-to-nearest-even). Half-origin values round-trip byte-exact: a float
+// widened from a half has zero low mantissa bits, so narrowing reproduces it.
+
+inline float HalfToFloat(uint16_t h) {
+  uint32_t sign = static_cast<uint32_t>(h >> 15) & 1u;
+  uint32_t exp = static_cast<uint32_t>(h >> 10) & 0x1Fu;
+  uint32_t mant = static_cast<uint32_t>(h) & 0x3FFu;
+  uint32_t f;
+  if (exp == 0) {
+    if (mant == 0) {
+      f = sign << 31;  // +/- zero
+    } else {
+      // Subnormal half -> normalized float.
+      exp = 1;
+      while ((mant & 0x400u) == 0) {
+        mant <<= 1;
+        exp--;
+      }
+      mant &= 0x3FFu;
+      f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+  } else if (exp == 0x1Fu) {
+    f = (sign << 31) | (0xFFu << 23) | (mant << 13);  // inf / nan
+  } else {
+    f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mant << 13);
+  }
+  float out;
+  std::memcpy(&out, &f, sizeof(out));
+  return out;
+}
+
+inline uint16_t FloatToHalf(float value) {
+  uint32_t f;
+  std::memcpy(&f, &value, sizeof(f));
+  uint16_t sign = static_cast<uint16_t>((f >> 16) & 0x8000u);
+  uint32_t fexp = (f >> 23) & 0xFFu;
+  uint32_t mant = f & 0x7FFFFFu;
+
+  if (fexp == 0xFFu) {  // inf / nan
+    return static_cast<uint16_t>(sign | 0x7C00u | (mant ? 0x200u : 0u));
+  }
+  int32_t exp = static_cast<int32_t>(fexp) - 127 + 15;
+  if (exp >= 0x1F) {
+    return static_cast<uint16_t>(sign | 0x7C00u);  // overflow -> inf
+  }
+  if (exp <= 0) {
+    if (exp < -10) return sign;  // underflow -> zero
+    mant |= 0x800000u;
+    uint32_t shift = static_cast<uint32_t>(14 - exp);
+    uint32_t hm = mant >> shift;
+    uint32_t rem = mant & ((1u << shift) - 1u);
+    uint32_t half = 1u << (shift - 1);
+    if (rem > half || (rem == half && (hm & 1u))) hm++;  // round to nearest even
+    return static_cast<uint16_t>(sign | hm);
+  }
+  uint16_t h = static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp) << 10) |
+                                     (mant >> 13));
+  uint32_t rem = mant & 0x1FFFu;
+  if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) h++;  // round to nearest even
+  return h;
+}
+
+// ============================================================
 // Crate file constants
 // ============================================================
 

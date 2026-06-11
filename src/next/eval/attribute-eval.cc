@@ -5,6 +5,7 @@
 
 #include "attribute-eval.hh"
 #include "../layer/property-index.hh"
+#include "../pcp/cache.hh"  // EvalAttributeLazy: cache-backed lazy evaluation
 #include <cstring>
 
 namespace tinyusdz {
@@ -81,7 +82,7 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
 }
 
 EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::string& attr_name,
-                                            const EvalOptions& opts) const {
+                                            const EvalOptions& opts) {
   EvalResult result;
 
   PropNameId name_id = GetPropNameTable().find(attr_name);
@@ -345,12 +346,13 @@ bool AttributeEval::HasConnection(const UsdPrim& prim, const std::string& attr_n
   const PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return false;
 
-  // Check for .connect suffix
-  const PropSlot* slot = spec->property(attr_name + ".connect");
-  if (slot && slot->is_connection()) return true;
+  // Connection targets are parsed into the PrimSpec connection map (from the
+  // crate "connectionPaths" field), keyed by the bare attribute name.
+  const std::vector<Path>* targets = spec->connection(attr_name);
+  if (targets && !targets->empty()) return true;
 
-  // Check the attribute itself
-  slot = spec->property(attr_name);
+  // Fall back to the connection flag on the property slot.
+  const PropSlot* slot = spec->property(attr_name);
   return slot && slot->is_connection();
 }
 
@@ -360,21 +362,10 @@ std::string AttributeEval::GetConnectionPath(const UsdPrim& prim,
   const PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return "";
 
-  // Try .connect suffix first
-  std::string conn_attr = attr_name + ".connect";
-  const Value* val = spec->property_value(conn_attr);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
-  }
-
-  // Try attribute directly
-  val = spec->property_value(attr_name);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
-  }
-
+  // The connection target is stored in the PrimSpec connection map (not as the
+  // attribute's value), keyed by the bare attribute name.
+  const std::vector<Path>* targets = spec->connection(attr_name);
+  if (targets && !targets->empty()) return (*targets)[0].str();
   return "";
 }
 
@@ -411,6 +402,49 @@ EvalResult EvalAttribute(const Stage& stage, const UsdPrim& prim,
                          const std::string& attr_name, double time) {
   AttributeEval eval(&stage);
   return eval.EvalAt(prim, attr_name, time);
+}
+
+namespace {
+// Lazy eval worker: resolve `attr` on `prim_path` via the cache, following
+// connections (depth-bounded) across lazily-composed prims.
+EvalResult EvalAttributeLazyRec(pcp::Cache& cache, const Path& prim_path,
+                                const std::string& attr_name,
+                                const EvalOptions& opts, int depth) {
+  EvalResult result;
+  std::string w, e;
+  const PrimSpec* spec = cache.ComposePrim(prim_path, &w, &e);
+  if (!spec) return result;
+
+  // Connection following: a connected attribute forwards to its target's value
+  // (the canonical connection() targets are populated by CopyLocalOpinions).
+  if (opts.follow_connections && depth < opts.max_connection_depth) {
+    if (const std::vector<Path>* conns = spec->connection(attr_name)) {
+      if (!conns->empty()) {
+        const Path& target = conns->front();
+        Path tprim = target.prim_path();
+        std::string tattr = target.property_name();
+        if (!tprim.str().empty() && !tattr.empty()) {
+          EvalResult cr =
+              EvalAttributeLazyRec(cache, tprim, tattr, opts, depth + 1);
+          if (cr.success) {
+            cr.from_connection = true;
+            return cr;
+          }
+        }
+      }
+    }
+  }
+
+  result = AttributeEval::EvalFromPrimSpec(spec, attr_name, opts);
+  if (result.success) result.source_path = prim_path.str();
+  return result;
+}
+}  // namespace
+
+EvalResult EvalAttributeLazy(pcp::Cache& cache, const Path& prim_path,
+                             const std::string& attr_name,
+                             const EvalOptions& opts) {
+  return EvalAttributeLazyRec(cache, prim_path, attr_name, opts, 0);
 }
 
 bool GetFloat(const Stage& stage, const UsdPrim& prim,

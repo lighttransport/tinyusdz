@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sstream>
 #include <type_traits>
+#include <unordered_set>
 
 #include "pprinter.hh"
 #include "value-types.hh"
@@ -268,6 +269,178 @@ const std::vector<float> GeomPoints::get_widths(double time, value::TimeSampleIn
 }
 const std::vector<int64_t> GeomPoints::get_ids(double time) const {
   return GetAnimatedArrayValue<int64_t>(ids, time, value::TimeSampleInterpolationType::Held);
+}
+
+// --- GeomPointInstancer convenience getters ---
+
+const std::vector<int32_t> GeomPointInstancer::get_protoIndices(double time) const {
+  return GetAnimatedArrayValue<int32_t>(protoIndices, time,
+                                        value::TimeSampleInterpolationType::Held);
+}
+const std::vector<value::point3f> GeomPointInstancer::get_positions(
+    double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(positions, time, interp);
+}
+const std::vector<value::float3> GeomPointInstancer::get_scales(
+    double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::float3>(scales, time, interp);
+}
+const std::vector<value::quath> GeomPointInstancer::get_orientations(
+    double time) const {
+  return GetAnimatedArrayValue<value::quath>(
+      orientations, time, value::TimeSampleInterpolationType::Held);
+}
+const std::vector<int64_t> GeomPointInstancer::get_ids(double time) const {
+  return GetAnimatedArrayValue<int64_t>(ids, time,
+                                        value::TimeSampleInterpolationType::Held);
+}
+const std::vector<int64_t> GeomPointInstancer::get_invisibleIds(double time) const {
+  return GetAnimatedArrayValue<int64_t>(invisibleIds, time,
+                                        value::TimeSampleInterpolationType::Held);
+}
+const std::vector<int64_t> GeomPointInstancer::get_inactiveIds() const {
+  std::vector<int64_t> dst;
+  inactiveIds.get_value(&dst);
+  return dst;
+}
+
+// --- GeomPointInstancer instance transform / mask computation ---
+
+bool ComputeInstanceTransformsAtTime(
+    const GeomPointInstancer &pi, double time,
+    value::TimeSampleInterpolationType interp,
+    std::vector<value::matrix4d> *out_xforms, std::string *err,
+    const std::vector<value::matrix4d> *proto_xforms) {
+  if (!out_xforms) {
+    if (err) (*err) += "ComputeInstanceTransformsAtTime: out_xforms is null.\n";
+    return false;
+  }
+  out_xforms->clear();
+
+  // protoIndices is the instance-count authority (integer topology => Held).
+  const std::vector<int32_t> protoIndices = GetAnimatedArrayValue<int32_t>(
+      pi.protoIndices, time, value::TimeSampleInterpolationType::Held);
+  const size_t n = protoIndices.size();
+  if (n == 0) {
+    // No instances (or protoIndices unauthored): valid empty result.
+    return true;
+  }
+
+  const std::vector<value::point3f> positions =
+      GetAnimatedArrayValue<value::point3f>(pi.positions, time, interp);
+  const std::vector<value::float3> scales =
+      GetAnimatedArrayValue<value::float3>(pi.scales, time, interp);
+  // Held for orientations in the preliminary pass (no slerp).
+  const std::vector<value::quath> orientations =
+      GetAnimatedArrayValue<value::quath>(
+          pi.orientations, time, value::TimeSampleInterpolationType::Held);
+
+  // An authored SRT array must be either empty (=> identity defaults) or == n.
+  auto check_len = [&](size_t sz, const char *name) -> bool {
+    if (sz != 0 && sz != n) {
+      if (err) {
+        (*err) += fmt::format(
+            "PointInstancer `{}` array length ({}) does not match protoIndices "
+            "length ({}).\n",
+            name, sz, n);
+      }
+      return false;
+    }
+    return true;
+  };
+  if (!check_len(positions.size(), "positions")) return false;
+  if (!check_len(scales.size(), "scales")) return false;
+  if (!check_len(orientations.size(), "orientations")) return false;
+  if (proto_xforms && proto_xforms->size() != 0 && proto_xforms->size() != n) {
+    if (err) {
+      (*err) += fmt::format(
+          "PointInstancer proto_xforms length ({}) does not match protoIndices "
+          "length ({}).\n",
+          proto_xforms->size(), n);
+    }
+    return false;
+  }
+
+  out_xforms->resize(n);
+  for (size_t i = 0; i < n; i++) {
+    // Scale (diagonal).
+    value::matrix4d S = value::matrix4d::identity();
+    if (!scales.empty()) {
+      S.m[0][0] = double(scales[i][0]);
+      S.m[1][1] = double(scales[i][1]);
+      S.m[2][2] = double(scales[i][2]);
+    }
+    // Rotation.
+    value::matrix4d R = value::matrix4d::identity();
+    if (!orientations.empty()) {
+      R = to_matrix(orientations[i]);
+    }
+    // Translation (row-vector convention => last row).
+    value::matrix4d T = value::matrix4d::identity();
+    if (!positions.empty()) {
+      T.m[3][0] = double(positions[i][0]);
+      T.m[3][1] = double(positions[i][1]);
+      T.m[3][2] = double(positions[i][2]);
+    }
+
+    // p * S * R * T
+    value::matrix4d local = value::Mult(value::Mult(S, R), T);
+    if (proto_xforms && !proto_xforms->empty()) {
+      // Prototype xform applied first (prototype-local => instancer space).
+      local = value::Mult((*proto_xforms)[i], local);
+    }
+    (*out_xforms)[i] = local;
+  }
+
+  return true;
+}
+
+bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
+                       std::vector<bool> *out_mask, std::string *err) {
+  if (!out_mask) {
+    if (err) (*err) += "ComputeMaskAtTime: out_mask is null.\n";
+    return false;
+  }
+  out_mask->clear();
+
+  const std::vector<int32_t> protoIndices = GetAnimatedArrayValue<int32_t>(
+      pi.protoIndices, time, value::TimeSampleInterpolationType::Held);
+  const size_t n = protoIndices.size();
+  if (n == 0) {
+    return true;
+  }
+
+  // Per-instance ids (optional). When absent, the implicit id is the index.
+  const std::vector<int64_t> ids = GetAnimatedArrayValue<int64_t>(
+      pi.ids, time, value::TimeSampleInterpolationType::Held);
+
+  // Build the set of masked ids: invisibleIds (animatable) + inactiveIds (uniform).
+  std::unordered_set<int64_t> masked;
+  {
+    const std::vector<int64_t> invisibleIds = GetAnimatedArrayValue<int64_t>(
+        pi.invisibleIds, time, value::TimeSampleInterpolationType::Held);
+    masked.insert(invisibleIds.begin(), invisibleIds.end());
+
+    std::vector<int64_t> inactiveIds;
+    if (pi.inactiveIds.get_value(&inactiveIds)) {
+      masked.insert(inactiveIds.begin(), inactiveIds.end());
+    }
+  }
+
+  out_mask->assign(n, true);
+  if (masked.empty()) {
+    return true;
+  }
+
+  for (size_t i = 0; i < n; i++) {
+    const int64_t id =
+        (i < ids.size()) ? ids[i] : static_cast<int64_t>(i);
+    if (masked.count(id)) {
+      (*out_mask)[i] = false;
+    }
+  }
+
+  return true;
 }
 
 std::vector<value::token> GeomMesh::get_joints() const {

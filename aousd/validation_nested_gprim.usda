@@ -1,0 +1,18 @@
+#usda 1.0
+(
+    doc = "Nested Gprim (Cube under Mesh). TinyUSDZ: geom.encapsulation.nestedGprim. OpenUSD usdchecker: EncapsulationChecker."
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+)
+
+def Xform "World"
+{
+    def Mesh "outer"
+    {
+        def Cube "inner"
+        {
+            double size = 1
+        }
+    }
+}

@@ -34,6 +34,7 @@
 #include "core/prim-spec.hh"
 #include "layer.hh"
 #include "namespace-mapping.hh"
+#include "tiny-hashmap.hh"
 
 namespace tinyusdz {
 
@@ -175,9 +176,19 @@ struct MapExpr {
   int32_t parent_expr{-1};   ///< Index of parent expression (-1 = identity)
 
   /// Lazily computed full chain from this expression to root.
+  ///
+  /// THREAD-SAFETY: this mutable cache is written by the `const` GetComposed()
+  /// below WITHOUT synchronization. That is safe today only because the MapExpr
+  /// `pool` lives in a per-build CompositionContext (private to one worker
+  /// thread during a parallel pcp build) and GetComposed() is never called
+  /// concurrently on a SHARED, already-cached PrimIndex. If lazy value
+  /// resolution is later added that reads cached indices from multiple threads,
+  /// compose eagerly at CompositionContext::AddMapExpression() time and drop
+  /// this `mutable` member instead of guarding it.
   mutable nonstd::optional<NamespaceMapping> _composed_cache;
 
   /// Get the fully composed mapping (composes up the chain, cached).
+  /// Not safe to call concurrently on a shared pool (see _composed_cache).
   const NamespaceMapping &GetComposed(const std::vector<MapExpr> &pool) const {
     if (_composed_cache.has_value()) return *_composed_cache;
 
@@ -258,6 +269,9 @@ class PrimIndex {
  private:
   friend class PrimIndexBuilder;
   friend class CompositionGraph;
+  // Incremental payload (un)load helpers (defined in composition-graph.cc).
+  friend CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx);
+  friend void RecomputeStrengthOrder(PrimIndex &index);
 
   Path _prim_path;
 
@@ -276,6 +290,19 @@ class PrimIndex {
   const std::vector<LayerStackEntry> *_layer_stacks{nullptr};
   const std::vector<MapExpr> *_map_expressions{nullptr};
 };
+
+// Incremental payload (un)load helpers (friends of PrimIndex).
+CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx);
+void RecomputeStrengthOrder(PrimIndex &index);
+
+/// Compose a PrimSpec by walking a PrimIndex in strength order (strongest
+/// opinion initializes, weaker opinions fill gaps). The layer-stack and path
+/// tables are passed explicitly so this works both for the shared-table
+/// CompositionGraph and for the per-index tables used by pcp::Cache.
+bool ComposePrimSpecFromIndex(const std::vector<LayerStackEntry> &layer_stacks,
+                              const std::vector<std::string> &path_table,
+                              const PrimIndex &index, PrimSpec *out,
+                              std::string *warn, std::string *err);
 
 // ---------------------------------------------------------------------------
 // InstanceKey -- for instancing deduplication
@@ -329,9 +356,25 @@ struct DeferredPayloadInfo {
 // CompositionGraphOptions
 // ---------------------------------------------------------------------------
 
+/// Layer-loading seam type (mirrors CompositionContext::LoadLayerFn). A plain
+/// non-capturing function pointer + opaque userdata so options stay copyable
+/// and free of self-captures. Used to route referenced/payload layer loads
+/// through a parse-once registry (see LargeSceneLoader / pcp::Cache).
+using CompositionLoadLayerFn = const Layer *(*)(void *userdata,
+                                                const std::string &asset_path,
+                                                const std::string &cwp,
+                                                std::string *warn,
+                                                std::string *err);
+
 struct CompositionGraphOptions {
   /// Payload loading policy. Return true to load, false to defer.
   /// When nullptr (default), all payloads are loaded eagerly.
+  ///
+  /// THREAD-SAFETY: when these options drive a multithreaded build
+  /// (pcp::CacheOptions::num_threads != 1), this callback is invoked
+  /// concurrently from worker threads. Each worker uses its own copy of the
+  /// std::function, but any state the closure *captures* is shared — the
+  /// closure must be thread-safe (or capture nothing mutable).
   std::function<bool(const Path &prim_path, const Payload &payload)>
       payload_policy;
 
@@ -342,16 +385,93 @@ struct CompositionGraphOptions {
   bool detect_instances{true};
 
   /// File format handlers for non-USD assets.
+  ///
+  /// THREAD-SAFETY: under a multithreaded build
+  /// (pcp::CacheOptions::num_threads != 1), the handler functions
+  /// (checker/reader/writer) and their `userdata` are invoked concurrently from
+  /// worker threads. They must be thread-safe.
   std::unordered_map<std::string, FileFormatHandler> fileformats;
 
   /// Maximum memory limit in MB.
+  ///
+  /// NOTE: currently advisory only — composition does not enforce it. Use the
+  /// `payload_policy` (e.g. a byte-budget closure) for actual memory bounding.
   size_t max_memory_mb{16384};
+
+  /// Allow parent-directory ('..') segments in reference/payload asset paths
+  /// (resolution delegated to the asset resolver). Required for scenes that use
+  /// '..'-relative arcs (e.g. Caldera). When false (default), such arcs are
+  /// rejected and skipped. See security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
+
+  /// Optional layer-loading seam. When set, referenced/payload layers are
+  /// loaded through this function (e.g. a parse-once registry) instead of being
+  /// parsed fresh and owned per-arc. `load_layer_userdata` is passed opaquely.
+  /// When null (default), the legacy per-arc parse-and-own behavior is used.
+  CompositionLoadLayerFn load_layer_fn{nullptr};
+  void *load_layer_userdata{nullptr};
 
   /// Make an error when referenced asset is not found.
   bool error_when_asset_not_found{false};
 
   /// Make an error when referenced asset has unsupported format.
   bool error_when_unsupported_fileformat{false};
+};
+
+// ---------------------------------------------------------------------------
+// CompositionContext -- shared composition state driven by PrimIndexBuilder
+// ---------------------------------------------------------------------------
+
+/// Holds the mutable shared state a PrimIndexBuilder needs while building a
+/// PrimIndex: the interned path table, layer-stack table, namespace-mapping
+/// pool, resolver/options, owned layers, and deferred-payload list.
+///
+/// CompositionGraph owns ONE context shared across all its prim builds (so
+/// paths/layer-stacks/map-exprs are deduplicated). pcp::Cache instead gives
+/// each cached PrimIndex its own context (per-index tables) and shares only
+/// the expensive parsed layers via a LayerRegistry, reached through the
+/// `load_layer_fn` seam below.
+struct CompositionContext {
+  // Shared tables (referenced by PrimIndex via borrowed pointers).
+  std::vector<std::string> _path_table;
+  HashMap<std::string, uint32_t> _path_intern_map;
+  std::vector<LayerStackEntry> _layer_stacks;
+  std::vector<MapExpr> _map_expressions;
+
+  // Composition inputs (borrowed; the layers they point at must outlive this).
+  const Layer *_root_layer{nullptr};
+  AssetResolutionResolver *_resolver{nullptr};
+  CompositionGraphOptions _options;
+
+  // Layers parsed via the default loader are owned here. When `load_layer_fn`
+  // is set (pcp::Cache), referenced/payload layers are owned elsewhere (a
+  // LayerRegistry) and this stays empty.
+  std::vector<std::unique_ptr<Layer>> _loaded_layers;
+
+  // Payloads skipped during initial composition (for incremental loading).
+  std::vector<DeferredPayloadInfo> _deferred_payloads;
+
+  /// Layer-loading seam. A plain (non-capturing) function pointer plus opaque
+  /// userdata -- deliberately NOT a std::function, so a CompositionContext can
+  /// be moved without dangling self-captures and so this header stays free of
+  /// any pcp dependency. When null, the builder parses the asset fresh and owns
+  /// it in `_loaded_layers` (the legacy CompositionGraph behavior). pcp::Cache
+  /// binds these at use-time (when `this` is at a stable address) to route
+  /// loads through its parse-once LayerRegistry.
+  using LoadLayerFn = const Layer *(*)(void *userdata,
+                                       const std::string &asset_path,
+                                       const std::string &cwp,
+                                       std::string *warn, std::string *err);
+  LoadLayerFn load_layer_fn{nullptr};
+  void *load_layer_userdata{nullptr};
+
+  /// Intern a path string, returning its index in _path_table.
+  uint32_t InternPath(const std::string &path_str);
+  /// Add a layer stack entry, returning its index (deduplicated).
+  uint16_t AddLayerStack(const Layer *layer, const std::string &id,
+                         const LayerOffset &offset);
+  /// Add a map expression, returning its index.
+  uint16_t AddMapExpression(const NamespaceMapping &mapping, int32_t parent_expr);
 };
 
 // ---------------------------------------------------------------------------
@@ -451,19 +571,8 @@ class CompositionGraph {
  private:
   friend class PrimIndexBuilder;
 
-  // -- Shared tables --
-
-  /// Interned path table. All prim paths stored once.
-  std::vector<std::string> _path_table;
-
-  /// Path string -> index lookup for interning.
-  std::unordered_map<std::string, uint32_t> _path_intern_map;
-
-  /// Layer stack entries (shared across all PrimIndices).
-  std::vector<LayerStackEntry> _layer_stacks;
-
-  /// Namespace mapping expressions (shared, with lazy composition).
-  std::vector<MapExpr> _map_expressions;
+  // -- Shared composition state (tables, resolver, options, owned layers) --
+  CompositionContext _ctx;
 
   // -- Per-prim composition graphs --
 
@@ -482,47 +591,32 @@ class CompositionGraph {
   /// Map: prim path -> prototype index (-1 if not an instance).
   std::unordered_map<std::string, int> _instance_to_prototype;
 
-  // -- Lazy payloads --
-
-  /// Deferred payload descriptors for incremental loading.
-  std::vector<DeferredPayloadInfo> _deferred_payloads;
-
-  // -- Loaded layers (kept alive for value resolution) --
-
-  /// Layers loaded during composition. Must outlive all PrimIndices
-  /// because nodes reference these layers via LayerStackEntry pointers.
-  std::vector<std::unique_ptr<Layer>> _loaded_layers;
-
-  /// The root layer (borrowed, must outlive the graph).
-  const Layer *_root_layer{nullptr};
-
-  /// Asset resolver (borrowed, must outlive the graph).
-  AssetResolutionResolver *_resolver{nullptr};
-
-  /// Options used for composition.
-  CompositionGraphOptions _options;
-
   // -- Internal helpers --
-
-  /// Intern a path string, returning its index in _path_table.
-  uint32_t InternPath(const std::string &path_str);
-
-  /// Add a layer stack entry, returning its index.
-  uint16_t AddLayerStack(const Layer *layer, const std::string &id,
-                         const LayerOffset &offset);
-
-  /// Add a map expression, returning its index.
-  uint16_t AddMapExpression(const NamespaceMapping &mapping,
-                            int32_t parent_expr);
 
   /// Build PrimIndex for a single prim (recursive for children).
   bool BuildPrimIndex(const std::string &prim_path, const PrimSpec &primspec,
                       uint16_t root_layer_stack_idx, std::string *warn,
                       std::string *err);
 
-  /// Compose a PrimSpec from a PrimIndex by walking the DAG in strength order.
-  bool ComposePrimSpecFromIndex(const PrimIndex &index, PrimSpec *out,
-                                std::string *warn, std::string *err) const;
+  /// Rebuild all composed descendants under an already-built prim index.
+  bool RebuildDescendantPrimIndices(
+      const std::string &prim_path, const std::shared_ptr<PrimIndex> &parent,
+      std::string *err);
+
+  /// Drop all cached PrimIndices below `prim_path`.
+  void EraseDescendantPrimIndices(const std::string &prim_path);
+
+  /// Recompute instance/prototype maps after graph mutation.
+  void RebuildInstanceRegistry();
+
+  /// Collect the composed child names of a prim (union of children across all
+  /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
+  std::vector<std::string> GatherComposedChildNames(
+      const PrimIndex &index) const;
+
+  /// Run instanceable detection + prototype registration for a built index.
+  void DetectAndRegisterInstance(const std::string &prim_path,
+                                 const std::shared_ptr<PrimIndex> &index);
 };
 
 // ---------------------------------------------------------------------------
@@ -572,16 +666,43 @@ struct CompositionTask {
 /// This is an internal class used by CompositionGraph::Compose().
 class PrimIndexBuilder {
  public:
-  PrimIndexBuilder(CompositionGraph *graph, const Path &prim_path,
+  PrimIndexBuilder(CompositionContext *ctx, const Path &prim_path,
                    const PrimSpec &root_primspec,
                    uint16_t root_layer_stack_idx);
+
+  /// Child-mode constructor: builds the index for a namespace child by
+  /// descending a parent PrimIndex (see BuildChildFrom). No single root
+  /// PrimSpec — the child's opinions come from the descended parent nodes.
+  PrimIndexBuilder(CompositionContext *ctx, const Path &prim_path);
 
   /// Build the PrimIndex by processing all composition arcs.
   nonstd::expected<PrimIndex, std::string> Build();
 
+  /// Build the index for `child_name` under `parent` by descending every
+  /// (non-culled) node of `parent` one namespace level and following the
+  /// descended prims' own arcs. This is what brings reference/payload-introduced
+  /// child prims (and their nested references) into the composed namespace.
+  nonstd::expected<PrimIndex, std::string> BuildChildFrom(
+      const PrimIndex &parent, const std::string &child_name);
+
+  /// Re-scan one node in an already-built index after incremental mutation
+  /// (for example, a deferred payload node that was just loaded) and finish the
+  /// queued composition phases in-place.
+  bool ReprocessNode(PrimIndex *index, uint16_t node_idx, std::string *err);
+
  private:
   // Task handlers
   bool EvalRootNode(std::string *err);
+
+  // Phases 2-6 shared by Build() and BuildChildFrom(): drain the task queue,
+  // resolve variants, cull, compute strength order, detect instanceable.
+  nonstd::expected<PrimIndex, std::string> FinishBuild();
+
+  // Drain all queued composition tasks in LIVRPS order.
+  bool DrainTaskQueue(std::string *err);
+
+  // Seed descended nodes for BuildChildFrom (phase-1 replacement).
+  void SeedDescendedNodes(const PrimIndex &parent, const std::string &child_name);
   bool EvalSubLayers(uint16_t node_idx, std::string *err);
   bool EvalInherits(uint16_t node_idx, std::string *err);
   bool EvalVariants(uint16_t node_idx, std::string *err);
@@ -601,12 +722,27 @@ class PrimIndexBuilder {
 
   void AppendChild(uint16_t parent_idx, uint16_t child_idx);
 
+  // Load a referenced/payload layer (borrowed). Routes through
+  // _ctx->load_layer_fn when set, else parses fresh into _ctx->_loaded_layers.
+  const Layer *LoadArcLayer(const std::string &asset_path,
+                            const std::string &cwp, std::string *warn,
+                            std::string *err);
+
   // Cycle detection
   bool WouldCreateCycle(const std::string &layer_id,
                         const std::string &prim_path) const;
 
   // Strength order computation
   void ComputeStrengthOrder();
+
+  // Compose variant CONTENT: for each node whose PrimSpec authors a variantSet
+  // that the composed selection picks, resolve the selected variant and repoint
+  // the node at the resolved PrimSpec (materialized in a synthetic layer), so
+  // the variant's child prims enter the namespace. Handles the case where the
+  // selection and the variantSet are authored on different nodes (e.g. a
+  // variant set introduced via a reference, selected by a stronger layer).
+  // Returns true if any node was resolved.
+  bool ApplyVariantContent();
 
   // Node culling
   void CullInertNodes();
@@ -623,7 +759,7 @@ class PrimIndexBuilder {
   const PrimSpec *GetPrimSpecForNode(uint16_t node_idx) const;
 
   // State
-  CompositionGraph *_graph;
+  CompositionContext *_ctx;
   PrimIndex _result;
   const PrimSpec *_root_primspec;
   uint16_t _root_layer_stack_idx;

@@ -34,6 +34,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
+    crate/crate-data-source.cc
     crate/crate-reader.cc
     crate/crate-writer.cc
 
@@ -72,6 +73,14 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Composition
     composition/composition.cc
+
+    # Low-memory flatten pipeline
+    pipeline/flatten.cc
+
+    # PCP-style lazy composition cache (native to next)
+    pcp/layer-registry.cc
+    pcp/load-rules.cc
+    pcp/cache.cc
 
     # High-level API
     tinyusdz-next.cc
@@ -146,6 +155,13 @@ set(TINYUSDZ_NEXT_HEADERS
     # Composition
     composition/composition.hh
 
+    # PCP-style lazy composition cache (native to next)
+    pcp/arc-types.hh
+    pcp/namespace-mapping.hh
+    pcp/prim-index.hh
+    pcp/layer-registry.hh
+    pcp/cache.hh
+
     # High-level API
     tinyusdz-next.hh
     compat.hh
@@ -171,6 +187,14 @@ add_library(tinyusdz_next STATIC
 # Set C++14 standard
 target_compile_features(tinyusdz_next PUBLIC cxx_std_14)
 
+# Optional threading: enables the parallel layer-prefetch path in next::pcp.
+option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
+if(TINYUSDZ_NEXT_ENABLE_THREAD)
+    find_package(Threads REQUIRED)
+    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)
+    target_link_libraries(tinyusdz_next PUBLIC Threads::Threads)
+endif()
+
 # Set include directories
 target_include_directories(tinyusdz_next PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
@@ -192,9 +216,23 @@ else()
 endif()
 
 # Optional: Create test executable
-option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next" OFF)
+#
+# EXPERIMENTAL / under-construction module. `next` is a standalone CMake project
+# (not added by the top-level CMakeLists) and its tests are OFF by default, so it
+# is intentionally excluded from the main native regression suite (`build/` ctest)
+# and from the Pixar comparison runner. Its tests may be unstable and use bare
+# assert() (no-ops under NDEBUG). Build/run them on demand only — see
+# doc/testing-cpp.md ("Experimental `next` library tests"). Do NOT add `next` to
+# the full regression gate without first hardening the suite.
+option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next (experimental; excluded from main regression)" OFF)
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
+    # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
+    # would compile those out and make the tests vacuous. Re-enable asserts for
+    # everything defined below (directory-scoped; -UNDEBUG is appended after the
+    # build-type flags so it wins). The library above keeps its NDEBUG/-O flags.
+    add_compile_options(-UNDEBUG)
+
     add_executable(test_tinyusdz_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_next.cc
     )
@@ -215,6 +253,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_stage PRIVATE tinyusdz_next)
 
+    add_executable(test_pcp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp.cc
+    )
+    target_link_libraries(test_pcp PRIVATE tinyusdz_next)
+
+    add_executable(test_pcp_parallel
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
+    )
+    target_link_libraries(test_pcp_parallel PRIVATE tinyusdz_next)
+
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
     )
@@ -229,6 +277,21 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_roundtrip.cc
     )
     target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
+
+    add_executable(test_lazy_array
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_array.cc
+    )
+    target_link_libraries(test_lazy_array PRIVATE tinyusdz_next)
+
+    add_executable(bench_lazy_mem
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_lazy_mem.cc
+    )
+    target_link_libraries(bench_lazy_mem PRIVATE tinyusdz_next)
+
+    add_executable(bench_pcp_compose
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_pcp_compose.cc
+    )
+    target_link_libraries(bench_pcp_compose PRIVATE tinyusdz_next)
 
     add_executable(test_schemas
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
@@ -249,6 +312,55 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdz_writer.cc
     )
     target_link_libraries(test_usdz_writer PRIVATE tinyusdz_next)
+
+    add_executable(test_composition
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_composition.cc
+    )
+    target_link_libraries(test_composition PRIVATE tinyusdz_next)
+
+    add_executable(test_load_rules
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_load_rules.cc
+    )
+    target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
+
+    # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
+    # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
+    add_executable(next_usdcat
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
+    )
+    target_link_libraries(next_usdcat PRIVATE tinyusdz_next)
+
+    # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
+    add_executable(test_crash_regressions
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crash_regressions.cc
+    )
+    target_link_libraries(test_crash_regressions PRIVATE tinyusdz_next)
+    target_compile_definitions(test_crash_regressions PRIVATE
+        CRASH_REGRESSION_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/crash_regressions")
+endif()
+
+# ============================================================
+# libFuzzer harnesses (clang only)
+# ============================================================
+option(TINYUSDZ_NEXT_BUILD_FUZZERS "Build libFuzzer harnesses for TinyUSDZ Next (requires clang)" OFF)
+
+if(TINYUSDZ_NEXT_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "TINYUSDZ_NEXT_BUILD_FUZZERS requires clang (-fsanitize=fuzzer)")
+    endif()
+    # The library must carry fuzzer coverage instrumentation too (no-link
+    # variant), otherwise only the tiny harness body is explored.
+    set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
+    set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+    target_compile_options(tinyusdz_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+    foreach(fz next_usdc next_usda next_compose)
+        add_executable(fuzz_${fz}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
+        )
+        target_link_libraries(fuzz_${fz} PRIVATE tinyusdz_next)
+        target_compile_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+        target_link_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    endforeach()
 endif()
 
 # Tydra Next (render data conversion)
@@ -309,6 +421,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_stage COMMAND test_stage
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_pcp COMMAND test_pcp
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_pcp_parallel COMMAND test_pcp_parallel
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_writer COMMAND test_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
@@ -316,6 +432,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_usdc_reader COMMAND test_usdc_reader
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_lazy_array COMMAND test_lazy_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas COMMAND test_schemas
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -325,8 +443,41 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdz_writer COMMAND test_usdz_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_composition COMMAND test_composition
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_load_rules COMMAND test_load_rules
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    # usd-wg asset-corpus regression gate (mirrors the top-level
+    # corpus-parse-native test, but drives next_usdcat). Registered only when
+    # node and the corpus checkout are present; set USD_WG_ASSETS_DIR to point
+    # at a usd-wg/assets clone.
+    find_program(TINYUSDZ_NEXT_NODE_EXECUTABLE NAMES node nodejs)
+    if(DEFINED ENV{USD_WG_ASSETS_DIR})
+        set(NEXT_CORPUS_ASSETS_DIR "$ENV{USD_WG_ASSETS_DIR}")
+    else()
+        set(NEXT_CORPUS_ASSETS_DIR "/mnt/nvme02/work/usd/assets")
+    endif()
+    if(TINYUSDZ_NEXT_NODE_EXECUTABLE AND EXISTS "${NEXT_CORPUS_ASSETS_DIR}")
+        add_test(
+            NAME next_corpus_parse
+            COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/parse-asset-corpus.mjs
+                    --assets "${NEXT_CORPUS_ASSETS_DIR}"
+                    --mode load
+                    --tusdcat "$<TARGET_FILE:next_usdcat>"
+                    --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
+                    # Regression ratchet, not a quality bar: 219 of 280 corpus
+                    # files fail today on known next parser gaps (see
+                    # corpus-parse-results/summary.md). Lower this as gaps
+                    # close; raising it requires justification.
+                    --max-fail 220
+        )
+    endif()
 endif()
 
 # ============================================================

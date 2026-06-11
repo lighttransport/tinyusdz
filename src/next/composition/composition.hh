@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <memory>
 #include <functional>
 
@@ -119,8 +120,23 @@ public:
   /// Parse a payload string
   static CompositionArc ParsePayload(const std::string& payload_str);
 
+  /// Parse a layer-offset expression "offset:scale" (or "offset").
+  static void ParseLayerOffset(const std::string& offset_str, double& offset,
+                               double& scale);
+
   /// Parse variant selection from string "variantSet=selection"
   static VariantSelection ParseVariantSelection(const std::string& str);
+
+  /// Merge local opinions from `source` into `target` (strongest-wins,
+  /// fill-absent): type name, properties, time samples, and metadata. Public so
+  /// the pcp value-resolution path can reuse it. Does NOT copy relationships or
+  /// children (callers handle those, incl. namespace remapping).
+  /// Time-sample times are remapped by the layer offset
+  /// `t -> time_offset + time_scale*t` (identity by default), baking a
+  /// composition arc's layer offset into the flattened result.
+  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
+                                double time_offset = 0.0,
+                                double time_scale = 1.0);
 
   // ============================================================
   // Layer cache
@@ -147,25 +163,34 @@ private:
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;
 
+  // Pass-2 arc resolution state: prims whose arcs are resolved/in-progress
+  // (prevents infinite recursion + redundant recomposition), and grafted
+  // subtree prims to append to the result after the pass (cannot add during
+  // iteration). Cleared at the start of each Compose().
+  std::set<std::string> arc_resolved_;
+  std::vector<PrimSpec> pending_graft_;
+  std::set<std::string> graft_paths_;
+
   // Internal composition methods
   bool ComposeLayer(Layer& target, const Layer& source_layer,
                     const std::string& anchor_path, int depth);
   bool ComposePrim(PrimSpec& target, const Layer& source_layer,
                    const PrimSpec& source, const std::string& anchor_path, int depth);
 
-  // Arc handling
-  bool ApplyReferences(PrimSpec& prim, const std::string& anchor_path, int depth);
-  bool ApplyPayloads(PrimSpec& prim, const std::string& anchor_path, int depth);
-  bool ApplyInherits(PrimSpec& prim, const Layer& layer, int depth);
-  bool ApplySpecializes(PrimSpec& prim, const Layer& layer, int depth);
+  // Arc resolution (pass 2). Operates on the already-merged `layer`, expanding
+  // each prim's references/payloads/inherits/specializes/variants in LIVRPS
+  // strength order (local opinions kept strongest), grafting referenced
+  // subtrees, then clearing the resolved arcs. Recursive (targets resolved
+  // before being copied) with cycle/recompute guards via arc_resolved_.
+  void ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
+                          const std::string& anchor_path, int depth);
+  // Resolve one reference/payload arc (internal or external) onto `prim`.
+  void ResolveRefArc(Layer& layer, PrimSpec& prim, const CompositionArc& arc,
+                     const std::string& anchor_path, int depth);
+  // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
+  void GraftSubtree(const Layer& src, const std::string& src_root,
+                    const std::string& dst_root);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
-
-  // Copy local opinions from source to target (strongest strength)
-  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source);
-
-  // Parse layer offset string into offset and scale
-  static void ParseLayerOffset(const std::string& offset_str,
-                                double& offset, double& scale);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

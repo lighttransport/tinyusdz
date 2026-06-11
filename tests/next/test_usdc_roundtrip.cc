@@ -18,6 +18,7 @@
 #include "next/types/value.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
+#include "next/crate/crate-reader.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -214,7 +215,7 @@ void test_roundtrip_schema_types() {
   {
     PrimSpec* prim = layer.current();
     assert(prim);
-    prim->meta().doc = "A helper scope";
+    prim->meta().doc() = "A helper scope";
     prim->meta().hidden = true;
   }
   layer.end_prim();
@@ -241,7 +242,12 @@ void test_roundtrip_schema_types() {
 
   // Parse TOC
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   // Verify required sections exist
   auto* tokens_sec = toc.find("TOKENS");
@@ -430,7 +436,12 @@ void test_roundtrip_layer_metadata() {
 
   // Parse TOC and verify
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   auto* tokens_sec = toc.find("TOKENS");
   assert(tokens_sec != nullptr);
@@ -491,10 +502,45 @@ void test_roundtrip_time_samples() {
   assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   TocInfo toc;
-  assert(ParseUSDCBinary(buffer.data(), buffer.size(), toc));
+  // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
+  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // which would leave `toc` empty and null-deref the section lookups below.
+  const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
+  assert(toc_parsed);
+  (void)toc_parsed;
 
   auto* ts = toc.find("TOKENS");
   assert(ts != nullptr);
+
+  // Read back and verify the time samples decode per-property (Phase: crate
+  // TimeSamples decoding — previously skipped on read).
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buffer.data(), buffer.size());
+  assert(rr.success && "re-read of time-sampled layer failed");
+  const PrimSpec* anim = rr.stage.GetRootLayer()->prim_at_path("/Animated");
+  assert(anim);
+
+  PropNameId tr = GetPropNameTable().find("xformOp:translate");
+  assert(tr.is_valid() && anim->has_time_samples(tr));
+  const auto* tr_samples = anim->time_samples(tr);
+  assert(tr_samples && tr_samples->size() == 3 && "translate: 3 samples expected");
+  // Sample at t=50 should be (10,5,0).
+  bool found_50 = false;
+  for (const auto& kv : *tr_samples) {
+    if (std::abs(kv.first - 50.0) < 1e-9) {
+      const Value* v = anim->time_sample_value(kv.second);
+      assert(v && v->is_array() == false);
+      const float* f3 = v->as_float3();
+      assert(f3 && f3[0] == 10.0f && f3[1] == 5.0f && f3[2] == 0.0f);
+      found_50 = true;
+    }
+  }
+  assert(found_50 && "translate sample at t=50 missing/wrong");
+
+  PropNameId wt = GetPropNameTable().find("weight");
+  assert(wt.is_valid() && anim->has_time_samples(wt));
+  const auto* wt_samples = anim->time_samples(wt);
+  assert(wt_samples && wt_samples->size() == 2 && "weight: 2 samples expected");
 
   std::cout << "  roundtrip time samples test passed!\n\n";
 }
@@ -533,13 +579,198 @@ void test_write_usdc_from_stage_api() {
   std::cout << "  WriteUSDC stage API test passed!\n\n";
 }
 
+// Vec4f / Matrix4d / Quatf / Double3 arrays must survive a write -> read cycle
+// (Phase 8: these were dropped on read with "Unsupported array type").
+void test_roundtrip_vec_matrix_arrays() {
+  std::cout << "Testing roundtrip vec/matrix/quat arrays...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("Geo", "Mesh");
+  std::vector<float> v4 = {1, 2, 3, 4, 5, 6, 7, 8};           // 2 x Vec4f
+  std::vector<float> qf = {0, 0, 0, 1, 0, 1, 0, 0};           // 2 x Quatf
+  std::vector<double> m4(32);                                 // 2 x Matrix4d
+  for (size_t i = 0; i < m4.size(); ++i) m4[i] = double(i) * 0.5;
+  std::vector<float> m4f(32);                                 // 2 x Matrix4f
+  std::vector<double> m4f_as_d(32);
+  for (size_t i = 0; i < m4f.size(); ++i) {
+    m4f[i] = float(i) * 0.25f;
+    m4f_as_d[i] = double(m4f[i]);
+  }
+  std::vector<double> d3 = {1.5, 2.5, 3.5, 4.5, 5.5, 6.5};    // 2 x Double3
+  b.add_property("v4", Value::MakeFloatCompArray(std::vector<float>(v4), TypeId::Float4, 4));
+  b.add_property("qf", Value::MakeFloatCompArray(std::vector<float>(qf), TypeId::Quatf, 4));
+  b.add_property("m4", Value::MakeDoubleCompArray(std::vector<double>(m4), TypeId::Matrix4d, 16));
+  b.add_property("m4f", Value::MakeFloatCompArray(std::vector<float>(m4f), TypeId::Matrix4f, 16));
+  b.add_property("d3", Value::MakeDoubleCompArray(std::vector<double>(d3), TypeId::Double3, 3));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  {
+    CrateReadOptions limited;
+    limited.max_memory = 1;
+    CrateReader limited_reader(limited);
+    CrateReadResult limited_result = limited_reader.Read(buf.data(), buf.size());
+    assert(!limited_result.success && !limited_result.errors.empty() &&
+           "max_memory must reject oversized in-memory crate input");
+  }
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of vec/matrix arrays failed");
+  const Layer* rl = rr.stage.GetRootLayer();
+  const PrimSpec* geo = rl->prim_at_path("/Geo");
+  assert(geo);
+
+  auto check_f = [&](const char* name, const std::vector<float>& expect, TypeId t) {
+    const Value* val = geo->property_value(name);
+    assert(val && val->is_array() && val->type_id() == t);
+    const std::vector<float>* arr = val->as_float_array();
+    assert(arr && *arr == expect);
+  };
+  auto check_d = [&](const char* name, const std::vector<double>& expect, TypeId t) {
+    const Value* val = geo->property_value(name);
+    assert(val && val->is_array() && val->type_id() == t);
+    const std::vector<double>* arr = val->as_double_array();
+    assert(arr && *arr == expect);
+  };
+  check_f("v4", v4, TypeId::Float4);
+  check_f("qf", qf, TypeId::Quatf);
+  check_d("m4", m4, TypeId::Matrix4d);
+  check_d("m4f", m4f_as_d, TypeId::Matrix4d);
+  check_d("d3", d3, TypeId::Double3);
+
+  std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
+}
+
+// HalfToFloat/FloatToHalf: every finite half bit pattern must survive
+// half -> float -> half byte-exact (NaN payloads excluded).
+void test_half_conversion() {
+  std::cout << "Testing half<->float conversion...\n";
+  size_t checked = 0;
+  for (uint32_t bits = 0; bits < 0x10000u; ++bits) {
+    uint16_t h = static_cast<uint16_t>(bits);
+    uint32_t exp = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x3FFu;
+    if (exp == 0x1Fu && mant != 0) continue;  // skip NaN (payload not preserved)
+    float f = HalfToFloat(h);
+    uint16_t h2 = FloatToHalf(f);
+    assert(h2 == h && "half->float->half not exact");
+    ++checked;
+  }
+  assert(HalfToFloat(0x3C00) == 1.0f && "half 1.0");
+  assert(HalfToFloat(0xC000) == -2.0f && "half -2.0");
+  std::cout << "  " << checked << " half patterns round-tripped exactly\n\n";
+}
+
+// Half / Vec3h / Quath arrays must survive write -> read (values chosen exactly
+// representable in half so the comparison is exact).
+void test_roundtrip_half_arrays() {
+  std::cout << "Testing roundtrip half arrays...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("Geo", "Mesh");
+  std::vector<float> h1 = {1.0f, -2.0f, 0.5f, 0.25f};            // 4 x Half
+  std::vector<float> h3 = {1.0f, 2.0f, 3.0f, -1.0f, 0.5f, 4.0f}; // 2 x Half3
+  std::vector<float> qh = {0.0f, 0.0f, 0.0f, 1.0f};             // 1 x Quath
+  b.add_property("h1", Value::MakeFloatCompArray(std::vector<float>(h1), TypeId::Half, 1));
+  b.add_property("h3", Value::MakeFloatCompArray(std::vector<float>(h3), TypeId::Half3, 3));
+  b.add_property("qh", Value::MakeFloatCompArray(std::vector<float>(qh), TypeId::Quath, 4));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of half arrays failed");
+  const PrimSpec* geo = rr.stage.GetRootLayer()->prim_at_path("/Geo");
+  assert(geo);
+
+  auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
+    const Value* v = geo->property_value(name);
+    assert(v && v->is_array() && v->type_id() == t);
+    const std::vector<float>* arr = v->as_float_array();  // materializes half->float
+    assert(arr && *arr == expect);
+  };
+  check("h1", h1, TypeId::Half);
+  check("h3", h3, TypeId::Half3);
+  check("qh", qh, TypeId::Quath);
+
+  std::cout << "  half array roundtrip passed!\n\n";
+}
+
+// Phase 7 S5: arc list-op qualifiers survive a USDC write -> read cycle via the
+// companion `<arc>_listOp` token[] fields. The within-spec effective list (the
+// `references` token[]) and the ArcEdit (prepend/append/delete) both round-trip.
+void test_roundtrip_arc_listops() {
+  std::cout << "Testing arc list-op crate roundtrip...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Scope");
+  // Within-spec effective list (= prepend B), plus the raw edit: prepend </B>,
+  // delete </A>.
+  b.current()->meta().references.push_back("</B>");
+  {
+    ArcEdit& e = b.current()->meta().ensure_arc_edits().references;
+    e.authored = true;
+    e.is_explicit = false;
+    e.prepended.push_back("</B>");
+    e.deleted.push_back("</A>");
+  }
+  // A bare (explicit) inherits list must NOT gain a companion field.
+  b.current()->meta().inherits.push_back("</_class_X>");
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of arc list-ops failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+  assert(p);
+
+  // The within-spec effective list round-trips.
+  assert(p->meta().references.size() == 1 && p->meta().references[0] == "</B>");
+  // The non-explicit edit round-trips.
+  const ArcListOpEdits* ed = p->meta().arc_edits();
+  assert(ed && "references edit must survive the crate roundtrip");
+  assert(ed->references.authored);
+  assert(!ed->references.is_explicit);
+  assert(ed->references.prepended.size() == 1 &&
+         ed->references.prepended[0] == "</B>");
+  assert(ed->references.deleted.size() == 1 &&
+         ed->references.deleted[0] == "</A>");
+  // Bare inherits: no companion field, so its edit stays explicit (default).
+  assert(!ed->inherits.authored && ed->inherits.is_explicit &&
+         ed->inherits.prepended.empty());
+  std::cout << "  arc list-op crate roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
   try {
+    test_half_conversion();
+    test_roundtrip_arc_listops();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
+    test_roundtrip_vec_matrix_arrays();
+    test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";

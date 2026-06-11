@@ -223,27 +223,23 @@ struct Xformable {
   ///
   /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
   ///
+  // Computes the local matrix on each call and returns it by value. (Previously
+  // cached into `mutable` members, which races if a single Xformable instance is
+  // evaluated from multiple threads. Concurrent evaluation of *distinct*
+  // Xformables is fine; to parallelize over one logical Xformable, give each
+  // worker its own copy.)
   nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, bool *resetTransformStack = nullptr) const {
-    if (_dirty || !value::TimeCode(t).is_default()) {
-      value::matrix4d m;
-      std::string err;
-      if (EvaluateXformOps(t, tinterp, &m, resetTransformStack, &err)) {
-        if (value::TimeCode(t).is_default()) {
-          _matrix = m;
-          _dirty = false;
-        }
-        else {
-          return m;
-        }
-      } else {
-        return nonstd::make_unexpected(err);
-      }
+    value::matrix4d m;
+    std::string err;
+    if (EvaluateXformOps(t, tinterp, &m, resetTransformStack, &err)) {
+      return m;
     }
-
-    return _matrix;
+    return nonstd::make_unexpected(err);
   }
 
-  void set_dirty(bool onoff) { _dirty = onoff; }
+  // Deprecated no-op: the local matrix is no longer cached, so there is no dirty
+  // state to set. Retained for source compatibility.
+  void set_dirty(bool onoff) { (void)onoff; }
 
   bool has_timesamples() const {
     for (size_t i = 0; i < xformOps.size(); i++) {
@@ -258,9 +254,6 @@ struct Xformable {
   std::vector<value::token> xformOpOrder() const;
 
   std::vector<XformOp> xformOps;
-
-  mutable bool _dirty{true};
-  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
 };
 
 

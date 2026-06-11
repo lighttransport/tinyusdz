@@ -2137,7 +2137,8 @@ def Xform "x" {
 }
 
 void usdc_writer_int64_scalar_test(void) {
-  // int64 outside 48-bit inline range -> out-of-line write path
+  // Large int64 values outside the OpenUSD-style int32 inline range use the
+  // out-of-line write path.
   const char *usda = R"(#usda 1.0
 def Xform "x" {
   custom int64 big = 9223372036854775000
@@ -2517,6 +2518,43 @@ def Xform "x" {
   TEST_CHECK(samples.size() == 3);
   if (samples.size() != 3) return;
   TEST_CHECK(samples[1].blocked);
+}
+
+void usdc_writer_timesamples_blocked_array_sample_test(void) {
+  // ValueBlock as one of multiple ARRAY time samples. Regression: a single
+  // `None` in an animated array attribute used to drop the entire timeSamples
+  // on USDC read-back (scalar-vs-array blocked type-id conflict in the reader).
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom float[] widths.timeSamples = {
+    0: [1, 2, 3],
+    5: None,
+    10: [4, 5, 6]
+  }
+}
+)";
+  RT_OK(usda);
+  const Prim *p = find_root_prim(stage, "x");
+  TEST_CHECK(p != nullptr);
+  if (!p) return;
+  const auto *xf = p->data().as<Xform>();
+  if (!xf) return;
+  auto it = xf->props.find("widths");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  const auto &ts = it->second.get_attribute().get_var().ts_raw();
+  const auto &samples = ts.get_samples();
+  TEST_CHECK(samples.size() == 3);
+  if (samples.size() != 3) return;
+  // Blocked sample preserved.
+  TEST_CHECK(samples[1].blocked);
+  // Real array samples preserved with their values.
+  std::vector<float> got;
+  bool blocked = false;
+  TEST_CHECK(ts.get_vector_at<float>(0, &got, &blocked) && !blocked &&
+             got == std::vector<float>({1.0f, 2.0f, 3.0f}));
+  TEST_CHECK(ts.get_vector_at<float>(2, &got, &blocked) && !blocked &&
+             got == std::vector<float>({4.0f, 5.0f, 6.0f}));
 }
 
 void usdc_writer_large_int_array_test(void) {
@@ -3742,9 +3780,8 @@ def BasisCurves "c" {
 }
 
 void usdc_writer_int64_large_test(void) {
-  // -9876543210 fits in 48 bits; verify the writer's inline path and the
-  // reader's 48-bit sign-extension preserve the full value (regression:
-  // reader was truncating to 32 bits, returning -1286608618).
+  // Values outside the OpenUSD-style int32 inline range still round-trip via
+  // out-of-line storage.
   const char *usda = R"(#usda 1.0
 def Xform "x" {
   custom int64 v = -9876543210
@@ -4431,4 +4468,140 @@ def Xform "x" {
   TEST_CHECK(toks[0].str() == "left");
   TEST_CHECK(toks[1].str() == "right");
   TEST_CHECK(toks[2].str() == "both");
+}
+
+// =========================================================================
+// UsdPrimvarReader varname-connection + uniform info:id (USDC write regression)
+//
+// Regression for two USDC writer bugs found while converting UE-exported USD:
+//   1) A UsdPrimvarReader's `inputs:varname` authored as a CONNECTION
+//      (`inputs:varname.connect = </Mat.inputs:stPrimvarName>`) was dropped on
+//      write (only the value form was handled), which broke UsdUVTexture
+//      evaluation and made the whole render-scene load fail.
+//   2) Shader `info:id` was written with `varying` variability instead of the
+//      schema-required `uniform`.
+// =========================================================================
+
+void usdc_writer_primvar_reader_varname_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Material "M" {
+  token inputs:stPrimvarName = "st"
+  token outputs:surface.connect = </M/S.outputs:surface>
+
+  def Shader "P" {
+    uniform token info:id = "UsdPrimvarReader_float2"
+    string inputs:varname.connect = </M.inputs:stPrimvarName>
+    float2 outputs:result
+  }
+  def Shader "S" {
+    uniform token info:id = "UsdPreviewSurface"
+    token outputs:surface
+  }
+}
+)";
+  RT_OK(usda);
+  const auto *mat = find_root<Material>(stage, "M");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+
+  const Prim *matPrim = find_root_prim(stage, "M");
+  TEST_CHECK(matPrim != nullptr);
+  if (!matPrim) return;
+
+  // Locate the PrimvarReader child shader "P".
+  const Shader *reader_shader = nullptr;
+  for (const auto &child : matPrim->children()) {
+    if (child.element_name() == "P") {
+      reader_shader = child.data().as<Shader>();
+    }
+  }
+  TEST_CHECK(reader_shader != nullptr);
+  if (!reader_shader) return;
+
+  const auto *reader = reader_shader->value.as<UsdPrimvarReader_float2>();
+  TEST_CHECK(reader != nullptr);
+  if (!reader) return;
+
+  // The connected varname must survive the USDC roundtrip.
+  TEST_CHECK(reader->varname.authored());
+  TEST_CHECK(reader->varname.has_connections());
+  if (!reader->varname.has_connections()) return;
+  const auto &paths = reader->varname.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/M.inputs:stPrimvarName");
+}
+
+// Regression: a UsdTransform2d's connected `inputs:in` (wired to a
+// UsdPrimvarReader's st output) must survive a USDC write. Dropping it (only the
+// value form was handled) makes UsdUVTexture evaluation fail with
+// `inputs:in` must be a connection.
+void usdc_writer_transform2d_in_connection_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "streader" {
+  uniform token info:id = "UsdPrimvarReader_float2"
+  float2 outputs:result
+}
+def Shader "place" {
+  uniform token info:id = "UsdTransform2d"
+  float2 inputs:in.connect = </streader.outputs:result>
+  float2 inputs:scale = (2, 2)
+  float2 outputs:result
+}
+)";
+  RT_OK(usda);
+  const auto *t = find_root<Shader>(stage, "place");
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+  const auto *xf = t->value.as<UsdTransform2d>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+
+  TEST_CHECK(xf->in.authored());
+  TEST_CHECK(xf->in.has_connections());
+  if (!xf->in.has_connections()) return;
+  const auto &paths = xf->in.connections();
+  TEST_CHECK(paths.size() == 1);
+  if (paths.size() != 1) return;
+  TEST_CHECK(paths[0].full_path_name() == "/streader.outputs:result");
+}
+
+void usdc_writer_shader_info_id_uniform_test(void) {
+  const char *usda = R"(#usda 1.0
+def Shader "S" {
+  uniform token info:id = "UsdPreviewSurface"
+  token outputs:surface
+}
+)";
+  std::string warn, err;
+  Layer layer;
+  bool ok = LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(usda),
+                                std::strlen(usda), "test.usda", &layer,
+                                &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); return; }
+
+  std::vector<uint8_t> buf;
+  ok = usdc::SaveAsUSDCToMemory(layer, &buf, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("write failed: %s", err.c_str()); return; }
+
+  Layer rt;
+  ok = LoadLayerFromMemory(buf.data(), buf.size(), "test.usdc", &rt, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) { TEST_MSG("reload failed: %s", err.c_str()); return; }
+
+  const PrimSpec *ps = nullptr;
+  TEST_CHECK(rt.find_primspec_at(Path("/S", ""), &ps, &err));
+  TEST_CHECK(ps != nullptr);
+  if (!ps) return;
+
+  auto it = ps->props().find("info:id");
+  TEST_CHECK(it != ps->props().end());
+  if (it == ps->props().end()) return;
+  TEST_CHECK(it->second.is_attribute());
+  if (!it->second.is_attribute()) return;
+  // info:id is `uniform token` per the UsdShade schema; it must not degrade to
+  // `varying` through the USDC writer.
+  TEST_CHECK(it->second.get_attribute().variability() == Variability::Uniform);
 }

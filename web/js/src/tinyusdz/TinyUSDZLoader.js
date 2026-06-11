@@ -151,6 +151,8 @@ class TinyUSDZLoader extends Loader {
      * @param {Function} options.onTydraProgress - Callback for Tydra conversion progress ({meshCurrent, meshTotal, stage, meshName, progress}) => void
      * @param {Function} options.onTydraStage - Callback for Tydra stage changes ({stage, message}) => void
      * @param {Function} options.onTydraComplete - Callback for Tydra conversion completion ({meshCount, materialCount, textureCount}) => void
+     * @param {Function} options.onTinyUSDZDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
+     * @param {boolean} options.debugMemory - Print native heap debug events to console
      */
     constructor(manager, options = {}) {
         super(manager);
@@ -186,6 +188,8 @@ class TinyUSDZLoader extends Loader {
         this.onTydraProgress_ = options.onTydraProgress || null;
         this.onTydraStage_ = options.onTydraStage || null;
         this.onTydraComplete_ = options.onTydraComplete || null;
+        this.onTinyUSDZDebug_ = options.onTinyUSDZDebug || null;
+        this.debugMemory_ = !!options.debugMemory;
     }
 
     _getBinarySize(binary) {
@@ -206,6 +210,47 @@ class TinyUSDZLoader extends Loader {
         }
 
         return null;
+    }
+
+    _formatDebugMemoryEvent(event) {
+        const heapMB = event && typeof event.heapBytes === 'number'
+            ? (event.heapBytes / (1024 * 1024)).toFixed(1)
+            : 'n/a';
+        const inputMB = event && typeof event.inputBytes === 'number' && event.inputBytes > 0
+            ? ` input=${(event.inputBytes / (1024 * 1024)).toFixed(1)}MB`
+            : '';
+        const material = event && event.materialName ? ` material=${event.materialName}` : '';
+        const materialCount = event && event.materialsTotal
+            ? ` materials=${event.materialsCurrent}/${event.materialsTotal}`
+            : '';
+        const detail = event && event.detail ? ` ${event.detail}` : '';
+        return `[TinyUSDZDebug] ${event ? event.phase : 'unknown'} heap=${heapMB}MB${inputMB}${materialCount}${material}${detail}`;
+    }
+
+    _makeDebugMemoryCallback(extraCallback, printToConsole) {
+        return (event) => {
+            if (printToConsole) {
+                console.debug(this._formatDebugMemoryEvent(event));
+            }
+            if (this.onTinyUSDZDebug_) {
+                this.onTinyUSDZDebug_(event);
+            }
+            if (extraCallback) {
+                extraCallback(event);
+            }
+        };
+    }
+
+    _logNativeMemory(usd, label, enabled) {
+        if (!enabled || !usd || typeof usd.debugLogMemory !== 'function') {
+            return;
+        }
+        const event = usd.debugLogMemory(label);
+        console.debug(this._formatDebugMemoryEvent({
+            phase: 'js.' + label,
+            heapBytes: event && event.heapBytes,
+            detail: label
+        }));
     }
 
     _describeUSDInput(binary, filePath) {
@@ -373,6 +418,9 @@ class TinyUSDZLoader extends Loader {
             }
             if (this.onTydraComplete_) {
               initOptions.onTydraComplete = this.onTydraComplete_;
+            }
+            if (this.onTinyUSDZDebug_ || this.debugMemory_) {
+              initOptions.onTinyUSDZDebug = this._makeDebugMemoryCallback(null, this.debugMemory_);
             }
 
             this.native_ = await initTinyUSDZNative(initOptions);
@@ -688,6 +736,8 @@ class TinyUSDZLoader extends Loader {
      * @param {Function} onError - Error callback
      * @param {Object} options - Parsing options
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this parse
+     * @param {boolean} options.debugMemory - Print native heap debug events for this parse
+     * @param {Function} options.onTinyUSDZDebug - Per-parse native debug callback
      */
     parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError, options = {}) {
 
@@ -723,20 +773,38 @@ class TinyUSDZLoader extends Loader {
 
         this._applySkinningLoadOptions(usd);
 
+        const debugMemory = options.debugMemory !== undefined ? !!options.debugMemory : this.debugMemory_;
+        const debugCallback = options.onTinyUSDZDebug || null;
+        let restoreDebugCallback = () => {};
+        if (debugMemory || debugCallback) {
+            const previousDebugCallback = this.native_.onTinyUSDZDebug;
+            this.native_.onTinyUSDZDebug = this._makeDebugMemoryCallback(debugCallback, debugMemory);
+            restoreDebugCallback = () => {
+                this.native_.onTinyUSDZDebug = previousDebugCallback;
+            };
+        }
+
         let ok;
         try {
+            this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
             ok = usd.loadFromBinary(binary, filePath);
+            this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
+            this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);
+            restoreDebugCallback();
             this._logFailedUSDInput(binary, filePath, e instanceof Error ? e.message : String(e));
             _onError(e instanceof Error ? e : new Error(String(e)));
             return;
         }
         if (!ok) {
+            this._logNativeMemory(usd, 'loadFromBinary-failed', debugMemory);
+            restoreDebugCallback();
             this._logFailedUSDInput(binary, filePath, usd.error());
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
+            restoreDebugCallback();
             onLoad(usd);
         }
     }
@@ -1140,7 +1208,7 @@ class TinyUSDZLoader extends Loader {
 
         // Allocate WASM buffer upfront
         // Returns UUID for buffer operations, asset_name stored inside for cache key
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer for streaming: ' + (allocResult.error || 'unknown error'));
         }
@@ -1301,7 +1369,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         // Now allocate WASM buffer with known size
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
         }
@@ -1529,7 +1597,7 @@ class TinyUSDZLoader extends Loader {
         const usd = options.usdInstance || new this.native_.TinyUSDZLoaderNative();
 
         // Allocate WASM buffer
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
         if (!allocResult.success) {
             throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
         }

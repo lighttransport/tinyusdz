@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertinament Inc.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 //#include <cassert>
 #include <cctype>  // std::tolower
@@ -20,6 +21,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "image-loader.hh"
@@ -51,15 +53,52 @@ namespace {
 constexpr uint32_t kMaxZstdNestingDepth = 2;
 
 std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
+  std::string basedir;
   if (asset_name.empty()) {
-    return std::string();
+    return basedir;
   }
 
-  std::string basedir = io::GetBaseDir(asset_name);
+  basedir = io::GetBaseDir(asset_name);
   if (basedir.empty()) {
-    return ".";
+    basedir = ".";
   }
   return basedir;
+}
+
+bool AdoptStageMMapFileForZeroCopy(Stage *stage, io::MMapFileHandle *handle,
+                                   std::string *err) {
+  if (!stage || !handle) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or mmap handle for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_file(std::move(*handle))) {
+    if (err) {
+      (*err) += "Failed to attach mmap file lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool AdoptStageBufferForZeroCopy(Stage *stage, std::vector<uint8_t> *data,
+                                 std::string *err) {
+  if (!stage || !data) {
+    if (err) {
+      (*err) += "Internal error: invalid Stage or buffer for zero-copy ownership.\n";
+    }
+    return false;
+  }
+
+  if (!stage->adopt_mmap_buffer(std::move(*data))) {
+    if (err) {
+      (*err) += "Failed to attach file buffer lifetime to Stage for zero-copy arrays.\n";
+    }
+    return false;
+  }
+  return true;
 }
 }
 
@@ -154,6 +193,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   config.mmap_zero_copy = options.mmap_zero_copy;
   usdc::USDCReader reader(&sr, config);
@@ -177,6 +217,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   // Reconstruct `Stage`(scene) object
   {
+    stage->clear_mmap_data();
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
@@ -237,8 +278,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDCFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -275,8 +323,15 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -394,7 +449,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
+    uint16_t compr_method;
+    memcpy(&compr_method, &local_header[8], sizeof(compr_method));
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
     uint32_t uncompr_bytes;
     memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
@@ -403,6 +459,13 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     if (compr_method != 0) {
       if (err) {
         (*err) += "Compressed ZIP is not supported for USDZ\n";
+      }
+      return false;
+    }
+
+    if (uncompr_bytes > (length - offset)) {
+      if (err) {
+        (*err) += "Invalid uncompressed size in ZIP data\n";
       }
       return false;
     }
@@ -524,6 +587,9 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
     if (!ret) {
       if (err) {
+        if (!err->empty() && err->back() != '\n') {
+          (*err) += "\n";
+        }
         (*err) += "Failed to load USDC: [" + filename + "].\n";
       }
 
@@ -602,8 +668,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDZFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -633,8 +706,15 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
-                              err, options);
+    bool ret = LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
+                                  err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -670,6 +750,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   // MaterialX validation options
@@ -809,8 +890,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
 
     bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
                               err, options);
+    bool keep_mmap = false;
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      keep_mmap = AdoptStageMMapFileForZeroCopy(stage, &handle, err);
+      if (!keep_mmap) {
+        ret = false;
+      }
+    }
 
-    {
+    if (!keep_mmap) {
       std::string _err;
       // Ignore unmap result for now.
       io::UnmapFile(handle, &_err);
@@ -831,8 +919,15 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
-                             options);
+    bool ret = LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn,
+                                 err, options);
+    if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
+      if (!AdoptStageBufferForZeroCopy(stage, &data, err)) {
+        return false;
+      }
+    }
+
+    return ret;
   }
 }
 
@@ -881,9 +976,15 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
       return false;
     }
 
+    // The decompressed buffer is local to this stack frame, so zero-copy refs
+    // cannot safely outlive this call.
+    USDLoadOptions decompressed_options = options;
+    decompressed_options.mmap_zero_copy = false;
+
     // Recursively call with bounded nested zstd depth.
     return LoadUSDFromMemoryImpl(decompressed_data.data(), decompressed_data.size(),
-                                 base_dir, stage, warn, err, options, zstd_depth + 1);
+                                 base_dir, stage, warn, err,
+                                 decompressed_options, zstd_depth + 1);
 #else
     if (err) {
       (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
@@ -1175,6 +1276,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
   usdc::USDCReader reader(&sr, config);
 
@@ -1255,6 +1357,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.strict_shader_type_check = options.strict_shader_type_check;
   // MaterialX validation options
   config.strict_mtlx_check = options.strict_mtlx_check;
   config.validate_mtlx_info_id = options.validate_mtlx_info_id;
@@ -1407,6 +1510,9 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 
     if (!ret) {
       if (err) {
+        if (!err->empty() && err->back() != '\n') {
+          (*err) += "\n";
+        }
         (*err) += "Failed to load USDC: [" + filename + "].\n";
       }
 
@@ -1808,25 +1914,26 @@ bool SetupUSDZAssetResolution(
 
 namespace {
 
-// CRC32 lookup table (IEEE 802.3 polynomial)
-static uint32_t usdz_crc32_table[256];
-static bool usdz_crc32_table_initialized = false;
-
-static void InitCRC32Table() {
-  for (uint32_t i = 0; i < 256; i++) {
-    uint32_t c = i;
-    for (int j = 0; j < 8; j++) {
-      c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+// CRC32 lookup table (IEEE 802.3 polynomial).
+// Thread-safe one-time init via a function-local static (C++11 magic statics),
+// so concurrent USDZ writes don't race on a hand-rolled init flag.
+static const std::array<uint32_t, 256> &Usdz_CRC32Table() {
+  static const std::array<uint32_t, 256> table = [] {
+    std::array<uint32_t, 256> t{};
+    for (uint32_t i = 0; i < 256; i++) {
+      uint32_t c = i;
+      for (int j = 0; j < 8; j++) {
+        c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+      }
+      t[i] = c;
     }
-    usdz_crc32_table[i] = c;
-  }
-  usdz_crc32_table_initialized = true;
+    return t;
+  }();
+  return table;
 }
 
 static uint32_t ComputeCRC32(const uint8_t *data, size_t len) {
-  if (!usdz_crc32_table_initialized) {
-    InitCRC32Table();
-  }
+  const std::array<uint32_t, 256> &usdz_crc32_table = Usdz_CRC32Table();
   uint32_t crc = 0xFFFFFFFFu;
   for (size_t i = 0; i < len; i++) {
     crc = usdz_crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
@@ -2102,7 +2209,9 @@ bool SerializeUSDZRootLayer(const Stage &stage, const USDZWriteOptions &options,
 
   switch (options.root_layer_format) {
     case USDZRootLayerFormat::USDC: {
-      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err)) {
+      if (!usdc::SaveAsUSDCToMemory(stage, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
         if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
         return false;
       }
@@ -2144,7 +2253,9 @@ bool SerializeUSDZRootLayer(const Layer &layer, const USDZWriteOptions &options,
 
   switch (options.root_layer_format) {
     case USDZRootLayerFormat::USDC: {
-      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err)) {
+      if (!usdc::SaveAsUSDCToMemory(layer, root_data, warn, err,
+                                    options.max_file_size_bytes,
+                                    options.max_memory_bytes)) {
         if (err) { (*err) += "Failed to serialize root layer as USDC.\n"; }
         return false;
       }
@@ -2509,7 +2620,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     uint32_t header_crc;
     memcpy(&header_crc, &local_header[14], 4);
 
-    if (uncompr_size > 0 && offset + uncompr_size <= length) {
+    if (uncompr_size > 0 && uncompr_size <= length - offset) {
       uint32_t actual_crc = ComputeCRC32(addr + offset, uncompr_size);
       if (header_crc != 0 && actual_crc != header_crc) {
         if (err) {
@@ -2519,7 +2630,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         valid = false;
       }
-    } else if (uncompr_size > 0 && offset + uncompr_size > length) {
+    } else if (uncompr_size > 0 && uncompr_size > length - offset) {
       if (err) {
         (*err) += "Entry '" + name + "': data extends beyond file end.\n";
       }
@@ -2545,7 +2656,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   // A minimal check: look for EOCD signature near the end
   bool found_eocd = false;
   if (length >= 22) {
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         found_eocd = true;
@@ -2559,6 +2671,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
         }
         break;
       }
+      if (i == eocd_lower) {
+        break;
+      }
     }
   }
 
@@ -2567,7 +2682,8 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     valid = false;
   } else {
     // Validate central directory entry count matches local headers
-    for (size_t i = length - 22; i >= (length > 65557 ? length - 65557 : 0); i--) {
+    const size_t eocd_lower = (length > 65557) ? (length - 65557) : 0;
+    for (size_t i = length - 22;; i--) {
       if (addr[i] == 0x50 && addr[i + 1] == 0x4b &&
           addr[i + 2] == 0x05 && addr[i + 3] == 0x06) {
         uint16_t cd_entry_count;
@@ -2580,6 +2696,9 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
                        std::to_string(entry_index) + ").\n";
           }
         }
+        break;
+      }
+      if (i == eocd_lower) {
         break;
       }
     }

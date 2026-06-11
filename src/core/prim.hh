@@ -172,7 +172,7 @@ class Prim {
   const Path &element_path() const { return _elementPath; }
 
   // elementName = element_path's prim part
-  const std::string &element_name() const { return _elementPath.prim_part(); }
+  tstring_view element_name() const { return _elementPath.prim_part(); }
 
   const std::string type_name() const { return _data.type_name(); }
 
@@ -229,14 +229,14 @@ class Prim {
   /// `indices_is_valid` is set to false(index may be duplicated(Duplicated Prim
   /// name exits in `primChildren`)  and not in range `[0, children() -1`)
   ///
-  /// NOTE: This function build a cache.
+  /// NOTE: The result is computed on each call and returned by value (no
+  /// internal cache), so this is safe to call on a shared Prim concurrently.
   ///
-  /// @param[in] force_update Always rebuild child_indices. false = use cache if
-  /// exits.
+  /// @param[in] force_update Deprecated no-op (nothing is cached anymore).
   /// @param[out] indices_is_valid Optional. Set true when returned indices are
   /// valid.
   ///
-  const std::vector<int64_t> &get_child_indices_from_primChildren(
+  std::vector<int64_t> get_child_indices_from_primChildren(
       bool force_update = true, bool *indices_is_valid = nullptr) const;
 
   //
@@ -310,16 +310,6 @@ class Prim {
   std::multiset<std::string>
       _childrenNameSet;  // Stores input child Prim's elementName to assign
                          // unique elementName in `add_child`
-
-  mutable bool _child_dirty{false};
-  mutable bool _primChildrenIndicesIsValid{
-      false};  // true when indices in _primChildrenIndices are not -1, unique,
-               // and index value are within [0, children().size()), and also
-               // _primChildrenIndices.size() == children().size()
-  mutable std::vector<int64_t>
-      _primChildrenIndices;  // Get corresponding array index in _children,
-                             // based on `metas().primChildren` token[] info. -1
-                             // = invalid.
 
   int64_t _prim_id{
       -1};  // Unique Prim id when positive(starts with 1). Id is assigned by

@@ -19,6 +19,8 @@
 #include "next/parser/ascii-parser.hh"
 #include "next/stage/stage.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/physics-api.hh"
+#include "next/schema/physics-joint.hh"
 
 using namespace tinyusdz::next;
 
@@ -148,6 +150,54 @@ void test_value() {
     assert(v.as_float_array() != nullptr);
     assert(v.as_float_array()->size() == 5);
     assert((*v.as_float_array())[2] == 3.0f);
+  }
+
+  // Copy-on-write: a copy shares the buffer until one side mutates, then the
+  // mutation must be private (the other copy is unaffected).
+  {
+    Value a = Value::MakeFloatArray(std::vector<float>{1, 2, 3});
+    Value b = a;  // shares the buffer (refcount bump, no element copy)
+    assert(*a.as_float_array() == *b.as_float_array());
+
+    (*b.as_float_array())[0] = 99.0f;  // mutable access detaches b
+    assert((*b.as_float_array())[0] == 99.0f);
+    assert((*a.as_float_array())[0] == 1.0f && "CoW detach failed: a was mutated");
+
+    // A token array (string elements) detaches correctly too.
+    Value t = Value::MakeTokenArray(std::vector<std::string>{"x", "y"});
+    Value t2 = t;
+    assert(*t.as_token_array() == *t2.as_token_array());
+  }
+
+  // Array equality/hash/raw-bytes must cover every concrete array backing type,
+  // not just float3/int. These are used by time-sample deduplication.
+  {
+    Value q1 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    Value q2 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    assert(q1 == q2);
+    assert(q1.hash() == q2.hash());
+    size_t n = 0;
+    const uint8_t* raw = q1.raw_bytes(&n);
+    assert(raw && n == 8 * sizeof(float));
+
+    Value m1 = Value::MakeDoubleCompArray(std::vector<double>(32, 2.0),
+                                          TypeId::Matrix4d, 16);
+    Value m2 = m1;
+    assert(m1 == m2);
+    assert(m1.hash() == m2.hash());
+    raw = m1.raw_bytes(&n);
+    assert(raw && n == 32 * sizeof(double));
+
+    Value tok1 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    Value tok2 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    assert(tok1 == tok2);
+    assert(tok1.hash() == tok2.hash());
+    assert(tok1.raw_bytes(&n) == nullptr && n == 0);
+
+    (*q2.as_float_array())[0] = 42.0f;
+    assert(q1 != q2);
   }
 
   std::cout << "  Value tests passed!" << std::endl;
@@ -383,6 +433,129 @@ def Sphere "MySphere" {
 }
 
 // ============================================================
+// Arc list-op qualifiers (prepend / append / delete)
+// ============================================================
+
+void test_arc_listops() {
+  std::cout << "Testing arc list-op qualifiers..." << std::endl;
+
+  // prepend inserts at the front; append at the back; delete removes. The
+  // composed `references` list must reflect those ops in authoring order.
+  const char* input = R"(#usda 1.0
+def "A" (
+    references = [@base.usd@</X>]
+    prepend references = [@front.usd@</X>]
+    append references = [@back.usd@</X>]
+    delete references = [@base.usd@</X>]
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim a = result.stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  const std::vector<std::string>& refs = a.GetMeta().references;
+  // explicit [base] -> prepend front -> [front, base] -> append back ->
+  // [front, base, back] -> delete base -> [front, back].
+  assert(refs.size() == 2 && "list-op qualifiers not applied");
+  assert(refs[0].find("front.usd") != std::string::npos && "prepend not at front");
+  assert(refs[1].find("back.usd") != std::string::npos && "append not at back");
+  for (const auto& r : refs) {
+    assert(r.find("base.usd") == std::string::npos && "delete did not remove");
+  }
+
+  std::cout << "  Arc list-op tests passed!" << std::endl;
+}
+
+// A per-reference layer offset `(offset = N; scale = M)` must be captured into
+// the canonical ref string as `?layerOffset=N:M`.
+void test_arc_layer_offset_parse() {
+  std::cout << "Testing arc layer-offset parse..." << std::endl;
+  const char* input = R"(#usda 1.0
+def "R" (
+    references = @asset.usd@</A> (offset = 12; scale = 2)
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim r = result.stage.GetPrimAtPath("/R");
+  assert(r.IsValid());
+  const std::vector<std::string>& refs = r.GetMeta().references;
+  assert(refs.size() == 1);
+  assert(refs[0].find("layerOffset=") != std::string::npos &&
+         "reference layer offset not captured");
+  assert(refs[0].find("12") != std::string::npos &&
+         refs[0].find(":2") != std::string::npos && "offset/scale wrong");
+  std::cout << "  Arc layer-offset parse passed!" << std::endl;
+}
+
+// ============================================================
+// Physics schema readers (regression: vector3f / quatf properties were dropped)
+// ============================================================
+
+void test_physics_schema() {
+  std::cout << "Testing physics schema readers..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    vector3f physics:velocity = (1, 2, 3)
+    vector3f physics:angularVelocity = (4, 5, 6)
+    point3f physics:centerOfMass = (0.5, 0.5, 0.5)
+    float3 physics:diagonalInertia = (2, 3, 4)
+}
+
+def PhysicsRevoluteJoint "Joint"
+{
+    point3f physics:localPos0 = (1, 0, 0)
+    point3f physics:localPos1 = (0, 1, 0)
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+
+  UsdPrim body = result.stage.GetPrimAtPath("/Body");
+  assert(body.IsValid());
+
+  // Rigid body velocity / angularVelocity (single vector3f attrs).
+  PhysicsRigidBodyData rb;
+  assert(GetPhysicsRigidBodyData(result.stage, body, &rb, 0.0));
+  assert(std::abs(rb.velocity[0] - 1.0f) < 0.001f);
+  assert(std::abs(rb.velocity[1] - 2.0f) < 0.001f);
+  assert(std::abs(rb.velocity[2] - 3.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[0] - 4.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[1] - 5.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[2] - 6.0f) < 0.001f);
+
+  // Mass: centerOfMass / diagonalInertia (vector3f).
+  PhysicsMassData mass;
+  assert(GetPhysicsMassData(result.stage, body, &mass));
+  assert(std::abs(mass.centerOfMass[0] - 0.5f) < 0.001f);
+  assert(std::abs(mass.centerOfMass[2] - 0.5f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[0] - 2.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[1] - 3.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[2] - 4.0f) < 0.001f);
+
+  // Joint local frame positions (vector3f).
+  UsdPrim joint = result.stage.GetPrimAtPath("/Joint");
+  assert(joint.IsValid());
+  PhysicsJointData jd;
+  assert(GetPhysicsJointData(result.stage, joint, &jd, 0.0));
+  assert(jd.hasLocalPos0);
+  assert(std::abs(jd.localPos0[0] - 1.0f) < 0.001f);
+  assert(jd.hasLocalPos1);
+  assert(std::abs(jd.localPos1[1] - 1.0f) < 0.001f);
+
+  std::cout << "  physics schema tests passed!" << std::endl;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -399,6 +572,9 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_arc_listops();
+    test_arc_layer_offset_parse();
+    test_physics_schema();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

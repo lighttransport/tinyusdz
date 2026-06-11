@@ -1,0 +1,11 @@
+#usda 1.0
+# EXPECT: shade.primvarReader.varname
+
+def Material "mat"
+{
+    def Shader "reader"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        float2 outputs:result
+    }
+}

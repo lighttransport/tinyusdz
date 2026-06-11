@@ -1,0 +1,8 @@
+#usda 1.0
+def "X" (references = @asset_1@</A>) {}
+%%%
+#usda 1.0
+def "A" (payload = @asset_2@</B>) {}
+%%%
+#usda 1.0
+def "B" (references = @asset_1@</A>) {}

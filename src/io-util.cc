@@ -836,7 +836,17 @@ bool IsAbsPath(const std::string &filename) {
     }
   }
 
-  // TODO: Windows drive path(e.g. C:\, D:\, ...)
+  // Windows drive path (e.g. C:\, D:/, ...). A drive letter followed by ':'
+  // and a separator is absolute; "C:foo" (drive-relative) is not.
+  if (filename.size() > 2) {
+    const char c = filename[0];
+    const bool is_drive_letter =
+        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    if (is_drive_letter && filename[1] == ':' &&
+        (filename[2] == '/' || filename[2] == '\\')) {
+      return true;
+    }
+  }
 
   return false;
 }

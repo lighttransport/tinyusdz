@@ -105,6 +105,9 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
 option(TINYUSDZ_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
+option(TINYUSDZ_WITH_PCP
+       "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
+       ON)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -310,7 +313,7 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
@@ -523,6 +526,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/composition-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
+    ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
     ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
     ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
@@ -590,6 +594,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
@@ -642,6 +648,17 @@ set(TINYUSDZ_SOURCES
 
     )
 
+if (TINYUSDZ_WITH_PCP)
+    list(APPEND TINYUSDZ_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.cc
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-impl.hh
+        ${PROJECT_SOURCE_DIR}/src/pcp/cache-parallel.cc
+    )
+endif()
+
 if (TINYUSDZ_WITH_TYDRA)
     list(APPEND TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
@@ -670,6 +687,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-material-mtlx.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-anim.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-instancer.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
@@ -722,6 +740,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
@@ -812,6 +832,27 @@ if (TINYUSDZ_WITH_FPNGE)
   endif()
 endif()
 
+# Native SIMD for the image-processing row kernels (src/imageproc/simd.cc).
+# When enabled on x86 GCC/Clang, the kernels use function multi-versioning
+# (target_clones + ifunc) to dispatch SSE2/SSE4.1/AVX/AVX2 at runtime. Off, or
+# on non-x86 / non-ELF / MSVC, a single auto-vectorized build is used. (WASM
+# auto-vectorizes via -msimd128 regardless; see web/CMakeLists.txt.)
+option(TINYUSDZ_ENABLE_NATIVE_SIMD "Runtime-dispatched native SIMD for image kernels" ON)
+# Disable FP contraction so vectorized kernels match the scalar reference bit-for-bit.
+if (NOT MSVC)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+if (TINYUSDZ_ENABLE_NATIVE_SIMD AND NOT EMSCRIPTEN AND NOT MSVC AND
+    (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86" OR
+     CMAKE_SYSTEM_PROCESSOR STREQUAL ""))
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+                              PROPERTIES COMPILE_DEFINITIONS TINYUSDZ_IMAGEPROC_MULTIVERSION)
+  message(STATUS "imageproc: native SIMD multi-versioning enabled (sse2/sse4.1/avx/avx2 runtime dispatch)")
+else()
+  message(STATUS "imageproc: native SIMD multi-versioning disabled (single auto-vectorized build)")
+endif()
+
 if(TINYUSDZ_WITH_USDMTLX)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
 endif()
@@ -867,34 +908,24 @@ endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_TINYEXR_V3)
-    # TinyEXR v3 API (modern C17/C++17 API)
-    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
-    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
-    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
+    # TinyEXR v3 C API (pure-C11 reader/writer; upstream `include/exr.h`).
+    # The vendored src/external/tinyexr/src/ holds only the minimal codec set:
+    # HTJ2K (EXR_NO_JPH) and ZSTD (EXR_NO_ZSTD) are compiled out for a small
+    # footprint. The v3 C core is self-contained (its own DEFLATE via fpnge), so
+    # it depends on neither miniz nor zlib.
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
-    if(TINYUSDZ_USE_SYSTEM_ZLIB)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-    else()
-      # Use bundled miniz (default)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-      set_source_files_properties(
-        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-    endif()
+    file(GLOB TINYEXR_V3_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
 
-    list(APPEND TINYUSDZ_DEP_SOURCES
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
-         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
+      INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
+      COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
+
+    list(APPEND TINYUSDZ_DEP_SOURCES ${TINYEXR_V3_SOURCES})
 
   else()
-    # TinyEXR v1 API (legacy API)
+    # TinyEXR v1 API (legacy; deprecated, kept behind TINYUSDZ_USE_TINYEXR_V3=OFF).
     message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
 
     if(TINYUSDZ_USE_SYSTEM_ZLIB)
@@ -1380,6 +1411,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-composition.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
@@ -1754,6 +1786,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_USE_USDVOX")
   endif()
 
+  if(TINYUSDZ_WITH_PCP)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_PCP")
+  endif()
+
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
                         ${CMAKE_DL_LIBS})
 
@@ -1783,6 +1820,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_EXR)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_EXR")
+    if(TINYUSDZ_USE_TINYEXR_V3)
+      # Select the pure-C11 v3 C EXR backend in image-loader.cc / image-writer.cc.
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "TINYUSDZ_EXR_V3=1")
+    endif()
   endif(TINYUSDZ_WITH_EXR)
 
   if(TINYUSDZ_WITH_COLORIO)
@@ -2010,7 +2052,6 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/tydra_to_renderscene)
     add_subdirectory(examples/variant-lister)
     add_subdirectory(examples/variant-analyzer)
-    add_subdirectory(examples/usddiff)
     add_subdirectory(examples/urdf-to-usd)
 
     if (TINYUSDZ_BUILD_GUI_VIEWER)
@@ -2030,6 +2071,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
+  add_subdirectory(examples/large-scene-load)
   #if (TINYUSDZ_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
@@ -2048,6 +2090,10 @@ endif(TINYUSDZ_BUILD_EXAMPLES)
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
+  # tusddiff uses the Tydra diff-and-compare API.
+  if(TINYUSDZ_WITH_TYDRA)
+    add_subdirectory(tools/tusddiff)
+  endif()
 endif()
 
 if(TINYUSDZ_BUILD_BENCHMARKS)
@@ -2153,6 +2199,83 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
+  # AOUSD validation fixture suite (self-checking via `# EXPECT:` markers).
+  # Runs `tusdcat --validate-all` over tests/usda/validation/**.
+  #
+  # These are end-to-end tests that spawn the `tusdcat` binary. On 32-bit
+  # (i386) + AddressSanitizer, the i386 ASan runtime/allocator cannot reserve
+  # enough virtual address space for the full `tusdcat` process and it aborts
+  # before useful work (`ERROR: Failed to mmap`, mmap -> ENOMEM; often while
+  # reporting an internal allocator OOM). This reproduces with both gcc's
+  # libasan and clang's compiler-rt, so it is a 32-bit ASan address-space
+  # limitation for this binary, not a toolchain bug. The validation logic
+  # itself is correct on 32-bit (verified with a non-ASan i386 build: full suite
+  # passes) and is exercised by every 64-bit job, and ASan coverage of the core
+  # library is still provided by unit-test-tinyusdz (which runs fine under
+  # 32-bit ASan). So skip just these tusdcat-driven E2E tests in the 32-bit+ASan
+  # configuration.
+  set(_tinyusdz_tusdcat_e2e_ok TRUE)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND SANITIZE_ADDRESS)
+    set(_tinyusdz_tusdcat_e2e_ok FALSE)
+    message(STATUS "tinyusdz: skipping tusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for tusdcat)")
+  endif()
+
+  if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
+    add_test(
+      NAME validation-suite-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
+              --app "$<TARGET_FILE:tusdcat>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
+      )
+
+    # Corpus-wide robustness regression: validate every parseable fixture in
+    # tests/usda and fail only if the validator crashes or hangs.
+    add_test(
+      NAME validation-regression-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
+              --app "$<TARGET_FILE:tusdcat>"
+              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+
+    add_test(
+      NAME validation-usdz-cube-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/cube.usdz"
+      )
+
+    add_test(
+      NAME validation-usdz-texture-cat-plane-test
+      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+              "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
+      )
+
+    find_program(TINYUSDZ_NODE_EXECUTABLE node)
+    if(TINYUSDZ_NODE_EXECUTABLE
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.js"
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.wasm")
+      add_test(
+        NAME web-validation-parity-test
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDCAT_PATH=$<TARGET_FILE:tusdcat>"
+                "TINYUSDZ_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz"
+                "TINYUSDZ_PARITY_SKIP_STALE_WASM=1"
+                "${TINYUSDZ_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
+        )
+    endif()
+  endif()
+
+  #
+  # Guard that src/usd-preview-surface-inputs.inc (the validator's table) stays
+  # in sync with src/usd-preview-surface-schema.json. Fails if a schema edit was
+  # not followed by `python3 scripts/gen-usd-preview-surface-inputs.py`.
+  #
+  add_test(
+    NAME preview-surface-schema-sync
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
+    )
+
+  #
   # USDA roundtrip tester
   #
   if(TINYUSDZ_WITH_MODULE_USDA_READER)
@@ -2195,13 +2318,37 @@ if(TINYUSDZ_BUILD_TESTS)
     # Uses --report-only so it does not fail the suite (informational baseline).
     # Run without --report-only for strict validation:
     #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
+    # tusddiff now lives under tools/ (TINYUSDZ_BUILD_TOOLS); skip if not built.
+    if(TARGET tusddiff)
+      add_test(
+        NAME usdc-writer-diff-test
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+                --tusdcat "$<TARGET_FILE:tusdcat>"
+                --tusddiff "$<TARGET_FILE:tusddiff>"
+                --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+                --report-only
+        )
+    endif()
+  endif()
+
+  #
+  # usd-wg asset corpus parse regression (native `tusdcat -l`).
+  #
+  # Runs the Node harness over the usd-wg/assets corpus (path from the
+  # USD_WG_ASSETS_DIR env var, else its built-in default). The harness SKIPS
+  # (exit 0) when the corpus or Node is absent, so this is safe in CI without
+  # the usd-wg/assets checkout. --max-fail 0 gates on the load baseline.
+  #
+  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  if(TINYUSDZ_NODE_EXECUTABLE AND TARGET tusdcat)
     add_test(
-      NAME usdc-writer-diff-test
-      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
+      NAME corpus-parse-native
+      COMMAND ${TINYUSDZ_NODE_EXECUTABLE}
+              ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
+              --mode load
               --tusdcat "$<TARGET_FILE:tusdcat>"
-              --tusddiff "$<TARGET_FILE:tusddiff>"
-              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-              --report-only
+              --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
+              --max-fail 0
       )
   endif()
 
@@ -2231,6 +2378,31 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # PointInstancer instancing (compute API + Tydra expansion)
+    add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
+    add_sanitizers(feat-instancing)
+    target_link_libraries(feat-instancing PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-instancing COMMAND feat-instancing
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Cross-directory cwp anchoring (composition) via LargeSceneLoader
+    add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
+    add_sanitizers(feat-large-scene)
+    target_link_libraries(feat-large-scene PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-large-scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-large-scene COMMAND feat-large-scene
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+      add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
+      add_sanitizers(feat-dedp)
+      target_link_libraries(feat-dedp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_include_directories(feat-dedp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-dedp COMMAND feat-dedp
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
 
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)

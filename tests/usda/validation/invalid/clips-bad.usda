@@ -1,0 +1,24 @@
+#usda 1.0
+# EXPECT: core.clips.active
+# EXPECT: core.clips.primPath
+# EXPECT: core.clips.times
+# EXPECT: core.clips.template
+
+over "Animated" (
+    clips = {
+        dictionary bad = {
+            asset[] assetPaths = [@clip_0.usdc@]
+            double2[] active = [(0, 0), (1, 2)]
+            string primPath = "NotAbsolute"
+            double2[] times = [(10, 10), (5, 5)]
+        }
+        dictionary templ = {
+            asset templateAssetPath = @clips/anim.###.usd@
+            double templateStartTime = 10
+            double templateEndTime = 1
+            double templateStride = 0
+        }
+    }
+)
+{
+}

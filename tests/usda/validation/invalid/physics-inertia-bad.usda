@@ -1,0 +1,28 @@
+#usda 1.0
+# EXPECT: physics.inertia
+# EXPECT: physics.quaternion
+# EXPECT: physics.collisionGroup.mergeGroup
+# EXPECT: physics.collisionGroup.filteredGroups
+(
+    doc = "UsdPhysics inertia, quaternion, joint transform, and collision group validation."
+)
+
+def Mesh "body" (
+    prepend apiSchemas = ["PhysicsMassAPI"]
+)
+{
+    float3 physics:diagonalInertia = (-1, 0, 0)
+    quatf physics:principalAxes = (0, 0, 0, 0)
+}
+
+def PhysicsRevoluteJoint "joint"
+{
+    point3f physics:localPos0 = (0, 0, 0)
+    quatf physics:localRot0 = (2, 0, 0, 0)
+}
+
+def PhysicsCollisionGroup "group"
+{
+    token physics:mergeGroup = ""
+    rel physics:filteredGroups = </body>
+}

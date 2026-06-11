@@ -125,6 +125,11 @@ public:
   const PrimSpec* GetPrimSpec() const { return spec_; }
 
 private:
+  // Resolves to the prototype's spec when this prim is an instance proxy
+  // (meta().instance_prototype() set); otherwise returns spec_. Used for child
+  // enumeration so instance children come from the prototype.
+  const PrimSpec* ChildSourceSpec() const;
+
   const PrimSpec* spec_ = nullptr;
   const Layer* layer_ = nullptr;
   uint32_t index_ = UINT32_MAX;
@@ -155,6 +160,11 @@ public:
   /// Get the root layer
   const Layer* GetRootLayer() const { return root_layer_.get(); }
   Layer* GetRootLayer() { return root_layer_.get(); }
+
+  /// Move the root layer out of the stage (transfers ownership). Used by the
+  /// pcp LayerRegistry to obtain a shareable Layer from a freshly-loaded Stage.
+  /// After this the stage has no root layer.
+  std::unique_ptr<Layer> ReleaseRootLayer() { return std::move(root_layer_); }
 
   /// Add a sublayer (for composition)
   void AddSubLayer(Layer&& layer);

@@ -1,0 +1,46 @@
+#usda 1.0
+(
+    doc = """Non-conformant UsdPreviewSurface-family shader property types.
+
+    Mirrors what Unreal Engine's USD exporter authors:
+      - `token outputs:result` on a UsdPrimvarReader_float2 (canonical: float2)
+      - `token outputs:rgb` on a UsdUVTexture (canonical: float3)
+      - a UsdPreviewSurface input authored with a wrong Sdf type
+        (`double inputs:roughness`; canonical: float)
+
+    With strict_shader_type_check=false (default) this should load with
+    warnings(matching OpenUSD). With strict_shader_type_check=true it should
+    be a hard error.
+    """
+)
+
+def Material "Mtl"
+{
+    token outputs:surface.connect = </Mtl/Surface.outputs:surface>
+
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Mtl/Tex.outputs:rgb>
+        # Non-conformant input: schema type is `float`, authored as `double`.
+        double inputs:roughness = 0.4
+        token outputs:surface
+    }
+
+    def Shader "Tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @./tex.png@
+        float2 inputs:st.connect = </Mtl/Reader.outputs:result>
+        # Non-conformant output: canonical type is `float3`.
+        token outputs:rgb
+    }
+
+    def Shader "Reader"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        string inputs:varname = "st"
+        # Non-conformant output: canonical type is `float2` (the reported bug).
+        token outputs:result
+    }
+}

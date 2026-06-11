@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
@@ -87,6 +88,8 @@ Options:
   --package-root <dir> Resolve package:// URIs under this directory
   --up-axis <axis>     Export up axis: Z or Y (default: Z)
   --allow-missing      Skip missing/unsupported meshes instead of failing
+  --allow-unsafe-paths Allow trusted XML to read assets/includes outside input
+                       dir, --asset-dir, and --package-root
   --tessellate-collision-shapes
                        Tessellate primitive collision shapes to mesh.
                        Default: use USD native shape prims for primitive collisions.
@@ -111,6 +114,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     packageRoot: null,
     upAxis: 'Z',
     allowMissing: false,
+    allowUnsafePaths: false,
     tessellateCollisionShapes: false,
     dumpJson: null,
     maxUsdcMb: 0,
@@ -148,6 +152,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       }
     } else if (arg === '--allow-missing') {
       opts.allowMissing = true;
+    } else if (arg === '--allow-unsafe-paths') {
+      opts.allowUnsafePaths = true;
     } else if (arg === '--tessellate-collision-shapes') {
       opts.tessellateCollisionShapes = true;
     } else if (arg === '--max-usdc-mb') {
@@ -184,6 +190,45 @@ function requireValue(argv, index, optionName) {
     throw new Error(`${optionName} requires a value`);
   }
   return value;
+}
+
+function realpathOrResolved(value) {
+  const resolved = path.resolve(value);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function isPathInside(candidate, root) {
+  const rel = path.relative(root, candidate);
+  return rel === '' || (rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function readRoots(opts, inputDir) {
+  const roots = [inputDir, ...(opts?.assetDirs || [])];
+  if (opts?.packageRoot) roots.push(opts.packageRoot);
+  return Array.from(new Set(roots.filter(Boolean).map(realpathOrResolved)));
+}
+
+function assertSafeReadPath(filePath, opts, inputDir, label = 'asset') {
+  if (opts?.allowUnsafePaths) return path.resolve(filePath);
+  const resolved = realpathOrResolved(filePath);
+  const roots = readRoots(opts, inputDir);
+  if (roots.some((root) => isPathInside(resolved, root))) return resolved;
+  throw new Error(
+    `Blocked ${label} outside allowed roots: ${path.resolve(filePath)}. ` +
+    'Use --asset-dir/--package-root for trusted asset roots, or ' +
+    '--allow-unsafe-paths for legacy trusted XML.'
+  );
+}
+
+function optsWithDefaultReadRoot(opts = {}, inputDir) {
+  return {
+    ...opts,
+    assetDirs: (opts.assetDirs && opts.assetDirs.length) ? opts.assetDirs : [inputDir]
+  };
 }
 
 function parseAttributes(text = '') {
@@ -434,6 +479,8 @@ function parseURDFMetadata(urdfText) {
         multiplier: numberAttr(mimicEl.attrs, 'multiplier', 1),
         offset: numberAttr(mimicEl.attrs, 'offset', 0)
       };
+      // The C++ converter maps this to NewtonMimicAPI when the target joint is
+      // exported.
     }
     joints.push(joint);
   }
@@ -500,6 +547,7 @@ class MeshResolver {
 
     for (const candidate of candidates.filter(Boolean)) {
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        assertSafeReadPath(candidate, this.opts, this.urdfDir, 'URDF mesh asset');
         return { path: candidate };
       }
     }
@@ -788,18 +836,19 @@ function shapePayloadForUrdfGeometry(geometryEl, originMatrix, fallbackName) {
   return null;
 }
 
-function expandMujocoIncludes(xml, baseDir, seen = new Set()) {
+function expandMujocoIncludes(xml, baseDir, opts = {}, seen = new Set()) {
   return xml.replace(/<include\b([^>]*?)\/\s*>/gi, (_tag, attrText) => {
     const attrs = parseAttributes(attrText || '');
     if (!attrs.file) return '';
     const includePath = path.resolve(baseDir, attrs.file);
-    if (seen.has(includePath)) {
-      throw new Error(`Recursive MJCF include: ${includePath}`);
+    const safeIncludePath = assertSafeReadPath(includePath, opts, baseDir, 'MJCF include');
+    if (seen.has(safeIncludePath)) {
+      throw new Error(`Recursive MJCF include: ${safeIncludePath}`);
     }
-    seen.add(includePath);
-    const childXML = stripMujocoDocumentRoot(fs.readFileSync(includePath, 'utf8'));
-    seen.delete(includePath);
-    return expandMujocoIncludes(childXML, path.dirname(includePath), seen);
+    seen.add(safeIncludePath);
+    const childXML = stripMujocoDocumentRoot(fs.readFileSync(safeIncludePath, 'utf8'));
+    seen.delete(safeIncludePath);
+    return expandMujocoIncludes(childXML, path.dirname(safeIncludePath), opts, seen);
   });
 }
 
@@ -861,10 +910,12 @@ function resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts, meshIndex) {
     candidates.push(path.resolve(dir, path.basename(file)));
   }
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return assertSafeReadPath(candidate, opts, baseDir, 'MJCF mesh asset');
+    }
   }
   const indexed = meshIndex?.get(path.basename(file).toLowerCase());
-  if (indexed) return indexed;
+  if (indexed) return assertSafeReadPath(indexed, opts, baseDir, 'MJCF mesh asset');
   return candidates[0];
 }
 
@@ -895,6 +946,8 @@ function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
   if (type === 'free') return 'floating';
+  // ball (3-DOF rotation) -> USD PhysicsSphericalJoint (matches web/js/urdf.js).
+  if (type === 'ball') return 'spherical';
   return 'fixed';
 }
 
@@ -908,12 +961,15 @@ function parseMujocoInertial(bodyNode) {
   };
   if (full.length >= 3) {
     inertial.diagonalInertia = [full[0], full[1], full[2]];
+    if (full.length >= 6 && full.slice(3, 6).some((v) => Math.abs(v) > 1e-9)) {
+      console.warn(`MJCF body "${bodyNode.attrs?.name || '?'}" has a non-diagonal `
+        + 'fullinertia; off-diagonal terms are dropped (only the diagonal is exported).');
+    }
   } else {
-    inertial.diagonalInertia = [
-      numberAttr(inertialNode.attrs, 'diaginertia', undefined),
-      undefined,
-      undefined
-    ].filter(Number.isFinite);
+    // `diaginertia` is "Ixx Iyy Izz" — parse all three (numberAttr only reads a
+    // single Number(), which yields NaN for the multi-value string and silently
+    // dropped the inertia). Mirrors web/js/urdf.js::parseMujocoInertial.
+    inertial.diagonalInertia = parseNumbers(inertialNode.attrs.diaginertia, []);
   }
   return inertial;
 }
@@ -1028,9 +1084,13 @@ function buildMujocoActuators(root) {
   for (const actuatorRoot of childElements(root, 'actuator')) {
     for (const actNode of childElements(actuatorRoot)) {
       const joint = actNode.attrs.joint || '';
-      if (!joint) continue;
+      const name = actNode.attrs.name || `${actNode.name}_${joint || actuators.length}`;
+      if (!joint) {
+        console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
+        continue;
+      }
       const act = {
-        name: actNode.attrs.name || `${actNode.name}_${joint}`,
+        name,
         joint,
         control: 'pd'
       };
@@ -1062,6 +1122,29 @@ function buildMujocoActuators(root) {
     }
   }
   return actuators;
+}
+
+function countDescendantsByName(node, name) {
+  let count = 0;
+  for (const child of childElements(node)) {
+    if (child.name === name) count += 1;
+    count += countDescendantsByName(child, name);
+  }
+  return count;
+}
+
+function warnUnsupportedMujocoElements(root) {
+  const unsupported = [
+    ['tendon', 'tendons (cable/spatial constraints)'],
+    ['equality', 'equality constraints'],
+    ['contact', 'explicit contact pairs/exclusions']
+  ];
+  for (const [tag, label] of unsupported) {
+    const count = countDescendantsByName(root, tag);
+    if (count) {
+      console.warn(`MJCF ${label} are not converted to USD (${count} <${tag}> element${count === 1 ? '' : 's'}).`);
+    }
+  }
 }
 
 async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
@@ -1204,11 +1287,13 @@ function resolveElementAttrs(node, classTable, rootAttrs, childclass) {
 }
 
 async function buildMujocoPayload(xmlText, opts, baseDir) {
-  const expanded = expandMujocoIncludes(xmlText, baseDir);
+  opts = optsWithDefaultReadRoot(opts, baseDir);
+  const expanded = expandMujocoIncludes(xmlText, baseDir, opts);
   const root = parseXMLTree(expanded);
   if (root.name !== 'mujoco') {
     throw new Error('Expected <mujoco> root for MJCF input.');
   }
+  warnUnsupportedMujocoElements(root);
 
   // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
   const compilerEl = firstChild(root, 'compiler');
@@ -1293,7 +1378,14 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     links.push(linkPayload);
 
     if (parentName) {
-      const jointNode = firstChild(bodyNode, 'joint');
+      const jointNodes = childElements(bodyNode, 'joint');
+      const jointNode = jointNodes[0] || null;
+      // MuJoCo permits multiple <joint> per body; USD joints are pairwise, so we
+      // represent the first and warn that the rest are dropped (matches urdf.js).
+      if (jointNodes.length > 1) {
+        console.warn(`MJCF body "${linkName}" has ${jointNodes.length} joints; only the `
+          + `first is converted — ${jointNodes.length - 1} DOF(s) dropped.`);
+      }
       if (jointNode) {
         const jAttrs = resolveElementAttrs(jointNode, defaults.joint, defaults.rootJoint, childclass);
         const axis = parseNumbers(jAttrs.axis, [0, 0, 1]);
@@ -1595,10 +1687,25 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`urdf-to-usd: ${err.message}`);
-  if (process.argv.includes('--verbose') || process.argv.includes('-v')) {
-    console.error(err.stack);
-  }
-  process.exit(1);
-});
+export {
+  assertSafeReadPath,
+  buildMujocoActuators,
+  buildMujocoPayload,
+  buildPayload,
+  expandMujocoIncludes,
+  parseArgs,
+  resolveMujocoMeshFile
+};
+
+const isMain = process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMain) {
+  main().catch((err) => {
+    console.error(`urdf-to-usd: ${err.message}`);
+    if (process.argv.includes('--verbose') || process.argv.includes('-v')) {
+      console.error(err.stack);
+    }
+    process.exit(1);
+  });
+}

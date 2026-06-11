@@ -113,7 +113,7 @@ function extractSceneData(loader) {
 
     // Extract meshes
     for (let i = 0; i < numMeshes; i++) {
-        const mesh = loader.getMesh(i);
+        const mesh = loader.getMeshCopy(i);
         if (mesh) {
             meshes.push(extractMeshData(mesh));
         }
@@ -167,7 +167,7 @@ function extractSceneData(loader) {
 
     // Extract images (actual pixel data)
     for (let i = 0; i < numImages; i++) {
-        const image = loader.getImage(i);
+        const image = loader.getImageCopy(i);
         if (image) {
             images.push(extractImageData(image));
         }
@@ -411,7 +411,7 @@ function getMesh(index) {
         return;
     }
 
-    const mesh = loader.getMesh(index);
+    const mesh = loader.getMeshCopy(index);
     if (mesh) {
         const data = extractMeshData(mesh);
         const transferables = [];
