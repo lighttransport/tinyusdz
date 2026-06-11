@@ -426,6 +426,43 @@ void test_caps_enforced() {
   CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
 }
 
+void test_base_caps_enforced_before_topology() {
+  corpus::Mesh cube = corpus::Cube();
+  RefinedMesh out;
+  std::string err;
+
+  Options opts;
+  opts.max_vertices = 7;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
+
+  opts = Options();
+  opts.max_faces = 5;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
+}
+
+void test_fvar_split_caps_enforced() {
+  corpus::Mesh cube = corpus::Cube();
+  std::vector<float> vals(cube.face_vertex_indices.size() * 2);
+  for (size_t i = 0; i < cube.face_vertex_indices.size(); i++) {
+    vals[2 * i + 0] = float(i);
+    vals[2 * i + 1] = float(i + 100);
+  }
+
+  tinyusdz::tsd::FVarChannelView ch;
+  ch.values = vals.data();
+  ch.num_values = uint32_t(cube.face_vertex_indices.size());
+  ch.indices = nullptr;
+  ch.stride = 2;
+  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+
+  Options opts;
+  opts.max_vertices = 30;  // base and geometry child fit; fvar split child does not.
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(cube), &ch, 1, nullptr, 0, opts, &out, &err) ==
+        Result::LimitExceeded);
+}
+
 // ---------------------------------------------------------------------------
 // FaceVarying smooth modes
 // ---------------------------------------------------------------------------
@@ -734,6 +771,11 @@ void test_limit_bilinear_identity() {
   RefinedMesh snapped = refined;
   CHECK(SnapToLimit(ToView(m), opts, &snapped, &err) == Result::Success);
   CHECK(snapped.points == refined.points);
+
+  Options capped = opts;
+  capped.max_vertices = 7;
+  CHECK(SnapToLimit(ToView(m), capped, &snapped, &err) ==
+        Result::LimitExceeded);
 }
 
 void test_limit_normals_unit_length() {
@@ -753,6 +795,25 @@ void test_limit_normals_unit_length() {
                                 normals[3 * v + 2] * normals[3 * v + 2]);
     CHECK(std::fabs(len - 1.0f) < 1e-3f);
   }
+}
+
+void test_limit_caps_enforced() {
+  corpus::Mesh m = corpus::Cube();
+  Options opts;
+  opts.level = 4;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &refined, &err) == Result::Success);
+
+  Options capped = opts;
+  capped.max_faces = 100;  // cube L4 would need 6*4^4 = 1536 faces
+  RefinedMesh snapped = refined;
+  CHECK(SnapToLimit(ToView(m), capped, &snapped, &err) ==
+        Result::LimitExceeded);
+
+  std::vector<float> normals;
+  CHECK(ComputeLimitNormals(ToView(m), capped, refined, &normals, &err) ==
+        Result::LimitExceeded);
 }
 
 // ---------------------------------------------------------------------------
@@ -982,6 +1043,8 @@ int main() {
   TEST(test_face_source_cube);
   TEST(test_holes_filtered);
   TEST(test_caps_enforced);
+  TEST(test_base_caps_enforced_before_topology);
+  TEST(test_fvar_split_caps_enforced);
   TEST(test_parallel_determinism);
 
   // FaceVarying smooth modes
@@ -999,6 +1062,7 @@ int main() {
   TEST(test_limit_corner_pinned);
   TEST(test_limit_bilinear_identity);
   TEST(test_limit_normals_unit_length);
+  TEST(test_limit_caps_enforced);
 
   // Topology
   TEST(test_topology_cube);

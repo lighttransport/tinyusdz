@@ -20,4 +20,5 @@ void tydra_subdivision_refines_display_opacity_test(void);
 void tydra_subdivision_refines_tangents_test(void);
 void tydra_subdivision_refines_binormals_test(void);
 void tydra_subdivision_refines_skinning_test(void);
+void tydra_subdivision_rejects_skin_element_size_before_refine_test(void);
 void tydra_subdivision_refines_blendshape_test(void);

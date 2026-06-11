@@ -6,12 +6,22 @@
 
 #include "tsd-tinyusdz.hh"
 
+#include <limits>
+
 #include "usdGeom.hh"
 
 namespace tinyusdz {
 namespace tsd {
 
 namespace {
+
+bool ToU32(size_t n, uint32_t *out) {
+  if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
+    return false;
+  }
+  *out = uint32_t(n);
+  return true;
+}
 
 // Reads the default value of an authored vector attribute (subdiv tags are
 // not animatable in practice); absent attributes yield an empty vector.
@@ -39,6 +49,22 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
                     const VertexPrimvarView *vertex_primvars,
                     uint32_t num_vertex_primvars, RefinedMesh *out,
                     std::string *err) {
+  auto fail = [&](const char *msg) {
+    if (err) {
+      (*err) += msg;
+      (*err) += "\n";
+    }
+    return false;
+  };
+
+  if ((num_fvar_channels > 0 && !fvar_channels) ||
+      (num_vertex_primvars > 0 && !vertex_primvars)) {
+    return fail("subdivision primvar view pointer is null.");
+  }
+  if ((points_xyz.size() % 3) != 0) {
+    return fail("points_xyz length must be divisible by 3.");
+  }
+
   Options options;
   options.level = level;
 
@@ -93,29 +119,37 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
 
   MeshView view;
   view.points = points_xyz.data();
-  view.num_points = uint32_t(points_xyz.size() / 3);
+  if (!ToU32(points_xyz.size() / 3, &view.num_points) ||
+      !ToU32(faceVertexCounts.size(), &view.num_faces) ||
+      !ToU32(faceVertexIndices.size(), &view.num_face_vertex_indices)) {
+    return fail("subdivision mesh counts exceed 32-bit index space.");
+  }
   view.face_vertex_counts = faceVertexCounts.data();
-  view.num_faces = uint32_t(faceVertexCounts.size());
   view.face_vertex_indices = faceVertexIndices.data();
-  view.num_face_vertex_indices = uint32_t(faceVertexIndices.size());
 
   if (!corner_indices.empty() &&
       corner_indices.size() == corner_sharpnesses.size()) {
     view.corner_indices = corner_indices.data();
-    view.num_corners = uint32_t(corner_indices.size());
+    if (!ToU32(corner_indices.size(), &view.num_corners)) {
+      return fail("corner index count exceeds 32-bit index space.");
+    }
     view.corner_sharpnesses = corner_sharpnesses.data();
   }
   if (!crease_lengths.empty()) {
     view.crease_indices = crease_indices.data();
-    view.num_crease_indices = uint32_t(crease_indices.size());
     view.crease_lengths = crease_lengths.data();
-    view.num_crease_lengths = uint32_t(crease_lengths.size());
     view.crease_sharpnesses = crease_sharpnesses.data();
-    view.num_crease_sharpnesses = uint32_t(crease_sharpnesses.size());
+    if (!ToU32(crease_indices.size(), &view.num_crease_indices) ||
+        !ToU32(crease_lengths.size(), &view.num_crease_lengths) ||
+        !ToU32(crease_sharpnesses.size(), &view.num_crease_sharpnesses)) {
+      return fail("crease tag counts exceed 32-bit index space.");
+    }
   }
   if (!hole_indices.empty()) {
     view.hole_indices = hole_indices.data();
-    view.num_holes = uint32_t(hole_indices.size());
+    if (!ToU32(hole_indices.size(), &view.num_holes)) {
+      return fail("hole index count exceeds 32-bit index space.");
+    }
   }
 
   // Stamp the mesh's authored faceVaryingLinearInterpolation on every
@@ -150,8 +184,10 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
         break;
     }
   }
-  std::vector<FVarChannelView> channels(
-      fvar_channels, fvar_channels + num_fvar_channels);
+  std::vector<FVarChannelView> channels;
+  if (num_fvar_channels) {
+    channels.assign(fvar_channels, fvar_channels + num_fvar_channels);
+  }
   for (FVarChannelView &ch : channels) {
     ch.interpolation = fvar_mode;
   }

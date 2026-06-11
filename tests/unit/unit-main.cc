@@ -162,6 +162,7 @@ TEST_LIST = {
   { "tydra_subdivision_refines_tangents_test", tydra_subdivision_refines_tangents_test },
   { "tydra_subdivision_refines_binormals_test", tydra_subdivision_refines_binormals_test },
   { "tydra_subdivision_refines_skinning_test", tydra_subdivision_refines_skinning_test },
+  { "tydra_subdivision_rejects_skin_element_size_before_refine_test", tydra_subdivision_rejects_skin_element_size_before_refine_test },
   { "tydra_subdivision_refines_blendshape_test", tydra_subdivision_refines_blendshape_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },

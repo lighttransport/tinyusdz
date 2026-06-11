@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 #include "tsd-internal.hh"
 
@@ -69,6 +70,14 @@ Result ValidateInput(const MeshView &mesh,
     return Fail(Result::InvalidArgument, err,
                 "mesh.face_vertex_indices is empty.");
   }
+  if (mesh.num_points > options.max_vertices) {
+    return Fail(Result::LimitExceeded, err,
+                "base mesh exceeds options.max_vertices.");
+  }
+  if (mesh.num_faces > options.max_faces) {
+    return Fail(Result::LimitExceeded, err,
+                "base mesh exceeds options.max_faces.");
+  }
 
   // Face degrees and corner-count consistency (64-bit accumulation).
   uint64_t corner_sum = 0;
@@ -79,6 +88,10 @@ Result ValidateInput(const MeshView &mesh,
                   "face degree out of range [3, 256].");
     }
     corner_sum += n;
+    if (corner_sum > (std::numeric_limits<uint32_t>::max)()) {
+      return Fail(Result::LimitExceeded, err,
+                  "base mesh corner count exceeds 32-bit index space.");
+    }
   }
   if (corner_sum != mesh.num_face_vertex_indices) {
     return Fail(Result::InvalidTopology, err,
