@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "tsd/tinysubdiv.hh"
@@ -217,6 +218,261 @@ void test_level0_fvar_expansion() {
 }
 
 // ---------------------------------------------------------------------------
+// Refinement: analytic checks
+// ---------------------------------------------------------------------------
+
+void test_bilinear_quad_level1_exact() {
+  corpus::Mesh quad = corpus::SingleQuad();
+  Options opts;
+  opts.scheme = Scheme::Bilinear;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(quad), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  // 4 verts + 4 edge midpoints + 1 centroid; 4 quads.
+  CHECK(out.points.size() == 9 * 3);
+  CHECK(out.face_vertex_counts.size() == 4);
+  for (uint32_t c : out.face_vertex_counts) {
+    CHECK(c == 4);
+  }
+  // Original vertices pass through exactly.
+  for (size_t i = 0; i < 12; i++) {
+    CHECK(out.points[i] == quad.points[i]);
+  }
+  // Centroid (last point).
+  for (int c = 0; c < 3; c++) {
+    const float expect = 0.25f * (quad.points[0 + c] + quad.points[3 + c] +
+                                  quad.points[6 + c] + quad.points[9 + c]);
+    CHECK(std::fabs(out.points[8 * 3 + size_t(c)] - expect) < 1e-6f);
+  }
+}
+
+void test_catmark_cube_level1_smooth_vertex() {
+  corpus::Mesh cube = corpus::Cube();
+  Options opts;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  // V + E + F = 8 + 12 + 6 = 26 points; 6*4 = 24 quads.
+  CHECK(out.points.size() == 26 * 3);
+  CHECK(out.face_vertex_counts.size() == 24);
+
+  // Hand-derive the smooth vertex rule for vertex 0 (valence 3):
+  // V' = (n-2)/n*V + sum(other endpoints)/n^2 + sum(child face points)/n^2.
+  // Child face points (centroids) occupy out.points[(8+12+f)*3].
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(cube.face_vertex_counts.data(), 6,
+                      cube.face_vertex_indices.data(), 24, 8, &topo,
+                      nullptr) == Result::Success);
+  const uint32_t v = 0;
+  const float n = 3.0f;
+  for (int c = 0; c < 3; c++) {
+    float acc = (n - 2.0f) / n * cube.points[v * 3 + size_t(c)];
+    for (uint32_t i = topo.vert_edge_offsets[v];
+         i < topo.vert_edge_offsets[v + 1]; i++) {
+      const uint32_t e = topo.vert_edges[i];
+      const uint32_t other = (topo.edge_verts[2 * e] == v)
+                                 ? topo.edge_verts[2 * e + 1]
+                                 : topo.edge_verts[2 * e];
+      acc += cube.points[other * 3 + size_t(c)] / (n * n);
+    }
+    for (uint32_t i = topo.vert_face_offsets[v];
+         i < topo.vert_face_offsets[v + 1]; i++) {
+      const uint32_t f = topo.vert_faces[i];
+      acc += out.points[(8 + 12 + f) * 3 + size_t(c)] / (n * n);
+    }
+    CHECK(std::fabs(out.points[v * 3 + size_t(c)] - acc) < 1e-6f);
+  }
+}
+
+void test_infinite_corner_pinned() {
+  corpus::Mesh cube = corpus::Cube();
+  cube.corner_indices = {3};
+  cube.corner_sharpnesses = {10.0f};
+  Options opts;
+  opts.level = 3;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  for (int c = 0; c < 3; c++) {
+    CHECK(out.points[3 * 3 + size_t(c)] == cube.points[3 * 3 + size_t(c)]);
+  }
+}
+
+void test_infinite_crease_midpoints() {
+  // Crease ring at sharpness 10: at level 1 the crease edge children are
+  // exact midpoints and ring vertices follow (6V + ea + eb) / 8.
+  corpus::Mesh cube = corpus::CreasedCube(10.0f, "creased_inf");
+  Options opts;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(cube.face_vertex_counts.data(), 6,
+                      cube.face_vertex_indices.data(), 24, 8, &topo,
+                      nullptr) == Result::Success);
+  // Ring edges: (2,3), (3,5), (5,4), (4,2). Edge child ids are 8 + e.
+  const uint32_t ring[4][2] = {{2, 3}, {3, 5}, {5, 4}, {4, 2}};
+  for (const auto &rv : ring) {
+    // Locate the edge id.
+    uint32_t edge = 0xFFFFFFFFu;
+    for (uint32_t e = 0; e < topo.num_edges; e++) {
+      const uint32_t a = topo.edge_verts[2 * e];
+      const uint32_t b = topo.edge_verts[2 * e + 1];
+      if ((a == rv[0] && b == rv[1]) || (a == rv[1] && b == rv[0])) {
+        edge = e;
+        break;
+      }
+    }
+    CHECK(edge != 0xFFFFFFFFu);
+    for (int c = 0; c < 3; c++) {
+      const float mid = 0.5f * (cube.points[rv[0] * 3 + size_t(c)] +
+                                cube.points[rv[1] * 3 + size_t(c)]);
+      CHECK(std::fabs(out.points[(8 + edge) * 3 + size_t(c)] - mid) < 1e-6f);
+    }
+  }
+  // Ring vertex 3 has crease neighbors 2 and 5 on the ring.
+  for (int c = 0; c < 3; c++) {
+    const float expect =
+        (6.0f * cube.points[3 * 3 + size_t(c)] +
+         cube.points[2 * 3 + size_t(c)] + cube.points[5 * 3 + size_t(c)]) /
+        8.0f;
+    CHECK(std::fabs(out.points[3 * 3 + size_t(c)] - expect) < 1e-6f);
+  }
+}
+
+void test_partition_of_unity() {
+  // A constant "vertex" primvar must stay exactly constant through smooth
+  // refinement (weights sum to 1), and a constant "varying" one likewise.
+  corpus::Mesh cube = corpus::CreasedCube(1.5f, "creased");
+  std::vector<float> ones(8, 1.0f);
+  tinyusdz::tsd::VertexPrimvarView pv[2];
+  pv[0].values = ones.data();
+  pv[0].stride = 1;
+  pv[0].varying = false;
+  pv[1].values = ones.data();
+  pv[1].stride = 1;
+  pv[1].varying = true;
+
+  Options opts;
+  opts.level = 3;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), nullptr, 0, pv, 2, opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(out.vertex_primvars.size() == 2);
+  for (const auto &channel : out.vertex_primvars) {
+    CHECK(channel.size() == out.points.size() / 3);
+    for (float v : channel) {
+      CHECK(std::fabs(v - 1.0f) < 1e-6f);
+    }
+  }
+}
+
+void test_face_source_cube() {
+  corpus::Mesh cube = corpus::Cube();
+  Options opts;
+  opts.level = 2;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(out.face_source.size() == 96);  // 6 * 4 * 4
+  uint32_t counts[6] = {0, 0, 0, 0, 0, 0};
+  for (uint32_t s : out.face_source) {
+    CHECK(s < 6);
+    counts[s]++;
+  }
+  for (uint32_t c : counts) {
+    CHECK(c == 16);
+  }
+}
+
+void test_holes_filtered() {
+  corpus::Mesh m = corpus::CubeWithHoles();  // holes: faces 1, 4
+  Options opts;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(m), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(out.face_vertex_counts.size() == 16);  // (6 - 2) * 4
+  for (uint32_t s : out.face_source) {
+    CHECK(s != 1 && s != 4);
+  }
+
+  // With remove_holes=false all 24 children remain.
+  opts.remove_holes = false;
+  RefinedMesh out2;
+  r = Refine(ToView(m), opts, &out2, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(out2.face_vertex_counts.size() == 24);
+}
+
+void test_caps_enforced() {
+  corpus::Mesh cube = corpus::Cube();
+  Options opts;
+  opts.level = 4;
+  opts.max_faces = 100;  // cube L4 would need 6*4^4 = 1536 faces
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
+}
+
+// ---------------------------------------------------------------------------
+// Determinism (serial vs parallel)
+// ---------------------------------------------------------------------------
+
+void parallel_for_4threads(void *user, uint32_t count,
+                           void (*body)(void *, uint32_t), void *body_user) {
+  (void)user;
+  std::vector<std::thread> threads;
+  const uint32_t num_threads = 4;
+  for (uint32_t t = 0; t < num_threads; t++) {
+    threads.emplace_back([=]() {
+      for (uint32_t i = t; i < count; i += num_threads) {
+        body(body_user, i);
+      }
+    });
+  }
+  for (std::thread &th : threads) {
+    th.join();
+  }
+}
+
+void test_parallel_determinism() {
+  corpus::Mesh m = corpus::CreasedCube(2.7f, "creased");
+  Options serial;
+  serial.level = 3;
+  RefinedMesh a;
+  std::string err;
+  CHECK(Refine(ToView(m), serial, &a, &err) == Result::Success);
+
+  Options parallel = serial;
+  parallel.parallel_for = parallel_for_4threads;
+  RefinedMesh b;
+  CHECK(Refine(ToView(m), parallel, &b, &err) == Result::Success);
+
+  CHECK(a.points.size() == b.points.size());
+  CHECK(memcmp(a.points.data(), b.points.data(),
+               a.points.size() * sizeof(float)) == 0);
+  CHECK(a.face_vertex_indices == b.face_vertex_indices);
+
+  // Serial runs are reproducible.
+  RefinedMesh c;
+  CHECK(Refine(ToView(m), serial, &c, &err) == Result::Success);
+  CHECK(memcmp(a.points.data(), c.points.data(),
+               a.points.size() * sizeof(float)) == 0);
+}
+
+// ---------------------------------------------------------------------------
 // Topology builder (internal)
 // ---------------------------------------------------------------------------
 
@@ -387,6 +643,17 @@ int main() {
   // Passthrough
   TEST(test_level0_passthrough);
   TEST(test_level0_fvar_expansion);
+
+  // Refinement: analytic
+  TEST(test_bilinear_quad_level1_exact);
+  TEST(test_catmark_cube_level1_smooth_vertex);
+  TEST(test_infinite_corner_pinned);
+  TEST(test_infinite_crease_midpoints);
+  TEST(test_partition_of_unity);
+  TEST(test_face_source_cube);
+  TEST(test_holes_filtered);
+  TEST(test_caps_enforced);
+  TEST(test_parallel_determinism);
 
   // Topology
   TEST(test_topology_cube);

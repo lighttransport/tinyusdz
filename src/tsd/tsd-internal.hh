@@ -102,6 +102,98 @@ Result CanonicalizeCreases(const MeshView &mesh, CreaseEdges *out,
 void MapCreasesToEdges(const Topology &topo, const CreaseEdges &creases,
                        std::vector<float> *edge_sharpness);
 
+// --- Sharpness (Sdc-compatible semantics) ------------------------------------
+//
+// IsSharp(s): s > 0. IsInfinite(s): s >= kInfiniteSharpness.
+// Uniform child sharpness: smooth stays smooth, infinite stays infinite,
+// otherwise decrement by 1 (clamped at smooth).
+
+inline bool IsSharp(float s) { return s > 0.0f; }
+inline bool IsInfinitelySharp(float s) { return s >= kInfiniteSharpness; }
+inline bool IsSemiSharp(float s) {
+  return (s > 0.0f) && (s < kInfiniteSharpness);
+}
+
+inline float DecrementSharpness(float s) {
+  if (!(s > 0.0f)) {
+    return 0.0f;
+  }
+  if (s >= kInfiniteSharpness) {
+    return kInfiniteSharpness;
+  }
+  return (s > 1.0f) ? (s - 1.0f) : 0.0f;
+}
+
+// Child sharpness of edge `edge_sharpness` at its end vertex whose incident
+// edge sharpness values are given (Chaikin rule; matches OpenSubdiv
+// Sdc::Crease::SubdivideEdgeSharpnessAtVertex).
+float ChaikinChildEdgeSharpness(float edge_sharpness,
+                                uint32_t incident_edge_count,
+                                const float *incident_edge_sharpness);
+
+// Effective (boundary-baked) sharpness state for one level.
+struct SharpnessCtx {
+  const float *edge_sharpness = nullptr;  // per edge; may be null (all 0)
+  const float *vert_sharpness = nullptr;  // per vertex; may be null (all 0)
+
+  float EdgeSharpness(uint32_t e) const {
+    return edge_sharpness ? edge_sharpness[e] : 0.0f;
+  }
+  float VertSharpness(uint32_t v) const {
+    return vert_sharpness ? vert_sharpness[v] : 0.0f;
+  }
+};
+
+// Value-interpolation mode: Smooth applies the scheme rules (geometry and
+// "vertex" primvars), Linear applies bilinear rules ("varying" primvars).
+enum class RefineMode : uint8_t { Smooth, Linear };
+
+// --- One-level child topology -------------------------------------------------
+//
+// Quad split (Catmull-Clark & Bilinear): each parent n-gon face becomes n
+// quads. Child vertex order: [0, V) children of parent vertices, [V, V + E)
+// children of edges, [V + E, V + E + F) children of faces. Child quad k of
+// parent face f (corner k): { vchild(corner k), echild(edge k),
+// fchild(f), echild(edge k-1) }.
+
+struct ChildTopo {
+  uint32_t num_points = 0;
+  std::vector<uint32_t> fvc;
+  std::vector<uint32_t> fvi;
+  std::vector<uint32_t> face_parent;  // parent face per child face
+};
+
+Result BuildChildTopologyQuad(const Topology &topo, const uint32_t *parent_fvi,
+                              ChildTopo *out, std::string *err);
+
+// --- Per-scheme value kernels ---------------------------------------------------
+//
+// All kernels write child values for the quad-split layout above:
+// child_values must hold (V + E + F) * stride floats. `values` holds one
+// tuple of `stride` floats per parent vertex. Results are scatter-free per
+// output element (parallel_for-safe).
+
+// Bilinear: vertex children copy, edge children midpoint, face centroid.
+// (Also used for RefineMode::Linear by other quad schemes.)
+void BilinearRefineValues(const Topology &topo, const uint32_t *parent_fvi,
+                          const float *values, uint32_t stride,
+                          const Options &opts, float *child_values);
+
+// Catmull-Clark with Sdc-compatible crease/corner/boundary rules and
+// fractional-sharpness transitional blending. Boundary behavior comes
+// entirely from `sharp` (boundary edges/corners pre-baked to infinite).
+void CatmarkRefineValues(const Topology &topo, const uint32_t *parent_fvi,
+                         const float *values, uint32_t stride,
+                         const SharpnessCtx &sharp, const Options &opts,
+                         float *child_values);
+
+// FaceVarying "all" (fully linear) per-corner refinement for the quad
+// split: 4 child corner tuples per parent corner, in BuildChildTopologyQuad
+// child-face order.
+void LinearFVarRefineQuad(const Topology &topo, const float *corner_values,
+                          uint32_t stride, const Options &opts,
+                          float *child_corner_values);
+
 // --- Overflow-safe sizing ----------------------------------------------------
 
 // a + b with overflow check against 2^32-1; returns false on overflow.

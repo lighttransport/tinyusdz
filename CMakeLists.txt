@@ -1019,6 +1019,9 @@ endif(TINYUSDZ_WITH_QJS)
 list(APPEND TINYUSDZ_SOURCES
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-bilinear.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-catmark.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-fvar.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
 )
 
