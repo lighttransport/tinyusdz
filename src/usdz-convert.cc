@@ -663,9 +663,21 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
   Layer src_layer = root_layer;
 
+  // Like tusdcat, assets resolve against the local filesystem where USD's
+  // parent-relative references (`@../common/foo.usd@`) are legitimate; the
+  // resolver suffix-fallback additionally rebases paths authored against
+  // another machine's layout (e.g. UE exports).
+  tinyusdz::SublayersCompositionOptions sublayer_options;
+  sublayer_options.allow_parent_relative_paths = true;
+  tinyusdz::ReferencesCompositionOptions references_options;
+  references_options.allow_parent_relative_paths = true;
+  tinyusdz::PayloadCompositionOptions payload_options;
+  payload_options.allow_parent_relative_paths = true;
+
   if (!src_layer.metas().subLayers.empty()) {
     Layer tmp;
-    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err)) {
+    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
+                                      sublayer_options)) {
       return false;
     }
     src_layer = std::move(tmp);
@@ -678,7 +690,8 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_references()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, warn, err)) {
+      if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, warn, err,
+                                         references_options)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -687,7 +700,8 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_payload()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, warn, err)) {
+      if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, warn, err,
+                                      payload_options)) {
         return false;
       }
       src_layer = std::move(tmp);

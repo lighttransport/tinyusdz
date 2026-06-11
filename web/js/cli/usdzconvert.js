@@ -157,6 +157,21 @@ function parseArgs() {
 }
 
 // Recursively read a directory into a Map<relPath, Uint8Array>.
+// fs.writeFileSync caps a single write at 2^31-1 bytes; a passthrough .usdz of
+// a multi-GB scene exceeds that. Write in <2 GiB chunks instead.
+function writeFileChunked(path, bytes) {
+  const CHUNK = 1 << 30;  // 1 GiB
+  const fd = fs.openSync(path, 'w');
+  try {
+    for (let pos = 0; pos < bytes.length; pos += CHUNK) {
+      const n = Math.min(CHUNK, bytes.length - pos);
+      fs.writeSync(fd, bytes, pos, n, pos);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function readDirToMap(dir) {
   const map = new Map();
   const walk = (cur, prefix) => {
@@ -306,7 +321,7 @@ async function main() {
     if (streamFd !== null) fs.closeSync(streamFd);  // sink opened but path bailed
     const outPath = o.output ||
       `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
-    fs.writeFileSync(outPath, usdz);
+    writeFileChunked(outPath, usdz);
     console.log(`Wrote ${outPath} (${usdz.length} bytes) — ${statLine}`);
   }
 }
