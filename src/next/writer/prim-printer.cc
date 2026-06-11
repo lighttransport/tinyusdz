@@ -111,8 +111,8 @@ void PrintMetadata(std::ostream& os, const PrimSpecMeta& meta, int depth,
   // Check what metadata we have
   if (!meta.active) has_meta = true;
   if (meta.hidden) has_meta = true;
-  if (!meta.doc.empty()) has_meta = true;
-  if (!meta.apiSchemas.empty()) has_meta = true;
+  if (!meta.doc().empty()) has_meta = true;
+  if (!meta.apiSchemas().empty()) has_meta = true;
   if (!meta.references.empty()) has_meta = true;
   if (!meta.payloads.empty()) has_meta = true;
   if (!meta.inherits.empty()) has_meta = true;
@@ -129,16 +129,16 @@ void PrintMetadata(std::ostream& os, const PrimSpecMeta& meta, int depth,
     PrintIndent(os, depth, opts.indent);
     os << "hidden = true\n";
   }
-  if (!meta.doc.empty()) {
+  if (!meta.doc().empty()) {
     PrintIndent(os, depth, opts.indent);
-    os << "doc = \"" << meta.doc << "\"\n";
+    os << "doc = \"" << meta.doc() << "\"\n";
   }
-  if (!meta.apiSchemas.empty()) {
+  if (!meta.apiSchemas().empty()) {
     PrintIndent(os, depth, opts.indent);
     os << "apiSchemas = [";
-    for (size_t i = 0; i < meta.apiSchemas.size(); ++i) {
+    for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
       if (i > 0) os << ", ";
-      os << "\"" << meta.apiSchemas[i] << "\"";
+      os << "\"" << meta.apiSchemas()[i] << "\"";
     }
     os << "]\n";
   }

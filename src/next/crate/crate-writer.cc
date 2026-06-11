@@ -605,8 +605,8 @@ private:
       }
 
       // Metadata strings
-      if (!prim.meta().doc.empty()) InternString(prim.meta().doc);
-      for (const auto& schema : prim.meta().apiSchemas) {
+      if (!prim.meta().doc().empty()) InternString(prim.meta().doc());
+      for (const auto& schema : prim.meta().apiSchemas()) {
         InternToken(schema);
       }
       for (const auto& ref : prim.meta().references) {
@@ -1558,7 +1558,7 @@ private:
         size_t lb = pp.find("/{");
         if (lb != std::string::npos) {
           const PrimSpec* owner = layer.prim_at_path(pp.substr(0, lb));
-          if (!owner || owner->meta().variantSets.empty()) continue;
+          if (!owner || owner->meta().variantSets().empty()) continue;
         }
       }
       std::vector<uint32_t> fieldset;
@@ -1630,24 +1630,24 @@ private:
       }
 
       // doc
-      if (!prim.meta().doc.empty()) {
+      if (!prim.meta().doc().empty()) {
         CrateField f;
         f.token_index.value = InternToken("doc");
-        uint32_t str_idx = InternString(prim.meta().doc);
+        uint32_t str_idx = InternString(prim.meta().doc());
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
 
       // apiSchemas
-      if (!prim.meta().apiSchemas.empty()) {
+      if (!prim.meta().apiSchemas().empty()) {
         // Write as array of tokens
         // Build data: uint64_t count + (uint32_t token_idx) * count
-        size_t count = prim.meta().apiSchemas.size();
+        size_t count = prim.meta().apiSchemas().size();
         std::vector<uint8_t> api_data(8 + count * 4);
         std::memcpy(api_data.data(), &count, 8);
         for (size_t i = 0; i < count; ++i) {
-          uint32_t tok_idx = InternToken(prim.meta().apiSchemas[i]);
+          uint32_t tok_idx = InternToken(prim.meta().apiSchemas()[i]);
           std::memcpy(api_data.data() + 8 + i * 4, &tok_idx, 4);
         }
         uint64_t data_idx = value_data_.size();
@@ -1696,17 +1696,17 @@ private:
       add_token_array_field("payload", prim.meta().payloads);
       add_token_array_field("inherits", prim.meta().inherits);
       add_token_array_field("specializes", prim.meta().specializes);
-      if (!prim.meta().comment.empty()) {
-        add_string_field("comment", prim.meta().comment);
+      if (!prim.meta().comment().empty()) {
+        add_string_field("comment", prim.meta().comment());
       }
       // variantSelection: a VariantSelectionMap of each set's selected variant.
       // The reader rebuilds the VariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The
       // bracketed holder/child prims carry the variant CONTENT and are emitted
       // above for unflattened layers.)
-      if (!prim.meta().variantSets.empty()) {
+      if (!prim.meta().variantSets().empty()) {
         std::vector<std::pair<std::string, std::string>> sels;
-        for (const auto& vs : prim.meta().variantSets) {
+        for (const auto& vs : prim.meta().variantSets()) {
           if (!vs.selected.empty()) sels.emplace_back(vs.name, vs.selected);
         }
         if (!sels.empty()) {

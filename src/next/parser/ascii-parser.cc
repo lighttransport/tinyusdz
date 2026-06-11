@@ -672,7 +672,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "doc") {
       std::string doc;
       if (lexer_->expect(TokenType::String, doc)) {
-        prim->meta().doc = doc;
+        prim->meta().doc() = doc;
       }
     } else if (key == "apiSchemas") {
       if (Match(TokenType::OpenBracket)) {
@@ -684,7 +684,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (Check(TokenType::String)
                   ? lexer_->expect(TokenType::String, schema)
                   : lexer_->expect(TokenType::Identifier, schema)) {
-            prim->meta().apiSchemas.push_back(schema);
+            prim->meta().apiSchemas().push_back(schema);
           }
           Match(TokenType::Comma);
         }
@@ -709,8 +709,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (Check(TokenType::String)
                   ? lexer_->expect(TokenType::String, vs_name)
                   : lexer_->expect(TokenType::Identifier, vs_name)) {
-            prim->meta().variantSets.emplace_back();
-            prim->meta().variantSets.back().name = vs_name;
+            prim->meta().variantSets().emplace_back();
+            prim->meta().variantSets().back().name = vs_name;
           }
           Match(TokenType::Comma);
         }
@@ -789,15 +789,15 @@ bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name)
 
   // Find or create the VariantSetData
   VariantSetData* vs_data = nullptr;
-  for (auto& vs : prim->meta().variantSets) {
+  for (auto& vs : prim->meta().variantSets()) {
     if (vs.name == variant_set_name) {
       vs_data = &vs;
       break;
     }
   }
   if (!vs_data) {
-    prim->meta().variantSets.emplace_back();
-    vs_data = &prim->meta().variantSets.back();
+    prim->meta().variantSets().emplace_back();
+    vs_data = &prim->meta().variantSets().back();
     vs_data->name = variant_set_name;
   }
 

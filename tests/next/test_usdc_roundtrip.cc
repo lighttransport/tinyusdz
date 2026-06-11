@@ -215,7 +215,7 @@ void test_roundtrip_schema_types() {
   {
     PrimSpec* prim = layer.current();
     assert(prim);
-    prim->meta().doc = "A helper scope";
+    prim->meta().doc() = "A helper scope";
     prim->meta().hidden = true;
   }
   layer.end_prim();

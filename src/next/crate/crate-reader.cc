@@ -2040,9 +2040,9 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (field.first == "doc") {
           if (const std::string* s = field.second.as_string())
-            ps->meta().doc = *s;
+            ps->meta().doc() = *s;
           else if (const std::string* s = field.second.as_token())
-            ps->meta().doc = *s;
+            ps->meta().doc() = *s;
           continue;
         }
       }
@@ -2076,9 +2076,9 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (field.first == "comment") {
           if (const std::string* s = field.second.as_token())
-            ps->meta().comment = *s;
+            ps->meta().comment() = *s;
           else if (const std::string* s = field.second.as_string())
-            ps->meta().comment = *s;
+            ps->meta().comment() = *s;
           continue;
         }
         if (field.first == "variantSets") {
@@ -2088,7 +2088,7 @@ bool CrateReader::Impl::BuildStage() {
           for (auto& n : names) {
             VariantSetData vsd;
             vsd.name = std::move(n);
-            ps->meta().variantSets.push_back(std::move(vsd));
+            ps->meta().variantSets().push_back(std::move(vsd));
           }
           continue;
         }
@@ -2166,7 +2166,7 @@ bool CrateReader::Impl::BuildStage() {
         VariantSetData vsd;
         vsd.name = kv.first;
         vsd.selected = kv.second;
-        ps->meta().variantSets.push_back(std::move(vsd));
+        ps->meta().variantSets().push_back(std::move(vsd));
       }
       // Keep the first selection in the legacy single-string field too.
       if (!sel->second.empty()) {

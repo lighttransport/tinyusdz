@@ -71,7 +71,7 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     lo.properties.push_back({"variantLow", Value::MakeFloat3(1, 1, 1)});
     vss.variants.push_back(std::move(hi));
     vss.variants.push_back(std::move(lo));
-    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSets().push_back(std::move(vss));
     lb.current()->meta().variantSelection = "vset=high";
   }
   lb.end_prim();  // V
@@ -93,7 +93,7 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
-    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSets().push_back(std::move(vss));
     lb.current()->meta().variantSelection = "geo=full";
     lb.end_prim();  // VC
   }
@@ -112,10 +112,10 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     s2on.name = "on";
     s2on.properties.push_back({"p2", Value::MakeFloat3(2, 2, 2)});
     s2.variants.push_back(std::move(s2on));
-    lb.current()->meta().variantSets.push_back(std::move(s1));
-    lb.current()->meta().variantSets.push_back(std::move(s2));
-    lb.current()->meta().variantSelections.push_back({"s1", "on"});
-    lb.current()->meta().variantSelections.push_back({"s2", "on"});
+    lb.current()->meta().variantSets().push_back(std::move(s1));
+    lb.current()->meta().variantSets().push_back(std::move(s2));
+    lb.current()->meta().variantSelections().push_back({"s1", "on"});
+    lb.current()->meta().variantSelections().push_back({"s2", "on"});
     lb.end_prim();  // MV
   }
   // Three instanceable prims: Inst1/Inst2 reference the same asset (one
@@ -133,7 +133,7 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().instanceable = true;
   lb.end_prim();
   // Relocate /World/Old -> /World/New (authored on World).
-  lb.current()->meta().relocates.push_back({"/World/Old", "/World/New"});
+  lb.current()->meta().relocates().push_back({"/World/Old", "/World/New"});
   lb.begin_prim("Old", "Scope");
   lb.end_prim();  // Old (relocated to New)
   lb.end_prim();  // World
@@ -547,7 +547,7 @@ static void test_variant_content_key_stable() {
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
-    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSets().push_back(std::move(vss));
     lb.current()->meta().variantSelection = "geo=full";
     lb.end_prim();
     lb.finalize();
@@ -732,8 +732,8 @@ static void test_instance_proxy() {
   assert(i1.IsValid() && i2.IsValid());
 
   // Inst1 is the prototype (subtree materialized); Inst2 links to it.
-  assert(i1.GetMeta().instance_prototype.empty());
-  assert(i2.GetMeta().instance_prototype == "/World/Inst1");
+  assert(i1.GetMeta().instance_prototype().empty());
+  assert(i2.GetMeta().instance_prototype() == "/World/Inst1");
 
   // The prototype owns the referenced child; the instance's subtree is NOT
   // duplicated in the layer.
@@ -826,7 +826,7 @@ static void test_cross_source_variant() {
     hi.name = "hi";
     hi.properties.push_back({"xvar", Value::MakeFloat3(5, 5, 5)});
     vss.variants.push_back(std::move(hi));
-    ab.current()->meta().variantSets.push_back(std::move(vss));
+    ab.current()->meta().variantSets().push_back(std::move(vss));
     ab.end_prim();
     ab.finalize();
   }
@@ -1447,7 +1447,7 @@ static void test_variant_content_cycle() {
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
-    lb.current()->meta().variantSets.push_back(std::move(vss));
+    lb.current()->meta().variantSets().push_back(std::move(vss));
     lb.current()->meta().variantSelection = "geo=full";
     lb.end_prim();
     lb.finalize();

@@ -64,6 +64,11 @@ void Layer::finalize() {
     prim.finalize_properties();
   }
 
+  // The prim array is append-only during build and immutable after finalize:
+  // release any over-reservation so the per-layer fixed cost matches its
+  // contents (Phase 8.1 footprint trim).
+  prims_.shrink_to_fit();
+
   finalized_ = true;
 }
 
