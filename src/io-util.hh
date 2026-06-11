@@ -109,6 +109,22 @@ bool FileExists(const std::string &filepath, void *userdata = nullptr);
 ///
 std::string FindFile(const std::string &filepath, const std::vector<std::string> &search_paths);
 
+///
+/// Generate fallback path candidates for an asset path that failed literal
+/// resolution, by stripping its un-anchorable prefix (Windows drive, leading
+/// '/', './' and '../' runs) and then dropping leading directory components
+/// one at a time (longest suffix first, down to the basename).
+///
+/// e.g. "../../../../../USD_Exports/Scene/Assets/SM_Ppe3.usd" ->
+///   ["USD_Exports/Scene/Assets/SM_Ppe3.usd", "Scene/Assets/SM_Ppe3.usd",
+///    "Assets/SM_Ppe3.usd", "SM_Ppe3.usd"]
+///
+/// The input path itself is never included. Used to rebase composition arcs
+/// authored against another machine's directory layout (e.g. UnrealEngine USD
+/// exports) onto the local scene root.
+///
+std::vector<std::string> AssetPathSuffixCandidates(const std::string &asset_path);
+
 bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, size_t filesize_max = 0,
                    void *userdata = nullptr);

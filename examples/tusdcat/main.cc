@@ -409,6 +409,8 @@ void print_help() {
   std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
+  std::cout << "  --no-asset-path-fallback Disable suffix-fallback rebasing of "
+               "unresolvable composition asset paths\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
   std::cout << "                      (disable stack snipping and line truncation)\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
@@ -484,6 +486,7 @@ int main(int argc, char **argv) {
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  bool asset_path_fallback{true};
   bool compress_float_arrays{false};
   OutputFormat output_format{OutputFormat::Infer};
 
@@ -563,6 +566,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--no-asset-path-fallback") == 0) {
+      asset_path_fallback = false;
     } else if (arg.compare("--error-detail") == 0) {
       error_detail = true;
     } else if (arg.compare("--progress") == 0) {
@@ -975,7 +980,7 @@ int main(int argc, char **argv) {
     tinyusdz::Layer root_layer;
     bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
-      std::cout << "WARN: " << warn << "\n";
+      std::cerr << "WARN: " << warn << "\n"; warn.clear();
     }
 
     if (!ret) {
@@ -1004,6 +1009,7 @@ int main(int argc, char **argv) {
     tinyusdz::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
+    resolver.set_enable_suffix_fallback(asset_path_fallback);
 
     //
     // LIVRPS strength ordering
@@ -1045,7 +1051,7 @@ int main(int argc, char **argv) {
       }
 
       if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
+        std::cerr << "WARN: " << warn << "\n"; warn.clear();
       }
 
       if (print_intermediate) {
@@ -1074,7 +1080,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1099,7 +1105,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1124,7 +1130,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1149,7 +1155,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
