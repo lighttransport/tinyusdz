@@ -1,0 +1,19 @@
+#usda 1.0
+# EXPECT: shade.materialX.configAPI
+# EXPECT: shade.materialX.version
+# EXPECT: shade.materialX.sourceUri
+# EXPECT: shade.materialX.referencePrimPath
+# EXPECT: shade.materialX.output
+
+def Material "mat" (
+    references = @./look.mtlx@
+)
+{
+    string config:mtlx:version = "2.0"
+    string config:mtlx:sourceUri = "look.usda"
+
+    def Shader "mtlxShader"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+    }
+}

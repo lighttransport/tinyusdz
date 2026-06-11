@@ -13,7 +13,7 @@ namespace next {
 // ============================================================
 
 static bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
-  for (const auto& s : prim.GetMeta().apiSchemas) {
+  for (const auto& s : prim.GetMeta().apiSchemas()) {
     if (s == name) return true;
   }
   return false;

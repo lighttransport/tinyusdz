@@ -544,43 +544,60 @@ bool EvaluateAttributeImpl(
     std::string *err, std::set<std::string> &visited_paths, const double t,
     const tinyusdz::value::TimeSampleInterpolationType tinterp) {
 
-  if (attr.is_connection()) {
+  if (attr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the value only if the connection cannot be resolved. (is_connection() is
+    // false when a value is also present, so dispatch on has_connections().)
+    std::string conn_err;
+    bool resolved = false;
+
     // Follow connection target Path(single targetPath only).
     std::vector<Path> pv = attr.connections();
     Path target;
-    if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
-                                                   err)) {
-      return false;
-    }
+    if (detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
+                                                  &conn_err)) {
+      std::string targetPrimPath = target.prim_part();
+      std::string targetPrimPropName = target.prop_part();
+      DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                       << ", Prop: " << targetPrimPropName
+                                       << ")");
 
-    std::string targetPrimPath = target.prim_part();
-    std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
-                                     << ", Prop: " << targetPrimPropName
-                                     << ")");
+      auto targetPrimRet =
+          stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+      if (targetPrimRet) {
+        const Prim *targetPrim = targetPrimRet.value();
 
-    auto targetPrimRet =
-        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
-    if (targetPrimRet) {
-      const Prim *targetPrim = targetPrimRet.value();
+        std::string abs_path = target.full_path_name();
 
-      std::string abs_path = target.full_path_name();
+        if (visited_paths.count(abs_path)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Circular referencing detected. connectionTargetPath = {}",
+              to_string(target)));
+        }
+        visited_paths.insert(abs_path);
 
-      if (visited_paths.count(abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Circular referencing detected. connectionTargetPath = {}",
-            to_string(target)));
+        // Delegate to the iterative Prim-based overload
+        resolved = EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                         value, &conn_err, visited_paths, t,
+                                         tinterp);
+      } else {
+        conn_err += targetPrimRet.error();
       }
-      visited_paths.insert(abs_path);
-
-      // Delegate to the iterative Prim-based overload
-      return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                   value, err, visited_paths, t, tinterp);
-
-    } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
-      return false;
     }
+
+    if (resolved) {
+      return true;
+    }
+    // Connection unresolved — fall back to the authored value if present.
+    if (attr.has_value() &&
+        ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+      return true;
+    }
+    if (err) {
+      (*err) += conn_err;
+    }
+    return false;
+
   } else if (attr.is_blocked()) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));

@@ -484,6 +484,15 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Skeleton;
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_POINT_INSTANCER) {
+      // UsdGeomPointInstancer: the instancer prim itself is an Xform node with
+      // no directly-attached geometry (id == -1). Its instances are expanded
+      // into RenderScene::instances (see ExpandPointInstancer); the instancer's
+      // world transform recorded here is used as the instance space origin.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Xform;
     } else {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
@@ -717,6 +726,7 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
   PathPrimMap<Skeleton> allSkeletons;
   PathPrimMap<SkelRoot> allSkelRoots;
   PathPrimMap<SkelAnimation> allAnimations;
+  PathPrimMap<GeomPointInstancer> pointInstancerPrimMap;
 
   {
     // Iterative stack-based traversal visiting each prim exactly once
@@ -752,6 +762,10 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
           break;
         case value::TYPE_ID_SKELANIMATION:
           if (const auto *p = prim.as<SkelAnimation>()) allAnimations[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_POINT_INSTANCER:
+          if (const auto *p = prim.as<GeomPointInstancer>())
+            pointInstancerPrimMap[path_buf] = p;
           break;
         default:
           break;
@@ -1087,6 +1101,24 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
     return false;
   }
 
+  // Flatten the built Node hierarchy into an abs_path -> world matrix map.
+  // Used to look up per-prim world transforms for instance expansion
+  // (scenegraph instances in 7b, PointInstancer instances in 7c).
+  std::unordered_map<std::string, value::matrix4d> path_to_global;
+  {
+    std::function<void(const Node &)> collect = [&](const Node &n) {
+      if (!n.abs_path.empty()) {
+        path_to_global[n.abs_path] = n.global_matrix;
+      }
+      for (const auto &c : n.children) {
+        collect(c);
+      }
+    };
+    for (const auto &n : root_nodes) {
+      collect(n);
+    }
+  }
+
   //
   // 7b. Build instance registry from Stage (AOUSD Spec 11.3.3)
   //
@@ -1127,6 +1159,13 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
           rinst.prototype_index = static_cast<int32_t>(proto_idx);
           rinst.mesh_id = found_mesh_id;
 
+          // Populate the instance transform from the instance prim's node.
+          auto mit = path_to_global.find(path_str);
+          if (mit != path_to_global.end()) {
+            rinst.global_matrix = mit->second;
+            rinst.local_matrix = mit->second;
+          }
+
           // Extract prim name from path
           size_t last_slash = path_str.rfind('/');
           if (last_slash != std::string::npos) {
@@ -1138,6 +1177,32 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
       }
       DCOUT("[Tydra] Created " << instances.size() << " render instances");
     }
+  }
+
+  //
+  // 7c. Expand PointInstancer prims into RenderScene::instances.
+  //
+  if (env.scene_config.expand_point_instancers &&
+      !pointInstancerPrimMap.empty()) {
+    for (const auto &kv : pointInstancerPrimMap) {
+      const std::string &pi_path = kv.first;
+      const GeomPointInstancer *pi = kv.second;
+      if (!pi) continue;
+
+      value::matrix4d instancer_world = value::matrix4d::identity();
+      auto mit = path_to_global.find(pi_path);
+      if (mit != path_to_global.end()) {
+        instancer_world = mit->second;
+      }
+
+      if (!ExpandPointInstancer(env, pi_path, *pi, instancer_world,
+                                path_to_global)) {
+        PushWarn("PointInstancer expansion failed for " + pi_path +
+                 "; continuing.\n");
+      }
+    }
+    DCOUT("[Tydra] Total render instances after PointInstancer expansion: "
+          << instances.size());
   }
 
   // render_scene.meshMap = std::move(meshMap);

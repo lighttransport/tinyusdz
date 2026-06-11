@@ -28,6 +28,8 @@
 #include "prim-reconstruct.hh"
 #include "usda-reader.hh"
 #include "usdShade.hh"
+#include "layer.hh"
+#include "composition.hh"
 #include "usdMtlx.hh"
 #include "asset-resolution.hh"
 #include "value-types.hh"
@@ -103,6 +105,22 @@ def Material "TestMaterial" (
     TEST_CHECK(ret == true);
 
     if (ret && material_prim) {
+      // Regression: MaterialXConfigAPI must be recognized as a known (built-in)
+      // API schema, not preserved as an "unknown API schema". Recognition is
+      // separate from the typed reconstruct below.
+      TEST_CHECK(material_prim->metas().has_apiSchemas());
+      if (material_prim->metas().has_apiSchemas()) {
+        const auto &schemas = material_prim->metas().get_apiSchemas();
+        bool known = false;
+        for (const auto &n : schemas.names) {
+          if (n.first == APISchemas::APIName::MaterialXConfigAPI) {
+            known = true;
+          }
+        }
+        TEST_CHECK(known);
+        TEST_CHECK(schemas.unknownSchemas.empty());
+      }
+
       const Material *mat = material_prim->data().as<Material>();
       TEST_CHECK(mat != nullptr);
 
@@ -406,6 +424,47 @@ def NodeGraph "TestNodeGraph"
   */
 }
 
+// Regression: a NodeGraph PrimSpec must survive Layer->Stage reconstruction
+// (composition flatten). It was previously dropped as "TODO or unsupported prim
+// type: NodeGraph", which lost the whole MaterialX network on a USDZ roundtrip.
+void nodegraph_reconstruct_from_layer_test(void) {
+  Layer layer;
+  PrimSpec ng(Specifier::Def, "NodeGraph", "MyNodeGraph");
+
+  // A MaterialX image shader node inside the node graph.
+  PrimSpec shader(Specifier::Def, "Shader", "ImageNode");
+  {
+    Attribute attr;
+    attr.set_value(value::token("ND_image_color3"));
+    attr.set_type_name("token");
+    attr.variability() = Variability::Uniform;
+    shader.props()["info:id"] = Property(attr, false);
+  }
+  ng.children().push_back(shader);
+  layer.add_primspec("MyNodeGraph", ng);
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LayerToStage(std::move(layer), &stage, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("LayerToStage failed: %s", err.c_str());
+    return;
+  }
+
+  // The NodeGraph prim (and its Shader child) must survive, not be dropped.
+  Path path("/MyNodeGraph", "");
+  auto result = stage.GetPrimAtPath(path);
+  TEST_CHECK(result.has_value());
+  if (result) {
+    TEST_CHECK(result.value()->data().as<NodeGraph>() != nullptr);
+    TEST_CHECK(result.value()->children().size() == 1);
+    if (result.value()->children().size() == 1) {
+      TEST_CHECK(result.value()->children()[0].data().as<Shader>() != nullptr);
+    }
+  }
+}
+
 // Test MaterialX shader type constants
 void materialx_shader_constants_test(void) {
   // Check that the constants are defined and have expected values
@@ -592,12 +651,193 @@ void materialx_include_path_traversal_test(void) {
   std::remove((kTmpRoot + "/secret_outside.txt").c_str());
 }
 
+// Regression: UsdPreviewSurface `inputs:displacement` must be reconstructed into
+// the typed `displacement` field. The reconstruction code previously matched a
+// misspelled "inputs:dispacement" token, so a correctly-authored displacement
+// silently fell through to the generic props bag and never populated
+// `surface->displacement`.
+void usdpreviewsurface_displacement_test(void) {
+  std::string usda = R"(#usda 1.0
+
+def Shader "PreviewShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+
+    float inputs:displacement = 0.42
+    token outputs:surface
+    token outputs:displacement
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+
+  bool ret = LoadUSDAFromMemory((const uint8_t*)usda.c_str(), usda.length(), "", &stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  TEST_MSG("warn: %s err: %s", warn.c_str(), err.c_str());
+
+  if (ret) {
+    const Prim *shader_prim = nullptr;
+    ret = stage.find_prim_at_path(Path("/PreviewShader", ""), shader_prim, &err);
+    TEST_CHECK(ret == true);
+
+    if (ret && shader_prim) {
+      const Shader *shader = shader_prim->data().as<Shader>();
+      TEST_CHECK(shader != nullptr);
+
+      if (shader) {
+        TEST_CHECK(shader->info_id == kUsdPreviewSurface);
+
+        const UsdPreviewSurface *surface = shader->value.as<UsdPreviewSurface>();
+        TEST_CHECK(surface != nullptr);
+
+        if (surface) {
+          // The whole point of the regression: displacement must be authored.
+          TEST_CHECK(surface->displacement.authored() == true);
+          if (surface->displacement.authored()) {
+            const auto &disp_anim = surface->displacement.get_value();
+            float val = 0.0f;
+            if (disp_anim.get_scalar(&val)) {
+              TEST_CHECK(math::is_close(val, 0.42f));
+            }
+          }
+          // And it must NOT have leaked into the generic props bag.
+          TEST_CHECK(surface->props.count("inputs:displacement") == 0);
+        }
+      }
+    }
+  }
+}
+
+// Regression: UsdUVTexture `inputs:uv_set` / `inputs:uv_set_name` (tinyusdz
+// extensions) must reconstruct into the typed fields, not be left in the
+// generic props bag.
+void usduvtexture_uvset_test(void) {
+  std::string usda = R"(#usda 1.0
+
+def Shader "Tex"
+{
+    uniform token info:id = "UsdUVTexture"
+
+    asset inputs:file = @./tex.png@
+    int inputs:uv_set = 2
+    token inputs:uv_set_name = "st1"
+    float3 outputs:rgb
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+
+  bool ret = LoadUSDAFromMemory((const uint8_t*)usda.c_str(), usda.length(), "", &stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  TEST_MSG("warn: %s err: %s", warn.c_str(), err.c_str());
+
+  if (ret) {
+    const Prim *shader_prim = nullptr;
+    ret = stage.find_prim_at_path(Path("/Tex", ""), shader_prim, &err);
+    TEST_CHECK(ret == true);
+
+    if (ret && shader_prim) {
+      const Shader *shader = shader_prim->data().as<Shader>();
+      TEST_CHECK(shader != nullptr);
+      if (shader) {
+        const UsdUVTexture *tex = shader->value.as<UsdUVTexture>();
+        TEST_CHECK(tex != nullptr);
+        if (tex) {
+          TEST_CHECK(tex->uv_set.authored() == true);
+          TEST_CHECK(tex->uv_set.get_value() == 2);
+          TEST_CHECK(tex->uv_set_name.authored() == true);
+          value::token name_tok;
+          if (tex->uv_set_name.get_value(&name_tok)) {
+            TEST_CHECK(name_tok.str() == "st1");
+          }
+          // Must be consumed into typed fields, not leaked into props.
+          TEST_CHECK(tex->props.count("inputs:uv_set") == 0);
+          TEST_CHECK(tex->props.count("inputs:uv_set_name") == 0);
+        }
+      }
+    }
+  }
+}
+
+// Regression: OpenPBRSurface accepts both the OpenPBR-canonical
+// `inputs:geometry_opacity` and the legacy `inputs:opacity`. When both are
+// authored, geometry_opacity must win regardless of property iteration order.
+void openpbr_opacity_precedence_test(void) {
+  auto load_opacity = [](const std::string &usda, float *out, std::string *warn) -> bool {
+    Stage stage;
+    std::string err;
+    if (!LoadUSDAFromMemory((const uint8_t*)usda.c_str(), usda.length(), "", &stage, warn, &err)) {
+      return false;
+    }
+    const Prim *p = nullptr;
+    if (!stage.find_prim_at_path(Path("/S", ""), p, &err) || !p) return false;
+    const Shader *shader = p->data().as<Shader>();
+    if (!shader) return false;
+    const OpenPBRSurface *s = shader->value.as<OpenPBRSurface>();
+    if (!s || !s->opacity.authored()) return false;
+    return s->opacity.get_value().get_scalar(out);
+  };
+
+  // Both authored -> geometry_opacity (0.7) wins; a warning is emitted.
+  {
+    std::string usda = R"(#usda 1.0
+def Shader "S"
+{
+    uniform token info:id = "OpenPBRSurface"
+    float inputs:opacity = 0.3
+    float inputs:geometry_opacity = 0.7
+    token outputs:surface
+}
+)";
+    float val = -1.0f;
+    std::string warn;
+    TEST_CHECK(load_opacity(usda, &val, &warn) == true);
+    TEST_CHECK(math::is_close(val, 0.7f));
+    TEST_CHECK(!warn.empty());  // both-authored warning
+  }
+
+  // Only legacy opacity authored -> used as-is.
+  {
+    std::string usda = R"(#usda 1.0
+def Shader "S"
+{
+    uniform token info:id = "OpenPBRSurface"
+    float inputs:opacity = 0.3
+    token outputs:surface
+}
+)";
+    float val = -1.0f;
+    std::string warn;
+    TEST_CHECK(load_opacity(usda, &val, &warn) == true);
+    TEST_CHECK(math::is_close(val, 0.3f));
+  }
+
+  // Only canonical geometry_opacity authored.
+  {
+    std::string usda = R"(#usda 1.0
+def Shader "S"
+{
+    uniform token info:id = "OpenPBRSurface"
+    float inputs:geometry_opacity = 0.7
+    token outputs:surface
+}
+)";
+    float val = -1.0f;
+    std::string warn;
+    TEST_CHECK(load_opacity(usda, &val, &warn) == true);
+    TEST_CHECK(math::is_close(val, 0.7f));
+  }
+}
+
 // Main test runner
 void materialx_tests(void) {
   materialx_config_api_struct_test();
   materialx_config_api_parsing_test();
   openpbr_surface_reconstruction_test();
   mtlx_standard_surface_reconstruction_test();
+  usdpreviewsurface_displacement_test();
   nodegraph_support_test();
   materialx_shader_constants_test();
   materialx_shader_fallback_values_test();

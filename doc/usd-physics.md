@@ -442,6 +442,62 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 
 ---
 
+## URDF / MJCF → USD Physics Conversion
+
+TinyUSDZ converts URDF and MuJoCo MJCF robots into a UsdPhysics + mjcPhysics
+stage. The C++ converter is `tinyusdz::tydra::ConvertURDFJsonToUSDStage`
+(`src/tydra/urdf-to-usd.cc`); it consumes a JSON payload produced by the web
+demo (`web/js/urdf.js`) or the node CLI (`web/js/cli/urdf-to-usd.js`), both of
+which parse the source robot and emit per-joint frames (`localPos0/1`,
+`localRot0/1`) and per-link inertials. The WASM entry point is
+`createURDFPhysicsScene` in `web/binding.cc`; re-importing the stage for the
+preview goes back through `extractPhysicsSceneJSON`.
+
+The node CLI treats URDF/MJCF XML as untrusted by default: mesh assets and MJCF
+`<include>` files are read only from the input directory, `--asset-dir`, or
+`--package-root`. Use `--allow-unsafe-paths` only for trusted legacy XML that
+intentionally references files outside those roots.
+
+### Joint type mapping
+
+| Source joint | USD prim | Notes |
+|---|---|---|
+| URDF `revolute`, `continuous` / MJCF `hinge` | `PhysicsRevoluteJoint` | `continuous` = revolute with no limits |
+| URDF `prismatic` / MJCF `slide` | `PhysicsPrismaticJoint` | |
+| MJCF `ball` | `PhysicsSphericalJoint` | 3-DOF; cone-angle limits not carried (free rotation) |
+| URDF/MJCF `fixed` (or absent joint) | `PhysicsFixedJoint` | welded link |
+| MJCF `free` / `floating` base | grounded (fixed root) | the floating DOFs are not emitted as a joint; a non-root `free` joint warns and exports as `PhysicsFixedJoint` |
+
+The joint frame rotation is authored via `physics:localRot0` / `physics:localRot1`
+(quaternion, USD `(w, x, y, z)` order). `localRot0` is authoritative; `originMatrix`
+in the payload is consumed only for its translation. A joint that carries a
+rotation in `originMatrix` but omits `localRot0` warns rather than dropping it
+silently.
+
+### Units
+
+- **Revolute limits**: the payload carries radians; the converter writes USD
+  `physics:lowerLimit` / `physics:upperLimit` in **degrees** (UsdPhysics
+  convention, `× 180/π`). Re-import converts back to radians.
+- **Prismatic limits**: meters, unchanged.
+- MJCF `<compiler angle="degree|radian">` is honored when parsing source ranges.
+
+### Best-effort and unsupported features
+
+These are converted on a best-effort basis and **emit a warning** (console /
+status line) instead of being dropped silently:
+
+| Feature | Behavior |
+|---|---|
+| MJCF body with multiple `<joint>` | only the first joint is converted; the remaining DOFs are dropped (USD joints are pairwise) |
+| MJCF `ball` joint | mapped to `PhysicsSphericalJoint`; the single-slider preview leaves it at rest (3 DOF can't be driven by one scalar) |
+| MJCF non-diagonal `fullinertia` | only the diagonal is exported (`physics:diagonalInertia`); off-diagonal terms (`physics:principalAxes`) are not authored |
+| URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
+| MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
+| MJCF `<tendon>`, `<equality>`, `<contact>` | not converted to USD physics |
+
+---
+
 ## TinyUSDZ Implementation Status
 
 ### Core (parsing + reconstruction)

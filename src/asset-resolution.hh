@@ -26,6 +26,7 @@
 ///
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -51,9 +52,17 @@ class Asset {
 
   void shrink_to_fit() { buf_.shrink_to_fit(); }
 
-  void set_data(const std::vector<uint8_t> &&rhs) {
+  void set_data(std::vector<uint8_t> &&rhs) {
+    buf_ = std::move(rhs);
+  }
+
+  void set_data(const std::vector<uint8_t> &rhs) {
     buf_ = rhs;
   }
+
+  // Move the underlying byte buffer out, leaving this Asset empty. Use when the
+  // Asset is about to be discarded and its bytes can be reused without a copy.
+  std::vector<uint8_t> release_buffer() { return std::move(buf_); }
 
   void set_name(const std::string &name) {
     name_ = name;
@@ -162,6 +171,9 @@ class AssetResolutionResolver {
       _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = rhs._search_paths;
+      _current_working_path = rhs._current_working_path;
+      _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
+      _max_file_descriptors = rhs._max_file_descriptors;
     }
   }
 
@@ -171,6 +183,9 @@ class AssetResolutionResolver {
       _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = rhs._search_paths;
+      _current_working_path = rhs._current_working_path;
+      _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
+      _max_file_descriptors = rhs._max_file_descriptors;
     }
     return (*this);
   }
@@ -181,6 +196,9 @@ class AssetResolutionResolver {
       _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = std::move(rhs._search_paths);
+      _current_working_path = std::move(rhs._current_working_path);
+      _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
+      _max_file_descriptors = rhs._max_file_descriptors;
     }
     return (*this);
   }
@@ -303,12 +321,31 @@ class AssetResolutionResolver {
     return _max_asset_bytes_in_mb;
   }
 
+  /// Maximum number of concurrently open file descriptors / asset handles
+  /// allowed through this resolver. The built-in filesystem loader opens one
+  /// descriptor per `open_asset()` call and closes it before returning; custom
+  /// handlers are counted as one logical handle per call. Set to 0 to reject
+  /// all opens (useful for tests).
+  void set_max_file_descriptors(uint32_t max_file_descriptors) {
+    _max_file_descriptors = max_file_descriptors;
+  }
+
+  uint32_t get_max_file_descriptors() const {
+    return _max_file_descriptors;
+  }
+
+  uint32_t current_open_file_descriptors() const {
+    return _open_file_descriptors.load();
+  }
+
  private:
   //ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
   std::string _current_working_path{"./"};
   std::vector<std::string> _search_paths;
   mutable size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
+  uint32_t _max_file_descriptors{1024};
+  mutable std::atomic<uint32_t> _open_file_descriptors{0};
 
   std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;
 

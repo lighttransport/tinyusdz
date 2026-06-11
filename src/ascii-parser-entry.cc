@@ -587,6 +587,7 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
 static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
+  d.insert("MaterialXConfigAPI");  // usdMtlx: config:mtlx:* on Material
   d.insert("NewtonSceneAPI");
   d.insert("NewtonXpbdSceneAPI");
   d.insert("NewtonKaminoSceneAPI");

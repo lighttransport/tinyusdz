@@ -117,30 +117,21 @@ TypeNameTable& GetTypeNameTable() {
 // ============================================================
 
 ValueStorage::ValueStorage() {
-  data_.reserve(4096);  // Initial 4KB
-  values_.reserve(64);
+  // Grow on demand: eager per-prim reservations cost KBs per prim regardless
+  // of property count, which is catastrophic on high-prim-count scenes.
 }
 
 ValueStorage::~ValueStorage() = default;
 
-uint32_t ValueStorage::allocate(size_t size, size_t alignment) {
-  // Align current position
-  size_t aligned = (used_ + alignment - 1) & ~(alignment - 1);
-
-  // Grow if needed
-  if (aligned + size > data_.size()) {
-    size_t new_size = std::max(data_.size() * 2, aligned + size + 1024);
-    data_.resize(new_size);
-  }
-
-  uint32_t offset = static_cast<uint32_t>(aligned);
-  used_ = aligned + size;
-  return offset;
-}
-
 uint32_t ValueStorage::store(const Value& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());
   values_.push_back(value);
+  return idx;
+}
+
+uint32_t ValueStorage::store(Value&& value) {
+  uint32_t idx = static_cast<uint32_t>(values_.size());
+  values_.push_back(std::move(value));
   return idx;
 }
 
@@ -154,24 +145,17 @@ Value* ValueStorage::get(uint32_t offset) {
   return &values_[offset];
 }
 
-const void* ValueStorage::raw(uint32_t offset) const {
-  if (offset >= data_.size()) return nullptr;
-  return data_.data() + offset;
-}
-
-void* ValueStorage::raw(uint32_t offset) {
-  if (offset >= data_.size()) return nullptr;
-  return data_.data() + offset;
-}
-
-void ValueStorage::reserve(size_t bytes) {
-  if (bytes > data_.size()) {
-    data_.resize(bytes);
+size_t ValueStorage::memory_usage() const {
+  size_t size = values_.capacity() * sizeof(Value);
+  for (const auto& v : values_) {
+    if (v.is_array()) {
+      size += v.array_size() * 4;  // Approximate (element payload)
+    }
   }
+  return size;
 }
 
 void ValueStorage::clear() {
-  used_ = 0;
   values_.clear();
 }
 
@@ -180,7 +164,7 @@ void ValueStorage::clear() {
 // ============================================================
 
 TimeSampleStorage::TimeSampleStorage() {
-  values_.reserve(64);
+  // Grow on demand (was reserve(64) ~= 8.7 KB per prim with time samples).
 }
 
 TimeSampleStorage::~TimeSampleStorage() = default;
@@ -314,19 +298,15 @@ TimeSampleStorage::Stats TimeSampleStorage::stats() const {
 // PrimSpec
 // ============================================================
 
-PrimSpec::PrimSpec()
-    : values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {}
+// values_ / time_samples_ are allocated lazily on first use: most prims in
+// composed scenes carry no local values or samples, and two eager heap blocks
+// per prim dominated the per-prim fixed cost on high-prim-count layers.
+PrimSpec::PrimSpec() {}
 
-PrimSpec::PrimSpec(const std::string& name)
-    : name_(name),
-      values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {}
+PrimSpec::PrimSpec(const std::string& name) : name_(name) {}
 
 PrimSpec::PrimSpec(const std::string& name, const std::string& type_name)
-    : name_(name),
-      values_(std::make_unique<ValueStorage>()),
-      time_samples_(std::make_unique<TimeSampleStorage>()) {
+    : name_(name) {
   set_type_name(type_name);
 }
 
@@ -341,19 +321,16 @@ PrimSpec PrimSpec::Clone() const {
   c.specifier_ = specifier_;
   c.path_ = path_;
 
-  // Deep copy properties
+  // Deep copy properties (slots carry value-storage indices + flags).
   c.props_ = props_;
 
-  // Deep copy values
+  // Deep copy the value storage. A slot's value_offset is a position in the
+  // values_ vector, so copying the vector keeps every offset valid — no need to
+  // re-add (the old code did both `c.props_ = props_` AND a re-add loop, which
+  // duplicated every property). Lazy array Values copy as a shared_ptr bump
+  // (no payload copy), so cloning a crate-backed prim stays cheap.
   if (values_) {
-    c.values_ = std::make_unique<ValueStorage>();
-    // Copy each property value
-    for (const auto& slot : props_.slots()) {
-      const Value* v = property_value(slot.name_id);
-      if (v) {
-        c.add_property(slot.name_id, *v, slot.flags);
-      }
-    }
+    c.values_ = std::make_unique<ValueStorage>(*values_);
   }
 
   // Deep copy time samples
@@ -375,6 +352,10 @@ PrimSpec PrimSpec::Clone() const {
 
   // Deep copy relationships
   c.relationships_ = relationships_;
+
+  // Deep copy attribute connections + declared type names
+  c.connections_ = connections_;
+  c.prop_type_names_ = prop_type_names_;
 
   // Deep copy children
   c.child_indices_ = child_indices_;
@@ -403,13 +384,13 @@ const PropSlot* PrimSpec::property(const std::string& name) const {
 
 const Value* PrimSpec::property_value(PropNameId name_id) const {
   const PropSlot* slot = property(name_id);
-  if (!slot) return nullptr;
+  if (!slot || !values_) return nullptr;
   return values_->get(slot->value_offset);
 }
 
 const Value* PrimSpec::property_value(const std::string& name) const {
   const PropSlot* slot = property(name);
-  if (!slot) return nullptr;
+  if (!slot || !values_) return nullptr;
   return values_->get(slot->value_offset);
 }
 
@@ -420,6 +401,7 @@ void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   // Store value
+  if (!values_) values_ = std::make_unique<ValueStorage>();
   uint32_t offset = values_->store(std::move(value));
 
   // Get type from stored value
@@ -459,6 +441,7 @@ void PrimSpec::finalize_properties() {
 
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
   // Use deduplicated storage for array values (common case for animation)
+  if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
   time_samples_->add_dedup(name_id, time, std::move(value));
 }
 
@@ -527,6 +510,35 @@ std::vector<std::string> PrimSpec::relationship_names() const {
   return names;
 }
 
+void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
+  connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
+}
+
+const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
+  PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = connections_.find(id.id);
+  if (it == connections_.end()) return nullptr;
+  return &it->second;
+}
+
+void PrimSpec::set_property_type_name(const std::string& prop_name,
+                                      const std::string& type_name) {
+  // Intern both name and typeName; typeNames are few and highly shared.
+  prop_type_names_[GetPropNameTable().intern(prop_name).id] =
+      GetPropNameTable().intern(type_name).id;
+}
+
+const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {
+  PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = prop_type_names_.find(id.id);
+  if (it == prop_type_names_.end()) return nullptr;
+  PropNameId tn_id;
+  tn_id.id = it->second;
+  return &GetPropNameTable().get(tn_id);
+}
+
 void PrimSpec::add_child_index(uint32_t index) {
   child_indices_.push_back(index);
 }
@@ -539,9 +551,7 @@ size_t PrimSpec::memory_usage() const {
   // Properties
   size += props_.slots().capacity() * sizeof(PropSlot);
   if (values_) {
-    size += values_->capacity();
-    // Estimate Value objects
-    size += values_->size() * sizeof(Value);
+    size += values_->memory_usage();
   }
 
   // Time samples (use TimeSampleStorage's memory tracking)
@@ -558,15 +568,20 @@ size_t PrimSpec::memory_usage() const {
   // Children
   size += child_indices_.capacity() * sizeof(uint32_t);
 
-  // Metadata
-  size += meta_.doc.capacity();
-  size += meta_.comment.capacity();
-  for (const auto& s : meta_.apiSchemas) size += s.capacity();
+  // Metadata (inline hot fields)
   for (const auto& s : meta_.references) size += s.capacity();
   for (const auto& s : meta_.payloads) size += s.capacity();
   for (const auto& s : meta_.inherits) size += s.capacity();
   for (const auto& s : meta_.specializes) size += s.capacity();
   size += meta_.variantSelection.capacity();
+  // Cold fields only cost anything when the ext was allocated.
+  if (const PrimSpecMetaExt* ext = meta_.ext()) {
+    size += sizeof(PrimSpecMetaExt);
+    size += ext->doc.capacity();
+    size += ext->comment.capacity();
+    size += ext->instance_prototype.capacity();
+    for (const auto& s : ext->apiSchemas) size += s.capacity();
+  }
 
   return size;
 }

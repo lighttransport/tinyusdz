@@ -136,7 +136,7 @@ static bool ValuesEquivalentForDiff(const value::Value &lhs,
 static std::string ListEditQualForDiff(ListEditQual qual) {
   std::string s = tinyusdz::to_string(qual);
   if (s.empty()) {
-    return "explicit";
+    s = "explicit";
   }
   return s;
 }

@@ -14,6 +14,180 @@ function registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility) 
   meshVisibility.set(mesh, true);
 }
 
+function collectUsedSkinBones(skeleton, sceneMeshes) {
+  const used = new Set();
+  const bones = skeleton?.bones || [];
+
+  for (const mesh of sceneMeshes) {
+    if (!mesh.isSkinnedMesh || mesh.skeleton !== skeleton || !mesh.geometry) {
+      continue;
+    }
+
+    for (const attrName of ['skinIndex', 'skinIndex2']) {
+      const skinIndex = mesh.geometry.attributes[attrName];
+      if (!skinIndex) {
+        continue;
+      }
+
+      const weightName = attrName === 'skinIndex' ? 'skinWeight' : 'skinWeight2';
+      const skinWeight = mesh.geometry.attributes[weightName];
+      for (let i = 0; i < skinIndex.count; i++) {
+        for (let j = 0; j < skinIndex.itemSize; j++) {
+          if (skinWeight && skinWeight.getComponent(i, j) <= 1.0e-6) {
+            continue;
+          }
+          const boneIndex = skinIndex.getComponent(i, j);
+          if (boneIndex >= 0 && boneIndex < bones.length) {
+            used.add(bones[boneIndex]);
+          }
+        }
+      }
+    }
+  }
+
+  const included = new Set();
+  for (const bone of used) {
+    let current = bone;
+    while (current && current.isBone && !current.userData?.isTipBone) {
+      included.add(current);
+      current = current.parent;
+    }
+  }
+
+  return included;
+}
+
+function lineEndpointForTip(parentPos, childPos, capTips, maxLength, target) {
+  target.copy(childPos);
+  if (!capTips || !(maxLength > 0)) {
+    return target;
+  }
+
+  target.sub(parentPos);
+  const len = target.length();
+  if (len > maxLength) {
+    target.multiplyScalar(maxLength / len);
+  }
+  target.add(parentPos);
+  return target;
+}
+
+class FilteredSkeletonHelper extends THREE.LineSegments {
+  constructor(rootBone, skeleton, sceneMeshes, options = {}) {
+    const geometry = new THREE.BufferGeometry();
+    const material = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.95,
+      toneMapped: false
+    });
+    super(geometry, material);
+
+    this.rootBone = rootBone;
+    this.skeleton = skeleton;
+    this.sceneMeshes = sceneMeshes;
+    this.type = 'FilteredSkeletonHelper';
+    this.frustumCulled = false;
+    this.matrixAutoUpdate = false;
+    this.visible = !!options.visible;
+    this.options = {
+      mode: options.mode || 'full',
+      showTips: options.showTips !== false,
+      capTips: !!options.capTips,
+      tipMaxLength: options.tipMaxLength || 120
+    };
+    this.edges = [];
+    this._parentPos = new THREE.Vector3();
+    this._childPos = new THREE.Vector3();
+    this._cappedChildPos = new THREE.Vector3();
+    this.rebuild();
+  }
+
+  setDisplayOptions(options = {}) {
+    Object.assign(this.options, options);
+    this.rebuild();
+  }
+
+  rebuild() {
+    const mode = this.options.mode === 'deforming' ? 'deforming' : 'full';
+    const includeTips = !!this.options.showTips;
+    const includedBones = mode === 'deforming'
+      ? collectUsedSkinBones(this.skeleton, this.sceneMeshes)
+      : null;
+
+    const isIncluded = (bone) => {
+      if (!bone || !bone.isBone) {
+        return false;
+      }
+      if (bone.userData?.isTipBone) {
+        return includeTips && isIncluded(bone.parent);
+      }
+      return mode === 'full' || includedBones.has(bone);
+    };
+
+    this.edges = [];
+    this.rootBone.traverse((bone) => {
+      if (!bone.isBone || !bone.parent?.isBone || !isIncluded(bone) || !isIncluded(bone.parent)) {
+        return;
+      }
+      this.edges.push({
+        parent: bone.parent,
+        child: bone,
+        isTip: !!bone.userData?.isTipBone
+      });
+    });
+
+    const positions = new Float32Array(this.edges.length * 2 * 3);
+    const colors = new Float32Array(this.edges.length * 2 * 3);
+    for (let i = 0; i < this.edges.length; i++) {
+      const c = i * 6;
+      colors[c + 0] = 0.0;
+      colors[c + 1] = 1.0;
+      colors[c + 2] = 0.45;
+      colors[c + 3] = 0.0;
+      colors[c + 4] = 0.35;
+      colors[c + 5] = 1.0;
+    }
+
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this.update();
+  }
+
+  update() {
+    const positionAttr = this.geometry.attributes.position;
+    if (!positionAttr) {
+      return;
+    }
+
+    this.rootBone.updateMatrixWorld(true);
+    for (let i = 0; i < this.edges.length; i++) {
+      const edge = this.edges[i];
+      edge.parent.getWorldPosition(this._parentPos);
+      edge.child.getWorldPosition(this._childPos);
+
+      const childPos = edge.isTip
+        ? lineEndpointForTip(
+            this._parentPos,
+            this._childPos,
+            this.options.capTips,
+            this.options.tipMaxLength,
+            this._cappedChildPos)
+        : this._childPos;
+
+      positionAttr.setXYZ(i * 2, this._parentPos.x, this._parentPos.y, this._parentPos.z);
+      positionAttr.setXYZ(i * 2 + 1, childPos.x, childPos.y, childPos.z);
+    }
+    positionAttr.needsUpdate = true;
+  }
+
+  dispose() {
+    this.geometry.dispose();
+    this.material.dispose();
+  }
+}
+
 /**
  * Build skeletons, bind skinned meshes, and collect render meshes for a USD scene node.
  */
@@ -28,6 +202,10 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   const usdScene = options.usdScene;
   const showMesh = options.showMesh !== false;
   const showSkeleton = !!options.showSkeleton;
+  const skeletonDisplayMode = options.skeletonDisplayMode || 'full';
+  const showSkeletonTips = options.showSkeletonTips !== false;
+  const capSkeletonTips = !!options.capSkeletonTips;
+  const skeletonTipMaxLength = options.skeletonTipMaxLength || 120;
   const useWASMBoneTexture = !!options.useWASMBoneTexture;
 
   if (!threeNode || !characterGroup) {
@@ -57,11 +235,12 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
       const {
         skelId,
         bones: skelBones,
+        boneInverses: skelBoneInverses,
         rootBone: skelRootBone,
         skeletonAbsPath: skelAbsPath
       } = skelData;
 
-      const skelThree = new THREE.Skeleton(skelBones);
+      const skelThree = new THREE.Skeleton(skelBones, skelBoneInverses);
       logger.log(`Created skeleton ${skelId} with ${skelBones.length} bones`);
       skeletons.set(skelId, skelThree);
 
@@ -97,7 +276,7 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
       const meshName = mesh.name;
       const meshAbsPath = mesh.userData?.['primMeta.absPath'] || '';
       let meshUSDData = allSkinnedMeshUSDData.get(meshAbsPath);
-      if (!meshUSDData && skinnedMeshDataByName.has(meshName)) {
+      if (!meshUSDData && !meshAbsPath && skinnedMeshDataByName.has(meshName)) {
         meshUSDData = skinnedMeshDataByName.get(meshName);
         if (meshUSDData === null) {
           logger.warn(
@@ -220,8 +399,18 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
     if (helperScene) {
       for (const skelData of skeletonDataArray) {
         const { skelId, rootBone: skelRootBone } = skelData;
-        const helper = new THREE.SkeletonHelper(skelRootBone);
-        helper.visible = showSkeleton;
+        const helper = new FilteredSkeletonHelper(
+          skelRootBone,
+          skeletons.get(skelId),
+          allSceneMeshes,
+          {
+            visible: showSkeleton,
+            mode: skeletonDisplayMode,
+            showTips: showSkeletonTips,
+            capTips: capSkeletonTips,
+            tipMaxLength: skeletonTipMaxLength
+          }
+        );
         helper.name = `SkeletonHelper_${skelId}`;
         helperScene.add(helper);
         skeletonHelpers.push(helper);

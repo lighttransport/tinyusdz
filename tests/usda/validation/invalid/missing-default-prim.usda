@@ -1,0 +1,10 @@
+#usda 1.0
+# EXPECT: core.layer.defaultPrim
+(
+    doc = "defaultPrim names a non-existent prim. Expect ERROR core.layer.defaultPrim."
+    defaultPrim = "Missing"
+)
+
+def Xform "World"
+{
+}

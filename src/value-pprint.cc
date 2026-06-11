@@ -764,6 +764,33 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 }
 
 template <>
+std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
+  // uchar[]: print each element as an integer (os << uint8_t would emit a char).
+  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  if (col_limit > 0 && v.size() > 1) {
+    std::vector<std::string> elems;
+    elems.reserve(v.size());
+    for (const auto &e : v) {
+      std::ostringstream ess;
+      ess << static_cast<unsigned int>(e);
+      elems.push_back(ess.str());
+    }
+    ofs << tinyusdz::pprint::format_wrapped_array(
+        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    return ofs;
+  }
+  ofs << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      ofs << ", ";
+    }
+    ofs << static_cast<unsigned int>(v[i]);
+  }
+  ofs << "]";
+  return ofs;
+}
+
+template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
   uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {

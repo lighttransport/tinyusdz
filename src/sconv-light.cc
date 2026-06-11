@@ -218,6 +218,10 @@ bool CrateWriter::ExtractDomeLightProperties(
     if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
   if (light->color.authored())
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // guideRadius is parsed (DOME_LIGHT_TYPED_ATTRS) and printed, so emit it too
+  // for USDC round-trip parity. Note: no "inputs:" prefix (matches the reader).
+  if (light->guideRadius.authored())
+    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -308,6 +312,9 @@ bool CrateWriter::ExtractDomeLight1Properties(
     if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
   if (light->color.authored())
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  if (light->guideRadius.authored())
+    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
 
   // Extract poleAxis (uniform token with fallback) - DomeLight_1 specific
   if (light->poleAxis.authored()) {
@@ -407,6 +414,20 @@ bool CrateWriter::ExtractPluginLightFilterProperties(
       value::token purpose_tok(to_string(purpose_val));
       purpose_crate_val.Set(purpose_tok);
       fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
+  // Extract light:shaderId (PluginLightFilter-specific; parsed but previously not
+  // written). TypedAttribute<Animatable<token>>.
+  if (filter->shaderId.authored()) {
+    const auto& sid_opt = filter->shaderId.get_value();
+    if (sid_opt && sid_opt.value().has_default()) {
+      value::token sid;
+      if (sid_opt.value().get_default(&sid)) {
+        crate::CrateValue sid_crate_val;
+        sid_crate_val.Set(sid);
+        fields.push_back({"light:shaderId", sid_crate_val});
+      }
     }
   }
 

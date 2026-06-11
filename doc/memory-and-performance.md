@@ -218,8 +218,10 @@ VEC2/3/4 F/D/H, scalar FLOAT/DOUBLE/HALF, MATRIX2/3/4D. NOT eligible: INT/UINT/I
 (LZ4 + integer compression). Minimum threshold: 1024 elements.
 
 Activation: `--mmap-lowmem` (CLI `tydra_to_renderscene`), `setMMapZeroCopy(true)` (WASM,
-default off), or `USDLoadOptions::mmap_zero_copy = true` (C++). The mmap'd / input buffer
-must stay alive while the Stage is in use.
+default off), or `USDLoadOptions::mmap_zero_copy = true` (C++). File-based loaders keep
+the backing mmap/file buffer alive through `Stage` ownership; memory-based loaders require
+the caller's input buffer to remain alive while zero-copy refs may be used. See
+[mmap.md](mmap.md) for API usage and lifecycle details.
 
 **Limitations:** TimeSamples are NOT deferred (V2 only handles `default` values);
 `ExportToString`/pprinter and direct Stage accessors (`get_points()`, …) return empty
@@ -227,7 +229,7 @@ vectors for deferred arrays (accepted, opt-in); sub-1024-element arrays always
 materialized.
 
 **Verified** (OBJ identical to baseline): suzanne-subd-lv5/lv6 (3 deferred arrays each),
-CesiumMan.usdz (4), outpost_19.usdz (233 deferred, 116.35 MB RenderScene),
+CesiumMan.usdz (4), a large production scene (233 deferred, 116.35 MB RenderScene),
 timesamples-array-dedup-001/002/004.
 
 **V2 savings** (suzanne-subd-lv6, 12M verts): Stage float arrays ~288 MB → ~0 (sentinels);
@@ -412,3 +414,125 @@ intended for refcounts / type tags / cache-coherency flags.
 | `tests/feat/tangent/bench_tangent.cc` | tangent memory/quality benchmark |
 | `tests/feat/hash/hash_bench.cc` | XXH3 vs FNV-1a hash benchmark |
 | `doc/tydra-tangent.md` | tangent computation + quantization |
+
+---
+
+## refactor-next Phase-0 baselines (2026-06-10, HEAD 59801312)
+
+Baselines for the `src/next` optimization roadmap (`doc/refator-next.md`),
+captured with `build/next/bench_pcp_compose` (new) and `bench_lazy_mem`
+(Release, gcc, Linux x86-64). Re-measure after each phase and diff here.
+
+### Struct sizes (`bench_pcp_compose sizes`)
+
+| struct | bytes | notes / target |
+|--------|-------|----------------|
+| `Value` | 160 | 136B SBO + header |
+| `PrimSpec` | 656 | Phase 8 target (MetaExt split) |
+| `PrimSpecMeta` | 344 | inline in every PrimSpec |
+| `VariantSetData` | 88 | |
+| `Layer` | 296 | |
+| `Path` | 32 | plain std::string wrapper |
+| `LazyArrayRef` | 64 | |
+| `pcp::CompNode` | 120 | doc'd target ≤40B (interned/packed) |
+| `pcp::PrimIndex` | 96 | |
+| `pcp::LayerStack` | 96 | |
+
+### Per-prim fixed cost (100k empty Xform prims)
+
+| metric | value |
+|--------|-------|
+| build time | 175 ms (570k prims/sec) |
+| self-reported | 1119 B/prim |
+| RSS delta | 960 B/prim (93.8 MB total) |
+
+Empty prims (no properties/samples/arcs) cost ~1 KB each — the Phase-8
+`PrimSpecMetaExt` split + lazy `TimeSampleStorage` target.
+
+### Composition (`bench_pcp_compose compose`, M=20000 prims, R=64 shared assets, 256-vert arrays)
+
+| stage | value |
+|-------|-------|
+| Cache::Open | 0.2 ms |
+| ComputePrimIndex ×20000 | 145.4 ms (7.3 µs/prim) |
+| BuildStage | 213.6 ms |
+| composed prims | 40001 |
+| stage memory | 52.9 MB |
+| peak RSS | 173 MB |
+
+Phase-4 targets (FindSpecs memoization + interned keys + GraftSubtree).
+
+### Deep reference chain (`bench_pcp_compose deep`, D=200)
+
+| stage | value |
+|-------|-------|
+| ComputePrimIndex | 2.95 ms (201 nodes) |
+| BuildStage | 0.08 ms |
+
+Phase-1 target (per-arc copied cycle sets → frame chain; currently O(D²·len)).
+
+### Lazy vs eager clone (`bench_lazy_mem`, 4M-vert usdc = 45.8 MB, K=32 clones)
+
+| mode | peak RSS |
+|------|----------|
+| eager | 2,159,964 KB (2.06 GB) |
+| lazy | 97,792 KB (95 MB) |
+
+The 22× gap is what Phase-3 CoW array storage closes for *materialized*
+(USDA / eager-crate-type) values; lazy crate arrays already share.
+
+### genmany (100k prims, chain=64)
+
+| metric | value |
+|--------|-------|
+| peak RSS | 771,404 KB |
+| build prims | 100000 (reread OK, out=7.2 MB) |
+
+### Phase-1 deltas (recursion/cycle hardening + lazy per-prim storage)
+
+| metric | Phase 0 | Phase 1 | delta |
+|--------|---------|---------|-------|
+| empty prim, self-reported | 1119 B/prim | 975 B/prim | −13% |
+| empty prim, RSS | 960 B/prim | 736 B/prim | −23% |
+| deep chain D=200 index | 2.95 ms | 1.58 ms | −46% |
+| compose M=20k index / BuildStage | 145 / 214 ms | 155 / 201 ms | ~noise |
+
+Sources: lazy `values_`/`time_samples_` allocation (two heap blocks per prim
+were eager), and the per-arc copied `std::set<std::string>` cycle keys replaced
+by a stack-frame chain. Note: `stage_memory` self-reporting *increased*
+(52.9 → 73.6 MB) because the old `ValueStorage` accounting counted a dead byte
+buffer (always 0) — the new number is honest, not a regression.
+
+### Phase-3 delta (copy-on-write array storage in Value)
+
+`bench_lazy_mem`, 4M-vert usdc (45.8 MB), K=32 clones:
+
+| mode | Phase 0 | Phase 3 | delta |
+|------|---------|---------|-------|
+| eager | 2,159,964 KB | 176,640 KB | **−92% (12×)** |
+| lazy | 97,792 KB | 97,536 KB | unchanged |
+
+`Value`'s array buffers moved from a raw owning pointer to a
+`shared_ptr<ArrayStorageBase>` (VtArray `_DetachIfNotUnique`): copy = refcount
+bump, first mutable access clones if shared. Eager-read clones now share the
+one decoded buffer instead of deep-copying it 32×. Closes M1 for all
+materialized (USDA + eager-crate-type) arrays, not just lazy crate arrays.
+
+### Phase-4 delta (FindSpecs memoization)
+
+`bench_pcp_compose compose` (M=20000 prims, R=64 shared assets):
+
+| stage | Phase 0 | Phase 4 | delta |
+|-------|---------|---------|-------|
+| BuildStage | 213.6 ms | 163.2 ms | **−24%** |
+| ComputePrimIndex ×20000 | 145.4 ms | 155.6 ms | ~noise |
+
+The same `(stack, site)` was resolved 3–5× per composed prim; memoizing
+`FindSpecs` (stable references across rehash; cleared on `InvalidateLayer`)
+removes the redundant layer walks + Path parses on the BuildStage path. The
+full u32-interned-key conversion of pcp hot maps (M3) is deferred — invasive
+relative to its memory benefit now that CoW (Phase 3) removed the dominant copy
+cost; revisit if massif shows path strings dominating. The GraftSubtree
+child-index walk (M5) was attempted but reverted: composed-in-place layers
+don't reliably carry child_indices, so the path-prefix scan is the correct form
+(CoW already removed its per-graft array-copy cost).

@@ -57,11 +57,21 @@ inline bool EstimateBase64DecodedSize(const std::string &data,
 // Validates an asset path as "relative and contained":
 //   - must not be empty
 //   - must not start with '/' or a Windows drive (e.g. "C:")
-//   - must not contain any '..' segment
+//   - must not contain any '..' segment (unless `allow_parent_refs` is set)
 // On success, writes the slash-normalized path (backslashes -> '/', empty
 // and '.' segments removed) into *out and returns true.
+//
+// When `allow_parent_refs` is true, '..' segments are permitted: a "<seg>/.."
+// pair is collapsed lexically, and any leading '..' that cannot be collapsed is
+// preserved in the output. Absolute paths and Windows drives are still rejected.
+// Resolving the surviving '..' (against a base/search directory) is then the
+// asset resolver's responsibility — appropriate when a custom, sandboxed
+// resolver (e.g. an in-memory or fetch-backed handler) controls what is
+// reachable, where USD's legitimate parent-directory references (e.g.
+// `../common/foo.usd`) must work.
 inline bool ValidateAndNormalizeAssetPath(const std::string &path,
-                                          std::string *out) {
+                                          std::string *out,
+                                          bool allow_parent_refs) {
   if (!out) {
     return false;
   }
@@ -90,7 +100,17 @@ inline bool ValidateAndNormalizeAssetPath(const std::string &path,
       continue;
     }
     if (part == "..") {
-      return false;
+      if (!allow_parent_refs) {
+        return false;
+      }
+      // Collapse "<seg>/.." lexically; preserve a leading ".." that has no
+      // preceding segment to pop (the resolver resolves it against its base).
+      if (!parts.empty() && parts.back() != "..") {
+        parts.pop_back();
+      } else {
+        parts.push_back("..");
+      }
+      continue;
     }
     parts.push_back(std::move(part));
   }
@@ -109,6 +129,12 @@ inline bool ValidateAndNormalizeAssetPath(const std::string &path,
 
   *out = std::move(result);
   return true;
+}
+
+// Default (strict) overload: '..' segments are rejected.
+inline bool ValidateAndNormalizeAssetPath(const std::string &path,
+                                          std::string *out) {
+  return ValidateAndNormalizeAssetPath(path, out, /* allow_parent_refs */ false);
 }
 
 // bool-only convenience wrapper.

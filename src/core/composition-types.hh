@@ -35,6 +35,7 @@ struct APISchemas {
     ConnectableAPI, // "ConnectableAPI"
     CoordSysAPI, // "CoordSysAPI"
     NodeDefAPI, // "NodeDefAPI"
+    MaterialXConfigAPI, // "MaterialXConfigAPI" (usdMtlx: config:mtlx:*)
 
     CollectionAPI,      // "CollectionAPI"
     // usdGeom
@@ -105,6 +106,9 @@ struct APISchemas {
     PhysicsFilteredPairsAPI,
     PhysicsArticulationRootAPI,
 
+    // PhysX (Omniverse) API schemas
+    PhysxJointAPI,
+
     // UsdMedia API schemas
     AssetPreviewsAPI,
 
@@ -129,6 +133,26 @@ struct APISchemas {
   // composition can still see what was deleted by a strong layer.
   std::vector<std::pair<APIName, std::string>> deletedNames;
   std::vector<std::pair<std::string, std::string>> deletedUnknownSchemas;
+
+  // --- Authored list-op, preserved verbatim for lossless round-trip ---
+  //
+  // In USD `apiSchemas` is an unresolved `SdfTokenListOp`: a layer stores the
+  // authored ops (prepend/append/add/delete/explicit) as-is and composition
+  // resolves them later. The fields above (`names`, `unknownSchemas`,
+  // `deletedNames`, `listOpQual`) are the *resolved* single-layer view consumed
+  // by schema application; they cannot reconstruct the original ops (a `delete`
+  // is already subtracted from `names`). These fields keep what was authored so
+  // the USDA/USDC writers can reproduce it (matches pxrUSD usdcat round-trip).
+  //
+  // Each entry is one authored op: `(<qualifier>, [(schemaName, instanceName), ...])`,
+  // in authoring order. Schema names are kept as raw strings so unknown schemas
+  // round-trip identically to known ones.
+  std::vector<std::pair<ListEditQual,
+                        std::vector<std::pair<std::string, std::string>>>>
+      authoredOps;
+
+  // Authored as `apiSchemas = None` (explicit empty list / ValueBlock).
+  bool explicitlyEmpty{false};
 };
 
 // SdfLayerOffset

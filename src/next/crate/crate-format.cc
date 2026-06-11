@@ -452,6 +452,9 @@ bool DecodeIntegers(const uint8_t* src, size_t src_size,
   if (src_idx >= src_size) return false;
   uint32_t common = 0;
   uint8_t common_bytes = src[src_idx++];
+  // The prefix is a uint32: more than 4 bytes is malformed input (and i*8
+  // would be an out-of-range shift -> UB).
+  if (common_bytes > 4) return false;
 
   for (int i = 0; i < common_bytes && src_idx < src_size; i++) {
     common |= static_cast<uint32_t>(src[src_idx++]) << (i * 8);

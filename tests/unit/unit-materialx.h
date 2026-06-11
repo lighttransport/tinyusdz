@@ -12,3 +12,7 @@ void materialx_shader_constants_test(void);
 void materialx_shader_fallback_values_test(void);
 void materialx_include_path_traversal_test(void);
 void materialx_tests(void);
+void nodegraph_reconstruct_from_layer_test(void);
+void usdpreviewsurface_displacement_test(void);
+void usduvtexture_uvset_test(void);
+void openpbr_opacity_precedence_test(void);

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <set>
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -68,6 +70,65 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
 
 std::string GetExtension(const std::string &name) {
   return to_lower(io::GetFileExtension(name));
+}
+
+// Below `kPathDedupSetThreshold` combined elements we keep the original
+// nested linear scan (cache-friendly, no allocation); above it we switch to a
+// hash set so list-edit composition of relationship targets stays O(N) instead
+// of O(N^2). `full_path_name()` is the canonical key for a *valid* Path (two
+// valid paths are `==` iff their full names match). Invalid paths never compare
+// equal under Path::operator== (not even to themselves), so they are never
+// treated as duplicates here either — matching the previous behavior exactly.
+constexpr size_t kPathDedupSetThreshold = 32;
+
+// Append `extra` onto `base`, skipping entries already present (dedup is against
+// the growing `base`, so duplicates within `extra` are also collapsed).
+void AppendUniquePaths(std::vector<Path> &base, const std::vector<Path> &extra) {
+  if (base.size() + extra.size() <= kPathDedupSetThreshold) {
+    for (const auto &p : extra) {
+      bool dup = false;
+      for (const auto &c : base) { if (c == p) { dup = true; break; } }
+      if (!dup) base.push_back(p);
+    }
+    return;
+  }
+  std::unordered_set<std::string> seen;
+  seen.reserve(base.size() + extra.size());
+  for (const auto &c : base) {
+    if (c.is_valid()) seen.insert(c.full_path_name());
+  }
+  for (const auto &p : extra) {
+    if (!p.is_valid()) { base.push_back(p); continue; }  // never dedup invalid
+    if (seen.insert(p.full_path_name()).second) base.push_back(p);
+  }
+}
+
+// Remove from `base` every entry that appears in `remove` (Path == semantics).
+void RemovePaths(std::vector<Path> &base, const std::vector<Path> &remove) {
+  if (base.size() + remove.size() <= kPathDedupSetThreshold) {
+    std::vector<Path> filtered;
+    filtered.reserve(base.size());
+    for (const auto &p : base) {
+      bool del = false;
+      for (const auto &d : remove) { if (d == p) { del = true; break; } }
+      if (!del) filtered.push_back(p);
+    }
+    base = std::move(filtered);
+    return;
+  }
+  std::unordered_set<std::string> del_set;
+  del_set.reserve(remove.size());
+  for (const auto &d : remove) {
+    if (d.is_valid()) del_set.insert(d.full_path_name());
+  }
+  std::vector<Path> filtered;
+  filtered.reserve(base.size());
+  for (const auto &p : base) {
+    // Invalid `p` never compares equal, so it is never deleted.
+    if (p.is_valid() && del_set.count(p.full_path_name())) continue;
+    filtered.push_back(p);
+  }
+  base = std::move(filtered);
 }
 
 void PushChildAndVariantPrimSpecs(PrimSpec &ps, std::vector<PrimSpec *> *stack) {
@@ -327,7 +388,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
                const bool error_when_asset_not_found,
-               const bool error_when_unsupported_fileformat, std::string *warn,
+               const bool error_when_unsupported_fileformat,
+               const bool allow_parent_relative_paths, std::string *warn,
                std::string *err) {
   if (!dst_layer) {
     PUSH_ERROR_AND_RETURN(
@@ -335,7 +397,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   std::string asset_path = assetPath.GetAssetPath();
-  if (!security_policy::ValidateAndNormalizeAssetPath(asset_path, &asset_path)) {
+  if (!security_policy::ValidateAndNormalizeAssetPath(
+          asset_path, &asset_path, allow_parent_relative_paths)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Unsafe asset path in composition: `{}`",
                     assetPath.GetAssetPath()));
@@ -446,22 +509,32 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   std::string _err;
 
   if (IsUSDFileFormat(asset_path)) {
-    if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer,
+    // Pass the RESOLVED (anchored) path so the loaded layer's prims are stamped
+    // with the resolved directory as their current-working-path. Using the
+    // authored (relative) asset_path here would lose the parent-directory
+    // context across nested references (e.g. `a/b.usd` referencing `./c.usd`
+    // must anchor c.usd to `a/`, not to the process working directory).
+    if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                              &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
     }
   } else if (IsMtlxFileFormat(asset_path)) {
-    // primPath must be '</MaterialX>'
-    if (primPath.prim_part() != "/MaterialX") {
-      PUSH_ERROR_AND_RETURN("Prim path must be </MaterialX>, but got: " +
-                            primPath.prim_part());
+    // A MaterialX reference targets the converted `/MaterialX` prim or one of
+    // its descendants — e.g. `@mat.mtlx@</MaterialX/Materials>` (common, as in
+    // usd-wg OpenChessSet looks). Accept /MaterialX or any prim under it; the
+    // sub-prim is extracted by find_primspec_at() below.
+    const std::string &mtlx_prim = primPath.prim_part();
+    if (mtlx_prim != "/MaterialX" && mtlx_prim.rfind("/MaterialX/", 0) != 0) {
+      PUSH_ERROR_AND_RETURN(
+          "Prim path for a MaterialX reference must be </MaterialX> or a "
+          "descendant, but got: " + mtlx_prim);
     }
 
     PrimSpec ps;
     if (!LoadMaterialXFromAsset(asset, asset_path, ps, &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to open mtlx asset `{}`", asset_path));
+          fmt::format("Failed to open mtlx asset `{}`: {}", asset_path, _err));
     }
 
     ps.name() = "MaterialX";
@@ -492,7 +565,29 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   DCOUT("layer = " << print_layer(layer, 0));
 
-  // TODO: Recursively resolve `references`
+  // If the loaded asset aggregates its prims through its OWN subLayers (e.g. a
+  // payload/reference target that is just a `subLayers` list — as in usd-wg
+  // OpenChessSet's *_payload.usd / *.usd), compose those subLayers here so the
+  // target's prims are present before the "no prims" check below (matching
+  // OpenUSD). Sublayers are resolved relative to this asset's directory.
+  if (IsUSDFileFormat(asset_path) && !layer.metas().subLayers.empty()) {
+    layer.set_asset_resolution_state(
+        base_dir.empty() ? resolver.current_working_path() : base_dir,
+        resolver.search_paths());
+
+    Layer sublayer_composited;
+    SublayersCompositionOptions subopts;
+    subopts.allow_parent_relative_paths = allow_parent_relative_paths;
+    subopts.error_when_asset_not_found = error_when_asset_not_found;
+    subopts.error_when_unsupported_fileformat = error_when_unsupported_fileformat;
+    subopts.fileformats = fileformats;
+    if (!CompositeSublayers(resolver, layer, &sublayer_composited, warn, err,
+                            subopts)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to composite subLayers of `{}`", asset_path));
+    }
+    layer = std::move(sublayer_composited);
+  }
 
   if (_warn.size()) {
     if (warn) {
@@ -533,14 +628,25 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       }
     }
 
-    if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+    std::string find_err;
+    if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, &find_err) ||
+        !src_ps) {
+      if (primPath.is_valid()) {
+        // A reference/payload that targets a SPECIFIC prim which does not exist
+        // in the referenced layer contributes no opinions — valid in USD
+        // (OpenUSD does not fail). Return a null root so the caller skips this
+        // arc instead of aborting the whole composition.
+        if (warn) {
+          (*warn) += "Referenced prim <" + default_prim + "> not found in `" +
+                     asset_path + "`; no opinions (skipped).\n";
+        }
+        (*dst_primspec_root) = nullptr;
+        (*dst_layer) = std::move(layer);
+        return true;
+      }
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to find PrimSpec `{}` in layer `{}`(resolved path: `{}`)",
           default_prim, asset_path, resolved_path));
-    }
-
-    if (!src_ps) {
-      PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
     }
 
     if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
@@ -575,8 +681,51 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep (max 4096).");
   }
 
+  // Whether dst authored its own reference/payload arcs BEFORE merging the
+  // weaker opinion (used for list-op accumulation + cross-directory anchoring).
+  const bool dst_had_refs = dst.metas().references.has_value();
+  const bool dst_had_payload = dst.metas().payload.has_value();
+  const bool dst_had_variant_sets = dst.metas().variantSets.has_value();
+  const bool dst_had_arcs = dst_had_refs || dst_had_payload;
+
   // Combine metadataum (weaker fills in where stronger is not authored)
   dst.metas().update_from(src.metas(), /* override_authored */ false);
+
+  // `references` and `payload` are LIST-OPS: across a sublayer stack each layer
+  // may `prepend`/`append` to the same prim and the results ACCUMULATE (USD
+  // semantics) -- e.g. a shot whose department layers each prepend a reference
+  // to the same root prim. update_from() above only gap-fills the whole value
+  // (keeping the stronger opinion when present), so when BOTH layers author the
+  // arc we must concatenate the weaker layer's list-op entries after the
+  // stronger's. (When dst had none, update_from already copied src's.)
+  if (dst_had_refs && src.metas().references.has_value()) {
+    auto &dref = dst.metas().references.value();
+    for (const auto &e : src.metas().references.value()) dref.push_back(e);
+  }
+  if (dst_had_payload && src.metas().payload.has_value()) {
+    auto &dpl = dst.metas().payload.value();
+    for (const auto &e : src.metas().payload.value()) dpl.push_back(e);
+  }
+  if (dst_had_variant_sets && src.metas().variantSets.has_value()) {
+    auto &dvsets = dst.metas().variantSets.value();
+    for (const auto &e : src.metas().variantSets.value()) {
+      dvsets.push_back(e);
+    }
+  }
+
+  // Cross-directory anchoring for the reference/payload arcs: if the arcs were
+  // introduced by this weaker layer (dst authored none of its own), they are
+  // anchored to the weaker layer's directory -- which may sit at a different
+  // depth than the stronger accumulator (e.g. a parent layer at .../shot/ vs.
+  // its `assembly/` subdirectory sublayer, where a `../../../` relative ref
+  // resolves to different places). Adopt the authoring layer's anchor so the
+  // arcs resolve correctly after sublayer flattening.
+  if (!dst_had_arcs &&
+      (src.metas().references.has_value() || src.metas().payload.has_value()) &&
+      !src.get_current_working_path().empty()) {
+    dst.set_asset_resolution_state(src.get_current_working_path(),
+                                   src.get_asset_search_paths());
+  }
 
   // AOUSD Core Spec 12.2.1 (specifier): Composed specifier resolution.
   // If dst (stronger) is `over` but src (weaker) is defining (def/class),
@@ -586,6 +735,18 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       (src.specifier() == Specifier::Def ||
        src.specifier() == Specifier::Class)) {
     dst.specifier() = src.specifier();
+
+    // The prim's definition -- and therefore the anchor for its relative
+    // reference/payload asset paths -- comes from this weaker DEFINING layer,
+    // not from the stronger `over`. A pure `over` (e.g. a root-layer variant
+    // selection) carries the root layer's working-path; keeping it would
+    // mis-anchor the arcs authored in the defining sublayer. Adopt the defining
+    // layer's asset-resolution anchor so those arcs resolve against the correct
+    // directory after sublayer flattening (cross-directory anchoring).
+    if (!src.get_current_working_path().empty()) {
+      dst.set_asset_resolution_state(src.get_current_working_path(),
+                                     src.get_asset_search_paths());
+    }
   }
 
   // AOUSD Core Spec 12.2.2 (typeName): Use typeName from defining spec.
@@ -599,20 +760,24 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 
   // Combine properties
   for (const auto &prop : src.props()) {
-    if (dst.props().count(prop.first) == 0) {
+    // Single lookup; the else-branch only mutates the found entry in place (no
+    // insert/erase on dst.props()), so the reference stays valid throughout.
+    auto dst_it = dst.props().find(prop.first);
+    if (dst_it == dst.props().end()) {
       // add if not existent
       dst.props()[prop.first] = prop.second;
     } else {
+      Property &dst_prop = dst_it->second;
       // AOUSD Core Spec 12.2.4 (custom): true if ANY opinion says true
-      if (prop.second.has_custom() && !dst.props().at(prop.first).has_custom()) {
-        dst.props()[prop.first].set_custom(true);
+      if (prop.second.has_custom() && !dst_prop.has_custom()) {
+        dst_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.4 (relationships): Compose relationship targets
       // using list-op semantics across opinions.
-      if (dst.props().at(prop.first).is_relationship() &&
+      if (dst_prop.is_relationship() &&
           prop.second.is_relationship()) {
-        Relationship &dst_rel = dst.props()[prop.first].relationship();
+        Relationship &dst_rel = dst_prop.relationship();
         const Relationship &src_rel = prop.second.get_relationship();
 
         // If weaker has targets and stronger doesn't block them,
@@ -623,33 +788,15 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
 
           if (src_qual == ListEditQual::Prepend) {
             // Prepend weaker targets before stronger
-            auto combined = src_rel.targetPathVector;
-            for (const auto &p : dst_rel.targetPathVector) {
-              bool dup = false;
-              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
-              if (!dup) combined.push_back(p);
-            }
-            dst_rel.targetPathVector = combined;
+            std::vector<Path> combined = src_rel.targetPathVector;
+            AppendUniquePaths(combined, dst_rel.targetPathVector);
+            dst_rel.targetPathVector = std::move(combined);
           } else if (src_qual == ListEditQual::Append) {
             // Append weaker targets after stronger
-            auto combined = dst_rel.targetPathVector;
-            for (const auto &p : src_rel.targetPathVector) {
-              bool dup = false;
-              for (const auto &c : combined) { if (c == p) { dup = true; break; } }
-              if (!dup) combined.push_back(p);
-            }
-            dst_rel.targetPathVector = combined;
+            AppendUniquePaths(dst_rel.targetPathVector, src_rel.targetPathVector);
           } else if (src_qual == ListEditQual::Delete) {
             // Delete weaker targets from stronger
-            std::vector<Path> filtered;
-            for (const auto &p : dst_rel.targetPathVector) {
-              bool del = false;
-              for (const auto &d : src_rel.targetPathVector) {
-                if (d == p) { del = true; break; }
-              }
-              if (!del) filtered.push_back(p);
-            }
-            dst_rel.targetPathVector = filtered;
+            RemovePaths(dst_rel.targetPathVector, src_rel.targetPathVector);
           }
           // ResetToExplicit: stronger already wins (default behavior)
         }
@@ -658,9 +805,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 6.5 (type agreement): Warn if composed property types
       // disagree. Role types (color3f) agree with their underlying type (float3)
       // but are not equivalent; other mismatches are errors.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        const std::string &dst_type = dst.props().at(prop.first).get_attribute().type_name();
+        const std::string &dst_type = dst_prop.get_attribute().type_name();
         const std::string &src_type = prop.second.get_attribute().type_name();
         if (!dst_type.empty() && !src_type.empty() && dst_type != src_type) {
           // Check if types agree via role-type relationship
@@ -679,9 +826,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
       // AOUSD Core Spec 12.2.3 (variability): If the stronger opinion did not
       // explicitly author variability, use the weaker opinion's variability.
       // Also consult the schema registry as the weakest fallback.
-      if (dst.props().at(prop.first).is_attribute() &&
+      if (dst_prop.is_attribute() &&
           prop.second.is_attribute()) {
-        Attribute &dst_attr = dst.props()[prop.first].attribute();
+        Attribute &dst_attr = dst_prop.attribute();
         const Attribute &src_attr = prop.second.get_attribute();
 
         // If dst (stronger) has default variability (Varying) and src (weaker)
@@ -705,20 +852,58 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   }
 
   // Combine child primspecs.
+  //
+  // Build a name->index map of dst children once so the per-child lookup is O(1)
+  // instead of an O(n*m) std::find_if scan. Indices (not iterators/pointers) are
+  // stored because push_back below may reallocate dst.children(); the map is
+  // kept in sync as new children are appended. emplace() keeps the first
+  // occurrence, matching find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
+
   for (auto &child : src.children()) {
-    auto dst_it = std::find_if(
-        dst.children().begin(), dst.children().end(),
-        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+    auto it = dst_child_index.find(child.name());
 
     // if exists, combine properties and children
-    if (dst_it != dst.children().end()) {
-      if (!CombinePrimSpecRec(depth + 1, (*dst_it), child, warn, err)) {
+    if (it != dst_child_index.end()) {
+      if (!CombinePrimSpecRec(depth + 1, dst.children()[it->second], child, warn, err)) {
         return false;
       }
     }
     // otherwise add it
     else {
+      dst_child_index.emplace(child.name(), dst.children().size());
       dst.children().push_back(child);
+    }
+  }
+
+  // Combine variantSet CONTENT (the `variantSet "x" = { ... }` blocks).
+  // update_from() above merged the `variantSets`/`variants` METADATA (the
+  // listop + the selection), but the actual variant content lives in
+  // variantSets() and would otherwise be dropped. Without this, a prim that
+  // receives its variant selection from one layer and its variant content from
+  // another (common: a shot/override selects a variant whose set is defined in
+  // a weaker sublayer) loses the content and the variant cannot be resolved.
+  for (const auto &src_vs : src.variantSets()) {
+    auto dit = dst.variantSets().find(src_vs.first);
+    if (dit == dst.variantSets().end()) {
+      dst.variantSets()[src_vs.first] = src_vs.second;  // add whole variantSet
+    } else {
+      // Same variantSet authored in both opinions: merge per-variant content
+      // (dst is stronger; weaker fills gaps / recurses on conflicts).
+      VariantSetSpec &dst_vs = dit->second;
+      for (const auto &v : src_vs.second.variantSet) {
+        auto vit = dst_vs.variantSet.find(v.first);
+        if (vit == dst_vs.variantSet.end()) {
+          dst_vs.variantSet[v.first] = v.second;
+        } else if (!CombinePrimSpecRec(depth + 1, vit->second, v.second, warn,
+                                       err)) {
+          return false;
+        }
+      }
     }
   }
 
@@ -823,6 +1008,14 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                       sublayer_asset_path, in_layer.name()));
     }
 
+    // Each sublayer is resolved relative to THIS layer's directory. A previous
+    // iteration's LoadAsset() leaves the resolver's working path pointing at the
+    // last-loaded sublayer's dir, so reset it here before the existence check —
+    // otherwise the 2nd+ sublayer of a multi-sublayer list resolves against the
+    // wrong base (e.g. `../../../_common/axis.usda` fails after a sibling loads).
+    resolver.set_current_working_path(in_layer.get_current_working_path());
+    resolver.set_search_paths(in_layer.get_asset_search_paths());
+
     std::string layer_filepath = resolver.resolve(sublayer_asset_path);
     if (layer_filepath.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("{} not found in path: {}",
@@ -837,7 +1030,8 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    &sublayer, /* primspec_root */ nullptr,
                    options.error_when_no_prims_in_sublayer,
                    options.error_when_asset_not_found,
-                   options.error_when_unsupported_fileformat, warn, err)) {
+                   options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
     }
@@ -975,10 +1169,18 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().references) {
+    // IMPORTANT: copy the reference listops before iterating. The loop body
+    // merges referenced content INTO `primspec`, which can append to
+    // `primspec.metas().references` (implied/nested arcs) and REALLOCATE the
+    // underlying vector — iterating it live then reads freed memory (observed as
+    // a garbage asset/prim path on the 2nd+ element of a `references = [a, b]`
+    // list). Iterate a stable copy instead (mirrors CompositeInheritsRec).
+    const auto references_ops = primspec.metas().references.value();
+
     // Process all listops in order (supports multiple listops per arc)
     // Pre-pass: collect deleted reference targets so we can skip them.
     std::set<std::pair<std::string, std::string>> ref_deleted;
-    for (const auto &ref_op : primspec.metas().references.value()) {
+    for (const auto &ref_op : references_ops) {
       if (ref_op.first == ListEditQual::Delete) {
         for (const auto &r : ref_op.second) {
           ref_deleted.insert({r.asset_path.GetAssetPath(), r.prim_path.prim_part()});
@@ -986,7 +1188,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    for (const auto &ref_op : primspec.metas().references.value()) {
+    for (const auto &ref_op : references_ops) {
       const ListEditQual &qual = ref_op.first;
       const auto &refecences = ref_op.second;
 
@@ -1003,10 +1205,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
           if (reference.asset_path.GetAssetPath().empty()) {
             if (reference.prim_path.is_absolute_path()) {
-              // Inherit-like operation.
-
-              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-                return false;
+              // Internal reference (`references = </some/Prim>`). A target that
+              // is not defined in this layer contributes no opinions — valid in
+              // USD (OpenUSD does not fail). Skip it (src_ps stays null → the
+              // `if (!src_ps) continue;` below) instead of aborting. Use a local
+              // error string so a benign miss does not poison the shared `err`.
+              std::string find_err;
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps,
+                                             &find_err)) {
+                if (warn) {
+                  (*warn) += "Internal reference target <" +
+                             reference.prim_path.prim_part() +
+                             "> not found in this layer; skipped.\n";
+                }
+                src_ps = nullptr;
               }
 
             } else {
@@ -1036,7 +1248,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1110,10 +1323,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
           if (reference.asset_path.GetAssetPath().empty()) {
             if (reference.prim_path.is_absolute_path()) {
-              // Inherit-like operation.
-
-              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-                return false;
+              // Internal reference (`references = </some/Prim>`). A target that
+              // is not defined in this layer contributes no opinions — valid in
+              // USD (OpenUSD does not fail). Skip it (src_ps stays null → the
+              // `if (!src_ps) continue;` below) instead of aborting. Use a local
+              // error string so a benign miss does not poison the shared `err`.
+              std::string find_err;
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps,
+                                             &find_err)) {
+                if (warn) {
+                  (*warn) += "Internal reference target <" +
+                             reference.prim_path.prim_part() +
+                             "> not found in this layer; skipped.\n";
+                }
+                src_ps = nullptr;
               }
 
             } else {
@@ -1138,7 +1361,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            reference.asset_path, reference.prim_path, &layer,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1221,9 +1445,15 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().payload) {
+    // Copy the payload listops before iterating: the loop body merges loaded
+    // content INTO `primspec`, which can reallocate `primspec.metas().payload`
+    // and invalidate a live iterator (use-after-free). See the matching note in
+    // CompositeReferencesRec.
+    const auto payload_ops = primspec.metas().payload.value();
+
     // Pre-pass: collect deleted payload targets so we can skip them.
     std::set<std::pair<std::string, std::string>> pl_deleted;
-    for (const auto &payload_op : primspec.metas().payload.value()) {
+    for (const auto &payload_op : payload_ops) {
       if (payload_op.first == ListEditQual::Delete) {
         for (const auto &p : payload_op.second) {
           pl_deleted.insert({p.asset_path.GetAssetPath(), p.prim_path.prim_part()});
@@ -1231,7 +1461,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    for (const auto &payload_op : primspec.metas().payload.value()) {
+    for (const auto &payload_op : payload_ops) {
       const ListEditQual &qual = payload_op.first;
       const auto &payloads = payload_op.second;
 
@@ -1286,7 +1516,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1386,7 +1617,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            pl.asset_path, pl.prim_path, &layer, &src_ps,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
-                           options.error_when_unsupported_fileformat, warn, err)) {
+                           options.error_when_unsupported_fileformat,
+                   options.allow_parent_relative_paths, warn, err)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1465,12 +1697,18 @@ using PathVisitedSet = std::set<std::string>;
 
 // Resolve ListEditQual operations into a final ordered list.
 // Implements: resetToExplicit clears + adds, prepend prepends, append appends,
-// delete removes matching items, order is ignored (warn).
-// Template version uses EqPred for matching delete targets.
-template <typename T, typename EqPred>
+// delete removes matching items, order reorders per the order vector.
+//
+// Matching is by a caller-supplied string key (`key`), which must satisfy
+// key(a) == key(b)  <=>  "a and b are the same item". This replaces the former
+// O(M*N) per-item linear scans in Delete/Order with hash-set/map lookups, so
+// resolution is O(N) regardless of how many list ops or items are supplied
+// (also a guard against pathologically large inherits/specializes lists). The
+// produced result is identical to the previous predicate-based implementation.
+template <typename T, typename KeyFn>
 static std::vector<T> ResolveListOpsT(
     const std::vector<std::pair<ListEditQual, std::vector<T>>> &listops,
-    EqPred eq, std::string *warn) {
+    KeyFn key, std::string *warn) {
   std::vector<T> result;
 
   for (const auto &op : listops) {
@@ -1489,14 +1727,17 @@ static std::vector<T> ResolveListOpsT(
       }
       result.insert(result.end(), items.begin(), items.end());
     } else if (qual == ListEditQual::Delete) {
-      for (const auto &del_item : items) {
-        result.erase(
-            std::remove_if(result.begin(), result.end(),
-                           [&del_item, &eq](const T &x) {
-                             return eq(x, del_item);
-                           }),
-            result.end());
-      }
+      // Remove every result element whose key matches any deleted item.
+      // Single stable pass; preserves the order of the survivors.
+      std::unordered_set<std::string> del_keys;
+      del_keys.reserve(items.size());
+      for (const auto &del_item : items) del_keys.insert(key(del_item));
+      result.erase(
+          std::remove_if(result.begin(), result.end(),
+                         [&del_keys, &key](const T &x) {
+                           return del_keys.count(key(x)) != 0;
+                         }),
+          result.end());
     } else if (qual == ListEditQual::Order) {
       // Reorder items per the order vector.
       // Items in the order vector are placed in that relative order.
@@ -1504,28 +1745,32 @@ static std::vector<T> ResolveListOpsT(
       // This follows the deprecated SdfListOp reorder semantics.
       if (items.empty() || result.empty()) continue;
 
-      // Build a position map: for each item in `items`, what rank?
-      // Items in `items` get moved to that position, rest stay at front.
+      // First result element (in result order) for each key.
+      std::unordered_map<std::string, const T *> first_match;
+      first_match.reserve(result.size());
+      for (const auto &r : result) {
+        first_match.emplace(key(r), &r);  // keeps the first occurrence
+      }
+      // Membership set of the order vector's keys.
+      std::unordered_set<std::string> item_keys;
+      item_keys.reserve(items.size());
+      for (const auto &anchor : items) item_keys.insert(key(anchor));
+
       std::vector<T> ordered;
       std::vector<T> unordered;
 
-      // Collect items that appear in the order vector (in order)
+      // Items that appear in the order vector, emitted in order-vector order
+      // (each anchor maps to the first matching result element).
       for (const auto &anchor : items) {
-        for (const auto &r : result) {
-          if (eq(r, anchor)) {
-            ordered.push_back(r);
-            break;
-          }
+        auto it = first_match.find(key(anchor));
+        if (it != first_match.end()) {
+          ordered.push_back(*it->second);
         }
       }
 
-      // Collect items NOT in the order vector (preserve original order)
+      // Result elements NOT named by the order vector, in original order.
       for (const auto &r : result) {
-        bool found = false;
-        for (const auto &anchor : items) {
-          if (eq(r, anchor)) { found = true; break; }
-        }
-        if (!found) {
+        if (item_keys.count(key(r)) == 0) {
           unordered.push_back(r);
         }
       }
@@ -1545,8 +1790,9 @@ static std::vector<Path> ResolveListOps(
     const std::vector<std::pair<ListEditQual, std::vector<Path>>> &listops,
     std::string *warn) {
   return ResolveListOpsT<Path>(listops,
-      [](const Path &a, const Path &b) {
-        return a.prim_part() == b.prim_part();
+      [](const Path &p) {
+        auto v = p.prim_part();
+        return std::string(v.data(), v.size());
       }, warn);
 }
 
@@ -1588,19 +1834,20 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
 
       const PrimSpec *src_ps{nullptr};
 
-      if (!layer.find_primspec_at(inheritPath, &src_ps, err)) {
-        visited.erase(key);
-        if (err) {
-          (*err) += "Inherit failed: Path <" +
-                    inheritPath.prim_part() + "> not found or is invalid.\n";
+      // Inheriting from a class that has no local opinions (or is not defined in
+      // this layer) is valid in USD: the arc contributes nothing. Treat a
+      // missing target as a no-op (matches OpenUSD) rather than failing the
+      // whole composition. Use a local error string so a benign miss does not
+      // poison the shared `err`.
+      std::string find_err;
+      if (!layer.find_primspec_at(inheritPath, &src_ps, &find_err) || !src_ps) {
+        if (warn) {
+          (*warn) += "Inherit target <" + inheritPath.prim_part() +
+                     "> not found in this layer; no opinions to inherit "
+                     "(skipped).\n";
         }
-        return false;
-      }
-
-      if (!src_ps) {
         visited.erase(key);
-        PUSH_ERROR_AND_RETURN(
-            "Internal error: PrimSpec is nullptr in CompositeInheritsRec.\n");
+        continue;
       }
 
       if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
@@ -1612,6 +1859,23 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
 
     // remove `inherits` metadataum after processing.
     primspec.metas().inherits.reset();
+
+    // Applying the inherit(s) above can copy in child PrimSpecs that themselves
+    // carry `inherits` (multi-level classes — a class whose children inherit
+    // further classes). Those children are introduced AFTER the children-first
+    // traversal at the top of this function, so resolve them now, within THIS
+    // pass. Otherwise the prim keeps reporting unresolved inherits and tusdcat's
+    // outer loop re-runs CompositeInherits up to kMaxIteration (128) times,
+    // re-copying large data every pass — the runaway behind oom.md's
+    // teapotScene_animCycle (1644 vs OpenUSD's 24 inherit refs). `visited`
+    // (erased above) still guards genuine cycles within each freshly-resolved
+    // chain, and once a class is applied its copy's `inherits` is reset, so
+    // acyclic multi-level chains terminate.
+    for (auto &child : primspec.children()) {
+      if (!CompositeInheritsRec(depth + 1, layer, child, warn, err, visited)) {
+        return false;
+      }
+    }
   }
 
   // AOUSD Core Spec 10.3.2.3: Implied inherits.
@@ -1713,7 +1977,10 @@ bool ExtractReferencesAssetPathsImpl(const PrimSpec &primspec, std::vector<std::
         const auto &refecences = ref_op.second;
 
         for (const auto &reference : refecences) {
-          paths.push_back(reference.asset_path.GetAssetPath());
+          std::string asset_path = reference.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }
@@ -1813,7 +2080,10 @@ bool ExtractPayloadAssetPathsImpl(const PrimSpec &primspec, std::vector<std::str
         const auto &payload = payload_op.second;
 
         for (const auto &pl : payload) {
-          paths.push_back(pl.asset_path.GetAssetPath());
+          std::string asset_path = pl.asset_path.GetAssetPath();
+          if (!asset_path.empty()) {
+            paths.push_back(std::move(asset_path));
+          }
         }
       }
     }
@@ -2183,27 +2453,31 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : dst.props()) {
-    if (ps.props().count(prop.first)) {
+    // Single lookup into ps.props(). The found-branch only mutates the entry in
+    // place; the else-branch inserts a *new* key, so the held reference (taken
+    // only in the found-branch) is never invalidated.
+    auto ps_it = ps.props().find(prop.first);
+    if (ps_it != ps.props().end()) {
+      Property &ps_prop = ps_it->second;
       // AOUSD Core Spec 12.2.3: Preserve uniform variability from weaker (inherited) opinion
       Variability inherited_variability = Variability::Varying;
-      if (ps.props().at(prop.first).is_attribute() && prop.second.is_attribute()) {
-        inherited_variability = ps.props().at(prop.first).get_attribute().variability();
+      if (ps_prop.is_attribute() && prop.second.is_attribute()) {
+        inherited_variability = ps_prop.get_attribute().variability();
       }
 
       // AOUSD Core Spec 12.2.4: OR the custom flags before replacing
-      bool src_custom = ps.props().at(prop.first).has_custom();
-      ps.props().at(prop.first) = ComposeStrongerPropertyOverWeaker(
-          prop.second, ps.props().at(prop.first));
+      bool src_custom = ps_prop.has_custom();
+      ps_prop = ComposeStrongerPropertyOverWeaker(prop.second, ps_prop);
       if (src_custom && !prop.second.has_custom()) {
-        ps.props().at(prop.first).set_custom(true);
+        ps_prop.set_custom(true);
       }
 
       // AOUSD Core Spec 12.2.3: If inherited property had uniform variability
       // and the overriding (stronger) is varying, preserve uniform.
-      if (ps.props().at(prop.first).is_attribute() &&
+      if (ps_prop.is_attribute() &&
           inherited_variability == Variability::Uniform &&
-          ps.props().at(prop.first).attribute().variability() == Variability::Varying) {
-        ps.props().at(prop.first).attribute().variability() = Variability::Uniform;
+          ps_prop.attribute().variability() == Variability::Varying) {
+        ps_prop.attribute().variability() = Variability::Uniform;
       }
     }
     else {
@@ -2213,14 +2487,22 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   }
 
   // Overide child primspecs.
-  for (auto &child : ps.children()) {
-    auto src_it = std::find_if(dst.children().begin(), dst.children().end(),
-                               [&child](const PrimSpec &primspec) {
-                                 return primspec.name() == child.name();
-                               });
+  //
+  // Build a name->index map of dst children once for O(1) lookup instead of an
+  // O(n*m) std::find_if scan. This loop does not resize dst.children(), so
+  // indices stay valid throughout. emplace() keeps the first occurrence, matching
+  // find_if's first-match semantics for duplicate names.
+  std::unordered_map<std::string, size_t> dst_child_index;
+  dst_child_index.reserve(dst.children().size());
+  for (size_t i = 0; i < dst.children().size(); i++) {
+    dst_child_index.emplace(dst.children()[i].name(), i);
+  }
 
-    if (src_it != dst.children().end()) {
-      if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
+  for (auto &child : ps.children()) {
+    auto it = dst_child_index.find(child.name());
+
+    if (it != dst_child_index.end()) {
+      if (!OverridePrimSpecRec(1, child, dst.children()[it->second], warn, err)) {
         return false;
       }
     }
@@ -2237,8 +2519,14 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
 bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                       std::string *err) {
+  // NOTE: composition merges (references/payloads/inherits) legitimately
+  // override opinions from `def` or `class` source prims, not only from `over`.
+  // Overriding their opinions onto `dst` is valid, so this is a debug note, not
+  // an error — emitting an error here poisons `err` and fails the whole arc
+  // (e.g. usd-wg OpenChessSet inherits from a `class`).
   if (src.specifier() != Specifier::Over) {
-    PUSH_ERROR("src PrimSpec must be qualified with `over` specifier.\n");
+    DCOUT("OverridePrimSpec: src specifier is "
+          << to_string(src.specifier()) << " (not `over`); proceeding.");
   }
 
   return detail::OverridePrimSpecRec(0, dst, src, warn, err);

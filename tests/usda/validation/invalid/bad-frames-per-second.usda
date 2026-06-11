@@ -1,0 +1,11 @@
+#usda 1.0
+# EXPECT: core.layer.framesPerSecond
+(
+    doc = "framesPerSecond must be > 0. Expect ERROR core.layer.framesPerSecond."
+    defaultPrim = "World"
+    framesPerSecond = 0
+)
+
+def Xform "World"
+{
+}

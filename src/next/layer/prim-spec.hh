@@ -72,29 +72,7 @@ TypeNameTable& GetTypeNameTable();
 // Forward declarations
 struct VariantData;
 struct VariantSetData;
-
-/// PrimSpec metadata
-struct PrimSpecMeta {
-  bool active = true;
-  bool hidden = false;
-  std::string doc;
-  std::string comment;
-  std::vector<std::string> apiSchemas;
-
-  // Composition arcs (stored as paths for lazy resolution)
-  std::vector<std::string> references;
-  std::vector<std::string> payloads;
-  std::vector<std::string> inherits;
-  std::vector<std::string> specializes;
-  std::string variantSelection;  // "variantSet=selection"
-
-  // Variant set definitions
-  std::vector<VariantSetData> variantSets;
-
-  // Layer offset (applied at evaluation time)
-  // First = offset, Second = scale. Default: (0, 1)
-  std::pair<double, double> layer_offset = {0.0, 1.0};
-};
+class Layer;  // for VariantData::content (variant subtree)
 
 /// Variant data - properties and prims inside a single variant option
 struct VariantData {
@@ -104,12 +82,208 @@ struct VariantData {
   std::string doc;
   std::vector<std::pair<std::string, Value>> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  // Optional subtree for variants that add prim-level opinions and/or child
+  // prims: a Layer whose root prim "__self__" carries the host opinions and
+  // whose descendants become the host prim's children when this variant is
+  // selected. (Composed reference-style, so it supports child prims.)
+  std::shared_ptr<Layer> content;
 };
 
 /// Variant set - a named set of variant options
 struct VariantSetData {
   std::string name;
+  std::string selected;  // selected variant name for this set ("" = none)
   std::vector<VariantData> variants;
+};
+
+/// One composition-arc field's list-op edits, exactly as authored (Phase 7 S5,
+/// AOUSD §10.3.2). `is_explicit` marks a bare `references = [...]` (or an
+/// explicit op), in which case the effective items are the inline arc vector on
+/// PrimSpecMeta; otherwise the effective list is composed from the prepend /
+/// append / delete / order lists. Kept so composition can merge a site's specs
+/// across the layer stack and the writer can re-emit the original qualifier.
+struct ArcEdit {
+  bool authored = false;     // true when this arc field authored list-op edits.
+  bool is_explicit = true;  // bare list (the common case)
+  std::vector<std::string> prepended;
+  std::vector<std::string> appended;
+  std::vector<std::string> deleted;
+  std::vector<std::string> ordered;
+
+  bool has_qualifiers() const {
+    return authored && (!is_explicit || !prepended.empty() || !appended.empty() ||
+           !deleted.empty() || !ordered.empty());
+  }
+  bool has_authored_opinion() const {
+    return authored;
+  }
+};
+
+/// Per-arc-type list-op edits for one PrimSpec (lazily allocated; only prims
+/// that author a non-bare arc qualifier pay for it).
+struct ArcListOpEdits {
+  ArcEdit references;
+  ArcEdit payloads;
+  ArcEdit inherits;
+  ArcEdit specializes;
+};
+
+/// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
+/// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
+/// Held behind a lazily-allocated unique_ptr on PrimSpecMeta so an ordinary
+/// prim pays only 8 pointer bytes instead of ~190 bytes of empty std::string /
+/// std::vector heads (Phase 8.1 footprint split).
+struct PrimSpecMetaExt {
+  std::string doc;
+  std::string comment;
+  // When non-empty (set by composition), this prim is an instance whose
+  // children come from the prototype prim at this path (no duplicated subtree).
+  std::string instance_prototype;
+  std::vector<std::string> apiSchemas;
+  // Variant set definitions.
+  std::vector<VariantSetData> variantSets;
+  // Multiple variant selections (set -> selection); composed in addition to the
+  // legacy single `variantSelection` field on PrimSpecMeta.
+  std::vector<std::pair<std::string, std::string>> variantSelections;
+  // Relocates: namespace renames (absolute source path -> absolute target path).
+  std::vector<std::pair<std::string, std::string>> relocates;
+  // Arc list-op qualifiers (Phase 7 S5); null unless authored.
+  std::unique_ptr<ArcListOpEdits> arc_edits;
+
+  PrimSpecMetaExt() = default;
+  PrimSpecMetaExt(const PrimSpecMetaExt &o)
+      : doc(o.doc),
+        comment(o.comment),
+        instance_prototype(o.instance_prototype),
+        apiSchemas(o.apiSchemas),
+        variantSets(o.variantSets),
+        variantSelections(o.variantSelections),
+        relocates(o.relocates),
+        arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
+  PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
+};
+
+/// PrimSpec metadata. Hot fields (flags, the four composition-arc lists, the
+/// legacy single variant selection, and the layer offset) are inline; cold
+/// fields live in a lazily-allocated PrimSpecMetaExt. The cold-field accessors
+/// keep the old names, so call sites change only by gaining `()`. Const reads
+/// never allocate (return a shared empty); mutable access allocates the ext on
+/// first touch. Copyable with a deep copy of the ext.
+struct PrimSpecMeta {
+  bool active = true;
+  bool hidden = false;
+  bool instanceable = false;  // when true (with arcs), the prim is an instance
+
+  // Composition arcs (stored as paths for lazy resolution).
+  std::vector<std::string> references;
+  std::vector<std::string> payloads;
+  std::vector<std::string> inherits;
+  std::vector<std::string> specializes;
+
+  // Legacy single "variantSet=selection" (kept inline; the plural list of
+  // selections lives in the ext).
+  std::string variantSelection;
+
+  // Layer offset (applied at evaluation time). First = offset, second = scale.
+  std::pair<double, double> layer_offset = {0.0, 1.0};
+
+  PrimSpecMeta() = default;
+  PrimSpecMeta(PrimSpecMeta &&) = default;
+  PrimSpecMeta &operator=(PrimSpecMeta &&) = default;
+  PrimSpecMeta(const PrimSpecMeta &o) { *this = o; }
+  PrimSpecMeta &operator=(const PrimSpecMeta &o) {
+    active = o.active;
+    hidden = o.hidden;
+    instanceable = o.instanceable;
+    references = o.references;
+    payloads = o.payloads;
+    inherits = o.inherits;
+    specializes = o.specializes;
+    variantSelection = o.variantSelection;
+    layer_offset = o.layer_offset;
+    ext_ = o.ext_ ? std::unique_ptr<PrimSpecMetaExt>(
+                        new PrimSpecMetaExt(*o.ext_))
+                  : nullptr;
+    return *this;
+  }
+
+  bool has_ext() const { return ext_ != nullptr; }
+  void ensure_ext() {
+    if (!ext_) ext_.reset(new PrimSpecMetaExt());
+  }
+  const PrimSpecMetaExt *ext() const { return ext_.get(); }
+
+  // Arc list-op edits (Phase 7 S5). Const returns null when none authored (the
+  // inline arc vectors are then implicit explicit lists); mutable allocates.
+  const ArcListOpEdits *arc_edits() const {
+    return ext_ ? ext_->arc_edits.get() : nullptr;
+  }
+  ArcListOpEdits &ensure_arc_edits() {
+    ensure_ext();
+    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
+    return *ext_->arc_edits;
+  }
+
+  const std::string &doc() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->doc : kEmpty;
+  }
+  std::string &doc() {
+    ensure_ext();
+    return ext_->doc;
+  }
+  const std::string &comment() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->comment : kEmpty;
+  }
+  std::string &comment() {
+    ensure_ext();
+    return ext_->comment;
+  }
+  const std::string &instance_prototype() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->instance_prototype : kEmpty;
+  }
+  std::string &instance_prototype() {
+    ensure_ext();
+    return ext_->instance_prototype;
+  }
+  const std::vector<std::string> &apiSchemas() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->apiSchemas : kEmpty;
+  }
+  std::vector<std::string> &apiSchemas() {
+    ensure_ext();
+    return ext_->apiSchemas;
+  }
+  const std::vector<VariantSetData> &variantSets() const {
+    static const std::vector<VariantSetData> kEmpty;
+    return ext_ ? ext_->variantSets : kEmpty;
+  }
+  std::vector<VariantSetData> &variantSets() {
+    ensure_ext();
+    return ext_->variantSets;
+  }
+  const std::vector<std::pair<std::string, std::string>> &variantSelections()
+      const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->variantSelections : kEmpty;
+  }
+  std::vector<std::pair<std::string, std::string>> &variantSelections() {
+    ensure_ext();
+    return ext_->variantSelections;
+  }
+  const std::vector<std::pair<std::string, std::string>> &relocates() const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->relocates : kEmpty;
+  }
+  std::vector<std::pair<std::string, std::string>> &relocates() {
+    ensure_ext();
+    return ext_->relocates;
+  }
+
+ private:
+  std::unique_ptr<PrimSpecMetaExt> ext_;
 };
 
 /// Value storage block
@@ -119,36 +293,25 @@ public:
   ValueStorage();
   ~ValueStorage();
 
-  /// Allocate space and return offset
-  uint32_t allocate(size_t size, size_t alignment = 8);
-
   /// Store a value and return its offset
   uint32_t store(const Value& value);
+  uint32_t store(Value&& value);
 
   /// Get value at offset
   const Value* get(uint32_t offset) const;
   Value* get(uint32_t offset);
 
-  /// Get raw pointer at offset
-  const void* raw(uint32_t offset) const;
-  void* raw(uint32_t offset);
+  /// Number of stored values
+  size_t count() const { return values_.size(); }
 
-  /// Current used size
-  size_t size() const { return used_; }
-
-  /// Total capacity
-  size_t capacity() const { return data_.size(); }
-
-  /// Reserve capacity
-  void reserve(size_t bytes);
+  /// Approximate memory usage in bytes
+  size_t memory_usage() const;
 
   /// Clear all storage
   void clear();
 
 private:
-  std::vector<uint8_t> data_;
-  size_t used_ = 0;
-  std::vector<Value> values_;  // Value objects (may reference data_)
+  std::vector<Value> values_;
 };
 
 /// TimeSampleStorage - stores time samples with value deduplication
@@ -350,6 +513,27 @@ public:
   std::vector<std::string> relationship_names() const;
 
   // ============================================================
+  // Attribute connections / declared type names (USDC fidelity)
+  // ============================================================
+
+  /// Add an attribute connection target (e.g. inputs:x.connect = </path>).
+  /// The property itself should also exist as a slot (kFlagConnection).
+  void add_connection(const std::string& prop_name, const Path& target);
+
+  /// Get connection targets for an attribute (nullptr if none)
+  const std::vector<Path>* connection(const std::string& prop_name) const;
+
+  /// Record the declared USD type name of a property (e.g. "color3f",
+  /// "token", "float[]"). Needed to faithfully re-emit attributes that have
+  /// no authored default value (connection-only / declared-only) and to
+  /// round-trip the exact role type for valued attributes.
+  void set_property_type_name(const std::string& prop_name,
+                              const std::string& type_name);
+
+  /// Get the declared type name of a property (nullptr if not recorded)
+  const std::string* property_type_name(const std::string& prop_name) const;
+
+  // ============================================================
   // Children (stored as indices into Layer's prim array)
   // ============================================================
 
@@ -391,6 +575,19 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
+
+  // Attribute connections: interned property-name id -> connection targets.
+  // (Keyed by PropNameId.id rather than a string to avoid a key string per
+  // connected property on shader-heavy scenes.)
+  std::unordered_map<uint32_t, std::vector<Path>> connections_;
+
+  // Declared USD type names: interned property-name id -> interned typeName id
+  // (both interned in the global PropNameTable). Lets the writer re-emit the
+  // exact `typeName` (incl. role types and value-less / connection-only attrs)
+  // while storing only two uint32s per property instead of two strings — the
+  // "string pooling" of the original low-memory plan (typeNames are highly
+  // repeated, so interning collapses ~150k strings to a few dozen).
+  std::unordered_map<uint32_t, uint32_t> prop_type_names_;
 
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;

@@ -25,3 +25,27 @@ void usdc_layer_nested_variant_props_roundtrip_test(void);
 void usdc_layer_multiple_variant_sets_roundtrip_test(void);
 void usdc_layer_3level_nested_roundtrip_test(void);
 void usdc_stage_variant_props_roundtrip_test(void);
+
+// Golden USDC schema reconstruction (fixtures authored by Pixar usdcat)
+void usdc_golden_geom_mesh_schema_test(void);
+void usdc_golden_geom_subset_schema_test(void);
+void usdc_golden_geom_camera_schema_test(void);
+void usdc_golden_light_schema_test(void);
+void usdc_golden_skeleton_schema_test(void);
+void usdc_golden_skelanim_schema_test(void);
+void usdc_golden_blendshape_schema_test(void);
+void usdc_golden_physics_scene_test(void);
+void usdc_golden_physics_joint_test(void);
+void usdc_golden_physics_collisiongroup_test(void);
+void usdc_golden_physics_apis_test(void);
+void usdc_golden_physics_material_test(void);
+void usdc_golden_collection_test(void);
+void usdc_golden_lightfilter_test(void);
+void usdc_golden_geom_intrinsics_test(void);
+void usdc_golden_geom_tetmesh_test(void);
+void usdc_golden_geom_nurbspatch_test(void);
+void usdc_golden_geom_hermite_test(void);
+void usdc_golden_lights_extra_test(void);
+void usdc_golden_matbind_collection_test(void);
+void usdc_golden_light_linking_test(void);
+void usdc_golden_physics_colliders_test(void);

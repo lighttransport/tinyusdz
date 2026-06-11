@@ -8,6 +8,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 
 // XXH3 hash (header-only mode, namespaced to avoid collision with zstd's copy)
 #define XXH_INLINE_ALL
@@ -34,6 +35,12 @@
 #include "lz4/lz4.h"
 
 #include "safe-arithmetic.hh"
+
+// math::is_close — used for exact (eps == 0) floating-point comparison without
+// tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
+// bit-exact equality for finite values (the int-representability checks below
+// guard the operands to a finite range before comparing).
+#include "math-util.inc"
 
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
@@ -140,7 +147,11 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
   // Float/double: canonicalize +0/-0 into a temp buffer, then XXH3
   // (We copy to avoid mutating the caller's data.)
   std::vector<uint8_t> canon(byte_count);
-  std::memcpy(canon.data(), data, byte_count);
+  // Guard the copy: an empty float/double array reaches here with
+  // byte_count==0 (and possibly-null data/canon pointers); memcpy(null,null,0)
+  // is UB-by-the-letter / flagged by UBSan's nonnull check. XXH3 of 0 bytes
+  // below is already safe.
+  if (byte_count) std::memcpy(canon.data(), data, byte_count);
 
   if (element_size == sizeof(float)) {
     size_t count = byte_count / sizeof(float);
@@ -282,12 +293,12 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // Check for duplicate specs with same path
-  // USD Crate format requires each path to appear only once
-  for (const auto& existing_spec : spec_data_) {
-    if (existing_spec.path.full_path_name() == path.full_path_name()) {
-      return true;  // Silently skip duplicate (not an error)
-    }
+  // Check for duplicate specs with same path (USD Crate requires each path to
+  // appear only once). O(1) via spec_path_set_ — a prior implementation did an
+  // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
+  // strings, which dominated write time for spec-dense scenes.
+  if (spec_path_set_.count(path)) {
+    return true;  // Silently skip duplicate (not an error)
   }
 
   // Create spec data
@@ -317,6 +328,7 @@ bool CrateWriter::AddSpec(const Path& path,
   // We'll fill in the actual crate::Spec later during Finalize
   // For now, just accumulate the data
   spec_data_.push_back(spec_data);
+  spec_path_set_.emplace(path, 1u);
   memory_used_estimate_ += estimated_memory;
 
   // Pre-register the path for deduplication
@@ -928,7 +940,12 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     return eidx;
   };
 
-  constexpr uint32_t kMaxPathTreeDepth = 512;
+  // Stack-overflow backstop for the recursive builder. ConvertPrimIterative is
+  // the authoritative depth gate (rejects prim nesting > kMaxPrimNestingDepth
+  // with a clear message before this pass runs); allow a small margin here for
+  // the extra path level that prim-property / root paths add, so this backstop
+  // is never the first thing a too-deep stage hits.
+  constexpr uint32_t kMaxPathTreeDepth = kMaxPrimNestingDepth + 8;
 
   std::function<bool(uint32_t&, uint32_t, uint32_t, uint32_t, uint32_t&)>
   buildPathTree = [&](uint32_t& currentIdx, uint32_t startIdx, uint32_t endIdx,
@@ -1303,6 +1320,27 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     return rep;
   }
 
+  bool dedup_candidate = false;
+  std::vector<char> dedup_bytes;
+  size_t dedup_element_size = 1;
+  bool dedup_is_float = false;
+  uint32_t dedup_wire_tag = 0;
+  size_t dedup_hash = 0;
+
+  if (options_.enable_deduplication &&
+      ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
+                                  &dedup_is_float, &dedup_wire_tag)) {
+    dedup_hash = NanAwareHash::combine(
+        NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
+                                  dedup_element_size, dedup_is_float),
+        dedup_wire_tag);
+    if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
+                                dedup_is_float, dedup_wire_tag, &rep)) {
+      return rep;
+    }
+    dedup_candidate = true;
+  }
+
   // Value cannot be inlined, write to value data section
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
@@ -1440,6 +1478,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   rep.SetPayload(static_cast<uint64_t>(offset));
   if (is_compressed) {
     rep.SetIsCompressed();
+  }
+
+  if (dedup_candidate) {
+    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
+                            dedup_element_size, dedup_is_float,
+                            dedup_wire_tag, rep);
   }
 
   return rep;
@@ -1602,6 +1646,217 @@ int64_t CrateWriter::WriteCompressedArray64(
   // Fallback: write uncompressed
   for (uint64_t i = 0; i < count; ++i) {
     if (!Write(data[i])) { if (err) { *err = "Failed to write "; *err += typeName; *err += " array element"; } return -1; }
+  }
+  return 0;
+}
+
+namespace {
+// Compress `count` uint32 values into `out` (just the compressed bytes; the
+// caller writes the uint64 size prefix). Matches the payload the reader's
+// ReadCompressedInts consumes after the size prefix. Returns false on failure.
+static bool CompressUInt32ToBuffer(const uint32_t* data, uint64_t count,
+                                   std::vector<char>* out) {
+  const size_t bufSize =
+      Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(count));
+  out->resize(bufSize);
+  std::string cerr;
+  const size_t n = Usd_IntegerCompression::CompressToBuffer(
+      data, static_cast<size_t>(count), out->data(), &cerr);
+  if (n == 0 || n == static_cast<size_t>(~0)) {
+    return false;
+  }
+  out->resize(n);
+  return true;
+}
+}  // namespace
+
+int64_t CrateWriter::WriteCompressedFloatArray(const float* data, uint64_t count,
+                                               bool* is_compressed,
+                                               std::string* err) {
+  if (is_compressed) {
+    (*is_compressed) = false;
+  }
+
+  // Opt-in (default off): tagged float-array compression. Requires both the
+  // dedicated flag and the general compression flag (the latter gates the
+  // integer-stream compressor the 'i'/'t' payloads use).
+  if (options_.enable_float_array_compression && options_.enable_compression &&
+      count >= crate::kMinCompressedArraySize) {
+    // Code 'i': every value is an integer exactly representable as int32 (the
+    // reader reconstructs via float(int32)). Note this collapses -0.0f -> +0.0f,
+    // matching OpenUSD's identical heuristic. The range guard before the cast
+    // mirrors OpenUSD's isIntegral() and avoids UB for NaN/Inf/out-of-range
+    // values. 2^31 is exactly representable in float; use it as the exclusive
+    // upper bound (anything >= it cannot be a valid int32).
+    {
+      constexpr float kInt32Lo = -2147483648.0f;     // -2^31 == INT32_MIN
+      constexpr float kInt32HiExcl = 2147483648.0f;  // 2^31, one past INT32_MAX
+      std::vector<int32_t> ints(static_cast<size_t>(count));
+      bool all_int = true;
+      for (uint64_t i = 0; i < count; ++i) {
+        const float v = data[i];
+        if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
+        const int32_t iv = static_cast<int32_t>(v);
+        if (!math::is_close(static_cast<float>(iv), v, 0.0f)) { all_int = false; break; }
+        ints[static_cast<size_t>(i)] = iv;
+      }
+      std::vector<char> comp;
+      if (all_int &&
+          CompressUInt32ToBuffer(reinterpret_cast<const uint32_t*>(ints.data()),
+                                 count, &comp)) {
+        const char code = 'i';
+        if (!WriteBytes(&code, 1)) { if (err) *err = "Failed to write float 'i' code"; return -1; }
+        if (!Write(static_cast<uint64_t>(comp.size()))) { if (err) *err = "Failed to write float compressed-int size"; return -1; }
+        if (!comp.empty() && !WriteBytes(comp.data(), comp.size())) { if (err) *err = "Failed to write float compressed ints"; return -1; }
+        if (is_compressed) { (*is_compressed) = true; }
+        return 0;
+      }
+    }
+    // Code 't': few distinct values -> lookup table + compressed indices. Keyed
+    // on the raw bit pattern so -0.0/NaN/Inf round-trip exactly here.
+    {
+      std::unordered_map<uint32_t, uint32_t> seen;
+      std::vector<float> lut;
+      std::vector<uint32_t> indexes(static_cast<size_t>(count));
+      // Give up once the LUT would exceed min(count/4, 1024) distinct values —
+      // the same profitability bound and 1024 ceiling OpenUSD uses. (We key on
+      // the raw bit pattern rather than operator==, so -0.0/NaN round-trip
+      // exactly instead of merging/exploding the table.)
+      const size_t max_lut = (std::min)(static_cast<size_t>(count / 4),
+                                        static_cast<size_t>(1024));
+      bool lut_ok = true;
+      for (uint64_t i = 0; i < count; ++i) {
+        uint32_t bits;
+        std::memcpy(&bits, &data[i], sizeof(bits));
+        auto it = seen.find(bits);
+        if (it != seen.end()) {
+          indexes[static_cast<size_t>(i)] = it->second;
+          continue;
+        }
+        if (lut.size() == max_lut) { lut_ok = false; break; }
+        const uint32_t idx = static_cast<uint32_t>(lut.size());
+        seen.emplace(bits, idx);
+        lut.push_back(data[i]);
+        indexes[static_cast<size_t>(i)] = idx;
+      }
+      std::vector<char> comp;
+      if (lut_ok && !lut.empty() &&
+          CompressUInt32ToBuffer(indexes.data(), count, &comp)) {
+        const char code = 't';
+        size_t lut_bytes;
+        if (!safe::mul(lut.size(), sizeof(float), &lut_bytes)) { if (err) *err = "Overflow: float LUT bytes"; return -1; }
+        if (!WriteBytes(&code, 1)) { if (err) *err = "Failed to write float 't' code"; return -1; }
+        if (!Write(static_cast<uint32_t>(lut.size()))) { if (err) *err = "Failed to write float LUT size"; return -1; }
+        if (!WriteBytes(lut.data(), lut_bytes)) { if (err) *err = "Failed to write float LUT"; return -1; }
+        if (!Write(static_cast<uint64_t>(comp.size()))) { if (err) *err = "Failed to write float index size"; return -1; }
+        if (!comp.empty() && !WriteBytes(comp.data(), comp.size())) { if (err) *err = "Failed to write float indices"; return -1; }
+        if (is_compressed) { (*is_compressed) = true; }
+        return 0;
+      }
+    }
+  }
+
+  // Uncompressed fallback: raw little-endian floats (is_compressed stays false).
+  size_t byte_count;
+  if (!safe::mul(static_cast<size_t>(count), sizeof(float), &byte_count)) {
+    if (err) *err = "Integer overflow: count * sizeof(float)";
+    return -1;
+  }
+  if (count > 0 && !WriteBytes(data, byte_count)) {
+    if (err) *err = "Failed to write float array data";
+    return -1;
+  }
+  return 0;
+}
+
+int64_t CrateWriter::WriteCompressedDoubleArray(const double* data, uint64_t count,
+                                                bool* is_compressed,
+                                                std::string* err) {
+  if (is_compressed) {
+    (*is_compressed) = false;
+  }
+
+  // Opt-in (default off); see WriteCompressedFloatArray for the gating rationale.
+  if (options_.enable_float_array_compression && options_.enable_compression &&
+      count >= crate::kMinCompressedArraySize) {
+    // Code 'i': integers exactly representable as int32 (reader reconstructs via
+    // double(int32)). int32 is always exact in double. The range guard mirrors
+    // OpenUSD's isIntegral() and avoids UB for NaN/Inf/out-of-range values.
+    {
+      constexpr double kInt32Lo = -2147483648.0;     // -2^31 == INT32_MIN
+      constexpr double kInt32HiExcl = 2147483648.0;  // 2^31, one past INT32_MAX
+      std::vector<int32_t> ints(static_cast<size_t>(count));
+      bool all_int = true;
+      for (uint64_t i = 0; i < count; ++i) {
+        const double v = data[i];
+        if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
+        const int32_t iv = static_cast<int32_t>(v);
+        if (!math::is_close(static_cast<double>(iv), v, 0.0)) { all_int = false; break; }
+        ints[static_cast<size_t>(i)] = iv;
+      }
+      std::vector<char> comp;
+      if (all_int &&
+          CompressUInt32ToBuffer(reinterpret_cast<const uint32_t*>(ints.data()),
+                                 count, &comp)) {
+        const char code = 'i';
+        if (!WriteBytes(&code, 1)) { if (err) *err = "Failed to write double 'i' code"; return -1; }
+        if (!Write(static_cast<uint64_t>(comp.size()))) { if (err) *err = "Failed to write double compressed-int size"; return -1; }
+        if (!comp.empty() && !WriteBytes(comp.data(), comp.size())) { if (err) *err = "Failed to write double compressed ints"; return -1; }
+        if (is_compressed) { (*is_compressed) = true; }
+        return 0;
+      }
+    }
+    // Code 't': lookup table + compressed indices. Keyed on the raw 64-bit
+    // pattern so -0.0/NaN/Inf round-trip exactly.
+    {
+      std::unordered_map<uint64_t, uint32_t> seen;
+      std::vector<double> lut;
+      std::vector<uint32_t> indexes(static_cast<size_t>(count));
+      // Same min(count/4, 1024) profitability bound as OpenUSD; keyed on the
+      // raw 64-bit pattern so -0.0/NaN round-trip exactly.
+      const size_t max_lut = (std::min)(static_cast<size_t>(count / 4),
+                                        static_cast<size_t>(1024));
+      bool lut_ok = true;
+      for (uint64_t i = 0; i < count; ++i) {
+        uint64_t bits;
+        std::memcpy(&bits, &data[i], sizeof(bits));
+        auto it = seen.find(bits);
+        if (it != seen.end()) {
+          indexes[static_cast<size_t>(i)] = it->second;
+          continue;
+        }
+        if (lut.size() == max_lut) { lut_ok = false; break; }
+        const uint32_t idx = static_cast<uint32_t>(lut.size());
+        seen.emplace(bits, idx);
+        lut.push_back(data[i]);
+        indexes[static_cast<size_t>(i)] = idx;
+      }
+      std::vector<char> comp;
+      if (lut_ok && !lut.empty() &&
+          CompressUInt32ToBuffer(indexes.data(), count, &comp)) {
+        const char code = 't';
+        size_t lut_bytes;
+        if (!safe::mul(lut.size(), sizeof(double), &lut_bytes)) { if (err) *err = "Overflow: double LUT bytes"; return -1; }
+        if (!WriteBytes(&code, 1)) { if (err) *err = "Failed to write double 't' code"; return -1; }
+        if (!Write(static_cast<uint32_t>(lut.size()))) { if (err) *err = "Failed to write double LUT size"; return -1; }
+        if (!WriteBytes(lut.data(), lut_bytes)) { if (err) *err = "Failed to write double LUT"; return -1; }
+        if (!Write(static_cast<uint64_t>(comp.size()))) { if (err) *err = "Failed to write double index size"; return -1; }
+        if (!comp.empty() && !WriteBytes(comp.data(), comp.size())) { if (err) *err = "Failed to write double indices"; return -1; }
+        if (is_compressed) { (*is_compressed) = true; }
+        return 0;
+      }
+    }
+  }
+
+  // Uncompressed fallback: raw little-endian doubles (is_compressed stays false).
+  size_t byte_count;
+  if (!safe::mul(static_cast<size_t>(count), sizeof(double), &byte_count)) {
+    if (err) *err = "Integer overflow: count * sizeof(double)";
+    return -1;
+  }
+  if (count > 0 && !WriteBytes(data, byte_count)) {
+    if (err) *err = "Failed to write double array data";
+    return -1;
   }
   return 0;
 }

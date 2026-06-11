@@ -100,6 +100,12 @@ bool ReconstructShader(
     return false; \
   } \
   \
+  /* Lights inherit Collection (BoundableLight/NonboundableLight): reconstruct */ \
+  /* collection:* instances (incl. lightLink / shadowLink) into the typed map. */ \
+  if (!prim::ReconstructCollectionProperties(table, properties, light_ptr, warn, err, options.strict_allowedToken_check)) { \
+    return false; \
+  } \
+  \
   for (auto &prop : properties) { \
     SPECIAL_HANDLING \
     TYPED_ATTRS(EXPAND_TYPED_ATTR) \
@@ -109,6 +115,7 @@ bool ReconstructShader(
                        light_ptr->visibility, options.strict_allowedToken_check) \
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightClass, \
                        light_ptr->purpose, options.strict_allowedToken_check) \
+    PARSE_TARGET_PATHS_RELATION(table, prop, "light:filters", light_ptr->lightFilters) \
     ADD_PROPERTY(table, prop, LightClass, light_ptr->props) \
     PARSE_PROPERTY_END_MAKE_WARN(table, prop) \
   } \

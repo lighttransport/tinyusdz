@@ -1,0 +1,18 @@
+#usda 1.0
+# EXPECT: geom.camera.range
+# EXPECT: geom.camera.optics
+# EXPECT: geom.camera.tokens
+# EXPECT: geom.camera.shutter
+
+def Camera "cam"
+{
+    float2 clippingRange = (10, 1)
+    float focalLength = 0
+    float horizontalAperture = -1
+    float verticalAperture = 0
+    float fStop = -1
+    token projection = "fisheye"
+    token stereoRole = "center"
+    double shutter:open = 1
+    double shutter:close = 0
+}

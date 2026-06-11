@@ -115,6 +115,23 @@ struct USDLoadOptions {
   ///
   bool strict_apiSchema_check{false}; // Make parse error when unknown apiSchema
 
+  ///
+  /// Shader property(input/output) type conformance.
+  ///
+  /// When false(default), a UsdPreviewSurface-family Shader property whose
+  /// authored Sdf type does not match the canonical schema type(inferred from
+  /// `info:id` / the UsdPreviewSurface spec) is accepted with a warning. This
+  /// matches OpenUSD, which does not validate shader output types and resolves
+  /// the real type from the Sdr registry. tinyusdz has no Sdr registry, so the
+  /// hand-written shader schema type is used as the canonical type.
+  ///
+  /// When true, such a type mismatch is a hard parse error.
+  ///
+  /// Example: Unreal-exported `token outputs:result` on `UsdPrimvarReader_float2`
+  /// (canonical type is `float2`).
+  ///
+  bool strict_shader_type_check{false};
+
   // ==========================================================================
   // MaterialX Validation Options
   // ==========================================================================
@@ -162,9 +179,10 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   /// Enable mmap zero-copy for uncompressed USDC arrays.
-  /// When true and data is loaded from mmap, defers reading uncompressed
-  /// float/double arrays and records their mmap offsets instead.
-  /// The mmap must remain valid for the lifetime of the Stage.
+  /// When true, defers reading eligible uncompressed USDC arrays and records
+  /// their offsets instead. File-based loaders keep the mmap/file buffer alive
+  /// through Stage ownership. Memory-based loaders still require the caller's
+  /// input buffer to remain alive while the Stage uses zero-copy arrays.
   bool mmap_zero_copy{false};
 
   Axis upAxis{Axis::Y};
@@ -203,6 +221,13 @@ struct USDWriteOptions {
   /// Default is 5 (good balance of speed and ratio).
   ///
   int zstd_compression_level{5};
+
+  ///
+  /// Enable OpenUSD-compatible tagged compression for float[]/double[] arrays
+  /// in USDC output (code 'i' = integers, 't' = lookup table; see
+  /// doc/crate-writer.md). Default OFF: such arrays are written uncompressed.
+  ///
+  bool compress_float_arrays{false};
 };
 
 //
@@ -501,6 +526,13 @@ enum class USDZRootLayerFormat {
 
 struct USDZWriteOptions {
   USDZRootLayerFormat root_layer_format{USDZRootLayerFormat::USDC};
+
+  // Optional overrides for the USDC root-layer writer resource limits (bytes).
+  // 0 keeps the built-in default (intentionally small on WASM to guard against
+  // resource exhaustion on untrusted input). Raise these to write large scenes
+  // (e.g. dense meshes / roundtrip testing).
+  int64_t max_file_size_bytes{0};
+  int64_t max_memory_bytes{0};
 };
 
 ///

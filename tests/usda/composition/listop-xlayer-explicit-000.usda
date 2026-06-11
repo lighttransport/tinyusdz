@@ -1,0 +1,21 @@
+#usda 1.0
+# Cross-layer list-op EXPLICIT-REPLACE fixture (Phase 7 S5).
+#   Sublayer (weaker): /Q references </Lib/A>.
+#   This (stronger) root: a bare (explicit) `references = </Lib/B>`.
+# CompositionOptions::apply_list_ops OFF (default): both arcs compose, so /Q
+#   carries fromA (weak) and fromB (strong).
+# apply_list_ops ON (AOUSD): a bare list is an explicit op, so the stronger
+#   layer REPLACES the weaker layer's references -- /Q carries only fromB.
+(
+    subLayers = [@listop-xlayer-explicit-000-sub.usda@]
+)
+def "Q" (
+    references = </Lib/B>
+)
+{
+}
+def Scope "Lib"
+{
+    def Mesh "A" { custom int fromA = 1 }
+    def Sphere "B" { custom int fromB = 2 }
+}

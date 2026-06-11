@@ -424,6 +424,18 @@ bool ReconstructPrim<Shader>(
     }
     shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
     shader->value = surface;
+  } else if (shader_type.compare(kNdUsdPreviewSurfaceSurfaceshader) == 0) {
+    // MaterialX's UsdPreviewSurface node (e.g. usd-wg MaterialXTest/basic_flatten):
+    // info:id `ND_UsdPreviewSurface_surfaceshader` with the same inputs as
+    // UsdPreviewSurface. Reconstruct into a UsdPreviewSurface value so downstream
+    // (tydra render-data) handles it as one; keep the ND_ info:id for round-trip.
+    UsdPreviewSurface surface;
+    if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
+                                              &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdUsdPreviewSurfaceSurfaceshader << "`.");
+    }
+    shader->info_id = kNdUsdPreviewSurfaceSurfaceshader;
+    shader->value = surface;
   } else {
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
@@ -492,7 +504,11 @@ bool ReconstructPrim<Material>(
 
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",
                                   Material, material->surface)
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:mtlx:surface",
+                                  Material, material->mtlxSurface)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:displacement",
+                                  Material, material->displacement)
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:mtlx:displacement",
                                   Material, material->displacement)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)

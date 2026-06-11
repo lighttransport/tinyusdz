@@ -1285,6 +1285,17 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       // Not authored
       return false;
     }
+  } else if (prop_name == "outputs:mtlx:surface") {
+    if (material.mtlxSurface.authored()) {
+      Attribute attr;
+      attr.set_type_name(value::TypeTraits<value::token>::type_name());
+      attr.set_connections(material.mtlxSurface.get_connections());
+      attr.metas() = material.mtlxSurface.metas();
+      (*out_prop) = Property(attr, /* custom */ false);
+      out_prop->set_listedit_qual(material.mtlxSurface.get_listedit_qual());
+    } else {
+      return false;
+    }
   } else if (prop_name == "outputs:displacement") {
     if (material.displacement.authored()) {
       Attribute attr;
@@ -2097,6 +2108,8 @@ bool GetPrimPropertyNamesImpl(const Material &material,
   if (attr_prop) {
     AppendPropertyNameIfAuthored(material.surface, "outputs:surface",
                                  prop_names);
+    AppendPropertyNameIfAuthored(material.mtlxSurface,
+                                 "outputs:mtlx:surface", prop_names);
     AppendPropertyNameIfAuthored(material.displacement,
                                  "outputs:displacement", prop_names);
     AppendPropertyNameIfAuthored(material.volume, "outputs:volume",
@@ -2983,7 +2996,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
 
 bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                     const std::string &varname, GeomPrimvar *out_primvar,
-                    std::string *err) {
+                    std::string *err, std::string *warn) {
   if (!out_primvar) {
     PUSH_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
   }
@@ -3012,8 +3025,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   if (it->second.is_attribute()) {
     const Attribute &attr = it->second.get_attribute();
 
-    if (attr.is_connection()) { // attribute only contains 'connection'
-      // follow targetPath to get Attribute 
+    if (attr.has_connections()) { // a connection overrides the value (USD)
+      // follow targetPath to get Attribute (GetTerminalAttribute falls back to
+      // this attribute's own value if the connection cannot be resolved).
       Attribute terminal_attr;
       bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name,
                                              &terminal_attr, err);
@@ -3064,8 +3078,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                         primvar_name));
       }
 
-      if (indexAttr.is_connection()) { // attribute only contains 'connection'
-        // follow targetPath to get Attribute 
+      if (indexAttr.has_connections()) { // a connection overrides the value (USD)
+        // follow targetPath to get Attribute (falls back to this attribute's
+        // own value if the connection cannot be resolved).
         Attribute terminal_indexAttr;
         bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name,
                                                &terminal_indexAttr, err);
@@ -3074,7 +3089,16 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (!terminal_indexAttr.has_value() && !terminal_indexAttr.has_timesamples()) {
-          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Terminal Index Attribute. Terminal Index Attribute does not have `default` or timesamples value.");
+          // No authored terminal indices value → treat as un-indexed (use the
+          // primvar values directly) instead of failing, as above.
+          DCOUT("primvars:" << varname
+                << ":indices (terminal) declared with no authored value; "
+                   "treating primvar as un-indexed.");
+          if (warn) {
+            (*warn) += fmt::format(
+                "`primvars:{}:indices` (terminal) is declared with no authored "
+                "value; treating the primvar as un-indexed.\n", varname);
+          }
         }
 
         if (terminal_indexAttr.has_timesamples()) {
@@ -3102,7 +3126,18 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
       } else {
 
         if (!indexAttr.has_value() && !indexAttr.has_timesamples()) {
-          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute. Index Attribute does not have `default` or timesamples value.");
+          // No authored indices value — e.g. the empty `int[] primvars:st:indices`
+          // in usd-wg TextureTransformTest. Treat the primvar as un-indexed (use
+          // its values directly) instead of failing, matching the blocked-indices
+          // case above and OpenUSD.
+          DCOUT("primvars:" << varname
+                << ":indices declared with no authored value; treating primvar "
+                   "as un-indexed.");
+          if (warn) {
+            (*warn) += fmt::format(
+                "`primvars:{}:indices` is declared with no authored value; "
+                "treating the primvar as un-indexed.\n", varname);
+          }
         }
 
         if (indexAttr.has_value()) {
@@ -3291,7 +3326,13 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
   std::unordered_set<std::string, FNV1StringHash> visited_paths;
   visited_paths.reserve(16);
 
-  if (attr.is_connection()) {
+  if (attr.has_connections()) {
+    // A connection overrides the authored value (USD). Follow it; fall back to
+    // the attribute's own value if it cannot be resolved. (is_connection() is
+    // false when a value is also present, so dispatch on has_connections().)
+    std::string conn_err;
+    bool resolved = false;
+
     std::vector<Path> pv = attr.connections();
     if (pv.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format(
@@ -3325,19 +3366,30 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
             to_string(target)));
       }
 
-      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                      value, err, visited_paths);
+      resolved = GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                          value, &conn_err, visited_paths);
 
     } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+      conn_err += targetPrimRet.error();
     }
+
+    if (resolved) {
+      return true;
+    }
+    // Connection unresolved — fall back to the attribute's own value if present.
+    if (attr.has_value()) {
+      (*value) = attr;
+      return true;
+    }
+    if (err) {
+      (*err) += conn_err;
+    }
+    return false;
 
   } else {
     (*value) = attr;
     return true;
   }
-
-  return false;
 }
 
 namespace detail {
@@ -4182,6 +4234,7 @@ const std::map<std::string, Property> *PrimPropsMap(const Prim &prim) {
   X(Model)
   X(Xform)
   X(Scope)
+  X(Material)
   X(GeomMesh)
   X(GeomCube)
   X(GeomSphere)
@@ -4255,6 +4308,101 @@ bool GetPhysicsCollidersCollection(const Prim &prim,
     }
   }
   return any;
+}
+
+namespace {
+
+// Extract a non-animatable scalar/vec/quat property (stored value type T) into a
+// Typed[WithFallback]Attribute target. No-op when the property is absent.
+template <typename T, typename Target>
+void ExtractTypedValue(const std::map<std::string, Property> &props,
+                       const char *name, Target *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) return;
+  if (auto v = it->second.get_attribute().get_value<T>()) {
+    target->set_value(*v);
+  }
+}
+
+// Animatable counterpart: wrap the authored default into Animatable<T>.
+template <typename T, typename Target>
+void ExtractAnimatableValue(const std::map<std::string, Property> &props,
+                            const char *name, Target *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) return;
+  if (auto v = it->second.get_attribute().get_value<T>()) {
+    target->set_value(Animatable<T>(*v));
+  }
+}
+
+void ExtractRel(const std::map<std::string, Property> &props, const char *name,
+                RelationshipProperty *target) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_relationship()) return;
+  *target = RelationshipProperty(it->second.get_relationship());
+}
+
+}  // namespace
+
+bool GetPhysicsRigidBodyAPI(const Prim &prim, PhysicsRigidBodyAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsRigidBodyAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<bool>(*props, "physics:rigidBodyEnabled", &out->rigidBodyEnabled);
+  ExtractTypedValue<bool>(*props, "physics:startsAsleep", &out->startsAsleep);
+  ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density);
+  ExtractTypedValue<value::point3f>(*props, "physics:centerOfMass", &out->centerOfMass);
+  ExtractTypedValue<value::float3>(*props, "physics:diagonalInertia", &out->diagonalInertia);
+  ExtractTypedValue<value::quatf>(*props, "physics:principalAxes", &out->principalAxes);
+  ExtractAnimatableValue<value::vector3f>(*props, "physics:velocity", &out->velocity);
+  ExtractAnimatableValue<value::vector3f>(*props, "physics:angularVelocity", &out->angularVelocity);
+  return true;
+}
+
+bool GetPhysicsCollisionAPI(const Prim &prim, PhysicsCollisionAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsCollisionAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<bool>(*props, "physics:collisionEnabled", &out->collisionEnabled);
+  ExtractRel(*props, "physics:simulationOwner", &out->simulationOwner);
+  return true;
+}
+
+bool GetPhysicsMaterialAPI(const Prim &prim, PhysicsMaterialAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMaterialAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<float>(*props, "physics:staticFriction", &out->staticFriction);
+  ExtractTypedValue<float>(*props, "physics:dynamicFriction", &out->dynamicFriction);
+  ExtractTypedValue<float>(*props, "physics:restitution", &out->restitution);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density);
+  return true;
+}
+
+bool GetPhysicsMassAPI(const Prim &prim, PhysicsMassAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMassAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
+  ExtractTypedValue<float>(*props, "physics:density", &out->density_);
+  ExtractTypedValue<value::point3f>(*props, "physics:centerOfMass", &out->centerOfMass);
+  ExtractTypedValue<value::float3>(*props, "physics:diagonalInertia", &out->diagonalInertia);
+  ExtractTypedValue<value::quatf>(*props, "physics:principalAxes", &out->principalAxes);
+  return true;
+}
+
+bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out) {
+  if (!out) return false;
+  if (!PrimHasAPISchema(prim, APISchemas::APIName::PhysicsMeshCollisionAPI)) return false;
+  const auto *props = PrimPropsMap(prim);
+  if (!props) return false;
+  ExtractTypedValue<value::token>(*props, "physics:approximation", &out->approximation);
+  return true;
 }
 
 }  // namespace tinyusdz

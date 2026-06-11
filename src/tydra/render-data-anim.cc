@@ -514,11 +514,19 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   // TODO: inbetweens BlendShape
   std::vector<value::token> blendShapes;
   if (skelAnim.blendShapes.authored()) {
-    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &_err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+    std::string blendShapeErr;
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &blendShapeErr)) {
+      if (skelAnim.blendShapes.is_value_empty()) {
+        PUSH_WARN(fmt::format(
+            "Skipping empty `blendShapes` declaration in SkelAnimation Prim : {}",
+            abs_path));
+      } else {
+        _err += blendShapeErr;
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+      }
     }
 
-    if (!skelAnim.blendShapeWeights.authored()) {
+    if (blendShapes.size() && !skelAnim.blendShapeWeights.authored()) {
       PUSH_ERROR_AND_RETURN(fmt::format("`blendShapeWeights` must be authored for SkelAnimation Prim {}", abs_path));
     }
   }
@@ -1061,7 +1069,11 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
 
   std::vector<std::pair<double, double>> times = clip_meta.times;
   std::vector<std::pair<double, int>> active = clip_meta.active;
-  constexpr double kTimeKeyEpsilon = std::numeric_limits<double>::epsilon();
+  // static storage duration so the comparison lambdas below can use it
+  // without capturing: clang's -Wunused-lambda-capture rejects capturing a
+  // constant expression, while MSVC's C3493 rejects using a local one without
+  // a capture. A static constexpr sidesteps both.
+  static constexpr double kTimeKeyEpsilon = std::numeric_limits<double>::epsilon();
 
   if (times.size() >= 2) {
     std::sort(times.begin(), times.end(),
@@ -2413,7 +2425,7 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           // Add buffer
           texImage.buffer_id = int64_t(buffers.size());
-          buffers.emplace_back(imageBuffer);
+          buffers.emplace_back(std::move(imageBuffer));
 
           // Add image and set envmap_texture_id
           rlight.envmap_texture_id = int32_t(images.size());
@@ -2439,11 +2451,11 @@ bool RenderSceneConverter::ConvertDomeLight(
 
             fallbackTexImage.asset_identifier = resolvedPath;
 
-            fallbackImageBuffer.data.resize(asset.size());
-            memcpy(fallbackImageBuffer.data.data(), asset.data(), asset.size());
+            // Steal the asset's bytes (no copy); `asset` is not used afterward.
+            SetBufferDataBytes(fallbackImageBuffer, asset.release_buffer());
 
             fallbackTexImage.buffer_id = int64_t(buffers.size());
-            buffers.emplace_back(fallbackImageBuffer);
+            buffers.emplace_back(std::move(fallbackImageBuffer));
 
             fallbackTexImage.decoded = false;
             fallbackTexImage.usdColorSpace = ColorSpace::Raw;
@@ -2472,11 +2484,11 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           texImage.asset_identifier = resolvedPath;
 
-          imageBuffer.data.resize(asset.size());
-          memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+          // Steal the asset's bytes (no copy); `asset` is not used afterward.
+          SetBufferDataBytes(imageBuffer, asset.release_buffer());
 
           texImage.buffer_id = int64_t(buffers.size());
-          buffers.emplace_back(imageBuffer);
+          buffers.emplace_back(std::move(imageBuffer));
 
           texImage.decoded = false;
           texImage.usdColorSpace = ColorSpace::Raw;

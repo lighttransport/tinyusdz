@@ -76,6 +76,7 @@ public:
   /// Read raw bytes into buffer
   bool read(void* dst, size_t count) {
     if (count > size_ - pos_) return false;  // overflow-safe (pos_ <= size_)
+    if (count == 0) return true;  // memcpy with a null src/dst is UB even at 0
     std::memcpy(dst, data_ + pos_, count);
     pos_ += count;
     return true;
@@ -87,6 +88,7 @@ public:
     // allocation; overflow-safe form (pos_ <= size_ invariant).
     if (count > size_ - pos_) return false;
     dst.resize(count);
+    if (count == 0) return true;  // dst.data() may be null for an empty vector
     std::memcpy(dst.data(), data_ + pos_, count);
     pos_ += count;
     return true;

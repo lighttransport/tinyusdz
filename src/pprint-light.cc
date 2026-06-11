@@ -22,6 +22,16 @@ static std::string print_light_common_attrs(const LightT& light, uint32_t indent
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent);
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent);
   ss << print_typed_attr(light.specular, "inputs:specular", indent);
+  // light:filters relationship (parsed into lightFilters; emit it so USDA
+  // round-trips and matches OpenUSD usdcat output).
+  if (light.lightFilters.authored()) {
+    ss << print_relationship(light.lightFilters.relationship(),
+                             light.lightFilters.get_listedit_qual(),
+                             /* custom */ false, "light:filters", indent);
+  }
+  // Collection instances (light:link / shadow:link, etc.) — lights inherit
+  // Collection, so emit them for USDA round-trip / usdcat parity.
+  ss << print_collection(&light, indent);
   return ss.str();
 }
 
@@ -189,6 +199,7 @@ std::string to_string(const PluginLightFilter &filter, const uint32_t indent,
   ss << print_prim_header(filter, "PluginLightFilter", indent);
   ss << print_typed_token_attr(filter.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(filter.purpose, "purpose", indent + 1);
+  ss << print_typed_attr(filter.shaderId, "light:shaderId", indent + 1);
   ss << print_props(filter.props, indent + 1);
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

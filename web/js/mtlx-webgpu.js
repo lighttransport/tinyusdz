@@ -2922,7 +2922,7 @@ class Application {
         let boundingBox = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
 
         for (let i = 0; i < numMeshes; i++) {
-            const meshData = this.nativeLoader.getMesh(i);
+            const meshData = this.nativeLoader.getMeshCopy(i);
             if (!meshData) continue;
 
             // Convert mesh to WebGPU buffers

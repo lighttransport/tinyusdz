@@ -103,7 +103,10 @@ Attribute ToAttributeConnection(const AttrT &input,
   if (input.is_blocked()) {
     attr.set_blocked(true);
     attr.variability() = var;
-  } else if (input.is_connection()) {
+  } else if (input.has_connections()) {
+    // A connection is followed even when a fallback value is also authored (USD:
+    // a connection overrides the value). Use has_connections(), not
+    // is_connection() (which is false when a value is present).
     attr.set_connections(input.connections());
   } else if (input.is_value_empty()) {
     if (!type_name_str.empty()) {

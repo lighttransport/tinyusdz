@@ -1,0 +1,35 @@
+#usda 1.0
+# EXPECT: geom.gprim.extent
+# EXPECT: geom.gprim.orientation
+# EXPECT: geom.gprim.purpose
+# EXPECT: geom.gprim.visibility
+# EXPECT: geom.gprim.arraySize
+# EXPECT: geom.primitive.size
+# EXPECT: geom.primitive.axis
+
+def Mesh "mesh"
+{
+    float3[] extent = [(1, 0, 0), (0, 0, 0)]
+    token orientation = "sideways"
+    token purpose = "fx"
+    token visibility = "hidden"
+    point3f[] points = [(0, 0, 0), (1, 0, 0)]
+    vector3f[] velocities = [(0, 0, 0)]
+}
+
+def Sphere "sphere"
+{
+    double radius = -1
+}
+
+def Cube "cube"
+{
+    double size = 0
+}
+
+def Cylinder "cyl"
+{
+    double radius = 1
+    double height = 0
+    uniform token axis = "W"
+}

@@ -42,24 +42,32 @@ void Layer::add_root(uint32_t index) {
   }
 }
 
-void Layer::finalize() {
-  if (finalized_) return;
-
-  // Build path-to-index map
+void Layer::build_path_index() {
   path_to_index_.clear();
   path_to_index_.reserve(prims_.size());
-
   for (size_t i = 0; i < prims_.size(); ++i) {
     const std::string& path_str = prims_[i].path().str();
     if (!path_str.empty()) {
       path_to_index_[path_str] = static_cast<uint32_t>(i);
     }
   }
+}
+
+void Layer::finalize() {
+  if (finalized_) return;
+
+  // Build path-to-index map
+  build_path_index();
 
   // Finalize each prim's properties (sort for binary search)
   for (auto& prim : prims_) {
     prim.finalize_properties();
   }
+
+  // The prim array is append-only during build and immutable after finalize:
+  // release any over-reservation so the per-layer fixed cost matches its
+  // contents (Phase 8.1 footprint trim).
+  prims_.shrink_to_fit();
 
   finalized_ = true;
 }

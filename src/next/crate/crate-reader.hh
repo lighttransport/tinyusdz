@@ -42,6 +42,18 @@ struct CrateReadOptions {
 
   /// Maximum memory budget (bytes, 0 = unlimited)
   size_t max_memory = 0;
+
+  /// Keep numeric POD arrays as lazy references into the retained source buffer
+  /// instead of eagerly decoding them (low-memory load/compose/write path).
+  /// Set false to force eager decode (e.g. for A/B memory comparisons).
+  bool lazy_arrays = true;
+
+  /// When reading from a file path, memory-map the crate read-only instead of
+  /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
+  /// path automatically when mmap is unavailable (non-posix / WASM) or the
+  /// mapping fails. The mapping stays alive as long as any lazy value (or the
+  /// reader) references it. Set false to force the owned-buffer path.
+  bool use_mmap = true;
 };
 
 /// Error from crate reading
@@ -73,8 +85,13 @@ public:
   CrateReader(CrateReader&&) noexcept;
   CrateReader& operator=(CrateReader&&) noexcept;
 
-  /// Read from memory buffer
+  /// Read from memory buffer (copies the input into a retained buffer).
   CrateReadResult Read(const uint8_t* data, size_t size);
+
+  /// Read from an owned buffer, adopted by move (single in-heap copy). Prefer
+  /// this on memory-constrained targets (e.g. WASM) when the caller can give up
+  /// ownership of the input bytes.
+  CrateReadResult ReadOwned(std::string&& owned);
 
   /// Read from file
   CrateReadResult ReadFile(const char* filename);
@@ -84,7 +101,9 @@ public:
   // ============================================================
 
   /// Get tokens table
-  const std::vector<std::string>& tokens() const;
+  // Materialized copy of the token table (diagnostics only; the reader stores
+  // tokens pooled, see TokenPool in the .cc).
+  std::vector<std::string> tokens() const;
 
   /// Get paths table
   const std::vector<std::string>& paths() const;
@@ -94,6 +113,9 @@ public:
 
   /// Get specs table
   const std::vector<CrateSpec>& specs() const;
+
+  /// Get fieldset-indices table (flattened; 0xFFFFFFFF terminates each set)
+  const std::vector<uint32_t>& fieldset_indices() const;
 
 private:
   class Impl;

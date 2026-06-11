@@ -1,5 +1,13 @@
 # WASM typed_memory_view and Data Copying
 
+> **Prefer the explicit-lifetime accessors.** New code should use the id-based
+> `getMeshPtr`/`getImagePtr` (zero-copy) and `getMeshCopy`/`getImageCopy`
+> (owned) accessors documented in [`HEAP_DATA_ACCESS.md`](./HEAP_DATA_ACCESS.md).
+> `getMesh()`/`getImage()` (discussed below) are deprecated and warn at runtime;
+> their returned views alias the heap and have no lifetime contract — the source
+> of the corruption described here. This document remains as the post-mortem and
+> applies to any remaining `getMesh()`/`getImage()` users.
+
 ## Summary
 
 All data retrieved from Emscripten `typed_memory_view` must be copied into JS-owned buffers
@@ -88,5 +96,5 @@ new THREE.QuaternionKeyframeTrack(name, new Float32Array(sampler.times), new Flo
 If `usd_scene.delete()` were removed, no copying would be needed since the C++ object (and its
 `render_scene_` data) would remain alive in WASM heap memory. However, this wastes memory -
 the entire parsed USD scene stays resident. For CesiumMan this is ~17MB; for larger models
-(AnimFinal_LowRes with 3001 joints) it can be significantly more. The one-time copy cost at
+(a large rigged model with 3001 joints) it can be significantly more. The one-time copy cost at
 load time is negligible compared to keeping the full scene in memory.

@@ -7,6 +7,7 @@
 #include "lexer.hh"
 #include "value-parser.hh"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -184,14 +185,21 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().doc = value;
         }
       } else if (key == "subLayers") {
-        // Parse sublayer list
+        // Parse sublayer list. Each element is an asset ref (`@path@`, lexed as
+        // a String) or a quoted string. Decide with a non-consuming Check first:
+        // `expect()` always consumes, so `expect(A) || expect(B)` would eat two
+        // tokens per element and corrupt the list.
         if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string path;
-            if (lexer_->expect(TokenType::PathRef, path) ||
-                lexer_->expect(TokenType::String, path)) {
-              layer_->meta().subLayers.push_back(path);
+            if (Check(TokenType::PathRef)) {
+              lexer_->expect(TokenType::PathRef, path);
+            } else if (Check(TokenType::String)) {
+              lexer_->expect(TokenType::String, path);
+            } else {
+              break;  // unexpected token: stop rather than mis-consume
             }
+            layer_->meta().subLayers.push_back(path);
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBracket);
@@ -533,7 +541,170 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     return false;
   }
 
+  // Read one composition-arc reference into canonical "@asset@</prim>" /
+  // "</prim>" form (the lexer yields @asset@ as a String without '@' and
+  // </prim> as a PathRef without '<>'). Peeks before consuming so a missing
+  // optional token does not eat the next one. Returns false if no arc token.
+  auto ReadArcRef = [this](std::string* out) -> bool {
+    std::string ref;
+    if (Check(TokenType::String)) {
+      std::string asset;
+      lexer_->expect(TokenType::String, asset);
+      ref = "@" + asset + "@";
+      if (Check(TokenType::PathRef)) {
+        std::string pr;
+        lexer_->expect(TokenType::PathRef, pr);
+        ref += "<" + pr + ">";
+      }
+    } else if (Check(TokenType::PathRef)) {
+      std::string pr;
+      lexer_->expect(TokenType::PathRef, pr);
+      ref = "<" + pr + ">";
+    } else {
+      return false;
+    }
+    // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
+    // canonical ref as `?layerOffset=offset:scale` (Compositor::ParseReference
+    // decodes it); composition composes it through the arc chain and bakes it
+    // into time-sample times.
+    if (Check(TokenType::OpenParen)) {
+      Match(TokenType::OpenParen);
+      double off = 0.0, scl = 1.0;
+      while (!Check(TokenType::CloseParen) && !AtEnd()) {
+        if (Check(TokenType::Identifier)) {
+          std::string k;
+          lexer_->expect(TokenType::Identifier, k);
+          Match(TokenType::Equals);
+          if (Check(TokenType::Number)) {
+            std::string num;
+            lexer_->expect(TokenType::Number, num);
+            double v = std::strtod(num.c_str(), nullptr);
+            if (k == "offset") off = v;
+            else if (k == "scale") scl = v;
+          }
+        } else {
+          lexer_->next();  // skip unexpected token (avoid spinning)
+        }
+        Match(TokenType::Semicolon);
+      }
+      Match(TokenType::CloseParen);
+      if (off != 0.0 || scl != 1.0) {
+        ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
+      }
+    }
+    *out = ref;
+    return true;
+  };
+  // Read an arc value that may be a bracketed list or a single value.
+  // List-op qualifier applied to an arc list (prepend/append/delete/explicit).
+  enum class ArcQual { Explicit, Prepend, Append, Delete, Reorder };
+
+  enum class ArcField { References, Payloads, Inherits, Specializes };
+  auto SelectArc = [](PrimSpecMeta& meta,
+                      ArcField f) -> std::vector<std::string>& {
+    switch (f) {
+      case ArcField::References: return meta.references;
+      case ArcField::Payloads: return meta.payloads;
+      case ArcField::Inherits: return meta.inherits;
+      default: return meta.specializes;
+    }
+  };
+  auto SelectEdit = [](ArcListOpEdits& e, ArcField f) -> ArcEdit& {
+    switch (f) {
+      case ArcField::References: return e.references;
+      case ArcField::Payloads: return e.payloads;
+      case ArcField::Inherits: return e.inherits;
+      default: return e.specializes;
+    }
+  };
+
+  // Read the bracketed (or single) arc references, then merge into the inline
+  // arc vector honoring the list-op qualifier (explicit/bare replaces, prepend
+  // front, append/reorder back, delete removes) -- the within-spec effective
+  // list. ALSO record the raw qualifier into the spec's ArcEdit (Phase 7 S5),
+  // which cross-layer composition (apply_list_ops) and the writer consume. Even
+  // a bare empty list (`references = []`) is authored and must replace weaker
+  // opinions.
+  auto ReadArcList = [this, &ReadArcRef, &SelectArc, &SelectEdit](
+                         PrimSpecMeta& meta, ArcField field, ArcQual qual) {
+    std::vector<std::string> items;
+    if (Match(TokenType::OpenBracket)) {
+      while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+        std::string ref;
+        if (!ReadArcRef(&ref)) break;
+        items.push_back(ref);
+        Match(TokenType::Comma);
+      }
+      Match(TokenType::CloseBracket);
+    } else {
+      std::string ref;
+      if (ReadArcRef(&ref)) items.push_back(ref);
+    }
+
+    // Record the list-op edit first (copies items for non-bare qualifiers).
+    ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
+    switch (qual) {
+      case ArcQual::Explicit:
+        e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+        e.authored = true;
+        break;
+      case ArcQual::Prepend:
+        e.authored = true;
+        e.is_explicit = false;
+        e.prepended.insert(e.prepended.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Append:
+        e.authored = true;
+        e.is_explicit = false;
+        e.appended.insert(e.appended.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Delete:
+        e.authored = true;
+        e.is_explicit = false;
+        e.deleted.insert(e.deleted.end(), items.begin(), items.end());
+        break;
+      case ArcQual::Reorder:
+        e.authored = true;
+        e.is_explicit = false;
+        e.ordered.insert(e.ordered.end(), items.begin(), items.end());
+        break;
+    }
+
+    std::vector<std::string>* target = &SelectArc(meta, field);
+    switch (qual) {
+      case ArcQual::Explicit:
+        *target = std::move(items);
+        break;
+      case ArcQual::Prepend:
+        target->insert(target->begin(), items.begin(), items.end());
+        break;
+      case ArcQual::Append:
+      case ArcQual::Reorder:
+        target->insert(target->end(), items.begin(), items.end());
+        break;
+      case ArcQual::Delete:
+        for (const std::string& d : items) {
+          target->erase(std::remove(target->begin(), target->end(), d),
+                        target->end());
+        }
+        break;
+    }
+  };
+
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    // Optional list-op qualifier keyword (prepend/append/delete/reorder)
+    // precedes the real key, e.g. `prepend references = [...]`.
+    ArcQual arc_qual = ArcQual::Explicit;
+    if (Match(TokenType::Prepend)) {
+      arc_qual = ArcQual::Prepend;
+    } else if (Match(TokenType::Append)) {
+      arc_qual = ArcQual::Append;
+    } else if (Match(TokenType::Delete)) {
+      arc_qual = ArcQual::Delete;
+    } else if (Match(TokenType::Reorder)) {
+      arc_qual = ArcQual::Reorder;
+    }
+
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
       AddError("Expected metadata key");
@@ -559,43 +730,45 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "doc") {
       std::string doc;
       if (lexer_->expect(TokenType::String, doc)) {
-        prim->meta().doc = doc;
+        prim->meta().doc() = doc;
       }
     } else if (key == "apiSchemas") {
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          // Schema names are authored as quoted strings (`"PhysicsRigidBodyAPI"`);
+          // accept bare identifiers too. expect() consumes even on mismatch, so
+          // Check the token type first.
           std::string schema;
-          if (lexer_->expect(TokenType::Identifier, schema)) {
-            prim->meta().apiSchemas.push_back(schema);
+          if (Check(TokenType::String)
+                  ? lexer_->expect(TokenType::String, schema)
+                  : lexer_->expect(TokenType::Identifier, schema)) {
+            prim->meta().apiSchemas().push_back(schema);
           }
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBracket);
       }
     } else if (key == "references") {
-      if (Match(TokenType::OpenBracket)) {
-        while (!Check(TokenType::CloseBracket) && !AtEnd()) {
-          std::string ref;
-          if (lexer_->expect(TokenType::PathRef, ref) || lexer_->expect(TokenType::String, ref)) {
-            prim->meta().references.push_back(ref);
-          }
-          Match(TokenType::Comma);
-        }
-        Match(TokenType::CloseBracket);
-      }
+      ReadArcList(prim->meta(), ArcField::References, arc_qual);
     } else if (key == "payload") {
-      std::string payload;
-      if (lexer_->expect(TokenType::PathRef, payload) || lexer_->expect(TokenType::String, payload)) {
-        prim->meta().payloads.push_back(payload);
-      }
+      ReadArcList(prim->meta(), ArcField::Payloads, arc_qual);
+    } else if (key == "inherits") {
+      ReadArcList(prim->meta(), ArcField::Inherits, arc_qual);
+    } else if (key == "specializes") {
+      ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "variantSets") {
       // variantSets = ["setName1", "setName2"]
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          // expect() consumes even on mismatch, so dispatch on the peeked type
+          // (the old `expect(String) || expect(Identifier)` dropped identifier
+          // names by consuming them in the failed String branch).
           std::string vs_name;
-          if (lexer_->expect(TokenType::String, vs_name) || lexer_->expect(TokenType::Identifier, vs_name)) {
-            prim->meta().variantSets.emplace_back();
-            prim->meta().variantSets.back().name = vs_name;
+          if (Check(TokenType::String)
+                  ? lexer_->expect(TokenType::String, vs_name)
+                  : lexer_->expect(TokenType::Identifier, vs_name)) {
+            prim->meta().variantSets().emplace_back();
+            prim->meta().variantSets().back().name = vs_name;
           }
           Match(TokenType::Comma);
         }
@@ -674,15 +847,15 @@ bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name)
 
   // Find or create the VariantSetData
   VariantSetData* vs_data = nullptr;
-  for (auto& vs : prim->meta().variantSets) {
+  for (auto& vs : prim->meta().variantSets()) {
     if (vs.name == variant_set_name) {
       vs_data = &vs;
       break;
     }
   }
   if (!vs_data) {
-    prim->meta().variantSets.emplace_back();
-    vs_data = &prim->meta().variantSets.back();
+    prim->meta().variantSets().emplace_back();
+    vs_data = &prim->meta().variantSets().back();
     vs_data->name = variant_set_name;
   }
 

@@ -505,7 +505,12 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
 
   ParseFn fn = GetParseFunction(expected_type);
   if (!fn) {
-    return ParseResult::Error("No parser for type " + std::string(GetTypeName(expected_type)));
+    // GetTypeName returns nullptr for ids without TypeInfo (e.g. semantic ids
+    // a malformed file maps onto) — std::string(nullptr) is UB/abort.
+    const char* tn = GetTypeName(expected_type);
+    return ParseResult::Error("No parser for type " +
+                              (tn ? std::string(tn)
+                                  : "#" + std::to_string(int(expected_type))));
   }
 
   ParseResult result = fn(lexer);
