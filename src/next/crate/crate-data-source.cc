@@ -12,6 +12,19 @@
 #include <cstring>
 #include <limits>
 
+// Posix mmap is used to back a CrateDataSource directly off the file (Phase
+// 8.3). WASM (emscripten/wasi) and non-posix platforms keep the owned-buffer
+// path; MmapFile() then returns nullptr and the reader falls back.
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                         \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+#define TINYUSDZ_NEXT_HAVE_MMAP 1
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace tinyusdz {
 namespace next {
 
@@ -37,6 +50,40 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(std::string&& bytes,
   ds->bytes_ = std::move(bytes);
   ds->version_ = version;
   return ds;
+}
+
+std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
+    const std::string& filename) {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  int fd = ::open(filename.c_str(), O_RDONLY);
+  if (fd < 0) return nullptr;
+  struct stat st;
+  if (::fstat(fd, &st) != 0 || st.st_size <= 0) {
+    ::close(fd);
+    return nullptr;
+  }
+  const size_t len = static_cast<size_t>(st.st_size);
+  void* addr = ::mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd, 0);
+  ::close(fd);  // the mapping survives the descriptor being closed.
+  if (addr == MAP_FAILED) return nullptr;
+  std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
+  ds->mmap_addr_ = addr;
+  ds->mmap_size_ = len;
+  ds->mmap_base_ = reinterpret_cast<const uint8_t*>(addr);
+  return ds;
+#else
+  (void)filename;
+  return nullptr;
+#endif
+}
+
+CrateDataSource::~CrateDataSource() {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  if (mmap_addr_) {
+    ::munmap(mmap_addr_, mmap_size_);
+    mmap_addr_ = nullptr;
+  }
+#endif
 }
 
 bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) const {

@@ -37,10 +37,25 @@ class CrateDataSource {
   static std::shared_ptr<CrateDataSource> Adopt(std::string&& bytes,
                                                 CrateVersion version);
 
+  /// Memory-map `filename` read-only and adopt the mapping as the backing
+  /// (Phase 8.3). Returns nullptr when mmap is unavailable on this platform
+  /// (non-posix / WASM) or the mapping fails -- the caller should then fall
+  /// back to the owned-buffer Adopt path. The mapping is released (munmap) by
+  /// the destructor, i.e. once the last shared_ptr (reader or lazy value)
+  /// referencing this source is gone. Tables can be installed later via
+  /// set_tables(); version via set_version().
+  static std::shared_ptr<CrateDataSource> MmapFile(const std::string& filename);
+
+  ~CrateDataSource();
+
+  /// Whether this source is backed by a memory mapping (vs an owned buffer).
+  bool is_mmapped() const { return mmap_base_ != nullptr; }
+
   const uint8_t* base() const {
-    return reinterpret_cast<const uint8_t*>(bytes_.data());
+    return mmap_base_ ? mmap_base_
+                      : reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const { return bytes_.size(); }
+  size_t size() const { return mmap_base_ ? mmap_size_ : bytes_.size(); }
   CrateVersion version() const { return version_; }
 
   /// Set the crate version once it has been parsed from the bootstrap header.
@@ -64,8 +79,17 @@ class CrateDataSource {
 
  private:
   CrateDataSource() = default;
+  CrateDataSource(const CrateDataSource&) = delete;
+  CrateDataSource& operator=(const CrateDataSource&) = delete;
 
-  std::string bytes_;       // the retained crate (moved in; never reallocated)
+  // Backing is exactly one of: an owned byte string (mmap_base_ == nullptr) or
+  // a read-only memory mapping (mmap_base_ != nullptr). base()/size() abstract
+  // over both so every reader stays backing-agnostic.
+  std::string bytes_;       // owned mode: the retained crate (never reallocated)
+  const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
+  size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
+  void* mmap_addr_ = nullptr;           // region to munmap in the destructor
+
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
   std::vector<uint32_t> string_indices_;
