@@ -26,13 +26,26 @@ Landed so far:
   instance split).
 - **Phase 7 (E1)** — USDA parser now honors arc list-op qualifiers
   (prepend→front, append→back, delete→remove, explicit→replace) within a spec.
-  Cross-layer ListOp merging, layer offsets (E2; moot until crate TimeSamples
-  are read), and typed error codes (E4) remain TODO.
-- **Phase 8 (arrays)** — read+write coverage for Vec4f/Quatf/Vec2-4d/Quatd/
-  Matrix2-4d **and half-typed** arrays (Half/Vec2-4h/Quath, lazy + byte-exact
-  passthrough; half↔float via crate-format.hh). Corpus now has **zero**
-  "Unsupported array type" warnings. PrimSpecMeta split, token pool, and mmap
-  CrateDataSource remain TODO.
+  Cross-layer ListOp merging remains TODO.
+- **Phase 7 (E4)** — typed composition diagnostics: `Cache::ErrorCode` +
+  `Cache::CompositionIssue` accumulated on Impl; all err-emitting sites route
+  through `AddIssue` (records a typed code + mirrors the message into the
+  existing `err` out-param, no API break). Recorded even when `err==nullptr`;
+  parallel-worker issues folded in at the post-join merge.
+  `GetCompositionIssues`/`ClearCompositionIssues` exposed.
+- **Phase 8 (arrays, M1/8.4)** — read+write lazy coverage for Vec4f/Quatf/
+  Vec2-4d/Quatd/Matrix2-4d **and half-typed** arrays (Half/Vec2-4h/Quath, lazy
+  + byte-exact passthrough; half↔float via crate-format.hh). TimeSamples sample
+  values reuse the same UnpackValue→UnpackArray lazy path. Corpus now has
+  **zero** "Unsupported array type" warnings.
+- **Phase 8 (M4/8.1)** — PrimSpecMeta footprint split: cold fields
+  (doc/comment/instance_prototype/apiSchemas/variantSets/variantSelections/
+  relocates) moved behind a lazily-allocated `unique_ptr<PrimSpecMetaExt>`; hot
+  fields (flags, 4 arc lists, legacy variantSelection, layer_offset) stay
+  inline. `sizeof(PrimSpecMeta)` 344B→160B without ext (2.15×); ext (192B) paid
+  only by the prim minority that carries cold data. `Layer::finalize()`
+  shrink_to_fit's `prims_`. Token pool (M6) and mmap CrateDataSource (M7) remain
+  TODO.
 - **TimeSamples decoding** — crate TimeSamples now decode into per-property
   storage (was skipped on read); reads next- and pxr-written files.
 - **Phase 7 (E2)** — layer offsets compose through the arc chain
@@ -41,13 +54,26 @@ Landed so far:
   `(offset; scale)` captured by the parser; offset folded into the instance key.
 - **Phase 9 (F2 + TSAN stress)** — LayerRegistry parses outside the lock
   (parallel layer load); a concurrent-payload-edit TSAN stress test guards the
-  Phase-6 paths. The deeper cache-table fine-grained locking (F3–F6) remains a
-  dedicated high-risk TODO (the coarse lock is correct; batch parallelism is
-  already achieved via per-worker Impls).
+  Phase-6 paths.
+- **Phase 9 (F6)** — dropped the *recursive* engine mutex: the two
+  re-entrantly-called methods (ComputePrimIndex, Invalidate) split into a public
+  entry (locks once) + a lock-free `*_locked` worker; internal callers use the
+  worker, so `api_mu_` is now a plain `std::mutex`.
+  `TINYUSDZ_NEXT_RECURSIVE_LOCK` restores the recursive mutex as an escape
+  hatch. TSAN-clean with threads on.
+- **Phase 9 (F4, opt-in)** — `TINYUSDZ_NEXT_FINE_LOCKS` makes `api_mu_` a
+  `std::shared_timed_mutex`: read-only queries + the ComputePrimIndex cache-hit
+  fast path take a shared lock (concurrent), builds/writers take the exclusive
+  lock; the write-lock double-check in `ComputePrimIndex_locked` keeps a
+  contended prim built once (subsumes the in-flight-future dedup). Default and
+  recursive policies keep READ==WRITE. Clean under ThreadSanitizer for test_pcp
+  (incl. 8-thread×1000-iter concurrent queries on one shared cache).
 
-Not yet started / partial: **Phase 7 E4** typed errors / cross-layer ListOps,
-**Phase 8** PrimSpecMeta split / token pool / mmap, **Phase 9 F3–F6**,
-**Phase 10** (lazy Stage). The sections below are the spec for them.
+Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 8** token
+pool (M6) / mmap CrateDataSource (M7), **Phase 9 F3** (stable deque tables for
+lock-free table reads) / **F5** (deterministic prototype assignment under
+concurrent builds — the PrewarmPrimIndices deferred-merge path already covers
+its model), **Phase 10** (lazy Stage). The sections below are the spec for them.
 
 Goals, in priority order:
 
