@@ -1753,6 +1753,14 @@ static void test_typed_composition_issues() {
   }
   assert(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
 
+  // Invalidate begins a fresh diagnostics cycle (and bounds accumulation).
+  cache.Invalidate(Path("/A"));
+  assert(cache.GetCompositionIssues().empty() && "Invalidate must drop issues");
+
+  // Recomposing re-accumulates, and an explicit Clear drops them again.
+  Stage stage2;
+  assert(cache.BuildStage(&stage2, nullptr, nullptr));
+  assert(!cache.GetCompositionIssues().empty() && "recompose re-accumulates");
   cache.ClearCompositionIssues();
   assert(cache.GetCompositionIssues().empty() && "Clear must drop issues");
   std::cout << "  OK" << std::endl;
