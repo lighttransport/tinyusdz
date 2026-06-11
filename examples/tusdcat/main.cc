@@ -1034,6 +1034,12 @@ int main(int argc, char **argv) {
     tinyusdz::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
 
+    // Parse each referenced file once across the whole fixed-point loop; all
+    // arcs to the same file share one copy of the heavy attribute data (COW).
+    std::map<std::string, tinyusdz::Layer> layer_cache;
+    reference_opts.layer_cache = &layer_cache;
+    payload_opts.layer_cache = &layer_cache;
+
     // Whether to dump each INTERMEDIATE composited layer as USDA text per
     // iteration (debug aid). For heavy scenes this USDA serialization is itself
     // the blow-up (e.g. baked vertex-animation timeSamples), and it happens

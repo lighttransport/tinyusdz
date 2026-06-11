@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -1691,15 +1692,27 @@ class any_value {
   /// Raw pointer to stored value (no type check). Const version.
   template <typename T>
   const T* cast() const noexcept {
-    return (desc_ && desc_->is_inline) ? reinterpret_cast<const T*>(&storage_)
-                                       : *reinterpret_cast<T* const*>(&storage_);
+    if (desc_ && desc_->is_inline) {
+      return reinterpret_cast<const T*>(&storage_);
+    }
+    const SharedHolder<T>* h =
+        *reinterpret_cast<const SharedHolder<T>* const*>(&storage_);
+    return h ? &h->value : nullptr;
   }
 
   /// Raw pointer to stored value (no type check). Mutable version.
+  /// Copy-on-write: heap-stored payloads are shared between copies, so
+  /// mutable access detaches (clones) when the payload is shared.
   template <typename T>
-  T* cast() noexcept {
-    return (desc_ && desc_->is_inline) ? reinterpret_cast<T*>(&storage_)
-                                       : *reinterpret_cast<T**>(&storage_);
+  T* cast() {
+    if (desc_ && desc_->is_inline) {
+      return reinterpret_cast<T*>(&storage_);
+    }
+    if (desc_) {
+      desc_->ops.detach(&storage_);
+    }
+    SharedHolder<T>* h = *reinterpret_cast<SharedHolder<T>**>(&storage_);
+    return h ? &h->value : nullptr;
   }
 
  private:
@@ -1707,6 +1720,24 @@ class any_value {
   static constexpr size_t kBufferAlign = 8;
 
   using name_fn_t = std::string (*)();
+
+  // Refcounted holder for heap-stored payloads. Copies of an any_value share
+  // one holder (copy-on-write); mutable access detaches when shared. The
+  // refcount is atomic so const copies/destroys are thread-safe; mutating the
+  // SAME any_value from multiple threads is not (and never was) supported.
+  //
+  // Layout note: role <-> underlying reinterpretation (unsafe_reinterpret_as /
+  // any_value_raw_cast) relies on SharedHolder<Role> and SharedHolder<Under>
+  // being layout-identical, which holds because the wrapped types are
+  // static_asserted to have identical size/alignment.
+  template <typename T>
+  struct SharedHolder {
+    std::atomic<uint32_t> refs{1};
+    T value;
+
+    SharedHolder(const T& v) : value(v) {}
+    SharedHolder(T&& v) noexcept : value(std::move(v)) {}
+  };
 
   // Per-type descriptor: a single shared static instance per stored type (vague
   // linkage), pointed to by every any_value of that type. Holds the type-erased
@@ -1716,6 +1747,9 @@ class any_value {
       void (*destroy)(void* storage) noexcept;
       void (*copy)(void* dst, const void* src);
       void (*move)(void* dst, void* src) noexcept;
+      // Clone the payload when shared (copy-on-write detach). No-op for
+      // inline storage and for uniquely-owned holders.
+      void (*detach)(void* storage);
     } ops;
     name_fn_t type_name_fn;
     name_fn_t underlying_type_name_fn;
@@ -1738,28 +1772,59 @@ class any_value {
       new (d) T(std::move(*static_cast<T*>(s)));
       static_cast<T*>(s)->~T();
     }
+    static void detach(void*) {}  // inline storage is never shared
   };
 
-  // Heap storage ops (T too large for buffer)
+  // Heap storage ops (T too large for buffer): refcounted copy-on-write.
   template <typename T>
   struct HeapOps {
+    using Holder = SharedHolder<T>;
     static void destroy(void* s) noexcept {
-      delete *static_cast<T**>(s);
+      Holder* h = *static_cast<Holder**>(s);
+      if (h && h->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        delete h;
+      }
     }
     static void copy(void* d, const void* s) {
-      *static_cast<T**>(d) = new T(**static_cast<T* const*>(s));
+      Holder* h = *static_cast<Holder* const*>(s);
+      if (h) {
+        h->refs.fetch_add(1, std::memory_order_relaxed);
+      }
+      *static_cast<Holder**>(d) = h;
     }
     static void move(void* d, void* s) noexcept {
-      *static_cast<T**>(d) = *static_cast<T**>(s);
-      *static_cast<T**>(s) = nullptr;
+      *static_cast<Holder**>(d) = *static_cast<Holder**>(s);
+      *static_cast<Holder**>(s) = nullptr;
+    }
+    static void detach(void* s) {
+      Holder* h = *static_cast<Holder**>(s);
+      if (h && h->refs.load(std::memory_order_acquire) > 1) {
+        Holder* fresh = new Holder(h->value);
+        if (h->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+          // Raced with the last other owner releasing; we own the original
+          // again, but `fresh` is already built — keep it, drop the original.
+          delete h;
+        }
+        *static_cast<Holder**>(s) = fresh;
+      }
     }
   };
+
+  template <typename T>
+  struct is_vector_like : std::false_type {};
+  template <typename U, typename A>
+  struct is_vector_like<std::vector<U, A>> : std::true_type {};
 
   template <typename T>
   static constexpr bool fits_inline() {
+    // Arrays (std::vector control blocks) FIT the buffer but their inline
+    // copy op deep-copies the elements; route them through the refcounted
+    // heap path instead so any_value copies share the (potentially huge)
+    // element storage copy-on-write.
     return sizeof(T) <= kBufferSize &&
            alignof(T) <= kBufferAlign &&
-           std::is_nothrow_move_constructible<T>::value;
+           std::is_nothrow_move_constructible<T>::value &&
+           !is_vector_like<T>::value;
   }
 
   // The single shared descriptor for stored type T.
@@ -1770,7 +1835,7 @@ class any_value {
                                                InlineOps<DecayT>,
                                                HeapOps<DecayT>>::type;
     static const TypeDesc desc = {
-        {OpsType::destroy, OpsType::copy, OpsType::move},
+        {OpsType::destroy, OpsType::copy, OpsType::move, OpsType::detach},
         &TypeTraits<DecayT>::type_name,
         &TypeTraits<DecayT>::underlying_type_name,
         TypeTraits<DecayT>::type_id(),
@@ -1790,7 +1855,8 @@ class any_value {
   template <typename ValueType, typename T>
   typename std::enable_if<!fits_inline<T>()>::type
   do_construct(ValueType&& val) {
-    *reinterpret_cast<T**>(&storage_) = new T(std::forward<ValueType>(val));
+    *reinterpret_cast<SharedHolder<T>**>(&storage_) =
+        new SharedHolder<T>(std::forward<ValueType>(val));
   }
 
   template <typename ValueType>
