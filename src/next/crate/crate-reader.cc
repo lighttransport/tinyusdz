@@ -18,6 +18,7 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -1273,6 +1274,14 @@ bool CrateReader::Impl::ReadTokens() {
                                             static_cast<size_t>(uncompressed_size));
   if (!dr.success) {
     AddError("Failed to decompress tokens: " + dr.error);
+    return false;
+  }
+
+  // TokenPool addresses tokens with uint32 (offset,len) spans; a token blob
+  // beyond 4 GiB would silently truncate. Reject it (absurd for real USDC; this
+  // only guards hostile/corrupt input).
+  if (dr.data.size() > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+    AddError("Token blob exceeds 4 GiB pooled-storage limit");
     return false;
   }
 
