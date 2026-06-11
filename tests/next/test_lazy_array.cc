@@ -42,6 +42,10 @@ int main() {
   }
   std::vector<double> matrices;     // 8 matrix4d
   for (int i = 0; i < 8 * 16; i++) matrices.push_back(double(i) * 0.125);
+  std::vector<float> tangents;      // 32 vec4f
+  for (int i = 0; i < 32 * 4; i++) tangents.push_back(float(i) * 0.25f);
+  std::vector<double> extents;      // 48 vec2d
+  for (int i = 0; i < 48 * 2; i++) extents.push_back(double(i) * -0.5);
 
   StageBuilder sb;
   sb.SetDefaultPrim("Mesh1");
@@ -55,6 +59,12 @@ int main() {
   lb.add_property("xforms",
                   Value::MakeDoubleCompArray(std::vector<double>(matrices),
                                              TypeId::Matrix4d, 16));
+  lb.add_property("tangents",
+                  Value::MakeFloatCompArray(std::vector<float>(tangents),
+                                            TypeId::Float4, 4));
+  lb.add_property("extent",
+                  Value::MakeDoubleCompArray(std::vector<double>(extents),
+                                             TypeId::Double2, 2));
   lb.end_prim();
   lb.finalize();
   Stage stage = sb.Build();
@@ -134,6 +144,17 @@ int main() {
   assert(ma && *ma == matrices);
   std::cout << "  quat/matrix arrays came back lazy and materialized correctly" << std::endl;
 
+  // ---- vec4f / vec2d: doc-named POD types must also be lazy -----------------
+  const Value* tv = ps->property_value("tangents");
+  assert(tv && tv->is_array() && tv->is_lazy());
+  const std::vector<float>* ta = tv->as_float_array();
+  assert(ta && *ta == tangents);
+  const Value* ev = ps->property_value("extent");
+  assert(ev && ev->is_array() && ev->is_lazy());
+  const std::vector<double>* ea = ev->as_double_array();
+  assert(ea && *ea == extents);
+  std::cout << "  vec4f/vec2d arrays came back lazy and materialized correctly" << std::endl;
+
   // ---- A2: composition (Clone + Compositor) preserves laziness -------------
   {
     USDCLoadResult lr2 = LoadUSDCFromMemory(buf.data(), buf.size());
@@ -186,8 +207,8 @@ int main() {
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
     // Numeric arrays (points Vec3f, indices Int, orientations Quatf, xforms
-    // Matrix4d) copied verbatim.
-    assert(wres.arrays_passed_through >= 4);
+    // Matrix4d, tangents Vec4f, extent Vec2d) copied verbatim.
+    assert(wres.arrays_passed_through >= 6);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
