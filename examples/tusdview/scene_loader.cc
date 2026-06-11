@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 
+#include "composition.hh"
 #include "mesh_build.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data-converter.hh"
@@ -30,24 +31,141 @@ bool HasUsdzExtension(const std::string& path) {
   return ext == ".usdz";
 }
 
-}  // namespace
+bool Cancelled(LoadControl* ctrl) { return ctrl && ctrl->cancel.load(); }
 
-bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
-             bool rtPath, LoadControl* ctrl) {
-  out->filepath = path;
-  out->ok = false;
-  out->warn.clear();
-  out->err.clear();
-  if (draw) *draw = DrawScene{};
+// True when the layer carries no composition arcs, so plain LayerToStage (or
+// the legacy direct Stage load) yields the same result as full composition.
+bool LayerHasCompositionArcs(const tinyusdz::Layer& layer) {
+  return !layer.metas().subLayers.empty() ||
+         layer.check_unresolved_references() ||
+         layer.check_unresolved_payload() || layer.check_unresolved_inherits() ||
+         layer.check_unresolved_variant() ||
+         layer.check_unresolved_specializes();
+}
 
-  if (ctrl && ctrl->cancel.load()) {
-    out->err = "Load cancelled.";
-    return false;
+// Compose `src` (post-sublayer) to a fixed point in LIVRPS order, honoring the
+// payload policy in `opts`. Deferred payloads are appended to `deferred`.
+// Pattern follows ComposeLayerToFixedPoint() in src/usdz-convert.cc, plus the
+// PayloadCompositionOptions::load_policy hook for lazy payloads.
+bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
+                         tinyusdz::Layer&& src, const LoadOptions& opts,
+                         tinyusdz::Layer* composed,
+                         std::vector<DeferredPayload>* deferred,
+                         std::string* warn, std::string* err,
+                         LoadControl* ctrl) {
+  tinyusdz::PayloadCompositionOptions pl_opts;
+  if (opts.payloadPolicy != PayloadPolicy::LoadAll) {
+    const std::set<std::string>* whitelist =
+        (opts.payloadPolicy == PayloadPolicy::Whitelist) ? &opts.payloadWhitelist
+                                                         : nullptr;
+    pl_opts.load_policy = [whitelist, deferred](
+                              const tinyusdz::Path& prim_path,
+                              const tinyusdz::Payload& payload) -> bool {
+      const std::string p = prim_path.full_path_name();
+      if (whitelist && whitelist->count(p)) {
+        return true;
+      }
+      deferred->push_back({p, payload.asset_path.GetAssetPath()});
+      return false;
+    };
   }
 
-  // mmap-based load: memory-map the file ourselves and parse from it. We keep
-  // the mapping alive in LoadedScene so zero-copy USDC arrays (which reference
-  // offsets into the mapping) stay valid for the Stage's lifetime.
+  tinyusdz::Layer work = std::move(src);
+
+  constexpr int kMaxIteration = 64;
+  for (int i = 0; i < kMaxIteration; i++) {
+    if (Cancelled(ctrl)) {
+      if (err) *err = "Load cancelled.";
+      return false;
+    }
+
+    bool has_unresolved = false;
+
+    if (work.check_unresolved_references()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_payload()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositePayload(resolver, work, &tmp, warn, err,
+                                      pl_opts)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_inherits()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeInherits(work, &tmp, warn, err)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_variant()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_specializes()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeSpecializes(work, &tmp, warn, err)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (!has_unresolved) {
+      *composed = std::move(work);
+      return true;
+    }
+  }
+
+  if (err) {
+    (*err) += "Composition did not converge before the iteration limit.";
+  }
+  return false;
+}
+
+// Build the Stage from `out->comp.rootLayer` (post-sublayer snapshot) with the
+// given payload policy, refreshing comp.deferred/loadedPayloads.
+bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
+                  LoadControl* ctrl) {
+  tinyusdz::AssetResolutionResolver resolver;
+  resolver.set_search_paths(out->comp.searchPaths);
+
+  tinyusdz::Layer work = *out->comp.rootLayer;  // compose from a copy
+
+  out->comp.deferred.clear();
+  tinyusdz::Layer composed;
+  if (!ComposeToFixedPoint(resolver, std::move(work), opts, &composed,
+                           &out->comp.deferred, &out->warn, &out->err, ctrl)) {
+    return false;
+  }
+  out->comp.loadedPayloads = (opts.payloadPolicy == PayloadPolicy::Whitelist)
+                                 ? opts.payloadWhitelist
+                                 : std::set<std::string>{};
+  out->comp.composed = true;
+
+  return tinyusdz::LayerToStage(std::move(composed), &out->stage, &out->warn,
+                                &out->err);
+}
+
+// Acquire `out->stage` without composition: mmap zero-copy load of the root
+// layer only (legacy path; also used for .usdz).
+bool LoadStageDirect(const std::string& path, LoadedScene* out) {
   tinyusdz::USDLoadOptions opts;
   opts.mmap_zero_copy = true;
 
@@ -73,13 +191,60 @@ bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
     opts.mmap_zero_copy = false;
     ok = tinyusdz::LoadUSDFromFile(path, &out->stage, &out->warn, &out->err, opts);
   }
-  if (!ok) {
+  if (!ok && out->err.empty()) {
+    out->err = "Failed to load USD file: " + path;
+  }
+  return ok;
+}
+
+// Acquire `out->stage` with composition (non-.usdz). Falls back to plain
+// LayerToStage when the file has no composition arcs. Retains the
+// post-sublayer layer in out->comp for later payload recompose.
+bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
+                       LoadedScene* out, LoadControl* ctrl) {
+  tinyusdz::Layer root;
+  if (!tinyusdz::LoadLayerFromFile(path, &root, &out->warn, &out->err)) {
     if (out->err.empty()) {
-      out->err = "Failed to load USD file: " + path;
+      out->err = "Failed to load USD layer: " + path;
     }
     return false;
   }
 
+  if (Cancelled(ctrl)) {
+    out->err = "Load cancelled.";
+    return false;
+  }
+
+  if (!LayerHasCompositionArcs(root)) {
+    return tinyusdz::LayerToStage(std::move(root), &out->stage, &out->warn,
+                                  &out->err);
+  }
+
+  out->comp.searchPaths = {DirName(path)};
+
+  tinyusdz::AssetResolutionResolver resolver;
+  resolver.set_search_paths(out->comp.searchPaths);
+
+  // Flatten sublayers first, then snapshot: payload recompose restarts from
+  // this layer (CompositePayload strips payload metadata even for deferred
+  // arcs, so the composed result alone cannot load payloads later).
+  if (!root.metas().subLayers.empty()) {
+    tinyusdz::Layer tmp;
+    if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, &out->warn,
+                                      &out->err)) {
+      return false;
+    }
+    root = std::move(tmp);
+  }
+  out->comp.rootLayer = std::make_shared<tinyusdz::Layer>(std::move(root));
+
+  return ComposeStage(opts, out, ctrl);
+}
+
+// Convert out->stage to RenderScene + DrawScene (shared by load and
+// recompose). Returns false with out->err set on failure.
+bool ConvertStageToScene(const std::string& path, LoadedScene* out,
+                         DrawScene* draw, bool rtPath, LoadControl* ctrl) {
   tinyusdz::tydra::RenderSceneConverterEnv env(out->stage);
   env.usd_filename = path;
   env.set_search_paths({DirName(path)});
@@ -94,12 +259,12 @@ bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
   if (HasUsdzExtension(path)) {
     std::string uwarn, uerr;
     bool gotInfo = false;
-    if (mapped) {
+    if (out->mmap) {
       // Zero-copy: reference the mmap (kept alive in out->mmap through the
       // conversion below).
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromMemory(
-          mh->addr, static_cast<size_t>(mh->size), /*asset_on_memory=*/true,
-          &usdzAsset, &uwarn, &uerr);
+          out->mmap->addr, static_cast<size_t>(out->mmap->size),
+          /*asset_on_memory=*/true, &usdzAsset, &uwarn, &uerr);
     } else {
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
     }
@@ -194,6 +359,67 @@ bool LoadUSD(const std::string& path, LoadedScene* out, DrawScene* draw,
 
   out->ok = true;
   return true;
+}
+
+}  // namespace
+
+bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
+             DrawScene* draw, bool rtPath, LoadControl* ctrl) {
+  out->filepath = path;
+  out->ok = false;
+  out->warn.clear();
+  out->err.clear();
+  if (draw) *draw = DrawScene{};
+
+  if (Cancelled(ctrl)) {
+    out->err = "Load cancelled.";
+    return false;
+  }
+
+  // .usdz archives keep the direct (non-composition) path for now: composing
+  // over archive-internal layers needs LoadLayerFromAsset wiring.
+  const bool compose = opts.composition && !HasUsdzExtension(path);
+
+  bool ok = false;
+  if (compose) {
+    ok = LoadStageComposed(path, opts, out, ctrl);
+  } else {
+    ok = LoadStageDirect(path, out);
+  }
+  if (!ok) {
+    return false;
+  }
+
+  return ConvertStageToScene(path, out, draw, rtPath, ctrl);
+}
+
+bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
+                           const LoadOptions& opts, LoadedScene* out,
+                           DrawScene* draw, bool rtPath, LoadControl* ctrl) {
+  out->filepath = path;
+  out->ok = false;
+  out->warn.clear();
+  out->err.clear();
+  if (draw) *draw = DrawScene{};
+
+  if (!prev.rootLayer) {
+    out->err = "No retained composition layer to recompose from.";
+    return false;
+  }
+
+  if (Cancelled(ctrl)) {
+    out->err = "Load cancelled.";
+    return false;
+  }
+
+  out->comp.rootLayer = prev.rootLayer;
+  out->comp.searchPaths = prev.searchPaths;
+
+  if (!ComposeStage(opts, out, ctrl)) {
+    return false;
+  }
+
+  return ConvertStageToScene(path, out, draw, rtPath, ctrl);
 }
 
 }  // namespace tusdview

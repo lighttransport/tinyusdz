@@ -7,11 +7,27 @@ displays it with an ImGui docking UI.
 
 ## Features
 
+- **USD composition with lazy payloads** — `.usd/.usda/.usdc` files are composed
+  on load (subLayers / references / payload / inherits / variants / specializes,
+  LIVRPS order). `payload` arcs are **deferred by default** in interactive runs:
+  the scene opens instantly showing non-payload content and the **Payloads**
+  panel lists deferred payloads with per-prim **Load** buttons (plus
+  **File ▸ Load All Payloads**); loading recomposes asynchronously on the worker
+  thread. Headless/`--frames` runs load payloads eagerly so screenshots are
+  complete. `--load-payloads` / `--defer-payloads` override either default;
+  `--no-composition` loads the root layer only (legacy fast path, also used for
+  `.usdz` archives for now).
+
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional
-    RenderScene-node view.
+    RenderScene-node view. The selected prim path is shown at the top, and
+    double-clicking a hierarchy item frames that prim/subtree in the viewport.
+    Selected paths are also shown as clickable breadcrumbs so you can jump back
+    to ancestor prims quickly.
   - **Inspector** — a 2-column table of the selected prim's properties/values
     (via `tydra::GetPropertyNames` / `GetProperty`).
+  - **Camera** — live eye/target/yaw/pitch/distance readout, preset view
+    buttons, bookmark save/load controls, and interactive navigation tuning.
   - **Viewport** — the 3D scene rendered to an offscreen target and shown as an
     `ImGui::Image`.
   - **Stats** — fps, mesh/triangle/material/texture counts, scene bounds, and a
@@ -21,11 +37,23 @@ displays it with an ImGui docking UI.
     name/value), and the Stage metadata panel (filters by key/value).
 - **Maya-style navigation & selection** (only when the viewport is hovered):
   - `Alt + LMB` orbit, `Alt + MMB` pan, `Alt + RMB` / **mouse wheel** dolly.
+  - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
+    default and can be toggled with `F1`.
   - **Click to pick** — a plain left click selects the nearest mesh under the
     cursor (world-space ray vs. per-mesh AABB then ray/triangle), updating the
     hierarchy highlight, inspector and selection bbox.
+  - **Hierarchy sync** — viewport or MCP selection auto-expands and scrolls the
+    hierarchy to the focused prim when possible.
+  - **Selection stepping** — `[` / `]` move to the previous/next visible
+    renderable selection, making scene review faster without clicking.
+  - **Selection history** — `Alt+Left` / `Alt+Right` move backward and forward
+    through previously focused prims.
   - `F` frames (fits) the **selected** mesh (falls back to the whole scene);
     `A` frames the whole scene.
+  - **Preset views** — `0` home, `5` isometric, `1 / Shift+1` front/back,
+    `3 / Shift+3` right/left, `7 / Shift+7` top/bottom.
+  - **Camera bookmarks** — `Ctrl+1..3` recall a saved view and
+    `Ctrl+Shift+1..3` save the current camera/selection to a bookmark slot.
   - **Hide family** (Maya 2016+): `H` toggle-hide the selection, `Ctrl+H` hide,
     `Shift+H` show, `Alt+H` isolate (hide everything else). **View ▸ Unhide all**
     restores. Visibility is viewer-side (raster paths; the RT path traces all
@@ -78,7 +106,8 @@ displays it with an ImGui docking UI.
 - **HiDPI-ready appearance**: Maya-like dark theme, **Cascadia Mono** font
   (embedded, `examples/common/cascadia_mono.h`), and a UI scale that defaults to
   **2×** for 4K panels (font 16 → 32 px, crisp — the scale is baked into the font
-  size, not `FontGlobalScale`). Tune with `--ui-scale S`.
+  size, not `FontGlobalScale`). Tune with `--ui-scale S`, or load `font_size`,
+  `window_scale`, and `window_size` from a JSON config file.
 - **Rendering foundation** copied from
   [light3d](https://github.com/lighttransport/light3d) into
   `examples/common/light3d` (math, camera, material incl. GLSL shaders, texture).
@@ -131,9 +160,17 @@ cmake --build build -j16 --target tusdview
 # HiDPI: 2x is the default; tune for your display:
 ./build/tusdview --ui-scale 1.5 model.usdz
 
+# Load startup settings from JSON:
+./build/tusdview --config /path/to/tusdview.json model.usdz
+
 # Budget controls (also useful for scripting/CI):
 ./build/tusdview --max-tris 5000000 model.usdz     # cap geometry (triangles)
 ./build/tusdview --time-budget 10 model.usdz        # abort conversion after 10s
+
+# USD composition / lazy payloads:
+./build/tusdview --load-payloads scene.usda         # compose payloads eagerly
+./build/tusdview --defer-payloads scene.usda        # lazy payloads (interactive default)
+./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
 # Headless full-window screenshot (UI + viewport, GL backend):
 ./build/tusdview --frames 8 --window-shot ui.ppm model.usdz
@@ -141,6 +178,51 @@ cmake --build build -j16 --target tusdview
 
 Note: `--frames` loads synchronously (deterministic screenshots); interactive
 runs load on the worker thread.
+
+### Startup config
+
+tusdview can load a JSON startup config automatically from the platform default
+location, or from `--config /path/to/config.json`.
+
+- **Linux:** `$XDG_CONFIG_HOME/tusdview/config.json`, else `~/.config/tusdview/config.json`
+- **macOS:** `~/Library/Application Support/tusdview/config.json`
+- **Windows:** `%APPDATA%\\tusdview\\config.json` (falls back to `%LOCALAPPDATA%`)
+
+Supported keys (snake_case and kebab-case are both accepted):
+
+```json
+{
+  "font_size": 24,
+  "window_scale": 1.25,
+  "window_size": {
+    "width": 1600,
+    "height": 900
+  },
+  "navigation": {
+    "orbit_sensitivity": 1.0,
+    "pan_sensitivity": 1.0,
+    "dolly_sensitivity": 1.0,
+    "invert_dolly": false
+  },
+  "composition": true,
+  "payload_policy": "defer"
+}
+```
+
+- `font_size` sets the ImGui font size in pixels and scales widget metrics to
+  match.
+- `window_scale` scales the default `1280x800` window/composite size.
+- `window_size` sets an explicit logical window size and overrides
+  `window_scale`.
+- `navigation.orbit_sensitivity`, `navigation.pan_sensitivity`, and
+  `navigation.dolly_sensitivity` tune camera response.
+- `navigation.invert_dolly` flips wheel / Alt+RMB dolly direction.
+- `composition` enables/disables USD composition on load (default `true`;
+  `--no-composition` overrides).
+- `payload_policy` is `"defer"` (lazy, interactive default) or `"load"` (eager);
+  `--defer-payloads` / `--load-payloads` override.
+- `--ui-scale` still works and overrides the config-derived font/window scaling
+  for that run.
 
 ### Headless / CI (no physical display)
 
@@ -162,7 +244,8 @@ so it runs on a bare host with `DISPLAY` unset.
 
 `--headless` is Vulkan-only (OpenGL needs a window/context) and implies
 `--backend vk`; it needs `--frames N` (windowless runs are bounded by frame
-count). The composite size is `1280×800 × --ui-scale`. Unlike the GL
+count). The composite size comes from `window_size`, or from `1280×800 ×
+window_scale` / `--ui-scale` when no explicit size is configured. Unlike the GL
 `--window-shot`, the headless `--window-shot` captures the **full UI** (it reads
 the Vulkan composite image, not a GL back buffer).
 
@@ -214,8 +297,9 @@ Tools (`tools/list` for schemas):
 | `get_scene_info` / `get_scene_bbox` | filepath, mesh/triangle/material counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
-| `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `set {target,yaw,pitch,distance}`; returns the camera state |
+| `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
+| `load_payloads {paths?}` | load deferred USD payloads (omit `paths` = all; async, poll `get_scene_info`, which also reports `deferred_payloads`) |
 
 Example:
 
