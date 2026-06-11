@@ -66,6 +66,14 @@ struct CompositionOptions {
                                         // exhausting the C++ stack.
   bool error_when_asset_not_found = false;
   bool detect_instances = true;    // group instanceable prims into prototypes.
+
+  // Phase 7 (S5): apply cross-layer list-op merging when gathering a site's
+  // composition arcs. With this off (default), each spec's arcs are expanded
+  // independently (an arc authored identically in two sublayers expands twice).
+  // With it on, identical arcs across the site's specs are de-duplicated so the
+  // arc is expanded once. (Full cross-layer prepend/append/delete/explicit
+  // semantics over a ListOp representation is a further step.)
+  bool apply_list_ops = false;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
   /// Per-payload load policy. Invoked with (prim path that authors the payload,

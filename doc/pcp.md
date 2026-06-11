@@ -117,6 +117,23 @@ layer's list-op is applied to an empty list, then each stronger layer's list-op
 in turn (prepend / append / delete / explicit / order), yielding a final
 strong-to-weak list of arcs.
 
+> **Implementation status (next).** *Within a single spec*, the USDA parser
+> honors the list-op qualifier (prepend → front, append → back, delete → remove,
+> bare/explicit → replace). *Across the layer stack*, the default path expands
+> each spec's arcs independently and relies on LIVRPS strength ordering for the
+> composed values — correct for the common case, but an arc authored identically
+> in two sublayers is expanded twice (redundant nodes, same values).
+> `CompositionOptions::apply_list_ops` (opt-in) de-duplicates identical arcs
+> across a site's specs so each expands once. Full cross-layer
+> explicit-replace / delete semantics and round-trip fidelity of the qualifier
+> (the writer currently always emits `prepend`) require an arc-field → ListOp
+> representation and remain a follow-up.
+>
+> **Relocates scope (next).** Relocates are applied as a *same-parent namespace
+> rename only*: a composed source `/A/B` may be renamed to `/A/C` (same parent
+> `/A`) as a post-composition rename in `BuildStage`. Reparenting under a
+> different ancestor is not yet modeled.
+
 ### Strength Ordering: LIVERPS (and the older LIVRPS)
 
 AOUSD §10.4 defines how to order two opinions X and Y for the same prim:
