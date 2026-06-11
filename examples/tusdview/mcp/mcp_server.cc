@@ -72,11 +72,13 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "viewport",
       "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly {amount} | fit "
-      "{frame the scene} | set {absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | fit | set")},
+      "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
+      "| bookmark_save {slot} | bookmark_load {slot} | set {absolute target[3],yaw,pitch,distance}.",
+      {{"op", strProp("orbit | pan | dolly | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
+       {"slot", {{"type", "integer"}, {"description", "bookmark slot 1..3"}}},
        {"target", {{"type", "array"}, {"items", {{"type", "number"}}}}},
        {"yaw", numProp("azimuth radians (set)")},
        {"pitch", numProp("elevation radians (set)")},
@@ -84,6 +86,14 @@ json MCPServer::buildToolsList() const {
       json::array({"op"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
+  tools.push_back(tool(
+      "load_payloads",
+      "Load deferred USD payloads (lazy loading). Omit 'paths' to load all "
+      "deferred payloads; otherwise pass prim paths from get_scene_info's "
+      "deferred_payloads. Async; poll get_scene_info.",
+      {{"paths", {{"type", "array"},
+                  {"items", {{"type", "string"}}},
+                  {"description", "Deferred-payload prim paths (omit = all)"}}}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -203,6 +213,8 @@ void MCPServer::drain() {
         payload = host_->mcpViewport(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
+      } else if (t == "load_payloads") {
+        payload = host_->mcpLoadPayloads(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

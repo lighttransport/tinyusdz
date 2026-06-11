@@ -23,6 +23,7 @@ class McpHost {
   virtual nlohmann::json mcpSetFocus(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpViewport(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpListPrims(const nlohmann::json& args, std::string& err) = 0;
+  virtual nlohmann::json mcpLoadPayloads(const nlohmann::json& args, std::string& err) = 0;
 
   // Forward an unrecognized tool name to the tinyusdz library tool dispatcher
   // (tydra::mcp::CallTool), run against a snapshot of the loaded Stage.

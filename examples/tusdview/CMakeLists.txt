@@ -51,6 +51,7 @@ endif()
 set(TUSDVIEW_SOURCES
     main.cc
     app.cc
+    config.cc
     scene_loader.cc
     mesh_build.cc
     camera_nav.cc

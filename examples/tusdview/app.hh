@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -44,8 +45,38 @@ class App
 
   // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
   void setUiScale(float s) {
-    if (s > 0.25f) uiScale_ = s;
+    if (s > 0.25f) {
+      uiScale_ = s;
+      fontSizePx_ = 16.0f * s;
+      windowScale_ = s;
+    }
   }
+  void setFontSize(float px) {
+    if (px > 4.0f) {
+      fontSizePx_ = px;
+      uiScale_ = px / 16.0f;
+    }
+  }
+  void setWindowScale(float s) {
+    if (s > 0.25f) windowScale_ = s;
+  }
+  void setWindowSize(int width, int height) {
+    if (width > 0 && height > 0) {
+      hasWindowSizeOverride_ = true;
+      windowWidth_ = width;
+      windowHeight_ = height;
+    }
+  }
+  void clearWindowSizeOverride() { hasWindowSizeOverride_ = false; }
+  void setOrbitSensitivity(float s) { camera_.setOrbitSensitivity(s); }
+  void setPanSensitivity(float s) { camera_.setPanSensitivity(s); }
+  void setDollySensitivity(float s) { camera_.setDollySensitivity(s); }
+  void setInvertDolly(bool on) { camera_.setInvertDolly(on); }
+
+  // USD composition behavior for subsequent loads (set from CLI/config before
+  // run(); payload whitelist is managed internally by recompose).
+  void setLoadOptions(const LoadOptions& o) { loadOpts_ = o; }
+  const LoadOptions& loadOptions() const { return loadOpts_; }
 
   // Request the Vulkan ray-tracing technique at startup (honored only when the
   // device supports it; otherwise the viewer stays on rasterization).
@@ -70,6 +101,7 @@ class App
   nlohmann::json mcpSetFocus(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -85,12 +117,17 @@ class App
  private:
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
+  void getRequestedWindowSize(int* width, int* height) const;
   void openFileDialog();
 
   // Synchronous load (used for headless --frames runs so screenshots are
   // deterministic) and the async path (keeps the UI responsive).
   void loadFileBlocking(const std::string& path);
   void startLoadAsync(const std::string& path);
+  // Recompose the current scene with additional payloads loaded (lazy payload
+  // on-demand load). `addPrimPaths` are deferred-payload prim paths to load on
+  // top of those already loaded. No-op if the scene wasn't composed.
+  void startRecomposeAsync(const std::set<std::string>& addPrimPaths);
   void finishLoadIfReady();
   void applyLoaded(bool ok, bool progressive);  // upload + bind on the main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
@@ -102,10 +139,16 @@ class App
 
   LoadedScene loaded_;
   DrawScene draw_;
+  LoadOptions loadOpts_;
   OrbitCamera camera_;
   Gui gui_;
 
-  float uiScale_{2.0f};  // HiDPI scale (font px = 16 * uiScale_)
+  float uiScale_{2.0f};      // widget scale (defaults to font px / 16)
+  float fontSizePx_{32.0f};  // font size in pixels
+  float windowScale_{2.0f};  // default window size multiplier
+  bool hasWindowSizeOverride_{false};
+  int windowWidth_{0};
+  int windowHeight_{0};
   std::string windowShot_;
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
 

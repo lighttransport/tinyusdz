@@ -6,6 +6,16 @@
 
 namespace tusdview {
 
+enum class CameraViewPreset {
+  Isometric,
+  Front,
+  Back,
+  Right,
+  Left,
+  Top,
+  Bottom,
+};
+
 class OrbitCamera {
  public:
   // View / projection (column-major, light3d::Mat4 layout).
@@ -27,6 +37,17 @@ class OrbitCamera {
   void orbit(float dxPix, float dyPix);
   void pan(float dxPix, float dyPix);
   void dolly(float amount);  // mouse wheel notches or RMB horizontal pixels
+  void setPreset(CameraViewPreset preset);
+  void setOrbitSensitivity(float s) {
+    if (s > 0.0f) orbitSensitivity_ = s;
+  }
+  void setPanSensitivity(float s) {
+    if (s > 0.0f) panSensitivity_ = s;
+  }
+  void setDollySensitivity(float s) {
+    if (s > 0.0f) dollySensitivity_ = s;
+  }
+  void setInvertDolly(bool on) { invertDolly_ = on; }
 
   // Frame the given world-space AABB.
   void fitToScene(const float aabbMin[3], const float aabbMax[3]);
@@ -39,6 +60,10 @@ class OrbitCamera {
   float yaw() const { return yaw_; }
   float pitch() const { return pitch_; }
   float distance() const { return distance_; }
+  float orbitSensitivity() const { return orbitSensitivity_; }
+  float panSensitivity() const { return panSensitivity_; }
+  float dollySensitivity() const { return dollySensitivity_; }
+  bool invertDolly() const { return invertDolly_; }
 
   // Absolute camera placement (e.g. driven by the MCP viewport tool). Pitch is
   // clamped like orbit(); distance kept positive.
@@ -54,6 +79,10 @@ class OrbitCamera {
   float fovYDeg_{45.0f};
   float aspect_{1.3333f};
   float sceneRadius_{1.0f};  // full-scene radius; drives dynamic near/far
+  float orbitSensitivity_{1.0f};
+  float panSensitivity_{1.0f};
+  float dollySensitivity_{1.0f};
+  bool invertDolly_{false};
 };
 
 }  // namespace tusdview

@@ -48,7 +48,7 @@ light3d::Mat4 OrbitCamera::proj(bool zeroToOneDepth) const {
 }
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
-  const float k = 0.008f;
+  const float k = 0.008f * orbitSensitivity_;
   yaw_ -= dxPix * k;
   pitch_ += dyPix * k;
   pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitch_));
@@ -59,14 +59,48 @@ void OrbitCamera::pan(float dxPix, float dyPix) {
   light3d::Vec3 fwd = light3d::normalize(target_ - eye());
   light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, worldUp()));
   light3d::Vec3 up = light3d::cross(right, fwd);
-  const float scale = distance_ * 0.0015f;
+  const float scale = distance_ * 0.0015f * panSensitivity_;
   target_ = target_ - right * (dxPix * scale) + up * (dyPix * scale);
 }
 
 void OrbitCamera::dolly(float amount) {
   // Exponential zoom keeps the feel consistent at any distance.
-  distance_ *= std::exp(-amount * 0.12f);
+  const float signedAmount = invertDolly_ ? -amount : amount;
+  distance_ *= std::exp(-signedAmount * 0.12f * dollySensitivity_);
   distance_ = std::max(distance_, 1e-3f);
+}
+
+void OrbitCamera::setPreset(CameraViewPreset preset) {
+  switch (preset) {
+    case CameraViewPreset::Isometric:
+      yaw_ = 0.6f;
+      pitch_ = 0.35f;
+      break;
+    case CameraViewPreset::Front:
+      yaw_ = 0.0f;
+      pitch_ = 0.0f;
+      break;
+    case CameraViewPreset::Back:
+      yaw_ = kPi;
+      pitch_ = 0.0f;
+      break;
+    case CameraViewPreset::Right:
+      yaw_ = 0.5f * kPi;
+      pitch_ = 0.0f;
+      break;
+    case CameraViewPreset::Left:
+      yaw_ = -0.5f * kPi;
+      pitch_ = 0.0f;
+      break;
+    case CameraViewPreset::Top:
+      yaw_ = 0.0f;
+      pitch_ = kPitchLimit;
+      break;
+    case CameraViewPreset::Bottom:
+      yaw_ = 0.0f;
+      pitch_ = -kPitchLimit;
+      break;
+  }
 }
 
 void OrbitCamera::fitToScene(const float aabbMin[3], const float aabbMax[3]) {

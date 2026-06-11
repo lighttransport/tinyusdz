@@ -25,6 +25,9 @@ void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
 }
 
+constexpr int kBaseWindowWidth = 1280;
+constexpr int kBaseWindowHeight = 800;
+
 // Write top-down RGBA8 rows as a binary PPM (RGB).
 void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h) {
   FILE* fp = std::fopen(path.c_str(), "wb");
@@ -41,6 +44,17 @@ void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, 
   std::fclose(fp);
 }
 }  // namespace
+
+void App::getRequestedWindowSize(int* width, int* height) const {
+  if (hasWindowSizeOverride_) {
+    *width = windowWidth_;
+    *height = windowHeight_;
+    return;
+  }
+
+  *width = static_cast<int>(static_cast<float>(kBaseWindowWidth) * windowScale_);
+  *height = static_cast<int>(static_cast<float>(kBaseWindowHeight) * windowScale_);
+}
 
 App::~App() {
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -73,10 +87,11 @@ bool App::initWindow(std::string* err) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   }
 
-  // Scale the default window with the UI scale (4K panels need a larger window
-  // so the HiDPI-scaled panels aren't cramped), clamped to the monitor work area.
-  int winW = static_cast<int>(1280.0f * uiScale_);
-  int winH = static_cast<int>(800.0f * uiScale_);
+  // Scale the default window independently from the font/widget sizing, then
+  // clamp to the current monitor work area.
+  int winW = 0;
+  int winH = 0;
+  getRequestedWindowSize(&winW, &winH);
   if (GLFWmonitor* mon = glfwGetPrimaryMonitor()) {
     int mx = 0, my = 0, mw = 0, mh = 0;
     glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);
@@ -114,9 +129,8 @@ bool App::initImGui(std::string* err) {
   // HiDPI: load Cascadia Mono at a scaled pixel size and scale widget metrics
   // so the UI is readable on 4K panels. Baking the scale into the font size
   // keeps the text crisp (vs. io.FontGlobalScale which just magnifies).
-  const float fontPx = 16.0f * uiScale_;
   io.Fonts->AddFontFromMemoryCompressedTTF(CascadiaMono_compressed_data,
-                                           CascadiaMono_compressed_size, fontPx);
+                                           CascadiaMono_compressed_size, fontSizePx_);
 
   // Maya-like dark theme, then scale rounding/padding/spacing for HiDPI.
   StyleMaya();
@@ -199,7 +213,7 @@ void App::loadFileBlocking(const std::string& path) {
   LoadedScene tmp;
   DrawScene drawTmp;
   // Streaming convert+build in one pass (also fully populates tmp.render).
-  const bool ok = LoadUSD(path, &tmp, &drawTmp, rtPath_, &loadCtrl_);
+  const bool ok = LoadUSD(path, loadOpts_, &tmp, &drawTmp, rtPath_, &loadCtrl_);
   loaded_ = std::move(tmp);
   draw_ = ok ? std::move(drawTmp) : DrawScene{};
   applyLoaded(ok, /*progressive=*/false);
@@ -219,8 +233,43 @@ void App::startLoadAsync(const std::string& path) {
   // Worker touches only CPU data (no GL/VK), so this is thread-safe. The
   // streaming load convert+builds the DrawScene (dp) in one pass.
   const bool rt = rtPath_;
-  loadThread_ = std::thread([this, path, lp, dp, rt]() {
-    LoadUSD(path, lp, dp, rt, &loadCtrl_);
+  const LoadOptions opts = loadOpts_;
+  loadThread_ = std::thread([this, path, opts, lp, dp, rt]() {
+    LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
+    loadFinished_.store(true, std::memory_order_release);
+  });
+}
+
+void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
+  if (!loaded_.comp.composed || !loaded_.comp.rootLayer) return;
+  if (addPrimPaths.empty()) return;
+  cancelAndJoinLoad();
+  loadCtrl_.resetProgress();
+  loadingPath_ = loaded_.filepath;
+  loadStart_ = std::chrono::steady_clock::now();
+  loadFinished_.store(false);
+  loadActive_ = true;
+  pendingLoaded_ = std::make_unique<LoadedScene>();
+  pendingDraw_ = std::make_unique<DrawScene>();
+  LoadedScene* lp = pendingLoaded_.get();
+  DrawScene* dp = pendingDraw_.get();
+
+  // Snapshot composition state for the worker: the root layer is shared
+  // (read-only) and the whitelist is the union of already-loaded payloads and
+  // the new requests.
+  CompositionInfo prev;
+  prev.composed = true;
+  prev.rootLayer = loaded_.comp.rootLayer;
+  prev.searchPaths = loaded_.comp.searchPaths;
+  LoadOptions opts = loadOpts_;
+  opts.payloadPolicy = PayloadPolicy::Whitelist;
+  opts.payloadWhitelist = loaded_.comp.loadedPayloads;
+  opts.payloadWhitelist.insert(addPrimPaths.begin(), addPrimPaths.end());
+
+  const std::string path = loaded_.filepath;
+  const bool rt = rtPath_;
+  loadThread_ = std::thread([this, path, prev, opts, lp, dp, rt]() {
+    RecomposeWithPayloads(path, prev, opts, lp, dp, rt, &loadCtrl_);
     loadFinished_.store(true, std::memory_order_release);
   });
 }
@@ -271,8 +320,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   std::string err;
   // Headless composite size (no monitor to clamp to); used for the windowless
   // ImGui DisplaySize and the offscreen composite image.
-  const int winW = static_cast<int>(1280.0f * uiScale_);
-  const int winH = static_cast<int>(800.0f * uiScale_);
+  int winW = 0;
+  int winH = 0;
+  getRequestedWindowSize(&winW, &winH);
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
@@ -396,6 +446,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool open = gui_.wantOpen();
     const bool quit = gui_.wantQuit();
     const bool cancelLoad = gui_.wantCancelLoad();
+    const bool loadAllPayloads = gui_.wantLoadAllPayloads();
+    std::vector<std::string> payloadReqs = gui_.takePayloadLoadRequests();
     gui_.clearActions();
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
@@ -403,6 +455,16 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
+
+    // Lazy payload on-demand load: recompose with the requested payloads added.
+    // Skipped while a load is in flight (loaded_ would be the outgoing scene).
+    if (!loadActive_ && (loadAllPayloads || !payloadReqs.empty())) {
+      std::set<std::string> add(payloadReqs.begin(), payloadReqs.end());
+      if (loadAllPayloads) {
+        for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+      }
+      startRecomposeAsync(add);
+    }
 
     if (!headless_) {
       if (quit) glfwSetWindowShouldClose(window_, GLFW_TRUE);
