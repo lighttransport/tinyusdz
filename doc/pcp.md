@@ -120,16 +120,15 @@ strong-to-weak list of arcs.
 > **Implementation status (next).** The USDA parser records each arc field's
 > list-op qualifier (prepend / append / delete / bare-explicit) into a per-spec
 > `ArcListOpEdits`, and the USDA writer re-emits it. *Across the layer stack*,
-> the default path expands each spec's arcs independently and relies on LIVRPS
-> strength ordering — correct for the common case, but an identically-authored
-> arc in two sublayers expands twice (redundant nodes, same values). With
-> `CompositionOptions::apply_list_ops` (opt-in), composition instead merges each
-> arc field once across the site weakest→strongest per AOUSD SdfListOp rules
-> (explicit-replace / prepend / append / delete / dedup), in LIVRPS order. The
-> crate (USDC) writer/reader preserve the qualifier via a companion
-> `<arc>_listOp` token[] field (the flat token[] carries the within-spec
-> effective list). *Remaining knob:* whether to default `apply_list_ops` on
-> after a corpus review.
+> `CompositionOptions::apply_list_ops` (**default ON**) merges each arc field
+> once across the site weakest→strongest per AOUSD SdfListOp rules
+> (explicit-replace / prepend / append / delete / dedup), in LIVRPS order —
+> validated to match pxrUSD `usdcat --flatten` on cross-layer delete/explicit
+> assets. Set it false for the legacy path (each spec's arcs expanded
+> independently / strong-first concatenation; an identically-authored arc in two
+> sublayers expands twice). The crate (USDC) writer/reader preserve the
+> qualifier via a companion `<arc>_listOp` token[] field (the flat token[]
+> carries the within-spec effective list).
 >
 > **Relocates scope (next).** Relocates are applied as a *same-parent namespace
 > rename only*: a composed source `/A/B` may be renamed to `/A/C` (same parent
