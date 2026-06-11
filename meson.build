@@ -516,6 +516,9 @@ endif
 tinyusdz_sources += files(
   'src/tsd/tsd-validate.cc',
   'src/tsd/tsd-topology.cc',
+  'src/tsd/tsd-bilinear.cc',
+  'src/tsd/tsd-catmark.cc',
+  'src/tsd/tsd-fvar.cc',
   'src/tsd/tsd-refine.cc',
 )
 
