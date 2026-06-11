@@ -99,17 +99,24 @@ Landed so far:
   added; doc/pcp.md gains a list-op implementation-status note and the
   same-parent-only relocates scope. Full cross-layer explicit-replace/delete +
   qualifier round-trip fidelity (arc-field → ListOp representation) remain TODO.
-- **Phase 10 (M9 core)** — `Cache::ComposePrim(path)` composes (and caches) one
-  prim on first access, reusing BuildStageRec's SourcesForPath + ComposeInto
-  step without materializing the whole stage; `ComposedChildNames(path)` for
-  lazy descent; dropped by Invalidate/InvalidateLayer/SetLoadRules; fine-locks
-  shared read fast path. Instancing/relocates stay stage-level (BuildStage
-  authoritative). The attribute-eval `(Cache*, Path)` wrapper and connection
-  following across lazily-composed prims remain a follow-up.
+- **Phase 10 (M9)** — `Cache::ComposePrim(path)` composes (and caches) one prim
+  on first access, reusing BuildStageRec's SourcesForPath + ComposeInto step
+  without materializing the whole stage; `ComposedChildNames(path)` for lazy
+  descent; dropped by Invalidate/InvalidateLayer/SetLoadRules; fine-locks shared
+  read fast path. Instancing/relocates stay stage-level (BuildStage
+  authoritative). The lazy attribute entry point landed too:
+  `EvalAttributeLazy(Cache&, Path, attr, opts)` resolves time samples / default
+  via the shared `AttributeEval::EvalFromPrimSpec` and follows connections
+  across lazily-composed prims -- no BuildStage.
+- **Hardening (post-audit)** — fixed: spurious ext allocation in
+  compose/flatten (`has_ext()` guard, restores the 8.1 footprint win); `issues_`
+  lifecycle (cleared on Invalidate*/SetLoadRules; `GetCompositionIssues` returns
+  by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
+  `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
 
-Remaining follow-ups: **Phase 7** full cross-layer ListOp representation
-(explicit-replace/delete + qualifier round-trip), **Phase 10** attribute-eval
-lazy entry point. The sections below are the original spec.
+Remaining follow-up: **Phase 7** full cross-layer ListOp representation
+(arc-field → ListOp struct: explicit-replace/delete + qualifier round-trip
+fidelity). The sections below are the original spec.
 
 Goals, in priority order:
 
