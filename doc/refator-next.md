@@ -92,8 +92,24 @@ Landed so far:
   keeps first-in-namespace-order (single-pass, already deterministic); flatten
   output and the round-trip corpus are unchanged.
 
-Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 10** (lazy
-Stage). The sections below are the spec for them.
+- **Phase 7 (S5 partial + E3)** — `CompositionOptions::apply_list_ops` (opt-in)
+  de-duplicates an arc authored identically across a site's specs so it expands
+  once instead of twice (fixes the double-expansion; values unchanged since
+  LIVRPS already made the duplicate redundant). Specialize-chain + dedup tests
+  added; doc/pcp.md gains a list-op implementation-status note and the
+  same-parent-only relocates scope. Full cross-layer explicit-replace/delete +
+  qualifier round-trip fidelity (arc-field → ListOp representation) remain TODO.
+- **Phase 10 (M9 core)** — `Cache::ComposePrim(path)` composes (and caches) one
+  prim on first access, reusing BuildStageRec's SourcesForPath + ComposeInto
+  step without materializing the whole stage; `ComposedChildNames(path)` for
+  lazy descent; dropped by Invalidate/InvalidateLayer/SetLoadRules; fine-locks
+  shared read fast path. Instancing/relocates stay stage-level (BuildStage
+  authoritative). The attribute-eval `(Cache*, Path)` wrapper and connection
+  following across lazily-composed prims remain a follow-up.
+
+Remaining follow-ups: **Phase 7** full cross-layer ListOp representation
+(explicit-replace/delete + qualifier round-trip), **Phase 10** attribute-eval
+lazy entry point. The sections below are the original spec.
 
 Goals, in priority order:
 

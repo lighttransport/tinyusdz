@@ -691,11 +691,22 @@ struct Cache::Impl {
     // one (cross-source selection).
     for (const SpecRef &sr : specs) RecordSelections(*sr.spec, sels);
 
+    // Phase 7 (S5): when apply_list_ops is on, an arc authored identically in
+    // two of this site's specs (e.g. the same `references = </Foo>` in the root
+    // and a sublayer) is expanded only once. `nodup` returns true the first
+    // time it sees a (field, arc-string) pair, false on a repeat.
+    std::set<std::string> seen_arcs;
+    auto nodup = [&](char field, const std::string &arc) -> bool {
+      if (!options.apply_list_ops) return true;
+      return seen_arcs.insert(std::string(1, field) + arc).second;
+    };
+
     for (const SpecRef &sr : specs) {
       const PrimSpec *spec = sr.spec;
 
       // Inherits (stronger than references).
       for (const std::string &s : spec->meta().inherits) {
+        if (!nodup('I', s)) continue;
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
                    out, spec_out, sels, chain, warn, err);
       }
@@ -741,6 +752,7 @@ struct Cache::Impl {
 
       // References.
       for (const std::string &ref_str : spec->meta().references) {
+        if (!nodup('R', ref_str)) continue;
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
                    frame, out, spec_out, sels, chain, warn, err);
       }
@@ -749,6 +761,7 @@ struct Cache::Impl {
       if (!spec->meta().payloads.empty()) {
         const std::string root_prim_path = src.map.Apply(src.site);
         for (const std::string &pl_str : spec->meta().payloads) {
+          if (!nodup('P', pl_str)) continue;
           CompositionArc arc = Compositor::ParsePayload(pl_str);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
             deferred_payload_prims.insert(root_prim_path);
@@ -762,6 +775,7 @@ struct Cache::Impl {
 
       // Specializes (globally weakest; routed into spec_out by ProcessArc).
       for (const std::string &s : spec->meta().specializes) {
+        if (!nodup('S', s)) continue;
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
                    frame, out, spec_out, sels, chain, warn, err);
       }
