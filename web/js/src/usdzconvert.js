@@ -1405,6 +1405,41 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     // the requested output format changes the extension).
     const textureRemap = {};
     const pickResizeCs = makeResizeCsPicker(native, assetMap.get(rootPath), opts);
+
+    // Stage A: when a textureProcessor hook is installed, run it over all
+    // textures with bounded concurrency (opts.textureConcurrency) — JS/worker
+    // processors parallelize across textures. The WASM fallback below stays
+    // sequential (single instance), as do the setAsset calls.
+    const processedByPath = new Map();
+    if (typeof opts.textureProcessor === 'function' && images.length) {
+      const limit = Math.max(1, Math.min(opts.textureConcurrency || 1, images.length));
+      let nextImage = 0;
+      const runOne = async () => {
+        while (nextImage < images.length) {
+          const path = images[nextImage++];
+          const bytes = assetMap.get(path);
+          const assetName = (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
+          try {
+            const processed = await opts.textureProcessor({
+              path,
+              name: assetName,
+              data: bytes,
+              maxTextureSize: opts.maxTextureSize || 0,
+              reencode: opts.reencode,
+              textureFormat,
+              jpegQuality: opts.jpegQuality || 90,
+              resizeColorspace: pickResizeCs(assetName),
+              log,
+            });
+            if (processed && processed.data) processedByPath.set(path, processed);
+          } catch (err) {
+            log(`  ${assetName}: texture processor failed (${err && err.message ? err.message : err}); will try WASM`);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: limit }, runOne));
+    }
+
     for (const path of images) {
       const bytes = assetMap.get(path);
       // Name as the USD most likely references it (relative to the USD's dir).
@@ -1415,23 +1450,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 
       const fmtInfo = outputFormatForImage(path, textureFormat);
       const wantResize = (opts.maxTextureSize || 0) > 0;
-      let processed = null;
-      if (typeof opts.textureProcessor === 'function') {
-        try {
-          processed = await opts.textureProcessor({
-            path,
-            name: assetName,
-            data: bytes,
-            maxTextureSize: opts.maxTextureSize || 0,
-            reencode: opts.reencode,
-            textureFormat,
-            jpegQuality: opts.jpegQuality || 90,
-            log,
-          });
-        } catch (err) {
-          log(`  ${assetName}: browser texture processing failed (${err && err.message ? err.message : err}); trying WASM`);
-        }
-      }
+      const processed = processedByPath.get(path) || null;
 
       if (processed && processed.data) {
         outBytes = new Uint8Array(processed.data);
