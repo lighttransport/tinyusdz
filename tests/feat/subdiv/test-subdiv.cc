@@ -427,6 +427,121 @@ void test_caps_enforced() {
 }
 
 // ---------------------------------------------------------------------------
+// FaceVarying smooth modes
+// ---------------------------------------------------------------------------
+
+void test_fvar_continuous_equals_vertex_refinement() {
+  // A fvar channel that is continuous everywhere (indexed by vertex) on a
+  // closed mesh must refine identically to a "vertex" primvar under any
+  // smooth fvar mode.
+  corpus::Mesh cube = corpus::Cube();
+  std::vector<float> vals(8 * 2);
+  for (size_t v = 0; v < 8; v++) {
+    vals[2 * v] = cube.points[3 * v];
+    vals[2 * v + 1] = cube.points[3 * v + 1];
+  }
+
+  tinyusdz::tsd::FVarChannelView ch;
+  ch.values = vals.data();
+  ch.num_values = 8;
+  ch.indices = cube.face_vertex_indices.data();  // continuous: vertex ids
+  ch.stride = 2;
+  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::CornersPlus1;
+
+  tinyusdz::tsd::VertexPrimvarView pv;
+  pv.values = vals.data();
+  pv.stride = 2;
+  pv.varying = false;
+
+  Options opts;
+  opts.level = 2;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(cube), &ch, 1, &pv, 1, opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  CHECK(out.fvar.size() == 1);
+  CHECK(out.vertex_primvars.size() == 1);
+
+  // Expand the vertex primvar per corner and compare.
+  const std::vector<float> &vpv = out.vertex_primvars[0];
+  const std::vector<float> &fv = out.fvar[0];
+  CHECK(fv.size() == out.face_vertex_indices.size() * 2);
+  for (size_t i = 0; i < out.face_vertex_indices.size(); i++) {
+    const uint32_t v = out.face_vertex_indices[i];
+    for (size_t c = 0; c < 2; c++) {
+      CHECK(std::fabs(fv[2 * i + c] - vpv[2 * v + c]) < 1e-6f);
+    }
+  }
+}
+
+void test_fvar_island_constants_preserved() {
+  // Constant values within each UV island must stay exactly constant
+  // through smooth refinement (partition of unity on the split mesh).
+  corpus::Mesh m = corpus::Cube();
+  // Two islands of 3 faces; one constant value id per island.
+  const uint32_t face_island[6] = {0, 0, 0, 1, 1, 1};
+  std::vector<float> vals = {5.0f, -1.0f, 9.0f, 4.0f};  // 2 values, stride 2
+  std::vector<uint32_t> indices(24);
+  for (size_t f = 0; f < 6; f++) {
+    for (size_t k = 0; k < 4; k++) {
+      indices[f * 4 + k] = face_island[f];
+    }
+  }
+
+  tinyusdz::tsd::FVarChannelView ch;
+  ch.values = vals.data();
+  ch.num_values = 2;
+  ch.indices = indices.data();
+  ch.stride = 2;
+  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+
+  Options opts;
+  opts.level = 2;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(m), &ch, 1, nullptr, 0, opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+  size_t corner = 0;
+  bool all_match = true;
+  for (size_t f = 0; f < out.face_vertex_counts.size(); f++) {
+    const uint32_t island = face_island[out.face_source[f]];
+    for (uint32_t k = 0; k < out.face_vertex_counts[f]; k++, corner++) {
+      all_match &=
+          std::fabs(out.fvar[0][2 * corner] - vals[2 * island]) < 1e-6f;
+      all_match &=
+          std::fabs(out.fvar[0][2 * corner + 1] - vals[2 * island + 1]) <
+          1e-6f;
+    }
+  }
+  CHECK(all_match);
+}
+
+void test_fvar_modes_differ_at_seams() {
+  // Sanity: "all" (linear) and "none" (smooth) must produce different
+  // refined values for a channel with seams.
+  corpus::Mesh m = corpus::UVSeamGrid();
+  tinyusdz::tsd::FVarChannelView ch;
+  ch.values = m.fvar_uv.data();
+  ch.num_values = uint32_t(m.fvar_uv.size() / 2);
+  ch.indices = m.fvar_indices.data();
+  ch.stride = 2;
+
+  Options opts;
+  opts.level = 2;
+  RefinedMesh out_all;
+  RefinedMesh out_none;
+  std::string err;
+  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::All;
+  CHECK(Refine(ToView(m), &ch, 1, nullptr, 0, opts, &out_all, &err) ==
+        Result::Success);
+  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+  CHECK(Refine(ToView(m), &ch, 1, nullptr, 0, opts, &out_none, &err) ==
+        Result::Success);
+  CHECK(out_all.fvar[0].size() == out_none.fvar[0].size());
+  CHECK(out_all.fvar[0] != out_none.fvar[0]);
+}
+
+// ---------------------------------------------------------------------------
 // Determinism (serial vs parallel)
 // ---------------------------------------------------------------------------
 
@@ -654,6 +769,11 @@ int main() {
   TEST(test_holes_filtered);
   TEST(test_caps_enforced);
   TEST(test_parallel_determinism);
+
+  // FaceVarying smooth modes
+  TEST(test_fvar_continuous_equals_vertex_refinement);
+  TEST(test_fvar_island_constants_preserved);
+  TEST(test_fvar_modes_differ_at_seams);
 
   // Topology
   TEST(test_topology_cube);
