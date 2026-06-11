@@ -44,8 +44,19 @@ Landed so far:
   fields (flags, 4 arc lists, legacy variantSelection, layer_offset) stay
   inline. `sizeof(PrimSpecMeta)` 344B→160B without ext (2.15×); ext (192B) paid
   only by the prim minority that carries cold data. `Layer::finalize()`
-  shrink_to_fit's `prims_`. Token pool (M6) and mmap CrateDataSource (M7) remain
-  TODO.
+  shrink_to_fit's `prims_`.
+- **Phase 8 (M6/8.2)** — pooled token storage (`TokenPool`: one blob + (off,len)
+  spans) replaces the per-token `std::string` table in the crate reader: 8
+  bytes/token + no per-token alloc, cutting the transient parse peak. Consumers
+  copy by value (unchanged behavior); `CrateReader::tokens()` now materializes
+  on demand (diagnostics-only). The `CrateDataSource` token table is never
+  populated (token arrays decode eagerly), so it carries no steady-state cost.
+- **Phase 8 (M7/8.3)** — mmap-backed `CrateDataSource`: a second read-only
+  memory-map backing behind `base()`/`size()` (readers/bounds-checks
+  untouched); `MmapFile()` (posix; nullptr→owned fallback on WASM/non-posix/
+  failure), destructor munmaps on last shared_ptr. `ReadFile` prefers mmap;
+  `CrateReadOptions::use_mmap` (default on) gates it. No in-heap crate copy for
+  file loads; lazy values read straight from the mapping.
 - **TimeSamples decoding** — crate TimeSamples now decode into per-property
   storage (was skipped on read); reads next- and pxr-written files.
 - **Phase 7 (E2)** — layer offsets compose through the arc chain
@@ -69,11 +80,11 @@ Landed so far:
   recursive policies keep READ==WRITE. Clean under ThreadSanitizer for test_pcp
   (incl. 8-thread×1000-iter concurrent queries on one shared cache).
 
-Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 8** token
-pool (M6) / mmap CrateDataSource (M7), **Phase 9 F3** (stable deque tables for
-lock-free table reads) / **F5** (deterministic prototype assignment under
-concurrent builds — the PrewarmPrimIndices deferred-merge path already covers
-its model), **Phase 10** (lazy Stage). The sections below are the spec for them.
+Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 9 F3**
+(stable deque tables for lock-free table reads) / **F5** (deterministic
+prototype assignment under concurrent builds — the PrewarmPrimIndices
+deferred-merge path already covers its model), **Phase 10** (lazy Stage). The
+sections below are the spec for them.
 
 Goals, in priority order:
 
