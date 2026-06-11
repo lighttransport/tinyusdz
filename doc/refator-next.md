@@ -79,12 +79,21 @@ Landed so far:
   contended prim built once (subsumes the in-flight-future dedup). Default and
   recursive policies keep READ==WRITE. Clean under ThreadSanitizer for test_pcp
   (incl. 8-thread×1000-iter concurrent queries on one shared cache).
+- **Phase 9 (F3)** — `layer_stacks`/`path_table` are `std::deque` (stable
+  element addresses): a PrimIndex borrows raw pointers into these tables and
+  resolves node sites lock-free (`SitePath`, used cross-thread), so a `vector`
+  realloc from a concurrent build would dangle them. `SitePath`'s bounds check
+  uses a per-PrimIndex size snapshot taken under the build lock, race-free
+  against concurrent appends.
+- **Phase 9 (F5)** — deterministic prototype assignment: the per-prim
+  ComputePrimIndex cache and the parallel merge pick the lexicographically
+  smallest member path as the prototype (`AssignPrototype` prefer_min mode), so
+  the grouping is identical regardless of computation order/threads. BuildStage
+  keeps first-in-namespace-order (single-pass, already deterministic); flatten
+  output and the round-trip corpus are unchanged.
 
-Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 9 F3**
-(stable deque tables for lock-free table reads) / **F5** (deterministic
-prototype assignment under concurrent builds — the PrewarmPrimIndices
-deferred-merge path already covers its model), **Phase 10** (lazy Stage). The
-sections below are the spec for them.
+Not yet started / partial: **Phase 7** cross-layer ListOps, **Phase 10** (lazy
+Stage). The sections below are the spec for them.
 
 Goals, in priority order:
 
