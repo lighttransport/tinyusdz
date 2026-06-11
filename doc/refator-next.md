@@ -122,17 +122,22 @@ Landed so far:
   by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
   `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
 
-`apply_list_ops` stays **default OFF (opt-in)**. Corpus-diff review (594 files;
-418 compose under both flag states, 176 fail identically regardless of the flag):
-**0 files differ in flattened output and 0 change compose success** — flipping
-the default is regression-free, but the corpus has **no file combining
-subLayers + arcs**, so it gives no positive coverage of the cross-layer
-explicit-replace/delete behavior the flag changes (that path is validated only
-by `test_cross_layer_listops`). Since defaulting it on would shift a common-case
-semantic (a bare arc list in a stronger layer replacing a weaker one) with no
-real cross-layer asset to confirm expectations, it remains opt-in pending
-cross-layer fixtures / a pxrUSD comparison. **The 10-phase roadmap is
-complete.** The sections below are the original spec.
+`apply_list_ops` stays **default OFF (opt-in)**. Corpus-diff review (flatten
+each file with the flag off vs on, diff the serialized output): across the
+top-level corpus **no file differs or changes compose-success** — flipping the
+default is regression-free there, but the stock corpus has no file combining
+subLayers + arcs, so it gives no positive coverage. Two dedicated cross-layer
+fixtures were added (`tests/usda/composition/listop-xlayer-{delete,explicit}-000.usda`):
+under the review they **differ exactly as intended** (the stronger layer's
+`delete` drops / a bare list replaces the weak sublayer's reference) and nothing
+else changes. So the flag does precisely the AOUSD thing on the cases it
+governs, with zero collateral effect. It still stays opt-in because flipping it
+shifts a common-case semantic (bare-list-as-explicit-replace across layers) that
+no *real-world* asset in the corpus exercises — revisit after a pxrUSD A/B on
+such an asset. (This review also surfaced that the next USDA parser never read
+`subLayers` from text — a double-consume bug, now fixed — and that the Release
+test build compiled out `assert()`; tests now build with `-UNDEBUG`.) **The
+10-phase roadmap is complete.** The sections below are the original spec.
 
 Goals, in priority order:
 
