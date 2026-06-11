@@ -9,6 +9,7 @@
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 
 #include <algorithm>
+#include <deque>
 #include <limits>
 #include <map>
 #include <set>
@@ -149,11 +150,15 @@ struct Cache::Impl {
   std::shared_ptr<Layer> root_layer;  // kept alive (also layer_stacks[0].layers[0])
   std::string root_identifier;
 
-  std::vector<LayerStack> layer_stacks;             // table; [0] == root stack
+  // Append-only shared tables backing every PrimIndex (Phase 9 F3). std::deque
+  // gives stable element addresses: a PrimIndex handed to another thread keeps
+  // resolving its nodes' layer-stacks/sites even as a concurrent build appends
+  // new entries here (a std::vector would reallocate and dangle them).
+  std::deque<LayerStack> layer_stacks;              // table; [0] == root stack
   std::map<std::string, uint32_t> stack_by_id;      // dedup by resolved identifier
 
   // Interned prim-path table shared by all PrimIndex nodes (dedup across indices).
-  std::vector<std::string> path_table;
+  std::deque<std::string> path_table;
   std::unordered_map<std::string, uint32_t> path_intern;
   uint32_t InternPath(const std::string &p) {
     auto it = path_intern.find(p);
@@ -463,28 +468,58 @@ struct Cache::Impl {
     return key;
   }
 
-  // Prototype bookkeeping for a prim known to be an instance with key `ik`.
-  // First prim of a given key becomes the prototype; the rest link to it.
-  // Order-sensitive: the caller must invoke this deterministically (the parallel
-  // build defers it to an input-order merge).
-  void AssignPrototype(const std::string &prim_path, const std::string &ik) {
+  // Prototype bookkeeping for a prim that is an instance with key `ik`.
+  //
+  // prefer_min == false (BuildStage): the first prim registered for a key
+  // becomes its prototype. BuildStage visits prims in deterministic namespace
+  // order and decides instance-vs-prototype in a single pass, so "first wins"
+  // is already order-independent there.
+  //
+  // prefer_min == true (per-prim ComputePrimIndex cache and the parallel
+  // merge): the prototype is the lexicographically-smallest member path, so the
+  // cached prototype/instance grouping is identical regardless of the order --
+  // or the threads -- in which prims were computed (Phase 9 F5). A smaller path
+  // arriving later demotes the previous prototype and re-points the group.
+  void AssignPrototype(const std::string &prim_path, const std::string &ik,
+                       bool prefer_min = false) {
     auto pit = prototype_by_key.find(ik);
-    std::string proto;
     if (pit == prototype_by_key.end()) {
-      prototype_by_key[ik] = prim_path;  // first of its key becomes prototype
-      proto = prim_path;
-    } else {
-      proto = pit->second;
+      prototype_by_key[ik] = prim_path;  // first of its key seeds the prototype
+      prototype_of[prim_path] = prim_path;
+      instances_by_prototype[prim_path].push_back(prim_path);
+      return;
     }
-    prototype_of[prim_path] = proto;
-    auto &vec = instances_by_prototype[proto];
-    if (std::find(vec.begin(), vec.end(), prim_path) == vec.end()) {
-      vec.push_back(prim_path);
+    const std::string old_proto = pit->second;
+    if (prim_path == old_proto) return;  // re-registering the prototype itself
+
+    if (!prefer_min || old_proto < prim_path) {
+      // prim_path is a (non-prototype) instance of the existing prototype.
+      prototype_of[prim_path] = old_proto;
+      auto &vec = instances_by_prototype[old_proto];
+      if (std::find(vec.begin(), vec.end(), prim_path) == vec.end()) {
+        vec.push_back(prim_path);
+      }
+      return;
     }
+
+    // prefer_min && prim_path < old_proto: prim_path becomes the new prototype.
+    // Demote old_proto and re-point the whole group under the new prototype.
+    pit->second = prim_path;
+    std::vector<std::string> members;
+    auto oit = instances_by_prototype.find(old_proto);
+    if (oit != instances_by_prototype.end()) {
+      members = std::move(oit->second);
+      instances_by_prototype.erase(oit);
+    }
+    if (std::find(members.begin(), members.end(), prim_path) == members.end()) {
+      members.push_back(prim_path);
+    }
+    for (const std::string &m : members) prototype_of[m] = prim_path;
+    instances_by_prototype[prim_path] = std::move(members);
   }
 
   void RegisterInstance(const std::string &prim_path,
-                        const std::vector<Src> &srcs) {
+                        const std::vector<Src> &srcs, bool prefer_min = false) {
     if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
     const std::string ik = ComputeInstanceKeyImpl(srcs);
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -494,7 +529,7 @@ struct Cache::Impl {
       return;
     }
 #endif
-    AssignPrototype(prim_path, ik);
+    AssignPrototype(prim_path, ik, prefer_min);
   }
 
   void DropInstancing(const std::string &prim_path) {
@@ -910,7 +945,6 @@ struct Cache::Impl {
     auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
     index->SetPath(prim_path);
     index->SetLayerStacks(&layer_stacks);
-    index->SetPathTable(&path_table);
 
     std::vector<uint16_t> order;
     std::vector<Site> sites;
@@ -943,8 +977,13 @@ struct Cache::Impl {
       order.push_back(ni);
     }
     index->SetStrengthOrder(std::move(order));
+    // Bind the path table AFTER the node loop interned every site, so the
+    // size snapshot covers all of this index's site_path_idx values (F3).
+    index->SetPathTable(&path_table, path_table.size());
 
-    RegisterInstance(key, srcs);
+    // Per-prim cache: pick the prototype deterministically (min path) so the
+    // grouping does not depend on the order/threads of ComputePrimIndex (F5).
+    RegisterInstance(key, srcs, /*prefer_min=*/true);
 
     for (const Site &site : sites) site_to_indices[site].insert(key);
     index_to_sites[key] = std::move(sites);
@@ -1095,7 +1134,9 @@ struct Cache::Impl {
       }
     }
     idx->SetLayerStacks(&layer_stacks);
-    idx->SetPathTable(&path_table);
+    // Remap above already interned every site into path_table, so its size is
+    // final for this index's snapshot (F3).
+    idx->SetPathTable(&path_table, path_table.size());
 
     auto sit = w.index_to_sites.find(key);
     if (sit != w.index_to_sites.end()) {
@@ -1108,7 +1149,9 @@ struct Cache::Impl {
     if (options.detect_instances) {
       auto piit = w.pending_instance_.find(key);
       if (piit != w.pending_instance_.end() && piit->second.first) {
-        AssignPrototype(key, piit->second.second);
+        // Match the per-prim cache's deterministic min-path rule so the
+        // parallel merge and a serial ComputePrimIndex agree (F5).
+        AssignPrototype(key, piit->second.second, /*prefer_min=*/true);
       }
     }
   }

@@ -18,6 +18,7 @@
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -89,12 +90,19 @@ class PrimIndex {
   uint16_t GetNodeCount() const { return static_cast<uint16_t>(nodes_.size()); }
   const std::vector<CompNode> &GetNodes() const { return nodes_; }
   const std::vector<uint16_t> &GetStrengthOrder() const { return strength_order_; }
-  const std::vector<LayerStack> *GetLayerStacks() const { return layer_stacks_; }
+  const std::deque<LayerStack> *GetLayerStacks() const { return layer_stacks_; }
 
   /// Resolve a node's interned site prim path (empty if no path table bound).
+  ///
+  /// The path/layer tables are std::deque (Phase 9 F3): appends never move
+  /// existing elements, so a PrimIndex handed to another thread can resolve its
+  /// nodes' sites while a concurrent build appends new entries -- no dangling
+  /// reference. The bounds check uses `path_table_size_`, a snapshot captured
+  /// (under the build lock) when this index was bound to the table, instead of
+  /// the live `deque::size()`, so it is also race-free against those appends.
   const std::string &SitePath(const CompNode &n) const {
     static const std::string kEmpty;
-    if (!path_table_ || n.site_path_idx >= path_table_->size()) return kEmpty;
+    if (!path_table_ || n.site_path_idx >= path_table_size_) return kEmpty;
     return (*path_table_)[n.site_path_idx];
   }
 
@@ -117,8 +125,13 @@ class PrimIndex {
 
   // Build API (used by Cache::Impl).
   void SetPath(const Path &p) { prim_path_ = p; }
-  void SetLayerStacks(const std::vector<LayerStack> *t) { layer_stacks_ = t; }
-  void SetPathTable(const std::vector<std::string> *t) { path_table_ = t; }
+  void SetLayerStacks(const std::deque<LayerStack> *t) { layer_stacks_ = t; }
+  // `published_size` is the table size at bind time; SitePath bounds-checks
+  // against it (race-free) rather than the live deque size (see SitePath).
+  void SetPathTable(const std::deque<std::string> *t, size_t published_size) {
+    path_table_ = t;
+    path_table_size_ = published_size;
+  }
   uint16_t AddNode(CompNode &&n) {
     if (nodes_.size() >= kMaxNodeCount) return kInvalidNode;
     nodes_.push_back(std::move(n));
@@ -131,8 +144,11 @@ class PrimIndex {
   Path prim_path_;
   std::vector<CompNode> nodes_;            // node 0 == root
   std::vector<uint16_t> strength_order_;   // strongest first
-  const std::vector<LayerStack> *layer_stacks_ = nullptr;  // borrowed
-  const std::vector<std::string> *path_table_ = nullptr;   // borrowed (interned sites)
+  // Borrowed, stable-address tables owned by the Cache (std::deque so concurrent
+  // appends never invalidate elements a held PrimIndex resolves; F3).
+  const std::deque<LayerStack> *layer_stacks_ = nullptr;
+  const std::deque<std::string> *path_table_ = nullptr;   // interned site paths
+  size_t path_table_size_ = 0;  // snapshot of path_table size at bind time
 };
 
 }  // namespace pcp
