@@ -715,8 +715,10 @@ struct Cache::Impl {
       const PrimSpecMeta &m = it->spec->meta();
       const ArcEdit *e = SelectArcEdit(m, f);
       const std::vector<std::string> &inl = SelectInlineArc(m, f);
-      if (!e && inl.empty()) continue;  // field not authored on this spec
-      if (!e || e->is_explicit) {
+      if ((!e || !e->authored) && inl.empty()) {
+        continue;  // field not authored on this spec
+      }
+      if (!e || !e->authored || e->is_explicit) {
         result = inl;  // bare/explicit replaces weaker layers
         continue;
       }
@@ -1433,6 +1435,8 @@ struct Cache::Impl {
     }
     index_cache.erase(key);
     sources_cache.erase(key);
+    composed_cache_.erase(key);
+    composed_children_.erase(key);
     DropInstancing(key);
   }
 

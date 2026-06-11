@@ -245,6 +245,33 @@ static void test_compose_prim_lazy() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_compose_prim_dependency_invalidate() {
+  std::cout << "test_compose_prim_dependency_invalidate..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  // Build the dependency map, then lazily compose a prim whose opinions come
+  // from the class site. Invalidating the class must drop the dependent lazy
+  // composed prim, not just its PrimIndex.
+  assert(cache.ComputePrimIndex(Path("/World/I"), &warn, &err) != nullptr);
+  const PrimSpec *before = cache.ComposePrim(Path("/World/I"), &warn, &err);
+  assert(before && before->property_value("newClassOpinion") == nullptr);
+
+  PrimSpec *cls = root->prim_at_path_mutable("/_class_Base");
+  assert(cls);
+  cls->add_property("newClassOpinion", Value(int32_t(42)));
+  cache.Invalidate(Path("/_class_Base"));
+
+  const PrimSpec *after = cache.ComposePrim(Path("/World/I"), &warn, &err);
+  assert(after && after->property_value("newClassOpinion") &&
+         "dependency invalidation must drop stale ComposePrim cache entries");
+  std::cout << "  OK" << std::endl;
+}
+
 // Phase 10 (A2): lazy attribute evaluation through the cache -- resolve a
 // prim's attribute value (default + time-sample interpolation) and follow a
 // connection across lazily-composed prims, all WITHOUT BuildStage.
@@ -1167,11 +1194,14 @@ static void test_writer_listop_fidelity() {
   LayerBuilder lb(layer);
   lb.begin_prim("Bare", "Scope");
   lb.current()->meta().references.push_back("ext.usda</X>");  // bare (no edit)
+  lb.current()->meta().inherits.push_back("</_class_Base>");
+  lb.current()->meta().specializes.push_back("</_class_Fallback>");
   lb.end_prim();
   lb.begin_prim("Edited", "Scope");
   lb.current()->meta().references.push_back("ext.usda</A>");  // within-spec list
   {
     ArcEdit& e = lb.current()->meta().ensure_arc_edits().references;
+    e.authored = true;
     e.is_explicit = false;
     e.prepended.push_back("ext.usda</A>");
     e.deleted.push_back("ext.usda</Old>");
@@ -1188,6 +1218,10 @@ static void test_writer_listop_fidelity() {
   // whose `references = [` is not preceded by a qualifier word.
   assert(out.find("\n        references = [") != std::string::npos ||
          out.find("\n    references = [") != std::string::npos);
+  assert(out.find("inherits = [") != std::string::npos &&
+         "USDA writer must emit inherits arcs");
+  assert(out.find("specializes = [") != std::string::npos &&
+         "USDA writer must emit specializes arcs");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1246,6 +1280,61 @@ static void test_cross_layer_listops() {
   auto q_on = compose(exp, true, "/Q");
   assert(!q_on.first && q_on.second && "explicit list must replace the weak arc");
 
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_listop_edit_does_not_clear_other_arc_fields() {
+  std::cout << "test_listop_edit_does_not_clear_other_arc_fields..." << std::endl;
+  const std::string weak = "/tmp/next_pcp_listop_sibling_weak.usda";
+  const std::string root = "/tmp/next_pcp_listop_sibling_root.usda";
+  {
+    std::ofstream f(weak);
+    f << "#usda 1.0\n"
+         "def \"P\" (\n"
+         "    payload = </Lib/Pay>\n"
+         ")\n"
+         "{\n"
+         "}\n"
+         "def Scope \"Lib\"\n"
+         "{\n"
+         "    def Sphere \"Pay\" { custom int payloadProp = 2 }\n"
+         "}\n";
+  }
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\n"
+         "(\n"
+         "    subLayers = [@next_pcp_listop_sibling_weak.usda@]\n"
+         ")\n"
+         "def \"P\" (\n"
+         "    prepend references = </Lib/Ref>\n"
+         ")\n"
+         "{\n"
+         "}\n"
+         "def Scope \"Lib\"\n"
+         "{\n"
+         "    def Mesh \"Ref\" { custom int refProp = 1 }\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions opts;
+  opts.apply_list_ops = true;
+  Stage stage;
+  std::string warn, err;
+  bool ok = pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err);
+  if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+  assert(ok);
+  UsdPrim p = stage.GetPrimAtPath("/P");
+  assert(p.IsValid());
+  assert(p.GetPropertyValue("refProp") &&
+         "strong references list-op should compose");
+  assert(p.GetPropertyValue("payloadProp") &&
+         "references edit must not clear weak payload opinions");
+
+  std::remove(weak.c_str());
+  std::remove(root.c_str());
   std::cout << "  OK" << std::endl;
 }
 
@@ -1965,6 +2054,7 @@ int main() {
   test_typed_composition_issues();
   test_prototype_order_independent();
   test_compose_prim_lazy();
+  test_compose_prim_dependency_invalidate();
   test_eval_attribute_lazy();
   test_specialize_chain();
   test_cross_layer_arc_dedup();
@@ -1988,6 +2078,7 @@ int main() {
   test_cross_source_variant();
   test_implied_intermediate();
   test_cross_layer_listops();
+  test_listop_edit_does_not_clear_other_arc_fields();
   test_writer_listop_fidelity();
   test_compose_from_file();
   test_sublayer_stack_composition();

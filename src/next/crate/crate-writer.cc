@@ -483,6 +483,9 @@ private:
     std::shared_ptr<const CrateDataSource> src;  // null => inline `data`
     uint64_t src_offset = 0;
     uint64_t src_len = 0;
+    DataBlock() : type(TypeId::Invalid) {}
+    DataBlock(TypeId t, std::vector<uint8_t>&& bytes)
+        : type(t), data(std::move(bytes)) {}
     bool is_ref() const { return static_cast<bool>(src); }
     size_t size() const { return is_ref() ? static_cast<size_t>(src_len) : data.size(); }
     const uint8_t* bytes() const {
@@ -1705,7 +1708,7 @@ private:
       // unknown fields are ignored by other readers.
       const ArcListOpEdits* edits = prim.meta().arc_edits();
       auto add_arc_listop = [&](const char* base, const ArcEdit* e) {
-        if (!e || e->is_explicit) return;
+        if (!e || !e->authored || e->is_explicit) return;
         std::vector<std::string> enc;
         auto section = [&](const char* marker,
                            const std::vector<std::string>& items) {
