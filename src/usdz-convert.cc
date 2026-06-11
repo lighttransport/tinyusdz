@@ -2246,5 +2246,10 @@ bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
   return true;
 }
 
+size_t RemapLayerTextureAssetPaths(
+    Layer &layer, const std::map<std::string, std::string> &remap) {
+  return RemapLayerAssetPaths(layer, remap);
+}
+
 }  // namespace usdz
 }  // namespace tinyusdz

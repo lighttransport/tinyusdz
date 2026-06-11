@@ -6916,6 +6916,29 @@ class TinyUSDZLoaderNative {
         usdz_export_buf_.size(), usdz_export_buf_.data()));
   }
 
+  /// Rewrite texture asset paths in the loaded (composed, when flattened)
+  /// Layer per `remap` ({oldName: newName}). For streaming USDZ packers that
+  /// export the Layer directly (exportLayerAsUSDC*) and rename textures
+  /// (e.g. PNG -> JPG): the references must follow before the root is written.
+  /// Returns the number of references rewritten.
+  int remapLayerAssetPaths(emscripten::val remap) {
+    if (!loaded_) {
+      error_ = "No layer loaded";
+      return -1;
+    }
+    std::map<std::string, std::string> remap_map;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      remap_map[k] = remap[k].as<std::string>();
+    }
+    tinyusdz::Layer &layer = composited_ ? composed_layer_ : layer_;
+    return int(
+        tinyusdz::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
+  }
+
   /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
   /// paths according to `remap` ({oldName: newName}). Use when textures are
   /// renamed (e.g. transcoded PNG -> JPG) so references follow.
@@ -9133,6 +9156,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("debugLogMemory", &TinyUSDZLoaderNative::debugLogMemory)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
+      .function("remapLayerAssetPaths", &TinyUSDZLoaderNative::remapLayerAssetPaths)
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
       .function("exportLayerAsUSDZWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDZWithOptions)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
