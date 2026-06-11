@@ -23,7 +23,7 @@ set(TEST_SOURCES
 	unit-png-stream.cc
 	unit-imageproc.cc
 	unit-tydra.cc
-	# unit-tydra-subdivision.cc disabled during tsd migration (restored in M6)
+	unit-tydra-subdivision.cc
 	unit-dedup.cc
 	unit-path.cc
 	unit-crate-writer.cc

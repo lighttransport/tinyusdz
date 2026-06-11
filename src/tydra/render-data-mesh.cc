@@ -47,6 +47,7 @@
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
 #include "safe-arithmetic.hh"
+#include "tsd/tsd-tinyusdz.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -2778,16 +2779,67 @@ bool RenderSceneConverter::ConvertMesh(
 
   const uint32_t src_num_faces = uint32_t(dst.usdFaceVertexCounts.size());
   bool subdivision_applied{false};
+  // Base-face id per refined face when subdivision is applied (used to
+  // remap GeomSubset face indices).
+  std::vector<uint32_t> subdiv_face_source;
 
-  // TODO(tsd-migration, M6): apply subdivision through the tinysubdiv
-  // (src/tsd) adapter. The previous OpenSubdiv/TinySubdiv backends were
-  // removed; until the tsd adapter lands, subdivision requests fail cleanly.
   if (env.mesh_config.subdivision_level > 0 &&
       mesh.subdivisionScheme.get_value() !=
           GeomMesh::SubdivisionScheme::SubdivisionSchemeNone) {
-    PUSH_ERROR_AND_RETURN(
-        "Subdivision is temporarily unavailable while the subdivision backend "
-        "is being migrated to tinysubdiv (src/tsd).");
+    if (mesh.has_primvar("displayColor") ||
+        mesh.has_primvar("displayOpacity")) {
+      PUSH_ERROR_AND_RETURN(
+          "Subdivision is not yet supported for meshes with authored "
+          "`displayColor` or `displayOpacity` primvars in Tydra conversion.");
+    }
+
+    if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name) ||
+        mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
+      PUSH_ERROR_AND_RETURN(
+          "Subdivision is not yet supported for meshes with authored tangent "
+          "or binormal primvars in Tydra conversion.");
+    }
+
+    if (mesh.has_primvar("skel:jointIndices") ||
+        mesh.has_primvar("skel:jointWeights")) {
+      PUSH_ERROR_AND_RETURN(
+          "Subdivision is not yet supported for skinned meshes in Tydra "
+          "conversion.");
+    }
+
+    if (!blendshapes.empty()) {
+      PUSH_ERROR_AND_RETURN(
+          "Subdivision is not yet supported for meshes with BlendShapes in "
+          "Tydra conversion.");
+    }
+
+    if (mesh.has_primvar("normals") || mesh.normals.authored()) {
+      PUSH_WARN(
+          "Subdivision currently ignores authored normals and recomputes "
+          "normals from the subdivided topology.");
+    }
+
+    std::vector<float> control_points(dst.points.size() * 3);
+    memcpy(control_points.data(), dst.points.data(),
+           dst.points.size() * sizeof(value::float3));
+
+    tsd::RefinedMesh refined;
+    std::string subdiv_err;
+    if (!tsd::RefineGeomMesh(mesh, env.mesh_config.subdivision_level,
+                             control_points, dst.usdFaceVertexCounts,
+                             dst.usdFaceVertexIndices, &refined,
+                             &subdiv_err)) {
+      PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
+    }
+
+    dst.points.resize(refined.points.size() / 3);
+    memcpy(dst.points.data(), refined.points.data(),
+           refined.points.size() * sizeof(float));
+    dst.usdFaceVertexCounts = std::move(refined.face_vertex_counts);
+    dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
+    subdiv_face_source = std::move(refined.face_source);
+
+    subdivision_applied = true;
   }
 
 
@@ -2872,8 +2924,48 @@ bool RenderSceneConverter::ConvertMesh(
     dst.material_subsetMap[ms.prim_name] = ms;
   }
 
-  // TODO(tsd-migration, M6): remap material subset face indices via the
-  // refined mesh's face_source map when subdivision is applied.
+  // Remap material subset face indices onto the refined mesh: a base face
+  // maps to every refined face whose face_source points back at it. The
+  // remapped ids land in `triangulatedIndices` (the effective index set);
+  // the triangulation pass below remaps them again when enabled.
+  if (subdivision_applied && !dst.material_subsetMap.empty()) {
+    // Invert face_source: base face -> contiguous run of refined faces.
+    std::vector<uint32_t> counts(src_num_faces, 0);
+    for (uint32_t srcf : subdiv_face_source) {
+      if (srcf >= src_num_faces) {
+        PUSH_ERROR_AND_RETURN("Subdivision produced invalid face provenance.");
+      }
+      counts[srcf]++;
+    }
+    std::vector<uint32_t> offsets(size_t(src_num_faces) + 1, 0);
+    for (uint32_t f = 0; f < src_num_faces; f++) {
+      offsets[f + 1] = offsets[f] + counts[f];
+    }
+    std::vector<uint32_t> refined_ids(subdiv_face_source.size());
+    {
+      std::vector<uint32_t> cursor(offsets.begin(), offsets.end() - 1);
+      for (uint32_t rf = 0; rf < uint32_t(subdiv_face_source.size()); rf++) {
+        refined_ids[cursor[subdiv_face_source[rf]]++] = rf;
+      }
+    }
+
+    for (auto &sit : dst.material_subsetMap) {
+      std::vector<int> remapped;
+      for (int src_face : sit.second.usdIndices) {
+        if (src_face < 0 || uint32_t(src_face) >= src_num_faces) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "MaterialSubset `{}` face index {} exceeds source face count "
+              "{}.",
+              sit.first, src_face, src_num_faces));
+        }
+        for (uint32_t k = offsets[uint32_t(src_face)];
+             k < offsets[uint32_t(src_face) + 1]; k++) {
+          remapped.push_back(int(refined_ids[k]));
+        }
+      }
+      sit.second.triangulatedIndices = std::move(remapped);
+    }
+  }
 
   uint32_t num_vertices = uint32_t(dst.points.size());
   uint32_t num_faces = uint32_t(dst.usdFaceVertexCounts.size());
@@ -3440,7 +3532,7 @@ bool RenderSceneConverter::ConvertMesh(
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex
   ///  colors/opacities).
   ///
-  bool triangulate = env.mesh_config.triangulate && !subdivision_applied;
+  bool triangulate = env.mesh_config.triangulate;
   if (triangulate) {
     DCOUT("Triangulate mesh");
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
@@ -3509,8 +3601,14 @@ bool RenderSceneConverter::ConvertMesh(
       for (auto &it : dst.material_subsetMap) {
         std::vector<int> triangulated_indices;
 
-        for (size_t i = 0; i < it.second.usdIndices.size(); i++) {
-          int32_t srcIndex = it.second.usdIndices[i];
+        // When subdivision ran, the effective face ids were remapped into
+        // triangulatedIndices above (refined face ids); otherwise the
+        // authored usdIndices apply.
+        const std::vector<int> effective_indices =
+            subdivision_applied ? it.second.triangulatedIndices
+                                : it.second.usdIndices;
+        for (size_t i = 0; i < effective_indices.size(); i++) {
+          int32_t srcIndex = effective_indices[i];
           if (srcIndex < 0 || size_t(srcIndex) >= faceIndexOffsets.size()) {
             PUSH_ERROR_AND_RETURN(fmt::format(
                 "GeomSubset '{}': index {} out of range [0, {}).",

@@ -1025,6 +1025,7 @@ list(APPEND TINYUSDZ_SOURCES
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-fvar.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-limit.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-tinyusdz.cc
 )
 
 if(TINYUSDZ_WITH_GEOGRAM)
