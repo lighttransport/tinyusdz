@@ -1446,6 +1446,10 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       let assetName = (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
 
       stats.textures++;
+      // The WASM convertImage fallback below is synchronous; yield to the
+      // event loop periodically so a driving page/CLI can surface progress
+      // during multi-minute texture phases.
+      if ((stats.textures & 7) === 0) await new Promise((r) => setTimeout(r, 0));
       let outBytes = bytes;
 
       const fmtInfo = outputFormatForImage(path, textureFormat);
