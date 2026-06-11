@@ -281,7 +281,10 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   prim.meta().payloads.clear();
   prim.meta().inherits.clear();
   prim.meta().specializes.clear();
-  prim.meta().variantSets().clear();
+  // variantSets lives in the lazily-allocated ext; only touch it (the mutable
+  // accessor would otherwise allocate an empty ext for every ext-free prim)
+  // when an ext already exists.
+  if (prim.meta().has_ext()) prim.meta().variantSets().clear();
   prim.meta().variantSelection.clear();
 }
 
@@ -566,7 +569,8 @@ void FlattenLayer(Layer& layer) {
     meta.inherits.clear();
     meta.specializes.clear();
     meta.variantSelection.clear();
-    meta.variantSets().clear();
+    // See note above: avoid allocating an empty ext just to clear variantSets.
+    if (meta.has_ext()) meta.variantSets().clear();
   }
 }
 
