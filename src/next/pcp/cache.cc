@@ -679,6 +679,66 @@ struct Cache::Impl {
                err);
   }
 
+  // --- cross-layer list-op merge (Phase 7 S5) -----------------------------
+
+  enum class ArcSel { References, Payloads, Inherits, Specializes };
+
+  static const std::vector<std::string> &SelectInlineArc(const PrimSpecMeta &m,
+                                                         ArcSel f) {
+    switch (f) {
+      case ArcSel::References: return m.references;
+      case ArcSel::Payloads: return m.payloads;
+      case ArcSel::Inherits: return m.inherits;
+      default: return m.specializes;
+    }
+  }
+  static const ArcEdit *SelectArcEdit(const PrimSpecMeta &m, ArcSel f) {
+    const ArcListOpEdits *e = m.arc_edits();
+    if (!e) return nullptr;
+    switch (f) {
+      case ArcSel::References: return &e->references;
+      case ArcSel::Payloads: return &e->payloads;
+      case ArcSel::Inherits: return &e->inherits;
+      default: return &e->specializes;
+    }
+  }
+
+  // Compose one arc field across a site's specs (input is strong-first) per the
+  // AOUSD list-op rules, applying weakest->strongest. Returns the merged arc
+  // list in strong-first order (prepended-of-strongest ... appended-of-strongest).
+  // A spec that does not author the field is a no-op; a bare/explicit list
+  // replaces the weaker accumulation; prepend/append/delete edit it.
+  std::vector<std::string> MergeArcField(const std::vector<SpecRef> &specs,
+                                         ArcSel f) const {
+    std::vector<std::string> result;
+    for (auto it = specs.rbegin(); it != specs.rend(); ++it) {  // weakest first
+      const PrimSpecMeta &m = it->spec->meta();
+      const ArcEdit *e = SelectArcEdit(m, f);
+      const std::vector<std::string> &inl = SelectInlineArc(m, f);
+      if (!e && inl.empty()) continue;  // field not authored on this spec
+      if (!e || e->is_explicit) {
+        result = inl;  // bare/explicit replaces weaker layers
+        continue;
+      }
+      auto removeAll = [&](const std::vector<std::string> &rm) {
+        for (const std::string &x : rm) {
+          result.erase(std::remove(result.begin(), result.end(), x),
+                       result.end());
+        }
+      };
+      removeAll(e->deleted);
+      removeAll(e->prepended);  // dedup before re-adding
+      removeAll(e->appended);
+      std::vector<std::string> merged;
+      merged.reserve(e->prepended.size() + result.size() + e->appended.size());
+      merged.insert(merged.end(), e->prepended.begin(), e->prepended.end());
+      merged.insert(merged.end(), result.begin(), result.end());
+      merged.insert(merged.end(), e->appended.begin(), e->appended.end());
+      result.swap(merged);
+    }
+    return result;
+  }
+
   // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
   // references > payloads; specializes routed to `spec_out` (globally weakest).
   void ExpandArcs(const Src &src, const ExpansionFrame *frame,
@@ -696,24 +756,28 @@ struct Cache::Impl {
     // one (cross-source selection).
     for (const SpecRef &sr : specs) RecordSelections(*sr.spec, sels);
 
-    // Phase 7 (S5): when apply_list_ops is on, an arc authored identically in
-    // two of this site's specs (e.g. the same `references = </Foo>` in the root
-    // and a sublayer) is expanded only once. `nodup` returns true the first
-    // time it sees a (field, arc-string) pair, false on a repeat.
-    std::set<std::string> seen_arcs;
-    auto nodup = [&](char field, const std::string &arc) -> bool {
-      if (!options.apply_list_ops) return true;
-      return seen_arcs.insert(std::string(1, field) + arc).second;
-    };
+    // Phase 7 (S5): with apply_list_ops, gather each arc field once across the
+    // whole site (cross-layer list-op merge: explicit-replace / prepend /
+    // append / delete / dedup); otherwise expand each spec's arcs independently
+    // (legacy strong-first concatenation). Variants are always per-spec.
+    const bool merge = options.apply_list_ops;
+
+    if (merge) {
+      for (const std::string &s : MergeArcField(specs, ArcSel::Inherits)) {
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
+                   out, spec_out, sels, chain, warn, err);
+      }
+    }
 
     for (const SpecRef &sr : specs) {
       const PrimSpec *spec = sr.spec;
 
-      // Inherits (stronger than references).
-      for (const std::string &s : spec->meta().inherits) {
-        if (!nodup('I', s)) continue;
-        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
-                   out, spec_out, sels, chain, warn, err);
+      // Inherits (stronger than references) -- legacy per-spec path.
+      if (!merge) {
+        for (const std::string &s : spec->meta().inherits) {
+          ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
+                     out, spec_out, sels, chain, warn, err);
+        }
       }
 
       // Variants (weaker than inherits, stronger than references). For each
@@ -755,9 +819,10 @@ struct Cache::Impl {
         }
       }
 
+      if (merge) continue;  // merged refs/payloads/specializes handled below
+
       // References.
       for (const std::string &ref_str : spec->meta().references) {
-        if (!nodup('R', ref_str)) continue;
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
                    frame, out, spec_out, sels, chain, warn, err);
       }
@@ -766,7 +831,6 @@ struct Cache::Impl {
       if (!spec->meta().payloads.empty()) {
         const std::string root_prim_path = src.map.Apply(src.site);
         for (const std::string &pl_str : spec->meta().payloads) {
-          if (!nodup('P', pl_str)) continue;
           CompositionArc arc = Compositor::ParsePayload(pl_str);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
             deferred_payload_prims.insert(root_prim_path);
@@ -780,7 +844,33 @@ struct Cache::Impl {
 
       // Specializes (globally weakest; routed into spec_out by ProcessArc).
       for (const std::string &s : spec->meta().specializes) {
-        if (!nodup('S', s)) continue;
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
+                   frame, out, spec_out, sels, chain, warn, err);
+      }
+    }
+
+    if (merge) {
+      // Cross-layer-merged references / payloads / specializes, processed once
+      // in LIVRPS order (all inherits already emitted above, before variants).
+      for (const std::string &s : MergeArcField(specs, ArcSel::References)) {
+        ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference, frame,
+                   out, spec_out, sels, chain, warn, err);
+      }
+      std::vector<std::string> mpay = MergeArcField(specs, ArcSel::Payloads);
+      if (!mpay.empty()) {
+        const std::string root_prim_path = src.map.Apply(src.site);
+        for (const std::string &pl_str : mpay) {
+          CompositionArc arc = Compositor::ParsePayload(pl_str);
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+            deferred_payload_prims.insert(root_prim_path);
+            continue;
+          }
+          deferred_payload_prims.erase(root_prim_path);
+          ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
+                     chain, warn, err);
+        }
+      }
+      for (const std::string &s : MergeArcField(specs, ArcSel::Specializes)) {
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
                    frame, out, spec_out, sels, chain, warn, err);
       }
