@@ -3117,10 +3117,19 @@ class TinyUSDZLoaderNative {
       // - [ ] Specializes
       //
 
+      // Allow parent-relative/drive-prefixed asset paths (UE exports); the
+      // sandboxed in-memory resolver bounds what is reachable.
+      tinyusdz::SublayersCompositionOptions sublayer_options;
+      sublayer_options.allow_parent_relative_paths = true;
+      tinyusdz::ReferencesCompositionOptions references_options;
+      references_options.allow_parent_relative_paths = true;
+      tinyusdz::PayloadCompositionOptions payload_options;
+      payload_options.allow_parent_relative_paths = true;
+
       tinyusdz::Layer src_layer = root_layer;
       if (comp_features.subLayers) {
         tinyusdz::Layer composited_layer;
-        if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+        if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_, sublayer_options)) {
           //std::cerr << "Failed to composite subLayers: " << err << "\n";
           return false;
         }
@@ -3143,7 +3152,7 @@ class TinyUSDZLoaderNative {
             has_unresolved = true;
 
             tinyusdz::Layer composited_layer;
-            if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+            if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_, references_options)) {
               return false;
             }
 
@@ -3160,7 +3169,7 @@ class TinyUSDZLoaderNative {
             has_unresolved = true;
 
             tinyusdz::Layer composited_layer;
-            if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+            if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_, payload_options)) {
               return false;
             }
 
@@ -6787,11 +6796,25 @@ class TinyUSDZLoaderNative {
     tinyusdz::Layer src_layer =
         composited_ ? std::move(composed_layer_) : std::move(layer_);
 
+    // Parent-relative ('../') and drive-prefixed asset paths are legitimate in
+    // UE-exported scenes; the sandboxed in-memory resolver bounds what is
+    // reachable, and the resolver suffix-fallback rebases escaping paths onto
+    // the uploaded folder root.
+    tinyusdz::SublayersCompositionOptions sublayer_options;
+    sublayer_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+    tinyusdz::ReferencesCompositionOptions references_options;
+    references_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+    tinyusdz::PayloadCompositionOptions payload_options;
+    payload_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+
     // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
     // fixed point. Each Composite* moves the prior layer into the next.
     {
       tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_)) {
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_, sublayer_options)) {
         error_ = "Failed to composite subLayers: " + error_;
         return false;
       }
@@ -6802,12 +6825,12 @@ class TinyUSDZLoaderNative {
       bool unresolved = false;
       if (src_layer.check_unresolved_references()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_, references_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_payload()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_, payload_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_inherits()) {

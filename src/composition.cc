@@ -4,6 +4,7 @@
 #include "composition.hh"
 
 #include <algorithm>
+#include <mutex>
 #include <set>
 #include <stack>
 #include <unordered_map>
@@ -421,23 +422,40 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   // resolve path
   // TODO: Store resolved path to Reference?
-  std::string resolved_path = resolver.resolve(asset_path);
+  bool used_suffix_fallback{false};
+  std::string resolved_path =
+      resolver.resolve(asset_path, &used_suffix_fallback);
 
   DCOUT("Loading references: " << resolved_path
                                << ", asset_path: " << asset_path);
+
+  // Dedupe per-asset-path warnings: UE-exported scenes repeat the same
+  // authored path across thousands of arcs.
+  static std::set<std::string> s_warned_asset_paths;
+  static std::mutex s_warned_asset_paths_mutex;
+  auto warn_once = [&](const std::string &key, const std::string &msg) {
+    std::lock_guard<std::mutex> lock(s_warned_asset_paths_mutex);
+    if (s_warned_asset_paths.insert(key).second) {
+      PUSH_WARN(msg);
+    }
+  };
+
+  if (used_suffix_fallback) {
+    warn_once(asset_path,
+              fmt::format("Asset `{}` not found at authored path; rebased to "
+                          "`{}` via suffix fallback.",
+                          asset_path, resolved_path));
+  }
 
   if (resolved_path.empty()) {
     if (error_when_asset_not_found) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to resolve asset path `{}`", asset_path));
     } else {
-      PUSH_WARN(fmt::format("Asset not found: `{}`", asset_path));
-      PUSH_WARN(
-          fmt::format("  current working path: `{}`", current_working_path));
-      PUSH_WARN(fmt::format("  resolver.current_working_path: `{}`",
-                            resolver.current_working_path()));
-      PUSH_WARN(fmt::format("  search_paths: `{}`", search_paths));
-      PUSH_WARN(fmt::format("  resolver.search_paths: `{}`",
+      warn_once(asset_path,
+                fmt::format("Asset not found: `{}` (current working path `{}`, "
+                            "search_paths `{}`)",
+                            asset_path, resolver.current_working_path(),
                             resolver.search_paths()));
       (*dst_primspec_root) = nullptr;
       return true;
