@@ -1074,7 +1074,11 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err, reference_opts)) {
+          // InPlace: consumes src_layer (no internal arcs) instead of holding
+          // input + output copies — halves the peak of the pass.
+          if (!tinyusdz::CompositeReferencesInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
@@ -1099,7 +1103,9 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err, payload_opts)) {
+          if (!tinyusdz::CompositePayloadInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }

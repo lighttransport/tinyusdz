@@ -2055,7 +2055,7 @@ bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `references` ok.");
   return true;
@@ -2070,6 +2070,99 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   ArcVisitedSet visited;
   return CompositeReferencesImpl(resolver, in_layer, composited_layer,
                                  warn, err, options, visited);
+}
+
+namespace {
+
+// True when any prim in the layer authors an internal arc (a reference or
+// payload whose asset path is empty: `references = </some/Prim>`). Internal
+// arcs are resolved by looking prims up in the *pristine* input layer, so the
+// move-based InPlace composition (which consumes the input) must fall back to
+// the copying path when they are present.
+bool LayerHasInternalArcs(const Layer &layer, bool check_references,
+                          bool check_payload) {
+  std::vector<const PrimSpec *> stack;
+  for (const auto &item : layer.primspecs()) {
+    stack.push_back(&item.second);
+  }
+  while (!stack.empty()) {
+    const PrimSpec *ps = stack.back();
+    stack.pop_back();
+
+    if (check_references && ps->metas().references) {
+      for (const auto &ref_op : ps->metas().references.value()) {
+        for (const auto &ref : ref_op.second) {
+          if (ref.asset_path.GetAssetPath().empty()) {
+            return true;
+          }
+        }
+      }
+    }
+    if (check_payload && ps->metas().payload) {
+      for (const auto &pl_op : ps->metas().payload.value()) {
+        for (const auto &pl : pl_op.second) {
+          if (pl.asset_path.GetAssetPath().empty()) {
+            return true;
+          }
+        }
+      }
+    }
+
+    for (const auto &child : ps->children()) {
+      stack.push_back(&child);
+    }
+    for (const auto &variant_set_item : ps->variantSets()) {
+      for (const auto &variant_item : variant_set_item.second.variantSet) {
+        stack.push_back(&variant_item.second);
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
+                                std::unique_ptr<Layer> layer,
+                                Layer *composited_layer, std::string *warn,
+                                std::string *err,
+                                ReferencesCompositionOptions options) {
+  if (!layer || !composited_layer) {
+    return false;
+  }
+
+  ArcVisitedSet visited;
+
+  // Internal references need pristine-layer lookups: keep the input alive and
+  // use the copying path.
+  if (LayerHasInternalArcs(*layer, /* references */ true, /* payload */ false)) {
+    return CompositeReferencesImpl(resolver, *layer, composited_layer, warn,
+                                   err, options, visited);
+  }
+
+  // No internal arcs: consume the input instead of deep-copying it, halving
+  // the peak of the pass (the copying path holds input + output).
+  std::vector<std::string> search_paths = layer->get_asset_search_paths();
+  Layer dst = std::move(*layer);
+  layer.reset();
+
+  for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
+    // `dst` doubles as the internal-lookup layer; never consulted since the
+    // scan above found no internal arcs (arcs appended during this pass are
+    // processed by the next fixed-point iteration, which rescans).
+    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths,
+                                primPath, dst, item.second, warn, err, options,
+                                visited)) {
+      if (err) {
+        (*err) += "Composite `references` failed.\n";
+      }
+      return false;
+    }
+  }
+
+  (*composited_layer) = std::move(dst);
+  return true;
 }
 
 namespace {
@@ -2155,7 +2248,7 @@ bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_lay
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `payload` ok.");
   return true;
@@ -2169,6 +2262,43 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   ArcVisitedSet visited;
   return CompositePayloadImpl(resolver, in_layer, composited_layer,
                               warn, err, options, visited);
+}
+
+bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
+                             std::unique_ptr<Layer> layer,
+                             Layer *composited_layer, std::string *warn,
+                             std::string *err,
+                             PayloadCompositionOptions options) {
+  if (!layer || !composited_layer) {
+    return false;
+  }
+
+  ArcVisitedSet visited;
+
+  // Internal payload arcs need pristine-layer lookups: copying path.
+  if (LayerHasInternalArcs(*layer, /* references */ false, /* payload */ true)) {
+    return CompositePayloadImpl(resolver, *layer, composited_layer, warn, err,
+                                options, visited);
+  }
+
+  // No internal arcs: consume the input instead of deep-copying it.
+  Layer dst = std::move(*layer);
+  layer.reset();
+
+  for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
+    if (!CompositePayloadRec(/* depth */ 0, resolver,
+                             item.second.get_asset_search_paths(), primPath,
+                             dst, item.second, warn, err, options, visited)) {
+      if (err) {
+        (*err) += "Composite `payload` failed.\n";
+      }
+      return false;
+    }
+  }
+
+  (*composited_layer) = std::move(dst);
+  return true;
 }
 
 bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
@@ -2185,7 +2315,7 @@ bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `variantSet` ok.");
   return true;
@@ -2207,7 +2337,7 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `inherits` ok.");
   return true;
@@ -2326,7 +2456,7 @@ bool CompositeSpecializes(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `specializes` ok.");
   return true;
@@ -2982,7 +3112,7 @@ bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
   // Clear layerRelocates after processing
   dst.metas().layerRelocates.clear();
 
-  *composited_layer = dst;
+  *composited_layer = std::move(dst);
   DCOUT("Composite `relocates` ok.");
   return true;
 }
