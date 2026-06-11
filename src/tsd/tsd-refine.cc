@@ -136,9 +136,12 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
                 "subdivision on the caller side.");
   }
   if (options.scheme == Scheme::Loop) {
-    // TODO(tsd, M4)
-    return Fail(Result::UnsupportedScheme, err,
-                "Loop scheme not implemented yet.");
+    for (uint32_t f = 0; f < mesh.num_faces; f++) {
+      if (mesh.face_vertex_counts[f] != 3) {
+        return Fail(Result::InvalidTopology, err,
+                    "Loop scheme requires an all-triangle mesh.");
+      }
+    }
   }
 
   if (options.level == 0) {
@@ -155,6 +158,8 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
   }
 
   const bool catmark = (options.scheme == Scheme::CatmullClark);
+  const bool loop = (options.scheme == Scheme::Loop);
+  const bool smooth_scheme = catmark || loop;
 
   // FVar channels split into the per-corner linear path ("all", or any mode
   // under bilinear whose masks are all linear) and the seam-split smooth
@@ -162,7 +167,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
   std::vector<uint8_t> fvar_is_linear(num_fvar_channels, 1);
   for (uint32_t c = 0; c < num_fvar_channels; c++) {
     fvar_is_linear[c] =
-        (!catmark ||
+        (!smooth_scheme ||
          fvar_channels[c].interpolation == FVarLinearInterpolation::All)
             ? 1
             : 0;
@@ -260,7 +265,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
       // authored infinitely sharp (OpenSubdiv's escape hatch). Bilinear is
       // exempt (OpenSubdiv only applies this to schemes with a local
       // neighborhood, i.e. catmark/loop).
-      if (options.boundary == BoundaryInterpolation::None && catmark) {
+      if (options.boundary == BoundaryInterpolation::None && smooth_scheme) {
         for (uint32_t v = 0; v < num_points; v++) {
           if (!topo.vert_is_boundary[v]) {
             continue;
@@ -316,7 +321,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
           return r;
         }
       }
-    } else if (catmark) {
+    } else if (smooth_scheme) {
       std::vector<float> new_edge_sharp;
       std::vector<float> new_vert_sharp;
       DeriveChildSharpness(prev_topo, prev_edge_sharp, prev_vert_sharp, topo,
@@ -328,9 +333,11 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
 
     // --- Capacity check for the child level ----------------------------------
     const uint64_t child_points64 =
-        uint64_t(topo.num_points) + topo.num_edges + topo.num_faces;
-    const uint64_t child_faces64 = fvi.size();
-    const uint64_t child_corners64 = child_faces64 * 4;
+        loop ? (uint64_t(topo.num_points) + topo.num_edges)
+             : (uint64_t(topo.num_points) + topo.num_edges + topo.num_faces);
+    const uint64_t child_faces64 =
+        loop ? (uint64_t(topo.num_faces) * 4) : uint64_t(fvi.size());
+    const uint64_t child_corners64 = child_faces64 * (loop ? 3 : 4);
     if (child_points64 > options.max_vertices ||
         child_faces64 > options.max_faces || child_points64 > 0xFFFFFFFFull ||
         child_corners64 > 0xFFFFFFFFull) {
@@ -340,7 +347,8 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
 
     // --- Child topology -------------------------------------------------------
     ChildTopo child;
-    r = BuildChildTopologyQuad(topo, fvi.data(), &child, err);
+    r = loop ? BuildChildTopologyTri(topo, fvi.data(), &child, err)
+             : BuildChildTopologyQuad(topo, fvi.data(), &child, err);
     if (r != Result::Success) {
       return r;
     }
@@ -354,6 +362,9 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
     if (catmark) {
       CatmarkRefineValues(topo, fvi.data(), geom.data(), 3, sharp, options,
                           child_geom.data());
+    } else if (loop) {
+      LoopRefineValues(topo, fvi.data(), geom.data(), 3, sharp, options,
+                       child_geom.data());
     } else {
       BilinearRefineValues(topo, fvi.data(), geom.data(), 3, options,
                            child_geom.data());
@@ -366,6 +377,28 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
       if (catmark && !vertex_primvars[p].varying) {
         CatmarkRefineValues(topo, fvi.data(), pvs[p].data(), stride, sharp,
                             options, child_pv.data());
+      } else if (loop && !vertex_primvars[p].varying) {
+        LoopRefineValues(topo, fvi.data(), pvs[p].data(), stride, sharp,
+                         options, child_pv.data());
+      } else if (loop) {
+        // Linear ("varying") under the tri split: vertex children copy,
+        // edge children midpoint; reuse the Loop kernel with a sharpness
+        // context that forces midpoints? No -- linear weights are simply
+        // copy + midpoint, which LinearTriVarying below provides inline.
+        for (uint32_t v = 0; v < topo.num_points; v++) {
+          memcpy(&child_pv[size_t(v) * stride],
+                 &pvs[p][size_t(v) * stride], sizeof(float) * stride);
+        }
+        for (uint32_t e = 0; e < topo.num_edges; e++) {
+          const float *a =
+              &pvs[p][size_t(topo.edge_verts[2 * e]) * stride];
+          const float *b =
+              &pvs[p][size_t(topo.edge_verts[2 * e + 1]) * stride];
+          float *d = &child_pv[(size_t(topo.num_points) + e) * stride];
+          for (uint32_t cc = 0; cc < stride; cc++) {
+            d[cc] = 0.5f * (a[cc] + b[cc]);
+          }
+        }
       } else {
         BilinearRefineValues(topo, fvi.data(), pvs[p].data(), stride, options,
                              child_pv.data());
@@ -377,8 +410,13 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
       if (fvar_is_linear[c]) {
         const uint32_t stride = fvar_channels[c].stride;
         std::vector<float> child_fv(size_t(child_corners64) * stride);
-        LinearFVarRefineQuad(topo, fvars[c].data(), stride, options,
-                             child_fv.data());
+        if (loop) {
+          LinearFVarRefineTri(topo, fvars[c].data(), stride, options,
+                              child_fv.data());
+        } else {
+          LinearFVarRefineQuad(topo, fvars[c].data(), stride, options,
+                               child_fv.data());
+        }
         fvars[c] = std::move(child_fv);
       } else {
         r = RefineFVarSplitOnce(&fvar_split[c], options,
@@ -406,7 +444,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
     num_points = child.num_points;
     fvc = std::move(child.fvc);
     fvi = std::move(child.fvi);
-    if (catmark && (lvl + 1 < options.level)) {
+    if (smooth_scheme && (lvl + 1 < options.level)) {
       prev_topo = std::move(topo);
       prev_edge_sharp = std::move(edge_sharp);
       prev_vert_sharp = std::move(vert_sharp);

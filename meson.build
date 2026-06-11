@@ -518,6 +518,7 @@ tinyusdz_sources += files(
   'src/tsd/tsd-topology.cc',
   'src/tsd/tsd-bilinear.cc',
   'src/tsd/tsd-catmark.cc',
+  'src/tsd/tsd-loop.cc',
   'src/tsd/tsd-fvar.cc',
   'src/tsd/tsd-refine.cc',
 )
