@@ -1589,6 +1589,11 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     composeToFixedPoint(usd);
+    // Composition is done: drop the previous-iteration source layer (a full
+    // copy of the composed scene) and the USD-layer bytes in the wasm asset
+    // cache — only the composed layer is used from here on.
+    if (typeof usd.releaseSourceLayer === 'function') usd.releaseSourceLayer();
+    if (typeof usd.clearAssets === 'function') usd.clearAssets();
 
     // 3. Precompute texture output names; remap renamed references in the
     //    composed layer before the root is written.
