@@ -22,6 +22,53 @@
 namespace tinyusdz {
 namespace next {
 
+// ============================================================
+// TokenPool (Phase 8.2: TfToken-lite)
+// ============================================================
+//
+// The crate token section is one contiguous run of NUL-separated strings. The
+// reader used to explode it into a std::vector<std::string> -- a separate
+// string object (and, for non-SSO tokens, a separate heap allocation) per
+// token. TokenPool instead keeps all token bytes in a single blob addressed by
+// (offset,len) spans: 8 bytes/token of fixed overhead and no per-token
+// allocation, cutting the transient parse-time peak. Every consumer copies a
+// token out by value, so the pool exposes `str(i)` rather than a reference.
+class TokenPool {
+ public:
+  void clear() {
+    blob_.clear();
+    spans_.clear();
+  }
+  void reserve(size_t n) { spans_.reserve(n); }
+  // Append a token spanning [begin, begin+len) into the pool.
+  void push(const char* begin, size_t len) {
+    spans_.push_back(Span{static_cast<uint32_t>(blob_.size()),
+                          static_cast<uint32_t>(len)});
+    blob_.append(begin, len);
+  }
+  size_t size() const { return spans_.size(); }
+  bool empty() const { return spans_.empty(); }
+  // Copy of token `i` (caller guarantees i < size()).
+  std::string str(size_t i) const {
+    const Span& s = spans_[i];
+    return std::string(blob_.data() + s.off, s.len);
+  }
+  // Materialize the whole pool as a vector<string> (diagnostics only).
+  std::vector<std::string> to_vector() const {
+    std::vector<std::string> out;
+    out.reserve(spans_.size());
+    for (size_t i = 0; i < spans_.size(); ++i) out.push_back(str(i));
+    return out;
+  }
+
+ private:
+  struct Span {
+    uint32_t off;
+    uint32_t len;
+  };
+  std::string blob_;
+  std::vector<Span> spans_;
+};
 
 // ============================================================
 // Implementation class
@@ -35,7 +82,7 @@ public:
   CrateReadResult ReadOwned(std::string&& owned);  // adopt bytes by move (single copy)
   CrateReadResult ReadFile(const char* filename);
 
-  const std::vector<std::string>& tokens() const { return tokens_; }
+  std::vector<std::string> tokens() const { return tokens_.to_vector(); }
   const std::vector<std::string>& paths() const { return paths_; }
   const std::vector<CrateField>& fields() const { return fields_; }
   const std::vector<CrateSpec>& specs() const { return specs_; }
@@ -53,7 +100,7 @@ private:
   // Parsed tables
   CrateVersion version_;
   CrateTOC toc_;
-  std::vector<std::string> tokens_;
+  TokenPool tokens_;  // pooled token storage (Phase 8.2)
   std::vector<uint32_t> string_indices_;
   std::vector<CrateField> fields_;
   std::vector<uint32_t> fieldset_indices_;
@@ -933,7 +980,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       std::vector<std::string> data(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) {
         if (idxs[i] >= tokens_.size()) return false;
-        data[i] = tokens_[idxs[i]];
+        data[i] = tokens_.str(idxs[i]);
       }
       out = Value::MakeTokenArray(std::move(data));
       return true;
@@ -1242,7 +1289,7 @@ bool CrateReader::Impl::ReadTokens() {
       AddError("Token table not NUL-terminated");
       return false;
     }
-    tokens_.emplace_back(ptr, nul);
+    tokens_.push(ptr, static_cast<size_t>(nul - ptr));
     ptr = nul + 1;
   }
 
@@ -1708,7 +1755,7 @@ bool CrateReader::Impl::ReadPaths() {
     uint32_t token_idx = is_prop
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    if (token_idx < tokens_.size()) return tokens_[token_idx];
+    if (token_idx < tokens_.size()) return tokens_.str(token_idx);
     return "__unknown_token_" + std::to_string(token_idx);
   };
 
@@ -2354,7 +2401,7 @@ bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {
   if (index >= tokens_.size()) {
     return false;
   }
-  out = tokens_[index];
+  out = tokens_.str(index);
   return true;
 }
 
@@ -2400,7 +2447,7 @@ CrateReadResult CrateReader::ReadFile(const char* filename) {
   return impl_->ReadFile(filename);
 }
 
-const std::vector<std::string>& CrateReader::tokens() const {
+std::vector<std::string> CrateReader::tokens() const {
   return impl_->tokens();
 }
 

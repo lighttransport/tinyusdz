@@ -101,7 +101,9 @@ public:
   // ============================================================
 
   /// Get tokens table
-  const std::vector<std::string>& tokens() const;
+  // Materialized copy of the token table (diagnostics only; the reader stores
+  // tokens pooled, see TokenPool in the .cc).
+  std::vector<std::string> tokens() const;
 
   /// Get paths table
   const std::vector<std::string>& paths() const;
