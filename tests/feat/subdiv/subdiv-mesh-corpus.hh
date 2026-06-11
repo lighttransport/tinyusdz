@@ -237,6 +237,63 @@ inline Mesh MixedDegree() {
   return m;
 }
 
+// Cube with a crease chain around the +y face ring (per-crease sharpness).
+inline Mesh CreasedCube(float sharpness, const char *name) {
+  Mesh m = Cube();
+  m.name = name;
+  // +y face is (2,3,5,4); close the ring back to 2.
+  m.crease_indices = {2, 3, 5, 4, 2};
+  m.crease_lengths = {5};
+  m.crease_sharpnesses = {sharpness};
+  return m;
+}
+
+// Cube with per-edge crease sharpness along the same ring.
+inline Mesh PerEdgeCreasedCube() {
+  Mesh m = Cube();
+  m.name = "per_edge_creased_cube";
+  m.crease_indices = {2, 3, 5, 4, 2};
+  m.crease_lengths = {5};
+  m.crease_sharpnesses = {0.4f, 1.5f, 2.7f, 10.0f};  // one per edge
+  return m;
+}
+
+// 3x3 quad grid with sharpened vertices: one boundary corner and interior
+// vertices with semi-sharp / infinite corner sharpness.
+inline Mesh CorneredGrid() {
+  Mesh m = QuadGrid(3, 3, "cornered_grid");
+  m.corner_indices = {0, 5, 6, 10};
+  m.corner_sharpnesses = {2.0f, 0.8f, 2.0f, 10.0f};
+  return m;
+}
+
+// Cube with two faces tagged as holes.
+inline Mesh CubeWithHoles() {
+  Mesh m = Cube();
+  m.name = "cube_with_holes";
+  m.hole_indices = {1, 4};
+  return m;
+}
+
+// 2x2 quad grid with a per-corner UV channel containing a seam between the
+// left and right column of faces (two UV islands).
+inline Mesh UVSeamGrid() {
+  Mesh m = QuadGrid(2, 2, "uv_seam_grid");
+  m.fvar_uv.reserve(m.face_vertex_indices.size() * 2);
+  for (size_t f = 0; f < m.face_vertex_counts.size(); f++) {
+    const float u_off = (f % 2 == 0) ? 0.0f : 0.55f;  // island per column
+    const float v_off = (f / 2 == 0) ? 0.0f : 0.45f;
+    // 4 corners per quad in (x, y) param order.
+    const float us[4] = {0.0f, 0.4f, 0.4f, 0.0f};
+    const float vs[4] = {0.0f, 0.0f, 0.4f, 0.4f};
+    for (int k = 0; k < 4; k++) {
+      m.fvar_uv.push_back(u_off + us[k]);
+      m.fvar_uv.push_back(v_off + vs[k]);
+    }
+  }
+  return m;
+}
+
 // Non-manifold "bowtie sheets": three quads sharing one edge.
 // tsd must reject this (OpenSubdiv tolerates it).
 inline Mesh NonManifoldFan() {

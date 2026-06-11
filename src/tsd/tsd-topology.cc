@@ -202,6 +202,44 @@ Result BuildTopology(const uint32_t *face_vertex_counts, uint32_t num_faces,
   return Result::Success;
 }
 
+Result BuildChildTopologyQuad(const Topology &topo, const uint32_t *parent_fvi,
+                              ChildTopo *out, std::string *err) {
+  const uint32_t V = topo.num_points;
+  const uint32_t E = topo.num_edges;
+  const uint32_t F = topo.num_faces;
+  const uint32_t num_corners = topo.face_offsets[F];
+
+  // Sizes are pre-validated by the driver's cap check; this is a backstop.
+  const uint64_t child_points = uint64_t(V) + E + F;
+  const uint64_t child_corners = uint64_t(num_corners) * 4;
+  if (child_points > 0xFFFFFFFFull || child_corners > 0xFFFFFFFFull) {
+    return Fail(Result::LimitExceeded, err, "child topology too large.");
+  }
+
+  out->num_points = uint32_t(child_points);
+  out->fvc.assign(num_corners, 4);
+  out->fvi.resize(size_t(child_corners));
+  out->face_parent.resize(num_corners);
+
+  uint32_t child_face = 0;
+  for (uint32_t f = 0; f < F; f++) {
+    const uint32_t begin = topo.face_offsets[f];
+    const uint32_t n = topo.face_offsets[f + 1] - begin;
+    const uint32_t fchild = V + E + f;
+    for (uint32_t k = 0; k < n; k++) {
+      const uint32_t prev = (k == 0) ? (n - 1) : (k - 1);
+      uint32_t *quad = &out->fvi[size_t(child_face) * 4];
+      quad[0] = parent_fvi[begin + k];
+      quad[1] = V + topo.face_edges[begin + k];
+      quad[2] = fchild;
+      quad[3] = V + topo.face_edges[begin + prev];
+      out->face_parent[child_face] = f;
+      child_face++;
+    }
+  }
+  return Result::Success;
+}
+
 // Internal helper used by the refine driver to map canonical crease vertex
 // pairs onto edge ids of the level-0 topology. Pairs that are not actual
 // mesh edges are skipped (OpenSubdiv warns and ignores them too).
