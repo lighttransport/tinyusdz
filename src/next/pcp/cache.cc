@@ -17,6 +17,9 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#if defined(TINYUSDZ_NEXT_FINE_LOCKS)
+#include <shared_mutex>
+#endif
 #endif
 
 namespace tinyusdz {
@@ -28,19 +31,42 @@ namespace pcp {
 // (ComputePrimIndex / BuildStage / queries / payload edits) from multiple
 // threads. Compiles to nothing in non-threaded builds.
 //
-// Phase 9 (F6) dropped the original *recursive* mutex: public entry points now
-// take the lock exactly once and delegate to lock-free `*_locked` internals, so
-// no public method re-enters the lock. Define TINYUSDZ_NEXT_RECURSIVE_LOCK to
-// fall back to the re-entrant recursive mutex -- a bring-up escape hatch for the
-// wider fine-locking work (TINYUSDZ_NEXT_FINE_LOCKS) should a new re-entrant
-// path ever be introduced.
-#if defined(TINYUSDZ_NEXT_RECURSIVE_LOCK)
+// Three lock policies, selected at compile time:
+//
+//  * default (Phase 9 F6): a single non-recursive std::mutex. Public entry
+//    points take the lock exactly once and delegate to lock-free `*_locked`
+//    internals, so no public method re-enters the lock. READ and WRITE locks
+//    are the same exclusive lock.
+//
+//  * TINYUSDZ_NEXT_FINE_LOCKS (Phase 9 F4): a std::shared_timed_mutex. Pure
+//    reads (cache hits in ComputePrimIndex, and the read-only query methods)
+//    take a shared lock and run concurrently; builds and writers take the
+//    exclusive lock. ComputePrimIndex tries the shared fast path first and,
+//    on a cache miss, re-acquires exclusively and double-checks (so the same
+//    prim is built once even under contention).
+//
+//  * TINYUSDZ_NEXT_RECURSIVE_LOCK: the original re-entrant recursive mutex --
+//    a bring-up escape hatch should a new re-entrant path be introduced.
+#if defined(TINYUSDZ_NEXT_FINE_LOCKS)
+#include <shared_mutex>
+using PcpMutex = std::shared_timed_mutex;
+// std::shared_lock lives in <shared_mutex> (included at file scope above).
+#define NEXT_PCP_READ_LOCK(m) std::shared_lock<PcpMutex> _pcp_rlk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::unique_lock<PcpMutex> _pcp_wlk(m)
+#elif defined(TINYUSDZ_NEXT_RECURSIVE_LOCK)
 using PcpMutex = std::recursive_mutex;
+#define NEXT_PCP_READ_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
 #else
 using PcpMutex = std::mutex;
+#define NEXT_PCP_READ_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
+#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
 #endif
-#define NEXT_PCP_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
+// Legacy alias: existing exclusive sites use NEXT_PCP_LOCK == write lock.
+#define NEXT_PCP_LOCK(m) NEXT_PCP_WRITE_LOCK(m)
 #else
+#define NEXT_PCP_READ_LOCK(m) (void)0
+#define NEXT_PCP_WRITE_LOCK(m) (void)0
 #define NEXT_PCP_LOCK(m) (void)0
 #endif
 
@@ -852,7 +878,18 @@ struct Cache::Impl {
   // Public entry: takes the lock once, then runs the lock-free worker.
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err) {
-    NEXT_PCP_LOCK(api_mu_);
+#if defined(TINYUSDZ_ENABLE_THREAD) && defined(TINYUSDZ_NEXT_FINE_LOCKS)
+    // F4 fast path: a shared lock lets cache hits resolve concurrently. On a
+    // miss we fall through to the exclusive build; ComputePrimIndex_locked
+    // re-checks index_cache under the write lock, so a prim contended by many
+    // threads is still built exactly once.
+    {
+      NEXT_PCP_READ_LOCK(api_mu_);
+      auto it = index_cache.find(prim_path.str());
+      if (it != index_cache.end()) return it->second.get();
+    }
+#endif
+    NEXT_PCP_WRITE_LOCK(api_mu_);
     return ComputePrimIndex_locked(prim_path, warn, err);
   }
 
@@ -1358,24 +1395,24 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
 }
 
 bool Cache::IsInstance(const Path &p) const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() && it->second != p.str();
 }
 Path Cache::GetPrototype(const Path &p) const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   auto it = impl_->prototype_of.find(p.str());
   return it != impl_->prototype_of.end() ? Path(it->second) : Path();
 }
 std::vector<Path> Cache::GetPrototypePaths() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->instances_by_prototype.size());
   for (const auto &kv : impl_->instances_by_prototype) out.push_back(Path(kv.first));
   return out;
 }
 std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   auto it = impl_->instances_by_prototype.find(proto.str());
   if (it != impl_->instances_by_prototype.end()) {
@@ -1384,7 +1421,7 @@ std::vector<Path> Cache::GetInstancesForPrototype(const Path &proto) const {
   return out;
 }
 size_t Cache::PrototypeCount() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->instances_by_prototype.size();
 }
 std::string Cache::ComputeInstanceKey(const Path &p, std::string *warn,
@@ -1402,15 +1439,15 @@ bool Cache::LoadPayload(const Path &p, LoadPolicy policy, std::string *warn,
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
 void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
 LoadRules Cache::GetLoadRules() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->load_rules_;
 }
 bool Cache::HasDeferredPayload(const Path &p) const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->deferred_payload_prims.count(p.str()) != 0;
 }
 std::vector<Path> Cache::GetDeferredPayloadPaths() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   std::vector<Path> out;
   out.reserve(impl_->deferred_payload_prims.size());
   for (const std::string &s : impl_->deferred_payload_prims) out.push_back(Path(s));
@@ -1418,11 +1455,11 @@ std::vector<Path> Cache::GetDeferredPayloadPaths() const {
 }
 
 const std::vector<Cache::CompositionIssue> &Cache::GetCompositionIssues() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->issues_;
 }
 void Cache::ClearCompositionIssues() {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
   impl_->issues_.clear();
 }
 
@@ -1430,11 +1467,11 @@ void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
 void Cache::InvalidateLayer(const std::string &id) { impl_->InvalidateLayer(id); }
 
 bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->index_cache.count(prim_path.str()) != 0;
 }
 size_t Cache::ComputedPrimIndexCount() const {
-  NEXT_PCP_LOCK(impl_->api_mu_);
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->index_cache.size();
 }
 const LayerRegistry &Cache::layer_registry() const { return impl_->registry; }
