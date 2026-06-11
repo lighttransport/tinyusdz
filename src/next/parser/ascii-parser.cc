@@ -185,14 +185,21 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().doc = value;
         }
       } else if (key == "subLayers") {
-        // Parse sublayer list
+        // Parse sublayer list. Each element is an asset ref (`@path@`, lexed as
+        // a String) or a quoted string. Decide with a non-consuming Check first:
+        // `expect()` always consumes, so `expect(A) || expect(B)` would eat two
+        // tokens per element and corrupt the list.
         if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string path;
-            if (lexer_->expect(TokenType::PathRef, path) ||
-                lexer_->expect(TokenType::String, path)) {
-              layer_->meta().subLayers.push_back(path);
+            if (Check(TokenType::PathRef)) {
+              lexer_->expect(TokenType::PathRef, path);
+            } else if (Check(TokenType::String)) {
+              lexer_->expect(TokenType::String, path);
+            } else {
+              break;  // unexpected token: stop rather than mis-consume
             }
+            layer_->meta().subLayers.push_back(path);
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBracket);
