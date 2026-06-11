@@ -154,16 +154,19 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
     return r;
   }
 
-  for (uint32_t c = 0; c < num_fvar_channels; c++) {
-    if (fvar_channels[c].interpolation != FVarLinearInterpolation::All) {
-      // TODO(tsd, M3): seam-split smooth fvar modes.
-      return Fail(Result::UnsupportedScheme, err,
-                  "faceVaryingLinearInterpolation modes other than 'all' are "
-                  "not implemented yet.");
-    }
-  }
-
   const bool catmark = (options.scheme == Scheme::CatmullClark);
+
+  // FVar channels split into the per-corner linear path ("all", or any mode
+  // under bilinear whose masks are all linear) and the seam-split smooth
+  // path refined with the scheme kernels.
+  std::vector<uint8_t> fvar_is_linear(num_fvar_channels, 1);
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    fvar_is_linear[c] =
+        (!catmark ||
+         fvar_channels[c].interpolation == FVarLinearInterpolation::All)
+            ? 1
+            : 0;
+  }
 
   CreaseEdges creases;
   r = CanonicalizeCreases(mesh, &creases, err);
@@ -188,9 +191,14 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
                       size_t(mesh.num_points) * vertex_primvars[p].stride);
   }
 
-  // FVar channels: expand to per-corner tuples once, then refine linearly.
+  // Linear fvar channels: expand to per-corner tuples once, then refine
+  // linearly. Smooth channels get their split state built at level 0 below.
   std::vector<std::vector<float>> fvars(num_fvar_channels);
+  std::vector<FVarSplitState> fvar_split(num_fvar_channels);
   for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    if (!fvar_is_linear[c]) {
+      continue;
+    }
     const FVarChannelView &ch = fvar_channels[c];
     fvars[c].resize(size_t(mesh.num_face_vertex_indices) * ch.stride);
     for (uint32_t i = 0; i < mesh.num_face_vertex_indices; i++) {
@@ -218,7 +226,7 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
   // parent vertex's incident-edge sharpness).
   Topology prev_topo;
   std::vector<float> prev_edge_sharp;
-  const bool chaikin = (options.creasing == CreasingMethod::Chaikin);
+  std::vector<float> prev_vert_sharp;
 
   Topology topo;
   for (int32_t lvl = 0; lvl < options.level; lvl++) {
@@ -295,52 +303,27 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
           }
         }
       }
+
+      // Seam-split state for smooth fvar channels.
+      for (uint32_t c = 0; c < num_fvar_channels; c++) {
+        if (fvar_is_linear[c]) {
+          continue;
+        }
+        r = BuildFVarSplitLevel0(topo, fvc.data(), fvi.data(),
+                                 fvar_channels[c], edge_sharp, vert_sharp,
+                                 &fvar_split[c], err);
+        if (r != Result::Success) {
+          return r;
+        }
+      }
     } else if (catmark) {
-      // Derive this level's sharpness from the parent level: a child edge
-      // is a half of parent edge `pe` iff it connects a vertex child
-      // (id < prevV) to that edge's child (id in [prevV, prevV + prevE)).
-      const uint32_t prevV = prev_topo.num_points;
-      const uint32_t prevE = prev_topo.num_edges;
-      edge_sharp.assign(topo.num_edges, 0.0f);
-      for (uint32_t e = 0; e < topo.num_edges; e++) {
-        const uint32_t a = topo.edge_verts[2 * e];      // a < b
-        const uint32_t b = topo.edge_verts[2 * e + 1];
-        if (a >= prevV || b < prevV || b >= prevV + prevE) {
-          continue;
-        }
-        const uint32_t pe = b - prevV;
-        const float ps = prev_edge_sharp[pe];
-        if (!IsSharp(ps)) {
-          continue;
-        }
-        if (!chaikin) {
-          edge_sharp[e] = DecrementSharpness(ps);
-        } else {
-          const uint32_t pbegin = prev_topo.vert_edge_offsets[a];
-          const uint32_t pend = prev_topo.vert_edge_offsets[a + 1];
-          const uint32_t valence = pend - pbegin;
-          float stack[32];
-          std::vector<float> heap;
-          float *incident = stack;
-          if (valence > 32) {
-            heap.resize(valence);
-            incident = heap.data();
-          }
-          for (uint32_t i = 0; i < valence; i++) {
-            incident[i] = prev_edge_sharp[prev_topo.vert_edges[pbegin + i]];
-          }
-          edge_sharp[e] = ChaikinChildEdgeSharpness(ps, valence, incident);
-        }
-      }
-      // Vertex children of vertices keep decayed sharpness; edge/face
-      // children are smooth.
-      vert_sharp.resize(num_points);
-      for (uint32_t v = prevV; v < num_points; v++) {
-        vert_sharp[v] = 0.0f;
-      }
-      for (uint32_t v = 0; v < prevV; v++) {
-        vert_sharp[v] = DecrementSharpness(vert_sharp[v]);
-      }
+      std::vector<float> new_edge_sharp;
+      std::vector<float> new_vert_sharp;
+      DeriveChildSharpness(prev_topo, prev_edge_sharp, prev_vert_sharp, topo,
+                           options.creasing, &new_edge_sharp,
+                           &new_vert_sharp);
+      edge_sharp = std::move(new_edge_sharp);
+      vert_sharp = std::move(new_vert_sharp);
     }
 
     // --- Capacity check for the child level ----------------------------------
@@ -391,11 +374,19 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
     }
 
     for (uint32_t c = 0; c < num_fvar_channels; c++) {
-      const uint32_t stride = fvar_channels[c].stride;
-      std::vector<float> child_fv(size_t(child_corners64) * stride);
-      LinearFVarRefineQuad(topo, fvars[c].data(), stride, options,
-                           child_fv.data());
-      fvars[c] = std::move(child_fv);
+      if (fvar_is_linear[c]) {
+        const uint32_t stride = fvar_channels[c].stride;
+        std::vector<float> child_fv(size_t(child_corners64) * stride);
+        LinearFVarRefineQuad(topo, fvars[c].data(), stride, options,
+                             child_fv.data());
+        fvars[c] = std::move(child_fv);
+      } else {
+        r = RefineFVarSplitOnce(&fvar_split[c], options,
+                                lvl + 1 < options.level, err);
+        if (r != Result::Success) {
+          return r;
+        }
+      }
     }
 
     // --- Hole flags + provenance ------------------------------------------------
@@ -418,8 +409,24 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
     if (catmark && (lvl + 1 < options.level)) {
       prev_topo = std::move(topo);
       prev_edge_sharp = std::move(edge_sharp);
+      prev_vert_sharp = std::move(vert_sharp);
       topo = Topology();
       edge_sharp.clear();
+      vert_sharp.clear();
+    }
+  }
+
+  // Expand smooth fvar channels to per-corner tuples.
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    if (fvar_is_linear[c]) {
+      continue;
+    }
+    const FVarSplitState &st = fvar_split[c];
+    fvars[c].resize(st.fvi.size() * st.stride);
+    for (size_t i = 0; i < st.fvi.size(); i++) {
+      memcpy(&fvars[c][i * st.stride],
+             &st.values[size_t(st.fvi[i]) * st.stride],
+             sizeof(float) * st.stride);
     }
   }
 

@@ -66,10 +66,49 @@ struct Case {
   const corpus::Mesh *mesh;
   tsd::Options opts;
   bool with_fvar = false;
+  tsd::FVarLinearInterpolation fvar_mode = tsd::FVarLinearInterpolation::All;
   std::string label;
 };
 
-Sdc::Options ToSdcOptions(const tsd::Options &o) {
+Sdc::Options::FVarLinearInterpolation ToSdcFVar(
+    tsd::FVarLinearInterpolation m) {
+  switch (m) {
+    case tsd::FVarLinearInterpolation::None:
+      return Sdc::Options::FVAR_LINEAR_NONE;
+    case tsd::FVarLinearInterpolation::CornersOnly:
+      return Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
+    case tsd::FVarLinearInterpolation::CornersPlus1:
+      return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
+    case tsd::FVarLinearInterpolation::CornersPlus2:
+      return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2;
+    case tsd::FVarLinearInterpolation::Boundaries:
+      return Sdc::Options::FVAR_LINEAR_BOUNDARIES;
+    case tsd::FVarLinearInterpolation::All:
+      return Sdc::Options::FVAR_LINEAR_ALL;
+  }
+  return Sdc::Options::FVAR_LINEAR_ALL;
+}
+
+const char *FVarModeName(tsd::FVarLinearInterpolation m) {
+  switch (m) {
+    case tsd::FVarLinearInterpolation::None:
+      return "fvNone";
+    case tsd::FVarLinearInterpolation::CornersOnly:
+      return "fvCornersOnly";
+    case tsd::FVarLinearInterpolation::CornersPlus1:
+      return "fvCornersPlus1";
+    case tsd::FVarLinearInterpolation::CornersPlus2:
+      return "fvCornersPlus2";
+    case tsd::FVarLinearInterpolation::Boundaries:
+      return "fvBoundaries";
+    case tsd::FVarLinearInterpolation::All:
+      return "fvAll";
+  }
+  return "?";
+}
+
+Sdc::Options ToSdcOptions(const tsd::Options &o,
+                          tsd::FVarLinearInterpolation fvar_mode) {
   Sdc::Options so;
   switch (o.boundary) {
     case tsd::BoundaryInterpolation::EdgeAndCorner:
@@ -82,7 +121,7 @@ Sdc::Options ToSdcOptions(const tsd::Options &o) {
       so.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_NONE);
       break;
   }
-  so.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_ALL);
+  so.SetFVarLinearInterpolation(ToSdcFVar(fvar_mode));
   so.SetCreasingMethod(o.creasing == tsd::CreasingMethod::Chaikin
                            ? Sdc::Options::CREASE_CHAIKIN
                            : Sdc::Options::CREASE_UNIFORM);
@@ -104,7 +143,8 @@ struct OsdResult {
 };
 
 OsdResult RefineWithOsd(const corpus::Mesh &m, const tsd::Options &topts,
-                        bool with_fvar) {
+                        bool with_fvar,
+                        tsd::FVarLinearInterpolation fvar_mode) {
   OsdResult out;
 
   Sdc::SchemeType type = (topts.scheme == tsd::Scheme::Bilinear)
@@ -161,11 +201,16 @@ OsdResult RefineWithOsd(const corpus::Mesh &m, const tsd::Options &topts,
   std::vector<int> fvar_indices;
   Far::TopologyDescriptor::FVarChannel fvar_channel;
   if (with_fvar) {
-    fvar_indices.resize(m.face_vertex_indices.size());
-    for (size_t i = 0; i < fvar_indices.size(); i++) {
-      fvar_indices[i] = int(i);  // identity: one value per corner
+    if (!m.fvar_indices.empty()) {
+      fvar_indices.assign(m.fvar_indices.begin(), m.fvar_indices.end());
+      fvar_channel.numValues = int(m.fvar_uv.size() / 2);
+    } else {
+      fvar_indices.resize(m.face_vertex_indices.size());
+      for (size_t i = 0; i < fvar_indices.size(); i++) {
+        fvar_indices[i] = int(i);  // identity: one value per corner
+      }
+      fvar_channel.numValues = int(fvar_indices.size());
     }
-    fvar_channel.numValues = int(fvar_indices.size());
     fvar_channel.valueIndices = fvar_indices.data();
     desc.numFVarChannels = 1;
     desc.fvarChannels = &fvar_channel;
@@ -173,7 +218,8 @@ OsdResult RefineWithOsd(const corpus::Mesh &m, const tsd::Options &topts,
 
   using Factory = Far::TopologyRefinerFactory<Far::TopologyDescriptor>;
   Far::TopologyRefiner *refiner =
-      Factory::Create(desc, Factory::Options(type, ToSdcOptions(topts)));
+      Factory::Create(desc,
+                      Factory::Options(type, ToSdcOptions(topts, fvar_mode)));
   if (!refiner) {
     return out;
   }
@@ -396,9 +442,9 @@ bool CompareCase(const Case &cs) {
   tsd::FVarChannelView fvar;
   fvar.values = m.fvar_uv.data();
   fvar.num_values = uint32_t(m.fvar_uv.size() / 2);
-  fvar.indices = nullptr;  // identity per corner
+  fvar.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
   fvar.stride = 2;
-  fvar.interpolation = tsd::FVarLinearInterpolation::All;
+  fvar.interpolation = cs.fvar_mode;
 
   tsd::RefinedMesh refined;
   std::string err;
@@ -412,7 +458,7 @@ bool CompareCase(const Case &cs) {
   }
 
   // --- OSD --------------------------------------------------------------------
-  OsdResult osd = RefineWithOsd(m, cs.opts, cs.with_fvar);
+  OsdResult osd = RefineWithOsd(m, cs.opts, cs.with_fvar, cs.fvar_mode);
   if (!osd.ok) {
     fprintf(stderr, "[FAIL] %s: OSD refinement failed\n", cs.label.c_str());
     return false;
@@ -554,6 +600,9 @@ int main(int argc, char **argv) {
   meshes.push_back(corpus::CorneredGrid());
   meshes.push_back(corpus::CubeWithHoles());
   meshes.push_back(corpus::UVSeamGrid());
+  meshes.push_back(corpus::UVCube());
+  meshes.push_back(corpus::UVDartGrid());
+  meshes.push_back(corpus::UVCreasedCube());
 
   const tsd::Scheme schemes[] = {tsd::Scheme::CatmullClark,
                                  tsd::Scheme::Bilinear};
@@ -567,22 +616,38 @@ int main(int argc, char **argv) {
     for (tsd::Scheme scheme : schemes) {
       for (tsd::BoundaryInterpolation boundary : boundaries) {
         const bool has_creases = !m.crease_lengths.empty();
+        const bool has_fvar = !m.fvar_uv.empty();
         const int num_creasing = has_creases ? 2 : 1;
+        const tsd::FVarLinearInterpolation fvar_modes[6] = {
+            tsd::FVarLinearInterpolation::All,
+            tsd::FVarLinearInterpolation::None,
+            tsd::FVarLinearInterpolation::CornersOnly,
+            tsd::FVarLinearInterpolation::CornersPlus1,
+            tsd::FVarLinearInterpolation::CornersPlus2,
+            tsd::FVarLinearInterpolation::Boundaries,
+        };
+        const int num_fvar_modes = has_fvar ? 6 : 1;
         for (int creasing = 0; creasing < num_creasing; creasing++) {
-          for (int level = 1; level <= 3; level++) {
-            Case cs;
-            cs.mesh = &m;
-            cs.opts.scheme = scheme;
-            cs.opts.boundary = boundary;
-            cs.opts.creasing = creasing ? tsd::CreasingMethod::Chaikin
-                                        : tsd::CreasingMethod::Uniform;
-            cs.opts.level = level;
-            cs.with_fvar = !m.fvar_uv.empty();
-            cs.label = m.name + "/" + SchemeName(scheme) + "/" +
-                       BoundaryName(boundary) +
-                       (creasing ? "/chaikin" : "/uniform") + "/L" +
-                       std::to_string(level);
-            RunCase(cs);
+          for (int fm = 0; fm < num_fvar_modes; fm++) {
+            for (int level = 1; level <= 3; level++) {
+              Case cs;
+              cs.mesh = &m;
+              cs.opts.scheme = scheme;
+              cs.opts.boundary = boundary;
+              cs.opts.creasing = creasing ? tsd::CreasingMethod::Chaikin
+                                          : tsd::CreasingMethod::Uniform;
+              cs.opts.level = level;
+              cs.with_fvar = has_fvar;
+              cs.fvar_mode = fvar_modes[fm];
+              cs.label = m.name + "/" + SchemeName(scheme) + "/" +
+                         BoundaryName(boundary) +
+                         (creasing ? "/chaikin" : "/uniform") +
+                         (has_fvar ? (std::string("/") +
+                                      FVarModeName(cs.fvar_mode))
+                                   : std::string()) +
+                         "/L" + std::to_string(level);
+              RunCase(cs);
+            }
           }
         }
       }

@@ -194,6 +194,52 @@ void LinearFVarRefineQuad(const Topology &topo, const float *corner_values,
                           uint32_t stride, const Options &opts,
                           float *child_corner_values);
 
+// Derives child-level sharpness from a parent level: a child edge is a half
+// of parent edge pe iff it connects a vertex child (< parentV) to pe's edge
+// child; halves decay (uniform decrement or Chaikin at the shared parent
+// vertex), everything else is smooth. Parent vertex children keep decayed
+// vertex sharpness.
+void DeriveChildSharpness(const Topology &parent_topo,
+                          const std::vector<float> &parent_edge_sharp,
+                          const std::vector<float> &parent_vert_sharp,
+                          const Topology &child_topo, CreasingMethod method,
+                          std::vector<float> *child_edge_sharp,
+                          std::vector<float> *child_vert_sharp);
+
+// --- FaceVarying seam-split refinement (modes other than "all") --------------
+//
+// The five smooth-capable fvar modes refine a "split mesh": its vertices are
+// equivalence classes of face corners at the same mesh vertex whose values
+// are continuous across the shared edges (the spans of OpenSubdiv's
+// FVarLevel). The split mesh is refined with the same scheme kernels as
+// geometry; seams and mesh boundaries become split-mesh boundary edges
+// (infinitely sharp) and the per-mode rules become extra vertex sharpness.
+
+struct FVarSplitState {
+  uint32_t stride = 0;
+  uint32_t num_values = 0;           // split vertex count (current level)
+  std::vector<float> values;         // per split vertex, stride floats
+  std::vector<uint32_t> fvi;         // per corner -> split vertex id
+  std::vector<float> edge_sharp;     // per split edge (current level)
+  std::vector<float> vert_sharp;     // per split vertex
+  Topology topo;                     // split topology (current level)
+};
+
+// Builds the level-0 split mesh + sharpness for one smooth fvar channel.
+// `geo_edge_sharp`/`geo_vert_sharp` are the geometry's baked level-0 arrays
+// (boundary edges infinite, corner pinning applied).
+Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
+                            const uint32_t *geo_fvi,
+                            const FVarChannelView &channel,
+                            const std::vector<float> &geo_edge_sharp,
+                            const std::vector<float> &geo_vert_sharp,
+                            FVarSplitState *state, std::string *err);
+
+// Refines one smooth fvar channel one level. When `more_levels` is false the
+// child topology/sharpness are not rebuilt (only values + fvi advance).
+Result RefineFVarSplitOnce(FVarSplitState *state, const Options &opts,
+                           bool more_levels, std::string *err);
+
 // --- Overflow-safe sizing ----------------------------------------------------
 
 // a + b with overflow check against 2^32-1; returns false on overflow.
