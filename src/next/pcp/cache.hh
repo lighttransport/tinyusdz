@@ -99,6 +99,27 @@ class Cache {
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
+  // --- lazy per-prim composition (Phase 10) -------------------------------
+
+  /// Compose (and cache) just the prim at `prim_path` on first access, reusing
+  /// the same source resolution + opinion merge as BuildStage but WITHOUT
+  /// materializing the whole stage -- for read-only consumers that touch a few
+  /// prims. Returns a borrowed pointer to the composed PrimSpec (type,
+  /// specifier, properties, relationships, connections, declared type names,
+  /// and active/hidden/doc/... metadata), stable until Invalidate/destruction,
+  /// or nullptr if the prim authors no opinions. Children are not materialized
+  /// here: query their names via ComposedChildNames() and compose each lazily.
+  /// Instancing/relocates are stage-level concerns and are NOT applied to this
+  /// per-prim view (use BuildStage / the instance query API for those).
+  const PrimSpec *ComposePrim(const Path &prim_path, std::string *warn,
+                              std::string *err);
+
+  /// Composed child prim names of `prim_path` in BuildStage emit order
+  /// (composes the prim first if needed). Empty if it has no children.
+  std::vector<std::string> ComposedChildNames(const Path &prim_path,
+                                              std::string *warn,
+                                              std::string *err);
+
   // --- instancing ---------------------------------------------------------
 
   /// Whether `prim_path` is an instance (instanceable, and not the prototype of
