@@ -19,6 +19,7 @@
 #include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -46,6 +47,39 @@ class Cache {
       AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
       const std::string &root_identifier = "",
       const CompositionOptions &options = {});
+
+  // --- typed composition diagnostics (Phase 7 E4) -------------------------
+
+  /// Typed composition diagnostic codes. Stable across message wording so
+  /// tests and consumers can branch on the code rather than matching the
+  /// free-form `err` text. New codes are appended (never renumbered).
+  enum class ErrorCode : uint8_t {
+    ArcCycle,                 ///< reference/payload/inherit/specialize cycle
+    SublayerCycle,            ///< subLayers form a cycle
+    MaxDepthExceeded,         ///< sublayer / arc / namespace recursion limit hit
+    InvalidAssetPath,         ///< an arc or sublayer asset could not be resolved
+    UnresolvedPrimPath,       ///< an arc targets a prim path that does not exist
+    IndexCapacityExceeded,    ///< PrimIndex node count exceeds uint16 capacity
+    InvalidVariantSelection,  ///< a variant selection names no known variant
+    InvalidReferenceOffset,   ///< a layer offset is non-invertible (scale == 0)
+  };
+
+  /// One typed composition diagnostic. `site` is the layer:prim (or prim path)
+  /// where the problem was detected; `message` is the human-readable rendering
+  /// that is also concatenated into the `err` out-param (so no API break).
+  struct CompositionIssue {
+    ErrorCode code;
+    std::string site;
+    std::string message;
+  };
+
+  /// All composition issues accumulated since Open (or the last Clear /
+  /// Invalidate). Populated regardless of whether an `err` pointer was passed,
+  /// so callers can inspect typed codes even with `err == nullptr`.
+  const std::vector<CompositionIssue> &GetCompositionIssues() const;
+
+  /// Drop all accumulated composition issues.
+  void ClearCompositionIssues();
 
   /// Lazily build (if needed) and cache the PrimIndex for `prim_path`. Returns a
   /// borrowed pointer owned by the cache (stable until Invalidate/destruction),

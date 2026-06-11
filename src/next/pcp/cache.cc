@@ -153,6 +153,18 @@ struct Cache::Impl {
     }
   }
 
+  // --- typed composition diagnostics (Phase 7 E4) -------------------------
+  // Accumulated typed issues. Recorded regardless of whether a caller passed an
+  // `err` pointer; when present, the rendered message is mirrored into *err so
+  // the existing string-based API is unchanged.
+  std::vector<CompositionIssue> issues_;
+
+  void AddIssue(ErrorCode code, const std::string &site,
+                const std::string &message, std::string *err) {
+    issues_.push_back(CompositionIssue{code, site, message});
+    if (err) *err += message + "\n";
+  }
+
   // --- layer stacks -------------------------------------------------------
 
   static constexpr uint32_t kInvalidStack =
@@ -190,7 +202,8 @@ struct Cache::Impl {
                                std::string *err) {
     if (!layer) return false;
     if (depth > options.max_depth) {
-      if (err) *err += "Sublayer max depth exceeded at: " + identifier + "\n";
+      AddIssue(ErrorCode::MaxDepthExceeded, identifier,
+               "Sublayer max depth exceeded at: " + identifier, err);
       return false;
     }
     st.layers.push_back(layer);
@@ -199,12 +212,14 @@ struct Cache::Impl {
     for (const std::string &sub : layer->meta().subLayers) {
       const std::string sub_id = resolver->ResolvePath(sub, anchor);
       if (sub_id.empty()) {
-        if (err) *err += "Failed to resolve sublayer: " + sub + "\n";
+        AddIssue(ErrorCode::InvalidAssetPath, sub,
+                 "Failed to resolve sublayer: " + sub, err);
         if (options.error_when_asset_not_found) return false;
         continue;
       }
       if (visiting && visiting->count(sub_id)) {
-        if (err) *err += "Sublayer cycle detected at: " + sub_id + "\n";
+        AddIssue(ErrorCode::SublayerCycle, sub_id,
+                 "Sublayer cycle detected at: " + sub_id, err);
         return false;
       }
       std::shared_ptr<Layer> sl =
@@ -483,8 +498,9 @@ struct Cache::Impl {
       std::shared_ptr<Layer> arc_layer =
           reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
       if (!arc_layer) {
-        if (options.error_when_asset_not_found && err) {
-          *err += "Arc asset not found: " + arc.asset_path + "\n";
+        if (options.error_when_asset_not_found) {
+          AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
+                   "Arc asset not found: " + arc.asset_path, err);
         }
         return;
       }
@@ -502,14 +518,16 @@ struct Cache::Impl {
     }
 
     if (frame && frame->Contains(arc_stack_idx, arc_site)) {
-      if (err) {
-        *err += "Composition cycle detected at arc: " +
-                layer_stacks[arc_stack_idx].identifier + ":" + arc_site + "\n";
-      }
+      const std::string site =
+          layer_stacks[arc_stack_idx].identifier + ":" + arc_site;
+      AddIssue(ErrorCode::ArcCycle, site,
+               "Composition cycle detected at arc: " + site, err);
       return;
     }
     if (frame && frame->depth + 1 >= options.max_depth) {
-      if (err) *err += "Composition max depth exceeded\n";
+      AddIssue(ErrorCode::MaxDepthExceeded,
+               layer_stacks[arc_stack_idx].identifier + ":" + arc_site,
+               "Composition max depth exceeded", err);
       return;
     }
     // A same-stack arc that targets a namespace ANCESTOR of its own source site
@@ -519,10 +537,10 @@ struct Cache::Impl {
     // reject it here.
     if (arc_stack_idx == src.stack_idx && arc_site != src.site &&
         IsAtOrUnder(src.site, arc_site)) {
-      if (err) {
-        *err += "Composition cycle detected: arc at " + src.site +
-                " targets ancestor " + arc_site + "\n";
-      }
+      AddIssue(ErrorCode::ArcCycle, src.site,
+               "Composition cycle detected: arc at " + src.site +
+                   " targets ancestor " + arc_site,
+               err);
       return;
     }
 
@@ -857,10 +875,8 @@ struct Cache::Impl {
       }
       uint16_t ni = index->AddNode(std::move(n));
       if (ni == PrimIndex::kInvalidNode) {
-        if (err) {
-          *err += "PrimIndex node count exceeds uint16 capacity for " + key +
-                  "\n";
-        }
+        AddIssue(ErrorCode::IndexCapacityExceeded, key,
+                 "PrimIndex node count exceeds uint16 capacity for " + key, err);
         return nullptr;
       }
       if (i != 0) index->MutableNode(0).children.push_back(ni);
@@ -889,10 +905,9 @@ struct Cache::Impl {
     // (e.g. an ancestor cycle a stronger check missed) must surface as an
     // error, never as C++ stack exhaustion.
     if (depth > options.max_namespace_depth) {
-      if (err) {
-        *err += "BuildStage max namespace depth exceeded at: " +
-                out_path.str() + "\n";
-      }
+      AddIssue(ErrorCode::MaxDepthExceeded, out_path.str(),
+               "BuildStage max namespace depth exceeded at: " + out_path.str(),
+               err);
       return;
     }
     const std::vector<Src> &srcs = SourcesForPath(src_path, warn, err);
@@ -1140,10 +1155,13 @@ struct Cache::Impl {
         for (int t = 0; t < W; ++t) {
           if (warn) *warn += wwarn[static_cast<size_t>(t)];
           if (err) *err += werr[static_cast<size_t>(t)];
-          for (const std::string &dp :
-               workers[static_cast<size_t>(t)]->deferred_payload_prims) {
+          Impl &wk = *workers[static_cast<size_t>(t)];
+          for (const std::string &dp : wk.deferred_payload_prims) {
             deferred_payload_prims.insert(dp);
           }
+          // Fold per-worker typed diagnostics into the main Impl (workers each
+          // own a private issues_, so this join is race-free).
+          for (auto &iss : wk.issues_) issues_.push_back(std::move(iss));
         }
         return true;
       }
@@ -1369,6 +1387,15 @@ std::vector<Path> Cache::GetDeferredPayloadPaths() const {
   out.reserve(impl_->deferred_payload_prims.size());
   for (const std::string &s : impl_->deferred_payload_prims) out.push_back(Path(s));
   return out;
+}
+
+const std::vector<Cache::CompositionIssue> &Cache::GetCompositionIssues() const {
+  NEXT_PCP_LOCK(impl_->api_mu_);
+  return impl_->issues_;
+}
+void Cache::ClearCompositionIssues() {
+  NEXT_PCP_LOCK(impl_->api_mu_);
+  impl_->issues_.clear();
 }
 
 void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
