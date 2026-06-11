@@ -126,7 +126,7 @@ public:
 
 private:
   // Resolves to the prototype's spec when this prim is an instance proxy
-  // (meta().instance_prototype set); otherwise returns spec_. Used for child
+  // (meta().instance_prototype() set); otherwise returns spec_. Used for child
   // enumeration so instance children come from the prototype.
   const PrimSpec* ChildSourceSpec() const;
 

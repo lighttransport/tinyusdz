@@ -568,15 +568,20 @@ size_t PrimSpec::memory_usage() const {
   // Children
   size += child_indices_.capacity() * sizeof(uint32_t);
 
-  // Metadata
-  size += meta_.doc.capacity();
-  size += meta_.comment.capacity();
-  for (const auto& s : meta_.apiSchemas) size += s.capacity();
+  // Metadata (inline hot fields)
   for (const auto& s : meta_.references) size += s.capacity();
   for (const auto& s : meta_.payloads) size += s.capacity();
   for (const auto& s : meta_.inherits) size += s.capacity();
   for (const auto& s : meta_.specializes) size += s.capacity();
   size += meta_.variantSelection.capacity();
+  // Cold fields only cost anything when the ext was allocated.
+  if (const PrimSpecMetaExt* ext = meta_.ext()) {
+    size += sizeof(PrimSpecMetaExt);
+    size += ext->doc.capacity();
+    size += ext->comment.capacity();
+    size += ext->instance_prototype.capacity();
+    for (const auto& s : ext->apiSchemas) size += s.capacity();
+  }
 
   return size;
 }

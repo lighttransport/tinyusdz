@@ -310,16 +310,16 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
     WriteIndent(os, content_depth, opts.indent);
     os << "hidden = true\n";
   }
-  if (!meta.doc.empty() && opts.include_comments) {
+  if (!meta.doc().empty() && opts.include_comments) {
     WriteIndent(os, content_depth, opts.indent);
-    os << "doc = " << EscapeString(meta.doc) << "\n";
+    os << "doc = " << EscapeString(meta.doc()) << "\n";
   }
-  if (!meta.apiSchemas.empty()) {
+  if (!meta.apiSchemas().empty()) {
     WriteIndent(os, content_depth, opts.indent);
     os << "apiSchemas = [";
-    for (size_t i = 0; i < meta.apiSchemas.size(); ++i) {
+    for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
       if (i > 0) os << ", ";
-      os << "\"" << meta.apiSchemas[i] << "\"";
+      os << "\"" << meta.apiSchemas()[i] << "\"";
     }
     os << "]\n";
   }

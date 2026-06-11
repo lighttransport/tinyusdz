@@ -174,7 +174,7 @@ static Scene GenScene(int n_root, int n_assets, bool exotic, uint32_t seed) {
           lo.properties.push_back({"vprop", Value::MakeFloat3(9, 9, 9)});
           vss.variants.push_back(std::move(hi));
           vss.variants.push_back(std::move(lo));
-          ps->meta().variantSets.push_back(std::move(vss));
+          ps->meta().variantSets().push_back(std::move(vss));
           ps->meta().variantSelection = "v=hi";
         } else {
           ps->meta().references.push_back(aref);
