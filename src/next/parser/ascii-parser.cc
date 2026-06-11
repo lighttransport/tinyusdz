@@ -646,20 +646,25 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       switch (qual) {
         case ArcQual::Explicit:
           e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+          e.authored = true;
           break;
         case ArcQual::Prepend:
+          e.authored = true;
           e.is_explicit = false;
           e.prepended.insert(e.prepended.end(), items.begin(), items.end());
           break;
         case ArcQual::Append:
+          e.authored = true;
           e.is_explicit = false;
           e.appended.insert(e.appended.end(), items.begin(), items.end());
           break;
         case ArcQual::Delete:
+          e.authored = true;
           e.is_explicit = false;
           e.deleted.insert(e.deleted.end(), items.begin(), items.end());
           break;
         case ArcQual::Reorder:
+          e.authored = true;
           e.is_explicit = false;
           e.ordered.insert(e.ordered.end(), items.begin(), items.end());
           break;

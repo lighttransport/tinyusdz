@@ -171,6 +171,8 @@ private:
   bool UnpackQuath(ValueRep rep, Value& out);
 
   // Helpers
+  bool CheckByteAllocation(uint64_t bytes, const char* what);
+  bool CheckElementAllocation(uint64_t count, size_t elem_size, const char* what);
   bool GetToken(uint32_t index, std::string& out);
   bool GetString(uint32_t index, std::string& out);
   bool ResolveFieldset(uint32_t fieldset_index,
@@ -1048,6 +1050,12 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 // ============================================================
 
 CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
+  if (options_.max_memory && bytes.size() > options_.max_memory) {
+    result_ = CrateReadResult();
+    AddError("Input exceeds max_memory budget");
+    return std::move(result_);
+  }
+
   // Adopt the input bytes by MOVE — a single in-heap copy of the file. Lazy
   // array Values reference this buffer after Read() returns (they hold a
   // shared_ptr to the source); reader_ reads from it so ValueRep file offsets
@@ -1101,6 +1109,11 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
     AddError("Invalid input data");
     return std::move(result_);
   }
+  if (options_.max_memory && size > options_.max_memory) {
+    result_ = CrateReadResult();
+    AddError("Input exceeds max_memory budget");
+    return std::move(result_);
+  }
   // Const input: caller may free `data`, so copy it into an owned buffer once.
   return ReadFromString(std::string(reinterpret_cast<const char*>(data), size));
 }
@@ -1110,6 +1123,27 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  if (options_.max_memory) {
+    std::ifstream probe(filename, std::ios::binary | std::ios::ate);
+    if (!probe.is_open()) {
+      CrateReadResult result;
+      result.errors.push_back({0, std::string("Failed to open file: ") + filename});
+      return result;
+    }
+    std::streamsize probed_size = probe.tellg();
+    if (probed_size < 0) {
+      CrateReadResult result;
+      result.errors.push_back({0, "Failed to determine file size"});
+      return result;
+    }
+    if (static_cast<uint64_t>(probed_size) >
+        static_cast<uint64_t>(options_.max_memory)) {
+      CrateReadResult result;
+      result.errors.push_back({0, "File exceeds max_memory budget"});
+      return result;
+    }
+  }
+
   // Phase 8.3: prefer a read-only memory map of the file -- no in-heap copy of
   // the crate, and lazy values read straight from the mapping. Falls back to
   // the owned-buffer path below when mmap is disabled, unavailable, or fails.
@@ -1128,6 +1162,17 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   }
 
   std::streamsize size = file.tellg();
+  if (size < 0) {
+    CrateReadResult result;
+    result.errors.push_back({0, "Failed to determine file size"});
+    return result;
+  }
+  if (options_.max_memory &&
+      static_cast<uint64_t>(size) > static_cast<uint64_t>(options_.max_memory)) {
+    CrateReadResult result;
+    result.errors.push_back({0, "File exceeds max_memory budget"});
+    return result;
+  }
   file.seekg(0, std::ios::beg);
 
   // Read straight into the owned buffer (single copy; no intermediate vector).
@@ -1261,6 +1306,10 @@ bool CrateReader::Impl::ReadTokens() {
     AddError("Failed to read token compression info");
     return false;
   }
+  if (!CheckByteAllocation(compressed_size, "Compressed token table") ||
+      !CheckByteAllocation(uncompressed_size, "Uncompressed token table")) {
+    return false;
+  }
 
   // Use the check-before-resize read overload so a bogus compressed_size
   // cannot trigger a huge allocation before the bounds check.
@@ -1330,6 +1379,9 @@ bool CrateReader::Impl::ReadStrings() {
     AddError("Too many strings");
     return false;
   }
+  if (!CheckElementAllocation(num_strings, sizeof(uint32_t), "String table")) {
+    return false;
+  }
 
   string_indices_.resize(static_cast<size_t>(num_strings));
   for (size_t i = 0; i < num_strings; i++) {
@@ -1366,12 +1418,19 @@ bool CrateReader::Impl::ReadFields() {
     AddError("Too many fields");
     return false;
   }
+  if (!CheckElementAllocation(num_fields, sizeof(CrateField), "Field table") ||
+      !CheckElementAllocation(num_fields, sizeof(uint32_t),
+                              "Field token indices") ||
+      !CheckElementAllocation(num_fields, sizeof(uint64_t), "Field value reps")) {
+    return false;
+  }
 
   uint64_t indices_size;
   if (!reader_->read_u64(indices_size)) {
     AddError("Failed to read field indices size");
     return false;
   }
+  if (!CheckByteAllocation(indices_size, "Field indices")) return false;
 
   std::vector<uint8_t> indices_data;
   if (!reader_->read(indices_data, static_cast<size_t>(indices_size))) {
@@ -1416,6 +1475,7 @@ bool CrateReader::Impl::ReadFields() {
     AddError("Failed to read reps size");
     return false;
   }
+  if (!CheckByteAllocation(reps_size, "Field value reps")) return false;
 
   std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
 
@@ -1479,12 +1539,19 @@ bool CrateReader::Impl::ReadFieldsets() {
     AddError("Too many fieldset indices");
     return false;
   }
+  if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
+                              "Fieldset index table")) {
+    return false;
+  }
 
   if (section->size < 8) {
     AddError("FIELDSETS section too small");
     return false;
   }
   size_t data_size = static_cast<size_t>(section->size) - 8;
+  if (!CheckByteAllocation(static_cast<uint64_t>(data_size), "Fieldset data")) {
+    return false;
+  }
   std::vector<uint8_t> data;
   if (!reader_->read(data, data_size)) {
     AddError("Failed to read fieldset data");
@@ -1536,6 +1603,12 @@ bool CrateReader::Impl::ReadSpecs() {
 
   if (num_specs > options_.max_specs) {
     AddError("Too many specs");
+    return false;
+  }
+  if (!CheckElementAllocation(num_specs, sizeof(CrateSpec), "Spec table") ||
+      !CheckElementAllocation(num_specs, sizeof(uint32_t), "Spec path table") ||
+      !CheckElementAllocation(num_specs, sizeof(uint32_t), "Spec fieldset table") ||
+      !CheckElementAllocation(num_specs, sizeof(uint32_t), "Spec type table")) {
     return false;
   }
 
@@ -2101,6 +2174,7 @@ bool CrateReader::Impl::BuildStage() {
     auto decode_arc_listop = [&](const Value& v, ArcEdit& e) {
       const std::vector<std::string>* arr = v.as_token_array();
       if (!arr) return;
+      e.authored = true;
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
       for (const std::string& s : *arr) {
@@ -2438,6 +2512,30 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     out.emplace_back(std::move(key), std::move(val));
   }
   return true;
+}
+
+bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
+  if (bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    AddError(std::string(what) + " size exceeds addressable memory");
+    return false;
+  }
+  if (options_.max_memory && bytes > static_cast<uint64_t>(options_.max_memory)) {
+    AddError(std::string(what) + " exceeds max_memory budget");
+    return false;
+  }
+  return true;
+}
+
+bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
+                                               const char* what) {
+  if (elem_size == 0) return false;
+  const uint64_t max_size =
+      static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
+  if (count > max_size / elem_size) {
+    AddError(std::string(what) + " size exceeds addressable memory");
+    return false;
+  }
+  return CheckByteAllocation(count * static_cast<uint64_t>(elem_size), what);
 }
 
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {
