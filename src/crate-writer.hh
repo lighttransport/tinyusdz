@@ -18,6 +18,7 @@
 #include "stage.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface
 #include "usdSkel.hh"
 #include "usdLux.hh"
 
@@ -28,6 +29,15 @@
 
 namespace tinyusdz {
 namespace experimental {
+
+// Maximum prim nesting depth supported by the USDC writer. The path-tree
+// builder recurses once per nesting level on the native stack, so this bounds
+// recursion to a stack-safe value. ConvertPrimIterative enforces this as the
+// authoritative, early check (clear error before the path-tree pass); the
+// path-tree builder keeps a slightly larger backstop (property/root paths add
+// one extra level), so a too-deep stage always fails at prim conversion first
+// rather than cryptically during path-tree building.
+static constexpr uint32_t kMaxPrimNestingDepth = 512;
 
 ///
 /// ErrorContextStack - Tracks error context during crate writing operations
@@ -315,6 +325,13 @@ public:
     bool enable_deduplication = true; // Deduplicate tokens/strings/paths/values
     bool enable_validation = true;    // Phase 5: Pre-write validation enabled by default
 
+    // OpenUSD-compatible tagged compression for float[]/double[] arrays
+    // (code 'i' = integers, 't' = lookup table; see doc/crate-writer.md).
+    // Default OFF: float/double arrays are written uncompressed. Requires
+    // enable_compression as well (it gates the integer-stream compressor used
+    // by the 'i'/'t' payloads).
+    bool enable_float_array_compression = false;
+
     // Memory and file size limits (with WASM-specific defaults)
     // These prevent resource exhaustion when processing untrusted USD files
 #ifdef __wasm__
@@ -560,6 +577,11 @@ private:
   /// Add UsdTransform2d shader input specs as separate attribute specs (called after Shader prim spec is added)
   bool AddUsdTransform2dInputSpecs(const UsdTransform2d* transform2d, const Path& prim_path, std::string* err);
 
+  /// Add MtlxOpenPBRSurface shader input specs as separate attribute specs.
+  /// Mirrors AddUsdPreviewSurfaceInputSpecs (value + connectionPaths); without
+  /// this the typed MaterialX OpenPBR inputs are dropped on stage->USDC write.
+  bool AddMtlxOpenPBRSurfaceInputSpecs(const MtlxOpenPBRSurface* surface, const Path& prim_path, std::string* err);
+
   /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
   bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
@@ -570,6 +592,12 @@ private:
 
   /// Add PointInstancer prototypes relationship as separate relationship spec
   bool AddPointInstancerPrototypesSpec(const Prim& prim, const Path& prim_path, std::string* err);
+
+  /// Add SkelBindingAPI relationships as separate relationship specs (called after Prim spec is added)
+  /// Handles skel:animationSource (Skeleton, SkelRoot), skel:skeleton (SkelRoot, GeomMesh),
+  /// and skel:blendShapeTargets (GeomMesh). These are stored as typed optional Relationship
+  /// fields, so they are not covered by the generic props_map serialization path.
+  bool AddSkelBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
   /// Extract xformOps from Xformable (GPrim or Xform)
   /// Creates separate Attribute specs for each xformOp property
@@ -745,6 +773,26 @@ private:
                                  const char* typeName, bool* is_compressed,
                                  std::string* err);
 
+  /// Write a float array payload using OpenUSD's tagged compression for
+  /// floating-point arrays (code 'i' = compressed integers when every value is
+  /// an exactly-representable integer; code 't' = lookup table + compressed
+  /// indices when the array has few distinct values). Falls back to raw,
+  /// uncompressed floats otherwise. The array element count must already have
+  /// been written by the caller. Sets `*is_compressed` to match the bytes
+  /// written (true only when a code byte + compressed payload was emitted).
+  ///
+  /// Compression is only attempted when both `options_.enable_float_array_compression`
+  /// and `options_.enable_compression` are set (the former defaults to OFF, so
+  /// the default output is uncompressed and unchanged). Returns -1 on I/O error.
+  int64_t WriteCompressedFloatArray(const float* data, uint64_t count,
+                                    bool* is_compressed, std::string* err);
+
+  /// Double-precision counterpart of WriteCompressedFloatArray. Same tagged
+  /// format and option gating (the 'i' path reconstructs via int32, matching
+  /// the reader); falls back to raw doubles otherwise.
+  int64_t WriteCompressedDoubleArray(const double* data, uint64_t count,
+                                     bool* is_compressed, std::string* err);
+
   // ======================================================================
   // I/O utilities
   // ======================================================================
@@ -799,6 +847,11 @@ private:
   tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
   std::vector<Path> paths_;  // Index -> path
 
+  // Set of paths that already have a spec, for O(1) duplicate-spec detection in
+  // AddSpec (avoids an O(n^2) linear scan over spec_data_). Keyed like
+  // path_to_index_ but distinct because that map also holds ancestor paths.
+  tinyusdz::HashMap<Path, uint32_t, crate::PathHasher, crate::PathKeyEqual> spec_path_set_;
+
   tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
@@ -815,7 +868,7 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
-  // Phase 5: TimeSamples value deduplication with NaN-aware hashing.
+  // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
   // all other values hash by bit pattern.
   struct NanAwareHash {
@@ -840,13 +893,33 @@ private:
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };
+
   struct ValueDedupEntry {
     std::vector<char> bytes;
-    size_t element_size;
-    bool is_float;
-    int64_t offset;
+    size_t element_size = 1;
+    bool is_float = false;
+    uint32_t wire_tag = 0;
+    uint64_t rep_data = 0;
+    size_t retained_bytes = 0;
   };
+
+  static bool ComputeValueDedupDescriptor(const crate::CrateValue& value,
+                                          std::vector<char>* bytes,
+                                          size_t* element_size,
+                                          bool* is_float,
+                                          uint32_t* wire_tag);
+  bool LookupDeduplicatedValue(const std::vector<char>& bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag, crate::ValueRep* rep) const;
+  bool CanRetainDeduplicatedValue(size_t byte_count) const;
+  void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
+                               size_t element_size, bool is_float,
+                               uint32_t wire_tag,
+                               const crate::ValueRep& rep);
+  size_t GetValueDedupBudgetBytes() const;
+
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
+  size_t value_dedup_bytes_ = 0;
 };
 
 } // namespace experimental

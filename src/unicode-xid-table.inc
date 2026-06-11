@@ -1,11 +1,6 @@
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wglobal-constructors"
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
-
 // table is geneted from Unicode 5.1.0
-const std::vector<std::pair<int, int>> kXID_StartTable = {
+// (constexpr arrays: no global constructors / exit-time destructors)
+inline constexpr std::pair<int, int> kXID_StartTable[] = {
   {0x41, 0x5a},
   {0x61, 0x7a},
   {0xaa, 0xaa},
@@ -675,7 +670,7 @@ const std::vector<std::pair<int, int>> kXID_StartTable = {
   {0x31350, 0x323af}
 };
 
-const std::vector<std::pair<int, int>> kXID_ContinueTable = {
+inline constexpr std::pair<int, int> kXID_ContinueTable[] = {
   {0x30, 0x39},
   {0x41, 0x5a},
   {0x5f, 0x5f},
@@ -1453,7 +1448,3 @@ const std::vector<std::pair<int, int>> kXID_ContinueTable = {
   {0x31350, 0x323af},
   {0xe0100, 0xe01ef}
 };
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif

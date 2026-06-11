@@ -1017,12 +1017,13 @@ static bool TryReadMMapArrayWithIndices(
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
     const double t, const value::TimeSampleInterpolationType tinterp,
-    const std::string &prim_path = std::string()) {
+    const std::string &prim_path = std::string(),
+    std::string *warn = nullptr) {
   VertexAttribute vattr;
 
   std::string err;
   GeomPrimvar primvar;
-  if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err)) {
+  if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err, warn)) {
     return nonstd::make_unexpected(err);
   }
 
@@ -1031,20 +1032,26 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  // TODO: allow float2?
-  if (primvar.get_type_id() !=
-      value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
+  // Accept the texCoord2f[] role type and the layout-identical float2[] (some
+  // exporters author `st` as float2[] — e.g. usd-wg TextureTransformTest).
+  const bool is_texcoord2f =
+      (primvar.get_type_id() ==
+       value::TypeTraits<std::vector<value::texcoord2f>>::type_id());
+  const bool is_float2 =
+      (primvar.get_type_id() ==
+       value::TypeTraits<std::vector<value::float2>>::type_id());
+  if (!is_texcoord2f && !is_float2) {
     return nonstd::make_unexpected(
-        "Texture coordinate primvar must be texCoord2f[] type, but got " +
-        primvar.get_type_name() + "\n");
+        "Texture coordinate primvar must be texCoord2f[] or float2[] type, but "
+        "got " + primvar.get_type_name() + "\n");
   }
 
   std::vector<value::texcoord2f> uvs;
 
-  // mmap zero-copy path: read texcoords directly from mmap.
+  // mmap zero-copy path: read texcoords directly from mmap (texcoord2f only).
   // V2: also handles indexed primvars via TryReadMMapArrayWithIndices.
   bool got_from_mmap = false;
-  if (!prim_path.empty()) {
+  if (is_texcoord2f && !prim_path.empty()) {
     if (primvar.has_indices()) {
       got_from_mmap = TryReadMMapArrayWithIndices<value::texcoord2f>(
           stage, prim_path, "primvars:" + name, primvar, t, &uvs);
@@ -1055,9 +1062,27 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
   if (!got_from_mmap) {
-    if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-      return nonstd::make_unexpected(
-          "Failed to retrieve texture coordinate primvar with concrete type.\n");
+    if (is_texcoord2f) {
+      if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+        return nonstd::make_unexpected(
+            "Failed to retrieve texture coordinate primvar with concrete "
+            "type.\n");
+      }
+    } else {  // float2[] — flatten as float2 then copy to texcoord2f (same
+              // memory layout: two floats).
+      std::vector<value::float2> f2;
+      if (!primvar.flatten_with_indices(t, &f2, tinterp)) {
+        return nonstd::make_unexpected(
+            "Failed to retrieve float2[] texture coordinate primvar.\n");
+      }
+      // float2 (std::array<float,2>) and texcoord2f are both two contiguous
+      // floats with identical layout — copy in one shot.
+      static_assert(sizeof(value::float2) == sizeof(value::texcoord2f),
+                    "float2 and texcoord2f must share layout for memcpy");
+      uvs.resize(f2.size());
+      if (!f2.empty()) {
+        std::memcpy(uvs.data(), f2.data(), f2.size() * sizeof(value::float2));
+      }
     }
   }
 
@@ -1361,8 +1386,28 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
   }
 
   value::Value value;
-  if (!primvar.flatten_with_indices(t, &value, tinterp)) {
-    PUSH_ERROR_AND_RETURN("Failed to flatten primvar");
+  std::string flatten_err;
+  if (!primvar.flatten_with_indices(t, &value, tinterp, &flatten_err)) {
+    // INVARIANT: flatten_with_indices() returns false with NO error message
+    // ONLY for a primvar that carries no data — either no authored value and no
+    // timesamples (usdGeom.cc, the value::Value overload) or an empty authored
+    // array (usdGeom-primvar-impl.inc, the typed overload; intentional
+    // OpenUSD-compat, e.g. `float4[] primvars:tangents = []` in usd-wg
+    // TextureTransformTest). Every *real* failure sets a message. So an empty
+    // `flatten_err` here means "no data": skip the primvar (leaving `dst`
+    // empty) rather than failing the whole mesh conversion. If that invariant
+    // ever changes, surface real errors here instead of silently skipping.
+    if (flatten_err.empty()) {
+      if (warn) {
+        (*warn) += fmt::format(
+            "Primvar `{}` has no authored value (or an empty array); skipped.\n",
+            name);
+      }
+      return true;
+    }
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Failed to flatten primvar `{}` (interpolation {}, elementSize {}): {}",
+        name, to_string(primvar.get_interpolation()), elementSize, flatten_err));
   }
 
   bool is_array = value.type_id() & value::TYPE_ID_1D_ARRAY_BIT;
@@ -3069,7 +3114,7 @@ bool RenderSceneConverter::ConvertMesh(
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp, prim_path_str);
+          env.timecode, env.tinterp, prim_path_str, &_warn);
       if (ret) {
         //TUSDZ_LOG_I("uv attr");
 
@@ -3125,7 +3170,7 @@ bool RenderSceneConverter::ConvertMesh(
             // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
                                             env.timecode, env.tinterp,
-                                            prim_path_str);
+                                            prim_path_str, &_warn);
             if (ret) {
               VertexAttribute &vattr = ret.value();
 
@@ -3172,7 +3217,7 @@ bool RenderSceneConverter::ConvertMesh(
             << env.mesh_config.default_texcoords_primvar_name << "`.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp, prim_path_str);
+          env.timecode, env.tinterp, prim_path_str, &_warn);
       if (ret) {
         uvAttrs[0] = std::move(ret.value());
       } else {
@@ -3197,7 +3242,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (!GetGeomPrimvar(env.stage, &mesh,
                         env.mesh_config.default_tangents_primvar_name, &pvar,
-                        &_err)) {
+                        &_err, &_warn)) {
       return false;
     }
 
@@ -3219,7 +3264,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (!GetGeomPrimvar(env.stage, &mesh,
                         env.mesh_config.default_binormals_primvar_name, &pvar,
-                        &_err)) {
+                        &_err, &_warn)) {
       return false;
     }
 
@@ -3239,7 +3284,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (!subdivision_applied && mesh.has_primvar(kDisplayColor)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err, &_warn)) {
       return false;
     }
 
@@ -3265,7 +3310,7 @@ bool RenderSceneConverter::ConvertMesh(
   constexpr auto kDisplayOpacity = "displayOpacity";
   if (!subdivision_applied && mesh.has_primvar(kDisplayOpacity)) {
     GeomPrimvar pvar;
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err, &_warn)) {
       return false;
     }
 
@@ -3315,7 +3360,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
       GeomPrimvar pvar;
-      if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
+      if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err, &_warn)) {
         return false;
       }
 

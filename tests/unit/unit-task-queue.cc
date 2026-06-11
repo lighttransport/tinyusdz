@@ -224,3 +224,61 @@ void task_queue_clear_test(void) {
   TEST_CHECK(queue.Push(increment_task, &data) == true);
   TEST_CHECK(queue.Size() == 1);
 }
+
+// A non-power-of-two requested capacity is rounded up to the next power of two,
+// and the ring still transfers every task without loss under MPMC contention.
+void task_queue_nonpow2_capacity_test(void) {
+  // 100 -> 128. Capacity() reflects the rounded value.
+  TaskQueue queue(100);
+  TEST_CHECK(queue.Capacity() == 128);
+
+  // 0 and 1 are valid (rounded to 1); a 1-slot ring is a working SPSC.
+  TaskQueue q0(0);
+  TEST_CHECK(q0.Capacity() == 1);
+  TaskQueue q1(1);
+  TEST_CHECK(q1.Capacity() == 1);
+
+  const int NUM_PRODUCERS = 3;
+  const int NUM_CONSUMERS = 3;
+  const int TASKS_PER_PRODUCER = 400;
+  std::atomic<int> counter(0);
+  std::atomic<int> popped_null(0);  // Pop() true but payload not yet written
+  std::atomic<bool> done(false);
+
+  std::vector<std::thread> producers;
+  for (int i = 0; i < NUM_PRODUCERS; i++) {
+    producers.emplace_back([&queue, &counter, TASKS_PER_PRODUCER]() {
+      for (int j = 0; j < TASKS_PER_PRODUCER; j++) {
+        while (!queue.Push(simple_increment, &counter)) {
+          std::this_thread::yield();
+        }
+      }
+    });
+  }
+
+  std::vector<std::thread> consumers;
+  for (int i = 0; i < NUM_CONSUMERS; i++) {
+    consumers.emplace_back([&queue, &done, &popped_null]() {
+      TaskItem task;
+      while (!done.load(std::memory_order_acquire) || !queue.Empty()) {
+        if (queue.Pop(task)) {
+          if (task.func) {
+            task.func(task.user_data);
+          } else {
+            popped_null.fetch_add(1, std::memory_order_relaxed);
+          }
+        } else {
+          std::this_thread::yield();
+        }
+      }
+    });
+  }
+
+  for (auto& t : producers) t.join();
+  done.store(true, std::memory_order_release);
+  for (auto& t : consumers) t.join();
+
+  TEST_CHECK(popped_null.load() == 0);  // no slot consumed before publish
+  TEST_CHECK(counter.load() == NUM_PRODUCERS * TASKS_PER_PRODUCER);
+  TEST_CHECK(queue.Empty() == true);
+}

@@ -1,0 +1,54 @@
+#usda 1.0
+# EXPECT: core.layer.defaultPrim
+# EXPECT: core.layer.kilogramsPerUnit
+# EXPECT: core.layer.colorConfiguration
+# EXPECT: core.layer.colorManagementSystem
+# EXPECT: core.layer.owner
+# EXPECT: core.prim.kind
+# EXPECT: core.prim.instanceable
+# EXPECT: core.prim.assetInfo
+# EXPECT: core.apiSchema.instance
+# EXPECT: core.apiSchema.duplicate
+# EXPECT: core.apiSchema.unknown
+# EXPECT: core.attr.allowedTokens
+# EXPECT: core.attr.interpolation
+# EXPECT: core.attr.elementSize
+# EXPECT: core.attr.connectability
+# EXPECT: core.attr.renderType
+# EXPECT: core.attr.outputName
+# EXPECT: core.relationship.variability
+(
+    defaultPrim = "1Bad"
+    kilogramsPerUnit = 0
+    colorConfiguration = @@
+    colorManagementSystem = ""
+    owner = ""
+)
+
+def Xform "Root" (
+    kind = ""
+    instanceable = true
+    assetInfo = {
+        asset identifier = @@
+        string name = ""
+        asset[] payloadAssetDependencies = [@@]
+    }
+    prepend apiSchemas = [
+        "CollectionAPI",
+        "MaterialBindingAPI:bad",
+        "CollectionAPI:look",
+        "CollectionAPI:look",
+        "UnknownAPI:bad:name"
+    ]
+)
+{
+    uniform token side = "middle" (
+        allowedTokens = ["left", "right", "left"]
+        interpolation = "bogus"
+        elementSize = 0
+        connectability = "sometimes"
+        renderType = ""
+        outputName = ""
+    )
+    varying rel material:binding = </Root>
+}

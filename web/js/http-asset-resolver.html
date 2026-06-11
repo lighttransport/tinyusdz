@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TinyUSDZ — HTTP(fetch) Asset Resolution</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; overflow: hidden; font-family: system-ui, sans-serif;
+           background: #14161a; color: #e7e9ee; }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    .ui { position: absolute; z-index: 2; background: rgba(20, 22, 27, 0.86);
+          border: 1px solid #2a2e37; border-radius: 10px; padding: 12px 14px;
+          backdrop-filter: blur(6px); font-size: 13px; }
+    #top { top: 12px; left: 12px; max-width: 64ch; }
+    #top h1 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+    #top p { margin: 4px 0; color: #aeb4c0; line-height: 1.4; }
+    #status { margin-top: 8px; color: #9fd0a0; min-height: 1.2em; }
+    .row { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button { font-size: 12px; padding: 6px 10px; border-radius: 7px; border: 1px solid #38507a;
+             background: #1f2937; color: #dbe4f3; cursor: pointer; }
+    button:hover { background: #26344a; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    select, input[type=text] { font-size: 12px; padding: 5px 7px; border-radius: 6px;
+             border: 1px solid #2a2e37; background: #11141a; color: #dbe4f3; }
+    input[type=text] { width: 100%; }
+    .label { color: #7b818d; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .hint { color: #7b818d; font-size: 12px; }
+    #log { margin-top: 10px; max-height: 26vh; overflow: auto; font-family: ui-monospace, monospace;
+           font-size: 11px; color: #9aa3b2; border-top: 1px solid #2a2e37; padding-top: 8px; }
+    #mem { top: 12px; right: 12px; min-width: 320px; max-width: 38ch; }
+    #mem h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #cbd2de; }
+    #mem table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    #mem td { padding: 2px 0; }
+    #mem .phases { margin-top: 10px; border-top: 1px solid #2a2e37; padding-top: 8px; color: #aeb4c0; }
+    #mem .phases b { color: #cbd2de; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="top" class="ui">
+    <h1>HTTP(fetch) Asset Resolution</h1>
+    <p>Resolves a USD scene's external assets — sublayers, references, payloads,
+       and textures — over the network with <code>fetch()</code>. Relative paths
+       are rewritten onto the source host; composition arcs resolve first, then
+       textures. MaterialX and UsdPreviewSurface shade through one tydra-unified
+       path. Rendering keeps textures <b>encoded</b> (decoded in JS off the WASM
+       heap) and frees the WASM scene after GPU upload — the low-memory streaming
+       path applied to an HTTP-composed scene.</p>
+
+    <div class="row">
+      <button id="btn-demo1">① Local USDA (HTTP texture)</button>
+    </div>
+    <p class="hint">A local <code>.usda</code> whose texture is an absolute
+       <code>https://</code> URL — fetched over HTTP, then rendered.</p>
+
+    <div class="row"><span class="label">② Root USD over HTTP</span></div>
+    <div class="row">
+      <select id="preset"></select>
+      <button id="btn-demo2">Load over HTTP</button>
+    </div>
+    <div class="row">
+      <input id="asset-url" type="text" spellcheck="false"
+             placeholder="https://…/test_assets/<asset>/<file>.usd[a|c|z]" />
+    </div>
+    <p class="hint">Root loaded from a remote host (default: usd-wg/assets
+       <code>test_assets</code>); every relative reference/texture is rewritten
+       onto its directory and pulled over HTTP. Edit the URL for other assets.
+       Drag to orbit, wheel to zoom.</p>
+
+    <div id="status">Initializing…</div>
+    <div id="log"></div>
+  </div>
+
+  <div id="mem" class="ui">
+    <h2>Memory</h2>
+    <div id="mem-panel"><span class="hint">Run a demo to see memory usage.</span></div>
+  </div>
+
+  <script type="module">
+    import { mountHttpAssetResolverDemo } from './http-asset-resolver.js';
+    mountHttpAssetResolverDemo().catch((e) => {
+      document.getElementById('status').textContent = 'Init failed: ' + e.message;
+      console.error(e);
+    });
+  </script>
+</body>
+</html>

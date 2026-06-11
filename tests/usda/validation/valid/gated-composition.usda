@@ -1,0 +1,28 @@
+#usda 1.0
+# EXPECT-OK
+(
+    doc = "Composition arcs must suppress locality-dependent rules (no false positives)."
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    # xformOpOrder references `xformOp:translate`, which is supplied by the
+    # referenced base layer rather than authored here. Because this prim has a
+    # references arc, `core.xformOp.order` must NOT fire.
+    def Xform "RefChild" (
+        prepend references = @./base.usda@</Base>
+    )
+    {
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # A Shader that is not directly parented by a Material/NodeGraph would
+    # normally trip `shade.encapsulation.shaderParent`, but the references arc
+    # gates the rule (the container may come from composition).
+    def Shader "LooseShader" (
+        prepend references = @./shaderlib.usda@</Shader>
+    )
+    {
+    }
+}

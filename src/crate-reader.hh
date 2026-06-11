@@ -335,6 +335,17 @@ class CrateReader {
     return _live_fieldsets;
   }
 
+  const uint8_t *GetVersion() const { return _version; }
+
+  int64_t GetTOCOffset() const { return _toc_offset; }
+
+  const crate::TableOfContents &GetTableOfContents() const { return _toc; }
+
+  bool IsFieldSetStartIndex(crate::Index index) const {
+    static constexpr uint32_t kInvalidFieldSetEnd = ~0u;
+    return (index.value < _fieldset_end_indices.size()) &&
+           (_fieldset_end_indices[index.value] != kInvalidFieldSetEnd);
+  }
 
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
@@ -432,6 +443,7 @@ class CrateReader {
 
   // implementation in crate-reader-timesamples.cc
   bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UCHAR(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_INT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);

@@ -1,0 +1,28 @@
+{
+  "_comment": "Single source of truth for UsdPreviewSurface input/output types. Consumed by (1) scripts/gen-usd-preview-surface-inputs.py, which generates src/usd-preview-surface-inputs.inc included by src/usd-validation.cc, and (2) tests/usda/validation/gen_validation_fixtures.py, which generates validation fixtures. Keep in sync with the UsdPreviewSurface struct in src/usdShade.hh; regenerate the .inc and fixtures after editing.",
+  "shaders": {
+    "UsdPreviewSurface": {
+      "inputs": {
+        "diffuseColor": "color3f",
+        "emissiveColor": "color3f",
+        "specularColor": "color3f",
+        "useSpecularWorkflow": "int",
+        "metallic": "float",
+        "roughness": "float",
+        "clearcoat": "float",
+        "clearcoatRoughness": "float",
+        "opacity": "float",
+        "opacityThreshold": "float",
+        "opacityMode": "token",
+        "ior": "float",
+        "normal": "normal3f",
+        "displacement": "float",
+        "occlusion": "float"
+      },
+      "outputs": {
+        "surface": "token",
+        "displacement": "token"
+      }
+    }
+  }
+}

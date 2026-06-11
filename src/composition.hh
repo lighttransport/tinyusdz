@@ -72,6 +72,12 @@ struct SublayersCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+
+  // Allow parent-directory ('..') segments in asset paths. Resolution of the
+  // surviving '..' is delegated to the asset resolver, so only enable this when
+  // a sandboxed/custom resolver controls reachability. See
+  // security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
 };
 
 struct ReferencesCompositionOptions {
@@ -90,6 +96,10 @@ struct ReferencesCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+
+  // Allow parent-directory ('..') segments in asset paths (resolution delegated
+  // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
 };
 
 struct PayloadCompositionOptions {
@@ -108,6 +118,10 @@ struct PayloadCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+
+  // Allow parent-directory ('..') segments in asset paths (resolution delegated
+  // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
+  bool allow_parent_relative_paths{false};
 
   ///
   /// Lazy payload loading policy.

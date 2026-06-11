@@ -1,0 +1,20 @@
+#usda 1.0
+# EXPECT: core.attr.interpolation
+# EXPECT: core.attr.elementSize
+# EXPECT: geom.primvar.metadata
+# EXPECT: geom.primvar.indices
+(
+    doc = "Indexed primvar has invalid interpolation, zero elementSize, and bad indices."
+)
+
+def Mesh "mesh"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    float[] primvars:weights = [0.25, 0.5] (
+        interpolation = "bogus"
+        elementSize = 0
+    )
+    int[] primvars:weights:indices = [0, 2, -1]
+}

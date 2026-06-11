@@ -17,6 +17,7 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "usdShade.hh"  // For Material and Shader
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface (concrete ShaderNode subtype)
 #include "usdPhysics.hh"  // For PhysicsScene, PhysicsJoint, PhysicsCollisionGroup
 #include "common-macros.inc"
 
@@ -35,6 +36,41 @@ namespace tinyusdz {
 namespace experimental {
 
 namespace {
+
+// Shader::value stores a CONCRETE ShaderNode subtype (UsdPreviewSurface,
+// UsdUVTexture, UsdPrimvarReader_*, ...). value::Value::as<T> matches the exact
+// type id, so as<ShaderNode>() (the base) does NOT match a concrete node.
+// Dispatch each concrete type to reach its inherited UsdShadePrim::props — the
+// map where reconstruction (ADD_PROPERTY) stashes authored inputs that aren't
+// modeled as typed schema fields (e.g. Unreal's inputs:anisotropy / scalar
+// inputs:specular / inputs:tangent on UsdPreviewSurface). Without this, those
+// authored inputs are silently dropped on stage->USDC writes. Mirrors the
+// concrete-type dispatch in pprint-shader.cc.
+const std::map<std::string, Property> *GetShaderNodeProps(
+    const value::Value &v) {
+#define GET_SHADER_NODE_PROPS(__ty) \
+  if (auto *p = v.as<__ty>()) {     \
+    return &(p->props);             \
+  }
+  GET_SHADER_NODE_PROPS(UsdPreviewSurface)
+  GET_SHADER_NODE_PROPS(UsdUVTexture)
+  GET_SHADER_NODE_PROPS(UsdTransform2d)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float2)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float3)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_float4)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_int)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_string)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_normal)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_vector)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_point)
+  GET_SHADER_NODE_PROPS(UsdPrimvarReader_matrix)
+  GET_SHADER_NODE_PROPS(OpenPBRSurface)
+  GET_SHADER_NODE_PROPS(MtlxOpenPBRSurface)
+  GET_SHADER_NODE_PROPS(ShaderNode)  // generic fallback (info:id-only shaders)
+#undef GET_SHADER_NODE_PROPS
+  return nullptr;
+}
 
 const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
 #define GET_PRIM_PROPS(__ty)        \
@@ -73,13 +109,14 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(RectLight)
   GET_PRIM_PROPS(Material)
   // Shader stores generic/unknown shader inputs inside Shader::value
-  // (a ShaderNode) rather than Shader::props. Prefer the inner map when
-  // the outer one is empty so generic shaders keep their inputs/outputs
-  // through USDC roundtrip.
+  // (a concrete ShaderNode subtype) rather than Shader::props. Prefer the inner
+  // map when the outer one is empty so shaders keep their non-schema inputs/
+  // outputs through USDC roundtrip. Note: as<ShaderNode>() does not match a
+  // concrete node (exact-type id), so we dispatch each concrete subtype.
   if (auto *sh = v.as<Shader>()) {
     if (sh->props.empty()) {
-      if (auto *node = sh->value.as<ShaderNode>()) {
-        return &node->props;
+      if (const auto *node_props = GetShaderNodeProps(sh->value)) {
+        return node_props;
       }
     }
     return &sh->props;
@@ -150,6 +187,16 @@ const Collection *GetPrimCollection(const value::Value &v) {
   GET_PRIM_COLLECTION(GeomCapsule_1)
   GET_PRIM_COLLECTION(GeomTetMesh)
   GET_PRIM_COLLECTION(GeomNurbsPatch)
+  // Lights inherit Collection (light:link / shadow:link collections).
+  GET_PRIM_COLLECTION(SphereLight)
+  GET_PRIM_COLLECTION(RectLight)
+  GET_PRIM_COLLECTION(DiskLight)
+  GET_PRIM_COLLECTION(CylinderLight)
+  GET_PRIM_COLLECTION(DistantLight)
+  GET_PRIM_COLLECTION(DomeLight)
+  GET_PRIM_COLLECTION(DomeLight_1)
+  GET_PRIM_COLLECTION(GeometryLight)
+  GET_PRIM_COLLECTION(PortalLight)
 
 #undef GET_PRIM_COLLECTION
   return nullptr;
@@ -374,6 +421,14 @@ bool CrateWriter::ConvertSinglePrim(
   Path prim_path(abs_path_str, "");
   std::string type_name = prim.prim_type_name();
 
+  // All specs this prim contributes (its Prim spec + Attribute/Relationship/
+  // Connection specs) are appended to spec_data_ within this call. Record the
+  // start index so the "properties"-field pass below scans only this prim's
+  // specs instead of all accumulated specs — the prior all-specs scan made
+  // ConvertSinglePrim O(prims x total_specs), which dominated write time for
+  // spec-dense scenes (e.g. a scene with ~5000 shaders -> ~57 s write).
+  const size_t my_specs_begin = spec_data_.size();
+
   DCOUT("ConvertSinglePrim: name=" << prim_name << " abs=" << abs_path_str << " type=" << type_name);
 
   // Extract properties from this prim
@@ -531,6 +586,7 @@ bool CrateWriter::ConvertSinglePrim(
     "blendShapes",  // SkelAnimation
     "inactiveIds",  // PointInstancer
     "purpose", "doubleSided",  // GPrim
+    "info:id",  // Shader (UsdShade: `uniform token info:id`)
   };
 
   // Create separate Attribute specs for each property
@@ -674,6 +730,12 @@ bool CrateWriter::ConvertSinglePrim(
         else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
         else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
         else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
+      } else if (auto* mtlx_surface = shader->value.as<MtlxOpenPBRSurface>()) {
+        // MaterialX ND_open_pbr_surface_surfaceshader -> typed MtlxOpenPBRSurface
+        if (!AddMtlxOpenPBRSurfaceInputSpecs(mtlx_surface, prim_path, err)) {
+          if (err) *err = "Failed to add MtlxOpenPBRSurface input specs: " + *err;
+          return false;
+        }
       }
     }
   }
@@ -682,6 +744,13 @@ bool CrateWriter::ConvertSinglePrim(
   // This applies to any prim that might have material bindings (typically geometry)
   if (!AddMaterialBindingSpecs(prim, prim_path, err)) {
     // Don't fail on material binding errors - just warn
+  }
+
+  // SkelBindingAPI relationships (skel:animationSource / skel:skeleton /
+  // skel:blendShapeTargets) are stored as typed optional Relationship fields and
+  // would otherwise be dropped on USDC write, losing skeletal animation bindings.
+  if (!AddSkelBindingSpecs(prim, prim_path, err)) {
+    // Don't fail the whole export on a skel binding error - just warn.
   }
 
   // Handle doubleSided for GPrim-derived types via ConvertPropertyToFields
@@ -860,7 +929,11 @@ bool CrateWriter::ConvertSinglePrim(
     const std::string prim_prefix = abs_path_str + ".";
     std::vector<value::token> property_names;
     std::set<std::string> seen;
-    for (const auto &sd : spec_data_) {
+    // Scan only the specs this prim added (see my_specs_begin), not all of
+    // spec_data_ — direct-child Attribute/Relationship specs are always among
+    // this prim's own specs.
+    for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+      const auto &sd = spec_data_[_i];
       if (sd.spec_type == SpecType::Attribute ||
           sd.spec_type == SpecType::Relationship) {
         const std::string &fp = sd.path.full_path_name();
@@ -878,10 +951,12 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!property_names.empty()) {
-      // Append "properties" field to the existing prim spec
-      for (auto &sd : spec_data_) {
-        if (sd.path.full_path_name() == abs_path_str &&
-            sd.spec_type == SpecType::Prim) {
+      // Append "properties" field to this prim's Prim spec (also within the
+      // [my_specs_begin, end) range this call appended).
+      for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
+        auto &sd = spec_data_[_i];
+        if (sd.spec_type == SpecType::Prim &&
+            sd.path.full_path_name() == abs_path_str) {
           crate::CrateValue props_value;
           props_value.Set(property_names);
           sd.fields.push_back({"properties", props_value});
@@ -903,14 +978,15 @@ bool CrateWriter::ConvertPrimIterative(
   const Path& parent_path,
   std::string* err
 ) {
-  // Explicit DFS stack: (prim pointer, parent path)
+  // Explicit DFS stack: (prim pointer, parent path, nesting depth)
   struct WorkItem {
     const Prim* prim;
     Path parent_path;
+    uint32_t depth;
   };
 
   std::vector<WorkItem> stack;
-  stack.push_back({&root_prim, parent_path});
+  stack.push_back({&root_prim, parent_path, 0});
 
   while (!stack.empty()) {
     if (stack.size() > kMaxDefaultTraversalLimit) {
@@ -920,6 +996,20 @@ bool CrateWriter::ConvertPrimIterative(
 
     WorkItem item = std::move(stack.back());
     stack.pop_back();
+
+    // Authoritative prim-nesting depth gate. The path-tree builder recurses on
+    // the native stack (see kMaxPrimNestingDepth in crate-writer.hh); reject
+    // here, early and clearly, so deeply nested stages don't fail cryptically
+    // during path-tree building.
+    if (item.depth > kMaxPrimNestingDepth) {
+      if (err) {
+        *err = "Prim nesting too deep (>" +
+               std::to_string(kMaxPrimNestingDepth) +
+               " levels) at " + item.parent_path.prim_part() + "/" +
+               item.prim->element_name();
+      }
+      return false;
+    }
 
     if (!ConvertSinglePrim(*item.prim, item.parent_path, err)) {
       return false;
@@ -938,7 +1028,7 @@ bool CrateWriter::ConvertPrimIterative(
     // Push children in reverse order so left-most child is processed first
     const auto& children = item.prim->children();
     for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back({&(*it), prim_path});
+      stack.push_back({&(*it), prim_path, item.depth + 1});
     }
   }
 
@@ -1040,18 +1130,14 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"variantSetNames", v});
   }
 
-  // TODO: references, payload, customData, apiSchemas, inherits, specializes,
-  // assetInfo, and unregisteredMetas are implemented in the code below but
-  // currently disabled because the Stage path's binary encoding causes
-  // fieldset decode errors and CustomDataType serialization issues.
-  // The Layer path (ConvertPrimSpecRecursive) handles these correctly.
-  // Enable these after fixing the encoding/decoding issues.
-  //
-  // Fields that need fixing before enabling:
-  // - references/payload: cause "Failed to decode fieldset id" errors
-  // - customData/assetInfo: int2, int2[], asset types unsupported
-  // - apiSchemas: ListOp encoding issues for non-Explicit qualifiers
-  // - inherits/specializes: similar to references
+  // Composition arcs and dictionary metadata (customData, assetInfo, clips),
+  // apiSchemas, references, payload, inherits, and specializes ARE emitted on
+  // the Stage path below, mirroring the Layer path (ConvertPrimSpecRecursive in
+  // sconv-layer.cc). These were historically disabled due to fieldset
+  // decode/serialization issues; the encoding has since been fixed and is now
+  // covered by Stage->USDC round-trip tests (see unit-crate-writer.cc:
+  // crate_writer_stage_composition_arcs_test). Keep the two paths in sync when
+  // adding new metadata fields.
 
   if (metas.has_instanceable()) {
     crate::CrateValue v;
@@ -1710,10 +1796,20 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uchar") {
+    if (auto v = val.get_value<uint8_t>()) {
+      out.Set(*v);
+      return true;
+    }
   }
 
   // Array types
-  else if (type_name == "int[]") {
+  else if (type_name == "uchar[]") {
+    if (auto v = val.get_value<std::vector<uint8_t>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int[]") {
     if (auto v = val.get_value<std::vector<int32_t>>()) {
       out.Set(*v);
       return true;

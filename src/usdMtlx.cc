@@ -1542,7 +1542,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "transmission_extra_roughness", "float", float, valueStr, surface.transmission_extra_roughness)
       GET_SHADER_PARAM(name, typeName, "subsurface", "float", float, valueStr, surface.subsurface)
       GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
-      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "color3", value::color3f, valueStr, surface.subsurface_radius)
       GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
       GET_SHADER_PARAM(name, typeName, "sheen", "float", float, valueStr, surface.sheen)
@@ -2086,14 +2086,17 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   //   }
   //   def "Shaders" {
   //   }
-  constexpr auto kAutodeskStandardSurface = "AutodeskStandardSurface";
-
+  // Validate the model's surface shader is one we recognize. (This top-level
+  // info:id is informational; the root PrimSpec is rebuilt below.) Compare
+  // against the SAME constants the reader assigns (see shader_name = … above);
+  // the standard_surface one is kMtlxAutodeskStandardSurface, not the bare
+  // "AutodeskStandardSurface" string.
   if (model.shader_name == kUsdPreviewSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kUsdPreviewSurface));
-  } else if (model.shader_name == kAutodeskStandardSurface) {
+  } else if (model.shader_name == kMtlxAutodeskStandardSurface) {
     ps.props()["info:id"] =
-        detail::MakeProperty(value::token(kAutodeskStandardSurface));
+        detail::MakeProperty(value::token(kMtlxAutodeskStandardSurface));
   } else if (model.shader_name == kOpenPBRSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kOpenPBRSurface));

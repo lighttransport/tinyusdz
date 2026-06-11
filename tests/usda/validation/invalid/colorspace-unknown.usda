@@ -1,0 +1,12 @@
+#usda 1.0
+# EXPECT: core.schema.ColorSpaceAPI.name
+(
+    doc = "ColorSpaceAPI with an unknown color space token. Expect ERROR core.schema.ColorSpaceAPI.name."
+)
+
+def Scope "Root" (
+    prepend apiSchemas = ["ColorSpaceAPI"]
+)
+{
+    uniform token colorSpace:name = "not_a_real_color_space"
+}

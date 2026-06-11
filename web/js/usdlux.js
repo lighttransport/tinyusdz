@@ -3290,7 +3290,7 @@ async function loadLightsFromUSD(usdLoader) {
 
       if (usdLight.envmapTextureId >= 0) {
         debugLog(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
-        imageData = usdLoader.getImage(usdLight.envmapTextureId);
+        imageData = usdLoader.getImageCopy(usdLight.envmapTextureId);
 
         if (imageData && !imageData.error) {
           debugLog(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);

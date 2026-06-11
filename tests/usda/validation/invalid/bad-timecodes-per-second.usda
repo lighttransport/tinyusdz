@@ -1,0 +1,11 @@
+#usda 1.0
+# EXPECT: core.layer.timeCodesPerSecond
+(
+    doc = "timeCodesPerSecond must be > 0. Expect ERROR core.layer.timeCodesPerSecond."
+    defaultPrim = "World"
+    timeCodesPerSecond = -1
+)
+
+def Xform "World"
+{
+}

@@ -451,6 +451,23 @@ bool GetPhysicsFilteredPairsAPI(const Prim &prim,
                                 PhysicsFilteredPairsAPI *out);
 
 ///
+/// @brief Populate a Physics*API struct from a Prim's authored properties.
+///
+/// UsdPhysics applied/multi-apply API schemas (RigidBody/Collision/Material/
+/// Mass/MeshCollision) attach `physics:*` properties to an arbitrary host prim
+/// (Mesh, Xform, ...). TinyUSDZ keeps those in the host prim's generic property
+/// map; these helpers extract them into the typed struct on demand. Each returns
+/// true iff the prim lists the corresponding schema in its apiSchemas metadata
+/// (authored properties then fill the matching struct members; absent ones keep
+/// their struct defaults).
+///
+bool GetPhysicsRigidBodyAPI(const Prim &prim, PhysicsRigidBodyAPI *out);
+bool GetPhysicsCollisionAPI(const Prim &prim, PhysicsCollisionAPI *out);
+bool GetPhysicsMaterialAPI(const Prim &prim, PhysicsMaterialAPI *out);
+bool GetPhysicsMassAPI(const Prim &prim, PhysicsMassAPI *out);
+bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out);
+
+///
 /// @brief Resolve membership of the auto-applied CollectionAPI:colliders
 ///        on a PhysicsCollisionGroup prim.
 ///

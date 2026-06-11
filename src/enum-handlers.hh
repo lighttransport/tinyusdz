@@ -148,5 +148,13 @@ APISchemaName(const std::string &tok);
 nonstd::optional<APISchemas::APIName>
 APISchemaNameOpt(const std::string &tok);
 
+/// Resolve an apiSchemas token that may carry a multi-apply instance name.
+/// USD writes multi-apply instances as `SchemaName:instanceName` (split on the
+/// first ':'). Looks up the base schema name; on success returns
+/// `(APIName, instanceName)` where `instanceName` is empty for single-apply.
+/// Returns nullopt when the base name is not a known schema.
+nonstd::optional<std::pair<APISchemas::APIName, std::string>>
+APISchemaNameWithInstanceOpt(const std::string &tok);
+
 }  // namespace enum_handler
 }  // namespace tinyusdz

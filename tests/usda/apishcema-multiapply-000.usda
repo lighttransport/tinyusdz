@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    defaultPrim = "joint"
+    upAxis = "Y"
+)
+
+# Regression test: multi-apply API schema instance names.
+# Multi-apply schemas are authored as `SchemaName:instanceName`; the reader
+# must split the instance (so the resolved view recognizes the base schema)
+# while the writer reproduces the full `SchemaName:instanceName` token.
+
+def Xform "joint" (
+    prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsDriveAPI:linear", "PhysicsLimitAPI:rotX"]
+)
+{
+}

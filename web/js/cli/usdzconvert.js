@@ -13,8 +13,18 @@ import path from 'node:path';
 import { convertFolderToUSDZ, loadWasm, parseByteSize } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
-// CLI runs with plain `node`.
-const wasmGlue = new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+// CLI runs with plain `node`. TINYUSDZ_WASM64=1 selects the 64-bit (8 GB) glue
+// — used as a fallback for scenes that overflow the wasm32 2 GB ceiling. Falls
+// back to the 32-bit glue if the 64-bit build is not present.
+function selectWasmGlue() {
+  if (process.env.TINYUSDZ_WASM64 === '1') {
+    const url64 = new URL('../src/tinyusdz/tinyusdz_64.js', import.meta.url);
+    if (fs.existsSync(url64)) return url64.href;
+    console.error('[usdzconvert] TINYUSDZ_WASM64=1 but tinyusdz_64.js not found; using wasm32.');
+  }
+  return new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+}
+const wasmGlue = selectWasmGlue();
 
 function printHelp() {
   console.log(`
@@ -28,11 +38,41 @@ Convert options:
   -o, --output <file>      Output .usdz path (default: <root>.usdz)
   --root <relpath>         Root USD layer within the input dir (default: auto)
   --resize <N>             Cap each texture's longest edge to N pixels
+  --resize-colorspace <s>  How to resample when resizing:
+                           'auto'   = per-texture from UsdUVTexture sourceColorSpace
+                                      (sRGB textures in linear light, data maps
+                                      gamma-space) — correct without guessing;
+                           'srgb'   = force linear-light for ALL resized textures;
+                           'linear' = force gamma-space for all (default).
   --texture-format <fmt>   Texture output: keep, png, jpeg (default: keep)
   --root-layer-format <fmt> USDZ root layer: usdc, usda (default: usdc)
   --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
   --no-flatten             Accepted for parity; JS/WASM export still flattens
   --jpeg-quality <1-100>   JPEG quality when re-encoding (default 90)
+  --max-usdc-mb <N>        Raise the USDC root-layer write size cap to N MB
+                           (0 = keep the conservative ~100 MB WASM default).
+                           Needed for very large scenes.
+  --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
+  --pipeline <legacy|next> Flatten pipeline (default: legacy). 'next' uses the
+                           experimental low-memory lazy-ValueRep path for a single
+                           .usdz with a top-level USDC root; falls back to legacy
+                           otherwise. Also via TINYUSDZ_PIPELINE env.
+  --stream-textures        Re-encode/resize textures one at a time and repack in
+                           JS, so decoded images never accumulate in the WASM
+                           heap. This is the DEFAULT for a single .usdz with
+                           --texture-format keep + re-encode/resize (it keeps
+                           large texture-heavy scenes under the wasm32
+                           2 GB ceiling). The flag forces it; otherwise it is
+                           auto-enabled and falls back for nested roots / non-keep
+                           formats.
+  --no-stream-textures     Force the in-heap batch texture path (higher memory).
+  --stream-write           (--pipeline next, DEFAULT) Stream the flattened root
+                           crate straight into the .usdz instead of buffering it,
+                           so the output crate never materializes in the WASM heap
+                           or in JS. Byte-identical output; roughly halves peak
+                           RSS on large scenes. Engages when writing to a file
+                           (-o); falls back to buffering otherwise.
+  --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
@@ -62,10 +102,20 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const o = {
     input: null, output: null, root: null, resize: 0, jpegQuality: 90,
-    pngEncoder: 'auto', reencode: true, verbose: false,
+    pngEncoder: 'auto', reencode: true, verbose: false, resizeColorspace: '',
     textureFormat: 'keep', rootLayerFormat: 'usdc', arkitCompatible: false,
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
+    maxUsdcMb: 0, maxMemMb: 0,
+    pipeline: process.env.TINYUSDZ_PIPELINE || 'legacy',
+    // undefined => auto (stream textures for a single .usdz keep-format re-encode,
+    // the low-memory default); true => force; false => force the in-heap path.
+    streamTextures: undefined,
+    // Stream the flattened root crate straight into the .usdz (next pipeline only)
+    // instead of buffering it — keeps the output crate out of the WASM heap and JS.
+    // Default ON for --pipeline next when writing to a file; TINYUSDZ_STREAM_WRITE=0
+    // (or --no-stream-write) disables it.
+    streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
   };
   for (let i = 0; i < args.length; i++) {
@@ -74,6 +124,7 @@ function parseArgs() {
     else if (a === '-o' || a === '--output') o.output = args[++i];
     else if (a === '--root') o.root = args[++i];
     else if (a === '--resize') o.resize = parseInt(args[++i], 10) || 0;
+    else if (a === '--resize-colorspace') o.resizeColorspace = args[++i];
     else if (a === '--texture-format') o.textureFormat = args[++i];
     else if (a === '--root-layer-format') o.rootLayerFormat = args[++i];
     else if (a === '--arkit-compatible') o.arkitCompatible = true;
@@ -85,6 +136,13 @@ function parseArgs() {
     else if (a === '--fit-strategy') o.fitStrategy = args[++i];
     else if (a === '--fit-min-size') o.fitMinSize = parseInt(args[++i], 10) || 64;
     else if (a === '--fit-min-quality') o.fitMinQuality = parseInt(args[++i], 10) || 30;
+    else if (a === '--max-usdc-mb') o.maxUsdcMb = parseInt(args[++i], 10) || 0;
+    else if (a === '--max-mem-mb') o.maxMemMb = parseInt(args[++i], 10) || 0;
+    else if (a === '--pipeline') o.pipeline = args[++i];
+    else if (a === '--stream-textures') o.streamTextures = true;
+    else if (a === '--no-stream-textures') o.streamTextures = false;
+    else if (a === '--stream-write') o.streamWrite = true;
+    else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -106,7 +164,7 @@ function readDirToMap(dir) {
       const full = path.join(cur, entry.name);
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) walk(full, rel);
-      else if (entry.isFile()) map.set(rel, new Uint8Array(fs.readFileSync(full)));
+      else if (entry.isFile()) map.set(rel, fs.readFileSync(full));
     }
   };
   walk(dir, '');
@@ -132,7 +190,7 @@ async function runRepack(native, o) {
     const key = slots[i].toLowerCase();
     if (parsed.file !== undefined) {
       if (!fs.existsSync(parsed.file)) { console.error('File not found: ' + parsed.file); process.exit(1); }
-      args[key] = { data: new Uint8Array(fs.readFileSync(parsed.file)), channel: parsed.channel };
+      args[key] = { data: fs.readFileSync(parsed.file), channel: parsed.channel };
     } else {
       args[key] = { const: parsed.const };
     }
@@ -173,6 +231,12 @@ async function main() {
   if (st.isDirectory()) {
     assetMap = readDirToMap(o.input);
     rootRel = o.root || null;
+  } else if (/\.usdz$/i.test(o.input)) {
+    // A .usdz is self-contained; read only the archive and let the converter
+    // unpack it to repack its internal textures (avoids slurping siblings).
+    const base = path.basename(o.input);
+    assetMap = new Map([[base, fs.readFileSync(o.input)]]);
+    rootRel = o.root || base;
   } else {
     // Single file: read its whole directory so sibling textures resolve.
     const dir = path.dirname(o.input);
@@ -181,9 +245,36 @@ async function main() {
   }
 
   const log = o.verbose ? (m) => console.log(m) : () => {};
-  const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+
+  // When an explicit -o path is given, offer a file-backed zip sink so the
+  // texture-streaming path can write the archive straight to disk (one entry at
+  // a time) instead of building the whole USDZ in memory — the lowest-peak
+  // legacy path for texture-heavy scenes. Opened lazily on first write, so if a
+  // non-streaming path runs the sink is simply never used.
+  // Patch-capable (seekable) sink: write() appends at the running offset; patch()
+  // rewrites already-written bytes at an absolute position (used to backfill a
+  // streamed root entry's local-header CRC/size). All writes use an explicit
+  // position so append and patch never depend on the fd's implicit cursor.
+  let streamFd = null, streamBytes = 0;
+  const ensureFd = () => { if (streamFd === null) streamFd = fs.openSync(o.output, 'w'); };
+  const zipSink = o.output
+    ? {
+        write: (chunk) => {
+          ensureFd();
+          fs.writeSync(streamFd, chunk, 0, chunk.length, streamBytes);
+          streamBytes += chunk.length;
+        },
+        patch: (pos, chunk) => {
+          ensureFd();
+          fs.writeSync(streamFd, chunk, 0, chunk.length, pos);
+        },
+      }
+    : undefined;
+
+  const { usdz, streamedToSink, stats } = await convertFolderToUSDZ(native, assetMap, {
     rootPath: rootRel,
     maxTextureSize: o.resize,
+    resizeColorspace: o.resizeColorspace,
     targetTextureBytes: o.targetSize,
     fitStrategy: o.fitStrategy,
     fitMinTextureSize: o.fitMinSize,
@@ -195,14 +286,29 @@ async function main() {
     flatten: o.flatten,
     pngEncoder: o.pngEncoder,
     jpegQuality: o.jpegQuality,
+    maxUsdcMb: o.maxUsdcMb,
+    maxMemMb: o.maxMemMb,
+    pipeline: o.pipeline,
+    streamTextures: o.streamTextures,
+    streamWrite: o.streamWrite,
+    zipSink,
     log,
   });
 
-  const outPath = o.output ||
-    `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
-  fs.writeFileSync(outPath, usdz);
-  console.log(`Wrote ${outPath} (${usdz.length} bytes) — root: ${stats.rootPath}, ` +
-              `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}`);
+  const statLine = `root: ${stats.rootPath}, textures: ${stats.textures}, ` +
+    `resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
+    `audio: ${stats.audio || 0}, other assets: ${stats.otherAssets || 0}`;
+
+  if (streamedToSink && streamFd !== null) {
+    fs.closeSync(streamFd);
+    console.log(`Wrote ${o.output} (${streamBytes} bytes, streamed) — ${statLine}`);
+  } else {
+    if (streamFd !== null) fs.closeSync(streamFd);  // sink opened but path bailed
+    const outPath = o.output ||
+      `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
+    fs.writeFileSync(outPath, usdz);
+    console.log(`Wrote ${outPath} (${usdz.length} bytes) — ${statLine}`);
+  }
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1); });

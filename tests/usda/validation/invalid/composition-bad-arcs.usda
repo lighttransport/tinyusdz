@@ -1,0 +1,39 @@
+#usda 1.0
+# EXPECT: core.composition.reference
+# EXPECT: core.composition.payload
+# EXPECT: core.composition.inherits
+# EXPECT: core.composition.specializes
+# EXPECT: core.composition.variantSets
+# EXPECT: core.composition.variantSelection
+# EXPECT: core.composition.over
+
+class Xform "NotAClassTarget"
+{
+}
+
+def Xform "Root" (
+    references = @./ref.usda@</Ref> (scale = 0)
+    payload = @./payload.usda@</Payload> (scale = 0)
+    inherits = </Root>
+    specializes = </Root>
+    variantSets = ["bad-name"]
+)
+{
+}
+
+over "Empty"
+{
+}
+
+def Xform "VariantBad" (
+    variants = {
+        string look = "missing"
+    }
+    prepend variantSets = ["look"]
+)
+{
+    variantSet "look" = {
+        "hero" {
+        }
+    }
+}

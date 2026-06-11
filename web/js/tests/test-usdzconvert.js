@@ -19,6 +19,11 @@ import {
   rootUsdFromMap,
   loadWasm,
   convertFolderToUSDZ,
+  unpackUSDZ,
+  expandUsdzInputs,
+  isAudioName,
+  parseUSDZEntries,
+  buildUSDZWithNewRoot,
 } from '../src/usdzconvert.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -118,12 +123,23 @@ test('path with dirs', () => assert.equal(isUsdName('models/scene.usda'), true))
 test('empty string', () => assert.equal(isUsdName(''), false));
 
 // ============================================================
+console.log('isAudioName');
+// ============================================================
+test('m4a is audio', () => assert.equal(isAudioName('clip.m4a'), true));
+test('mp3 is audio', () => assert.equal(isAudioName('clip.mp3'), true));
+test('wav is audio', () => assert.equal(isAudioName('clip.wav'), true));
+test('aac is audio', () => assert.equal(isAudioName('clip.AAC'), true));
+test('png is not audio', () => assert.equal(isAudioName('tex.png'), false));
+test('usd is not audio', () => assert.equal(isAudioName('scene.usda'), false));
+test('audio path with dirs', () => assert.equal(isAudioName('audio/voice.mp3'), true));
+
+// ============================================================
 console.log('imageFormatFromName');
 // ============================================================
 test('png format', () => assert.equal(imageFormatFromName('tex.png'), 'png'));
 test('jpg format', () => assert.equal(imageFormatFromName('tex.jpg'), 'jpeg'));
 test('jpeg format', () => assert.equal(imageFormatFromName('tex.jpeg'), 'jpeg'));
-test('exr returns null', () => assert.equal(imageFormatFromName('tex.exr'), null));
+test('exr is exr', () => assert.equal(imageFormatFromName('tex.exr'), 'exr'));
 test('avif returns null', () => assert.equal(imageFormatFromName('tex.avif'), null));
 test('no extension', () => assert.equal(imageFormatFromName('noext'), null));
 test('case insensitive', () => assert.equal(imageFormatFromName('TEX.PNG'), 'png'));
@@ -135,7 +151,11 @@ test('keep png', () => assert.deepEqual(outputFormatForImage('tex.png'), { forma
 test('keep jpeg preserves extension', () => assert.deepEqual(outputFormatForImage('tex.jpeg'), { format: 'jpeg', ext: 'jpeg' }));
 test('force jpeg', () => assert.deepEqual(outputFormatForImage('tex.png', 'jpeg'), { format: 'jpeg', ext: 'jpg' }));
 test('force png', () => assert.deepEqual(outputFormatForImage('tex.jpg', 'png'), { format: 'png', ext: 'png' }));
-test('unsupported keep', () => assert.deepEqual(outputFormatForImage('tex.exr'), { format: null, ext: null }));
+test('keep exr stays exr', () => assert.deepEqual(outputFormatForImage('tex.exr'), { format: 'exr', ext: 'exr' }));
+test('exr to png', () => assert.deepEqual(outputFormatForImage('tex.exr', 'png'), { format: 'png', ext: 'png' }));
+test('exr to jpeg', () => assert.deepEqual(outputFormatForImage('tex.exr', 'jpeg'), { format: 'jpeg', ext: 'jpg' }));
+test('png to exr', () => assert.deepEqual(outputFormatForImage('tex.png', 'exr'), { format: 'exr', ext: 'exr' }));
+test('unsupported avif keep', () => assert.deepEqual(outputFormatForImage('tex.avif'), { format: null, ext: null }));
 
 // ============================================================
 console.log('parseByteSize');
@@ -371,6 +391,400 @@ def Xform "fromSub"
     } catch (e) {
       assert.ok(e.message.includes('Failed to load USD'), 'error should mention load failure');
     }
+  });
+
+  // --- USDZ unpack + repack round-trips ---
+  await testAsync('unpackUSDZ round-trips a generated USDZ', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map();
+    assetMap.set('scene.usda', new TextEncoder().encode(usdaContent));
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, { rootPath: 'scene.usda' });
+    const { entries, order } = unpackUSDZ(usdz);
+    assert.ok(order.length >= 1, 'archive should have at least one entry');
+    assert.ok(order.some(isUsdName), 'archive should contain a USD layer');
+    for (const name of order) {
+      assert.ok(entries.get(name) instanceof Uint8Array, `${name} should be bytes`);
+    }
+  });
+
+  await testAsync('unpackUSDZ rejects a non-zip buffer', () => {
+    assert.throws(() => unpackUSDZ(new Uint8Array([1, 2, 3, 4, 5])), /USDZ|ZIP/);
+  });
+
+  await testAsync('expandUsdzInputs unpacks a .usdz into its contents', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const { usdz } = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    const { assetMap, innerRoot } = expandUsdzInputs(new Map([['model.usdz', usdz]]));
+    assert.ok(innerRoot && isUsdName(innerRoot), 'innerRoot should be a USD layer');
+    assert.ok(!assetMap.has('model.usdz'), 'archive itself should be expanded away');
+    assert.ok(assetMap.has(innerRoot), 'expanded map should contain the inner root');
+  });
+
+  await testAsync('convertFolderToUSDZ flattens a .usdz input with low heap root rewrite', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    // Feed the produced USDZ back in as the sole input. With flatten enabled
+    // (the default), this should rewrite only the root layer and copy entries in JS.
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', first.usdz]]),
+      { rootPath: 'model.usdz', reencode: false },
+    );
+    assert.ok(repacked.usdz instanceof Uint8Array, 'repack should produce bytes');
+    assert.equal(repacked.usdz[0], 0x50, 'output should be a ZIP (P)');
+    assert.equal(firstZipEntryName(repacked.usdz), 'root.usdc',
+      'low-heap flattened output should write a USDC root');
+    assert.equal(repacked.stats.lowHeapFlatten, true,
+      'stats should identify the low-heap flatten path');
+    assert.ok(!/\.usdz$/i.test(repacked.stats.rootPath),
+      'root should resolve to the inner layer, not the .usdz');
+    // The repacked archive must still be loadable.
+    const usd = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
+        'repacked USDZ should load: ' + usd.error());
+    } finally {
+      usd.delete();
+    }
+  });
+
+  await testAsync('convertFolderToUSDZ passthrough keeps a .usdz byte-identical when flatten is disabled', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', first.usdz]]),
+      { rootPath: 'model.usdz', reencode: false, flatten: false },
+    );
+    assert.deepEqual(Array.from(repacked.usdz), Array.from(first.usdz),
+      'non-flatten passthrough should be byte-identical');
+    assert.equal(repacked.stats.passthrough, true,
+      'stats should identify the exact passthrough path');
+  });
+
+  // The low-heap flatten path rewrites the root as a top-level `root.usdc` and
+  // strips the root's directory prefix. For a USDZ whose root layer lives in a
+  // subdirectory that rename would re-anchor relative asset references, so the
+  // converter must fall back to the standard repack path instead.
+  await testAsync('convertFolderToUSDZ falls back to standard repack for a subdirectory-rooted .usdz', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const seed = new Map([['scene.usda', new TextEncoder().encode(usdaContent)]]);
+    const first = await convertFolderToUSDZ(native, seed, { rootPath: 'scene.usda' });
+    // Re-pack the produced (self-contained) root layer so it lives in a
+    // subdirectory inside the archive.
+    const innerRoot = parseUSDZEntries(first.usdz).find((e) => isUsdName(e.name));
+    assert.ok(innerRoot, 'seed USDZ should contain a USD root');
+    const nested = buildUSDZWithNewRoot('sub/root.usdc', innerRoot.data, []);
+    assert.equal(firstZipEntryName(nested), 'sub/root.usdc',
+      'fixture should have a subdirectory-rooted layer');
+
+    const repacked = await convertFolderToUSDZ(
+      native,
+      new Map([['model.usdz', nested]]),
+      { rootPath: 'model.usdz', reencode: false },
+    );
+    assert.ok(repacked.usdz instanceof Uint8Array, 'repack should produce bytes');
+    assert.equal(repacked.usdz[0], 0x50, 'output should be a ZIP (P)');
+    // The low-heap flatten path must be skipped for a subdirectory-rooted input.
+    assert.notEqual(repacked.stats.lowHeapFlatten, true,
+      'subdirectory-rooted input must fall back to the standard repack path');
+    // The fallback output must still be loadable.
+    const usd = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
+        'repacked nested-root USDZ should load: ' + usd.error());
+    } finally {
+      usd.delete();
+    }
+  });
+
+  // Regression: skel:animationSource (SkelBindingAPI relationship) must survive a
+  // USDC-root export, otherwise skeletal animation is silently dropped on convert.
+  await testAsync('convertFolderToUSDZ preserves skeletal animation (USDC root)', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const skelUsda = `#usda 1.0
+(
+    defaultPrim = "root"
+    upAxis = "Y"
+)
+
+def SkelRoot "root"
+{
+    def Skeleton "skel"
+    {
+        uniform matrix4d[] bindTransforms = [( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) )]
+        uniform token[] joints = ["joint0"]
+        uniform matrix4d[] restTransforms = [( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) )]
+        rel skel:animationSource = </root/anim>
+    }
+
+    def SkelAnimation "anim"
+    {
+        uniform token[] joints = ["joint0"]
+        quatf[] rotations = [(1, 0, 0, 0)]
+        half3[] scales = [(1, 1, 1)]
+        float3[] translations.timeSamples = {
+            0: [(0, 0, 0)],
+            10: [(1, 0, 0)],
+        }
+    }
+}
+`;
+    const assetMap = new Map([['skel.usda', new TextEncoder().encode(skelUsda)]]);
+    // Sanity-check the source actually has a skeleton + animation.
+    const src = new native.TinyUSDZLoaderNative();
+    assert.ok(src.loadFromBinary(new TextEncoder().encode(skelUsda), 'skel.usda'));
+    assert.equal(src.numSkeletons(), 1, 'source should have a skeleton');
+    assert.equal(src.numAnimations(), 1, 'source should have a skel animation');
+    src.delete();
+
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'skel.usda', rootLayerFormat: 'usdc',
+    });
+    const out = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(out.loadFromBinary(usdz, 'out.usdz'), 'converted USDZ should load');
+      assert.equal(out.numSkeletons(), 1, 'skeleton should survive conversion');
+      assert.equal(out.numAnimations(), 1,
+        'skeletal animation must survive USDC conversion (skel:animationSource binding)');
+    } finally {
+      out.delete();
+    }
+  });
+
+  // Regression: a UsdPrimvarReader's connected `inputs:varname` (and the uniform
+  // `info:id`) must survive a USDC write. Dropping the varname connection breaks
+  // UsdUVTexture evaluation, making the whole render-scene load fail.
+  await testAsync('USDC write preserves shader varname connection + uniform info:id', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const matUsda = `#usda 1.0
+def Material "M"
+{
+    token inputs:stPrimvarName = "st"
+    token outputs:surface.connect = </M/S.outputs:surface>
+    def Shader "P"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        string inputs:varname.connect = </M.inputs:stPrimvarName>
+        float2 outputs:result
+    }
+    def Shader "S"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        token outputs:surface
+    }
+}
+`;
+    const usd = new native.TinyUSDZLoaderNative();
+    assert.ok(usd.loadAsLayerFromBinary(new TextEncoder().encode(matUsda), 'm.usda'));
+    const usdc = usd.exportAsUSDC();
+    usd.delete();
+    const rt = new native.TinyUSDZLoaderNative();
+    try {
+      assert.ok(rt.loadAsLayerFromBinary(new Uint8Array(usdc), 'rt.usdc'), 'USDC reload');
+      const out = rt.exportAsUSDA();
+      assert.match(out, /inputs:varname\.connect\s*=\s*<\/M\.inputs:stPrimvarName>/,
+        'varname connection must survive the USDC round-trip');
+      assert.match(out, /uniform token info:id\s*=\s*"UsdPrimvarReader_float2"/,
+        'info:id must remain uniform after the USDC round-trip');
+    } finally {
+      rt.delete();
+    }
+  });
+
+  await testAsync('convertFolderToUSDZ passes audio assets through into the USDZ', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const audioBytes = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 1, 2, 3, 4, 5, 6, 7, 8]); // 'fLaC' + filler
+    const assetMap = new Map([
+      ['scene.usda', new TextEncoder().encode(usdaContent)],
+      ['audio/voice.wav', audioBytes],
+    ]);
+    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, { rootPath: 'scene.usda' });
+    assert.equal(stats.audio, 1, 'one audio asset should be counted');
+    const { entries } = unpackUSDZ(usdz);
+    assert.ok(entries.has('audio/voice.wav'), 'audio file should be packed into the USDZ');
+    assert.deepEqual(entries.get('audio/voice.wav'), audioBytes, 'audio bytes should pass through unchanged');
+  });
+
+  await testAsync('audioProcessor hook can replace audio bytes', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const assetMap = new Map([
+      ['scene.usda', new TextEncoder().encode(usdaContent)],
+      ['snd.mp3', new Uint8Array([1, 1, 1])],
+    ]);
+    const replacement = new Uint8Array([9, 9, 9, 9]);
+    const { usdz } = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: 'scene.usda',
+      audioProcessor: () => ({ data: replacement }),
+    });
+    const { entries } = unpackUSDZ(usdz);
+    assert.deepEqual(entries.get('snd.mp3'), replacement, 'audioProcessor output should be packed');
+  });
+
+  // EXR texture handling: keep+resize as EXR, and transcode EXR -> PNG/JPEG.
+  // (Regression: native EXR decode had an inverted success check, and EXR
+  // resize/encode were unimplemented.)
+  await testAsync('convertImage keeps + resizes EXR and transcodes to PNG/JPEG', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    // Synthesize an EXR from a solid 16x16 PNG (no external fixture needed).
+    const packed = native.repackChannels({ channels: 3, width: 16, height: 16,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    assert.ok(packed && packed.success, 'repackChannels should produce a PNG');
+    const exrRes = native.convertImage(new Uint8Array(packed.data), { format: 'exr' });
+    assert.ok(exrRes && exrRes.success, 'PNG -> EXR: ' + (exrRes && exrRes.error));
+    const exr = new Uint8Array(exrRes.data);
+    assert.deepEqual([...exr.slice(0, 4)], [0x76, 0x2f, 0x31, 0x01], 'valid EXR magic');
+
+    // Keep EXR + resize.
+    const kept = native.convertImage(exr, { format: 'exr', maxSize: 8 });
+    assert.ok(kept && kept.success, 'EXR resize: ' + (kept && kept.error));
+    assert.equal(kept.width, 8);
+    assert.equal(kept.height, 8);
+    assert.equal(kept.resized, true);
+    assert.deepEqual([...new Uint8Array(kept.data).slice(0, 2)], [0x76, 0x2f], 'still EXR');
+    // The resized EXR must re-decode.
+    const redec = native.convertImage(new Uint8Array(kept.data), { format: 'png' });
+    assert.ok(redec && redec.success, 'resized EXR should re-decode');
+
+    // Transcode EXR -> PNG and EXR -> JPEG.
+    const toPng = native.convertImage(exr, { format: 'png' });
+    assert.ok(toPng && toPng.success, 'EXR -> PNG: ' + (toPng && toPng.error));
+    assert.deepEqual([...new Uint8Array(toPng.data).slice(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic');
+    const toJpg = native.convertImage(exr, { format: 'jpeg', jpegQuality: 80 });
+    assert.ok(toJpg && toJpg.success, 'EXR -> JPEG: ' + (toJpg && toJpg.error));
+    assert.deepEqual([...new Uint8Array(toJpg.data).slice(0, 2)], [0xff, 0xd8], 'JPEG magic');
+  });
+
+  // EXR -> PNG applies an ACES filmic tonemap (not a plain clamp). A 0.502
+  // linear gray maps to ~165 under ACES+sRGB vs ~188 for a plain sRGB clamp.
+  await testAsync('EXR -> PNG applies ACES filmic tonemap', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const packed = native.repackChannels({ channels: 3, width: 4, height: 4,
+      r: { const: 128 }, g: { const: 128 }, b: { const: 128 } });
+    const exr = new Uint8Array(native.convertImage(new Uint8Array(packed.data), { format: 'exr' }).data);
+    const pngRes = native.convertImage(exr, { format: 'png' });
+    assert.ok(pngRes && pngRes.success, 'EXR -> PNG: ' + (pngRes && pngRes.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(pngRes.data)));
+    const v = png.data[0];
+    assert.ok(v >= 158 && v <= 172, `expected ACES-tonemapped gray ~165, got ${v}`);
+  });
+
+  // fitTextures: EXR participates in the SIZE strategy (kept as EXR) and is
+  // passed through unchanged under the QUALITY strategy (no HDR->JPEG).
+  await testAsync('fitTextures keeps EXR under size, passes through under quality', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const packed = native.repackChannels({ channels: 3, width: 64, height: 64,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    const exr = new Uint8Array(native.convertImage(new Uint8Array(packed.data), { format: 'exr' }).data);
+
+    const sized = native.fitTextures({ images: [{ data: exr, name: 'e.exr' }],
+      targetBytes: 256, strategy: 'size', minTextureSize: 8 });
+    assert.ok(sized && sized.success, sized && sized.error);
+    assert.equal(sized.results[0].ext, 'exr', 'EXR stays EXR under size strategy');
+    assert.deepEqual([...new Uint8Array(sized.results[0].data).slice(0, 2)], [0x76, 0x2f], 'EXR magic');
+
+    const qual = native.fitTextures({ images: [{ data: exr, name: 'e.exr' }],
+      targetBytes: 256, strategy: 'quality', minQuality: 30 });
+    assert.ok(qual && qual.success, qual && qual.error);
+    assert.equal(qual.results[0].ext, 'exr', 'EXR untouched under quality strategy');
+    assert.equal(new Uint8Array(qual.results[0].data).length, exr.length, 'EXR passed through verbatim');
+  });
+
+  // --- Image decode/write coverage for the imageproc features ---
+
+  await testAsync('repackChannels packs constant channels exactly', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const res = native.repackChannels({ channels: 3, width: 8, height: 8,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    assert.ok(res && res.success, 'repackChannels: ' + (res && res.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(res.data)));
+    assert.equal(png.data[0], 200, 'R');
+    assert.equal(png.data[1], 100, 'G');
+    assert.equal(png.data[2], 50, 'B');
+  });
+
+  await testAsync('convertImage colorspace sRGB->linear applies the LUT', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const src = native.repackChannels({ channels: 3, width: 8, height: 8,
+      r: { const: 128 }, g: { const: 128 }, b: { const: 128 } });
+    assert.ok(src && src.success);
+    const res = native.convertImage(new Uint8Array(src.data),
+      { format: 'png', colorspace: 'srgb-to-linear' });
+    assert.ok(res && res.success, 'colorspace convert: ' + (res && res.error));
+    const png = PNG.sync.read(Buffer.from(new Uint8Array(res.data)));
+    // sRGB 128/255 -> linear ~0.216 -> ~55.
+    assert.ok(png.data[0] >= 53 && png.data[0] <= 57,
+      `sRGB->linear of 128 expected ~55, got ${png.data[0]}`);
+  });
+
+  await testAsync('convertImage resizeColorspace srgb differs from linear', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    // High-contrast checker so gamma-space vs linear-light downsample differ.
+    const W = 16, H = 16;
+    const chk = new PNG({ width: W, height: H });
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4, c = ((x ^ y) & 1) ? 255 : 0;
+      chk.data[o] = c; chk.data[o + 1] = c; chk.data[o + 2] = c; chk.data[o + 3] = 255;
+    }
+    const src = PNG.sync.write(chk);
+    const lin = native.convertImage(new Uint8Array(src), { format: 'png', maxSize: 4, resizeColorspace: 'linear' });
+    const srgb = native.convertImage(new Uint8Array(src), { format: 'png', maxSize: 4, resizeColorspace: 'srgb' });
+    assert.ok(lin.success && srgb.success, 'resize: ' + (lin.error || srgb.error));
+    const pl = PNG.sync.read(Buffer.from(new Uint8Array(lin.data)));
+    const ps = PNG.sync.read(Buffer.from(new Uint8Array(srgb.data)));
+    let differ = false;
+    for (let i = 0; i < pl.data.length; i++) if (pl.data[i] !== ps.data[i]) { differ = true; break; }
+    assert.ok(differ, 'srgb-aware resize should differ from gamma-space on high contrast');
+  });
+
+  await testAsync('getTextureColorspaceMap reads UsdUVTexture sourceColorSpace', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    assert.equal(typeof native.getTextureColorspaceMap, 'function',
+      'getTextureColorspaceMap should be exported');
+    const usda = `#usda 1.0
+def "M"
+{
+    def Shader "a"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @tex/albedo.png@
+        token inputs:sourceColorSpace = "sRGB"
+    }
+    def Shader "n"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @tex/normal.png@
+        token inputs:sourceColorSpace = "raw"
+    }
+}
+`;
+    const map = native.getTextureColorspaceMap(new TextEncoder().encode(usda));
+    assert.equal(map['albedo.png'], 'sRGB');
+    assert.equal(map['normal.png'], 'raw');
+  });
+
+  await testAsync('convertImage EXR->EXR fp16 round-trips losslessly', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const { PNG } = await import('pngjs');
+    const src = native.repackChannels({ channels: 3, width: 16, height: 16,
+      r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+    const exr0 = native.convertImage(new Uint8Array(src.data), { format: 'exr' });
+    assert.ok(exr0.success, 'PNG->EXR: ' + (exr0 && exr0.error));
+    const exr1 = native.convertImage(new Uint8Array(exr0.data), { format: 'exr' });  // EXR->EXR fp16
+    assert.ok(exr1.success, 'EXR->EXR: ' + (exr1 && exr1.error));
+    const dec = (e) => PNG.sync.read(Buffer.from(new Uint8Array(
+      native.convertImage(new Uint8Array(e.data), { format: 'png' }).data)));
+    const p0 = dec(exr0), p1 = dec(exr1);
+    let eq = p0.data.length === p1.data.length;
+    for (let i = 0; eq && i < p0.data.length; i++) if (p0.data[i] !== p1.data[i]) eq = false;
+    assert.ok(eq, 'EXR->EXR fp16 decode->encode should be lossless');
   });
 
   // Cleanup temp files.

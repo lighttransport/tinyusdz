@@ -12,6 +12,16 @@
 #include "usdGeom.hh"
 #include "usda-writer.hh"
 #include "stage.hh"
+#include "timesamples.hh"
+#include "mmap-array-ref.hh"
+
+#include <cstdint>
+#include <vector>
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 
 using namespace tinyusdz;
 
@@ -247,6 +257,39 @@ void stage_find_prim_by_id_test(void) {
     TEST_CHECK(ok1 && ok2);
     TEST_CHECK(found1 == found2);  // Same pointer from cache
   }
+}
+
+void stage_adopt_mmap_buffer_lifetime_test(void) {
+  std::vector<uint8_t> bytes = {0, 1, 2, 3, 4, 5, 6, 7};
+
+  Stage stage;
+  stage.set_mmap_source(MMapDataSource(bytes.data() + 2, 4));
+
+  MMapArrayRef ref;
+  ref.byte_offset = 1;
+  ref.element_count = 2;
+  ref.element_size = sizeof(uint8_t);
+
+  MMapArrayTable table;
+  table.add("/Mesh", "points", ref);
+  stage.set_mmap_table(std::move(table));
+
+  TEST_CHECK(stage.adopt_mmap_buffer(std::move(bytes)));
+  TEST_CHECK(stage.has_mmap_zero_copy());
+
+  const MMapArrayRef *stored_ref = stage.mmap_table()->find("/Mesh", "points");
+  TEST_CHECK(stored_ref != nullptr);
+  if (stored_ref) {
+    const uint8_t *ptr = stage.mmap_source()->get_ptr<uint8_t>(*stored_ref);
+    TEST_CHECK(ptr != nullptr);
+    if (ptr) {
+      TEST_CHECK(ptr[0] == 3);
+      TEST_CHECK(ptr[1] == 4);
+    }
+  }
+
+  stage.clear_mmap_data();
+  TEST_CHECK(!stage.has_mmap_zero_copy());
 }
 
 void stage_add_root_prim_test(void) {
@@ -550,4 +593,188 @@ void stage_nested_hierarchy_test(void) {
     auto r = stage.GetPrimAtPath(p);
     TEST_CHECK(!r.has_value());
   }
+}
+
+// Shares ONE Stage across many threads, all calling the const read API
+// find_prim_at_path() concurrently. This exercises the lazy lookup-cache
+// (clear-on-dirty + insert) under contention. Must be ThreadSanitizer-clean
+// (the cache read/write is guarded by Stage::_cache_mu).
+void stage_concurrent_find_prim_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  Stage stage = build_test_stage();
+
+  const std::vector<std::string> hit_paths = {
+      "/Root",
+      "/Root/Child1",
+      "/Root/Child1/GrandChild1",
+      "/Root/Child1/GrandChild2",
+      "/Root/Child2",
+      "/Root/Child2/GrandChild3"};
+  const std::string miss_path = "/Root/DoesNotExist";
+
+  const int kThreads = 8;
+  const int kIters = 2000;
+  std::atomic<bool> ok{true};
+
+  auto worker = [&]() {
+    for (int it = 0; it < kIters; ++it) {
+      for (const auto &sp : hit_paths) {
+        const Prim *prim = nullptr;
+        std::string err;
+        bool found = stage.find_prim_at_path(Path(sp, ""), prim, &err);
+        if (!found || prim == nullptr) {
+          ok.store(false);
+        }
+      }
+      {
+        const Prim *prim = nullptr;
+        std::string err;
+        bool found = stage.find_prim_at_path(Path(miss_path, ""), prim, &err);
+        if (found) {
+          ok.store(false);
+        }
+      }
+    }
+  };
+
+  std::vector<std::thread> ts;
+  ts.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    ts.emplace_back(worker);
+  }
+  for (auto &t : ts) {
+    t.join();
+  }
+
+  TEST_CHECK(ok.load());
+#else
+  // Threads disabled: the const read API is covered by the other Stage tests.
+  TEST_CHECK(true);
+#endif
+}
+
+// N threads each parse the SAME in-memory USDA buffer (read-only) into their
+// OWN Stage, concurrently. This exercises process-wide parse state — notably the
+// ParserProfiler singleton, which used to mutate a shared std::map on every
+// parse. The buffer contains an out-of-order timeSamples block so the parse-time
+// TimeSamples finalize (sort) runs too. Must be ThreadSanitizer-clean.
+void stage_concurrent_parse_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const std::string usda =
+      "#usda 1.0\n"
+      "def Xform \"Root\"\n"
+      "{\n"
+      "    double val.timeSamples = {\n"
+      "        2: 2.0,\n"
+      "        0: 0.0,\n"
+      "        1: 1.0,\n"
+      "    }\n"
+      "    def Xform \"Child\"\n"
+      "    {\n"
+      "    }\n"
+      "}\n";
+
+  const int kThreads = 8;
+  std::atomic<int> ok_count{0};
+
+  auto worker = [&]() {
+    Stage stage;
+    std::string warn, err;
+    bool ok = tinyusdz::LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        /* base_dir */ "", &stage, &warn, &err);
+    if (ok) {
+      ok_count.fetch_add(1);
+    }
+  };
+
+  std::vector<std::thread> ts;
+  ts.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    ts.emplace_back(worker);
+  }
+  for (auto &t : ts) {
+    t.join();
+  }
+
+  TEST_CHECK(ok_count.load() == kThreads);
+#else
+  TEST_CHECK(true);
+#endif
+}
+
+// A finalized (update()-sorted) TimeSamples must be safe to read from many
+// threads: the const accessors (get()/size()) must not mutate it. Build with
+// out-of-order samples, finalize once (as the parsers now do), then read
+// concurrently. Must be ThreadSanitizer-clean.
+void stage_concurrent_timesamples_read_test(void) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  value::TimeSamples ts;
+  // Add out of time order so update() actually sorts.
+  ts.add_sample<double>(2.0, 20.0);
+  ts.add_sample<double>(0.0, 0.0);
+  ts.add_sample<double>(1.0, 10.0);
+  ts.add_sample<double>(3.0, 30.0);
+
+  // Finalize once, single-threaded (mirrors what the parsers do at load). This
+  // sorts unified storage but intentionally leaves _samples unmaterialized, so
+  // the threads below race on the first get_samples() materialization — which
+  // must be internally guarded.
+  ts.update();
+  TEST_CHECK(ts.size() == 4);
+
+  const int kThreads = 8;
+  const int kIters = 5000;
+  std::atomic<bool> ok{true};
+  // Start barrier so all threads hit the cold first get_samples() (the lazy
+  // materialization) at the same instant. NOTE: this validates functional
+  // correctness under concurrency; the acutest binary's in-process TSan does not
+  // reliably flag data races (see doc/datarace.md) — the authoritative TSan
+  // check for this fix is the standalone harness documented there.
+  std::atomic<int> ready{0};
+  std::atomic<bool> go{false};
+
+  auto worker = [&]() {
+    ready.fetch_add(1);
+    while (!go.load(std::memory_order_acquire)) {
+      // spin until released
+    }
+    for (int it = 0; it < kIters; ++it) {
+      if (ts.size() != 4) {
+        ok.store(false);
+      }
+      double v = 0.0;
+      // Binary scalar fast path.
+      if (ts.get<double>(&v, 1.0)) {
+        if (v != 10.0) {
+          ok.store(false);
+        }
+      }
+      // Generic-samples path: this lazily materializes `_samples` from unified
+      // storage on first call (the const-read mutation being guarded). Exercise
+      // it concurrently so the materialization race would surface under TSan.
+      const std::vector<value::TimeSamples::Sample> &samples = ts.get_samples();
+      if (samples.size() != 4) {
+        ok.store(false);
+      }
+    }
+  };
+
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+  for (int i = 0; i < kThreads; ++i) {
+    threads.emplace_back(worker);
+  }
+  // Release all workers once they're all spun up.
+  while (ready.load() < kThreads) {
+  }
+  go.store(true, std::memory_order_release);
+  for (auto &t : threads) {
+    t.join();
+  }
+
+  TEST_CHECK(ok.load());
+#else
+  TEST_CHECK(true);
+#endif
 }

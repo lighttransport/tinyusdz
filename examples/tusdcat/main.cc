@@ -136,9 +136,29 @@ static std::string format_memory_size(size_t bytes) {
   return ss.str();
 }
 
+// Memory cap for USDA *text* output of a composed stage. USDA serialization of a
+// deeply-composed stage (e.g. baked vertex-animation timeSamples) can balloon to
+// many GB; emitting it as one std::string then exhausts memory and the process
+// is OOM-killed/aborted. When the composed stage's estimated size exceeds this
+// cap we serialize to compact USDC in memory instead of the huge USDA text.
+// Configurable via env `TUSDCAT_MAX_USDA_MB` (0 = unlimited). Default 0.
+static size_t GetMaxUsdaOutputBytes() {
+  const char *e = std::getenv("TUSDCAT_MAX_USDA_MB");
+  if (!e || !e[0]) {
+    return 0;  // unlimited (preserve existing behavior unless opted in)
+  }
+  char *end = nullptr;
+  unsigned long long mb = std::strtoull(e, &end, 10);
+  if (end == e) {
+    return 0;
+  }
+  return static_cast<size_t>(mb) * 1024ull * 1024ull;
+}
+
 static bool WriteStageToFile(const tinyusdz::Stage &stage,
                              const std::string &output_path,
-                             OutputFormat format) {
+                             OutputFormat format,
+                             bool compress_float_arrays = false) {
   std::string warn;
   std::string err;
 
@@ -149,12 +169,16 @@ static bool WriteStageToFile(const tinyusdz::Stage &stage,
         return false;
       }
       break;
-    case OutputFormat::USDC:
-      if (!tinyusdz::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err)) {
+    case OutputFormat::USDC: {
+      tinyusdz::USDWriteOptions wopts;
+      wopts.compress_float_arrays = compress_float_arrays;
+      if (!tinyusdz::usdc::SaveAsUSDCToFile(output_path, stage, &warn, &err,
+                                            wopts)) {
         std::cerr << "Failed to write USDC file: " << err << "\n";
         return false;
       }
       break;
+    }
     case OutputFormat::USDZ: {
       const std::map<std::string, std::vector<uint8_t>> assets;
       if (!tinyusdz::SaveAsUSDZToFile(output_path, stage, assets, &warn, &err)) {
@@ -379,6 +403,10 @@ void print_help() {
   std::cout << "  -o, --output FILE   Write output to FILE\n";
   std::cout << "  --output-format FMT Output format: usda, usdc, usdz\n";
   std::cout << "                      Default: infer from output filename extension\n";
+  std::cout << "  --compress-float-arrays\n";
+  std::cout << "                      Enable OpenUSD-compatible tagged compression\n";
+  std::cout << "                      for float[]/double[] arrays in USDC output\n";
+  std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
@@ -411,7 +439,9 @@ void print_help() {
   std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
   std::cout << "                      (validates info:id, index bounds, etc.)\n";
   std::cout << "  --validate         Validate against AOUSD Core semantic rules\n";
-  std::cout << "                      (core schemas/metadata only; no file-format checks)\n";
+  std::cout << "                      (core schemas/metadata; binary inputs add Crate/USDZ checks)\n";
+  std::cout << "  --validate-all     Validate with all rule groups (core + geom + shade + lux + physics + crate)\n";
+  std::cout << "                      (adds geom/shade/lux/physics/crate checks; warning-heavy)\n";
   std::cout << "\n";
   std::cout << "Composition graph dump options:\n";
   std::cout << "  --dump-comp-graph[=FMT]  Dump composition graph\n";
@@ -454,6 +484,7 @@ int main(int argc, char **argv) {
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  bool compress_float_arrays{false};
   OutputFormat output_format{OutputFormat::Infer};
 
   // Inspect options
@@ -466,6 +497,7 @@ int main(int argc, char **argv) {
   // MaterialX validation
   bool strict_mtlx_check{false};
   bool validate_against_core{false};
+  bool validate_all_groups{false};
 
   // Composition graph dump
   bool do_dump_comp_graph{false};
@@ -512,6 +544,8 @@ int main(int argc, char **argv) {
                   << ". Must be 'usda', 'usdc', or 'usdz'.\n";
         return EXIT_FAILURE;
       }
+    } else if (arg.compare("--compress-float-arrays") == 0) {
+      compress_float_arrays = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
@@ -539,6 +573,9 @@ int main(int argc, char **argv) {
       strict_mtlx_check = true;
     } else if (arg.compare("--validate") == 0) {
       validate_against_core = true;
+    } else if (arg.compare("--validate-all") == 0) {
+      validate_against_core = true;
+      validate_all_groups = true;
     } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
@@ -715,9 +752,14 @@ int main(int argc, char **argv) {
     tinyusdz::USDLoadOptions options;
     options.error_detail = error_detail;
 
-    tinyusdz::Layer layer;
-    const bool ret =
-        tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err, options);
+    tinyusdz::ValidationOptions validation_options;
+    if (validate_all_groups) {
+      validation_options = tinyusdz::MakeValidateAllOptions();
+    }
+
+    tinyusdz::USDValidationResult validation;
+    const bool ret = tinyusdz::ValidateUSDFileAgainstAOUSDCore(
+        filepath, validation_options, options, &validation, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
     }
@@ -730,8 +772,6 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    const tinyusdz::USDValidationResult validation =
-        tinyusdz::ValidateLayerAgainstAOUSDCore(layer);
     std::cout << tinyusdz::FormatValidationResult(validation);
     return validation.ok() ? EXIT_SUCCESS : EXIT_FAILURE;
   }
@@ -923,7 +963,8 @@ int main(int argc, char **argv) {
       }
 
       if (has_output_file) {
-        if (!WriteStageToFile(stage, output_filepath, output_format)) {
+        if (!WriteStageToFile(stage, output_filepath, output_format,
+                            compress_float_arrays)) {
           return EXIT_FAILURE;
         }
       }
@@ -975,9 +1016,30 @@ int main(int argc, char **argv) {
     //
 
     tinyusdz::Layer src_layer = root_layer;
+
+    // tusdcat resolves assets against the local filesystem (the input file's
+    // directory), where USD's parent-relative references (e.g.
+    // `@../common/foo.usd@`) are legitimate and ubiquitous — OpenUSD resolves
+    // them too. Allow '..' in composition asset paths.
+    tinyusdz::SublayersCompositionOptions sublayer_opts;
+    sublayer_opts.allow_parent_relative_paths = true;
+    tinyusdz::ReferencesCompositionOptions reference_opts;
+    reference_opts.allow_parent_relative_paths = true;
+    tinyusdz::PayloadCompositionOptions payload_opts;
+    payload_opts.allow_parent_relative_paths = true;
+
+    // Whether to dump each INTERMEDIATE composited layer as USDA text per
+    // iteration (debug aid). For heavy scenes this USDA serialization is itself
+    // the blow-up (e.g. baked vertex-animation timeSamples), and it happens
+    // inside the composition loop — before any post-loop memory cap. So when a
+    // memory cap is set, skip these intermediate dumps; the final result is
+    // still emitted (USDA, or compact USDC if over the cap) after the loop.
+    const bool print_intermediate =
+        !suppress_usd_text_output && (GetMaxUsdaOutputBytes() == 0);
+
     if (comp_features.subLayers) {
       tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err, sublayer_opts)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -986,7 +1048,7 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      if (!suppress_usd_text_output) {
+      if (print_intermediate) {
         std::cout << "# `subLayers` composited\n";
         std::cout << composited_layer << "\n";
       }
@@ -1006,7 +1068,7 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
@@ -1015,7 +1077,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `references` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1031,7 +1093,7 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
@@ -1040,7 +1102,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `payload` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1065,7 +1127,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `inherits` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1090,7 +1152,7 @@ int main(int argc, char **argv) {
             std::cout << "WARN: " << warn << "\n";
           }
 
-          if (!suppress_usd_text_output) {
+          if (print_intermediate) {
             std::cout << "# `variantSet` composited\n";
             std::cout << composited_layer << "\n";
           }
@@ -1130,7 +1192,15 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
+    try {
+      ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
+    } catch (const std::bad_alloc &) {
+      // OOM detection: turn an allocation failure into a clean error instead of
+      // an uncaught std::bad_alloc -> std::terminate -> abort().
+      std::cerr << "ERR: out of memory while building the composed Stage. "
+                   "Set TUSDCAT_MAX_USDA_MB or use USDC output for heavy scenes.\n";
+      return EXIT_FAILURE;
+    }
     if (warn.size()) {
       std::cout << warn<< "\n";
     }
@@ -1159,7 +1229,42 @@ int main(int argc, char **argv) {
       std::cerr << "JSON output is not supported in this build\n";
 #endif
     } else if (!suppress_usd_text_output) {
-      std::cout << comp_stage.ExportToString() << "\n";
+      const size_t est_bytes = comp_stage.estimate_memory_usage();
+      const size_t cap_bytes = GetMaxUsdaOutputBytes();
+      if (cap_bytes && est_bytes > cap_bytes) {
+        // Over the USDA cap: keep timeSamples compact by serializing to USDC in
+        // memory (binary, far smaller than baked USDA text) instead of emitting
+        // a multi-GB USDA string that would exhaust memory.
+        std::vector<uint8_t> usdc_bytes;
+        std::string c_warn, c_err;
+        if (tinyusdz::usdc::SaveAsUSDCToMemory(comp_stage, &usdc_bytes, &c_warn,
+                                               &c_err)) {
+          std::cerr << "# Composed stage estimate " << format_memory_size(est_bytes)
+                    << " exceeds USDA output cap " << format_memory_size(cap_bytes)
+                    << "; serialized compact USDC to memory ("
+                    << format_memory_size(usdc_bytes.size())
+                    << ") instead of USDA text. (Use -o out.usdc to write it.)\n";
+        } else {
+          std::cerr << "ERR: composed stage too large for USDA output ("
+                    << format_memory_size(est_bytes) << " > cap "
+                    << format_memory_size(cap_bytes)
+                    << ") and the compact USDC fallback failed: " << c_err << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        // Guard the (potentially huge) USDA serialization against allocation
+        // failure: turn an out-of-memory condition into a clean error instead of
+        // an uncaught std::bad_alloc -> std::terminate -> abort().
+        try {
+          std::cout << comp_stage.ExportToString() << "\n";
+        } catch (const std::bad_alloc &) {
+          std::cerr << "ERR: out of memory while serializing composed stage to "
+                       "USDA text (estimate " << format_memory_size(est_bytes)
+                    << "). Use USDC output (-o out.usdc) or set TUSDCAT_MAX_USDA_MB "
+                       "for large composed scenes.\n";
+          return EXIT_FAILURE;
+        }
+      }
     }
 
     if (has_output_file) {
@@ -1277,7 +1382,8 @@ int main(int argc, char **argv) {
     }
 
     if (has_output_file) {
-      if (!WriteStageToFile(stage, output_filepath, output_format)) {
+      if (!WriteStageToFile(stage, output_filepath, output_format,
+                            compress_float_arrays)) {
         return EXIT_FAILURE;
       }
     }

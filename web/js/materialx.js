@@ -1749,7 +1749,7 @@ async function buildMeshesFallback() {
     threeState.scene.add(sceneState.root);
 
     for (let i = 0; i < numMeshes; i++) {
-        const meshData = loaderState.nativeLoader.getMesh(i);
+        const meshData = loaderState.nativeLoader.getMeshCopy(i);
         if (!meshData) continue;
 
         const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
@@ -2008,13 +2008,13 @@ async function convertMaterial(matData, index) {
                         // Find embedded texture (bufferId >= 0) for the same filename
                         let actualTextureId = normalTextureId;
                         const tex = loaderState.nativeLoader.getTexture(normalTextureId);
-                        const texImage = loaderState.nativeLoader.getImage(tex.textureImageId);
+                        const texImage = loaderState.nativeLoader.getImageCopy(tex.textureImageId);
 
                         if (texImage.bufferId === -1 && texImage.uri) {
                             const filename = texImage.uri.replace(/^\.\//, '');
                             const numImages = loaderState.nativeLoader.numImages();
                             for (let i = 0; i < numImages; i++) {
-                                const altImage = loaderState.nativeLoader.getImage(i);
+                                const altImage = loaderState.nativeLoader.getImageCopy(i);
                                 if (altImage.bufferId >= 0 && altImage.uri === filename) {
                                     const numTextures = loaderState.nativeLoader.numTextures();
                                     for (let t = 0; t < numTextures; t++) {
@@ -2146,13 +2146,13 @@ function resolveTextureId(nativeLoader, textureId) {
     if (textureId < 0) return textureId;
     try {
         const tex = nativeLoader.getTexture(textureId);
-        const texImage = nativeLoader.getImage(tex.textureImageId);
+        const texImage = nativeLoader.getImageCopy(tex.textureImageId);
 
         if (texImage.bufferId === -1 && texImage.uri) {
             const filename = texImage.uri.replace(/^\.\//, '');
             const numImages = nativeLoader.numImages();
             for (let i = 0; i < numImages; i++) {
-                const altImage = nativeLoader.getImage(i);
+                const altImage = nativeLoader.getImageCopy(i);
                 if (altImage.bufferId >= 0 && altImage.uri === filename) {
                     const numTextures = nativeLoader.numTextures();
                     for (let t = 0; t < numTextures; t++) {

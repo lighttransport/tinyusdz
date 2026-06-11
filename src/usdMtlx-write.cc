@@ -305,7 +305,10 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
   // Subsurface properties
   EMIT_ATTRIBUTE("subsurface", "float", shader.subsurface)
   EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
-  EMIT_ATTRIBUTE("subsurface_radius", "float", shader.subsurface_radius)
+  // Autodesk standard_surface defines subsurface_radius as color3 (matching the
+  // MtlxAutodeskStandardSurface color3f field and the reader); emitting "float"
+  // here produced a type/value mismatch that failed re-parse.
+  EMIT_ATTRIBUTE("subsurface_radius", "color3", shader.subsurface_radius)
   EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
   EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
 

@@ -15,6 +15,9 @@ const state = {
   usdObject: null,
   usdRestObject: null,
   usdArticulation: null,
+  // True when the USD view is a conversion of the current source robot (vs an
+  // imported USD). Lets the "Export upAxis" toggle auto-reconvert.
+  usdIsConverted: false,
   sourceGhost: null,
   usdGhost: null,
   usdLinkBindings: [],
@@ -202,6 +205,9 @@ function disposeObject(root) {
     if (obj.material && obj.material !== collisionMaterial) {
       const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const mat of mats) {
+        // Label sprite materials/textures are shared and cached across frames;
+        // disposeLabelSpriteCache() owns their lifetime, skip them here.
+        if (mat.userData?.debugLabelMaterial) continue;
         if (mat.map?.userData?.debugLabelTexture) mat.map.dispose();
         mat.dispose?.();
       }
@@ -254,6 +260,7 @@ function clearRobot() {
   updateButtonStates();
   clearGhosts();
   clearDebugVisualizations();
+  disposeLabelSpriteCache();
   updateLabels();
 }
 
@@ -265,6 +272,7 @@ function clearUSD() {
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
+  state.usdIsConverted = false;
   state.usdName = '';
   state.latestUSDBytes = null;
   state.latestUSDFormat = '';
@@ -272,6 +280,7 @@ function clearUSD() {
   updateButtonStates();
   clearGhosts();
   clearDebugVisualizations();
+  disposeLabelSpriteCache();
   updateLabels();
 }
 
@@ -825,15 +834,50 @@ function debugVisualizationEnabled() {
     || state.settings.showJointNames;
 }
 
-function makeTextSprite(text, color) {
+// Rasterizing label text and uploading a CanvasTexture is expensive, and the
+// skeleton debug overlay is rebuilt every frame (positions follow the joints).
+// Label text/color never changes between frames, so cache the texture+material
+// per (text, color): frames reuse the GPU texture and only the cheap Sprite
+// wrapper + its position are recreated. Cleared on robot/USD swap (see
+// disposeLabelSpriteCache) since link/joint names may then differ.
+const labelSpriteCache = new Map();
+const LABEL_CACHE_LIMIT = 512;
+const LABEL_MAX_CHARS = 160;
+const LABEL_MAX_CANVAS_WIDTH = 2048;
+
+function labelTextForSprite(text) {
+  const raw = String(text ?? '');
+  return raw.length > LABEL_MAX_CHARS
+    ? `${raw.slice(0, LABEL_MAX_CHARS - 3)}...`
+    : raw;
+}
+
+function disposeLabelSpriteAssets(assets) {
+  assets.material.map?.dispose();
+  assets.material.dispose();
+}
+
+function labelSpriteAssets(text, color) {
+  const displayText = labelTextForSprite(text);
+  const key = JSON.stringify([color, displayText]);
+  const cached = labelSpriteCache.get(key);
+  if (cached) {
+    labelSpriteCache.delete(key);
+    labelSpriteCache.set(key, cached);
+    return cached;
+  }
+
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const fontSize = 36;
   const paddingX = 14;
   const paddingY = 8;
   ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
-  const metrics = ctx.measureText(text);
-  canvas.width = Math.ceil(metrics.width + paddingX * 2);
+  const metrics = ctx.measureText(displayText);
+  canvas.width = Math.min(
+    LABEL_MAX_CANVAS_WIDTH,
+    Math.max(1, Math.ceil(metrics.width + paddingX * 2))
+  );
   canvas.height = fontSize + paddingY * 2;
 
   ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
@@ -843,7 +887,7 @@ function makeTextSprite(text, color) {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
   ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
   ctx.fillStyle = color;
-  ctx.fillText(text, paddingX, canvas.height * 0.5);
+  ctx.fillText(displayText, paddingX, canvas.height * 0.5, canvas.width - paddingX * 2);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.userData.debugLabelTexture = true;
@@ -853,11 +897,28 @@ function makeTextSprite(text, color) {
     depthTest: false,
     depthWrite: false
   });
+  const cacheable = labelSpriteCache.size < LABEL_CACHE_LIMIT;
+  if (cacheable) {
+    // Shared+cached: disposeObject must not free this on the per-frame rebuild.
+    material.userData.debugLabelMaterial = true;
+  }
+  const assets = { material, aspect: canvas.width / canvas.height };
+  if (cacheable) labelSpriteCache.set(key, assets);
+  return assets;
+}
+
+function makeTextSprite(text, color) {
+  const { material, aspect } = labelSpriteAssets(text, color);
   const sprite = new THREE.Sprite(material);
   const height = 0.018;
-  sprite.scale.set(height * (canvas.width / canvas.height), height, 1);
+  sprite.scale.set(height * aspect, height, 1);
   sprite.renderOrder = 20;
   return sprite;
+}
+
+function disposeLabelSpriteCache() {
+  for (const assets of labelSpriteCache.values()) disposeLabelSpriteAssets(assets);
+  labelSpriteCache.clear();
 }
 
 function addLabel(root, text, position, color, offsetY = 0.035) {
@@ -1121,6 +1182,19 @@ function parseURDFMetadata(text) {
     const originQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, 'XYZ'));
     const limitEl = jointEl.querySelector(':scope > limit');
     const dynamicsEl = jointEl.querySelector(':scope > dynamics');
+    const mimicEl = jointEl.querySelector(':scope > mimic');
+    let mimic = null;
+    if (mimicEl?.getAttribute('joint')) {
+      mimic = {
+        joint: mimicEl.getAttribute('joint'),
+        multiplier: numberAttr(mimicEl, 'multiplier', 1),
+        offset: numberAttr(mimicEl, 'offset', 0)
+      };
+    } else if (mimicEl) {
+      const mimicName = jointEl.getAttribute('name') || '?';
+      console.warn(`URDF joint "${mimicName}" has a <mimic> with no joint target; mimic coupling is not exported to USD.`);
+      setStatus('Note: malformed URDF <mimic> joint coupling is not exported.');
+    }
     joints.push({
       name: jointEl.getAttribute('name') || `joint_${joints.length}`,
       type: jointEl.getAttribute('type') || 'fixed',
@@ -1143,7 +1217,8 @@ function parseURDFMetadata(text) {
       dynamics: dynamicsEl ? {
         damping: Number(dynamicsEl.getAttribute('damping')),
         friction: Number(dynamicsEl.getAttribute('friction'))
-      } : {}
+      } : {},
+      ...(mimic ? { mimic } : {})
     });
   }
 
@@ -1508,6 +1583,10 @@ function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
   if (type === 'free') return 'floating';
+  // MuJoCo ball joint (3-DOF rotation) -> USD PhysicsSphericalJoint. Best-effort:
+  // the joint round-trips structurally; the single-slider preview leaves it at
+  // rest (see setJointValue) rather than collapsing it to a rigid weld.
+  if (type === 'ball') return 'spherical';
   return 'fixed';
 }
 
@@ -1521,6 +1600,16 @@ function parseMujocoInertial(bodyNode) {
   };
   if (full.length >= 3) {
     inertial.diagonalInertia = [full[0], full[1], full[2]];
+    // fullinertia is "Ixx Iyy Izz Ixy Ixz Iyz"; USD physics:diagonalInertia +
+    // physics:principalAxes would be needed to represent a non-diagonal tensor.
+    // We only export the diagonal, so flag when off-diagonal terms are dropped.
+    if (full.length >= 6 && full.slice(3, 6).some((v) => Math.abs(v) > 1e-9)) {
+      const name = bodyNode.getAttribute?.('name') || '?';
+      console.warn(
+        `MJCF body "${name}" has a non-diagonal fullinertia; off-diagonal terms `
+        + `(Ixy/Ixz/Iyz) are dropped — only the diagonal is exported.`
+      );
+    }
   } else {
     inertial.diagonalInertia = parseNumbers(inertialNode.getAttribute('diaginertia'), []);
   }
@@ -1720,6 +1809,66 @@ function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   applyMatrixToObject(object, matrix);
 }
 
+// MuJoCo features with no UsdPhysics analog in this converter. We don't model
+// them, but they should be visible rather than silently dropped.
+function warnUnsupportedMujocoElements(root) {
+  const unsupported = [
+    ['tendon', 'tendons (cable/spatial constraints)'],
+    ['equality', 'equality constraints'],
+    ['contact', 'explicit contact pairs/exclusions']
+  ];
+  for (const [tag, label] of unsupported) {
+    const count = root.querySelectorAll(tag).length;
+    if (count) {
+      console.warn(`MJCF: ${count} <${tag}> element(s) — ${label} are not converted to USD.`);
+      setStatus(`Note: MJCF ${label} are not converted.`);
+    }
+  }
+}
+
+function buildMujocoActuators(root) {
+  const actuators = [];
+  for (const actuatorRoot of childElements(root, 'actuator')) {
+    for (const actNode of childElements(actuatorRoot)) {
+      const attrs = attrsFromElement(actNode);
+      const joint = attrs.joint || '';
+      const name = attrs.name || `${actNode.localName || 'actuator'}_${joint || actuators.length}`;
+      if (!joint) {
+        console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
+        setStatus('Note: MJCF non-joint actuators are not converted.');
+        continue;
+      }
+      const act = { name, joint, control: 'pd' };
+      const kp = numberAttr(attrs, 'kp');
+      if (Number.isFinite(kp)) {
+        act.kp = kp;
+      } else {
+        const gain = parseNumbers(attrs.gainprm, []);
+        if (gain.length) act.kp = gain[0];
+      }
+      const kd = numberAttr(attrs, 'kv');
+      if (Number.isFinite(kd)) {
+        act.kd = kd;
+      } else {
+        const bias = parseNumbers(attrs.biasprm, []);
+        if (bias.length >= 3) act.kd = Math.abs(bias[2]);
+      }
+      const forceRange = parseNumbers(attrs.forcerange, []);
+      if (forceRange.length >= 2) {
+        act.maxEffort = Math.max(Math.abs(forceRange[0]), Math.abs(forceRange[1]));
+      }
+      const ctrlRange = parseNumbers(attrs.ctrlrange, []);
+      if (actNode.localName === 'motor' && ctrlRange.length >= 2) {
+        act.constEffort = Math.max(Math.abs(ctrlRange[0]), Math.abs(ctrlRange[1]));
+      }
+      const delay = numberAttr(attrs, 'delay');
+      if (Number.isFinite(delay)) act.delaySteps = Math.max(1, Math.round(delay));
+      actuators.push(act);
+    }
+  }
+  return actuators;
+}
+
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const expanded = await expandMujocoIncludes(xmlText, baseDir);
   const doc = parseXMLDocument(expanded);
@@ -1736,8 +1885,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
   };
 
+  warnUnsupportedMujocoElements(root);
+
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
+  const actuators = buildMujocoActuators(root);
   const group = new THREE.Group();
   group.name = root.getAttribute('model') || filename.replace(/\.[^.]+$/, '') || 'mujoco_scene';
   group.links = {};
@@ -1749,6 +1901,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     // the XML rest configuration is (qpos - ref). At qpos == ref the body is in
     // its authored pose (zero displacement).
     const disp = value - (joint.refRad || 0);
+    // Spherical (ball) and floating (free) joints are multi-DOF; a single slider
+    // value can't drive them meaningfully, so leave them at their rest pose
+    // instead of misapplying it as a 1-DOF hinge rotation.
+    if (joint.jointType === 'spherical' || joint.jointType === 'floating') {
+      return;
+    }
     if (joint.jointType === 'prismatic') {
       const offset = new THREE.Vector3(...joint.axis)
         .normalize()
@@ -1796,7 +1954,19 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     group.links[linkName] = linkObject;
 
     if (parentName) {
-      const jointNode = firstChildElement(bodyNode, 'joint');
+      const jointNodes = childElements(bodyNode, 'joint');
+      const jointNode = jointNodes[0] || null;
+      // MuJoCo allows several <joint> per body (a composite/universal joint).
+      // USD physics joints are pairwise, so we represent the first and warn that
+      // the rest are dropped rather than silently losing DOFs.
+      if (jointNodes.length > 1) {
+        console.warn(
+          `MJCF body "${linkName}" has ${jointNodes.length} joints; only the first `
+          + `("${jointNodes[0].getAttribute('name') || '?'}") is converted — the `
+          + `remaining ${jointNodes.length - 1} DOF(s) are dropped.`
+        );
+        setStatus(`Note: body "${linkName}" has ${jointNodes.length} joints; extras dropped.`);
+      }
       const jointAttrs = jointNode ? resolveMujocoAttrs(jointNode, defaults, 'joint', childClass) : {};
       const axis = parseNumbers(jointAttrs.axis, [0, 0, 1]);
       const range = parseNumbers(jointAttrs.range, []);
@@ -1950,9 +2120,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     gravity: state.settings.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
     timestep: numberAttr(firstChildElement(root, 'option'), 'timestep'),
     links,
-    joints
+    joints,
+    actuators
   };
-  group.userData.stats = { links: links.length, joints: joints.length, visuals: visualCount, collisions: collisionCount };
+  group.userData.stats = {
+    links: links.length,
+    joints: joints.length,
+    visuals: visualCount,
+    collisions: collisionCount,
+    actuators: actuators.length
+  };
   return group;
 }
 
@@ -2022,7 +2199,11 @@ function classifyRobotMeshes(robot) {
     let cursor = obj;
     let ownerLink = null;
     let isCollision = false;
-    while (cursor && cursor !== robot) {
+    // Walk up to the owning link. Check `robot` itself too: urdf-loader makes
+    // the ROOT link node the URDFRobot root (robot.links[root] === robot), so
+    // stopping at `cursor !== robot` would orphan the root link's meshes (they
+    // then get dropped from the export payload).
+    while (cursor) {
       const marker = `${cursor.type || ''} ${cursor.name || ''}`.toLowerCase();
       if (cursor.isURDFCollider || cursor.isURDFCollision || marker.includes('collision') || marker.includes('collider')) {
         isCollision = true;
@@ -2031,6 +2212,7 @@ function classifyRobotMeshes(robot) {
         ownerLink = cursor;
         break;
       }
+      if (cursor === robot) break;
       cursor = cursor.parent;
     }
     obj.userData.urdfOwnerLink = ownerLink;
@@ -2100,11 +2282,20 @@ function fitCurrentView() {
 }
 
 function applySceneOrientation() {
-  for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The source robot is built directly from URDF/MJCF, which are always Z-up,
+  // so it always needs the -90deg X display rotation to stand upright in
+  // three.js (Y-up).
+  for (const root of [sourceView.root, sourceView.ghostRoot]) {
     root.rotation.set(0, 0, 0);
+    root.rotation.x = -Math.PI / 2;
   }
-  if (state.settings.upAxis === 'Z') {
-    for (const root of [sourceView.root, sourceView.ghostRoot, usdView.root, usdView.ghostRoot]) {
+  // The USD view shows the actual loaded USD (converted or imported). A Z-up USD
+  // needs the same -90deg X display rotation; a Y-up USD already carries the
+  // converter's /World rotateX (applied by the loader and preserved by
+  // buildArticulatedRobotFromUSD), so it is already upright.
+  for (const root of [usdView.root, usdView.ghostRoot]) {
+    root.rotation.set(0, 0, 0);
+    if (state.settings.upAxis === 'Z') {
       root.rotation.x = -Math.PI / 2;
     }
   }
@@ -2118,6 +2309,15 @@ function applyAxisHelperVisibility() {
 function buildGUI() {
   const gui = new GUI({ title: 'Robot Controls' });
   gui.add(state.settings, 'upAxis', ['Z', 'Y']).name('Export upAxis').onChange(() => {
+    // If a converted USD is on screen, re-export with the new up axis so the
+    // USD view stays in sync (convertSourceToUSD re-applies orientation + fit).
+    if (state.robot && state.usdIsConverted) {
+      convertSourceToUSD(state.latestUSDFormat || 'usdc').catch((err) => {
+        console.error(err);
+        setStatus(`Convert to USD failed: ${err.message}`);
+      });
+      return;
+    }
     applySceneOrientation();
     if ((state.robot || state.usdObject) && state.settings.autocenter) fitCamera(currentFitObjects());
   });
@@ -2469,13 +2669,15 @@ function usdPhysicsToUrdf(extracted) {
   }
 
   const joints = prims
-    .filter((prim) => /^Physics(?:Revolute|Prismatic|Fixed|Joint)/.test(prim.type))
+    .filter((prim) => /^Physics(?:Revolute|Prismatic|Spherical|Fixed|Joint)/.test(prim.type))
     .map((prim) => {
       const type = prim.type === 'PhysicsRevoluteJoint'
         ? 'revolute'
         : prim.type === 'PhysicsPrismaticJoint'
           ? 'prismatic'
-          : 'fixed';
+          : prim.type === 'PhysicsSphericalJoint'
+            ? 'spherical'
+            : 'fixed';
       const parentPath = firstRelTarget(prim, 'physics:body0');
       const childPath = firstRelTarget(prim, 'physics:body1');
       const axisToken = prim.properties?.['physics:axis'] || 'X';
@@ -2546,13 +2748,15 @@ function usdPhysicsToSourceModel(extracted) {
   const linksByPath = new Map(links.map((link) => [link.path, link]));
 
   const joints = prims
-    .filter((prim) => /^Physics(?:Revolute|Prismatic|Fixed|Joint)/.test(prim.type))
+    .filter((prim) => /^Physics(?:Revolute|Prismatic|Spherical|Fixed|Joint)/.test(prim.type))
     .map((prim) => {
       const type = prim.type === 'PhysicsRevoluteJoint'
         ? 'revolute'
         : prim.type === 'PhysicsPrismaticJoint'
           ? 'prismatic'
-          : 'fixed';
+          : prim.type === 'PhysicsSphericalJoint'
+            ? 'spherical'
+            : 'fixed';
       const parentPath = firstRelTarget(prim, 'physics:body0');
       const childPath = firstRelTarget(prim, 'physics:body1');
       const axisToken = prim.properties?.['physics:axis'] || 'X';
@@ -2715,6 +2919,13 @@ function mjcfFromSourceModel(model) {
     `<mujoco model="${escapeXML(model.name || 'ConvertedFromUSD')}">`,
     '  <worldbody>'
   ];
+  const mjcfJointType = (joint) => joint.type === 'prismatic'
+    ? 'slide'
+    : joint.type === 'fixed'
+      ? 'fixed'
+      : joint.type === 'spherical'
+        ? 'ball'
+        : 'hinge';
 
   function writeBody(link, indent) {
     const pad = ' '.repeat(indent);
@@ -2722,7 +2933,7 @@ function mjcfFromSourceModel(model) {
     for (const joint of childJoints.get(link.name) || []) {
       const child = linksByName.get(joint.child);
       if (!child) continue;
-      const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+      const jointType = mjcfJointType(joint);
       const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
         ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
         : '';
@@ -2743,7 +2954,7 @@ function mjcfFromSourceModel(model) {
 
   function writeBodyFromJoint(parent, joint, link, indent) {
     const pad = ' '.repeat(indent);
-    const jointType = joint.type === 'prismatic' ? 'slide' : joint.type === 'fixed' ? 'fixed' : 'hinge';
+    const jointType = mjcfJointType(joint);
     const range = joint.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper)
       ? ` range="${fmtNumber(joint.limit.lower)} ${fmtNumber(joint.limit.upper)}"`
       : '';
@@ -3015,9 +3226,30 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   };
   for (const link of rootLinks) attachLink(link.path, group);
 
+  // Localize each mesh against the SAME rest world used to place its link node
+  // (the joint chain above), not the loaded USD's link-Xform world. The link
+  // node sits at `restWorldByLinkPath`, so a mesh placed with
+  //   meshLocal = restWorld⁻¹ · meshWorld(loaded)
+  // lands back at meshWorld(loaded) in the rest pose — the rig reproduces the
+  // loaded USD exactly, then articulates from there.
+  //
+  // This is robust to where the writer parks the body-world transform:
+  //   • baked into the link Xform (link world == restWorld): equivalent to the
+  //     old loaded-Xform math, and
+  //   • baked into the geoms with the link Xform left at identity (the current
+  //     tinyusdz URDF/MJCF converter, MuJoCo-style): the old code used the
+  //     identity link Xform, so meshLocal == full kinematic world, which the
+  //     joint-positioned link node then double-applied — exploding the rig.
+  // Falls back to the loaded link world, then identity, when a link has no
+  // rest-world entry.
   const linkInverseWorld = new Map();
-  for (const [path, restWorld] of restWorldByLinkPath) {
-    linkInverseWorld.set(path, restWorld.clone().invert());
+  for (const link of model.links || []) {
+    let baseWorld = restWorldByLinkPath.get(link.path);
+    if (!baseWorld) {
+      const linkObj = usdObjectsByPath.get(link.path);
+      baseWorld = linkObj ? matrixInSceneRoot(linkObj, sourceObject) : new THREE.Matrix4();
+    }
+    linkInverseWorld.set(link.path, baseWorld.clone().invert());
   }
 
   if (options.resetMeshLists) {
@@ -3049,7 +3281,8 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
     if (joint.jointType === 'prismatic') {
       const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(value);
       joint.pivot.position.copy(joint.origin).add(offset);
-    } else if (joint.jointType !== 'fixed') {
+    } else if (joint.jointType !== 'fixed' && joint.jointType !== 'spherical') {
+      // Spherical (3-DOF) joints can't be driven by a single scalar; leave at rest.
       joint.pivot.quaternion.copy(joint.originQuat)
         .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), value));
     }
@@ -3320,17 +3553,43 @@ function exportSourceXML() {
 async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format);
   clearUSD();
-  const restObject = await loadUSDObjectFromBytes(result.bytes, result.filename);
-  const object = buildConvertedUSDPreviewFromPayload(result.payload);
+  const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
   state.usdObject = object;
-  state.usdRestObject = restObject;
+  state.usdRestObject = object;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;
   state.latestUSDFormat = format;
   usdGroup.add(object);
   applySceneOrientation();
-  bindConvertedUSDLinksToSource();
-  syncConvertedUSDToSourcePose();
+  // Articulate from the *exported USD's* own physics, exactly like the import
+  // path. This replaces the former payload-based preview that was positioned
+  // from the source's world-space link matrices + a world-delta source sync:
+  // that path dropped links on URDF input (the inverseSourceRest correction was
+  // MJCF-only) and stopped following joints once the source and USD views no
+  // longer shared a frame. Driving the USD's own joints is robust to both.
+  try {
+    const extracted = await extractUSDPhysicsJSONFromBytes(result.bytes, result.filename);
+    annotateUSDRenderableClasses(object, extracted);
+    const model = usdPhysicsToSourceModel(extracted);
+    if (model.links.length && model.joints.length) {
+      const articulated = buildArticulatedRobotFromUSD(model, object, {
+        name: object.name,
+        resetMeshLists: false,
+        inferMissingJointFrames: true
+      });
+      usdGroup.remove(object);
+      state.usdObject = articulated;
+      state.usdArticulation = articulated;
+      usdGroup.add(articulated);
+      // Match the USD articulation to the source's current joint pose.
+      for (const [name, value] of Object.entries(state.jointValues)) {
+        articulated.setJointValue?.(name, value);
+      }
+    }
+  } catch (err) {
+    console.warn('USD Physics articulation skipped:', err);
+  }
+  state.usdIsConverted = true;
   updateButtonStates();
   rebuildGhosts();
   updateLabels();

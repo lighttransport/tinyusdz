@@ -1002,8 +1002,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
                                                  &material_path, &material,
                                                  &err));
-    TEST_CHECK(err.find("/NotMaterial") != std::string::npos);
-    TEST_CHECK(err.find("not a Material Prim") != std::string::npos);
+    TEST_CHECK(err.empty());
+    TEST_CHECK(material == nullptr);
 
     std::string cached_err;
     material_path = Path();
@@ -1011,15 +1011,17 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
                                                  &material_path, &material,
                                                  &cached_err));
-    TEST_CHECK(cached_err.find("/NotMaterial") != std::string::npos);
-    TEST_CHECK(cached_err.find("not a Material Prim") != std::string::npos);
+    TEST_CHECK(cached_err.empty());
+    TEST_CHECK(material == nullptr);
 
     tydra::RenderSceneConverterEnv env(stage);
     tydra::RenderScene scene;
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find("/NotMaterial") != std::string::npos);
-    TEST_CHECK(converter.GetError().find("not a Material Prim") !=
-               std::string::npos);
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(scene.meshes.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id < 0);
+    }
   }
 
   {

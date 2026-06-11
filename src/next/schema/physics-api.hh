@@ -26,6 +26,9 @@ struct PhysicsRigidBodyData {
   float density = 0.0f;
   float centerOfMass[3] = {0.0f, 0.0f, 0.0f};
   float diagonalInertia[3] = {0.0f, 0.0f, 0.0f};
+  // physics:principalAxes is a quatf in (w, x, y, z) order (USD text order), so
+  // {1, 0, 0, 0} is the identity orientation. Keep this order if a consumer is
+  // added (none reads it today).
   float principalAxes[4] = {1.0f, 0.0f, 0.0f, 0.0f};
   float velocity[3] = {0.0f, 0.0f, 0.0f};
   float angularVelocity[3] = {0.0f, 0.0f, 0.0f};
@@ -85,6 +88,9 @@ struct PhysicsMassData {
   float density = 0.0f;
   float centerOfMass[3] = {0.0f, 0.0f, 0.0f};
   float diagonalInertia[3] = {0.0f, 0.0f, 0.0f};
+  // physics:principalAxes is a quatf in (w, x, y, z) order (USD text order), so
+  // {1, 0, 0, 0} is the identity orientation. Keep this order if a consumer is
+  // added (none reads it today).
   float principalAxes[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 };
 

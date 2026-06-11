@@ -28,14 +28,29 @@
 #include "pprinter.hh"
 #include "typed-array-core.hh"
 #include "value-types.hh"
+
+// next: low-memory lazy-ValueRep flatten pipeline (src/next/).
+#include "next/pipeline/flatten.hh"
+#include "next/reader/usdc-reader.hh"
+#include "next/stage/stage.hh"
+#include "next/types/value.hh"
+#include "next/schema/geom-mesh.hh"
+#include "next/schema/usd-shade.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
+#include "tydra/diff-and-compare.hh"
 
+// js-script.hh must precede mcp-context.hh: tydra::mcp::Context holds a
+// std::unique_ptr<JSEngineState> and relies on its implicit destructor, which
+// requires the complete JSEngineState type (forward-declared in mcp-context.hh,
+// defined in js-script.hh).
+#include "tydra/js-script.hh"
 #include "tydra/mcp-context.hh"
-// mcp::Context holds a std::unique_ptr<JSEngineState>; the full definition is
-// needed in this TU so Context's (implicit) destructor can be instantiated.
+// mcp-context.hh's Context holds a unique_ptr<JSEngineState> (forward-declared
+// there); js-script.hh provides the complete type so Context's destructor can
+// be instantiated here (matches mcp-server.cc / mcp-js-bridge.cc).
 #include "tydra/js-script.hh"
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
@@ -45,8 +60,12 @@
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "crate-writer.hh"
 #include "image-writer.hh"
+#include "imageio/png-stream.hh"  // streaming scanline PNG codec
+#include "imageproc/simd.hh"      // SIMD row kernels (channel pack)
 #include "usdGeom.hh"
+#include "usd-validation.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "usdShade.hh"
@@ -60,17 +79,29 @@
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
 
-// TinyEXR for EXR decoding
-#if defined(TINYUSDZ_WITH_EXR)
-#include "external/tinyexr.h"
-#endif
+// EXR detection here is backend-agnostic (a magic-number test). Decoding goes
+// through tinyusdz::image::LoadImageFromMemory, which selects the active EXR
+// backend (pure-C11 v3 C by default), so binding.cc no longer depends on a
+// specific tinyexr API.
+static inline bool IsEXRMagic(const uint8_t *p, size_t n) {
+  // EXR magic 20000630 == 0x01312F76, stored little-endian.
+  return n >= 4 && p[0] == 0x76 && p[1] == 0x2f && p[2] == 0x31 && p[3] == 0x01;
+}
 
 // stb_image for HDR (Radiance RGBE) decoding
 // Only compile HDR support to minimize code size
 #define STBI_ONLY_HDR
 #define STBI_NO_STDIO
 #define STB_IMAGE_IMPLEMENTATION
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
 #include "external/stb_image.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -95,6 +126,97 @@
 
 
 using namespace emscripten;
+
+namespace {
+
+tinyusdz::ValidationOptions ParseValidationOptionsJSONForWeb(
+    const std::string &options_json) {
+  tinyusdz::ValidationOptions opts;
+  if (options_json.empty()) {
+    return opts;
+  }
+
+  nlohmann::json args = nlohmann::json::parse(options_json, nullptr, false);
+  if (args.is_discarded() || !args.is_object() || !args.contains("groups") ||
+      !args["groups"].is_array()) {
+    return opts;
+  }
+
+  opts.core = false;
+  opts.geom = false;
+  opts.shade = false;
+  opts.lux = false;
+  opts.physics = false;
+  opts.crate = false;
+  for (const auto &group : args["groups"]) {
+    if (!group.is_string()) {
+      continue;
+    }
+    const std::string name = group.get<std::string>();
+    if (name == "core") {
+      opts.core = true;
+    } else if (name == "geom") {
+      opts.geom = true;
+    } else if (name == "shade") {
+      opts.shade = true;
+    } else if (name == "lux") {
+      opts.lux = true;
+    } else if (name == "physics") {
+      opts.physics = true;
+    } else if (name == "crate") {
+      opts.crate = true;
+    } else if (name == "all") {
+      opts = tinyusdz::MakeValidateAllOptions();
+    }
+  }
+
+  if (!opts.core && !opts.geom && !opts.shade && !opts.lux &&
+      !opts.physics && !opts.crate) {
+    opts.core = true;
+  }
+  return opts;
+}
+
+const char *ValidationSeverityString(tinyusdz::USDValidationSeverity severity) {
+  return severity == tinyusdz::USDValidationSeverity::Error ? "error"
+                                                            : "warning";
+}
+
+nlohmann::json ValidationGroupsToJSON(
+    const tinyusdz::ValidationOptions &options) {
+  nlohmann::json groups = nlohmann::json::array();
+  for (const std::string &name : tinyusdz::GetValidationGroupNames(options)) {
+    groups.push_back(name);
+  }
+  return groups;
+}
+
+nlohmann::json ValidationResultToJSON(
+    const tinyusdz::USDValidationResult &validation) {
+  nlohmann::json result;
+  result["parse_ok"] = true;
+  result["ok"] = validation.ok();
+  result["error_count"] = validation.error_count();
+  result["warning_count"] = validation.warning_count();
+  result["spec_version"] = tinyusdz::GetAOUSDCoreSpecVersionString();
+  result["checked_groups"] =
+      ValidationGroupsToJSON(validation.checked_groups);
+
+  nlohmann::json issues = nlohmann::json::array();
+  for (const tinyusdz::USDValidationIssue *issue :
+       tinyusdz::GetOrderedValidationIssues(validation)) {
+    nlohmann::json item;
+    item["severity"] = ValidationSeverityString(issue->severity);
+    item["rule_id"] = issue->rule_id;
+    item["location"] = issue->location;
+    item["message"] = issue->message;
+    issues.push_back(item);
+  }
+  result["issues"] = issues;
+  return result;
+}
+
+}  // namespace
 
 // Fix degenerate tangent: when a tangent vector is zero, near-zero, NaN, or
 // Inf, generate a fallback perpendicular to the normal.  Also handles
@@ -154,17 +276,71 @@ static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
 // NOTE: const char* params are BigInt in MEMORY64 mode, but UTF8ToString
 // expects Number. Using Number() is a no-op for regular numbers (32-bit)
 // and converts BigInt→Number (64-bit), so it works for both modes.
-EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, float progress), {
+EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, int materialsCurrent, int materialsTotal, const char* materialName, float progress), {
   if (typeof Module.onTydraProgress === 'function') {
     Module.onTydraProgress({
       meshCurrent: current,
       meshTotal: total,
       stage: UTF8ToString(Number(stage)),
       meshName: UTF8ToString(Number(meshName)),
+      materialsCurrent,
+      materialsTotal,
+      materialName: UTF8ToString(Number(materialName)),
       progress: progress
     });
   }
 });
+
+EM_JS(double, getWasmHeapByteLengthForDebug, (), {
+  return HEAPU8.buffer.byteLength;
+});
+
+EM_JS(void, reportTinyUSDZDebug, (const char* phase, const char* detail, double heapBytes, double inputBytes, int isUsdz, int materialsCurrent, int materialsTotal, const char* materialName), {
+  const event = {
+    phase: UTF8ToString(Number(phase)),
+    detail: UTF8ToString(Number(detail)),
+    heapBytes,
+    inputBytes,
+    isUsdz: !!isUsdz,
+    materialsCurrent,
+    materialsTotal,
+    materialName: UTF8ToString(Number(materialName))
+  };
+  if (typeof Module.onTinyUSDZDebug === 'function') {
+    Module.onTinyUSDZDebug(event);
+  }
+});
+
+static inline double GetWasmHeapByteLengthForDebug() {
+  return getWasmHeapByteLengthForDebug();
+}
+
+// Cheap test for whether a JS debug listener is attached. Lets hot paths skip
+// building debug strings / querying the heap size when nobody is listening.
+EM_JS(int, isTinyUSDZDebugEnabled, (), {
+  return (typeof Module.onTinyUSDZDebug === 'function') ? 1 : 0;
+});
+
+static inline bool IsTinyUSDZDebugEnabled() {
+  return isTinyUSDZDebugEnabled() != 0;
+}
+
+static inline void ReportTinyUSDZDebugEvent(
+    const char *phase, const std::string &detail, size_t input_bytes = 0,
+    bool is_usdz = false, size_t materials_current = 0,
+    size_t materials_total = 0, const std::string &material_name = "") {
+  // No JS listener => skip the heap-size query and the JS event construction
+  // entirely. This keeps debug instrumentation off the cost path in the common
+  // (no-listener) case.
+  if (!IsTinyUSDZDebugEnabled()) {
+    return;
+  }
+  reportTinyUSDZDebug(
+      phase, detail.c_str(), GetWasmHeapByteLengthForDebug(),
+      static_cast<double>(input_bytes), is_usdz ? 1 : 0,
+      static_cast<int>(materials_current), static_cast<int>(materials_total),
+      material_name.c_str());
+}
 
 // Report conversion stage change
 EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
@@ -356,8 +532,11 @@ bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t>
     return false;
   }
 
-  // Copy JS typed array -> v (one memcpy under the hood)
-  emscripten::val view = emscripten::val::global("Uint8Array").new_(u8["buffer"], u8["byteOffset"], n);
+  // Copy JS typed array -> v (one memcpy under the hood). Length must be a JS
+  // Number (double): a C++ size_t marshals to a BigInt under wasm64 and
+  // `new Uint8Array(buffer, byteOffset, bigint)` throws.
+  emscripten::val view = emscripten::val::global("Uint8Array").new_(
+      u8["buffer"], u8["byteOffset"], emscripten::val(static_cast<double>(n)));
   emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(n, buf.data()));
   heapView.call<void>("set", view);
 
@@ -397,8 +576,11 @@ void copyTypedArray(const emscripten::val &data, std::vector<T> &buffer,
   if (length == 0) {
     return;
   }
+  // byteOffset/length as JS Numbers (double): size_t -> BigInt under wasm64
+  // breaks the typed-array constructor.
   emscripten::val view = emscripten::val::global(array_ctor).new_(
-      data["buffer"], byteOffset, length);
+      data["buffer"], emscripten::val(static_cast<double>(byteOffset)),
+      emscripten::val(static_cast<double>(length)));
   emscripten::val heapView =
       emscripten::val(emscripten::typed_memory_view(length, buffer.data()));
   heapView.call<void>("set", view);
@@ -586,15 +768,130 @@ struct ZeroCopyStreamingBuffer {
   }
 };
 
+class JSUint8ArrayOutputStream
+    : public tinyusdz::experimental::IOutputStream {
+ public:
+  JSUint8ArrayOutputStream(const emscripten::val &buffer, size_t capacity)
+      : buffer_(buffer), capacity_(capacity) {}
+
+  bool Open(std::string *err) override {
+    if (buffer_.isNull() || buffer_.isUndefined() || capacity_ == 0) {
+      if (err) {
+        *err = "JS output buffer is empty.";
+      }
+      return false;
+    }
+    pos_ = 0;
+    max_pos_ = 0;
+    open_ = true;
+    error_.clear();
+    return true;
+  }
+
+  void Close() override { open_ = false; }
+
+  bool IsOpen() const override { return open_; }
+
+  int64_t Tell() override { return static_cast<int64_t>(pos_); }
+
+  bool Seek(int64_t pos) override {
+    if (pos < 0) {
+      error_ = "Negative seek in JS output buffer.";
+      return false;
+    }
+    const size_t next = static_cast<size_t>(pos);
+    if (next > capacity_) {
+      error_ = "Seek exceeds JS output buffer capacity.";
+      return false;
+    }
+    pos_ = next;
+    return true;
+  }
+
+  bool Write(const void *data, size_t size) override {
+    if (!open_) {
+      error_ = "JS output buffer is not open.";
+      return false;
+    }
+    if (size == 0) {
+      return true;
+    }
+    if (!data) {
+      error_ = "Null write data for JS output buffer.";
+      return false;
+    }
+    if (pos_ > capacity_ || size > capacity_ - pos_) {
+      error_ = "JS output buffer too small for USDC export.";
+      return false;
+    }
+
+    emscripten::val src = emscripten::val(emscripten::typed_memory_view(
+        size, reinterpret_cast<const uint8_t *>(data)));
+    buffer_.call<void>("set", src, emscripten::val(static_cast<double>(pos_)));
+    pos_ += size;
+    if (pos_ > max_pos_) {
+      max_pos_ = pos_;
+    }
+    return true;
+  }
+
+  bool Flush() override { return true; }
+
+  size_t written() const { return max_pos_; }
+  const std::string &error() const { return error_; }
+
+ private:
+  emscripten::val buffer_;
+  size_t capacity_{0};
+  size_t pos_{0};
+  size_t max_pos_{0};
+  bool open_{false};
+  std::string error_;
+};
+
 struct EMAssetResolutionResolver {
+
+  // Lexically collapse '.' and '<seg>/..' in a relative path, preserving any
+  // leading '..' (those are resolved against a base directory elsewhere). Pure
+  // string arithmetic — no filesystem access (FILESYSTEM=0 in this build).
+  static std::string LexicalNormalizePath(const std::string &path) {
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i <= path.size()) {
+      size_t j = path.find('/', i);
+      std::string seg =
+          path.substr(i, j == std::string::npos ? std::string::npos : j - i);
+      if (!seg.empty() && seg != ".") {
+        if (seg == "..") {
+          if (!parts.empty() && parts.back() != "..") {
+            parts.pop_back();
+          } else {
+            parts.push_back("..");
+          }
+        } else {
+          parts.push_back(std::move(seg));
+        }
+      }
+      if (j == std::string::npos) {
+        break;
+      }
+      i = j + 1;
+    }
+    std::string out;
+    for (size_t k = 0; k < parts.size(); k++) {
+      if (k) {
+        out.push_back('/');
+      }
+      out += parts[k];
+    }
+    return out;
+  }
 
   static int Resolve(const char *asset_name,
                      const std::vector<std::string> &search_paths,
                      std::string *resolved_asset_name, std::string *err,
                      void *userdata) {
     (void)err;
-    (void)userdata;
-    (void)search_paths;
 
     if (!asset_name) {
       return -2;  // err
@@ -604,9 +901,94 @@ struct EMAssetResolutionResolver {
       return -2;  // err
     }
 
-    // TODO: searchpath
+    EMAssetResolutionResolver *p =
+        reinterpret_cast<EMAssetResolutionResolver *>(userdata);
+
+    // Without a cache to consult, echo the name back (legacy behavior).
+    if (!p) {
+      (*resolved_asset_name) = asset_name;
+      return 0;
+    }
+
+    // 1) Direct hit: the name is already a cache key.
+    if (p->has(asset_name)) {
+      (*resolved_asset_name) = asset_name;
+      return 0;
+    }
+
+    // 2) Honor search paths. A nested reference path is authored relative to the
+    //    referencing layer's directory; composition pushes that directory into
+    //    `search_paths`. Try "<search_path>/<asset_name>" against the cache.
+    const std::string name(asset_name);
+    for (const std::string &sp : search_paths) {
+      if (sp.empty() || sp == "." || sp == "./") {
+        continue;
+      }
+      std::string base = sp;
+      while (!base.empty() && base.back() == '/') {
+        base.pop_back();
+      }
+      const std::string cand = base + "/" + name;
+      if (p->has(cand)) {
+        (*resolved_asset_name) = cand;
+        return 0;
+      }
+    }
+
+    // 3) Fallback: match by trailing path segment, so a relative ref resolves to
+    //    a uniquely-named cached asset regardless of its subdirectory.
+    const std::string suffix = "/" + name;
+    for (const auto &kv : p->cache) {
+      const std::string &key = kv.first;
+      if (key.size() >= suffix.size() &&
+          key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        (*resolved_asset_name) = key;
+        return 0;
+      }
+    }
+
+    // 4) Resolve '..'/'.' nicely: collapse the request (and each
+    //    "<search_path>/<name>") lexically, then retry the cache. Lets a
+    //    parent-relative ref such as `../common/foo.usd` match a cached key that
+    //    differs only by collapsible segments, regardless of how composition
+    //    pushed the working directory.
+    {
+      const std::string norm_name = LexicalNormalizePath(name);
+      if (norm_name != name && p->has(norm_name)) {
+        (*resolved_asset_name) = norm_name;
+        return 0;
+      }
+      for (const std::string &sp : search_paths) {
+        if (sp.empty() || sp == "." || sp == "./") {
+          continue;
+        }
+        std::string base = sp;
+        while (!base.empty() && base.back() == '/') {
+          base.pop_back();
+        }
+        const std::string cand = LexicalNormalizePath(base + "/" + name);
+        if (p->has(cand)) {
+          (*resolved_asset_name) = cand;
+          return 0;
+        }
+      }
+      if (!norm_name.empty() && norm_name != name) {
+        const std::string nsuffix = "/" + norm_name;
+        for (const auto &kv : p->cache) {
+          const std::string &key = kv.first;
+          if (key.size() >= nsuffix.size() &&
+              key.compare(key.size() - nsuffix.size(), nsuffix.size(),
+                          nsuffix) == 0) {
+            (*resolved_asset_name) = key;
+            return 0;
+          }
+        }
+      }
+    }
+
+    // Not found in cache: echo the name so Size/Read report a clean miss.
     (*resolved_asset_name) = asset_name;
-    return 0;  // OK
+    return 0;
   }
 
   // AssetResoltion handlers
@@ -629,6 +1011,12 @@ struct EMAssetResolutionResolver {
     }
 
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
+    if (!p || !p->has(asset_name)) {
+      if (err) {
+        (*err) += "Asset not found in cache: " + std::string(asset_name) + "\n";
+      }
+      return -1;  // not found
+    }
     const AssetCacheEntry &entry = p->get(asset_name);
 
     //std::cout << asset_name << ".size " << entry.binary.size() << "\n";
@@ -871,7 +1259,7 @@ struct EMAssetResolutionResolver {
       return false;
     }
     
-    cache[asset_name] = std::move(entry.finalize());
+    cache[asset_name] = entry.finalize();
     streaming_cache.erase(asset_name);
     return true;
   }
@@ -913,8 +1301,13 @@ struct EMAssetResolutionResolver {
   /// Allocate a zero-copy buffer for streaming transfer
   /// @param asset_name The asset path/name (used as cache key when finalized)
   /// @param size Buffer size in bytes
+  /// @param max_bytes Caller-supplied upper bound for a single buffer (0 = use
+  ///        the 512 MiB default). Lets a geometry-heavy root USDC whose single
+  ///        layer exceeds the default stream in instead of falling back to the
+  ///        high-memory in-heap path (raise via the CLI --max-mem-mb arg).
   /// Returns buffer info including UUID and pointer for direct memory access
-  emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size) {
+  emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size,
+                                         size_t max_bytes) {
     emscripten::val result = emscripten::val::object();
 
     if (size == 0) {
@@ -924,10 +1317,13 @@ struct EMAssetResolutionResolver {
     }
 
     // Cap single buffer allocation to avoid OOM in WASM's ~2GB linear memory.
-    constexpr size_t kMaxZeroCopyBufferBytes = size_t(1) << 28;  // 256 MiB
-    if (size > kMaxZeroCopyBufferBytes) {
+    // Default 512 MiB; the caller may raise it (still bounded by the heap).
+    constexpr size_t kDefaultMaxZeroCopyBufferBytes = size_t(1) << 29;  // 512 MiB
+    const size_t cap = max_bytes ? max_bytes : kDefaultMaxZeroCopyBufferBytes;
+    if (size > cap) {
       result.set("success", false);
-      result.set("error", "Buffer size exceeds 256 MiB limit");
+      result.set("error",
+                 "Buffer size exceeds " + std::to_string(cap >> 20) + " MiB limit");
       return result;
     }
 
@@ -1009,6 +1405,17 @@ struct EMAssetResolutionResolver {
     cache[cache_key] = buf.finalize();
     zerocopy_buffers.erase(uuid);
     return true;
+  }
+
+  /// Move the raw bytes out of a zero-copy buffer (and erase it), for callers
+  /// that want to adopt the streamed input directly (e.g. the next flatten
+  /// pipeline) instead of caching it as an asset. Returns empty on unknown uuid.
+  std::string takeZeroCopyBufferString(const std::string &uuid) {
+    auto it = zerocopy_buffers.find(uuid);
+    if (it == zerocopy_buffers.end()) return std::string();
+    std::string s = std::move(it->second.buffer);
+    zerocopy_buffers.erase(it);
+    return s;
   }
 
   /// Cancel and free zero-copy buffer
@@ -1277,15 +1684,6 @@ bool AddTypedAttr(json &props, const std::string &name,
   return true;
 }
 
-bool AddTypedAttr(json &props, const std::string &name,
-                  const tinyusdz::TypedAttribute<tinyusdz::value::float3> &attr) {
-  auto v = attr.get_value();
-  if (!v) {
-    return false;
-  }
-  props[name] = Vec3Json(v.value());
-  return true;
-}
 
 bool AddTypedAttr(json &props, const std::string &name,
                   const tinyusdz::TypedAttribute<tinyusdz::value::vector3f> &attr) {
@@ -1714,6 +2112,12 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddTypedAttr(props, "physics:lowerLimit", joint->lowerLimit);
     AddTypedAttr(props, "physics:upperLimit", joint->upperLimit);
     AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsSphericalJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:axis", joint->axis);
+    AddTypedAttr(props, "physics:coneAngle0Limit", joint->coneAngle0Limit);
+    AddTypedAttr(props, "physics:coneAngle1Limit", joint->coneAngle1Limit);
+    AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsFixedJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddPropertyMap(props, rels, joint->props);
@@ -1775,6 +2179,10 @@ class TinyUSDZLoaderNative {
 #endif
 
   bool stageToRenderScene(const tinyusdz::Stage &stage, bool is_usdz, const std::string &binary) {
+    ReportTinyUSDZDebugEvent(
+        "renderScene.begin",
+        "filename=" + filename_ + " inputBytes=" + std::to_string(binary.size()),
+        binary.size(), is_usdz);
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -1815,13 +2223,25 @@ class TinyUSDZLoaderNative {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetInfo.begin",
+          "asset_on_memory=false filename=" + filename_, binary.size(),
+          is_usdz);
       if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
+        ReportTinyUSDZDebugEvent(
+            "usdzAssetInfo.failed", error_, binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetInfo.end",
+          "entries=" + std::to_string(usdz_asset_.asset_map.size()) +
+              " copiedBytes=" + std::to_string(usdz_asset_.data.size()) +
+              " backingBytes=" + std::to_string(usdz_asset_.size),
+          binary.size(), is_usdz);
 
       tinyusdz::AssetResolutionResolver arr;
 
@@ -1829,18 +2249,32 @@ class TinyUSDZLoaderNative {
       // RenderSceneConverter::ConvertToRenderScene.
       if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+        ReportTinyUSDZDebugEvent(
+            "usdzAssetResolution.failed", "SetupUSDZAssetResolution failed",
+            binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "usdzAssetResolution.end",
+          "entries=" + std::to_string(usdz_asset_.asset_map.size()),
+          binary.size(), is_usdz);
 
       env.asset_resolver = arr;
     } else {
       tinyusdz::AssetResolutionResolver arr;
       if (!SetupEMAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
+        ReportTinyUSDZDebugEvent(
+            "emAssetResolution.failed", "SetupEMAssetResolution failed",
+            binary.size(), is_usdz);
         loaded_ = false;
         return false;
       }
+      ReportTinyUSDZDebugEvent(
+          "emAssetResolution.end",
+          "cacheEntries=" + std::to_string(em_resolver_.cache.size()),
+          binary.size(), is_usdz);
 
       env.asset_resolver = arr;
     }
@@ -1850,7 +2284,7 @@ class TinyUSDZLoaderNative {
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
     converter.SetDetailedProgressCallback(
-        [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+        [input_size = binary.size(), is_usdz, debug_enabled = IsTinyUSDZDebugEnabled()](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
           if (pp) {
             pp->meshes_processed = info.meshes_processed;
@@ -1864,12 +2298,32 @@ class TinyUSDZLoaderNative {
             pp->progress = 0.8f + (info.progress * 0.2f);
           }
 
+          // Build the (per-tick) debug detail string only when a JS listener is
+          // attached; otherwise this hot callback pays nothing for debugging.
+          if (debug_enabled) {
+            std::ostringstream detail;
+            detail << "stage=" << info.GetStageName()
+                   << " message=" << info.message
+                   << " mesh=" << info.meshes_processed << "/"
+                   << info.meshes_total
+                   << " material=" << info.materials_processed << "/"
+                   << info.materials_total
+                   << " currentMaterial=" << info.current_material_name;
+            ReportTinyUSDZDebugEvent(
+                "renderScene.progress", detail.str(), input_size, is_usdz,
+                info.materials_processed, info.materials_total,
+                info.current_material_name);
+          }
+
           // Call JavaScript synchronously via EM_JS
           reportTydraProgress(
             static_cast<int>(info.meshes_processed),
             static_cast<int>(info.meshes_total),
             info.GetStageName(),  // Already returns const char*
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
 
@@ -1888,7 +2342,17 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    ReportTinyUSDZDebugEvent(
+        "convertToRenderScene.begin",
+        "loadTextureInNative=" + std::to_string(loadTextureInNative_ ? 1 : 0) +
+            " combineUDIMTiles=" + std::to_string(combineUDIMTiles_ ? 1 : 0) +
+            " deferTangents=" +
+            std::to_string(defer_tangent_computation_ ? 1 : 0),
+        binary.size(), is_usdz);
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+    ReportTinyUSDZDebugEvent(
+        loaded_ ? "convertToRenderScene.end" : "convertToRenderScene.failed",
+        loaded_ ? "success" : converter.GetError(), binary.size(), is_usdz);
 
     // Capture warnings from converter (available via warn() method)
     if (!converter.GetWarning().empty()) {
@@ -1908,10 +2372,6 @@ class TinyUSDZLoaderNative {
   }
 
   bool loadAsLayerFromBinary(const std::string &binary, const std::string &filename) {
-
-
-    bool is_usdz = tinyusdz::IsUSDZ(
-        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
@@ -1939,6 +2399,10 @@ class TinyUSDZLoaderNative {
 
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+    ReportTinyUSDZDebugEvent(
+        "loadFromBinary.begin",
+        "filename=" + filename + " bytes=" + std::to_string(binary.size()),
+        binary.size(), is_usdz);
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
@@ -1950,8 +2414,16 @@ class TinyUSDZLoaderNative {
         filename, &stage, &warn_, &error_, options);
 
     if (!loaded_) {
+      ReportTinyUSDZDebugEvent(
+          "loadFromBinary.parseFailed", error_, binary.size(), is_usdz);
       return false;
     }
+    ReportTinyUSDZDebugEvent(
+        "loadFromBinary.parsed",
+        "warnBytes=" + std::to_string(warn_.size()) +
+            " maxMemoryLimitMB=" + std::to_string(max_memory_limit_mb_) +
+            " mmapZeroCopy=" + std::to_string(mmap_zero_copy_ ? 1 : 0),
+        binary.size(), is_usdz);
 
     loaded_as_layer_ = false;
     filename_ = filename;
@@ -2034,6 +2506,9 @@ class TinyUSDZLoaderNative {
             static_cast<int>(info.meshes_total),
             info.GetStageName(),  // Already returns const char*
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
 
@@ -2194,6 +2669,9 @@ class TinyUSDZLoaderNative {
             static_cast<int>(info.meshes_total),
             info.GetStageName(),
             info.current_mesh_name.c_str(),
+            static_cast<int>(info.materials_processed),
+            static_cast<int>(info.materials_total),
+            info.current_material_name.c_str(),
             info.progress
           );
           return true;
@@ -2524,7 +3002,7 @@ class TinyUSDZLoaderNative {
     
     // Test 15: Quaternion types
     {
-      tinyusdz::value::quatf q{0.0f, 0.0f, 0.0f, 1.0f};
+      tinyusdz::value::quatf q{{0.0f, 0.0f, 0.0f}, 1.0f};
       tinyusdz::value::Value v(q);
       emscripten::val test = emscripten::val::object();
       test.set("name", "quatf");
@@ -2954,7 +3432,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
 
-    if (mat_id < 0 || mat_id >= render_scene_.materials.size()) {
+    if (mat_id < 0 || mat_id >= static_cast<int>(render_scene_.materials.size())) {
       result.set("error", "Invalid material ID");
       return result;
     }
@@ -3413,6 +3891,11 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val getImage(int img_id) const {
+    warnDeprecated_("getImage", "getImagePtr()/getImageCopy()");
+    return buildImageVal_(img_id);
+  }
+
+  emscripten::val buildImageVal_(int img_id) const {
     emscripten::val img = emscripten::val::object();
 
     if (!loaded_) {
@@ -3446,7 +3929,204 @@ class TinyUSDZLoaderNative {
     return img;
   }
 
+  // ---------------------------------------------------------------------------
+  // Id-based, OpenGL-style heap accessors (zero-copy + explicit copy)
+  //
+  // The scene owns mesh/image data in the WASM heap, addressed by id. Transfer
+  // to the GPU lazily, when needed:
+  //
+  //   getMeshPtr(i) / getImagePtr(i)  -> per-attribute {ptr,length,comps,dtype,
+  //     byteLength} descriptors (NO TypedArrays). Build a view on the *live*
+  //     Module.HEAPU8.buffer at the instant of gl.bufferData/texImage2D, then
+  //     keep only the GL object (like an OpenGL name). `ptr` is the byte offset
+  //     into linear memory; it survives heap growth (a TypedArray view would
+  //     NOT — growth detaches it), as long as the loader isn't deleted/reloaded.
+  //
+  //   getMeshCopy(i) / getImageCopy(i) -> the SAME shape as the deprecated
+  //     getMesh()/getImage() (a drop-in replacement), but every heap-backed
+  //     TypedArray is an owned (JS-heap) copy — safe to retain, hand to
+  //     THREE.BufferAttribute, or process on the CPU (e.g. UDIM atlas assembly).
+  //
+  // getMesh()/getImage() remain (deprecated) for backward compatibility.
+  // ---------------------------------------------------------------------------
+
+  static size_t dtypeByteSize_(const char *dtype) {
+    std::string d(dtype);
+    if (d == "f32" || d == "u32") return 4;
+    if (d == "snorm16") return 2;
+    return 1;  // snorm8 / u8
+  }
+
+  // Build one zero-copy attribute descriptor: {ptr, length, comps, count,
+  // dtype, byteLength}. `length` is the total scalar count (vertices * comps).
+  static emscripten::val heapAttr_(const void *p, size_t length, int comps,
+                                   const char *dtype) {
+    emscripten::val a = emscripten::val::object();
+    a.set("length", emscripten::val(static_cast<double>(length)));
+    a.set("comps", comps);
+    a.set("dtype", std::string(dtype));
+    a.set("count", emscripten::val(static_cast<double>(comps ? length / comps : length)));
+    a.set("ptr", emscripten::val(static_cast<double>(reinterpret_cast<uintptr_t>(p))));
+    a.set("byteLength", emscripten::val(static_cast<double>(length * dtypeByteSize_(dtype))));
+    return a;
+  }
+
+  // Replace every (possibly nested) TypedArray in `v` with an owned JS-heap
+  // copy (`.slice()`), turning a heap-aliasing getMesh()/getImage() result into
+  // a retain-safe one without duplicating those builders.
+  static void deepCopyTypedArrays_(emscripten::val v) {
+    emscripten::val keys = emscripten::val::global("Object").call<emscripten::val>("keys", v);
+    const size_t n = keys["length"].as<size_t>();
+    for (size_t i = 0; i < n; i++) {
+      const std::string k = keys[i].as<std::string>();
+      emscripten::val child = v[k];
+      if (child.isNull() || child.isUndefined()) continue;
+      if (!child["BYTES_PER_ELEMENT"].isUndefined()) {
+        v.set(k, child.call<emscripten::val>("slice"));  // TypedArray -> owned copy
+      } else if (child.typeOf().as<std::string>() == "object") {
+        deepCopyTypedArrays_(child);  // recurse (e.g. uvSets.uvN.data)
+      }
+    }
+  }
+
+  void warnDeprecated_(const char *fn, const char *repl) const {
+    if (deprecation_warned_.insert(fn).second) {
+      emscripten::val::global("console").call<void>(
+          "warn", std::string("[tinyusdz] ") + fn +
+                      "() is deprecated; prefer " + repl +
+                      ". (Heap views from the old API alias WASM memory and can"
+                      " dangle; the *Ptr/*Copy accessors make the contract"
+                      " explicit.)");
+    }
+  }
+
+  // Zero-copy mesh descriptor: per-attribute {ptr,length,comps,count,dtype,
+  // byteLength}. Subset needed for GPU rendering (points/indices/normals/uv0).
+  emscripten::val getMeshPtr(int mesh_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || mesh_id < 0 ||
+        static_cast<size_t>(mesh_id) >= render_scene_.meshes.size()) {
+      return out;
+    }
+    using tinyusdz::tydra::VertexAttributeFormat;
+    const tinyusdz::tydra::RenderMesh &rmesh =
+        render_scene_.meshes[size_t(mesh_id)];
+
+    const size_t vtx = rmesh.points.size();
+    out.set("vertexCount", emscripten::val(static_cast<double>(vtx)));
+    out.set("materialId", rmesh.material_id);
+    out.set("doubleSided", rmesh.doubleSided);
+    out.set("primName", rmesh.prim_name);
+
+    out.set("points",
+            heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
+                      vtx * 3, 3, "f32"));
+
+    const auto &idx = rmesh.faceVertexIndices();
+    const auto &cnt = rmesh.faceVertexCounts();
+    if (!idx.empty()) {
+      out.set("indices", heapAttr_(idx.data(), idx.size(), 1, "u32"));
+    }
+    bool triangulated = !cnt.empty();
+    for (uint32_t c : cnt) {
+      if (c != 3) { triangulated = false; break; }
+    }
+    if (!cnt.empty()) {
+      out.set("faceVertexCounts", heapAttr_(cnt.data(), cnt.size(), 1, "u32"));
+    }
+    out.set("triangulated", triangulated);
+
+    // normals (snorm8 / snorm16 / f32; 1010102 unpacked to a stable f32 cache)
+    if (!rmesh.normals.empty()) {
+      const size_t nv = rmesh.normals.vertex_count();
+      if (rmesh.normals.format == VertexAttributeFormat::Char3) {
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm8"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
+        out.set("normals", heapAttr_(rmesh.normals.data.data(), nv * 3, 3, "snorm16"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+        auto &cache = normals_cache_[mesh_id];
+        if (cache.size() != nv * 3) {
+          cache.resize(nv * 3);
+          const uint32_t *P =
+              reinterpret_cast<const uint32_t *>(rmesh.normals.data.data());
+          for (size_t i = 0; i < nv; i++) {
+            tinyusdz::tydra::tangent_quantize::unpack_normal_1010102(
+                P[i], cache[i * 3 + 0], cache[i * 3 + 1], cache[i * 3 + 2]);
+          }
+        }
+        out.set("normals", heapAttr_(cache.data(), nv * 3, 3, "f32"));
+      } else {
+        out.set("normals",
+                heapAttr_(reinterpret_cast<const float *>(rmesh.normals.data.data()),
+                          nv * 3, 3, "f32"));
+      }
+    }
+
+    auto uvit = rmesh.texcoords.find(0);
+    if (uvit != rmesh.texcoords.end()) {
+      const size_t uvn = uvit->second.vertex_count();
+      out.set("uv0",
+              heapAttr_(reinterpret_cast<const float *>(uvit->second.data.data()),
+                        uvn * 2, 2, "f32"));
+    }
+    return out;
+  }
+
+  // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
+  emscripten::val getMeshCopy(int mesh_id) const {
+    emscripten::val m = buildMeshVal_(mesh_id);
+    deepCopyTypedArrays_(m);
+    return m;
+  }
+
+  // Zero-copy image descriptor: {width,height,channels,decoded,colorSpace,
+  // usdColorSpace,uri,bufferId, ptr,byteLength}.
+  emscripten::val getImagePtr(int img_id) const {
+    emscripten::val out = imageMeta_(img_id);
+    if (out.isUndefined()) return emscripten::val::object();
+    const auto &i = render_scene_.images[size_t(img_id)];
+    if (i.buffer_id >= 0 &&
+        static_cast<size_t>(i.buffer_id) < render_scene_.buffers.size()) {
+      const auto &b = render_scene_.buffers[size_t(i.buffer_id)];
+      out.set("ptr", emscripten::val(static_cast<double>(
+                         reinterpret_cast<uintptr_t>(b.data.data()))));
+      out.set("byteLength", emscripten::val(static_cast<double>(b.data.size())));
+    }
+    return out;
+  }
+
+  // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
+  emscripten::val getImageCopy(int img_id) const {
+    emscripten::val m = buildImageVal_(img_id);
+    deepCopyTypedArrays_(m);
+    return m;
+  }
+
+  // Image metadata common to getImage/getImagePtr/getImageCopy (no pixel data).
+  emscripten::val imageMeta_(int img_id) const {
+    if (!loaded_ || img_id < 0 ||
+        static_cast<size_t>(img_id) >= render_scene_.images.size()) {
+      return emscripten::val::undefined();
+    }
+    const auto &i = render_scene_.images[size_t(img_id)];
+    emscripten::val out = emscripten::val::object();
+    out.set("width", int(i.width));
+    out.set("height", int(i.height));
+    out.set("channels", int(i.channels));
+    out.set("decoded", bool(i.decoded));
+    out.set("colorSpace", to_string(i.colorSpace));
+    out.set("usdColorSpace", to_string(i.usdColorSpace));
+    out.set("uri", i.asset_identifier);
+    out.set("bufferId", int(i.buffer_id));
+    return out;
+  }
+
   emscripten::val getMesh(int mesh_id) const {
+    warnDeprecated_("getMesh", "getMeshPtr()/getMeshCopy()");
+    return buildMeshVal_(mesh_id);
+  }
+
+  emscripten::val buildMeshVal_(int mesh_id) const {
     emscripten::val mesh = emscripten::val::object();
 
     if (!loaded_) {
@@ -3900,12 +4580,10 @@ class TinyUSDZLoaderNative {
         } else {
           // Float3 (Vec3) or unpacked from 1010102
           const float* src;
-          bool useCache = false;
           if (rmesh.normals.format == VertexAttributeFormat::Uint) {
             // 1010102 was already unpacked to normals_cache_ by the primary export above
             if (normals_cache_.count(mesh_id)) {
               src = normals_cache_[mesh_id].data();
-              useCache = true;
             } else {
               src = reinterpret_cast<const float*>(rmesh.normals.data.data());
             }
@@ -3996,6 +4674,64 @@ class TinyUSDZLoaderNative {
         mesh.set("tangents", emscripten::typed_memory_view(cache.tangents.size(), cache.tangents.data()));
       }
 
+      // Reorder vertex skinning data. Joint indices/weights are authored per
+      // original mesh point, while this path expands points to one vertex per
+      // triangle corner for material grouping.
+      if (!rmesh.joint_and_weights.jointIndices.empty() &&
+          !rmesh.joint_and_weights.jointWeights.empty() &&
+          rmesh.joint_and_weights.elementSize > 0) {
+        const int elementSize = rmesh.joint_and_weights.elementSize;
+        const size_t skinIndexCount = rmesh.joint_and_weights.jointIndices.size();
+        const size_t skinWeightCount = rmesh.joint_and_weights.jointWeights.size();
+        const size_t sourceSkinVertexCount =
+            std::min(skinIndexCount, skinWeightCount) / size_t(elementSize);
+        const bool skinIsPerPoint = sourceSkinVertexCount == rmesh.points.size();
+        const bool skinIsFaceVarying = sourceSkinVertexCount == fvIndices.size();
+        const size_t totalVerts = numNewTriangles * 3;
+
+        if (skinIsPerPoint || skinIsFaceVarying) {
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.jointIndices.assign(totalVerts * size_t(elementSize), 0);
+          cache.jointWeights.assign(totalVerts * size_t(elementSize), 0.0f);
+
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              size_t srcVertex = oldFV;
+              if (skinIsPerPoint) {
+                if (oldFV >= fvIndices.size()) {
+                  continue;
+                }
+                srcVertex = size_t(fvIndices[oldFV]);
+              }
+              if (srcVertex >= sourceSkinVertexCount) {
+                continue;
+              }
+
+              const size_t srcBase = srcVertex * size_t(elementSize);
+              const size_t dstBase = newV * size_t(elementSize);
+              for (int j = 0; j < elementSize; j++) {
+                const size_t srcIdx = srcBase + size_t(j);
+                const size_t dstIdx = dstBase + size_t(j);
+                if (srcIdx < skinIndexCount && srcIdx < skinWeightCount) {
+                  cache.jointIndices[dstIdx] =
+                      rmesh.joint_and_weights.jointIndices[srcIdx];
+                  cache.jointWeights[dstIdx] =
+                      rmesh.joint_and_weights.jointWeights[srcIdx];
+                }
+              }
+            }
+          }
+
+          mesh.set("jointIndices", emscripten::typed_memory_view(
+              cache.jointIndices.size(), cache.jointIndices.data()));
+          mesh.set("jointWeights", emscripten::typed_memory_view(
+              cache.jointWeights.size(), cache.jointWeights.data()));
+        }
+      }
+
       // Generate new sequential indices (0, 1, 2, 3, 4, 5, ...)
       // Since we reordered the vertex data to facevarying, indices are sequential
       std::vector<uint32_t> newIndices(numNewTriangles * 3);
@@ -4020,7 +4756,7 @@ class TinyUSDZLoaderNative {
   emscripten::val getRootNode(int idx) {
     emscripten::val val = emscripten::val::object();
 
-    if ((idx < 0) || (idx >= render_scene_.nodes.size())) {
+    if ((idx < 0) || (idx >= static_cast<int>(render_scene_.nodes.size()))) {
       return val;
     }
 
@@ -4121,7 +4857,7 @@ class TinyUSDZLoaderNative {
     emscripten::val tracks = emscripten::val::array();
 
     for (const auto &channel : clip.channels) {
-      if (!channel.is_valid() || channel.sampler >= clip.samplers.size()) {
+      if (!channel.is_valid() || channel.sampler >= static_cast<int32_t>(clip.samplers.size())) {
         continue;
       }
 
@@ -4133,7 +4869,7 @@ class TinyUSDZLoaderNative {
       emscripten::val track = emscripten::val::object();
 
       // Set track name based on target node and property
-      if (channel.target_node >= 0 && channel.target_node < render_scene_.nodes.size()) {
+      if (channel.target_node >= 0 && channel.target_node < static_cast<int32_t>(render_scene_.nodes.size())) {
         const auto &node = render_scene_.nodes[channel.target_node];
         std::string trackName = node.abs_path.empty() ? node.prim_name : node.abs_path;
 
@@ -4315,7 +5051,7 @@ class TinyUSDZLoaderNative {
       return animations;
     }
 
-    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
       animations.call<void>("push", getAnimation(i));
     }
 
@@ -4326,7 +5062,7 @@ class TinyUSDZLoaderNative {
   emscripten::val getAnimationInfo(int anim_id) const {
     emscripten::val info = emscripten::val::object();
 
-    if (!loaded_ || anim_id >= render_scene_.animations.size()) {
+    if (!loaded_ || anim_id >= static_cast<int>(render_scene_.animations.size())) {
       return info;
     }
 
@@ -4383,7 +5119,7 @@ class TinyUSDZLoaderNative {
       return infos;
     }
 
-    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
       infos.call<void>("push", getAnimationInfo(i));
     }
 
@@ -4673,6 +5409,19 @@ class TinyUSDZLoaderNative {
     return combineUDIMTiles_;
   }
 
+  // Allow parent-directory ('..') segments in composition asset paths
+  // (references/payloads/sublayers). Resolution of the surviving '..' is
+  // delegated to the (sandboxed) EM asset resolver, so this is safe in the
+  // browser, where USD's legitimate `../foo.usd` references must work. Default
+  // on for the WASM build (FILESYSTEM=0 — there is no real filesystem to escape).
+  void setAllowParentRelativeAssetPaths(bool enabled) {
+    allow_parent_relative_asset_paths_ = enabled;
+  }
+
+  bool getAllowParentRelativeAssetPaths() const {
+    return allow_parent_relative_asset_paths_;
+  }
+
   // MMap zero-copy configuration
   void setMMapZeroCopy(bool enabled) {
     mmap_zero_copy_ = enabled;
@@ -4748,8 +5497,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractSublayerAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractSublayerAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractSublayerAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -4760,8 +5509,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractReferencesAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractReferencesAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractReferencesAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -4772,8 +5521,8 @@ class TinyUSDZLoaderNative {
   emscripten::val extractPayloadAssetPaths() {
     emscripten::val arr = emscripten::val::array();
 
-    
-    std::vector<std::string> paths = tinyusdz::ExtractPayloadAssetPaths(layer_);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<std::string> paths = tinyusdz::ExtractPayloadAssetPaths(curr);
     for (size_t i = 0; i < paths.size(); i++) {
      arr.call<void>("push", paths[i]);
     }
@@ -4802,7 +5551,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::SublayersCompositionOptions sublayer_options;
+    sublayer_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_, sublayer_options)) {
       std::cerr << "Failed to composite subLayers: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -4837,7 +5588,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::ReferencesCompositionOptions references_options;
+    references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_, references_options)) {
       std::cerr << "Failed to composite references: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -4853,7 +5606,7 @@ class TinyUSDZLoaderNative {
   }
 
   bool hasPayload() {
-    return tinyusdz::HasPayload(layer_, /* force_check */true);
+    return tinyusdz::HasPayload(composited_ ? composed_layer_ : layer_, /* force_check */true);
   }
 
   bool composePayload() {
@@ -4871,7 +5624,9 @@ class TinyUSDZLoaderNative {
       layer_ = std::move(composed_layer_);
     }
 
-    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+    tinyusdz::PayloadCompositionOptions payload_options;
+    payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
+    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_, payload_options)) {
       std::cerr << "Failed to composite payload: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -4974,6 +5729,59 @@ class TinyUSDZLoaderNative {
     return tinyusdz::to_string(curr);
   }
 
+  std::string validateLoadedLayer(const std::string &options_json) const {
+    nlohmann::json result;
+    if (!loaded_ || !loaded_as_layer_) {
+      result["parse_ok"] = false;
+      result["ok"] = false;
+      result["error"] = "No Layer is loaded. Use loadAsLayerFromBinary first.";
+      return result.dump();
+    }
+
+    const tinyusdz::ValidationOptions options =
+        ParseValidationOptionsJSONForWeb(options_json);
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    result = ValidationResultToJSON(
+        tinyusdz::ValidateLayerAgainstAOUSDCore(curr, options));
+    if (!warn_.empty()) {
+      result["warn"] = warn_;
+    }
+    return result.dump();
+  }
+
+  std::string validateFromBinary(const std::string &binary,
+                                 const std::string &filename,
+                                 const std::string &options_json) {
+    warn_.clear();
+    error_.clear();
+
+    tinyusdz::USDLoadOptions load_options;
+    load_options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    nlohmann::json result;
+    const tinyusdz::ValidationOptions options =
+        ParseValidationOptionsJSONForWeb(options_json);
+    tinyusdz::USDValidationResult validation;
+    const bool loaded = tinyusdz::ValidateUSDFromMemoryAgainstAOUSDCore(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, options, load_options, &validation, &warn_, &error_);
+    if (!loaded) {
+      result["parse_ok"] = false;
+      result["ok"] = false;
+      result["error"] = error_;
+      if (!warn_.empty()) {
+        result["warn"] = warn_;
+      }
+      return result.dump();
+    }
+
+    result = ValidationResultToJSON(validation);
+    if (!warn_.empty()) {
+      result["warn"] = warn_;
+    }
+    return result.dump();
+  }
+
   void clearAssets() {
     em_resolver_.clear();
   }
@@ -5014,7 +5822,8 @@ class TinyUSDZLoaderNative {
     // Clear export state
     export_stage_ = tinyusdz::Stage();
     has_stage_ = false;
-    usdc_export_buf_.clear();
+    // (USDC export no longer retains a wasm-side buffer; it copies straight to a
+    // JS-owned Uint8Array — see toOwnedUint8Array().)
     usdz_export_buf_.clear();
     image_export_buf_.clear();
   }
@@ -5082,8 +5891,9 @@ class TinyUSDZLoaderNative {
 
   /// Allocate a zero-copy buffer for streaming transfer from JS
   /// Returns object with {success, uuid, bufferPtr, totalSize} or {success: false, error}
-  emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size) {
-    return em_resolver_.allocateZeroCopyBuffer(name, size);
+  emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size,
+                                         size_t max_bytes) {
+    return em_resolver_.allocateZeroCopyBuffer(name, size, max_bytes);
   }
 
   /// Get the buffer pointer for direct memory writes
@@ -5145,7 +5955,7 @@ class TinyUSDZLoaderNative {
       const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
       emscripten::val u8 =
-          emscripten::val::global("Uint8Array").new_(entry.binary.size());
+          emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
       u8.call<void>("set",
                     emscripten::val(emscripten::typed_memory_view(
                         entry.binary.size(),
@@ -5188,7 +5998,7 @@ class TinyUSDZLoaderNative {
 
     val.set("name", name);
     emscripten::val u8 =
-        emscripten::val::global("Uint8Array").new_(entry.binary.size());
+        emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
     u8.call<void>("set",
                   emscripten::val(emscripten::typed_memory_view(
                       entry.binary.size(),
@@ -5256,12 +6066,11 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val extractUnresolvedTexturePaths() const {
-    emscripten::val val;
+    // Must be an Array: a default-constructed val is `undefined`, on which
+    // `.push()` throws. Call this AFTER layerToRenderScene()/loadFromBinary().
+    emscripten::val val = emscripten::val::array();
 
-    // Assume USD is converted to RenderScene before calling this function.
-    
     for (const tinyusdz::tydra::TextureImage &texImg : render_scene_.images) {
-      // 
       if (texImg.buffer_id == -1) {
         std::string path = texImg.asset_identifier;
         val.call<void>("push", path);
@@ -5488,6 +6297,147 @@ class TinyUSDZLoaderNative {
   // USD Export Methods
   // =========================================================================
 
+  /// Helper: return a detach-safe, JS-owned Uint8Array COPY of `bytes`.
+  ///
+  /// A bare `typed_memory_view` aliases the WASM heap's ArrayBuffer; if the
+  /// caller holds it across any later embind call that grows the heap (e.g.
+  /// `delete()` then `new TinyUSDZLoaderNative()`), the view's ArrayBuffer is
+  /// detached and reads return garbage. Buffer exporters whose result a caller
+  /// may retain must therefore hand back an independent JS-owned copy. Same
+  /// idiom as getAsset()/getAssetByUUID().
+  static emscripten::val toOwnedUint8Array(const std::vector<uint8_t> &bytes) {
+    // Pass the length as a double (JS Number), not size_t: under wasm64
+    // (MEMORY64) size_t marshals to a BigInt and `new Uint8Array(bigint)`
+    // throws "Cannot convert a BigInt value to a number". double is exact for
+    // these sizes and works on both wasm32 and wasm64.
+    emscripten::val u8 = emscripten::val::global("Uint8Array").new_(
+        static_cast<double>(bytes.size()));
+    if (!bytes.empty()) {
+      u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
+                               bytes.size(), bytes.data())));
+    }
+    return u8;
+  }
+
+  // ============================================================
+  // next: low-memory lazy-ValueRep flatten pipeline
+  // ============================================================
+
+  /// Flatten a USDC buffer via the next lazy pipeline: numeric arrays are kept
+  /// as lazy references into a single moved-in source buffer, composed
+  /// structurally (no array copy), and written back by copying unchanged
+  /// compressed blocks verbatim. This avoids the eager path's 5-10x heap
+  /// blow-up. Returns {success, data?:Uint8Array, error?, inputBytes,
+  /// outputBytes, primCount, arraysPassedThrough, arraysReencoded}.
+  // Shared: flatten an owned USDC buffer and build the JS result object.
+  emscripten::val nextFlattenOwned(std::string &&input, bool lazyArrays) {
+    emscripten::val result = emscripten::val::object();
+    std::vector<uint8_t> out;
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
+        std::move(input), out, opts, &stats, &err);
+
+    result.set("success", ok);
+    if (!ok) {
+      result.set("error", err);
+      return result;
+    }
+    result.set("data", toOwnedUint8Array(out));
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    return result;
+  }
+
+  emscripten::val nextFlattenUSDC(emscripten::val data, bool lazyArrays) {
+    // One JS->WASM copy into an owned std::string; the pipeline then MOVES it
+    // into the retained crate buffer (the single in-heap copy of the input).
+    size_t size = data["byteLength"].as<size_t>();
+    std::string input;
+    input.resize(size);
+    if (size > 0) {
+      // Pass length as a JS Number (double): under wasm64 size_t marshals to a
+      // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
+      emscripten::val view = emscripten::val::global("Uint8Array").new_(
+          data["buffer"], data["byteOffset"],
+          emscripten::val(static_cast<double>(size)));
+      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
+          size, reinterpret_cast<uint8_t *>(&input[0])));
+      heapView.call<void>("set", view);
+    }
+    return nextFlattenOwned(std::move(input), lazyArrays);
+  }
+
+  /// Streaming-input flatten: the caller first allocates a buffer via
+  /// allocateZeroCopyBuffer(name, size), fills it directly through module.HEAPU8
+  /// (in chunks, re-grabbing HEAPU8 after the alloc), then calls this. The
+  /// buffer's bytes are MOVED straight into the retained crate buffer — no
+  /// embind marshalling and no second copy. The buffer is consumed (erased).
+  emscripten::val nextFlattenBuffer(const std::string &uuid, bool lazyArrays) {
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    return nextFlattenOwned(std::move(input), lazyArrays);
+  }
+
+  /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
+  /// emitted to `chunkCb(view)` in file order, so the full output crate is never
+  /// materialized in the wasm heap (peak stays ~= retained input + small
+  /// structural sections). `chunkCb` receives a Uint8Array VIEW into the wasm
+  /// heap valid ONLY for the duration of the call — JS must copy it out
+  /// synchronously and must not retain it (a later wasm growth can detach it).
+  /// chunkCb may return false to abort. Returns stats only (no `data`).
+  emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
+                                          emscripten::val chunkCb) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazyArrays;
+    opts.write.streaming = true;
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool aborted = false;
+    tinyusdz::next::CrateWriteSink sink =
+        [&](const uint8_t *data, size_t size) -> bool {
+      emscripten::val view(emscripten::typed_memory_view(size, data));
+      emscripten::val r = chunkCb(view);
+      if (r.isFalse()) {  // strictly false aborts; undefined/anything else continues
+        aborted = true;
+        return false;
+      }
+      return true;
+    };
+    bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
+        std::move(input), sink, opts, &stats, &err);
+    result.set("success", ok);
+    if (!ok) {
+      result.set("error", aborted ? "aborted by sink" : err);
+      return result;
+    }
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    return result;
+  }
+
   /// Helper: convert current loaded layer to a Stage
   bool getStageFromLayer(tinyusdz::Stage &stage) {
     if (!loaded_) {
@@ -5565,6 +6515,14 @@ class TinyUSDZLoaderNative {
         memory_mb > 0 ? static_cast<int64_t>(memory_mb) * 1024 * 1024 : 0;
   }
 
+  emscripten::val debugLogMemory(const std::string &label) {
+    ReportTinyUSDZDebugEvent("manual", label);
+    emscripten::val result = emscripten::val::object();
+    result.set("label", label);
+    result.set("heapBytes", GetWasmHeapByteLengthForDebug());
+    return result;
+  }
+
   emscripten::val exportAsUSDC() {
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
@@ -5583,14 +6541,306 @@ class TinyUSDZLoaderNative {
 
     warn_ = warn;
 
-    // Copy to JS Uint8Array
-    usdc_export_buf_ = std::move(output);
-    return emscripten::val(emscripten::typed_memory_view(
-        usdc_export_buf_.size(), usdc_export_buf_.data()));
+    // Return a JS-owned COPY, not a heap view: callers commonly hold the result
+    // across delete()/new-loader calls that grow the WASM heap and would detach
+    // a typed_memory_view (yielding a garbage buffer). Copy straight from the
+    // local `output` so the USDC bytes are freed wasm-side on return rather than
+    // retained in a member. See toOwnedUint8Array().
+    return toOwnedUint8Array(output);
+  }
+
+  /// Export the current layer as USDC (binary Crate) - returns Uint8Array.
+  /// This avoids Stage reconstruction and USDZ packaging, and is used by the
+  /// JS low-heap USDZ repacker to rewrite only the archive root layer.
+  emscripten::val exportLayerAsUSDCWithOptions(emscripten::val options) {
+    (void)options;
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return emscripten::val::null();
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
+      return emscripten::val::null();
+    }
+
+    warn_ = warn;
+    // JS-owned copy (not a heap view) — detach-safe if the caller retains it
+    // across heap-growing WASM calls; copied from the local so nothing is
+    // retained wasm-side after return. See toOwnedUint8Array().
+    return toOwnedUint8Array(output);
+  }
+
+  /// Export the current layer as USDC directly into a JS Uint8Array.
+  /// This avoids retaining the whole written crate in a WASM-side vector.
+  emscripten::val exportLayerAsUSDCToBufferWithOptions(
+      emscripten::val buffer, emscripten::val options) {
+    (void)options;
+    emscripten::val result = emscripten::val::object();
+    result.set("success", false);
+    result.set("size", 0.0);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      result.set("error", error_);
+      return result;
+    }
+    if (buffer.isNull() || buffer.isUndefined()) {
+      error_ = "USDC export output buffer is null.";
+      result.set("error", error_);
+      return result;
+    }
+
+    size_t capacity = 0;
+    try {
+      capacity = buffer["byteLength"].as<size_t>();
+    } catch (...) {
+      error_ = "USDC export output must be a Uint8Array.";
+      result.set("error", error_);
+      return result;
+    }
+    if (capacity == 0) {
+      error_ = "USDC export output buffer is empty.";
+      result.set("error", error_);
+      return result;
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+
+    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
+        new JSUint8ArrayOutputStream(buffer, capacity));
+    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
+    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
+        std::move(js_stream));
+    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
+
+    tinyusdz::experimental::CrateWriter::Options opts;
+    opts.version_major = 0;
+    opts.version_minor = 8;
+    opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_deduplication = true;
+    if (usdc_max_file_size_bytes_ > 0) {
+      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
+    }
+    if (usdc_max_memory_bytes_ > 0) {
+      opts.max_memory_bytes = usdc_max_memory_bytes_;
+    }
+    writer.SetOptions(opts);
+
+    std::string open_err;
+    if (!writer.Open(&open_err)) {
+      error_ = "Failed to open CrateWriter: " + open_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string convert_err;
+    if (!writer.ConvertLayerToSpecs(curr, &convert_err)) {
+      writer.Close();
+      error_ = "Failed to convert Layer to USDC: " + convert_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string finalize_err;
+    if (!writer.Finalize(&finalize_err)) {
+      writer.Close();
+      error_ = "Failed to finalize USDC: " + finalize_err;
+      if (!stream_ptr->error().empty()) {
+        error_ += " " + stream_ptr->error();
+      }
+      result.set("error", error_);
+      return result;
+    }
+
+    writer.Close();
+    warn_.clear();
+    result.set("success", true);
+    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("warn", warn_);
+    return result;
+  }
+
+  /// Export the current layer's COMPOSED STAGE (typed-Prim reconstruction, the
+  /// same path as exportAsUSDC()/exportAsUSDZWithOptions()) as USDC directly
+  /// into a JS Uint8Array. Low-heap counterpart of the in-heap stage export:
+  /// the finalized crate streams into `buffer` instead of a WASM-side vector,
+  /// so large scenes that overflow the 2 GB wasm32 heap when the whole USDZ is
+  /// built in-heap can be repacked from JS (keep textures + JS-side zip).
+  emscripten::val exportStageAsUSDCToBufferWithOptions(
+      emscripten::val buffer, emscripten::val options) {
+    (void)options;
+    emscripten::val result = emscripten::val::object();
+    result.set("success", false);
+    result.set("size", 0.0);
+
+    if (buffer.isNull() || buffer.isUndefined()) {
+      error_ = "USDC export output buffer is null.";
+      result.set("error", error_);
+      return result;
+    }
+    size_t capacity = 0;
+    try {
+      capacity = buffer["byteLength"].as<size_t>();
+    } catch (...) {
+      error_ = "USDC export output must be a Uint8Array.";
+      result.set("error", error_);
+      return result;
+    }
+    if (capacity == 0) {
+      error_ = "USDC export output buffer is empty.";
+      result.set("error", error_);
+      return result;
+    }
+
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      result.set("error", error_);
+      return result;
+    }
+
+    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
+        new JSUint8ArrayOutputStream(buffer, capacity));
+    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
+    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
+        std::move(js_stream));
+    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
+
+    tinyusdz::experimental::CrateWriter::Options opts;
+    opts.version_major = 0;
+    opts.version_minor = 8;
+    opts.version_patch = 0;
+    opts.enable_compression = true;
+    opts.enable_deduplication = true;
+    if (usdc_max_file_size_bytes_ > 0) {
+      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
+    }
+    if (usdc_max_memory_bytes_ > 0) {
+      opts.max_memory_bytes = usdc_max_memory_bytes_;
+    }
+    writer.SetOptions(opts);
+
+    std::string open_err;
+    if (!writer.Open(&open_err)) {
+      error_ = "Failed to open CrateWriter: " + open_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string convert_err;
+    if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
+      writer.Close();
+      error_ = "Failed to convert Stage to USDC: " + convert_err;
+      result.set("error", error_);
+      return result;
+    }
+
+    std::string finalize_err;
+    if (!writer.Finalize(&finalize_err)) {
+      writer.Close();
+      error_ = "Failed to finalize USDC: " + finalize_err;
+      if (!stream_ptr->error().empty()) {
+        error_ += " " + stream_ptr->error();
+      }
+      result.set("error", error_);
+      return result;
+    }
+
+    writer.Close();
+    warn_.clear();
+    result.set("success", true);
+    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("warn", warn_);
+    return result;
+  }
+
+  /// Flatten the loaded layer at the LAYER level: compose
+  /// sublayers/references/payload/inherits/variants into a single Layer and
+  /// store it as composed_layer_ (composited_=true). Non-consuming, so the
+  /// caller writes the result with exportLayerAsUSDCToBufferWithOptions (which
+  /// is retriable for buffer growth). This is the non-Stage flatten entry: it
+  /// avoids the Layer->Stage typed reconstruction AND the layer copy
+  /// getStageFromLayer makes, so it is much lighter on the wasm heap and
+  /// faithful (PrimSpecs written as-authored, no typed-input drop).
+  bool flattenLayer() {
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "No layer loaded";
+      return false;
+    }
+
+    tinyusdz::AssetResolutionResolver resolver;
+    if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+      error_ = "Failed to setup asset resolution for flatten.";
+      return false;
+    }
+    resolver.set_current_working_path("./");
+    resolver.set_search_paths({"./"});
+
+    // Move the current layer out — flatten in place, never duplicating it.
+    tinyusdz::Layer src_layer =
+        composited_ ? std::move(composed_layer_) : std::move(layer_);
+
+    // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
+    // fixed point. Each Composite* moves the prior layer into the next.
+    {
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_)) {
+        error_ = "Failed to composite subLayers: " + error_;
+        return false;
+      }
+      src_layer = std::move(tmp);
+    }
+    constexpr int kMaxFlattenIter = 32;
+    for (int i = 0; i < kMaxFlattenIter; i++) {
+      bool unresolved = false;
+      if (src_layer.check_unresolved_references()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_payload()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_inherits()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeInherits(src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (src_layer.check_unresolved_variant()) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
+        src_layer = std::move(tmp); unresolved = true;
+      }
+      if (!unresolved) break;
+    }
+
+    // Store the flattened layer; exportLayerAsUSDCToBufferWithOptions writes it
+    // (and can be retried with a larger buffer without re-flattening).
+    composed_layer_ = std::move(src_layer);
+    composited_ = true;
+    loaded_as_layer_ = true;
+    return true;
   }
 
   /// Export loaded scene as USDZ (ZIP package with packed assets) — returns Uint8Array
   /// Assets are collected from the em_resolver_ cache.
+  ///
+  /// CONTRACT: the four exportAsUSDZ*/exportLayerAsUSDZ* methods return a
+  /// `typed_memory_view` aliasing the WASM heap (cheap, no copy — these buffers
+  /// can be large). The caller MUST copy the result (e.g. `new Uint8Array(v)`)
+  /// before invoking any other method that can grow the heap, or the view is
+  /// detached and reads garbage. The in-tree callers (usdzconvert.js exportUSDZ)
+  /// copy immediately. If you may retain the result across WASM calls, prefer a
+  /// USDC exporter (those return JS-owned copies via toOwnedUint8Array).
   emscripten::val exportAsUSDZ() {
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
@@ -5602,7 +6852,6 @@ class TinyUSDZLoaderNative {
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
       const std::string &binary = kv.second.binary;
-      // Include dependency layers and payload assets.
       std::string ext;
       {
         auto dot = name.rfind('.');
@@ -5612,17 +6861,25 @@ class TinyUSDZLoaderNative {
           for (auto &c : ext) c = static_cast<char>(std::tolower(c));
         }
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-          ext == ".exr" || ext == ".avif" ||
-          ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+      // The stage is flattened (getStageFromLayer composed all sublayers /
+      // references / payloads in), so .usd/.usda/.usdc dependency layers are
+      // already inlined into the root — packing them would duplicate the
+      // geometry. Pack only the image/audio assets the flattened root still
+      // references.
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
     }
 
+    tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
+
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+                                      &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -5656,7 +6913,9 @@ class TinyUSDZLoaderNative {
     }
     tinyusdz::usdz::RemapTextureAssetPaths(stage, remap_map);
 
-    // Collect dependency layers and payload assets from the resolver cache.
+    // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
+    // inlined into the root; pack only the image/audio assets it references
+    // (packing the inlined layers would duplicate the geometry).
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -5667,16 +6926,20 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
     }
 
+    tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
+
     std::vector<uint8_t> output;
     std::string warn, err;
-    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, &warn, &err)) {
+    if (!tinyusdz::SaveAsUSDZToMemory(stage, assets, &output, write_options,
+                                      &warn, &err)) {
       error_ = "USDZ export failed: " + err;
       warn_ = warn;
       return emscripten::val::null();
@@ -5711,6 +6974,8 @@ class TinyUSDZLoaderNative {
     }
 
     tinyusdz::USDZWriteOptions write_options;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
     bool arkit_compatible = false;
     if (!options.isUndefined() && !options.isNull()) {
       emscripten::val arkit_val = options["arkitCompatible"];
@@ -5731,6 +6996,9 @@ class TinyUSDZLoaderNative {
       write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDC;
     }
 
+    // The stage is flattened, so .usd/.usda/.usdc dependency layers are already
+    // inlined into the root; pack only the image/audio assets it references
+    // (packing the inlined layers would duplicate the geometry).
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -5741,8 +7009,7 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+      if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
@@ -5772,6 +7039,8 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDZWriteOptions write_options;
     write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+    write_options.max_file_size_bytes = usdc_max_file_size_bytes_;
+    write_options.max_memory_bytes = usdc_max_memory_bytes_;
     if (!options.isUndefined() && !options.isNull()) {
       emscripten::val root_format_val = options["rootLayerFormat"];
       if (!root_format_val.isUndefined() && !root_format_val.isNull()) {
@@ -5783,6 +7052,12 @@ class TinyUSDZLoaderNative {
       }
     }
 
+    // When the layer was composed (composited_), `curr` below is the composed
+    // layer with all sublayers/references/payloads resolved in, so the
+    // .usd/.usda/.usdc dependency layers are already inlined and packing them
+    // would duplicate the geometry. When the raw layer is exported (not
+    // composited), composition arcs stay authored in the root, so those
+    // dependency layers are still required.
     std::map<std::string, std::vector<uint8_t>> assets;
     for (const auto &kv : em_resolver_.cache) {
       const std::string &name = kv.first;
@@ -5793,9 +7068,12 @@ class TinyUSDZLoaderNative {
         ext = name.substr(dot);
         for (auto &c : ext) c = static_cast<char>(std::tolower(c));
       }
-      if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
-          ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
-          ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav") {
+      const bool is_usd_layer =
+          (ext == ".usd" || ext == ".usda" || ext == ".usdc");
+      const bool is_media =
+          (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
+           ext == ".avif" || ext == ".m4a" || ext == ".mp3" || ext == ".wav");
+      if (is_media || (is_usd_layer && !composited_)) {
         assets[name] = std::vector<uint8_t>(binary.begin(), binary.end());
       }
     }
@@ -6282,6 +7560,11 @@ class TinyUSDZLoaderNative {
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
 
+  // Allow '..' parent-dir segments in composition asset paths. Default on for
+  // WASM: the EM resolver is a sandboxed cache (FILESYSTEM=0), so there is no
+  // real directory to traverse out of, and USD `../foo.usd` refs are common.
+  bool allow_parent_relative_asset_paths_{true};
+
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
   // tiles into a single atlas texture.
@@ -6339,7 +7622,6 @@ class TinyUSDZLoaderNative {
   // Export state
   tinyusdz::Stage export_stage_;
   bool has_stage_{false};
-  std::vector<uint8_t> usdc_export_buf_;
   std::vector<uint8_t> usdz_export_buf_;
   std::vector<uint8_t> image_export_buf_;
   // Optional USDC writer resource-limit overrides (bytes; 0 = built-in default).
@@ -6357,6 +7639,8 @@ class TinyUSDZLoaderNative {
     std::vector<int16_t> normals_i16;  // SNorm16x3 normals
     std::vector<float> texcoords;
     std::vector<float> tangents;
+    std::vector<int> jointIndices;
+    std::vector<float> jointWeights;
     std::vector<uint32_t> faceVertexIndices;
   };
   mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
@@ -6367,6 +7651,9 @@ class TinyUSDZLoaderNative {
   // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
   mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
+
+  // Deprecated-method names already warned about (warn once per name).
+  mutable std::set<std::string> deprecation_warned_;
 
   // Per-session MCP contexts. key = session_id. Each session gets its own
   // isolated Context so tools cannot read/overwrite another session's state.
@@ -6517,18 +7804,6 @@ inline float float16ToFloat32(uint16_t h) {
   return o.f;
 }
 
-/// Convert int32 to float16 (with normalization)
-inline uint16_t int32ToFloat16(int32_t value, float scale = 1.0f / 2147483647.0f) {
-  float normalized = static_cast<float>(value) * scale;
-  return float32ToFloat16(normalized);
-}
-
-/// Convert uint32 to float16 (with normalization)
-inline uint16_t uint32ToFloat16(uint32_t value, float scale = 1.0f / 4294967295.0f) {
-  float normalized = static_cast<float>(value) * scale;
-  return float32ToFloat16(normalized);
-}
-
 /// Convert float32 array to float16 array
 void convertFloat32ToFloat16(const float* src, uint16_t* dst, size_t count) {
   for (size_t i = 0; i < count; ++i) {
@@ -6546,7 +7821,8 @@ void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer)
   }
   buffer.resize(size);
   emscripten::val view = emscripten::val::global("Uint8Array").new_(
-      data["buffer"], data["byteOffset"], size);
+      data["buffer"], data["byteOffset"],
+      emscripten::val(static_cast<double>(size)));  // double: wasm64 BigInt-safe
   emscripten::val heapView = emscripten::val(
       emscripten::typed_memory_view(size, buffer.data()));
   heapView.call<void>("set", view);
@@ -6601,35 +7877,27 @@ emscripten::val decodeEXR(const emscripten::val& data,
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
 
-  if (IsEXRFromMemory(buffer.data(), buffer.size()) != TINYEXR_SUCCESS) {
+  if (!IsEXRMagic(buffer.data(), buffer.size())) {
     result.set("success", false);
     result.set("error", std::string("Not a valid EXR file"));
     return result;
   }
 
-  float* rgba = nullptr;
-  int width = 0;
-  int height = 0;
-  const char* err = nullptr;
-
-  // LoadEXRFromMemory always returns float32 RGBA
-  int ret = LoadEXRFromMemory(&rgba, &width, &height,
-                               buffer.data(), buffer.size(), &err);
-
-  if (ret != TINYEXR_SUCCESS) {
+  // Decode via the backend-agnostic image loader (EXR -> fp32 RGBA).
+  auto loaded = tinyusdz::image::LoadImageFromMemory(buffer.data(),
+                                                     buffer.size(), "decodeEXR");
+  if (!loaded) {
     result.set("success", false);
-    if (err) {
-      result.set("error", std::string(err));
-      FreeEXRErrorMessage(err);
-    } else {
-      result.set("error", std::string("Failed to decode EXR"));
-    }
+    result.set("error", loaded.error());
     return result;
   }
+  tinyusdz::Image& im = loaded.value().image;
+  const int width = im.width;
+  const int height = im.height;
+  float* rgba = reinterpret_cast<float*>(im.data.data());
 
   size_t pixelCount = 0;
   if (!ComputeImageComponentCount(width, height, 4, &pixelCount)) {
-    free(rgba);
     result.set("success", false);
     result.set("error",
                std::string("EXR image dimensions are invalid or too large."));
@@ -6640,10 +7908,9 @@ emscripten::val decodeEXR(const emscripten::val& data,
     // Convert to float16 and return as Uint16Array
     std::vector<uint16_t> fp16Data(pixelCount);
     convertFloat32ToFloat16(rgba, fp16Data.data(), pixelCount);
-    free(rgba);
 
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, fp16Data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -6654,11 +7921,10 @@ emscripten::val decodeEXR(const emscripten::val& data,
   } else {
     // Return as Float32Array (default)
     emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(pixelCount);
+    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, rgba));
     pixelData.call<void>("set", jsHeap);
-    free(rgba);
 
     result.set("data", pixelData);
     result.set("pixelFormat", std::string("float32"));
@@ -6680,7 +7946,7 @@ bool isEXR(const emscripten::val& data) {
 
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
-  return IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS;
+  return IsEXRMagic(buffer.data(), buffer.size());
 }
 #endif
 
@@ -6733,7 +7999,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
   if (outputFormat == "float32") {
     // Return as Float32Array
     emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(pixelCount);
+    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, floatData));
     pixelData.call<void>("set", jsHeap);
@@ -6747,7 +8013,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
     convertFloat32ToFloat16(floatData, fp16Data.data(), pixelCount);
 
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, fp16Data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -6789,7 +8055,7 @@ emscripten::val decodeImage(const emscripten::val& data,
 
 #if defined(TINYUSDZ_WITH_EXR)
   // Check for EXR first
-  if (IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS) {
+  if (IsEXRMagic(buffer.data(), buffer.size())) {
     std::string exrFormat = (outputFormat == "auto") ? "float32" : outputFormat;
     return decodeEXR(data, exrFormat);
   }
@@ -6846,7 +8112,7 @@ emscripten::val decodeImage(const emscripten::val& data,
       convertFloat32ToFloat16(srcData, fp16Data.data(), pixelCount);
 
       emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-      emscripten::val pixelData = Uint16Array.new_(pixelCount);
+      emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
       emscripten::val jsHeap = emscripten::val(
           emscripten::typed_memory_view(pixelCount, fp16Data.data()));
       pixelData.call<void>("set", jsHeap);
@@ -6857,7 +8123,7 @@ emscripten::val decodeImage(const emscripten::val& data,
     } else {
       // Keep as float32
       emscripten::val Float32Array = emscripten::val::global("Float32Array");
-      emscripten::val pixelData = Float32Array.new_(pixelCount);
+      emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
       emscripten::val jsHeap = emscripten::val(
           emscripten::typed_memory_view(pixelCount, srcData));
       pixelData.call<void>("set", jsHeap);
@@ -6880,7 +8146,7 @@ emscripten::val decodeImage(const emscripten::val& data,
 
     // Return as Uint16Array (native format)
     emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(pixelCount, srcData));
     pixelData.call<void>("set", jsHeap);
@@ -6892,7 +8158,7 @@ emscripten::val decodeImage(const emscripten::val& data,
   // Handle 8-bit data
   else {
     emscripten::val Uint8Array = emscripten::val::global("Uint8Array");
-    emscripten::val pixelData = Uint8Array.new_(dataSize);
+    emscripten::val pixelData = Uint8Array.new_(emscripten::val(static_cast<double>(dataSize)));
     emscripten::val jsHeap = emscripten::val(
         emscripten::typed_memory_view(dataSize, img.data.data()));
     pixelData.call<void>("set", jsHeap);
@@ -6929,7 +8195,7 @@ emscripten::val convertFloat32ToFloat16Array(const emscripten::val& float32Data)
 
   // Return as Uint16Array
   emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-  emscripten::val result = Uint16Array.new_(count);
+  emscripten::val result = Uint16Array.new_(emscripten::val(static_cast<double>(count)));
   emscripten::val jsHeap = emscripten::val(
       emscripten::typed_memory_view(count, fp16Data.data()));
   result.call<void>("set", jsHeap);
@@ -6958,12 +8224,440 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 
   // Return as Float32Array
   emscripten::val Float32Array = emscripten::val::global("Float32Array");
-  emscripten::val result = Float32Array.new_(count);
+  emscripten::val result = Float32Array.new_(emscripten::val(static_cast<double>(count)));
   emscripten::val jsHeap = emscripten::val(
       emscripten::typed_memory_view(count, fp32Data.data()));
   result.call<void>("set", jsHeap);
 
   return result;
+}
+
+// ============================================================================
+// RenderStream — incremental, low-memory render-data extraction.
+//
+// Loads ONLY the root USDC crate (the caller extracts it from the .usdz in JS
+// and keeps the texture entries there, off the WASM heap) into the next pipeline
+// with LAZY arrays, so the crate sits in the heap exactly once (~= input size).
+// getMesh(i) then materializes a SINGLE mesh's geometry on demand into a reused
+// scratch and returns zero-copy descriptors; the next getMesh(i) overwrites the
+// scratch, so at most one mesh's geometry is decoded at a time. Geometry arrays
+// are read through a *copy* of the lazy Value (Value tmp = *v) so the Stage's own
+// property stays lazy and the per-mesh decode never accumulates across meshes.
+//
+// Peak WASM heap = crate + one mesh's largest array (vs. the eager
+// loadFromBinary() path which builds the whole typed Stage + RenderScene at once,
+// peaking at ~5-10x input). Material parameters resolve to UsdPreviewSurface
+// values + texture ASSET PATHS; the JS caller maps a path to its in-archive
+// texture entry (which it already holds) and uploads it to the GPU.
+// ============================================================================
+class RenderStream {
+ public:
+  RenderStream() = default;
+
+  // Adopt the root crate bytes by move and load lazily.
+  emscripten::val beginOwned(std::string &&crate) {
+    emscripten::val r = emscripten::val::object();
+    end();
+    error_.clear();
+    tinyusdz::next::USDCLoadResult res =
+        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate));
+    if (!res.success) {
+      error_ = res.error_summary.empty() ? std::string("USDC load failed")
+                                         : res.error_summary;
+      r.set("success", false);
+      r.set("error", error_);
+      return r;
+    }
+    stage_ = std::move(res.stage);
+    meshes_ = tinyusdz::next::GetAllMeshes(stage_);
+    loaded_ = true;
+    r.set("success", true);
+    r.set("meshCount", static_cast<int>(meshes_.size()));
+    return r;
+  }
+
+  // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
+  emscripten::val begin(emscripten::val bytes) {
+    const size_t size = bytes["byteLength"].as<size_t>();
+    std::string s;
+    s.resize(size);
+    if (size > 0) {
+      emscripten::val view = emscripten::val::global("Uint8Array").new_(
+          bytes["buffer"], bytes["byteOffset"],
+          emscripten::val(static_cast<double>(size)));
+      emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
+          size, reinterpret_cast<uint8_t *>(&s[0])));
+      heapView.call<void>("set", view);
+    }
+    return beginOwned(std::move(s));
+  }
+
+  int meshCount() const { return loaded_ ? static_cast<int>(meshes_.size()) : 0; }
+  std::string error() const { return error_; }
+
+  // Materialize mesh i's geometry into the scratch and return zero-copy
+  // descriptors {points,indices,normals,uv0} + resolved material. Valid until the
+  // next getMesh()/end(); the JS caller must upload before calling getMesh again.
+  emscripten::val getMesh(int i) {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || i < 0 || i >= static_cast<int>(meshes_.size())) {
+      out.set("error", std::string("invalid mesh index"));
+      return out;
+    }
+    const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
+
+    const bool soup = buildRenderMesh_(prim);  // indexed, or non-indexed soup
+
+    out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
+    out.set("primName", prim.GetName());
+    out.set("points", heapF_(s_points_, 3));
+    if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
+    if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
+    if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
+    out.set("material", resolveMaterial_(prim));
+    return out;
+  }
+
+  // Free the stage, mesh list and scratch (returns the heap to the allocator).
+  void end() {
+    loaded_ = false;
+    meshes_.clear();
+    meshes_.shrink_to_fit();
+    stage_ = tinyusdz::next::Stage();
+    freeVec_(s_points_);
+    freeVec_(s_normals_);
+    freeVec_(s_uv_);
+    freeVec_(s_indices_);
+  }
+
+ private:
+  template <typename T>
+  static void freeVec_(std::vector<T> &v) { std::vector<T>().swap(v); }
+
+  // Read an array property through a COPY of the lazy Value, so the Stage's own
+  // property stays lazy (per-mesh decode does not accumulate across meshes).
+  std::vector<float> matFloat_(const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<float> *a = tmp.as_float_array();
+    return a ? *a : std::vector<float>{};
+  }
+  std::vector<int32_t> matInt_(const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? *a : std::vector<int32_t>{};
+  }
+
+  // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
+  // s_uv_/s_indices_). Returns true if the result is a NON-INDEXED triangle soup
+  // (drawn with drawArrays), false if INDEXED.
+  //   - all primvars per-vertex  -> keep the indexed form directly (compact);
+  //   - indexed UVs / per-vertex UV with face-varying normals -> de-index AND
+  //     WELD inline (one vertex per distinct pos/uv/normal tuple), recovering
+  //     vertex sharing while keeping correct attributes at seams;
+  //   - PURE face-varying UVs (no st indices) -> emit the non-indexed soup, the
+  //     minimal form when corners are mostly unique (welding would only add
+  //     index + hash-map overhead).
+  // The full soup is never materialized in the welded path; at most one mesh is
+  // resident at a time either way.
+  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+    std::vector<float> P = matFloat_(prim, "points");
+    std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
+    std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
+    std::vector<float> N = matFloat_(prim, "normals");
+    std::vector<float> UV = matFloat_(prim, "primvars:st");
+    if (UV.empty()) UV = matFloat_(prim, "primvars:st0");
+    if (UV.empty()) UV = matFloat_(prim, "st");
+    std::vector<int32_t> stIdx = matInt_(prim, "primvars:st:indices");
+
+    const size_t vtxCount = P.size() / 3;
+    const size_t faceVtx = fvi.size();
+    const size_t uvCount = UV.size() / 2;
+    const size_t nCount = N.size() / 3;
+
+    const bool uvFaceVarying = !UV.empty() && uvCount != vtxCount &&
+                               (uvCount == faceVtx || !stIdx.empty());
+    const bool nFaceVarying = !N.empty() && nCount != vtxCount && nCount == faceVtx;
+    const bool needExpand = uvFaceVarying || nFaceVarying || !stIdx.empty();
+
+    s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+
+    if (!needExpand) {
+      s_points_ = std::move(P);
+      triangulate_(fvi, fvc, s_indices_);
+      if (nCount == vtxCount) s_normals_ = std::move(N);
+      else computeNormals_(s_points_, s_indices_, s_normals_);
+      if (uvCount == vtxCount) s_uv_ = std::move(UV);
+      return false;
+    }
+
+    const bool haveN = (nCount == vtxCount) || nFaceVarying;
+
+    // Decide weld vs soup by POSITION sharing, not interpolation type: a welded
+    // mesh has at least vtxCount vertices, so it can only beat the (index-free)
+    // soup when positions are heavily shared (vtxCount well below the triangle-
+    // corner count). Face-varying UVs still weld well when positions share — what
+    // matters is the expansion factor. When vtxCount is already close to the
+    // corner count, the soup is minimal, so skip welding and keep it.
+    size_t triCount = 0;
+    for (int32_t nn : fvc) if (nn >= 3) triCount += static_cast<size_t>(nn - 2);
+    const size_t cornerCount = triCount * 3;
+    const bool doWeld = vtxCount > 0 && vtxCount * 3 < cornerCount;
+
+    if (!doWeld) {
+      // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
+      std::vector<uint32_t> slots;
+      size_t b = 0;
+      for (int32_t n : fvc) {
+        if (n >= 3 && b + static_cast<size_t>(n) <= faceVtx) {
+          for (int32_t k = 2; k < n; ++k) {
+            slots.push_back(static_cast<uint32_t>(b));
+            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k) - 1));
+            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k)));
+          }
+        }
+        b += static_cast<size_t>(n < 0 ? 0 : n);
+      }
+      const size_t corners = slots.size();
+      s_points_.resize(corners * 3);
+      if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
+      if (haveN) s_normals_.resize(corners * 3);
+      for (size_t c = 0; c < corners; ++c) {
+        const uint32_t slot = slots[c];
+        const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+        if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
+          s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+        }
+        if (!UV.empty()) {
+          const uint32_t ui = uvFaceVarying ? slot : vi;  // st:indices is empty here
+          if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+        }
+        if (haveN) {
+          const uint32_t ni = nFaceVarying ? slot : vi;
+          if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
+            s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+          }
+        }
+      }
+      if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // empty idx -> flat per-tri
+      return true;  // non-indexed soup
+    }
+
+    // De-index + weld: emit one welded vertex per unique (pos[,uv][,normal])
+    // corner, producing an INDEXED mesh. Built inline as faces are walked, so the
+    // full per-corner soup never exists — peak ~= welded verts + index buffer.
+    struct WeldKey {
+      uint32_t b[8];
+      bool operator==(const WeldKey &o) const { return std::memcmp(b, o.b, sizeof(b)) == 0; }
+    };
+    struct WeldHash {
+      size_t operator()(const WeldKey &k) const {
+        uint64_t h = 1469598103934665603ull;  // FNV-1a (folded to size_t for wasm32)
+        for (uint32_t w : k.b) { h ^= w; h *= 1099511628211ull; }
+        return static_cast<size_t>(h ^ (h >> 32));
+      }
+    };
+    std::unordered_map<WeldKey, uint32_t, WeldHash> weld;
+    // Welded vertices are bounded below by the point count; reserve to cut
+    // rehash spikes (which transiently inflate the peak).
+    weld.reserve(vtxCount ? vtxCount * 2 : 1024);
+
+    auto emit = [&](uint32_t slot) {
+      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+      float px = 0, py = 0, pz = 0, u = 0, v = 0, nx = 0, ny = 0, nz = 0;
+      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) { px = P[vi * 3]; py = P[vi * 3 + 1]; pz = P[vi * 3 + 2]; }
+      if (!UV.empty()) {
+        const uint32_t ui = (!stIdx.empty() && slot < stIdx.size())
+                                ? static_cast<uint32_t>(stIdx[slot])
+                                : (uvFaceVarying ? slot : vi);
+        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { u = UV[ui * 2]; v = UV[ui * 2 + 1]; }
+      }
+      if (haveN) {
+        const uint32_t ni = nFaceVarying ? slot : vi;
+        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) { nx = N[ni * 3]; ny = N[ni * 3 + 1]; nz = N[ni * 3 + 2]; }
+      }
+      WeldKey key;
+      std::memcpy(&key.b[0], &px, 4); std::memcpy(&key.b[1], &py, 4); std::memcpy(&key.b[2], &pz, 4);
+      std::memcpy(&key.b[3], &u, 4); std::memcpy(&key.b[4], &v, 4);
+      std::memcpy(&key.b[5], &nx, 4); std::memcpy(&key.b[6], &ny, 4); std::memcpy(&key.b[7], &nz, 4);
+      auto it = weld.find(key);
+      if (it != weld.end()) { s_indices_.push_back(it->second); return; }
+      const uint32_t idx = static_cast<uint32_t>(s_points_.size() / 3);
+      s_points_.push_back(px); s_points_.push_back(py); s_points_.push_back(pz);
+      if (!UV.empty()) { s_uv_.push_back(u); s_uv_.push_back(v); }
+      if (haveN) { s_normals_.push_back(nx); s_normals_.push_back(ny); s_normals_.push_back(nz); }
+      weld.emplace(key, idx);
+      s_indices_.push_back(idx);
+    };
+
+    size_t base = 0;
+    for (int32_t n : fvc) {
+      if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
+        for (int32_t k = 2; k < n; ++k) {
+          emit(static_cast<uint32_t>(base));
+          emit(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
+          emit(static_cast<uint32_t>(base + static_cast<size_t>(k)));
+        }
+      }
+      base += static_cast<size_t>(n < 0 ? 0 : n);
+    }
+    // Normals not authored -> smooth normals on the welded indexed mesh.
+    if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
+    return false;  // welded result is INDEXED
+  }
+
+  // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
+  // inputs:file asset path, which the JS caller maps to an archive texture entry.
+  std::string texFile_(const std::string &connPath) {
+    if (connPath.empty()) return "";
+    const size_t slash = connPath.rfind('/');
+    const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
+    const std::string primPath = (dot == std::string::npos) ? connPath : connPath.substr(0, dot);
+    tinyusdz::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    if (!tex.IsValid()) return "";
+    const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:file");
+    if (!v) return "";
+    if (const std::string *a = v->as_asset_path()) return *a;
+    if (const std::string *s = v->as_string()) return *s;
+    return "";
+  }
+
+  // Fan-triangulate faceVertexIndices grouped by faceVertexCounts.
+  static void triangulate_(const std::vector<int32_t> &fvi,
+                           const std::vector<int32_t> &fvc,
+                           std::vector<uint32_t> &out) {
+    out.clear();
+    if (fvi.empty()) return;
+    if (fvc.empty()) {  // assume an already-triangulated index list
+      out.reserve(fvi.size());
+      for (int32_t v : fvi) out.push_back(static_cast<uint32_t>(v));
+      return;
+    }
+    size_t base = 0;
+    for (int32_t n : fvc) {
+      if (n < 3 || base + static_cast<size_t>(n) > fvi.size()) { base += static_cast<size_t>(n < 0 ? 0 : n); continue; }
+      for (int32_t k = 2; k < n; ++k) {
+        out.push_back(static_cast<uint32_t>(fvi[base]));
+        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k) - 1]));
+        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k)]));
+      }
+      base += static_cast<size_t>(n);
+    }
+  }
+
+  // Area-weighted vertex normals from the triangulated indices.
+  static void computeNormals_(const std::vector<float> &pos,
+                              const std::vector<uint32_t> &idx,
+                              std::vector<float> &out) {
+    out.assign(pos.size(), 0.0f);
+    const size_t nv = pos.size() / 3;
+    auto addTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+      if (a >= nv || b >= nv || c >= nv) return;
+      const float ex1 = pos[b * 3] - pos[a * 3], ey1 = pos[b * 3 + 1] - pos[a * 3 + 1], ez1 = pos[b * 3 + 2] - pos[a * 3 + 2];
+      const float ex2 = pos[c * 3] - pos[a * 3], ey2 = pos[c * 3 + 1] - pos[a * 3 + 1], ez2 = pos[c * 3 + 2] - pos[a * 3 + 2];
+      const float nx = ey1 * ez2 - ez1 * ey2, ny = ez1 * ex2 - ex1 * ez2, nz = ex1 * ey2 - ey1 * ex2;
+      for (uint32_t vi : {a, b, c}) { out[vi * 3] += nx; out[vi * 3 + 1] += ny; out[vi * 3 + 2] += nz; }
+    };
+    if (!idx.empty()) {
+      for (size_t t = 0; t + 2 < idx.size(); t += 3) addTri(idx[t], idx[t + 1], idx[t + 2]);
+    } else {
+      for (uint32_t v = 0; v + 2 < nv; v += 3) addTri(v, v + 1, v + 2);
+    }
+    for (size_t i = 0; i < nv; ++i) {
+      float x = out[i * 3], y = out[i * 3 + 1], z = out[i * 3 + 2];
+      float l = std::sqrt(x * x + y * y + z * z);
+      if (l > 0) { out[i * 3] = x / l; out[i * 3 + 1] = y / l; out[i * 3 + 2] = z / l; }
+      else { out[i * 3 + 2] = 1.0f; }
+    }
+  }
+
+  emscripten::val heapF_(const std::vector<float> &v, int comps) const {
+    emscripten::val d = emscripten::val::object();
+    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
+    d.set("length", static_cast<double>(v.size()));
+    d.set("comps", comps);
+    d.set("dtype", std::string("f32"));
+    d.set("byteLength", static_cast<double>(v.size() * sizeof(float)));
+    return d;
+  }
+  emscripten::val heapU32_(const std::vector<uint32_t> &v) const {
+    emscripten::val d = emscripten::val::object();
+    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
+    d.set("length", static_cast<double>(v.size()));
+    d.set("comps", 1);
+    d.set("dtype", std::string("u32"));
+    d.set("byteLength", static_cast<double>(v.size() * sizeof(uint32_t)));
+    return d;
+  }
+  static emscripten::val arr3_(const float *c) {
+    emscripten::val a = emscripten::val::array();
+    a.call<void>("push", c[0]);
+    a.call<void>("push", c[1]);
+    a.call<void>("push", c[2]);
+    return a;
+  }
+
+  // Resolve the mesh's bound material to UsdPreviewSurface values + texture
+  // asset paths (resolved to GPU textures by the JS caller from the archive).
+  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+    emscripten::val m = emscripten::val::object();
+    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+    if (!mat.IsValid()) return m;
+    // Resolve the surface shader: prefer the material's outputs:surface (a
+    // connection), but fall back to the first UsdPreviewSurface child shader —
+    // the common case and robust when the output connection is not resolved.
+    tinyusdz::next::UsdPrim shader;
+    const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
+    if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
+    if (!shader.IsValid()) {
+      for (const auto &ch : mat.GetChildren()) {
+        if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
+      }
+    }
+    if (!shader.IsValid()) return m;
+    tinyusdz::next::PreviewSurfaceData ps;
+    if (!tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
+    m.set("baseColor", arr3_(ps.diffuse_color));
+    m.set("metallic", ps.metallic);
+    m.set("roughness", ps.roughness);
+    m.set("opacity", ps.opacity);
+    m.set("occlusion", ps.occlusion);
+    m.set("emissive", arr3_(ps.emissive_color));
+    if (ps.opacity_threshold > 0.0f) m.set("opacityThreshold", ps.opacity_threshold);
+    // PreviewSurfaceData texture fields are connection paths to the UsdUVTexture
+    // shader; resolve each to its inputs:file asset path for the JS caller.
+    auto setTex = [&](const char *key, const std::string &connPath) {
+      const std::string file = texFile_(connPath);
+      if (!file.empty()) m.set(key, file);
+    };
+    setTex("baseColorTexture", ps.diffuse_texture);
+    setTex("normalTexture", ps.normal_texture);
+    setTex("roughnessTexture", ps.roughness_texture);
+    setTex("metallicTexture", ps.metallic_texture);
+    setTex("occlusionTexture", ps.occlusion_texture);
+    setTex("emissiveTexture", ps.emissive_texture);
+    return m;
+  }
+
+  tinyusdz::next::Stage stage_;
+  std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
+  bool loaded_ = false;
+  std::string error_;
+  std::vector<float> s_points_, s_normals_, s_uv_;
+  std::vector<uint32_t> s_indices_;
+};
+
+EMSCRIPTEN_BINDINGS(render_stream_module) {
+  emscripten::class_<RenderStream>("RenderStream")
+      .constructor<>()
+      .function("begin", &RenderStream::begin)
+      .function("meshCount", &RenderStream::meshCount)
+      .function("getMesh", &RenderStream::getMesh)
+      .function("error", &RenderStream::error)
+      .function("end", &RenderStream::end);
 }
 
 // Register STL
@@ -7113,6 +8807,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
+      .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
+      .function("nextFlattenBufferToSink",
+                &TinyUSDZLoaderNative::nextFlattenBufferToSink)
 #if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif
@@ -7126,7 +8824,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // For Stage 
       .function("extractUnresolvedTexturePaths", &TinyUSDZLoaderNative::extractUnresolvedTexturePaths)
       .function("getURI", &TinyUSDZLoaderNative::getURI)
-      .function("getMesh", &TinyUSDZLoaderNative::getMesh)
+      .function("getMesh", &TinyUSDZLoaderNative::getMesh)  // deprecated: use getMeshPtr/getMeshCopy
+      .function("getMeshPtr", &TinyUSDZLoaderNative::getMeshPtr)
+      .function("getMeshCopy", &TinyUSDZLoaderNative::getMeshCopy)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
       .function("numInstances", &TinyUSDZLoaderNative::numInstances)
       .function("getInstance", &TinyUSDZLoaderNative::getInstance)
@@ -7143,7 +8843,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numCameras", &TinyUSDZLoaderNative::numCameras)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
-      .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("getImage", &TinyUSDZLoaderNative::getImage)  // deprecated: use getImagePtr/getImageCopy
+      .function("getImagePtr", &TinyUSDZLoaderNative::getImagePtr)
+      .function("getImageCopy", &TinyUSDZLoaderNative::getImageCopy)
       .function("numImages", &TinyUSDZLoaderNative::numImages)
       .function("numUDIMTextures", &TinyUSDZLoaderNative::numUDIMTextures)
       .function("getUDIMTexture", &TinyUSDZLoaderNative::getUDIMTexture)
@@ -7151,6 +8853,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setCombineUDIMTiles)
       .function("getCombineUDIMTiles",
                 &TinyUSDZLoaderNative::getCombineUDIMTiles)
+      .function("setAllowParentRelativeAssetPaths",
+                &TinyUSDZLoaderNative::setAllowParentRelativeAssetPaths)
+      .function("getAllowParentRelativeAssetPaths",
+                &TinyUSDZLoaderNative::getAllowParentRelativeAssetPaths)
       .function("getDefaultRootNodeId",
                 &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
@@ -7356,6 +9062,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
+      .function("validateFromBinary",
+                &TinyUSDZLoaderNative::validateFromBinary)
+      .function("validateLoadedLayer",
+                &TinyUSDZLoaderNative::validateLoadedLayer)
       
       // JSON conversion methods
       .function("layerToJSON",
@@ -7392,7 +9102,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // USD Export
       .function("exportAsUSDA", &TinyUSDZLoaderNative::exportAsUSDA)
       .function("exportAsUSDC", &TinyUSDZLoaderNative::exportAsUSDC)
+      .function("exportLayerAsUSDCWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCWithOptions)
+      .function("exportLayerAsUSDCToBufferWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDCToBufferWithOptions)
+      .function("exportStageAsUSDCToBufferWithOptions", &TinyUSDZLoaderNative::exportStageAsUSDCToBufferWithOptions)
+      .function("flattenLayer", &TinyUSDZLoaderNative::flattenLayer)
       .function("setUSDCExportLimitMB", &TinyUSDZLoaderNative::setUSDCExportLimitMB)
+      .function("debugLogMemory", &TinyUSDZLoaderNative::debugLogMemory)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
@@ -7447,7 +9162,7 @@ static emscripten::val decodeImage_hint(const emscripten::val& data, const std::
 
 // Copy a byte vector into a fresh JS Uint8Array (survives the C++ buffer).
 static emscripten::val bytesToUint8Array(const std::vector<uint8_t>& v) {
-  emscripten::val u8 = emscripten::val::global("Uint8Array").new_(v.size());
+  emscripten::val u8 = emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(v.size())));
   if (!v.empty()) {
     u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
                              v.size(), v.data())));
@@ -7495,8 +9210,142 @@ static tinyusdz::Image dropAlpha(const tinyusdz::Image& img) {
   return out;
 }
 
+// ACES filmic tonemap (Stephen Hill's "ACES Fitted"): scene-linear -> ACEScg,
+// the RRT+ODT fit, then back to sRGB/Rec.709 linear. This compresses HDR
+// highlights the way DCC tools (Blender, Unreal) do by default.
+static inline float acesRrtOdtFit(float v) {
+  const float a = v * (v + 0.0245786f) - 0.000090537f;
+  const float b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
+  return (b != 0.0f) ? (a / b) : 0.0f;
+}
+// In-place ACES tonemap of one linear RGB triple. Output is sRGB/Rec.709 linear
+// (apply the sRGB OETF afterwards before quantizing to 8-bit).
+static inline void acesFittedRGB(float& r, float& g, float& b) {
+  // sRGB/Rec.709 linear -> ACEScg (ACESInputMat).
+  const float ir = 0.59719f * r + 0.35458f * g + 0.04823f * b;
+  const float ig = 0.07600f * r + 0.90834f * g + 0.01566f * b;
+  const float ib = 0.02840f * r + 0.13383f * g + 0.83777f * b;
+  const float fr = acesRrtOdtFit(ir);
+  const float fg = acesRrtOdtFit(ig);
+  const float fb = acesRrtOdtFit(ib);
+  // ACEScg -> sRGB/Rec.709 linear (ACESOutputMat).
+  r =  1.60475f * fr - 0.53108f * fg - 0.07367f * fb;
+  g = -0.10208f * fr + 1.10813f * fg - 0.00605f * fb;
+  b = -0.00327f * fr - 0.07276f * fg + 1.07602f * fb;
+}
+
+// Convert an fp32 (HDR/EXR) image to 8-bit LDR so it can be written as PNG/JPEG.
+// USDZ delivers color textures as sRGB-encoded 8-bit, while EXR data is
+// scene-linear, so we apply a default ACES filmic tonemap to the color channels
+// and then the sRGB OETF; an alpha channel (index 3) is treated as linear data.
+// Returns the input unchanged if it is not fp32 float.
+// TODO: exposure/EV control and per-texture colorspace (data vs color) handling.
+static tinyusdz::Image floatImageTo8bit(const tinyusdz::Image& img) {
+  using PF = tinyusdz::Image::PixelFormat;
+  if (!(img.bpp == 32 && img.format == PF::Float)) return img;
+  if (img.width <= 0 || img.height <= 0 || img.channels < 1 || img.channels > 4) {
+    return img;
+  }
+  const size_t npix = static_cast<size_t>(img.width) *
+                      static_cast<size_t>(img.height);
+  const size_t ch = static_cast<size_t>(img.channels);
+  if (npix > SIZE_MAX / ch) return img;
+  if (img.data.size() < npix * ch * sizeof(float)) return img;
+
+  auto srgb8 = [](float x) -> uint8_t {
+    if (!(x > 0.0f)) x = 0.0f;  // also maps NaN -> 0
+    if (x > 1.0f) x = 1.0f;
+    const float s = (x <= 0.0031308f) ? (12.92f * x)
+                                      : (1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f);
+    int v = static_cast<int>(s * 255.0f + 0.5f);
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+  };
+  auto lin8 = [](float x) -> uint8_t {
+    if (!(x > 0.0f)) x = 0.0f;
+    if (x > 1.0f) x = 1.0f;
+    int v = static_cast<int>(x * 255.0f + 0.5f);
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+  };
+
+  const float* src = reinterpret_cast<const float*>(img.data.data());
+  tinyusdz::Image out;
+  out.width = img.width; out.height = img.height; out.channels = img.channels;
+  out.bpp = 8; out.format = PF::UInt; out.colorspace = img.colorspace;
+  out.data.resize(npix * ch);
+  for (size_t i = 0; i < npix; i++) {
+    const float* p = &src[i * ch];
+    uint8_t* o = &out.data[i * ch];
+    if (ch >= 3) {
+      float r = p[0], g = p[1], b = p[2];
+      acesFittedRGB(r, g, b);     // tonemap color, then sRGB-encode below.
+      o[0] = srgb8(r);
+      o[1] = srgb8(g);
+      o[2] = srgb8(b);
+      if (ch == 4) o[3] = lin8(p[3]);
+    } else if (ch == 2) {
+      o[0] = srgb8(acesRrtOdtFit(p[0]));  // grayscale tonemap (no matrix)
+      o[1] = lin8(p[1]);
+    } else {  // ch == 1
+      o[0] = srgb8(acesRrtOdtFit(p[0]));
+    }
+  }
+  return out;
+}
+
+// Read a scalar token/string attribute from a PrimSpec (default time).
+static std::string psAttrStr(const tinyusdz::PrimSpec& ps, const char* name) {
+  auto it = ps.props().find(name);
+  if (it == ps.props().end() || !it->second.is_attribute()) return "";
+  const auto& a = it->second.get_attribute();
+  if (auto v = a.get_value<tinyusdz::value::token>()) return v.value().str();
+  if (auto v = a.get_value<std::string>()) return v.value();
+  if (auto v = a.get_value<tinyusdz::value::AssetPath>())
+    return v.value().GetAssetPath();
+  return "";
+}
+
+// Walk PrimSpecs collecting {texture-file-basename -> sourceColorSpace} from
+// UsdUVTexture shaders (authored value only; absent => "auto").
+static void collectTexColorspaces(const tinyusdz::PrimSpec& ps,
+                                  emscripten::val& out) {
+  if (ps.typeName() == "Shader" &&
+      psAttrStr(ps, "info:id") == "UsdUVTexture") {
+    std::string file = psAttrStr(ps, "inputs:file");
+    if (!file.empty()) {
+      size_t s = file.find_last_of("/\\");
+      std::string base = (s == std::string::npos) ? file : file.substr(s + 1);
+      if (!base.empty()) {
+        std::string cs = psAttrStr(ps, "inputs:sourceColorSpace");
+        out.set(base, cs.empty() ? std::string("auto") : cs);
+      }
+    }
+  }
+  for (const auto& c : ps.children()) collectTexColorspaces(c, out);
+}
+
+// getTextureColorspaceMap(rootUsdcBytes) -> { "<basename>": "sRGB"|"raw"|"auto" }
+// Loads the root layer and reports each UsdUVTexture's authored sourceColorSpace
+// so the JS pipeline can pick a per-texture resize colorspace (role-aware).
+// Returns an empty object on load failure (caller falls back to a global default).
+emscripten::val getTextureColorspaceMap(const emscripten::val& data) {
+  emscripten::val result = emscripten::val::object();
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+  tinyusdz::Layer layer;
+  std::string warn, err;
+  if (!tinyusdz::LoadLayerFromMemory(buffer.data(), buffer.size(), "root",
+                                     &layer, &warn, &err)) {
+    return result;
+  }
+  for (const auto& kv : layer.primspecs()) collectTexColorspaces(kv.second, result);
+  return result;
+}
+
 // convertImage(data, opts) -> { success, data?:Uint8Array, width, height, resized, error? }
 // opts: { maxSize?, width?, height?, format?:"png"|"jpeg", pngEncoder?, jpegQuality? }
+// The streaming PNG->PNG transcoder now lives in src/imageio/png-stream.cc
+// (tinyusdz::imageio::TranscodePNG); convertImage() calls it for the PNG
+// no-resize fast path below.
 emscripten::val convertImage(const emscripten::val& data,
                              const emscripten::val& opts) {
   using namespace tinyusdz;
@@ -7505,13 +9354,120 @@ emscripten::val convertImage(const emscripten::val& data,
   std::vector<uint8_t> buffer;
   copyFromJSBuffer(data, buffer);
 
-  auto loaded = image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
-  if (!loaded) {
-    result.set("success", false);
-    result.set("error", loaded.error());
-    return result;
+  // Fast path: PNG -> PNG, scanline-streamed (peak ~a few scanlines + the
+  // compressed output) instead of decoding the whole image to RGBA + a
+  // full-image resize/encode buffer (~hundreds of MB for large textures).
+  //   - no resize        -> TranscodePNG (filter-optimize + recompress)
+  //   - resize requested -> ResizePNG (stbir scanline callbacks)
+  // Falls through to the whole-image path on any unsupported case.
+  {
+    static const uint8_t PNGSIG[8] = {0x89, 'P', 'N', 'G', 0x0D,
+                                      0x0A, 0x1A, 0x0A};
+    const std::string fmt0 = optStr(opts, "format", "png");
+    const bool is_png = buffer.size() > 24 &&
+                        std::memcmp(buffer.data(), PNGSIG, 8) == 0;
+    auto rd32 = [](const uint8_t* p) {
+      return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+                   (uint32_t(p[2]) << 8) | uint32_t(p[3]));
+    };
+    if (fmt0 == "png" && is_png) {
+      const int W = rd32(buffer.data() + 16);  // IHDR width
+      const int H = rd32(buffer.data() + 20);  // IHDR height
+      const int maxSize = optInt(opts, "maxSize", 0);
+      int tw = optInt(opts, "width", 0);
+      int th = optInt(opts, "height", 0);
+      // Mirror the whole-image path's target-dimension computation exactly.
+      if ((tw <= 0 || th <= 0) && maxSize > 0 && W > 0 && H > 0) {
+        const int longest = (std::max)(W, H);
+        if (longest > maxSize) {
+          const double sc = double(maxSize) / double(longest);
+          tw = (std::max)(1, int(W * sc + 0.5));
+          th = (std::max)(1, int(H * sc + 0.5));
+        }
+      }
+      const bool wantResize = (tw > 0 && th > 0 && (tw != W || th != H));
+      // Resize colorspace: "srgb" resamples sRGB color textures in linear light
+      // (correct downsampling, avoids the gamma-space darkening of mipmaps).
+      // Default keeps gamma-space (linear-filter) resampling, which matches the
+      // legacy path AND is correct for linear DATA maps (normal / ORM / height)
+      // — forcing sRGB on those would corrupt them, so this is opt-in.
+      const std::string rcs = optStr(opts, "resizeColorspace", "");
+      const bool resizeSrgb = (rcs == "srgb");
+      // Optional sRGB<->linear colorspace conversion (no-resize PNG path).
+      const std::string cs = optStr(opts, "colorspace", "");
+      const bool wantCS = (cs == "srgb-to-linear" || cs == "srgbToLinear" ||
+                           cs == "linear-to-srgb" || cs == "linearToSrgb");
+      std::vector<uint8_t> trans;
+      if (!wantResize && wantCS) {
+        auto xf = (cs[0] == 's')
+                      ? tinyusdz::imageio::ColorspaceXform::SrgbToLinear
+                      : tinyusdz::imageio::ColorspaceXform::LinearToSrgb;
+        if (tinyusdz::imageio::ConvertColorspacePNG(buffer.data(),
+                                                    buffer.size(), xf, trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", false);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
+      } else if (!wantResize) {
+        if (tinyusdz::imageio::TranscodePNG(buffer.data(), buffer.size(),
+                                            trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", false);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
+      } else {
+        // srgb=false (linear) matches ResizeImage(Auto) on a colorspace-less PNG;
+        // resizeColorspace:"srgb" opts into linear-light resampling.
+        if (tinyusdz::imageio::ResizePNG(buffer.data(), buffer.size(),
+                                         (uint32_t)tw, (uint32_t)th,
+                                         resizeSrgb, trans)) {
+          result.set("success", true);
+          result.set("width", rd32(trans.data() + 16));
+          result.set("height", rd32(trans.data() + 20));
+          result.set("resized", true);
+          result.set("data", bytesToUint8Array(trans));
+          return result;
+        }
+      }
+    }
   }
-  Image img = std::move(loaded.value().image);
+
+  Image img;
+  {
+    // EXR -> EXR keeps half precision end-to-end: fp16 decode -> fp16 resize ->
+    // fp16 encode, with NO fp32 widening (halves HDR memory). Taken only when
+    // every channel is half (DecodeImageEXRHalf returns false otherwise) and the
+    // output is EXR; everything else uses the fp32 LoadImageFromMemory path.
+    static const uint8_t EXRMAGIC[4] = {0x76, 0x2f, 0x31, 0x01};
+    const bool is_exr = buffer.size() > 4 &&
+                        std::memcmp(buffer.data(), EXRMAGIC, 4) == 0;
+    const bool out_exr = optStr(opts, "format", "png") == "exr";
+    bool got = false;
+    if (is_exr && out_exr) {
+      std::string e;
+      got = tinyusdz::image::DecodeImageEXRHalf(buffer.data(), buffer.size(),
+                                                "mem", &img, &e);
+    }
+    if (!got) {
+      auto loaded =
+          image::LoadImageFromMemory(buffer.data(), buffer.size(), "mem");
+      if (!loaded) {
+        result.set("success", false);
+        result.set("error", loaded.error());
+        return result;
+      }
+      img = std::move(loaded.value().image);
+    }
+  }
+  // The compressed input is no longer needed once decoded; release it so it
+  // does not coexist with the (much larger) decoded RGBA + the encoder output.
+  std::vector<uint8_t>().swap(buffer);
 
   const int maxSize = optInt(opts, "maxSize", 0);
   int tw = optInt(opts, "width", 0);
@@ -7519,9 +9475,14 @@ emscripten::val convertImage(const emscripten::val& data,
   const std::string format = optStr(opts, "format", "png");
   const std::string pngEnc = optStr(opts, "pngEncoder", "auto");
   const int jpegQ = optInt(opts, "jpegQuality", 90);
+  // resizeColorspace:"srgb" resamples in linear light (correct for sRGB color
+  // textures); default keeps gamma-space (Auto -> linear on colorspace-less
+  // images), correct for linear data maps.
+  const bool resizeSrgb = optStr(opts, "resizeColorspace", "") == "srgb";
 
+  // Resize works for both 8-bit (LDR) and fp32 (HDR/EXR) images now.
   bool resized = false;
-  if (img.bpp == 8) {
+  {
     if ((tw <= 0 || th <= 0) && maxSize > 0) {
       const int longest = (std::max)(img.width, img.height);
       if (longest > maxSize) {
@@ -7532,7 +9493,9 @@ emscripten::val convertImage(const emscripten::val& data,
     }
     if (tw > 0 && th > 0 && (tw != img.width || th != img.height)) {
       Image out; std::string rerr;
-      if (tydra::ResizeImage(img, tw, th, &out, tydra::ResizeFilter::Auto, &rerr)) {
+      const tydra::ResizeFilter rfilter =
+          resizeSrgb ? tydra::ResizeFilter::SRGB : tydra::ResizeFilter::Auto;
+      if (tydra::ResizeImage(img, tw, th, &out, rfilter, &rerr)) {
         img = std::move(out);
         resized = true;
       } else {
@@ -7546,11 +9509,17 @@ emscripten::val convertImage(const emscripten::val& data,
   image::WriteOption wopt;
   wopt.png_encoder = parsePngEncoder(pngEnc);
   wopt.jpeg_quality = jpegQ;
-  if (format == "jpeg" || format == "jpg") {
+  if (format == "exr") {
+    // Keep HDR/float data; WriteImageToMemory promotes 8-bit input if needed.
+    // (EXR output is already encoded as fp16 — the compact texture form.)
+    wopt.format = image::WriteImageFormat::EXR;
+  } else if (format == "jpeg" || format == "jpg") {
     wopt.format = image::WriteImageFormat::JPEG;
+    img = floatImageTo8bit(img);  // tone-map fp32 -> 8-bit (no-op if 8-bit)
     img = dropAlpha(img);
   } else {
     wopt.format = image::WriteImageFormat::PNG;
+    img = floatImageTo8bit(img);  // tone-map fp32 -> 8-bit (no-op if 8-bit)
   }
 
   auto enc = image::WriteImageToMemory(img, wopt);
@@ -7576,6 +9545,96 @@ emscripten::val repackChannels(const emscripten::val& opts) {
   emscripten::val result = emscripten::val::object();
 
   const char* slot_names[4] = {"r", "g", "b", "a"};
+
+  // Streaming fast path: all referenced inputs are 8-bit, same-size, non-palette
+  // PNGs, output is PNG, and no resize is requested. Pack per-scanline (peak ~N
+  // input rows + one output row) instead of decoding every input whole plus a
+  // whole-image output buffer. Falls through to the whole-image path otherwise.
+  {
+    const std::string fmt = optStr(opts, "format", "png");
+    if (fmt == "png") {
+      struct SlotS { bool has = false; std::vector<uint8_t> bytes; int channel = 0; uint8_t cst = 0; };
+      SlotS s[4];
+      const int req_w = optInt(opts, "width", 0);
+      const int req_h = optInt(opts, "height", 0);
+      int reqCh = optInt(opts, "channels", 0);
+      int inferred = 0;
+      bool any = false;
+      for (int c = 0; c < 4; c++) {
+        emscripten::val slot = opts[slot_names[c]];
+        if (slot.isUndefined() || slot.isNull()) { s[c].cst = (c == 3) ? 255 : 0; continue; }
+        inferred = (std::max)(inferred, c + 1);
+        emscripten::val sd = slot["data"];
+        if (!sd.isUndefined() && !sd.isNull()) {
+          copyFromJSBuffer(sd, s[c].bytes);
+          s[c].has = true;
+          s[c].channel = optInt(slot, "channel", 0);
+          any = true;
+        } else {
+          s[c].cst = uint8_t(optInt(slot, "const", 0) & 0xff);
+        }
+      }
+      const int out_channels = (reqCh >= 1 && reqCh <= 4) ? reqCh : (inferred > 0 ? inferred : 4);
+      bool ok = any;
+      uint32_t W = 0, H = 0;
+      int in_ch[4] = {0, 0, 0, 0};
+      tinyusdz::imageio::PngScanlineReader rd[4];
+      for (int c = 0; c < 4 && ok; c++) {
+        if (!s[c].has) continue;
+        if (!rd[c].Open(s[c].bytes.data(), s[c].bytes.size())) { ok = false; break; }
+        const auto& info = rd[c].info();
+        if (info.bit_depth != 8 || info.color_type == 3) { ok = false; break; }  // palette/sub-byte -> fallback
+        in_ch[c] = info.channels;
+        if (W == 0) { W = info.width; H = info.height; }
+        else if (info.width != W || info.height != H) { ok = false; break; }
+        if (s[c].channel < 0 || s[c].channel >= in_ch[c]) { ok = false; break; }
+      }
+      if (ok && req_w > 0 && uint32_t(req_w) != W) ok = false;  // resize needed -> fallback
+      if (ok && req_h > 0 && uint32_t(req_h) != H) ok = false;
+      if (ok && W > 0 && H > 0) {
+        const uint8_t out_ct = (out_channels == 1) ? 0 : (out_channels == 2) ? 4 : (out_channels == 3) ? 2 : 6;
+        tinyusdz::imageio::PngScanlineWriter wr;
+        tinyusdz::imageio::PngImageInfo oi;
+        oi.width = W; oi.height = H; oi.bit_depth = 8; oi.color_type = out_ct;
+        if (wr.Begin(oi)) {
+          std::vector<uint8_t> rows[4];
+          for (int c = 0; c < 4; c++) if (s[c].has) rows[c].resize(rd[c].info().row_bytes);
+          std::vector<uint8_t> outrow((size_t)W * out_channels);
+          // Per-output-channel source descriptors (row pointers are stable across
+          // scanlines); the SIMD kernel does the per-row gather/interleave.
+          tinyusdz::imageproc::PackSource srcs[4];
+          for (int oc = 0; oc < out_channels; oc++) {
+            if (s[oc].has) {
+              srcs[oc].in = rows[oc].data();
+              srcs[oc].in_stride = in_ch[oc];
+              srcs[oc].channel = s[oc].channel;
+            } else {
+              srcs[oc].in = nullptr;
+              srcs[oc].constant = s[oc].cst;
+            }
+          }
+          bool good = true;
+          for (uint32_t y = 0; y < H && good; y++) {
+            for (int c = 0; c < 4; c++)
+              if (s[c].has && !rd[c].NextRow(rows[c].data())) { good = false; break; }
+            if (!good) break;
+            tinyusdz::imageproc::PackChannels8(outrow.data(), W, out_channels, srcs);
+            if (!wr.WriteRow(outrow.data())) good = false;
+          }
+          std::vector<uint8_t> outpng;
+          if (good && wr.Finish(outpng)) {
+            result.set("success", true);
+            result.set("data", bytesToUint8Array(outpng));
+            result.set("width", (int)W);
+            result.set("height", (int)H);
+            result.set("channels", out_channels);
+            return result;
+          }
+        }
+      }
+    }
+  }
+
   std::vector<Image> images;
 
   tydra::ChannelPackSpec spec;
@@ -7685,9 +9744,19 @@ emscripten::val fitTextures(const emscripten::val& opts) {
       }
     }
     auto dec = image::LoadImageFromMemory(buf.data(), buf.size(), name);
-    if (dec && dec.value().image.bpp == 8) {
-      fi.image = std::move(dec.value().image);
-      fi.reencodable = true;
+    if (dec) {
+      const Image& dimg = dec.value().image;
+      // 8-bit LDR can be resized/transcoded; fp32 EXR can be resized (kept as
+      // EXR under the size strategy). The fit logic decides per strategy.
+      const bool fittable =
+          (dimg.bpp == 8) ||
+          (dimg.bpp == 32 && dimg.format == Image::PixelFormat::Float);
+      if (fittable) {
+        fi.image = std::move(dec.value().image);
+        fi.reencodable = true;
+      } else {
+        fi.reencodable = false;
+      }
     } else {
       fi.reencodable = false;
     }
@@ -7745,6 +9814,90 @@ emscripten::val fitTextures(const emscripten::val& opts) {
   return result;
 }
 
+// usddiff(opts) -> { success, hasDiffs, text?, json?, error?, warn? }
+// opts: { left:{data:Uint8Array, name?:string}, right:{data:Uint8Array, name?:string},
+//         format?:"text"|"json"|"both" (default "text") }
+//
+// Loads both inputs as Layers (pre-composition, so the full PrimSpec/Attribute
+// tree is preserved) and diffs them with tinyusdz::tydra. Mirrors the native
+// `tusddiff` tool (tools/tusddiff/tusddiff.cc).
+emscripten::val usddiff(const emscripten::val& opts) {
+  using namespace tinyusdz;
+  emscripten::val result = emscripten::val::object();
+
+  if (opts.isUndefined() || opts.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("usddiff: missing options"));
+    return result;
+  }
+
+  emscripten::val left = opts["left"];
+  emscripten::val right = opts["right"];
+  if (left.isUndefined() || left.isNull() || right.isUndefined() ||
+      right.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("usddiff: 'left' and 'right' are required"));
+    return result;
+  }
+
+  std::vector<uint8_t> lhsBuf, rhsBuf;
+  copyFromJSBuffer(left["data"], lhsBuf);
+  copyFromJSBuffer(right["data"], rhsBuf);
+
+  const std::string lhsName = optStr(left, "name", "left");
+  const std::string rhsName = optStr(right, "name", "right");
+  const std::string format = optStr(opts, "format", "text");
+
+  USDLoadOptions loadOpts;
+
+  Layer lhsLayer, rhsLayer;
+  std::string warn, err;
+
+  if (!LoadLayerFromMemory(lhsBuf.data(), lhsBuf.size(), lhsName, &lhsLayer,
+                           &warn, &err, loadOpts)) {
+    result.set("success", false);
+    result.set("error", std::string("Error loading ") + lhsName + ": " + err);
+    return result;
+  }
+  std::string accumWarn = warn;
+
+  warn.clear();
+  err.clear();
+  if (!LoadLayerFromMemory(rhsBuf.data(), rhsBuf.size(), rhsName, &rhsLayer,
+                           &warn, &err, loadOpts)) {
+    result.set("success", false);
+    result.set("error", std::string("Error loading ") + rhsName + ": " + err);
+    return result;
+  }
+  if (!warn.empty()) {
+    if (!accumWarn.empty()) accumWarn += "\n";
+    accumWarn += warn;
+  }
+
+  tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
+  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs);
+
+  const bool hasDiffs = !psDiffs.empty() || !propDiffs.empty();
+
+  result.set("success", true);
+  result.set("hasDiffs", hasDiffs);
+  if (!accumWarn.empty()) result.set("warn", accumWarn);
+
+  if (format == "json" || format == "both") {
+    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName));
+  }
+  if (format == "text" || format == "both") {
+    if (hasDiffs) {
+      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName));
+    } else {
+      result.set("text", std::string("No differences found.\n"));
+    }
+  }
+
+  return result;
+}
+
 EMSCRIPTEN_BINDINGS(image_module) {
 #if defined(TINYUSDZ_WITH_EXR)
   // EXR decoding
@@ -7777,10 +9930,15 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // convertImage(data, {maxSize?, width?, height?, format?, pngEncoder?, jpegQuality?})
   //   -> { success, data:Uint8Array, width, height, resized }
   function("convertImage", &convertImage);
+  function("getTextureColorspaceMap", &getTextureColorspaceMap);
   // repackChannels({channels?, width?, height?, format?, r/g/b/a:{data?,channel?,const?}})
   //   -> { success, data:Uint8Array, width, height, channels }
   function("repackChannels", &repackChannels);
   // fitTextures({images:[{data,name}], targetBytes, strategy:"size"|"quality", ...})
   //   -> { success, results:[{data, ext, width, height, name}], totalBytes }
   function("fitTextures", &fitTextures);
+
+  // usddiff({left:{data,name?}, right:{data,name?}, format?:"text"|"json"|"both"})
+  //   -> { success, hasDiffs, text?, json?, error?, warn? }
+  function("usddiff", &usddiff);
 }

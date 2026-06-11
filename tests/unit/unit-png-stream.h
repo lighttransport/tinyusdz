@@ -1,0 +1,19 @@
+#pragma once
+
+void png_stream_transcode_rgba_test(void);
+void png_stream_transcode_rgb_test(void);
+void png_stream_transcode_gray_test(void);
+void png_stream_reader_writer_roundtrip_test(void);
+void png_stream_reject_nonpng_test(void);
+void png_stream_reject_huge_dims_test(void);
+void png_stream_resize_fp16_test(void);
+void png_stream_exr_fp16_roundtrip_test(void);
+void png_stream_exr_half_float_consistency_test(void);
+void image_get_info_test(void);
+void png_stream_resize_rgb_test(void);
+void png_stream_resize_rgba_test(void);
+void png_stream_resize_srgb_test(void);
+void png_stream_colorspace_test(void);
+void png_stream_colorspace_16bit_test(void);
+void png_stream_transcode_16bit_test(void);
+void png_stream_resize_16bit_test(void);

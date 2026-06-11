@@ -27,8 +27,10 @@
 #include <unordered_set>
 #include <vector>
 
-// DCOUT() and related debug-print macros (used throughout this file).
+// pprint() helpers used by some tools below.
 #include "pprinter.hh"
+// common-macros.inc (below) defines the DCOUT debug-logging macro used here.
+// Without it, DCOUT(...) is undefined and its `<<` args parse as an expression.
 #include "common-macros.inc"
 
 // [ ] Roots(from Protocol revision 2025-06-18)

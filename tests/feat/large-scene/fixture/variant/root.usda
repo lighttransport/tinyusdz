@@ -1,0 +1,7 @@
+#usda 1.0
+( subLayers = [ @content.usda@ ] )
+def "P" (
+    variants = { string vs = "render" }
+)
+{
+}

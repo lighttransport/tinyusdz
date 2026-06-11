@@ -1,0 +1,44 @@
+#usda 1.0
+# EXPECT: geom.skel.skeleton.topology
+# EXPECT: geom.skel.skeleton.transforms
+# EXPECT: geom.skel.animation.transforms
+# EXPECT: geom.skel.animation.blendShapes
+# EXPECT: geom.skel.skinning.interpolation
+# EXPECT: geom.skel.skinning.elementSize
+# EXPECT: geom.skel.skinning.size
+# EXPECT: geom.skel.skinning.index
+
+def SkelRoot "Root"
+{
+    def Skeleton "Skel"
+    {
+        uniform token[] joints = ["Root/Spine", "Root"]
+        uniform matrix4d[] bindTransforms = [
+            ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
+        ]
+    }
+
+    def SkelAnimation "Anim"
+    {
+        uniform token[] joints = ["Root", "Root/Spine"]
+        float3[] translations = [(0, 0, 0)]
+        uniform token[] blendShapes = ["smile", "blink"]
+        float[] blendShapeWeights = [1]
+    }
+
+    def Mesh "Mesh"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0)]
+        int[] faceVertexCounts = [2]
+        int[] faceVertexIndices = [0, 1]
+        rel skel:skeleton = </Root/Skel>
+        int[] primvars:skel:jointIndices = [0, -1, 1] (
+            interpolation = "constant"
+            elementSize = 2
+        )
+        float[] primvars:skel:jointWeights = [1, 0] (
+            interpolation = "vertex"
+            elementSize = 1
+        )
+    }
+}
