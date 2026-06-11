@@ -171,6 +171,11 @@ struct Cache::Impl {
 
   std::unordered_map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
+
+  // Phase 10: lazily-composed per-prim specs + their composed child names,
+  // keyed by prim path. Populated by ComposePrim, dropped by Invalidate.
+  std::unordered_map<std::string, std::unique_ptr<PrimSpec>> composed_cache_;
+  std::unordered_map<std::string, std::vector<std::string>> composed_children_;
   std::unordered_map<Site, std::set<std::string>, SiteHash> site_to_indices;
   std::unordered_map<std::string, std::vector<Site>> index_to_sites;
 
@@ -908,6 +913,31 @@ struct Cache::Impl {
     return child_names;
   }
 
+  // --- lazy per-prim composition (Phase 10) -------------------------------
+
+  // Compose just `prim_path` on first access (cached), reusing the exact
+  // source-resolution + opinion-merge of BuildStageRec's per-prim step, but
+  // without walking/emitting the whole namespace. Returns nullptr if the prim
+  // authors no opinions. Assumes api_mu_ is held.
+  const PrimSpec *ComposePrim_locked(const Path &prim_path, std::string *warn,
+                                     std::string *err) {
+    const std::string key = prim_path.str();
+    auto it = composed_cache_.find(key);
+    if (it != composed_cache_.end()) return it->second.get();
+
+    const std::vector<Src> &srcs = SourcesForPath(prim_path, warn, err);
+    if (!AnyAuthors(srcs)) return nullptr;
+
+    auto spec = std::unique_ptr<PrimSpec>(new PrimSpec(prim_path.name()));
+    spec->set_path(prim_path);
+    std::vector<std::string> children = ComposeInto(srcs, spec.get());
+
+    const PrimSpec *ret = spec.get();
+    composed_cache_.emplace(key, std::move(spec));
+    composed_children_[key] = std::move(children);
+    return ret;
+  }
+
   // --- ComputePrimIndex ---------------------------------------------------
 
   // Public entry: takes the lock once, then runs the lock-free worker.
@@ -1327,6 +1357,15 @@ struct Cache::Impl {
       if (IsAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
       else ++it;
     }
+    // Phase 10: drop lazily-composed specs at/under the path.
+    for (auto it = composed_cache_.begin(); it != composed_cache_.end();) {
+      if (IsAtOrUnder(it->first, base)) it = composed_cache_.erase(it);
+      else ++it;
+    }
+    for (auto it = composed_children_.begin(); it != composed_children_.end();) {
+      if (IsAtOrUnder(it->first, base)) it = composed_children_.erase(it);
+      else ++it;
+    }
   }
 
   void InvalidateLayer(const std::string &layer_id) {
@@ -1342,6 +1381,8 @@ struct Cache::Impl {
     // contents just changed.
     sources_cache.clear();
     spec_cache_.clear();
+    composed_cache_.clear();  // Phase 10: composed specs read from these sources.
+    composed_children_.clear();
     reg_->Drop(layer_id);
   }
 
@@ -1385,6 +1426,8 @@ struct Cache::Impl {
     prototype_by_key.clear();
     prototype_of.clear();
     instances_by_prototype.clear();
+    composed_cache_.clear();  // Phase 10
+    composed_children_.clear();
   }
 };
 
@@ -1435,6 +1478,29 @@ bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn
 bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
   if (!stage) return false;
   return impl_->BuildStage(stage, warn, err);
+}
+
+const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
+                                   std::string *err) {
+#if defined(TINYUSDZ_ENABLE_THREAD) && defined(TINYUSDZ_NEXT_FINE_LOCKS)
+  {
+    NEXT_PCP_READ_LOCK(impl_->api_mu_);
+    auto it = impl_->composed_cache_.find(prim_path.str());
+    if (it != impl_->composed_cache_.end()) return it->second.get();
+  }
+#endif
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  return impl_->ComposePrim_locked(prim_path, warn, err);
+}
+
+std::vector<std::string> Cache::ComposedChildNames(const Path &prim_path,
+                                                   std::string *warn,
+                                                   std::string *err) {
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  impl_->ComposePrim_locked(prim_path, warn, err);  // ensure cached
+  auto it = impl_->composed_children_.find(prim_path.str());
+  return it != impl_->composed_children_.end() ? it->second
+                                               : std::vector<std::string>();
 }
 
 bool Cache::IsInstance(const Path &p) const {
