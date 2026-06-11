@@ -7,7 +7,9 @@
 
 #include "unit-tydra-subdivision.h"
 
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <string>
 
@@ -1032,7 +1034,7 @@ def Xform "Root"
   TEST_CHECK(std::fabs(scene.meshes[0].displayOpacity - 0.5f) < 1e-6f);
 }
 
-void tydra_subdivision_rejects_tangents_test(void) {
+void tydra_subdivision_refines_tangents_test(void) {
   const std::string usda = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
@@ -1066,11 +1068,27 @@ def Xform "Root"
   tinyusdz::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("tangent") != std::string::npos);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+  // A constant unit tangent field refines to itself (affine combination of
+  // identical unit vectors, then renormalized): one (1,0,0) per refined
+  // point.
+  const auto &mesh = scene.meshes[0];
+  TEST_CHECK(mesh.tangents.vertex_count() == mesh.points.size());
+  const float *vals = reinterpret_cast<const float *>(mesh.tangents.buffer());
+  bool all_x = true;
+  for (size_t i = 0; i < mesh.tangents.vertex_count(); i++) {
+    all_x &= std::fabs(vals[3 * i] - 1.0f) < 1e-6f &&
+             std::fabs(vals[3 * i + 1]) < 1e-6f &&
+             std::fabs(vals[3 * i + 2]) < 1e-6f;
+  }
+  TEST_CHECK(all_x);
 }
 
-void tydra_subdivision_rejects_binormals_test(void) {
+void tydra_subdivision_refines_binormals_test(void) {
   const std::string usda = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
@@ -1104,11 +1122,24 @@ def Xform "Root"
   tinyusdz::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("binormal") != std::string::npos);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+  const auto &mesh = scene.meshes[0];
+  TEST_CHECK(mesh.binormals.vertex_count() == mesh.points.size());
+  const float *vals = reinterpret_cast<const float *>(mesh.binormals.buffer());
+  bool all_y = true;
+  for (size_t i = 0; i < mesh.binormals.vertex_count(); i++) {
+    all_y &= std::fabs(vals[3 * i]) < 1e-6f &&
+             std::fabs(vals[3 * i + 1] - 1.0f) < 1e-6f &&
+             std::fabs(vals[3 * i + 2]) < 1e-6f;
+  }
+  TEST_CHECK(all_y);
 }
 
-void tydra_subdivision_rejects_skinning_test(void) {
+void tydra_subdivision_refines_skinning_test(void) {
   const std::string usda = R"usda(#usda 1.0
 (
     defaultPrim = "Root"
@@ -1130,8 +1161,8 @@ def Xform "Root"
 
         int[] primvars:skel:jointIndices = [
             0, 1,
-            0, 1,
-            0, 1,
+            1, 0,
+            1, 0,
             0, 1
         ] (
             interpolation = "vertex"
@@ -1139,10 +1170,10 @@ def Xform "Root"
         )
 
         float[] primvars:skel:jointWeights = [
-            0.75, 0.25,
-            0.75, 0.25,
-            0.75, 0.25,
-            0.75, 0.25
+            1.0, 0.0,
+            1.0, 0.0,
+            1.0, 0.0,
+            1.0, 0.0
         ] (
             interpolation = "vertex"
             elementSize = 2
@@ -1151,9 +1182,140 @@ def Xform "Root"
 }
 )usda";
 
+  // Left vertices (0, 3) bind fully to joint 0, right vertices (1, 2) to
+  // joint 1. Refined weights must keep elementSize entries per refined
+  // point, sum to 1, and blend 50/50 along the vertical center line.
   tinyusdz::tydra::RenderScene scene;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda, 1, &scene, &err);
-  TEST_CHECK(!ret);
-  TEST_CHECK(err.find("skinned meshes") != std::string::npos);
+  TEST_CHECK(ret);
+  if (!ret || scene.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+
+  const auto &mesh = scene.meshes[0];
+  const auto &jw = mesh.joint_and_weights;
+  TEST_CHECK(jw.elementSize == 2);
+  TEST_CHECK(jw.jointIndices.size() == mesh.points.size() * 2);
+  TEST_CHECK(jw.jointWeights.size() == mesh.points.size() * 2);
+
+  bool sums_ok = true;
+  bool found_blend = false;
+  for (size_t v = 0; v < mesh.points.size(); v++) {
+    const float w0 = jw.jointWeights[2 * v];
+    const float w1 = jw.jointWeights[2 * v + 1];
+    sums_ok &= std::fabs(w0 + w1 - 1.0f) < 1e-5f;
+    // The face center sits midway between the joints: expect a 0.5/0.5
+    // blend somewhere.
+    found_blend |= (std::fabs(w0 - 0.5f) < 1e-5f) &&
+                   (std::fabs(w1 - 0.5f) < 1e-5f);
+  }
+  TEST_CHECK(sums_ok);
+  TEST_CHECK(found_blend);
+}
+
+void tydra_subdivision_refines_blendshape_test(void) {
+  // Subdivision is linear in the point data, so subdividing the blended
+  // mesh must equal subdividing the base mesh and applying the refined
+  // blendshape offsets: points(subdiv(base + offsets)) ==
+  // points(subdiv(base)) + refined_offsets.
+  const char *mesh_tmpl = R"usda(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Mesh "Mesh"
+    {
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 4, 3,
+            1, 2, 5, 4
+        ]
+        point3f[] points = [
+            (0, 0, 0),
+            (1, 0, %s),
+            (2, 0, 0),
+            (0, 1, 0),
+            (1, 1, 0),
+            (2, 1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+%s
+    }
+}
+)usda";
+
+  const std::string blendshape_attrs = R"(
+        uniform token[] skel:blendShapes = ["bump"]
+        rel skel:blendShapeTargets = </Root/Mesh/bump>
+
+        def BlendShape "bump"
+        {
+            uniform vector3f[] offsets = [(0, 0, 0.8)]
+            uniform int[] pointIndices = [1]
+        }
+)";
+
+  char usda_a[4096];
+  char usda_b[4096];
+  // Scene A: base mesh + blendshape moving vertex 1 by (0, 0, 0.8).
+  snprintf(usda_a, sizeof(usda_a), mesh_tmpl, "0", blendshape_attrs.c_str());
+  // Scene B: mesh with the blendshape fully applied, no blendshape prim.
+  snprintf(usda_b, sizeof(usda_b), mesh_tmpl, "0.8", "");
+
+  tinyusdz::tydra::RenderScene scene_a;
+  tinyusdz::tydra::RenderScene scene_b;
+  std::string err;
+  bool ret = ConvertSceneWithSubdivision(usda_a, 2, &scene_a, &err);
+  TEST_CHECK(ret);
+  if (!ret || scene_a.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+  ret = ConvertSceneWithSubdivision(usda_b, 2, &scene_b, &err);
+  TEST_CHECK(ret);
+  if (!ret || scene_b.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+
+  const auto &mesh_a = scene_a.meshes[0];
+  const auto &mesh_b = scene_b.meshes[0];
+  TEST_CHECK(mesh_a.points.size() == mesh_b.points.size());
+
+  auto target = mesh_a.targets.find("bump");
+  TEST_CHECK(target != mesh_a.targets.end());
+  if (target == mesh_a.targets.end()) {
+    return;
+  }
+  TEST_CHECK(!target->second.pointIndices.empty());
+  TEST_CHECK(target->second.pointOffsets.size() ==
+             target->second.pointIndices.size());
+
+  // Apply the refined offsets to scene A points; result must match scene B.
+  std::vector<std::array<float, 3>> blended(mesh_a.points.size());
+  for (size_t v = 0; v < mesh_a.points.size(); v++) {
+    blended[v] = {mesh_a.points[v][0], mesh_a.points[v][1],
+                  mesh_a.points[v][2]};
+  }
+  for (size_t i = 0; i < target->second.pointIndices.size(); i++) {
+    const uint32_t v = target->second.pointIndices[i];
+    TEST_CHECK(v < blended.size());
+    if (v >= blended.size()) {
+      return;
+    }
+    blended[v][0] += target->second.pointOffsets[i][0];
+    blended[v][1] += target->second.pointOffsets[i][1];
+    blended[v][2] += target->second.pointOffsets[i][2];
+  }
+  bool match = true;
+  for (size_t v = 0; v < blended.size(); v++) {
+    match &= std::fabs(blended[v][0] - mesh_b.points[v][0]) < 1e-5f &&
+             std::fabs(blended[v][1] - mesh_b.points[v][1]) < 1e-5f &&
+             std::fabs(blended[v][2] - mesh_b.points[v][2]) < 1e-5f;
+  }
+  TEST_CHECK(match);
 }

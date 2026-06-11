@@ -42,7 +42,7 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 | `tsd-fvar.cc` | faceVarying: seam-split smooth + linear paths |
 | `tsd-refine.cc` | per-level driver (`Refine`) |
 | `tsd-limit.cc` | limit positions/normals |
-| `tsd-tinyusdz.{hh,cc}` | `GeomMesh` adapter (the only tinyusdz-typed file); refines UV/primvar channels in lockstep with geometry |
+| `tsd-tinyusdz.{hh,cc}` | `GeomMesh` adapter (the only tinyusdz-typed file); refines UV/display/tangent primvars, skin weights and blendshape offsets in lockstep with geometry |
 
 ## Testing
 
