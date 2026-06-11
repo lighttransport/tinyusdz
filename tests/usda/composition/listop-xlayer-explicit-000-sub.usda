@@ -1,0 +1,8 @@
+#usda 1.0
+# Weak sublayer for listop-xlayer-explicit-000: contributes a reference that the
+# stronger root layer's bare (explicit) list replaces.
+def "Q" (
+    references = </Lib/A>
+)
+{
+}

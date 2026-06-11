@@ -1,0 +1,22 @@
+#usda 1.0
+# Cross-layer list-op DELETE fixture (Phase 7 S5).
+#   Sublayer (weaker): /P references </Lib/A>.
+#   This (stronger) root: deletes </Lib/A> and prepends </Lib/B>.
+# CompositionOptions::apply_list_ops OFF (default): both arcs compose, so /P
+#   carries fromA (weak) and fromB (strong).
+# apply_list_ops ON (AOUSD): the stronger `delete` removes </Lib/A> across the
+#   layer stack, so /P carries only fromB.
+(
+    subLayers = [@listop-xlayer-delete-000-sub.usda@]
+)
+def "P" (
+    delete references = </Lib/A>
+    prepend references = </Lib/B>
+)
+{
+}
+def Scope "Lib"
+{
+    def Mesh "A" { custom int fromA = 1 }
+    def Sphere "B" { custom int fromB = 2 }
+}
