@@ -240,6 +240,52 @@ Result BuildChildTopologyQuad(const Topology &topo, const uint32_t *parent_fvi,
   return Result::Success;
 }
 
+Result BuildChildTopologyTri(const Topology &topo, const uint32_t *parent_fvi,
+                             ChildTopo *out, std::string *err) {
+  const uint32_t V = topo.num_points;
+  const uint32_t E = topo.num_edges;
+  const uint32_t F = topo.num_faces;
+
+  const uint64_t child_points = uint64_t(V) + E;
+  const uint64_t child_faces = uint64_t(F) * 4;
+  const uint64_t child_corners = child_faces * 3;
+  if (child_points > 0xFFFFFFFFull || child_corners > 0xFFFFFFFFull) {
+    return Fail(Result::LimitExceeded, err, "child topology too large.");
+  }
+
+  out->num_points = uint32_t(child_points);
+  out->fvc.assign(size_t(child_faces), 3);
+  out->fvi.resize(size_t(child_corners));
+  out->face_parent.resize(size_t(child_faces));
+
+  for (uint32_t f = 0; f < F; f++) {
+    const uint32_t begin = topo.face_offsets[f];
+    const uint32_t v0 = parent_fvi[begin];
+    const uint32_t v1 = parent_fvi[begin + 1];
+    const uint32_t v2 = parent_fvi[begin + 2];
+    const uint32_t m01 = V + topo.face_edges[begin];      // edge v0-v1
+    const uint32_t m12 = V + topo.face_edges[begin + 1];  // edge v1-v2
+    const uint32_t m20 = V + topo.face_edges[begin + 2];  // edge v2-v0
+    uint32_t *fvi = &out->fvi[size_t(f) * 12];
+    fvi[0] = v0;
+    fvi[1] = m01;
+    fvi[2] = m20;
+    fvi[3] = v1;
+    fvi[4] = m12;
+    fvi[5] = m01;
+    fvi[6] = v2;
+    fvi[7] = m20;
+    fvi[8] = m12;
+    fvi[9] = m01;
+    fvi[10] = m12;
+    fvi[11] = m20;
+    for (uint32_t k = 0; k < 4; k++) {
+      out->face_parent[size_t(f) * 4 + k] = f;
+    }
+  }
+  return Result::Success;
+}
+
 // Internal helper used by the refine driver to map canonical crease vertex
 // pairs onto edge ids of the level-0 topology. Pairs that are not actual
 // mesh edges are skipped (OpenSubdiv warns and ignores them too).

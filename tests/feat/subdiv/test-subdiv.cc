@@ -541,6 +541,108 @@ void test_fvar_modes_differ_at_seams() {
   CHECK(out_all.fvar[0] != out_none.fvar[0]);
 }
 
+
+// ---------------------------------------------------------------------------
+// Loop scheme
+// ---------------------------------------------------------------------------
+
+void test_loop_rejects_non_tris() {
+  corpus::Mesh cube = corpus::Cube();
+  Options opts;
+  opts.scheme = Scheme::Loop;
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::InvalidTopology);
+}
+
+void test_loop_regular_vertex_weights() {
+  // Interior valence-6 vertex of a tri grid: V' = 5/8 V + 1/16 sum(ring).
+  corpus::Mesh m = corpus::TriGrid(4, 4, "tg");
+  Options opts;
+  opts.scheme = Scheme::Loop;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(m), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(m.face_vertex_counts.data(),
+                      uint32_t(m.face_vertex_counts.size()),
+                      m.face_vertex_indices.data(),
+                      uint32_t(m.face_vertex_indices.size()),
+                      uint32_t(m.points.size() / 3), &topo,
+                      nullptr) == Result::Success);
+  // Find an interior valence-6 vertex.
+  uint32_t v6 = 0xFFFFFFFFu;
+  for (uint32_t v = 0; v < topo.num_points; v++) {
+    const uint32_t valence =
+        topo.vert_edge_offsets[v + 1] - topo.vert_edge_offsets[v];
+    if (!topo.vert_is_boundary[v] && valence == 6) {
+      v6 = v;
+      break;
+    }
+  }
+  CHECK(v6 != 0xFFFFFFFFu);
+  for (int c = 0; c < 3; c++) {
+    float acc = 0.625f * m.points[v6 * 3 + size_t(c)];
+    for (uint32_t i = topo.vert_edge_offsets[v6];
+         i < topo.vert_edge_offsets[v6 + 1]; i++) {
+      const uint32_t e = topo.vert_edges[i];
+      const uint32_t other = (topo.edge_verts[2 * e] == v6)
+                                 ? topo.edge_verts[2 * e + 1]
+                                 : topo.edge_verts[2 * e];
+      acc += 0.0625f * m.points[other * 3 + size_t(c)];
+    }
+    CHECK(std::fabs(out.points[v6 * 3 + size_t(c)] - acc) < 1e-6f);
+  }
+  // All-triangle output, 4x face count.
+  CHECK(out.face_vertex_counts.size() == m.face_vertex_counts.size() * 4);
+  for (uint32_t n : out.face_vertex_counts) {
+    CHECK(n == 3);
+  }
+}
+
+void test_loop_edge_smooth_rule() {
+  // Interior edge child: 3/8 (v0+v1) + 1/8 (opposite vertices).
+  corpus::Mesh m = corpus::Icosahedron();
+  Options opts;
+  opts.scheme = Scheme::Loop;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  Result r = Refine(ToView(m), opts, &out, &err);
+  CHECK_MSG(r == Result::Success, err);
+
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(m.face_vertex_counts.data(), 20,
+                      m.face_vertex_indices.data(), 60, 12, &topo,
+                      nullptr) == Result::Success);
+  const uint32_t e = 0;
+  const uint32_t v0 = topo.edge_verts[0];
+  const uint32_t v1 = topo.edge_verts[1];
+  const uint32_t f0 = topo.edge_faces[0];
+  const uint32_t f1 = topo.edge_faces[1];
+  auto opposite = [&](uint32_t f) {
+    for (uint32_t k = topo.face_offsets[f]; k < topo.face_offsets[f + 1];
+         k++) {
+      const uint32_t v = m.face_vertex_indices[k];
+      if (v != v0 && v != v1) {
+        return v;
+      }
+    }
+    return 0u;
+  };
+  const uint32_t o0 = opposite(f0);
+  const uint32_t o1 = opposite(f1);
+  for (int c = 0; c < 3; c++) {
+    const float expect =
+        0.375f * (m.points[v0 * 3 + size_t(c)] + m.points[v1 * 3 + size_t(c)]) +
+        0.125f * (m.points[o0 * 3 + size_t(c)] + m.points[o1 * 3 + size_t(c)]);
+    CHECK(std::fabs(out.points[(12 + e) * 3 + size_t(c)] - expect) < 1e-6f);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Determinism (serial vs parallel)
 // ---------------------------------------------------------------------------
@@ -774,6 +876,11 @@ int main() {
   TEST(test_fvar_continuous_equals_vertex_refinement);
   TEST(test_fvar_island_constants_preserved);
   TEST(test_fvar_modes_differ_at_seams);
+
+  // Loop scheme
+  TEST(test_loop_rejects_non_tris);
+  TEST(test_loop_regular_vertex_weights);
+  TEST(test_loop_edge_smooth_rule);
 
   // Topology
   TEST(test_topology_cube);

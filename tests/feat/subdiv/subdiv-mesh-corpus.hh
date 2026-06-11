@@ -371,6 +371,64 @@ inline Mesh UVCreasedCube() {
   return m;
 }
 
+// Icosahedron (closed all-triangle mesh; all vertices valence 5).
+inline Mesh Icosahedron() {
+  Mesh m;
+  m.name = "icosahedron";
+  const float p = 1.6180339887f;  // golden ratio
+  m.points = {
+      -1, p,  0,  1,  p,  0,  -1, -p, 0,  1,  -p, 0,  0,  -1, p,  0,  1, p,
+      0,  -1, -p, 0,  1,  -p, p,  0,  -1, p,  0,  1,  -p, 0,  -1, -p, 0, 1,
+  };
+  m.face_vertex_counts.assign(20, 3);
+  m.face_vertex_indices = {
+      0, 11, 5,  0, 5,  1,  0, 1,  7,  0, 7,  10, 0, 10, 11,
+      1, 5,  9,  5, 11, 4,  11, 10, 2,  10, 7,  6,  7, 1,  8,
+      3, 9,  4,  3, 4,  2,  3, 2,  6,  3, 6,  8,  3, 8,  9,
+      4, 9,  5,  2, 4,  11, 6, 2,  10, 8, 6,  7,  9, 8,  1,
+  };
+  Jitter(&m);
+  return m;
+}
+
+// nx x ny grid of quads each split into 2 triangles (open boundary,
+// interior vertices valence 6).
+inline Mesh TriGrid(uint32_t nx, uint32_t ny, const char *name) {
+  Mesh m = QuadGrid(nx, ny, name);
+  std::vector<uint32_t> fvi;
+  fvi.reserve(m.face_vertex_indices.size() / 4 * 6);
+  for (size_t f = 0; f < m.face_vertex_counts.size(); f++) {
+    const uint32_t *q = &m.face_vertex_indices[f * 4];
+    fvi.insert(fvi.end(), {q[0], q[1], q[2]});
+    fvi.insert(fvi.end(), {q[0], q[2], q[3]});
+  }
+  m.face_vertex_counts.assign(m.face_vertex_counts.size() * 2, 3);
+  m.face_vertex_indices = std::move(fvi);
+  return m;
+}
+
+// Tri grid with a semi-sharp crease chain along an interior row.
+inline Mesh CreasedTriGrid() {
+  Mesh m = TriGrid(3, 3, "creased_tri_grid");
+  // Interior row of the 3x3 grid: vertices 4,5,6 (row y=1, width 4).
+  m.crease_indices = {4, 5, 6, 7};
+  m.crease_lengths = {4};
+  m.crease_sharpnesses = {1.7f};
+  return m;
+}
+
+// Tri grid with UV islands split between face columns (seams for Loop fvar).
+inline Mesh UVTriGrid() {
+  Mesh m = TriGrid(2, 2, "uv_tri_grid");
+  std::vector<uint32_t> island(m.face_vertex_counts.size());
+  for (size_t f = 0; f < island.size(); f++) {
+    // Two tris per original quad; quads alternate columns 0,1 per row.
+    island[f] = ((f / 2) % 2 == 0) ? 0 : 1;
+  }
+  AssignIslandUVs(&m, island, 2.5f);
+  return m;
+}
+
 // Non-manifold "bowtie sheets": three quads sharing one edge.
 // tsd must reject this (OpenSubdiv tolerates it).
 inline Mesh NonManifoldFan() {
