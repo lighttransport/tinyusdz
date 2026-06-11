@@ -96,7 +96,7 @@ Landed so far:
   qualifiers (prepend/append/delete/explicit) are stored per field in a lazily
   allocated `ArcListOpEdits` on the cold ext (the inline arc vectors stay as the
   within-spec effective list, so Phase 8.1's footprint is preserved); the USDA
-  parser records them. With `CompositionOptions::apply_list_ops` (opt-in),
+  parser records them. With `CompositionOptions::apply_list_ops` (default on),
   `ExpandArcs` composes each arc field once across the site via `MergeArcField`
   (AOUSD SdfListOp weakest→strongest: explicit-replace / prepend / append /
   delete / dedup), in LIVRPS order. The USDA writer re-emits the authored
@@ -122,22 +122,25 @@ Landed so far:
   by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
   `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
 
-`apply_list_ops` stays **default OFF (opt-in)**. Corpus-diff review (flatten
-each file with the flag off vs on, diff the serialized output): across the
-top-level corpus **no file differs or changes compose-success** — flipping the
-default is regression-free there, but the stock corpus has no file combining
-subLayers + arcs, so it gives no positive coverage. Two dedicated cross-layer
-fixtures were added (`tests/usda/composition/listop-xlayer-{delete,explicit}-000.usda`):
-under the review they **differ exactly as intended** (the stronger layer's
-`delete` drops / a bare list replaces the weak sublayer's reference) and nothing
-else changes. So the flag does precisely the AOUSD thing on the cases it
-governs, with zero collateral effect. It still stays opt-in because flipping it
-shifts a common-case semantic (bare-list-as-explicit-replace across layers) that
-no *real-world* asset in the corpus exercises — revisit after a pxrUSD A/B on
-such an asset. (This review also surfaced that the next USDA parser never read
-`subLayers` from text — a double-consume bug, now fixed — and that the Release
-test build compiled out `assert()`; tests now build with `-UNDEBUG`.) **The
-10-phase roadmap is complete.** The sections below are the original spec.
+`apply_list_ops` is now **default ON** (set false for legacy strong-first
+concatenation). The decision rests on three checks:
+ 1. **Corpus-diff** (flatten each file with the flag off vs on): across the
+    top-level corpus **no file differs or changes compose-success** — flipping
+    is regression-free (the stock corpus has no file combining subLayers + arcs).
+ 2. **Positive coverage**: two dedicated fixtures
+    (`tests/usda/composition/listop-xlayer-{delete,explicit}-000.usda`) differ
+    exactly as intended under the review and nothing else does.
+ 3. **pxrUSD A/B**: flattening those cross-layer assets with OpenUSD `usdcat
+    --flatten` and with next, `apply_list_ops=ON` **matches pxrUSD exactly**
+    (the stronger layer's `delete` drops / a bare list replaces the weak
+    sublayer's reference → only `fromB` survives), while the old OFF default was
+    **non-conformant** (wrongly kept the deleted/replaced `fromA`).
+So ON is the AOUSD-correct behavior, matches the reference implementation, and
+is regression-free on the corpus — hence the default. (This review also
+surfaced that the next USDA parser never read `subLayers` from text — a
+double-consume bug, now fixed — and that the Release test build compiled out
+`assert()`; tests now build with `-UNDEBUG`.) **The 10-phase roadmap is
+complete.** The sections below are the original spec.
 
 Goals, in priority order:
 
