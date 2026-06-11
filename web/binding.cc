@@ -9393,6 +9393,14 @@ emscripten::val convertImage(const emscripten::val& data,
       return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
                    (uint32_t(p[2]) << 8) | uint32_t(p[3]));
     };
+    // PNG->PNG routing: the scanline-streamed Transcode/Resize path keeps the
+    // whole image out of the heap but pays miniz filter+deflate per row —
+    // ~6x slower than whole-image stb-decode + fpng-encode (2 vs 13 MP/s on a
+    // 2048^2 texture). Streaming is therefore OPT-IN via lowMemory:1; the
+    // default falls through to the fast whole-image path below. (The
+    // whole-image PNG writer emits IHDR+IDAT only — palette/ancillary chunks
+    // are not preserved — which is fine for texture re-encode.)
+    const bool low_memory = optInt(opts, "lowMemory", 0) != 0;
     if (fmt0 == "png" && is_png) {
       const int W = rd32(buffer.data() + 16);  // IHDR width
       const int H = rd32(buffer.data() + 20);  // IHDR height
@@ -9434,7 +9442,7 @@ emscripten::val convertImage(const emscripten::val& data,
           result.set("data", bytesToUint8Array(trans));
           return result;
         }
-      } else if (!wantResize) {
+      } else if (!wantResize && low_memory) {
         if (tinyusdz::imageio::TranscodePNG(buffer.data(), buffer.size(),
                                             trans)) {
           result.set("success", true);
@@ -9444,7 +9452,7 @@ emscripten::val convertImage(const emscripten::val& data,
           result.set("data", bytesToUint8Array(trans));
           return result;
         }
-      } else {
+      } else if (wantResize && low_memory) {
         // srgb=false (linear) matches ResizeImage(Auto) on a colorspace-less PNG;
         // resizeColorspace:"srgb" opts into linear-light resampling.
         if (tinyusdz::imageio::ResizePNG(buffer.data(), buffer.size(),
