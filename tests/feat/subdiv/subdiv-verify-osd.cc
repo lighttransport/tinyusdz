@@ -139,6 +139,11 @@ struct OsdResult {
   std::vector<uint32_t> face_vertex_counts;   // non-hole faces only
   std::vector<uint32_t> face_vertex_indices;
   std::vector<float> fvar_uv;                 // per corner (of kept faces), stride 2
+  std::vector<float> limit_points;            // last-level limit positions
+  std::vector<float> limit_normals;           // normalized tan1 x tan2
+  std::vector<float> limit_tan1;              // normalized crease tangent
+  std::vector<uint8_t> normal_class;          // 0 strict, 1 interior crease,
+                                              // 2 corner (ambiguous)
   bool ok = false;
 };
 
@@ -269,6 +274,61 @@ OsdResult RefineWithOsd(const corpus::Mesh &m, const tsd::Options &topts,
   const int nfaces = last.GetNumFaces();
 
   size_t vert_offset = size_t(refiner->GetNumVerticesTotal()) - size_t(nverts);
+
+  // Limit positions + tangents (catmark/loop only).
+  if (topts.scheme != tsd::Scheme::Bilinear) {
+    std::vector<VtxN<3>> pos(static_cast<size_t>(nverts));
+    std::vector<VtxN<3>> tan1(static_cast<size_t>(nverts));
+    std::vector<VtxN<3>> tan2(static_cast<size_t>(nverts));
+    Far::PrimvarRefiner primvar(*refiner);
+    VtxN<3> const *src_last = verts.data() + vert_offset;
+    primvar.Limit(src_last, pos, tan1, tan2);
+    out.limit_points.resize(size_t(nverts) * 3);
+    out.limit_normals.resize(size_t(nverts) * 3);
+    out.limit_tan1.resize(size_t(nverts) * 3);
+    out.normal_class.resize(size_t(nverts), 0);
+    for (int i = 0; i < nverts; i++) {
+      // Classify the vertex rule for normal comparison: interior creases
+      // and sharp corners have convention-dependent (sector-ambiguous)
+      // tangents in OSD itself.
+      {
+        Far::ConstIndexArray ve = last.GetVertexEdges(i);
+        int sharp_edges = 0;
+        for (int k = 0; k < ve.size(); k++) {
+          if (last.GetEdgeSharpness(ve[k]) > 0.0f) {
+            sharp_edges++;
+          }
+        }
+        const bool vert_sharp = last.GetVertexSharpness(i) > 0.0f;
+        if (vert_sharp || sharp_edges > 2) {
+          out.normal_class[size_t(i)] = 2;  // corner
+        } else if (sharp_edges == 2 && !last.IsVertexBoundary(i)) {
+          out.normal_class[size_t(i)] = 1;  // interior crease
+        }
+      }
+      out.limit_points[3 * size_t(i)] = pos[size_t(i)].v[0];
+      out.limit_points[3 * size_t(i) + 1] = pos[size_t(i)].v[1];
+      out.limit_points[3 * size_t(i) + 2] = pos[size_t(i)].v[2];
+      const float *a = tan1[size_t(i)].v;
+      const float *b = tan2[size_t(i)].v;
+      float n[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                    a[0] * b[1] - a[1] * b[0]};
+      const float len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      if (len > 0.0f) {
+        n[0] /= len;
+        n[1] /= len;
+        n[2] /= len;
+      }
+      out.limit_normals[3 * size_t(i)] = n[0];
+      out.limit_normals[3 * size_t(i) + 1] = n[1];
+      out.limit_normals[3 * size_t(i) + 2] = n[2];
+      const float t1len = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+      for (int c = 0; c < 3; c++) {
+        out.limit_tan1[3 * size_t(i) + size_t(c)] =
+            (t1len > 0.0f) ? (a[size_t(c)] / t1len) : 0.0f;
+      }
+    }
+  }
   out.points.resize(size_t(nverts) * 3);
   for (int i = 0; i < nverts; i++) {
     out.points[3 * size_t(i)] = verts[vert_offset + size_t(i)].v[0];
@@ -513,6 +573,72 @@ bool CompareCase(const Case &cs) {
     }
   }
 
+  // Limit positions and normals (catmark/loop; skipped when holes were
+  // filtered since the limit pipeline retains hole faces consistently).
+  if (cs.opts.scheme != tsd::Scheme::Bilinear) {
+    tsd::RefinedMesh limit_mesh = refined;
+    tsd::Result lr = SnapToLimit(view, cs.opts, &limit_mesh, &err);
+    if (lr != tsd::Result::Success) {
+      fprintf(stderr, "[FAIL] %s: SnapToLimit failed: %s\n", cs.label.c_str(),
+              err.c_str());
+      return false;
+    }
+    for (size_t i = 0; i < vmap.size(); i++) {
+      for (int c = 0; c < 3; c++) {
+        const float tv = limit_mesh.points[3 * i + size_t(c)];
+        const float ov = osd.limit_points[3 * size_t(vmap[i]) + size_t(c)];
+        if (std::fabs(tv - ov) > 1e-4f) {
+          fprintf(stderr,
+                  "[FAIL] %s: limit position mismatch at vertex %zu: "
+                  "tsd %f vs osd %f\n",
+                  cs.label.c_str(), i, double(tv), double(ov));
+          return false;
+        }
+      }
+    }
+
+    std::vector<float> normals;
+    lr = ComputeLimitNormals(view, cs.opts, refined, &normals, &err);
+    if (lr != tsd::Result::Success) {
+      fprintf(stderr, "[FAIL] %s: ComputeLimitNormals failed: %s\n",
+              cs.label.c_str(), err.c_str());
+      return false;
+    }
+    size_t normal_mismatches = 0;
+    for (size_t i = 0; i < vmap.size(); i++) {
+      const float *a = &normals[3 * i];
+      const size_t j = size_t(vmap[i]);
+      const float *b = &osd.limit_normals[3 * j];
+      const float dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const float alen = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+      bool ok_normal = (dot > 0.999f);
+      if (!ok_normal && osd.normal_class[j] == 1) {
+        // Interior crease: OSD's cross-tangent sector choice is a
+        // convention; accept any unit normal perpendicular to the crease.
+        const float *t = &osd.limit_tan1[3 * j];
+        const float perp = a[0] * t[0] + a[1] * t[1] + a[2] * t[2];
+        ok_normal = (std::fabs(alen - 1.0f) < 1e-3f) &&
+                    (std::fabs(perp) < 0.05f);
+      } else if (!ok_normal && osd.normal_class[j] == 2) {
+        // Infinitely sharp corner: the normal is convention-dependent
+        // (cone point); require only a unit-length result.
+        ok_normal = (std::fabs(alen - 1.0f) < 1e-3f);
+      }
+      if (!ok_normal) {
+        normal_mismatches++;
+        if (g_verbose) {
+          fprintf(stderr, "  normal mismatch v%zu dot=%f class=%d\n", i,
+                  double(dot), int(osd.normal_class[j]));
+        }
+      }
+    }
+    if (normal_mismatches) {
+      fprintf(stderr, "[FAIL] %s: %zu/%zu limit normal mismatches\n",
+              cs.label.c_str(), normal_mismatches, vmap.size());
+      return false;
+    }
+  }
+
   // FVar comparison at matched corners (corner correspondence through the
   // canonical rotations of the matched face pair).
   if (cs.with_fvar) {
@@ -653,7 +779,16 @@ int main(int argc, char **argv) {
             tsd::FVarLinearInterpolation::CornersPlus2,
             tsd::FVarLinearInterpolation::Boundaries,
         };
+        bool has_tris = false;
+        for (uint32_t fc : m.face_vertex_counts) {
+          if (fc == 3) {
+            has_tris = true;
+          }
+        }
+        const int num_trisub =
+            (scheme == tsd::Scheme::CatmullClark && has_tris) ? 2 : 1;
         const int num_fvar_modes = has_fvar ? 6 : 1;
+        for (int trisub = 0; trisub < num_trisub; trisub++) {
         for (int creasing = 0; creasing < num_creasing; creasing++) {
           for (int fm = 0; fm < num_fvar_modes; fm++) {
             for (int level = 1; level <= 3; level++) {
@@ -663,12 +798,16 @@ int main(int argc, char **argv) {
               cs.opts.boundary = boundary;
               cs.opts.creasing = creasing ? tsd::CreasingMethod::Chaikin
                                           : tsd::CreasingMethod::Uniform;
+              cs.opts.triangle_subdivision =
+                  trisub ? tsd::TriangleSubdivision::Smooth
+                         : tsd::TriangleSubdivision::CatmullClark;
               cs.opts.level = level;
               cs.with_fvar = has_fvar;
               cs.fvar_mode = fvar_modes[fm];
               cs.label = m.name + "/" + SchemeName(scheme) + "/" +
                          BoundaryName(boundary) +
                          (creasing ? "/chaikin" : "/uniform") +
+                         (trisub ? "/triSmooth" : "") +
                          (has_fvar ? (std::string("/") +
                                       FVarModeName(cs.fvar_mode))
                                    : std::string()) +
@@ -676,6 +815,7 @@ int main(int argc, char **argv) {
               RunCase(cs);
             }
           }
+        }
         }
       }
     }

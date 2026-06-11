@@ -115,6 +115,85 @@ void FilterHoles(const std::vector<uint8_t> &face_is_hole, RefinedMesh *out) {
 
 }  // namespace
 
+void BakeLevel0Sharpness(const MeshView &mesh, const Options &options,
+                         const Topology &topo, const CreaseEdges &creases,
+                         std::vector<float> *edge_sharp,
+                         std::vector<float> *vert_sharp,
+                         std::vector<uint8_t> *hole, bool *any_hole) {
+  const bool smooth_scheme = (options.scheme == Scheme::CatmullClark) ||
+                             (options.scheme == Scheme::Loop);
+  const uint32_t num_points = topo.num_points;
+
+  edge_sharp->assign(topo.num_edges, 0.0f);
+  MapCreasesToEdges(topo, creases, edge_sharp);
+
+  vert_sharp->assign(num_points, 0.0f);
+  for (uint32_t i = 0; i < mesh.num_corners; i++) {
+    const uint32_t v = uint32_t(mesh.corner_indices[i]);
+    float s = mesh.corner_sharpnesses[i];
+    if (!(s > 0.0f)) {
+      s = 0.0f;
+    } else if (s > kInfiniteSharpness) {
+      s = kInfiniteSharpness;
+    }
+    if ((*vert_sharp)[v] < s) {
+      (*vert_sharp)[v] = s;
+    }
+  }
+
+  // interpolateBoundary "none": faces incident to a boundary vertex become
+  // holes -- unless every incident boundary edge was already authored
+  // infinitely sharp (OpenSubdiv's escape hatch). Bilinear is exempt
+  // (OpenSubdiv only applies this to schemes with a local neighborhood,
+  // i.e. catmark/loop).
+  if (options.boundary == BoundaryInterpolation::None && smooth_scheme &&
+      hole) {
+    for (uint32_t v = 0; v < num_points; v++) {
+      if (!topo.vert_is_boundary[v]) {
+        continue;
+      }
+      bool exclude = false;
+      const uint32_t ebegin = topo.vert_edge_offsets[v];
+      const uint32_t eend = topo.vert_edge_offsets[v + 1];
+      for (uint32_t i = ebegin; i < eend && !exclude; i++) {
+        const uint32_t e = topo.vert_edges[i];
+        exclude =
+            topo.IsBoundaryEdge(e) && !IsInfinitelySharp((*edge_sharp)[e]);
+      }
+      if (exclude) {
+        const uint32_t fbegin = topo.vert_face_offsets[v];
+        const uint32_t fend = topo.vert_face_offsets[v + 1];
+        for (uint32_t i = fbegin; i < fend; i++) {
+          (*hole)[topo.vert_faces[i]] = 1;
+          if (any_hole) {
+            *any_hole = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Boundary edges are always infinitely sharp (all modes).
+  for (uint32_t e = 0; e < topo.num_edges; e++) {
+    if (topo.IsBoundaryEdge(e)) {
+      (*edge_sharp)[e] = kInfiniteSharpness;
+    }
+  }
+
+  // "edgeAndCorner": pin topological corners (1 face, 2 edges).
+  if (options.boundary == BoundaryInterpolation::EdgeAndCorner) {
+    for (uint32_t v = 0; v < num_points; v++) {
+      const uint32_t nf =
+          topo.vert_face_offsets[v + 1] - topo.vert_face_offsets[v];
+      const uint32_t ne =
+          topo.vert_edge_offsets[v + 1] - topo.vert_edge_offsets[v];
+      if (nf == 1 && ne == 2) {
+        (*vert_sharp)[v] = kInfiniteSharpness;
+      }
+    }
+  }
+}
+
 Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
               uint32_t num_fvar_channels,
               const VertexPrimvarView *vertex_primvars,
@@ -243,71 +322,8 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
 
     // --- Sharpness state for this level -------------------------------------
     if (lvl == 0) {
-      edge_sharp.assign(topo.num_edges, 0.0f);
-      MapCreasesToEdges(topo, creases, &edge_sharp);
-
-      vert_sharp.assign(num_points, 0.0f);
-      for (uint32_t i = 0; i < mesh.num_corners; i++) {
-        const uint32_t v = uint32_t(mesh.corner_indices[i]);
-        float s = mesh.corner_sharpnesses[i];
-        if (!(s > 0.0f)) {
-          s = 0.0f;
-        } else if (s > kInfiniteSharpness) {
-          s = kInfiniteSharpness;
-        }
-        if (vert_sharp[v] < s) {
-          vert_sharp[v] = s;
-        }
-      }
-
-      // interpolateBoundary "none": faces incident to a boundary vertex
-      // become holes -- unless every incident boundary edge was already
-      // authored infinitely sharp (OpenSubdiv's escape hatch). Bilinear is
-      // exempt (OpenSubdiv only applies this to schemes with a local
-      // neighborhood, i.e. catmark/loop).
-      if (options.boundary == BoundaryInterpolation::None && smooth_scheme) {
-        for (uint32_t v = 0; v < num_points; v++) {
-          if (!topo.vert_is_boundary[v]) {
-            continue;
-          }
-          bool exclude = false;
-          const uint32_t ebegin = topo.vert_edge_offsets[v];
-          const uint32_t eend = topo.vert_edge_offsets[v + 1];
-          for (uint32_t i = ebegin; i < eend && !exclude; i++) {
-            const uint32_t e = topo.vert_edges[i];
-            exclude = topo.IsBoundaryEdge(e) &&
-                      !IsInfinitelySharp(edge_sharp[e]);
-          }
-          if (exclude) {
-            const uint32_t fbegin = topo.vert_face_offsets[v];
-            const uint32_t fend = topo.vert_face_offsets[v + 1];
-            for (uint32_t i = fbegin; i < fend; i++) {
-              hole[topo.vert_faces[i]] = 1;
-              any_hole = true;
-            }
-          }
-        }
-      }
-
-      // Boundary edges are always infinitely sharp (all modes).
-      for (uint32_t e = 0; e < topo.num_edges; e++) {
-        if (topo.IsBoundaryEdge(e)) {
-          edge_sharp[e] = kInfiniteSharpness;
-        }
-      }
-
-      // "edgeAndCorner": pin topological corners (1 face, 2 edges).
-      if (options.boundary == BoundaryInterpolation::EdgeAndCorner) {
-        for (uint32_t v = 0; v < num_points; v++) {
-          const uint32_t nf =
-              topo.vert_face_offsets[v + 1] - topo.vert_face_offsets[v];
-          const uint32_t ne =
-              topo.vert_edge_offsets[v + 1] - topo.vert_edge_offsets[v];
-          if (nf == 1 && ne == 2) {
-            vert_sharp[v] = kInfiniteSharpness;
-          }
-        }
-      }
+      BakeLevel0Sharpness(mesh, options, topo, creases, &edge_sharp,
+                          &vert_sharp, &hole, &any_hole);
 
       // Seam-split state for smooth fvar channels.
       for (uint32_t c = 0; c < num_fvar_channels; c++) {
@@ -481,27 +497,6 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
   }
 
   return Result::Success;
-}
-
-// TODO(tsd, M5): closed-form limit stencils (moves to tsd-limit.cc).
-Result SnapToLimit(const MeshView &base_mesh, const Options &options,
-                   RefinedMesh *inout, std::string *err) {
-  (void)base_mesh;
-  (void)options;
-  (void)inout;
-  return Fail(Result::InvalidArgument, err,
-              "SnapToLimit not implemented yet.");
-}
-
-Result ComputeLimitNormals(const MeshView &base_mesh, const Options &options,
-                           const RefinedMesh &refined,
-                           std::vector<float> *out_normals, std::string *err) {
-  (void)base_mesh;
-  (void)options;
-  (void)refined;
-  (void)out_normals;
-  return Fail(Result::InvalidArgument, err,
-              "ComputeLimitNormals not implemented yet.");
 }
 
 }  // namespace tsd

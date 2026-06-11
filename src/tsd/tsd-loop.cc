@@ -110,6 +110,14 @@ void LoopRefineValues(const Topology &topo, const uint32_t *parent_fvi,
     const float *pv = &values[size_t(v) * stride];
     float *dst = &vert_child[size_t(v) * stride];
 
+    if (valence == 0) {
+      // Unreferenced point: pass through.
+      for (uint32_t c = 0; c < stride; c++) {
+        dst[c] = pv[c];
+      }
+      return;
+    }
+
     float sharp_stack[32];
     std::vector<float> sharp_heap;
     float *es = sharp_stack;

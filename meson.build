@@ -521,6 +521,7 @@ tinyusdz_sources += files(
   'src/tsd/tsd-loop.cc',
   'src/tsd/tsd-fvar.cc',
   'src/tsd/tsd-refine.cc',
+  'src/tsd/tsd-limit.cc',
 )
 
 # ============================================================================
