@@ -20,6 +20,9 @@
 namespace tinyusdz {
 namespace next {
 
+namespace pcp { class Cache; }  // lazy (cache-backed) evaluation entry point
+class Path;
+
 /// Evaluation options
 struct EvalOptions {
   double time = 0.0;                              // Time to evaluate at
@@ -130,6 +133,14 @@ public:
   template<typename T>
   T EvalOr(const UsdPrim& prim, const std::string& attr_name, T fallback) const;
 
+  /// Resolve a single attribute's value from one composed PrimSpec: time
+  /// samples (interpolated at opts.time) first, else the authored default.
+  /// Pure (no stage/connection state) so it is shared by the stage-based and
+  /// the cache-based (lazy) evaluators.
+  static EvalResult EvalFromPrimSpec(const PrimSpec* spec,
+                                     const std::string& attr_name,
+                                     const EvalOptions& opts);
+
 private:
   const Stage* stage_;
   EvalOptions options_;
@@ -137,8 +148,6 @@ private:
   // Internal helpers
   EvalResult EvalInternal(const UsdPrim& prim, const std::string& attr_name,
                           const EvalOptions& opts, int depth) const;
-  EvalResult EvalFromPrimSpec(const PrimSpec* spec, const std::string& attr_name,
-                              const EvalOptions& opts) const;
   EvalResult FollowConnection(const std::string& connection_path,
                               const EvalOptions& opts, int depth) const;
 };
@@ -150,6 +159,16 @@ private:
 /// Evaluate attribute with time sample interpolation
 EvalResult EvalAttribute(const Stage& stage, const UsdPrim& prim,
                          const std::string& attr_name, double time = 0.0);
+
+/// Phase 10: lazily evaluate `attr_name` on the prim at `prim_path` by composing
+/// only the prims it touches through the pcp cache (no BuildStage). Resolves
+/// time samples / default value via EvalFromPrimSpec and follows connections
+/// across lazily-composed prims (the canonical `connection()` targets, bounded
+/// by opts.max_connection_depth). Returns an unsuccessful EvalResult if the
+/// prim or attribute authors no value.
+EvalResult EvalAttributeLazy(pcp::Cache& cache, const Path& prim_path,
+                             const std::string& attr_name,
+                             const EvalOptions& opts = EvalOptions());
 
 /// Quick type-safe getters (return false if not found)
 bool GetFloat(const Stage& stage, const UsdPrim& prim,

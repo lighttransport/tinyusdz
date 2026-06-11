@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "next/eval/attribute-eval.hh"
 #include "next/layer/layer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -235,6 +236,61 @@ static void test_compose_prim_lazy() {
   lazy.Invalidate(Path("/World/A"));
   const PrimSpec *a2 = lazy.ComposePrim(Path("/World/A"), &warn, &err);
   assert(a2 && a2 != a && "Invalidate must drop the composed spec");
+  std::cout << "  OK" << std::endl;
+}
+
+// Phase 10 (A2): lazy attribute evaluation through the cache -- resolve a
+// prim's attribute value (default + time-sample interpolation) and follow a
+// connection across lazily-composed prims, all WITHOUT BuildStage.
+static void test_eval_attribute_lazy() {
+  std::cout << "test_eval_attribute_lazy..." << std::endl;
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder lb(*root);
+    lb.begin_prim("Src", "Scope");
+    lb.add_property("value", Value(0.5f));
+    lb.add_time_sample("anim", 0.0, Value(1.0f));
+    lb.add_time_sample("anim", 10.0, Value(3.0f));
+    lb.end_prim();
+    lb.begin_prim("Dst", "Scope");
+    // Connection-only slot: /Dst.value -> /Src.value.
+    PropNameId vid = GetPropNameTable().intern("value");
+    lb.current()->add_property_slot(vid, TypeId::Float, PropSlot::kFlagConnection);
+    lb.current()->add_connection("value", Path("/Src.value"));
+    lb.end_prim();
+    lb.finalize();
+  }
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  // Default value, composed lazily (no BuildStage).
+  EvalResult r1 = EvalAttributeLazy(cache, Path("/Src"), "value");
+  assert(r1.success && r1.from_default);
+  const float *f1 = r1.value.as_float();
+  assert(f1 && *f1 == 0.5f);
+
+  // Time sample interpolated at t=5 -> 2.0.
+  EvalOptions opts;
+  opts.time = 5.0;
+  EvalResult r2 = EvalAttributeLazy(cache, Path("/Src"), "anim", opts);
+  assert(r2.success && r2.from_time_sample);
+  const float *f2 = r2.value.as_float();
+  assert(f2 && *f2 == 2.0f);
+
+  // Connection following: /Dst.value resolves to /Src.value == 0.5.
+  EvalResult r3 = EvalAttributeLazy(cache, Path("/Dst"), "value");
+  assert(r3.success && r3.from_connection);
+  const float *f3 = r3.value.as_float();
+  assert(f3 && *f3 == 0.5f);
+
+  // No opinion -> unsuccessful.
+  EvalResult r4 = EvalAttributeLazy(cache, Path("/Nope"), "x");
+  assert(!r4.success);
+
+  assert(cache.HasComputedPrimIndex(Path("/Src")) == false &&
+         "lazy eval must not have built a PrimIndex via ComputePrimIndex");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1807,6 +1863,7 @@ int main() {
   test_typed_composition_issues();
   test_prototype_order_independent();
   test_compose_prim_lazy();
+  test_eval_attribute_lazy();
   test_specialize_chain();
   test_cross_layer_arc_dedup();
   test_build_stage();
