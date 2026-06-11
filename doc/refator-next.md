@@ -92,13 +92,19 @@ Landed so far:
   keeps first-in-namespace-order (single-pass, already deterministic); flatten
   output and the round-trip corpus are unchanged.
 
-- **Phase 7 (S5 partial + E3)** — `CompositionOptions::apply_list_ops` (opt-in)
-  de-duplicates an arc authored identically across a site's specs so it expands
-  once instead of twice (fixes the double-expansion; values unchanged since
-  LIVRPS already made the duplicate redundant). Specialize-chain + dedup tests
-  added; doc/pcp.md gains a list-op implementation-status note and the
-  same-parent-only relocates scope. Full cross-layer explicit-replace/delete +
-  qualifier round-trip fidelity (arc-field → ListOp representation) remain TODO.
+- **Phase 7 (S5 + E3)** — full cross-layer list-op representation. Arc
+  qualifiers (prepend/append/delete/explicit) are stored per field in a lazily
+  allocated `ArcListOpEdits` on the cold ext (the inline arc vectors stay as the
+  within-spec effective list, so Phase 8.1's footprint is preserved); the USDA
+  parser records them. With `CompositionOptions::apply_list_ops` (opt-in),
+  `ExpandArcs` composes each arc field once across the site via `MergeArcField`
+  (AOUSD SdfListOp weakest→strongest: explicit-replace / prepend / append /
+  delete / dedup), in LIVRPS order. The USDA writer re-emits the authored
+  qualifier (was always `prepend`). Tests: specialize chain, cross-layer
+  delete + explicit-replace, writer fidelity. **Deferred:** crate reader/writer
+  list-op mapping (the crate ListOp arrives already flattened — needs an
+  upstream ListOp `Value` variant; USDC arcs are treated as explicit
+  cross-layer). doc/pcp.md has the implementation-status note + relocates scope.
 - **Phase 10 (M9)** — `Cache::ComposePrim(path)` composes (and caches) one prim
   on first access, reusing BuildStageRec's SourcesForPath + ComposeInto step
   without materializing the whole stage; `ComposedChildNames(path)` for lazy
@@ -114,9 +120,11 @@ Landed so far:
   by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
   `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
 
-Remaining follow-up: **Phase 7** full cross-layer ListOp representation
-(arc-field → ListOp struct: explicit-replace/delete + qualifier round-trip
-fidelity). The sections below are the original spec.
+Remaining follow-up: crate-side list-op fidelity (reader/writer mapping of
+crate ListOp sublists — needs an upstream ListOp `Value` variant), and
+deciding whether to default `apply_list_ops` on after a corpus review. The
+core 10-phase roadmap is otherwise complete. The sections below are the
+original spec.
 
 Goals, in priority order:
 

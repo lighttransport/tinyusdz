@@ -17,6 +17,7 @@
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/layer.hh"
+#include "next/writer/usda-writer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -1151,6 +1152,40 @@ static void test_implied_intermediate() {
 // stronger (root) layer removes an arc contributed by a weaker sublayer, and a
 // bare/explicit list in the stronger layer replaces the weaker one. With the
 // flag off, both arcs compose (legacy strong-first concatenation).
+// Phase 7 S5: the USDA writer re-emits the authored list-op qualifier from the
+// ArcEdit instead of always `prepend` -- a bare list as a bare list, and a
+// prepend/delete edit with its qualifiers (the old writer could not emit
+// `delete` at all).
+static void test_writer_listop_fidelity() {
+  std::cout << "test_writer_listop_fidelity..." << std::endl;
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim("Bare", "Scope");
+  lb.current()->meta().references.push_back("ext.usda</X>");  // bare (no edit)
+  lb.end_prim();
+  lb.begin_prim("Edited", "Scope");
+  lb.current()->meta().references.push_back("ext.usda</A>");  // within-spec list
+  {
+    ArcEdit& e = lb.current()->meta().ensure_arc_edits().references;
+    e.is_explicit = false;
+    e.prepended.push_back("ext.usda</A>");
+    e.deleted.push_back("ext.usda</Old>");
+  }
+  lb.end_prim();
+  lb.finalize();
+
+  std::string out = WriteLayerToString(layer, USDAWriteOptions());
+  // The edit's qualifiers are preserved (old writer always emitted `prepend`
+  // and never `delete`).
+  assert(out.find("prepend references = [") != std::string::npos);
+  assert(out.find("delete references = [") != std::string::npos);
+  // The bare prim emits an unqualified (explicit) list. It is the only prim
+  // whose `references = [` is not preceded by a qualifier word.
+  assert(out.find("\n        references = [") != std::string::npos ||
+         out.find("\n    references = [") != std::string::npos);
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_cross_layer_listops() {
   std::cout << "test_cross_layer_listops..." << std::endl;
   const std::string sub = "/tmp/next_pcp_lo_sub.usda";
@@ -1946,6 +1981,7 @@ int main() {
   test_cross_source_variant();
   test_implied_intermediate();
   test_cross_layer_listops();
+  test_writer_listop_fidelity();
   test_compose_from_file();
   test_sublayer_stack_composition();
   test_sublayer_cycle_and_depth();

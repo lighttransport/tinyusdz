@@ -117,17 +117,17 @@ layer's list-op is applied to an empty list, then each stronger layer's list-op
 in turn (prepend / append / delete / explicit / order), yielding a final
 strong-to-weak list of arcs.
 
-> **Implementation status (next).** *Within a single spec*, the USDA parser
-> honors the list-op qualifier (prepend → front, append → back, delete → remove,
-> bare/explicit → replace). *Across the layer stack*, the default path expands
-> each spec's arcs independently and relies on LIVRPS strength ordering for the
-> composed values — correct for the common case, but an arc authored identically
-> in two sublayers is expanded twice (redundant nodes, same values).
-> `CompositionOptions::apply_list_ops` (opt-in) de-duplicates identical arcs
-> across a site's specs so each expands once. Full cross-layer
-> explicit-replace / delete semantics and round-trip fidelity of the qualifier
-> (the writer currently always emits `prepend`) require an arc-field → ListOp
-> representation and remain a follow-up.
+> **Implementation status (next).** The USDA parser records each arc field's
+> list-op qualifier (prepend / append / delete / bare-explicit) into a per-spec
+> `ArcListOpEdits`, and the USDA writer re-emits it. *Across the layer stack*,
+> the default path expands each spec's arcs independently and relies on LIVRPS
+> strength ordering — correct for the common case, but an identically-authored
+> arc in two sublayers expands twice (redundant nodes, same values). With
+> `CompositionOptions::apply_list_ops` (opt-in), composition instead merges each
+> arc field once across the site weakest→strongest per AOUSD SdfListOp rules
+> (explicit-replace / prepend / append / delete / dedup), in LIVRPS order.
+> *Remaining:* the crate (USDC) reader/writer still flatten list-ops (USDC arcs
+> are treated as explicit cross-layer), pending an upstream ListOp value type.
 >
 > **Relocates scope (next).** Relocates are applied as a *same-parent namespace
 > rename only*: a composed source `/A/B` may be renamed to `/A/C` (same parent
