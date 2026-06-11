@@ -314,9 +314,12 @@ Result RefineFVarSplitOnce(FVarSplitState *state, const Options &opts,
                            bool more_levels, std::string *err) {
   const Topology &topo = state->topo;
   const uint32_t stride = state->stride;
+  const bool loop = (opts.scheme == Scheme::Loop);
 
   ChildTopo child;
-  Result r = BuildChildTopologyQuad(topo, state->fvi.data(), &child, err);
+  Result r = loop
+                 ? BuildChildTopologyTri(topo, state->fvi.data(), &child, err)
+                 : BuildChildTopologyQuad(topo, state->fvi.data(), &child, err);
   if (r != Result::Success) {
     return r;
   }
@@ -326,8 +329,13 @@ Result RefineFVarSplitOnce(FVarSplitState *state, const Options &opts,
   sharp.vert_sharpness = state->vert_sharp.data();
 
   std::vector<float> child_values(size_t(child.num_points) * stride);
-  CatmarkRefineValues(topo, state->fvi.data(), state->values.data(), stride,
-                      sharp, opts, child_values.data());
+  if (loop) {
+    LoopRefineValues(topo, state->fvi.data(), state->values.data(), stride,
+                     sharp, opts, child_values.data());
+  } else {
+    CatmarkRefineValues(topo, state->fvi.data(), state->values.data(), stride,
+                        sharp, opts, child_values.data());
+  }
 
   state->values = std::move(child_values);
   state->num_values = child.num_points;
@@ -390,6 +398,39 @@ void LinearFVarRefineQuad(const Topology &topo, const float *corner_values,
         dst[2 * stride + c] = favg[c];
         dst[3 * stride + c] = 0.5f * (cp[c] + ck[c]);
       }
+    }
+  });
+}
+
+void LinearFVarRefineTri(const Topology &topo, const float *corner_values,
+                         uint32_t stride, const Options &opts,
+                         float *child_corner_values) {
+  ParallelFor(opts, topo.num_faces, [&](uint32_t f) {
+    const uint32_t begin = topo.face_offsets[f];
+    const float *c0 = &corner_values[size_t(begin) * stride];
+    const float *c1 = &corner_values[size_t(begin + 1) * stride];
+    const float *c2 = &corner_values[size_t(begin + 2) * stride];
+
+    // Child face order: corner 0, corner 1, corner 2, center; corner layouts
+    // match BuildChildTopologyTri: (vk, m_k,k+1, m_k-1,k), center
+    // (m01, m12, m20).
+    float *dst = &child_corner_values[size_t(f) * 12 * stride];
+    for (uint32_t c = 0; c < stride; c++) {
+      const float m01 = 0.5f * (c0[c] + c1[c]);
+      const float m12 = 0.5f * (c1[c] + c2[c]);
+      const float m20 = 0.5f * (c2[c] + c0[c]);
+      dst[0 * stride + c] = c0[c];
+      dst[1 * stride + c] = m01;
+      dst[2 * stride + c] = m20;
+      dst[3 * stride + c] = c1[c];
+      dst[4 * stride + c] = m12;
+      dst[5 * stride + c] = m01;
+      dst[6 * stride + c] = c2[c];
+      dst[7 * stride + c] = m20;
+      dst[8 * stride + c] = m12;
+      dst[9 * stride + c] = m01;
+      dst[10 * stride + c] = m12;
+      dst[11 * stride + c] = m20;
     }
   });
 }

@@ -166,6 +166,12 @@ struct ChildTopo {
 Result BuildChildTopologyQuad(const Topology &topo, const uint32_t *parent_fvi,
                               ChildTopo *out, std::string *err);
 
+// Tri split (Loop): each parent triangle becomes 4 triangles. Child vertex
+// order: [0, V) children of parent vertices, [V, V + E) edge children.
+// Child face order per parent face: corner 0, corner 1, corner 2, center.
+Result BuildChildTopologyTri(const Topology &topo, const uint32_t *parent_fvi,
+                             ChildTopo *out, std::string *err);
+
 // --- Per-scheme value kernels ---------------------------------------------------
 //
 // All kernels write child values for the quad-split layout above:
@@ -187,12 +193,25 @@ void CatmarkRefineValues(const Topology &topo, const uint32_t *parent_fvi,
                          const SharpnessCtx &sharp, const Options &opts,
                          float *child_values);
 
+// Loop (all-triangle input) with the same Sdc-compatible crease semantics.
+// Child layout matches BuildChildTopologyTri ((V + E) * stride floats).
+void LoopRefineValues(const Topology &topo, const uint32_t *parent_fvi,
+                      const float *values, uint32_t stride,
+                      const SharpnessCtx &sharp, const Options &opts,
+                      float *child_values);
+
 // FaceVarying "all" (fully linear) per-corner refinement for the quad
 // split: 4 child corner tuples per parent corner, in BuildChildTopologyQuad
 // child-face order.
 void LinearFVarRefineQuad(const Topology &topo, const float *corner_values,
                           uint32_t stride, const Options &opts,
                           float *child_corner_values);
+
+// Same for the tri split: 12 child corner tuples per parent face (4 tris),
+// in BuildChildTopologyTri child-face order.
+void LinearFVarRefineTri(const Topology &topo, const float *corner_values,
+                         uint32_t stride, const Options &opts,
+                         float *child_corner_values);
 
 // Derives child-level sharpness from a parent level: a child edge is a half
 // of parent edge pe iff it connects a vertex child (< parentV) to pe's edge

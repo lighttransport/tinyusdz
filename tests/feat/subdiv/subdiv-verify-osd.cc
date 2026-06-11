@@ -363,9 +363,29 @@ bool MatchVertices(const std::vector<float> &a, const std::vector<float> &b,
         }
       }
     }
+    if (match == 0xFFFFFFFFu) {
+      // Rare: float rounding in the cell quantization can skip the right
+      // cell. Fall back to a brute-force scan for this vertex.
+      float best = 1e30f;
+      for (uint32_t j = 0; j < n; j++) {
+        const float d = std::fabs(b[3 * j] - x) + std::fabs(b[3 * j + 1] - y) +
+                        std::fabs(b[3 * j + 2] - z);
+        if (d < best) {
+          best = d;
+          match = j;
+        }
+      }
+      if (std::fabs(b[3 * match] - x) > kPosEps ||
+          std::fabs(b[3 * match + 1] - y) > kPosEps ||
+          std::fabs(b[3 * match + 2] - z) > kPosEps) {
+        *why = "no position match for tsd vertex " + std::to_string(i) +
+               " (closest |d|_1 = " + std::to_string(double(best)) + ")";
+        return false;
+      }
+      match_count = 1;
+    }
     if (match_count != 1 || b_used[match]) {
-      *why = "ambiguous or missing position match for tsd vertex " +
-             std::to_string(i);
+      *why = "ambiguous position match for tsd vertex " + std::to_string(i);
       return false;
     }
     b_used[match] = 1;
@@ -603,9 +623,11 @@ int main(int argc, char **argv) {
   meshes.push_back(corpus::UVCube());
   meshes.push_back(corpus::UVDartGrid());
   meshes.push_back(corpus::UVCreasedCube());
+  meshes.push_back(corpus::Icosahedron());
+  meshes.push_back(corpus::TriGrid(4, 3, "tri_grid_4x3"));
+  meshes.push_back(corpus::CreasedTriGrid());
+  meshes.push_back(corpus::UVTriGrid());
 
-  const tsd::Scheme schemes[] = {tsd::Scheme::CatmullClark,
-                                 tsd::Scheme::Bilinear};
   const tsd::BoundaryInterpolation boundaries[] = {
       tsd::BoundaryInterpolation::EdgeAndCorner,
       tsd::BoundaryInterpolation::EdgeOnly,
@@ -613,6 +635,11 @@ int main(int argc, char **argv) {
   };
 
   for (const corpus::Mesh &m : meshes) {
+    std::vector<tsd::Scheme> schemes = {tsd::Scheme::CatmullClark,
+                                        tsd::Scheme::Bilinear};
+    if (m.is_all_tris()) {
+      schemes.push_back(tsd::Scheme::Loop);
+    }
     for (tsd::Scheme scheme : schemes) {
       for (tsd::BoundaryInterpolation boundary : boundaries) {
         const bool has_creases = !m.crease_lengths.empty();
