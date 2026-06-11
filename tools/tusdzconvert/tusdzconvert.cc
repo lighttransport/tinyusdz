@@ -465,6 +465,7 @@ int main(int argc, char **argv) {
   parser.add_option("-textureFormat", true, "keep|png|jpeg");
   parser.add_option("-pngEncoder", true, "fpnge|fpng");
   parser.add_option("-jpegQuality", true, "1-100");
+  parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
   parser.add_option("-targetTextureSize", true, "Total texture budget (e.g. 100MB)");
   parser.add_option("-fitStrategy", true, "size|quality");

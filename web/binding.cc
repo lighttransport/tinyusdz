@@ -5599,7 +5599,11 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::ReferencesCompositionOptions references_options;
     references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
-    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_, references_options)) {
+    // InPlace: consumes layer_ (no internal arcs) instead of holding the
+    // input + output copies concurrently — halves the peak of the pass.
+    if (!tinyusdz::CompositeReferencesInPlace(resolver,
+            std::make_unique<tinyusdz::Layer>(std::move(layer_)),
+            &composed_layer_, &warn_, &error_, references_options)) {
       std::cerr << "Failed to composite references: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5635,7 +5639,9 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::PayloadCompositionOptions payload_options;
     payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
-    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_, payload_options)) {
+    if (!tinyusdz::CompositePayloadInPlace(resolver,
+            std::make_unique<tinyusdz::Layer>(std::move(layer_)),
+            &composed_layer_, &warn_, &error_, payload_options)) {
       std::cerr << "Failed to composite payload: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5793,6 +5799,17 @@ class TinyUSDZLoaderNative {
 
   void clearAssets() {
     em_resolver_.clear();
+  }
+
+  /// Free the pre-composition source layer. After composition converges the
+  /// composed layer (`composed_layer_`) is the live one, but `layer_` still
+  /// holds the previous iteration's full copy — for a flattened multi-GB
+  /// scene that is ~half the heap. Call once composition is done and only
+  /// the composed layer will be used (export/remap). No-op unless composited.
+  void releaseSourceLayer() {
+    if (composited_) {
+      layer_ = tinyusdz::Layer();
+    }
   }
 
   /// Reset all state - clears render scene, assets, and all cached data
@@ -6825,12 +6842,18 @@ class TinyUSDZLoaderNative {
       bool unresolved = false;
       if (src_layer.check_unresolved_references()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_, references_options)) return false;
+        // InPlace: consumes src_layer (no internal arcs) instead of holding
+        // input + output copies — halves the peak of the pass.
+        if (!tinyusdz::CompositeReferencesInPlace(resolver,
+                std::make_unique<tinyusdz::Layer>(std::move(src_layer)), &tmp,
+                &warn_, &error_, references_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_payload()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_, payload_options)) return false;
+        if (!tinyusdz::CompositePayloadInPlace(resolver,
+                std::make_unique<tinyusdz::Layer>(std::move(src_layer)), &tmp,
+                &warn_, &error_, payload_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_inherits()) {
@@ -9101,6 +9124,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
+      .function("releaseSourceLayer",
+                &TinyUSDZLoaderNative::releaseSourceLayer)
       .function("reset",
                 &TinyUSDZLoaderNative::reset)
       .function("getMemoryStats",

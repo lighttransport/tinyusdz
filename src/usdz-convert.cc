@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <deque>
 #include <fstream>
@@ -692,8 +693,11 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_references()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, warn, err,
-                                         references_options)) {
+      // InPlace: consumes src_layer (no internal arcs) instead of holding
+      // input + output copies — halves the peak of the pass.
+      if (!tinyusdz::CompositeReferencesInPlace(
+              resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
+              warn, err, references_options)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -702,8 +706,9 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_payload()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, warn, err,
-                                      payload_options)) {
+      if (!tinyusdz::CompositePayloadInPlace(
+              resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
+              warn, err, payload_options)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -800,6 +805,94 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 // Process one texture's bytes: optionally decode -> resize -> re-encode.
 // On success fills `out_bytes` and `out_ext` (lowercase, no dot) and sets the
 // resize/reencode flags. Falls back to passthrough on decode failure.
+// Bounded producer/consumer pool for texture jobs. `produce(job)` runs on the
+// calling thread (asset resolvers are not thread-safe) at most 2*num_threads
+// jobs ahead of the workers' `run(job)`, so peak memory holds a window of
+// in-flight source buffers instead of the whole texture set. Returns false
+// when `produce` reports a hard error (workers are drained first).
+template <typename Job, typename ProduceFn, typename RunFn>
+bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
+                           const ProduceFn &produce, const RunFn &run) {
+  size_t num_threads =
+      (num_threads_option > 0)
+          ? size_t(num_threads_option)
+          : size_t((std::max)(1u, std::thread::hardware_concurrency()));
+  num_threads = (std::min)(num_threads, jobs.size());
+
+  if (num_threads <= 1) {
+    for (Job &job : jobs) {
+      if (!produce(job)) {
+        return false;
+      }
+      run(job);
+    }
+    return true;
+  }
+
+  const size_t window = num_threads * 2;
+  std::mutex mtx;
+  std::condition_variable cv;
+  size_t produced = 0;   // jobs whose bytes are ready
+  size_t completed = 0;  // jobs workers have finished
+  std::atomic<size_t> next_job{0};
+  bool produce_failed = false;
+
+  std::vector<std::thread> workers;
+  workers.reserve(num_threads);
+  for (size_t t = 0; t < num_threads; t++) {
+    workers.emplace_back([&]() {
+      while (true) {
+        size_t idx = next_job.fetch_add(1);
+        if (idx >= jobs.size()) {
+          break;
+        }
+        {
+          std::unique_lock<std::mutex> lock(mtx);
+          cv.wait(lock, [&] { return produced > idx || produce_failed; });
+          if (idx >= produced) {
+            break;  // producer bailed before reaching this job
+          }
+        }
+        run(jobs[idx]);
+        {
+          std::lock_guard<std::mutex> lock(mtx);
+          completed++;
+        }
+        cv.notify_all();
+      }
+    });
+  }
+
+  bool ok = true;
+  for (size_t i = 0; i < jobs.size() && ok; i++) {
+    {
+      std::unique_lock<std::mutex> lock(mtx);
+      cv.wait(lock, [&] { return produced - completed < window; });
+    }
+    ok = produce(jobs[i]);
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      if (ok) {
+        produced++;
+      } else {
+        produce_failed = true;
+      }
+    }
+    cv.notify_all();
+  }
+  if (!ok) {
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      produce_failed = true;
+    }
+    cv.notify_all();
+  }
+  for (std::thread &worker : workers) {
+    worker.join();
+  }
+  return ok;
+}
+
 bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
                     const std::string &src_ext_lower,
                     const UsdzConvertOptions &opts, const std::string &uri,
@@ -1307,6 +1400,8 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     std::string src_ext;
     // refs (package_index, authored_path) to remap to this job's result
     std::vector<std::pair<size_t, std::string>> refs;
+    size_t package_index{0};  // for the lazy phase-2 read (base_dir)
+    bool skipped{false};      // unreadable-but-safe path; left as missing ref
     // results (phase 2)
     std::vector<uint8_t> out_bytes;
     std::string out_ext;
@@ -1359,83 +1454,69 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
       archive_name = SanitizeArchiveName(ref.authored_path);
     }
 
-    std::vector<uint8_t> src_bytes;
-    std::string rerr;
-    if (!ReadAssetBytesWithBase(resolver, ref.authored_path,
-                                packages[ref.package_index].base_dir,
-                                &src_bytes, warn, &rerr)) {
-      const std::string missing_ref =
-          SafeMissingArchiveReference(ref.authored_path, search_paths);
-      if (missing_ref.empty()) {
-        if (err) {
-          *err = "Unsafe texture path could not be packed: " +
-                 ref.authored_path + " (" + rerr + ")";
-        }
-        return false;
-      }
-      texture_remaps[ref.package_index][ref.authored_path] = missing_ref;
-      if (warn) {
-        *warn += "Skipping unreadable texture '" + ref.authored_path + "': " +
-                 rerr + "\n";
-      }
-      continue;
-    }
-
     TextureJob job;
     job.authored_path = ref.authored_path;
     job.source_path = ref.source_path;
+    job.package_index = ref.package_index;
     job.archive_name = std::move(archive_name);
-    job.src_bytes = std::move(src_bytes);
+    // Asset bytes are read lazily by the phase-2 producer (bounded window).
     job.src_ext = to_lower(io::GetFileExtension(ref.authored_path));
     job.refs.emplace_back(ref.package_index, ref.authored_path);
     source_to_job[ref.source_path] = jobs.size();
     jobs.push_back(std::move(job));
   }
 
-  // Phase 2: decode/resize/encode in parallel.
+  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
+  // (the resolver is not thread-safe), workers decode/resize/encode; at most
+  // 2*num_threads source buffers are in flight.
   {
-    size_t num_threads = (options.num_threads > 0)
-                             ? size_t(options.num_threads)
-                             : size_t((std::max)(
-                                   1u, std::thread::hardware_concurrency()));
-    num_threads = (std::min)(num_threads, jobs.size());
-
     auto run_job = [&options](TextureJob &job) {
+      if (job.skipped) {
+        return;
+      }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options,
                               job.authored_path, &job.out_bytes, &job.out_ext,
                               &job.resized, &job.reencoded, &job.pwarn);
-      // Source bytes are no longer needed; free them as we go so peak memory
-      // stays bounded by in-flight jobs, not the whole texture set.
       std::vector<uint8_t>().swap(job.src_bytes);
     };
 
-    if (num_threads <= 1) {
-      for (TextureJob &job : jobs) {
-        run_job(job);
-      }
-    } else {
-      std::atomic<size_t> next_job{0};
-      std::vector<std::thread> workers;
-      workers.reserve(num_threads);
-      for (size_t t = 0; t < num_threads; t++) {
-        workers.emplace_back([&]() {
-          while (true) {
-            size_t idx = next_job.fetch_add(1);
-            if (idx >= jobs.size()) {
-              break;
-            }
-            run_job(jobs[idx]);
+    auto produce_job = [&](TextureJob &job) -> bool {
+      std::string rerr;
+      if (!ReadAssetBytesWithBase(resolver, job.authored_path,
+                                  packages[job.package_index].base_dir,
+                                  &job.src_bytes, warn, &rerr)) {
+        const std::string missing_ref =
+            SafeMissingArchiveReference(job.authored_path, search_paths);
+        if (missing_ref.empty()) {
+          if (err) {
+            *err = "Unsafe texture path could not be packed: " +
+                   job.authored_path + " (" + rerr + ")";
           }
-        });
+          return false;
+        }
+        for (const auto &r : job.refs) {
+          texture_remaps[r.first][r.second] = missing_ref;
+        }
+        if (warn) {
+          *warn += "Skipping unreadable texture '" + job.authored_path + "': " +
+                   rerr + "\n";
+        }
+        job.skipped = true;
       }
-      for (std::thread &worker : workers) {
-        worker.join();
-      }
+      return true;
+    };
+
+    if (!RunBoundedTextureJobs(jobs, options.num_threads, produce_job,
+                               run_job)) {
+      return false;
     }
   }
 
   // Phase 3: archive naming, stats and remaps, deterministically in job order.
   for (TextureJob &job : jobs) {
+    if (job.skipped) {
+      continue;  // unreadable; already warned + safe missing reference left
+    }
     if (!job.ok) {
       if (warn) {
         *warn += "Failed to process texture " + job.authored_path + "\n";
@@ -1840,6 +1921,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     std::vector<uint8_t> src_bytes;
     std::string src_ext;
     bool needs_process{false};  // false: out_* prefilled (budget mode)
+    bool skipped{false};        // unreadable-but-safe path; left as missing ref
     // results
     std::vector<uint8_t> out_bytes;
     std::string out_ext;
@@ -1894,25 +1976,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       job.ok = true;
     } else {
       job.src_ext = to_lower(io::GetFileExtension(orig));
-      std::string rerr;
-      if (!ReadAssetBytes(resolver, orig, &job.src_bytes, warn, &rerr)) {
-        const std::string missing_ref =
-            SafeMissingArchiveReference(orig, search_paths);
-        if (missing_ref.empty()) {
-          if (err) {
-            (*err) = "Unsafe texture path could not be packed: " + orig +
-                     " (" + rerr + ")";
-          }
-          return false;
-        }
-        path_to_archive[orig] = missing_ref;
-        if (warn) {
-          (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
-        }
-        // Leave safe missing references untouched instead of creating broken
-        // sanitized references to assets that are not present in the archive.
-        continue;
-      }
+      // Asset bytes are read lazily by the phase-2 producer (bounded window)
+      // so peak memory holds a handful of textures, not the whole set.
       job.needs_process = true;
     }
 
@@ -1920,53 +1985,57 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     texture_jobs.push_back(std::move(job));
   }
 
-  // Phase 2: decode/resize/encode in parallel.
+  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
+  // (the resolver is not thread-safe), workers decode/resize/encode; at most
+  // 2*num_threads source buffers are in flight.
   {
-    size_t num_threads = (options.num_threads > 0)
-                             ? size_t(options.num_threads)
-                             : size_t((std::max)(
-                                   1u, std::thread::hardware_concurrency()));
-    num_threads = (std::min)(num_threads, texture_jobs.size());
-
     auto run_job = [&options](FlattenTextureJob &job) {
-      if (!job.needs_process) {
-        return;  // budget mode prefilled the result
+      if (!job.needs_process || job.skipped) {
+        return;  // budget mode prefilled the result, or the read was skipped
       }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options, job.orig,
                               &job.out_bytes, &job.out_ext, &job.resized,
                               &job.reencoded, &job.pwarn);
-      // Source bytes are no longer needed; free them as we go so peak memory
-      // stays bounded by in-flight jobs, not the whole texture set.
       std::vector<uint8_t>().swap(job.src_bytes);
     };
 
-    if (num_threads <= 1) {
-      for (FlattenTextureJob &job : texture_jobs) {
-        run_job(job);
+    // Returns false only on the hard "unsafe path" error; unreadable-but-safe
+    // paths mark the job skipped (reference left pointing at the missing name).
+    auto produce_job = [&](FlattenTextureJob &job) -> bool {
+      if (!job.needs_process) {
+        return true;
       }
-    } else {
-      std::atomic<size_t> next_job{0};
-      std::vector<std::thread> workers;
-      workers.reserve(num_threads);
-      for (size_t t = 0; t < num_threads; t++) {
-        workers.emplace_back([&]() {
-          while (true) {
-            size_t idx = next_job.fetch_add(1);
-            if (idx >= texture_jobs.size()) {
-              break;
-            }
-            run_job(texture_jobs[idx]);
+      std::string rerr;
+      if (!ReadAssetBytes(resolver, job.orig, &job.src_bytes, warn, &rerr)) {
+        const std::string missing_ref =
+            SafeMissingArchiveReference(job.orig, search_paths);
+        if (missing_ref.empty()) {
+          if (err) {
+            (*err) = "Unsafe texture path could not be packed: " + job.orig +
+                     " (" + rerr + ")";
           }
-        });
+          return false;
+        }
+        path_to_archive[job.orig] = missing_ref;
+        if (warn) {
+          (*warn) += "Skipping unreadable texture '" + job.orig + "': " + rerr + "\n";
+        }
+        job.skipped = true;
       }
-      for (std::thread &worker : workers) {
-        worker.join();
-      }
+      return true;
+    };
+
+    if (!RunBoundedTextureJobs(texture_jobs, options.num_threads, produce_job,
+                               run_job)) {
+      return false;
     }
   }
 
   // Phase 3: archive naming, stats and remaps, deterministically in job order.
   for (FlattenTextureJob &job : texture_jobs) {
+    if (job.skipped) {
+      continue;  // unreadable; already warned + safe missing reference left
+    }
     if (!job.ok) {
       if (warn) (*warn) += "Failed to process texture " + job.orig + "\n";
       continue;
