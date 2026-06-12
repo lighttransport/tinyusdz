@@ -68,6 +68,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.backend_name = "OpenGL";
   caps_.usesZeroToOneDepth = false;
   caps_.flipViewportV = true;
+  caps_.supportsGpuSkinning = true;
 
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);
@@ -89,11 +90,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
+  uSkinningEnabled_ = glGetUniformLocation(program_, "uSkinningEnabled");
   // Fixed sampler -> texture-unit bindings.
   glUniform1i(glGetUniformLocation(program_, "uBaseColorTex"), 0);
   glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
+  glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -104,6 +107,21 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glBindTexture(GL_TEXTURE_2D, 0);
+
+  glGenTextures(1, &boneTex_);
+  glBindTexture(GL_TEXTURE_2D, boneTex_);
+  const float ident[16] = {
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1};
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 1, 0, GL_RGBA, GL_FLOAT, ident);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  boneTexHeight_ = 1;
 
   // Unlit, vertex-colored line program for debug helpers (grid/axes/bbox).
   {
@@ -151,6 +169,8 @@ bool GLRenderer::initImGui(std::string* err) {
 void GLRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.ebo) glDeleteBuffers(1, &m.ebo);
+    if (m.weightVbo) glDeleteBuffers(1, &m.weightVbo);
+    if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -208,11 +228,35 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   textures_[static_cast<size_t>(slot)] = tex;
 }
 
+void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
+  if (!boneTex_) return;
+  const bool valid = skin.enabled && skin.matrixCount > 0 &&
+                     skin.rgba32f.size() >= static_cast<size_t>(skin.matrixCount) * 16;
+  skinningFrameEnabled_ = valid;
+  const int h = valid ? skin.matrixCount : 1;
+  const float ident[16] = {
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1};
+  const float* data = valid ? skin.rgba32f.data() : ident;
+  glBindTexture(GL_TEXTURE_2D, boneTex_);
+  if (h != boneTexHeight_) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, h, 0, GL_RGBA, GL_FLOAT, data);
+    boneTexHeight_ = h;
+  } else {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, h, GL_RGBA, GL_FLOAT, data);
+  }
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
   gm.doubleSided = sm.doubleSided;
+  gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
+               sm.jointWt.size() == sm.vertices.size() * 4;
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);
@@ -233,6 +277,27 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  if (gm.skinned) {
+    glGenBuffers(1, &gm.jointVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
+                 sm.jointIdx.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glGenBuffers(1, &gm.weightVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
+                 sm.jointWt.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+  } else {
+    glDisableVertexAttribArray(3);
+    glDisableVertexAttribArray(4);
+    glVertexAttribI4ui(3, 0, 0, 0, 0);
+    glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
+  }
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -290,6 +355,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniformMatrix3fv(uNormalMat_, 1, GL_FALSE, nmat);
+    glUniform1i(uSkinningEnabled_, (mesh.skinned && skinningFrameEnabled_) ? 1 : 0);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
 
     if (mesh.doubleSided || wireframe) {
       glDisable(GL_CULL_FACE);
@@ -377,6 +445,9 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     light3d::Mat4 MVP = P * V * W;
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
+    glUniform1i(uSkinningEnabled_, (mesh.skinned && skinningFrameEnabled_) ? 1 : 0);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
     glUniform3f(uBaseColor_, 0, 0, 0);
     glUniform3fv(uEmissive_, 1, orange);
     glUniform1f(uAlpha_, 1.f);
@@ -514,6 +585,7 @@ bool GLRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
 void GLRenderer::shutdown() {
   destroyScene();
   if (whiteTex_) { glDeleteTextures(1, &whiteTex_); whiteTex_ = 0; }
+  if (boneTex_) { glDeleteTextures(1, &boneTex_); boneTex_ = 0; }
   if (colorTex_) { glDeleteTextures(1, &colorTex_); colorTex_ = 0; }
   if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }

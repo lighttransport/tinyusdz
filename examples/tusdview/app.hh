@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -81,6 +82,7 @@ class App
   // Request the Vulkan ray-tracing technique at startup (honored only when the
   // device supports it; otherwise the viewer stays on rasterization).
   void setRequestRayTracing(bool on) { rtRequested_ = on; }
+  void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
 
   // Write a PPM of the full composited window after the last frame (QA).
   void setWindowShot(const std::string& path) { windowShot_ = path; }
@@ -103,6 +105,7 @@ class App
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -138,6 +141,10 @@ class App
   // Read the time range (start/end/fps) from the freshly loaded scene; resets
   // playback to a paused state at the start time.
   void readAnimationRange();
+  void updateSkinningEffective();
+  void updateGpuSkinningFrameIfNeeded();
+  bool wantsGpuSkinningLoad() const;
+  const char* skinningModeName(SkinningMode mode) const;
   // Advance the playback clock by `dtSec` and request a re-evaluation at the new
   // time (called once per frame while playing).
   void advancePlayback(float dtSec);
@@ -172,6 +179,13 @@ class App
   // renderer reports capability (drives the RT-friendly conversion config).
   bool rtRequested_{false};
   bool rtPath_{false};
+
+  SkinningMode skinningRequested_{SkinningMode::Auto};
+  SkinningMode skinningEffective_{SkinningMode::CPU};
+  std::string skinningReason_{"CPU path"};
+  SkinningFrameCPU skinFrame_;
+  double skinFrameTime_{std::numeric_limits<double>::quiet_NaN()};
+  bool lastRtActiveForSkinning_{false};
 
   // Async loading
   std::thread loadThread_;

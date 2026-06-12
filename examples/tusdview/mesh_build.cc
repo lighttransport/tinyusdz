@@ -2,8 +2,10 @@
 #include "mesh_build.hh"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <unordered_map>
 
@@ -78,6 +80,53 @@ int MapWrap(tydra::UVTexture::WrapMode w) {
 bool IsSrgb(tydra::ColorSpace cs) {
   return cs == tydra::ColorSpace::sRGB || cs == tydra::ColorSpace::sRGB_Texture ||
          cs == tydra::ColorSpace::sRGB_DisplayP3;
+}
+
+bool MeshHasSkinData(const tydra::RenderMesh& mesh, size_t pointCount) {
+  const auto& jw = mesh.joint_and_weights;
+  if (mesh.skel_id < 0 || jw.elementSize < 1) return false;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  return jw.jointIndices.size() == pointCount * infl &&
+         jw.jointWeights.size() == pointCount * infl;
+}
+
+void SetIdentity4(float out[16]) {
+  matrix4d ident = matrix4d::identity();
+  MatToColMajor(ident, out);
+}
+
+void WriteSkinVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
+                     size_t dstVertex, DrawMeshCPU* dm) {
+  if (!dm || dm->jointIdx.empty() || dm->jointWt.empty()) return;
+  const auto& jw = mesh.joint_and_weights;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  if (srcPoint >= mesh.points.size()) return;
+  const size_t src = srcPoint * infl;
+  if (src + infl > jw.jointIndices.size() || src + infl > jw.jointWeights.size()) {
+    return;
+  }
+  std::array<std::pair<float, uint32_t>, 4> top{};
+  for (auto& v : top) v = {0.0f, 0u};
+  for (size_t k = 0; k < infl; ++k) {
+    const float w = jw.jointWeights[src + k];
+    const int ji = jw.jointIndices[src + k];
+    if (w <= 0.0f || ji < 0) continue;
+    const uint32_t j = static_cast<uint32_t>(ji);
+    for (size_t slot = 0; slot < top.size(); ++slot) {
+      if (w > top[slot].first) {
+        for (size_t m = top.size() - 1; m > slot; --m) top[m] = top[m - 1];
+        top[slot] = {w, j};
+        break;
+      }
+    }
+  }
+  float sum = 0.0f;
+  for (const auto& v : top) sum += v.first;
+  const size_t dst = dstVertex * 4;
+  for (size_t k = 0; k < 4; ++k) {
+    dm->jointIdx[dst + k] = top[k].second;
+    dm->jointWt[dst + k] = (sum > 0.0f) ? (top[k].first / sum) : 0.0f;
+  }
 }
 
 // Decode a TextureImage's buffer into an RGBA8 light3d::Image. Returns false if
@@ -266,6 +315,13 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   dm.name = mesh.prim_name;
   dm.absPath = mesh.abs_path;
   dm.doubleSided = mesh.doubleSided;
+  SetIdentity4(dm.skinGeomBind);
+  dm.skelId = mesh.skel_id;
+  if (MeshHasSkinData(mesh, nPoints)) {
+    dm.jointIdx.assign(nPoints * 4, 0u);
+    dm.jointWt.assign(nPoints * 4, 0.0f);
+    MatToColMajor(mesh.joint_and_weights.geomBindTransform, dm.skinGeomBind);
+  }
 
   // Primary texcoord slot (0 if present, else the first available).
   const tydra::VertexAttribute* uvAttr = nullptr;
@@ -298,12 +354,17 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
+      WriteSkinVertex(mesh, i, i, &dm);
     }
     dm.indices.assign(srcIndices.begin(), srcIndices.end());
     gotNormals = normalsPerVertex;
   } else {
     // Facevarying fallback: expand one vertex per face-vertex.
     dm.vertices.resize(srcIndices.size());
+    if (MeshHasSkinData(mesh, nPoints)) {
+      dm.jointIdx.assign(srcIndices.size() * 4, 0u);
+      dm.jointWt.assign(srcIndices.size() * 4, 0.0f);
+    }
     dm.indices.resize(srcIndices.size());
     const bool normalsFV = !mesh.normals.empty() && mesh.normals.is_facevarying();
     const bool uvFV = uvAttr && !uvAttr->empty() && uvAttr->is_facevarying();
@@ -328,6 +389,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
+      if (pidx < nPoints) WriteSkinVertex(mesh, pidx, k, &dm);
       dm.indices[k] = static_cast<uint32_t>(k);
     }
   }
@@ -455,12 +517,52 @@ void ComputeSceneBounds(DrawScene* out) {
   out->hasBounds = !first;
 }
 
+void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
+  if (!out) return;
+  int nextMatrix = 0;
+  for (DrawMeshCPU& dm : out->meshes) {
+    const bool hasAttribs =
+        !dm.jointIdx.empty() && !dm.jointWt.empty() &&
+        dm.jointIdx.size() == dm.vertices.size() * 4 &&
+        dm.jointWt.size() == dm.vertices.size() * 4;
+    if (!hasAttribs || dm.skelId < 0 ||
+        static_cast<size_t>(dm.skelId) >= rs.skeletons.size()) {
+      dm.jointIdx.clear();
+      dm.jointWt.clear();
+      dm.skelId = -1;
+      dm.skinMatrixBase = -1;
+      continue;
+    }
+    const size_t nj = rs.skeletons[static_cast<size_t>(dm.skelId)].num_joints();
+    if (nj == 0 || nj > static_cast<size_t>(std::numeric_limits<int>::max() - nextMatrix)) {
+      dm.jointIdx.clear();
+      dm.jointWt.clear();
+      dm.skelId = -1;
+      dm.skinMatrixBase = -1;
+      continue;
+    }
+    dm.skinMatrixBase = nextMatrix;
+    for (uint32_t& j : dm.jointIdx) {
+      if (j < nj) {
+        j += static_cast<uint32_t>(dm.skinMatrixBase);
+      } else {
+        j = static_cast<uint32_t>(dm.skinMatrixBase);
+      }
+    }
+    nextMatrix += static_cast<int>(nj);
+  }
+  out->boneMatrixCount = nextMatrix;
+}
+
 // Returns true if adding `dm` would exceed the triangle / vertex-byte budget.
 bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
                 const DrawMeshCPU& dm, const LoadControl& ctrl) {
   const size_t thisTris = dm.indices.size() / 3;
   const size_t estBytes =
-      dm.vertices.size() * sizeof(DrawVertex) + dm.indices.size() * sizeof(uint32_t);
+      dm.vertices.size() * sizeof(DrawVertex) +
+      dm.jointIdx.size() * sizeof(uint32_t) +
+      dm.jointWt.size() * sizeof(float) +
+      dm.indices.size() * sizeof(uint32_t);
   return out.triangleCount + thisTris > ctrl.maxTriangles ||
          cumulativeVertexBytes + estBytes > ctrl.maxVertexBytes;
 }
@@ -514,11 +616,15 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out, LoadControl* c
     PlaceDrawMesh(&dm, world);
 
     cumulativeVertexBytes +=
-        dm.vertices.size() * sizeof(DrawVertex) + dm.indices.size() * sizeof(uint32_t);
+        dm.vertices.size() * sizeof(DrawVertex) +
+        dm.jointIdx.size() * sizeof(uint32_t) +
+        dm.jointWt.size() * sizeof(float) +
+        dm.indices.size() * sizeof(uint32_t);
     out->triangleCount += dm.indices.size() / 3;
     out->meshes.push_back(std::move(dm));
   }
 
+  FinalizeSkinningLayout(rs, out);
   ComputeSceneBounds(out);
 }
 
@@ -555,7 +661,10 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     if (out->truncated) return true;  // skip building further draw meshes
 
     cumulativeVertexBytes +=
-        dm.vertices.size() * sizeof(DrawVertex) + dm.indices.size() * sizeof(uint32_t);
+        dm.vertices.size() * sizeof(DrawVertex) +
+        dm.jointIdx.size() * sizeof(uint32_t) +
+        dm.jointWt.size() * sizeof(float) +
+        dm.indices.size() * sizeof(uint32_t);
     out->triangleCount += dm.indices.size() / 3;
     rsMeshToDraw[index] = static_cast<int>(out->meshes.size());
     out->meshes.push_back(std::move(dm));
@@ -589,6 +698,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     for (size_t i = 0; i < out->meshes.size(); ++i) {
       if (!placed[i]) PlaceDrawMesh(&out->meshes[i], ident);
     }
+    FinalizeSkinningLayout(scene, out);
     ComputeSceneBounds(out);
     return true;
   };
