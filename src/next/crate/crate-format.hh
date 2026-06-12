@@ -26,9 +26,13 @@ constexpr uint8_t kCrateMinVersionMajor = 0;
 constexpr uint8_t kCrateMinVersionMinor = 4;
 constexpr uint8_t kCrateMinVersionPatch = 0;
 
-/// Maximum supported version
+/// Maximum supported version.
+/// 0.10.0 only ADDS timecode/timecode[] value types over 0.9.0 (structural
+/// sections unchanged), so accepting it is safe: the new type ids simply
+/// surface as unsupported values if actually authored. (UE 5.6 exports write
+/// 0.10.0.)
 constexpr uint8_t kCrateMaxVersionMajor = 0;
-constexpr uint8_t kCrateMaxVersionMinor = 9;
+constexpr uint8_t kCrateMaxVersionMinor = 10;
 constexpr uint8_t kCrateMaxVersionPatch = 0;
 
 /// Bootstrap header size
