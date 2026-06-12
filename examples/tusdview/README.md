@@ -33,12 +33,16 @@ displays it with an ImGui docking UI.
   conversion sustains and never blocks the UI). Re-evaluation skips texture decode
   (`load_texture_assets=false`) and reuses the initial load's materials/textures,
   so only geometry/transforms are rebuilt. This animates **time-sampled
-  transforms** (`xformOp` timeSamples) and **deforming meshes** (time-sampled
-  `points`); **value clips** resolve through the same path. _Skeletal /
-  blendshape animation is not yet shown_ — Tydra delivers the rest-pose mesh plus
-  separate skinning data, and the viewer does not yet apply skinning. For a
-  static frame at a specific time (e.g. a headless screenshot), use
-  `--time CODE` (alias `--frame`).
+  transforms** (`xformOp` timeSamples), **deforming meshes** (time-sampled
+  `points`), **value clips**, and **skeletal + blendshape animation**.
+  Skinning is applied on the **CPU** (`skinning.cc`): Tydra delivers the
+  rest-pose mesh plus skeleton/animation data, then each posed frame the viewer
+  evaluates joint transforms (and blendshape weights, read from the stage's
+  `SkelAnimation` since Tydra does not emit them) and runs linear-blend skinning
+  (`SkinPointsLBS`) over the rest points — normals are regenerated from the
+  posed geometry. For a static frame at a specific time (e.g. a headless
+  screenshot), use `--time CODE` (alias `--frame`), which bakes the posed
+  geometry too.
 
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional
