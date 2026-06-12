@@ -65,6 +65,10 @@ struct CrateWriteResult {
   /// (byte pass-through) vs. arrays decoded and re-encoded.
   size_t arrays_passed_through = 0;
   size_t arrays_reencoded = 0;
+
+  /// VALUE blocks elided because an identical-bytes block was already written
+  /// (cross-spec content dedup).
+  size_t blocks_deduped = 0;
 };
 
 /// Crate file writer
