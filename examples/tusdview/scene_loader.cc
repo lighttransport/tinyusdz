@@ -3,9 +3,11 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 
 #include "composition.hh"
 #include "mesh_build.hh"
+#include "skinning.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data-converter.hh"
 
@@ -393,6 +395,23 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
 bool ConvertStageToScene(const std::string& path, double timecode,
                          LoadedScene* out, DrawScene* draw, bool rtPath,
                          LoadControl* ctrl) {
+  // When loading at a concrete time code (e.g. --time for a headless screenshot
+  // of an animated frame), use the two-phase convert→deform→pack path so
+  // skeletal/blendshape geometry is posed. The default (NaN) interactive load
+  // keeps the streaming path for progressive UI (rest pose; playback deforms
+  // via RenderSceneAtTime).
+  if (draw && std::isfinite(timecode)) {
+    if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
+                                 /*loadTextures=*/true, &out->render,
+                                 /*draw=*/nullptr, &out->warn, &out->err,
+                                 ctrl)) {
+      return false;
+    }
+    DeformSkinnedMeshes(out->stage, out->render, timecode);
+    BuildDrawScene(out->render, draw, ctrl);
+    out->ok = true;
+    return true;
+  }
   if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
                                /*loadTextures=*/true, &out->render, draw,
                                &out->warn, &out->err, ctrl)) {
@@ -467,13 +486,20 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
                        LoadControl* ctrl) {
   if (draw) *draw = DrawScene{};
-  // Discard the rebuilt RenderScene (geometry flows through `draw`); textures
-  // are not re-decoded (loadTextures=false), so the caller keeps the initial
-  // load's textures/materials.
+  // Convert the scene at `timecode` WITHOUT packing (draw=nullptr): node
+  // transforms / time-sampled points / value clips are resolved by Tydra, but
+  // skeletal skinning and blendshapes are not. Deform the rest-pose meshes on
+  // the CPU, then pack the posed geometry. Textures are not re-decoded
+  // (loadTextures=false), so the caller keeps the initial load's textures.
   tinyusdz::tydra::RenderScene scratch;
-  return ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
-                                 rtPath, /*loadTextures=*/false, &scratch, draw,
-                                 warn, err, ctrl);
+  if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
+                               rtPath, /*loadTextures=*/false, &scratch,
+                               /*draw=*/nullptr, warn, err, ctrl)) {
+    return false;
+  }
+  DeformSkinnedMeshes(src.stage, scratch, timecode);
+  BuildDrawScene(scratch, draw, ctrl);
+  return true;
 }
 
 }  // namespace tusdview
