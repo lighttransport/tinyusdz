@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
+  bool deferReferences = false;           // --defer-references (explicit opt-in)
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) {
@@ -74,6 +75,8 @@ int main(int argc, char** argv) {
       deferPayloads = true;
     } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
       deferPayloads = false;
+    } else if (std::strcmp(argv[i], "--defer-references") == 0) {
+      deferReferences = true;
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
@@ -90,7 +93,8 @@ int main(int argc, char** argv) {
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
           "[--screenshot out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
-          "                [--no-composition] [--defer-payloads | --load-payloads]\n"
+          "                [--no-composition] [--defer-payloads | --load-payloads] "
+          "[--defer-references]\n"
           "                [--headless] [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
@@ -104,6 +108,9 @@ int main(int argc, char** argv) {
           "demand from the GUI (default for interactive runs).\n"
           "  --load-payloads   Compose payload arcs eagerly (default for "
           "--frames/headless runs).\n"
+          "  --defer-references  Also defer `references` arcs (loaded on demand "
+          "like payloads). Non-standard: USD assumes references always resolve, "
+          "so most scene content stays unloaded until requested.\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n");
@@ -179,6 +186,9 @@ int main(int argc, char** argv) {
     const bool defer = deferPayloads.value_or(maxFrames < 0 && !headless);
     lo.payloadPolicy = defer ? tusdview::PayloadPolicy::DeferAll
                              : tusdview::PayloadPolicy::LoadAll;
+    // Explicit opt-in only (no headless default flip): deferring references is
+    // non-standard, so honor the flag verbatim even for --frames runs.
+    lo.deferReferences = deferReferences;
     app.setLoadOptions(lo);
   }
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);

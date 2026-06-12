@@ -50,14 +50,17 @@ bool LayerHasCompositionArcs(const tinyusdz::Layer& layer) {
 bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
                          tinyusdz::Layer&& src, const LoadOptions& opts,
                          tinyusdz::Layer* composed,
-                         std::vector<DeferredPayload>* deferred,
+                         std::vector<DeferredArc>* deferred,
                          std::string* warn, std::string* err,
                          LoadControl* ctrl) {
+  // One whitelist drives both arc types: a whitelisted prim path loads its
+  // payloads and (when deferred) its references.
+  const std::set<std::string>* whitelist =
+      (opts.payloadPolicy == PayloadPolicy::Whitelist) ? &opts.payloadWhitelist
+                                                       : nullptr;
+
   tinyusdz::PayloadCompositionOptions pl_opts;
   if (opts.payloadPolicy != PayloadPolicy::LoadAll) {
-    const std::set<std::string>* whitelist =
-        (opts.payloadPolicy == PayloadPolicy::Whitelist) ? &opts.payloadWhitelist
-                                                         : nullptr;
     pl_opts.load_policy = [whitelist, deferred](
                               const tinyusdz::Path& prim_path,
                               const tinyusdz::Payload& payload) -> bool {
@@ -65,7 +68,21 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
       if (whitelist && whitelist->count(p)) {
         return true;
       }
-      deferred->push_back({p, payload.asset_path.GetAssetPath()});
+      deferred->push_back({p, payload.asset_path.GetAssetPath(), "payload"});
+      return false;
+    };
+  }
+
+  tinyusdz::ReferencesCompositionOptions ref_opts;
+  if (opts.deferReferences) {
+    ref_opts.load_policy = [whitelist, deferred](
+                               const tinyusdz::Path& prim_path,
+                               const tinyusdz::Reference& reference) -> bool {
+      const std::string p = prim_path.full_path_name();
+      if (whitelist && whitelist->count(p)) {
+        return true;
+      }
+      deferred->push_back({p, reference.asset_path.GetAssetPath(), "reference"});
       return false;
     };
   }
@@ -84,7 +101,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
     if (work.check_unresolved_references()) {
       has_unresolved = true;
       tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err)) {
+      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err,
+                                         ref_opts)) {
         return false;
       }
       work = std::move(tmp);

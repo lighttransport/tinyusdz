@@ -100,6 +100,27 @@ struct ReferencesCompositionOptions {
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
   bool allow_parent_relative_paths{false};
+
+  ///
+  /// Lazy reference resolution policy (mirrors
+  /// PayloadCompositionOptions::load_policy).
+  ///
+  /// When set, this callback is called before resolving each `references` arc.
+  /// Return true to resolve the reference, false to skip it (deferred).
+  ///
+  /// Parameters:
+  ///   prim_path  — The path of the prim that has the reference arc
+  ///   reference  — The Reference descriptor (asset path, prim path, layer offset)
+  ///
+  /// When nullptr (default), all references are resolved eagerly.
+  ///
+  /// NOTE: unlike `payload`, USD semantics assume references are always
+  /// resolved — skipping one also skips its implied inherits/specializes
+  /// propagation and typeName resolution. Intended for viewers that recompose
+  /// from a retained layer later (CompositeReferences strips the reference
+  /// metadata even for skipped arcs).
+  ///
+  std::function<bool(const Path &prim_path, const Reference &reference)> load_policy;
 };
 
 struct PayloadCompositionOptions {

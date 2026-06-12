@@ -1200,6 +1200,13 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                                  reference.prim_path.prim_part()})) {
             continue;
           }
+          // Lazy reference: check load_policy callback
+          if (options.load_policy &&
+              !options.load_policy(dst_prim_path, reference)) {
+            DCOUT("Reference skipped by load_policy: "
+                  << reference.asset_path.GetAssetPath());
+            continue;
+          }
           Layer layer;
           const PrimSpec *src_ps{nullptr};
 
@@ -1316,6 +1323,13 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           // Skip if this reference was deleted
           if (ref_deleted.count({reference.asset_path.GetAssetPath(),
                                  reference.prim_path.prim_part()})) {
+            continue;
+          }
+          // Lazy reference: check load_policy callback
+          if (options.load_policy &&
+              !options.load_policy(dst_prim_path, reference)) {
+            DCOUT("Reference skipped by load_policy: "
+                  << reference.asset_path.GetAssetPath());
             continue;
           }
           Layer layer;
