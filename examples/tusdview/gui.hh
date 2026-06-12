@@ -36,9 +36,22 @@ class Gui {
     float elapsed{0.0f};
   };
 
+  // Current animation playback state (fed by App each frame). The viewer owns
+  // the clock; the panel displays it and emits play/stop/seek actions.
+  struct TimelineInfo {
+    bool hasAnimation{false};
+    double start{0.0};
+    double end{0.0};
+    double fps{24.0};
+    double current{0.0};
+    bool playing{false};
+    bool converting{false};  // a re-evaluation worker is running
+  };
+
   // (Re)bind the scene being viewed. Resets selection.
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
+  void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setBudget(LoadControl* b) { budget_ = b; }
 
   // Build all panels for one frame.
@@ -55,10 +68,19 @@ class Gui {
   std::vector<std::string> takePayloadLoadRequests() {
     return std::move(payloadLoadRequests_);
   }
+  // Timeline actions (consumed by App after the frame). loopPlayback()/
+  // playSpeed() are persistent toggles, not one-shot actions.
+  bool wantTogglePlay() const { return wantTogglePlay_; }
+  bool wantStop() const { return wantStop_; }
+  bool hasSeek() const { return hasSeek_; }
+  double seekTime() const { return seekTime_; }
+  bool loopPlayback() const { return loop_; }
+  float playSpeed() const { return speed_; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
     wantLoadAllPayloads_ = false;
     payloadLoadRequests_.clear();
+    wantTogglePlay_ = wantStop_ = hasSeek_ = false;
   }
 
   // Selection: set focus by absolute prim path (meshIndex < 0 = look up by path);
@@ -87,6 +109,7 @@ class Gui {
   void drawCameraPanel();
   void drawStats();
   void drawPayloads();
+  void drawTimeline();
   void drawViewport();
   void drawLoadingModal();
   void drawStageMeta();
@@ -162,6 +185,15 @@ class Gui {
   bool wantCancelLoad_{false};
   bool wantLoadAllPayloads_{false};
   std::vector<std::string> payloadLoadRequests_;
+
+  // Timeline / playback.
+  TimelineInfo timeline_;
+  bool wantTogglePlay_{false};
+  bool wantStop_{false};
+  bool hasSeek_{false};
+  double seekTime_{0.0};
+  bool loop_{true};
+  float speed_{1.0f};
   float clearColor_[4]{0.12f, 0.12f, 0.13f, 1.0f};
 
   LoadStatus loadStatus_;

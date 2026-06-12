@@ -23,6 +23,23 @@ displays it with an ImGui docking UI.
   request it. Deferred references load on demand exactly like payloads (one
   whitelist drives both: loading a prim resolves its payloads and references).
 
+- **Animation playback (Timeline panel)** — a **Timeline** panel docked along the
+  bottom of the viewport plays time-sampled scenes. It reads `startTimeCode` /
+  `endTimeCode` / `timeCodesPerSecond` from the stage and offers **Play/Pause**,
+  **Stop** (reset to start), a frame **scrubber**, **Loop** and **Speed**. The
+  viewer owns the playback clock; each new time re-evaluates the scene
+  **asynchronously** (Tydra at `env.timecode`) on the worker thread and the
+  request is **coalesced** (only one re-eval in flight — playback runs as fast as
+  conversion sustains and never blocks the UI). Re-evaluation skips texture decode
+  (`load_texture_assets=false`) and reuses the initial load's materials/textures,
+  so only geometry/transforms are rebuilt. This animates **time-sampled
+  transforms** (`xformOp` timeSamples) and **deforming meshes** (time-sampled
+  `points`); **value clips** resolve through the same path. _Skeletal /
+  blendshape animation is not yet shown_ — Tydra delivers the rest-pose mesh plus
+  separate skinning data, and the viewer does not yet apply skinning. For a
+  static frame at a specific time (e.g. a headless screenshot), use
+  `--time CODE` (alias `--frame`).
+
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional
     RenderScene-node view. The selected prim path is shown at the top, and
@@ -178,6 +195,10 @@ cmake --build build -j16 --target tusdview
 ./build/tusdview --defer-references scene.usda       # also defer references (opt-in, non-standard)
 ./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
+# Animation: scrub/play interactively from the Timeline panel, or render a
+# static frame at a specific USD time code (headless screenshot of frame 12):
+./build/tusdview --frames 4 --time 12 --screenshot frame12.ppm anim.usda
+
 # Headless full-window screenshot (UI + viewport, GL backend):
 ./build/tusdview --frames 8 --window-shot ui.ppm model.usdz
 ```
@@ -306,6 +327,7 @@ Tools (`tools/list` for schemas):
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
+| `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
 
 Example:
 

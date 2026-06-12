@@ -76,6 +76,14 @@ json App::mcpSceneInfo(const json&, std::string&) {
   out["aabb_min"] = arr3(draw_.aabbMin);
   out["aabb_max"] = arr3(draw_.aabbMax);
   if (draw_.truncated) out["truncated"] = true;
+  if (hasAnimation_) {
+    out["has_animation"] = true;
+    out["time"] = animTime_;
+    out["start_time"] = animStart_;
+    out["end_time"] = animEnd_;
+    out["fps"] = animFps_;
+    out["playing"] = animPlaying_;
+  }
   if (loaded_.comp.composed) {
     out["composed"] = true;
     out["deferred_payload_count"] = loaded_.comp.deferred.size();
@@ -107,6 +115,35 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
   }
   startRecomposeAsync(add);  // async; client polls get_scene_info
   return json{{"started", true}, {"count", add.size()}};
+}
+
+json App::mcpTimeline(const json& args, std::string& err) {
+  if (!hasAnimation_) {
+    err = "timeline: scene has no animation";
+    return json::object();
+  }
+  const std::string op = args.value("op", std::string());
+  if (op == "play") {
+    animPlaying_ = true;
+  } else if (op == "pause") {
+    animPlaying_ = false;
+  } else if (op == "stop") {
+    animPlaying_ = false;
+    animTime_ = animStart_;
+    requestReconvert(animTime_);
+  } else if (op == "seek") {
+    double t = args.value("time", animTime_);
+    if (t < animStart_) t = animStart_;
+    if (t > animEnd_) t = animEnd_;
+    animTime_ = t;
+    requestReconvert(animTime_);
+  } else {
+    err = "timeline: unknown op '" + op + "' (play|pause|stop|seek)";
+    return json::object();
+  }
+  return json{{"playing", animPlaying_}, {"time", animTime_},
+              {"start", animStart_},     {"end", animEnd_},
+              {"fps", animFps_}};
 }
 
 json App::mcpGetFocusedPrim(const json&, std::string&) {

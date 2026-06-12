@@ -149,6 +149,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawStats();
   drawPayloads();
   drawViewport();
+  drawTimeline();
   drawLoadingModal();
 }
 
@@ -196,6 +197,9 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, nullptr, &center);
   ImGuiID rightBottom =
       ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.40f, nullptr, &right);
+  // Timeline spans the bottom of the viewport column.
+  ImGuiID centerBottom =
+      ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.14f, nullptr, &center);
 
   ImGui::DockBuilderDockWindow("Hierarchy", left);
   ImGui::DockBuilderDockWindow("Stats", left);
@@ -204,6 +208,7 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderDockWindow("Stage", rightBottom);
   ImGui::DockBuilderDockWindow("Payloads", rightBottom);
   ImGui::DockBuilderDockWindow("Viewport", center);
+  ImGui::DockBuilderDockWindow("Timeline", centerBottom);
   ImGui::DockBuilderFinish(dockId);
 }
 
@@ -940,6 +945,52 @@ void Gui::drawPayloads() {
     }
     ImGui::EndTable();
   }
+  ImGui::End();
+}
+
+void Gui::drawTimeline() {
+  ImGui::Begin("Timeline");
+  if (!timeline_.hasAnimation) {
+    ImGui::TextDisabled(loaded_ && loaded_->ok
+                            ? "No animation (single time code)."
+                            : "No scene loaded.");
+    ImGui::End();
+    return;
+  }
+
+  // Transport: Play/Pause + Stop (reset to start).
+  if (ImGui::Button(timeline_.playing ? "Pause" : "Play", ImVec2(70, 0))) {
+    wantTogglePlay_ = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Stop", ImVec2(70, 0))) {
+    wantStop_ = true;
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Loop", &loop_);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(90.0f);
+  if (ImGui::InputFloat("Speed", &speed_, 0.0f, 0.0f, "%.2fx")) {
+    if (speed_ < 0.01f) speed_ = 0.01f;
+    if (speed_ > 100.0f) speed_ = 100.0f;
+  }
+  if (timeline_.converting) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("(evaluating...)");
+  }
+
+  // Scrubber over [start, end] in time codes.
+  float cur = static_cast<float>(timeline_.current);
+  const float lo = static_cast<float>(timeline_.start);
+  const float hi = static_cast<float>(timeline_.end);
+  ImGui::SetNextItemWidth(-1.0f);  // full width
+  if (ImGui::SliderFloat("##timeline_scrub", &cur, lo, hi, "frame %.2f")) {
+    hasSeek_ = true;
+    seekTime_ = static_cast<double>(cur);
+  }
+
+  ImGui::Text("%.2f / [%.1f .. %.1f]  @ %.2f tps", timeline_.current,
+              timeline_.start, timeline_.end, timeline_.fps);
   ImGui::End();
 }
 
