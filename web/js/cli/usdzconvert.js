@@ -55,14 +55,18 @@ Convert options:
   --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
   --url-list <file.json>   Streaming source as URLs: [{key,url}...], [url...],
                            or {baseUrl, files}. Implies network fetch per asset.
-  --pipeline <legacy|next|stream> Flatten pipeline (default: legacy).
+  --pipeline <legacy|next|stream|stream-next> Flatten pipeline (default: legacy).
                            'stream': lazy folder/url-list source — USD layers
                            only in memory; textures fetched->processed->
                            zip-appended one at a time (lowest peak RSS;
                            requires -o and flatten). 'next' uses the
                            experimental low-memory lazy-ValueRep path for a single
                            .usdz with a top-level USDC root; falls back to legacy
-                           otherwise. Also via TINYUSDZ_PIPELINE env.
+                           otherwise. 'stream-next': the stream source combined
+                           with the next multi-asset compose+flatten in wasm
+                           (USDC layers only, --texture-format keep); falls back
+                           to the legacy stream compose when the input doesn't
+                           qualify. Also via TINYUSDZ_PIPELINE env.
   --stream-textures        Re-encode/resize textures one at a time and repack in
                            JS, so decoded images never accumulate in the WASM
                            heap. This is the DEFAULT for a single .usdz with
@@ -265,6 +269,8 @@ async function runStreamingConvert(native, o) {
       pngEncoder: o.pngEncoder,
       maxUsdcMb: o.maxUsdcMb,
       maxMemMb: o.maxMemMb,
+      pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
+      streamWrite: o.streamWrite,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 4,
       zipSink,
@@ -351,7 +357,7 @@ async function main() {
   // go into memory for composition, textures are fetched -> processed ->
   // appended to the output zip one at a time. Lowest peak RSS for
   // texture-heavy scene folders. Requires flatten; root must be a bare USD.
-  if (o.pipeline === 'stream') {
+  if (o.pipeline === 'stream' || o.pipeline === 'stream-next') {
     await runStreamingConvert(native, o);
     return;
   }
