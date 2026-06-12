@@ -1743,7 +1743,10 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::pair<std::string, Value>> fields;
     ResolveFieldset(spec.fieldset_index.value, fields);
 
-    entry.type_name = "Xform";
+    // Untyped prims stay untyped: composition fills the type from the
+    // referenced prim (a forced "Xform" default would mask e.g. a referenced
+    // Mesh definition; the writer already skips empty type names).
+    entry.type_name.clear();
     entry.specifier = PrimSpecifier::Def;
     for (auto& f : fields) {
       if (f.first == "typeName") {
