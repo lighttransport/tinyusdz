@@ -81,7 +81,8 @@ json App::mcpSceneInfo(const json&, std::string&) {
     out["deferred_payload_count"] = loaded_.comp.deferred.size();
     json deferred = json::array();
     for (const auto& d : loaded_.comp.deferred) {
-      deferred.push_back(json{{"prim", d.primPath}, {"asset", d.assetPath}});
+      deferred.push_back(
+          json{{"prim", d.primPath}, {"asset", d.assetPath}, {"arc", d.arc}});
     }
     out["deferred_payloads"] = deferred;
   }

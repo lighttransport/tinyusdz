@@ -29,15 +29,22 @@ struct LoadOptions {
   // behavior, keeps the mmap zero-copy fast path).
   bool composition{true};
   PayloadPolicy payloadPolicy{PayloadPolicy::DeferAll};
-  // Prim paths (composed-layer full paths) whose payloads to load when
+  // Also defer `references` arcs (--defer-references). Off by default: unlike
+  // payload, USD semantics assume references always resolve, so most content
+  // arrives through them and a deferred scene looks much emptier. Deferred
+  // references share the payload whitelist/on-demand machinery (a prim path in
+  // the whitelist loads both its arcs).
+  bool deferReferences{false};
+  // Prim paths (composed-layer full paths) whose deferred arcs to load when
   // payloadPolicy == Whitelist.
   std::set<std::string> payloadWhitelist;
 };
 
-// A payload arc that was skipped during composition.
-struct DeferredPayload {
-  std::string primPath;   // prim carrying the payload (composed-layer path)
-  std::string assetPath;  // payload target asset (may be empty for internal arcs)
+// A payload/reference arc that was skipped during composition.
+struct DeferredArc {
+  std::string primPath;   // prim carrying the arc (composed-layer path)
+  std::string assetPath;  // target asset (may be empty for internal arcs)
+  const char* arc;        // "payload" | "reference"
 };
 
 // Composition state retained for on-demand payload loading. `rootLayer` is the
@@ -48,7 +55,7 @@ struct CompositionInfo {
   bool composed{false};
   std::shared_ptr<const tinyusdz::Layer> rootLayer;
   std::vector<std::string> searchPaths;
-  std::vector<DeferredPayload> deferred;     // still-unloaded payloads
+  std::vector<DeferredArc> deferred;         // still-unloaded payload/reference arcs
   std::set<std::string> loadedPayloads;      // whitelist accumulated so far
 };
 
