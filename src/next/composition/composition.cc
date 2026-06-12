@@ -68,7 +68,14 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
       // Variant-holder prims and unselected variant content keep a "{...}"
       // segment in their path; a flatten never materializes those.
       if (gp.find('{') != std::string::npos) continue;
-      if (result->prim_at_path(gp)) continue;  // a local override already exists
+      if (PrimSpec* existing = result->prim_at_path_mutable(gp)) {
+        // A local spec already exists at this path (e.g. the root layer
+        // authors `over "LOD1"` material-binding overrides on a prim whose
+        // definition arrives via a referenced file's variant). Local opinions
+        // win; the graft fills in type/properties/children content.
+        CopyLocalOpinions(*existing, g.prim);
+        continue;
+      }
       added.emplace_back(result->prim_count(), g.anchor);
       result->add_prim(std::move(g.prim));
     }
@@ -239,6 +246,21 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
   }
   if (source.meta().active != target.meta().active) {
     target.meta().active = source.meta().active;
+  }
+
+  // Variant sets + selections ride along (weaker: only when the target has
+  // none of its own). A referenced prim whose content lives in variants
+  // (e.g. UE mesh assets: geometry inside variantSet "LOD") must keep its
+  // selection so the caller's ApplyVariants pass — which runs AFTER
+  // reference resolution — can bake the chosen variant.
+  if (target.meta().variantSets.empty() && !source.meta().variantSets.empty()) {
+    target.meta().variantSets = source.meta().variantSets;
+    if (target.meta().variantSelection.empty()) {
+      target.meta().variantSelection = source.meta().variantSelection;
+    }
+    if (target.meta().variantSelections.empty()) {
+      target.meta().variantSelections = source.meta().variantSelections;
+    }
   }
 }
 
