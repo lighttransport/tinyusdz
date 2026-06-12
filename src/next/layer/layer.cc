@@ -53,6 +53,14 @@ void Layer::build_path_index() {
   }
 }
 
+void Layer::sort_prims_by_path() {
+  std::stable_sort(prims_.begin(), prims_.end(),
+                   [](const PrimSpec& a, const PrimSpec& b) {
+                     return a.path().str() < b.path().str();
+                   });
+  path_to_index_.clear();
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 

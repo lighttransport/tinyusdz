@@ -1865,15 +1865,63 @@ private:
       std::string full_path;
       uint32_t index;
     };
+    // pxr's compressed path tree requires EVERY ancestor of every path to be
+    // present as a node. Connection/relationship TARGET paths can reference
+    // prims that have no spec in this layer (e.g. material shader outputs in
+    // a not-yet-composed referenced file), so synthesize the missing ancestor
+    // chain (tree-only nodes; no spec refers to them).
+    {
+      std::unordered_set<std::string> have(paths_.begin(), paths_.end());
+      const size_t orig = paths_.size();
+      for (size_t i = 0; i < orig; i++) {
+        std::string p = paths_[i];
+        size_t dot = p.rfind('.');
+        size_t slash = p.rfind('/');
+        if (dot != std::string::npos &&
+            (slash == std::string::npos || dot > slash)) {
+          p = p.substr(0, dot);  // property path: start from its prim part
+          if (!p.empty() && p != "/" && have.insert(p).second) {
+            paths_.push_back(p);
+          }
+        }
+        while (p.size() > 1) {
+          size_t sl = p.rfind('/');
+          if (sl == std::string::npos || sl == 0) break;
+          p = p.substr(0, sl);
+          if (!have.insert(p).second) break;  // rest of the chain exists
+          paths_.push_back(p);
+        }
+      }
+    }
+
     std::vector<PathEntry> sorted;
     sorted.reserve(paths_.size());
     for (size_t i = 0; i < paths_.size(); i++) {
       sorted.push_back({paths_[i], static_cast<uint32_t>(i)});
     }
-    // Sort lexicographically by full path
+    // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
+    // sibling name extends another with a character below '/' (e.g. prims
+    // "SM_x" and "SM_x-y": '-' < '/' puts "/A/SM_x-y" BETWEEN "/A/SM_x" and
+    // its children, splitting the subtree and corrupting the jump encoding).
+    // Rank the structural separators below every name character instead:
+    // '/' < '.' < everything else.
+    auto char_rank = [](unsigned char c) -> unsigned int {
+      if (c == '/') return 0;
+      if (c == '.') return 1;
+      return 2u + c;
+    };
+    auto preorder_less = [&char_rank](const std::string& a, const std::string& b) {
+      const size_t n = (std::min)(a.size(), b.size());
+      for (size_t i = 0; i < n; ++i) {
+        unsigned int ra = char_rank(static_cast<unsigned char>(a[i]));
+        unsigned int rb = char_rank(static_cast<unsigned char>(b[i]));
+        if (ra != rb) return ra < rb;
+      }
+      return a.size() < b.size();
+    };
     std::sort(sorted.begin(), sorted.end(),
-              [](const PathEntry& a, const PathEntry& b) {
-                return a.full_path < b.full_path;
+              [&preorder_less](const PathEntry& a, const PathEntry& b) {
+                return preorder_less(a.full_path, b.full_path);
               });
 
     size_t num_paths = sorted.size();
