@@ -5,6 +5,7 @@
 //
 #pragma once
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -98,10 +99,30 @@ class Path {
   // Path(const std::string &prim, const std::string &prop)
   //    : prim_part(prim), prop_part(prop) {}
 
-  Path(const Path &rhs) = default;
+  Path(const Path &rhs)
+      : _full(rhs._full),
+        _prim_len(rhs._prim_len),
+        _prop_len(rhs._prop_len),
+        _elem_off(rhs._elem_off),
+        _elem_len(rhs._elem_len),
+        _variant(rhs._variant ? new VariantTokens(*rhs._variant) : nullptr),
+        _path_type(rhs._path_type),
+        _valid(rhs._valid) {}
   Path(Path &&rhs) noexcept = default;
 
-  Path &operator=(const Path &rhs) = default;
+  Path &operator=(const Path &rhs) {
+    if (this != &rhs) {
+      _full = rhs._full;
+      _prim_len = rhs._prim_len;
+      _prop_len = rhs._prop_len;
+      _elem_off = rhs._elem_off;
+      _elem_len = rhs._elem_len;
+      _variant.reset(rhs._variant ? new VariantTokens(*rhs._variant) : nullptr);
+      _path_type = rhs._path_type;
+      _valid = rhs._valid;
+    }
+    return *this;
+  }
   Path &operator=(Path &&rhs) noexcept = default;
 
   // The canonical path text ("prim" or "prim.prop") is stored ONCE in `_full`;
@@ -156,7 +177,15 @@ class Path {
   // Formatted variant string "{var=sel}". Returns by value (no cached mutable
   // state -> safe to call on a shared const Path from multiple threads).
   std::string variant_part() const {
-    return "{" + _variant_part + "=" + _variant_selection_part + "}";
+    return "{" + variant_part_raw() + "=" + variant_selection_raw() + "}";
+  }
+
+  // Raw (unformatted) variant tokens; empty strings when no variant authored.
+  const std::string &variant_part_raw() const {
+    return _variant ? _variant->part : empty_string();
+  }
+  const std::string &variant_selection_raw() const {
+    return _variant ? _variant->selection : empty_string();
   }
 
   void set_path_type(const PathType ty) { _path_type = ty; }
@@ -217,7 +246,7 @@ class Path {
   bool is_valid() const { return _valid; }
 
   bool is_empty() {
-    return (_prim_len == 0 && _variant_part.empty() && _prop_len == 0);
+    return (_prim_len == 0 && variant_part_raw().empty() && _prop_len == 0);
   }
 
   // static Path RelativePath() { return Path("."); }
@@ -410,8 +439,11 @@ class Path {
   size_t estimate_memory_usage() const {
     size_t total = sizeof(Path);
     total += _full.capacity();
-    total += _variant_part.capacity();
-    total += _variant_selection_part.capacity();
+    if (_variant) {
+      total += sizeof(VariantTokens);
+      total += _variant->part.capacity();
+      total += _variant->selection.capacity();
+    }
     return total;
   }
 
@@ -427,10 +459,24 @@ class Path {
   uint32_t _elem_off{0};   // element_name = _full[_elem_off .. +_elem_len)
   uint32_t _elem_len{0};
 
-  // Variant tokens are rare; kept as small separate strings (usually empty ->
-  // SSO, no heap). `{var=sel}` is also embedded in the prim region of `_full`.
-  std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
-  std::string _variant_selection_part;  // e.g. `green`; could be empty.
+  // Variant tokens are rare: stored out-of-line so the common no-variant Path
+  // pays one null pointer instead of two inline strings (64 bytes).
+  // `{var=sel}` is also embedded in the prim region of `_full`.
+  struct VariantTokens {
+    std::string part;       // e.g. `variantColor` for {variantColor=green}
+    std::string selection;  // e.g. `green`; could be empty.
+  };
+  VariantTokens &mutable_variant() {
+    if (!_variant) {
+      _variant.reset(new VariantTokens());
+    }
+    return *_variant;
+  }
+  static const std::string &empty_string() {
+    static const std::string s_empty;
+    return s_empty;
+  }
+  std::unique_ptr<VariantTokens> _variant;
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 
