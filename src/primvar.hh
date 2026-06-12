@@ -37,9 +37,13 @@ namespace tinyusdz {
 namespace primvar {
 
 struct PrimVar {
+  // Diet layout: most attributes author only a default value, so the
+  // timeSamples and spline storage (~220 bytes combined) live in a lazily
+  // allocated extension block instead of inline — sizeof(PrimVar) drops from
+  // 280 to ~72, which dominates Attribute/Property size on large scenes
+  // (hundreds of thousands of properties per flattened UE/film layer).
   value::Value _value{nullptr}; // For scalar(default) value
   bool _blocked{false}; // ValueBlocked.
-  value::TimeSamples _ts; // For TimeSamples value.
 
   // Default constructor
   PrimVar() {
@@ -48,7 +52,8 @@ struct PrimVar {
 
   // Copy constructor
   PrimVar(const PrimVar& rhs)
-    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
+    : _value(rhs._value), _blocked(rhs._blocked),
+      _extras(rhs.clone_extras()) {
     //TUSDZ_LOG_I("PrimVar copy ctor");
   }
 
@@ -56,7 +61,7 @@ struct PrimVar {
   PrimVar(PrimVar&& rhs) noexcept
     : _value(std::move(rhs._value)),
       _blocked(rhs._blocked),
-      _ts(std::move(rhs._ts)) {
+      _extras(std::move(rhs._extras)) {
     //TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
   }
@@ -67,7 +72,7 @@ struct PrimVar {
     if (this != &rhs) {
       _value = rhs._value;
       _blocked = rhs._blocked;
-      _ts = rhs._ts;
+      _extras = rhs.clone_extras();
     }
     return *this;
   }
@@ -78,7 +83,7 @@ struct PrimVar {
     if (this != &rhs) {
       _value = std::move(rhs._value);
       _blocked = rhs._blocked;
-      _ts = std::move(rhs._ts);
+      _extras = std::move(rhs._extras);
       rhs._blocked = false;
     }
     return *this;
@@ -104,7 +109,7 @@ struct PrimVar {
   }
 
   bool has_timesamples() const {
-    return _ts.size() > 0;
+    return _extras && _extras->ts.size() > 0;
   }
 
   bool is_blocked() const {
@@ -126,8 +131,8 @@ struct PrimVar {
     }
 
     // Check if timeSamples were authored (even if empty)
-    if (has_timesamples() || _ts.type_id() != 0) {
-      return _ts.type_name();
+    if (_extras && (has_timesamples() || _extras->ts.type_id() != 0)) {
+      return _extras->ts.type_name();
     }
 
     return "[[InvalidType]]";
@@ -143,8 +148,8 @@ struct PrimVar {
     }
 
     // Check if timeSamples were authored (even if empty)
-    if (has_timesamples() || _ts.type_id() != 0) {
-      return _ts.type_id();
+    if (_extras && (has_timesamples() || _extras->ts.type_id() != 0)) {
+      return _extras->ts.type_id();
     }
 
     return value::TypeId::TYPE_ID_INVALID;
@@ -214,24 +219,26 @@ struct PrimVar {
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    _ts = v;
+    extras().ts = v;
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    _ts = std::move(v);
+    extras().ts = std::move(v);
   }
 
   void clear_timesamples() {
-    _ts.clear();
+    if (_extras) {
+      _extras->ts.clear();
+    }
   }
 
   template <typename T>
   void set_timesample(double t, const T &v) {
-    _ts.add_sample(t, v);
+    extras().ts.add_sample(t, v);
   }
 
   void set_timesample(double t, value::Value &v) {
-    _ts.add_sample(t, v);
+    extras().ts.add_sample(t, v);
   }
 
 
@@ -257,13 +264,13 @@ struct PrimVar {
         return true;
       }
 
-      if (_ts.empty()) {
+      if (!has_timesamples()) {
         return false;
       }
     }
 
     if (has_timesamples()) {
-      return _ts.get(v, t, tinterp);
+      return _extras->ts.get(v, t, tinterp);
     }
 
     if (has_default()) {
@@ -278,15 +285,19 @@ struct PrimVar {
 
   size_t num_timesamples() const {
     if (has_timesamples()) {
-      return _ts.size();
+      return _extras->ts.size();
     }
     return 0;
   }
 
   const value::TimeSamples &ts_raw() const {
-    return _ts;
+    if (_extras) {
+      return _extras->ts;
+    }
+    static const value::TimeSamples s_empty_ts;
+    return s_empty_ts;
   }
-  
+
   value::Value &value_raw() {
     return _value;
   }
@@ -294,22 +305,27 @@ struct PrimVar {
   const value::Value &value_raw() const {
     return _value;
   }
-  
+
+  // Mutable access lazily allocates the extension block.
   value::TimeSamples &ts_raw() {
-    return _ts;
+    return extras().ts;
   }
 
   size_t estimate_memory_usage() const {
     size_t total = sizeof(PrimVar);
     total += _value.estimate_memory_usage();
-    total += _ts.estimate_memory_usage();
+    if (_extras) {
+      total += _extras->ts.estimate_memory_usage();
+    }
     return total;
   }
 
   size_t estimate_actual_usage() const {
     size_t total = sizeof(PrimVar);
     total += _value.estimate_actual_usage();
-    total += _ts.estimate_actual_usage();
+    if (_extras) {
+      total += _extras->ts.estimate_actual_usage();
+    }
     return total;
   }
 
@@ -343,16 +359,41 @@ struct PrimVar {
     double postExtrapolationSlope{0.0};
   };
 
-  bool has_spline() const { return !_spline.knots.empty(); }
+  bool has_spline() const { return _extras && !_extras->spline.knots.empty(); }
 
-  const SplineData &spline_data() const { return _spline; }
-  SplineData &spline_data() { return _spline; }
+  const SplineData &spline_data() const {
+    if (_extras) {
+      return _extras->spline;
+    }
+    static const SplineData s_empty_spline;
+    return s_empty_spline;
+  }
+  // Mutable access lazily allocates the extension block.
+  SplineData &spline_data() { return extras().spline; }
 
-  void set_spline(const SplineData &spline) { _spline = spline; }
-  void set_spline(SplineData &&spline) { _spline = std::move(spline); }
+  void set_spline(const SplineData &spline) { extras().spline = spline; }
+  void set_spline(SplineData &&spline) { extras().spline = std::move(spline); }
+
+  // Rarely-authored value sources, stored out-of-line (see the class comment).
+  struct ExtrasBlock {
+    value::TimeSamples ts;
+    SplineData spline;
+  };
 
  private:
-  SplineData _spline;
+  ExtrasBlock &extras() {
+    if (!_extras) {
+      _extras.reset(new ExtrasBlock());
+    }
+    return *_extras;
+  }
+
+  std::unique_ptr<ExtrasBlock> clone_extras() const {
+    return _extras ? std::unique_ptr<ExtrasBlock>(new ExtrasBlock(*_extras))
+                   : nullptr;
+  }
+
+  std::unique_ptr<ExtrasBlock> _extras;
 
  public:
 };

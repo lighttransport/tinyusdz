@@ -65,7 +65,7 @@ static Stage MakeAnimStage(const std::string& primName,
   Attribute attr;
   attr.set_type_name(typeName);
   primvar::PrimVar pv;
-  pv._ts = ts;
+  pv.set_timesamples(ts);
   pv._value = defaultValue;
   attr.set_var(pv);
 
@@ -85,7 +85,7 @@ static void AddCustomAttribute(Xform* xform, const std::string& name,
   primvar::PrimVar pv;
   pv._value = defaultValue;
   if (ts) {
-    pv._ts = *ts;
+    pv.set_timesamples(*ts);
   }
   attr.set_var(pv);
   xform->props[name] = Property(attr, /* custom */ false);
