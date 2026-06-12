@@ -113,6 +113,64 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
 
 std::string AssetResolutionResolver::resolve(
     const std::string &assetPath) const {
+  return resolve(assetPath, /* used_suffix_fallback */ nullptr);
+}
+
+std::string AssetResolutionResolver::resolve(
+    const std::string &assetPath, bool *used_suffix_fallback) const {
+
+  if (used_suffix_fallback) {
+    (*used_suffix_fallback) = false;
+  }
+
+  std::string resolvedPath = resolve_literal(assetPath);
+
+  // A non-empty `resolvedPath` does not guarantee existence when a custom
+  // handler is registered(a handler may echo the input back on a miss), so
+  // verify with find() in that case before triggering the fallback.
+  bool literal_ok{false};
+  if (resolvedPath.empty()) {
+    literal_ok = false;
+  } else if (_asset_resolution_handlers.empty()) {
+    literal_ok = true;  // file-based resolution verified existence already.
+  } else {
+    literal_ok = find(assetPath);
+  }
+
+  if (!literal_ok && _enable_suffix_fallback) {
+    // Rebase a path authored against another machine's layout(e.g.
+    // `../../../../../USD_Exports/Scene/Assets/mesh.usd` or
+    // `F:/USD_Exports/Scene/Assets/mesh.usd` from an UnrealEngine export) by
+    // retrying progressively shorter path suffixes against the search paths.
+    const std::vector<std::string> candidates =
+        io::AssetPathSuffixCandidates(assetPath);
+    for (const auto &candidate : candidates) {
+      if (_asset_resolution_handlers.empty()) {
+        std::string rpath = resolve_literal(candidate);
+        if (rpath.size()) {
+          if (used_suffix_fallback) {
+            (*used_suffix_fallback) = true;
+          }
+          resolvedPath = rpath;
+          break;
+        }
+      } else if (find(candidate)) {
+        if (used_suffix_fallback) {
+          (*used_suffix_fallback) = true;
+        }
+        resolvedPath = resolve_literal(candidate);
+        break;
+      }
+    }
+  }
+
+  // On total miss, `resolvedPath` is the literal result unchanged(preserves
+  // legacy echo-back semantics of custom handlers).
+  return resolvedPath;
+}
+
+std::string AssetResolutionResolver::resolve_literal(
+    const std::string &assetPath) const {
 
   std::string ext = io::GetFileExtension(assetPath);
 

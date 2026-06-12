@@ -174,6 +174,7 @@ class AssetResolutionResolver {
       _current_working_path = rhs._current_working_path;
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
+      _enable_suffix_fallback = rhs._enable_suffix_fallback;
     }
   }
 
@@ -186,6 +187,7 @@ class AssetResolutionResolver {
       _current_working_path = rhs._current_working_path;
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
+      _enable_suffix_fallback = rhs._enable_suffix_fallback;
     }
     return (*this);
   }
@@ -199,6 +201,7 @@ class AssetResolutionResolver {
       _current_working_path = std::move(rhs._current_working_path);
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
+      _enable_suffix_fallback = rhs._enable_suffix_fallback;
     }
     return (*this);
   }
@@ -294,6 +297,35 @@ class AssetResolutionResolver {
   std::string resolve(const std::string &assetPath) const;
 
   ///
+  /// resolve() variant which reports whether the result was found through the
+  /// suffix fallback (see `set_enable_suffix_fallback`) instead of the
+  /// literally-authored path. `used_suffix_fallback` may be nullptr.
+  ///
+  std::string resolve(const std::string &assetPath,
+                      bool *used_suffix_fallback) const;
+
+  ///
+  /// When enabled(default), an asset path which fails literal resolution is
+  /// retried with its un-anchorable prefix(leading `../` runs, Windows drive)
+  /// stripped, dropping leading directory components one at a time(longest
+  /// suffix first) until a candidate resolves against the search paths.
+  /// This rebases composition arcs authored against another machine's
+  /// directory layout(e.g. UnrealEngine USD exports) onto the local scene
+  /// root. Only kicks in when the literal path resolves to nothing.
+  ///
+  void set_enable_suffix_fallback(bool enable) {
+    _enable_suffix_fallback = enable;
+  }
+
+  bool get_enable_suffix_fallback() const { return _enable_suffix_fallback; }
+
+ private:
+  // resolve() without the suffix fallback(literally-authored path only).
+  std::string resolve_literal(const std::string &assetPath) const;
+
+ public:
+
+  ///
   /// Open asset from the resolved Path.
   ///
   /// @param[in] resolvedPath Resolved path(through `resolve()`)
@@ -345,6 +377,7 @@ class AssetResolutionResolver {
   std::vector<std::string> _search_paths;
   mutable size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
   uint32_t _max_file_descriptors{1024};
+  bool _enable_suffix_fallback{true};
   mutable std::atomic<uint32_t> _open_file_descriptors{0};
 
   std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;

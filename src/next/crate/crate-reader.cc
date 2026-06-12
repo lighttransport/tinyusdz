@@ -187,6 +187,13 @@ private:
   // Decode a PathListOp (CrateTypeId 34) or PathVector (40) value into the
   // referenced path strings (resolved through the reconstructed paths_ table).
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
+  // Decode a ReferenceListOp (35) / PayloadListOp (55) into composition arc
+  // strings "@asset@</prim>[?layerOffset=o:s]" (the form Compositor::
+  // ParseReference consumes). List-edit semantics are flattened: explicit/
+  // added/prepended/appended entries are kept, deleted/ordered are read and
+  // discarded.
+  bool DecodeReferenceListOp(ValueRep rep, bool is_payload,
+                             std::vector<std::string>& out);
 
   // Decode a VariantSelectionMap (CrateTypeId 45): [u64 count][(u32 key_str_idx,
   // u32 val_str_idx) * count] -> (variantSet, selection) pairs.
@@ -788,6 +795,17 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Vec3h: return UnpackVec3h(rep, out);
     case CrateTypeId::Vec4h: return UnpackVec4h(rep, out);
     case CrateTypeId::Quath: return UnpackQuath(rep, out);
+
+    case CrateTypeId::ReferenceListOp:
+    case CrateTypeId::PayloadListOp: {
+      std::vector<std::string> arcs;
+      if (!DecodeReferenceListOp(rep, type_id == CrateTypeId::PayloadListOp,
+                                 arcs)) {
+        return false;
+      }
+      out = Value::MakeTokenArray(std::move(arcs));
+      return true;
+    }
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
@@ -2001,7 +2019,10 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::pair<std::string, Value>> fields;
     ResolveFieldset(spec.fieldset_index.value, fields);
 
-    entry.type_name = "Xform";
+    // Untyped prims stay untyped: composition fills the type from the
+    // referenced prim (a forced "Xform" default would mask e.g. a referenced
+    // Mesh definition; the writer already skips empty type names).
+    entry.type_name.clear();
     entry.specifier = PrimSpecifier::Def;
     for (auto& f : fields) {
       if (f.first == "typeName") {
@@ -2492,6 +2513,81 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   if ((bits & kHasAppended) && !read_run()) return false;
   if ((bits & kHasDeleted) && !read_run()) return false;
   if ((bits & kHasOrdered) && !read_run()) return false;
+  return true;
+}
+
+bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
+                                              std::vector<std::string>& out) {
+  const CrateTypeId tid = rep.type_id();
+  if (tid != CrateTypeId::ReferenceListOp && tid != CrateTypeId::PayloadListOp) {
+    return false;
+  }
+  if (rep.payload() == 0) return true;  // empty listop
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  // Payload items carry a LayerOffset only from crate 0.8.0 on.
+  const bool payload_has_offset =
+      !is_payload || (version_.minor >= 8);
+
+  // Read one SdfReference/SdfPayload item; when `keep`, append its arc string.
+  auto read_item = [&](bool keep) -> bool {
+    uint32_t asset_idx = 0, path_idx = 0;
+    if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+      return false;
+    }
+    double offset = 0.0, scale = 1.0;
+    if (payload_has_offset) {
+      if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+        return false;
+      }
+    }
+    if (!is_payload) {
+      // customData dict: u64 count, then per-entry recursive offsets. UE/pxr
+      // references rarely author it; decoding requires recursive value reads,
+      // so bail (drop the whole listop with a warning) when non-empty.
+      uint64_t dict_count = 0;
+      if (!reader_->read_u64(dict_count)) return false;
+      if (dict_count != 0) {
+        AddWarning("Reference customData is not supported; arc dropped");
+        return false;
+      }
+    }
+    if (!keep) return true;
+
+    std::string asset;
+    GetString(asset_idx, asset);
+    std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+    std::string arc = "@" + asset + "@";
+    if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
+    if (offset != 0.0 || scale != 1.0) {
+      arc += "?layerOffset=" + std::to_string(offset) + ":" +
+             std::to_string(scale);
+    }
+    out.push_back(std::move(arc));
+    return true;
+  };
+
+  auto read_run = [&](bool keep) -> bool {
+    uint64_t n = 0;
+    if (!reader_->read_u64(n)) return false;
+    if (n > options_.max_array_elements) return false;
+    for (uint64_t i = 0; i < n; ++i) {
+      if (!read_item(keep)) return false;
+    }
+    return true;
+  };
+
+  // ListOpHeader bits / read order match DecodePathTargets.
+  uint8_t bits = 0;
+  if (!reader_->read_u8(bits)) return false;
+  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
+                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  if ((bits & kHasExplicit) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !read_run(true)) return false;
+  if ((bits & kHasPrepended) && !read_run(true)) return false;
+  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasDeleted) && !read_run(false)) return false;
+  if ((bits & kHasOrdered) && !read_run(false)) return false;
   return true;
 }
 

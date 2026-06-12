@@ -409,6 +409,8 @@ void print_help() {
   std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
+  std::cout << "  --no-asset-path-fallback Disable suffix-fallback rebasing of "
+               "unresolvable composition asset paths\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
   std::cout << "                      (disable stack snipping and line truncation)\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
@@ -484,6 +486,7 @@ int main(int argc, char **argv) {
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  bool asset_path_fallback{true};
   bool compress_float_arrays{false};
   OutputFormat output_format{OutputFormat::Infer};
 
@@ -563,6 +566,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--no-asset-path-fallback") == 0) {
+      asset_path_fallback = false;
     } else if (arg.compare("--error-detail") == 0) {
       error_detail = true;
     } else if (arg.compare("--progress") == 0) {
@@ -975,7 +980,7 @@ int main(int argc, char **argv) {
     tinyusdz::Layer root_layer;
     bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
-      std::cout << "WARN: " << warn << "\n";
+      std::cerr << "WARN: " << warn << "\n"; warn.clear();
     }
 
     if (!ret) {
@@ -1004,6 +1009,7 @@ int main(int argc, char **argv) {
     tinyusdz::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
+    resolver.set_enable_suffix_fallback(asset_path_fallback);
 
     //
     // LIVRPS strength ordering
@@ -1028,6 +1034,12 @@ int main(int argc, char **argv) {
     tinyusdz::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
 
+    // Parse each referenced file once across the whole fixed-point loop; all
+    // arcs to the same file share one copy of the heavy attribute data (COW).
+    std::map<std::string, tinyusdz::Layer> layer_cache;
+    reference_opts.layer_cache = &layer_cache;
+    payload_opts.layer_cache = &layer_cache;
+
     // Whether to dump each INTERMEDIATE composited layer as USDA text per
     // iteration (debug aid). For heavy scenes this USDA serialization is itself
     // the blow-up (e.g. baked vertex-animation timeSamples), and it happens
@@ -1045,7 +1057,7 @@ int main(int argc, char **argv) {
       }
 
       if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
+        std::cerr << "WARN: " << warn << "\n"; warn.clear();
       }
 
       if (print_intermediate) {
@@ -1068,13 +1080,17 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err, reference_opts)) {
+          // InPlace: consumes src_layer (no internal arcs) instead of holding
+          // input + output copies — halves the peak of the pass.
+          if (!tinyusdz::CompositeReferencesInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1093,13 +1109,15 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err, payload_opts)) {
+          if (!tinyusdz::CompositePayloadInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1124,7 +1142,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1149,7 +1167,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {

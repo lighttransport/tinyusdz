@@ -2197,7 +2197,7 @@ bool CrateWriter::ConvertAttributeToFields(
   // 2c. Extract time samples
   if (pvar.has_timesamples()) {
     // Convert TimeSamples to CrateValue
-    const value::TimeSamples& ts = pvar._ts;
+    const value::TimeSamples& ts = pvar.ts_raw();
 
     // Create a CrateValue with TimeSamples
     crate::CrateValue ts_crate_val;

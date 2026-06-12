@@ -511,8 +511,9 @@ Path Path::append_element(const std::string &elem) {
   if (is_variantElementName(elem)) {
     std::array<std::string, 2> variant;
     if (tokenize_variantElement(elem, &variant)) {
-      _variant_part = variant[0];           // variant set name, e.g. `color`
-      _variant_selection_part = variant[1];  // selection, e.g. `red` (may be empty)
+      VariantTokens &vt = mutable_variant();
+      vt.part = variant[0];       // variant set name, e.g. `color`
+      vt.selection = variant[1];  // selection, e.g. `red` (may be empty)
       p._assemble(cur_prim + elem, cur_prop);
       return p;
     } else {

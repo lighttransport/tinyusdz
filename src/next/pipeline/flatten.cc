@@ -5,6 +5,9 @@
 
 #include "flatten.hh"
 
+#include <cstring>
+#include <fstream>
+
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
 
@@ -70,10 +73,19 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
   if (opts.flatten && !IsSelfContained(*root)) {
     Compositor comp;
     comp.SetOptions(opts.composition);
-    composed = comp.Compose(*root);  // structural: moves lazy refs, no decode
+    if (opts.resolver) comp.SetResolver(opts.resolver);
+    if (opts.layer_loader) comp.SetLayerLoader(opts.layer_loader);
+    composed = comp.Compose(*root, opts.root_anchor_path);  // structural: moves lazy refs, no decode
     if (!composed) {
       if (err) *err = "composition failed";
       return false;
+    }
+    if (stats) {
+      for (const auto& ce : comp.GetErrors()) {
+        stats->composition_errors.push_back(
+            ce.message + (ce.prim_path.empty() ? "" : " at " + ce.prim_path) +
+            (ce.arc_path.empty() ? "" : " (" + ce.arc_path + ")"));
+      }
     }
     layer = composed.get();
   }
@@ -138,6 +150,37 @@ bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink
   CrateReader reader(opts.read);
   return FlattenLoaded(reader.ReadOwned(std::move(data)), input_bytes, nullptr, &sink,
                        opts, stats, err);
+}
+
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts) {
+  return [read_opts](const std::string& resolved_path,
+                     std::string* error) -> std::unique_ptr<Layer> {
+    std::ifstream ifs(resolved_path, std::ios::binary);
+    if (!ifs) {
+      if (error) *error = "cannot open: " + resolved_path;
+      return nullptr;
+    }
+    std::string bytes((std::istreambuf_iterator<char>(ifs)),
+                      std::istreambuf_iterator<char>());
+    if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
+      if (error) *error = "not a USDC crate (USDA dependencies are not supported by the next loader yet): " + resolved_path;
+      return nullptr;
+    }
+    CrateReader reader(read_opts);
+    CrateReadResult rr = reader.ReadOwned(std::move(bytes));
+    if (!rr.success) {
+      if (error) {
+        *error = rr.errors.empty() ? ("crate read failed: " + resolved_path)
+                                   : rr.errors[0].message;
+      }
+      return nullptr;
+    }
+    std::unique_ptr<Layer> layer = rr.stage.ReleaseRootLayer();
+    if (layer) {
+      layer->build_path_index();  // compositor looks prims up by path
+    }
+    return layer;
+  };
 }
 
 }  // namespace pipeline
