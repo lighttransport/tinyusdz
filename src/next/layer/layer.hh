@@ -73,6 +73,12 @@ public:
   /// before the layer is finalized, and after prims are added/renamed).
   void build_path_index();
 
+  /// Sort prims so every ancestor precedes its descendants and subtrees are
+  /// contiguous (lexicographic full-path order). The crate writer's
+  /// compressed-paths encoding requires this; composition appends grafted
+  /// subtrees out of order. Clears the path index (rebuild after).
+  void sort_prims_by_path();
+
   // ============================================================
   // Access
   // ============================================================
