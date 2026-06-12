@@ -189,6 +189,15 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source) {
     target.set_type_name(source.type_name());
   }
 
+  // Specifier: composed prim existence is the union of opinions — an `over`
+  // backed by a `def` from any arc (reference / variant content) flattens to
+  // `def`, matching pxr (an over alone defines nothing; the def makes the
+  // prim real).
+  if (target.specifier() == PrimSpecifier::Over &&
+      source.specifier() == PrimSpecifier::Def) {
+    target.set_specifier(PrimSpecifier::Def);
+  }
+
   // Copy properties (source overrides target for time-sampled props).
   // Preserves valueless slots (connection-only / declared-only attributes),
   // their declared type names, and connection targets for USDC fidelity.
