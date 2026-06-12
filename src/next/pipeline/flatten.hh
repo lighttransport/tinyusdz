@@ -30,6 +30,10 @@ struct FlattenStats {
   size_t prim_count = 0;
   size_t arrays_passed_through = 0;  // arrays copied verbatim from the source
   size_t arrays_reencoded = 0;       // lazy arrays that fell back to re-encode
+  // Non-fatal composition errors (unresolved/unloadable external arcs). The
+  // flatten still succeeds with those arcs skipped; callers should surface
+  // these so silent partial composition is visible.
+  std::vector<std::string> composition_errors;
 };
 
 /// Options controlling the flatten pipeline.

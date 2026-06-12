@@ -80,6 +80,13 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
       if (err) *err = "composition failed";
       return false;
     }
+    if (stats) {
+      for (const auto& ce : comp.GetErrors()) {
+        stats->composition_errors.push_back(
+            ce.message + (ce.prim_path.empty() ? "" : " at " + ce.prim_path) +
+            (ce.arc_path.empty() ? "" : " (" + ce.arc_path + ")"));
+      }
+    }
     layer = composed.get();
   }
   FlattenMemLog("after-compose");
