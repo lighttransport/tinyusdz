@@ -591,7 +591,9 @@ bool CrateReader::BuildNodeHierarchy(
 
         if (!_nodes[parentPathIdx].AddChildren(
             name, pathIdx)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid path index.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format(
+              "Invalid path index. (duplicate child `{}` under parent `{}`, thisIndex={} pathIdx={})",
+              name, _paths[parentPathIdx].full_path_name(), thisIndex, pathIdx));
         }
       }
 

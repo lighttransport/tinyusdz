@@ -54,14 +54,45 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
     PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(i));
     if (p) ResolveArcsForPrim(*result, *p, anchor_path, 0);
   }
-  // Append grafted subtree prims brought in by references/payloads.
-  for (auto& g : pending_graft_) {
-    std::string gp = g.path().str();
-    if (result->prim_at_path(gp)) continue;  // a local override already exists
-    result->add_prim(std::move(g));
+  // Append grafted subtree prims brought in by references/payloads, then
+  // resolve the grafted prims' OWN arcs (anchored to the layer they came
+  // from) — referenced files commonly reference further files relative to
+  // themselves (e.g. a mesh asset referencing ../../Materials/x.usd). Each
+  // round may graft more subtrees; iterate to a fixed point (depth-capped).
+  for (int round = 0; round < 64 && !pending_graft_.empty(); ++round) {
+    std::vector<PendingGraft> batch = std::move(pending_graft_);
+    pending_graft_.clear();
+    std::vector<std::pair<size_t, std::string>> added;  // index in result, anchor
+    for (auto& g : batch) {
+      std::string gp = g.prim.path().str();
+      // Variant-holder prims and unselected variant content keep a "{...}"
+      // segment in their path; a flatten never materializes those.
+      if (gp.find('{') != std::string::npos) continue;
+      if (PrimSpec* existing = result->prim_at_path_mutable(gp)) {
+        // A local spec already exists at this path (e.g. the root layer
+        // authors `over "LOD1"` material-binding overrides on a prim whose
+        // definition arrives via a referenced file's variant). Local opinions
+        // win; the graft fills in type/properties/children content.
+        CopyLocalOpinions(*existing, g.prim);
+        continue;
+      }
+      added.emplace_back(result->prim_count(), g.anchor);
+      result->add_prim(std::move(g.prim));
+    }
+    if (added.empty()) break;
+    result->build_path_index();
+    for (const auto& a : added) {
+      PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(a.first));
+      if (p) ResolveArcsForPrim(*result, *p, a.second, 0);
+    }
   }
   pending_graft_.clear();
   graft_paths_.clear();
+
+  // The crate writer's compressed-paths encoding requires ancestors before
+  // descendants with contiguous subtrees; grafted prims were appended at the
+  // end, so restore hierarchical order first.
+  result->sort_prims_by_path();
 
   // Finalize the composed layer
   result->finalize();
@@ -159,6 +190,15 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
     target.set_type_name(source.type_name());
   }
 
+  // Specifier: composed prim existence is the union of opinions — an `over`
+  // backed by a `def` from any arc (reference / variant content) flattens to
+  // `def`, matching pxr (an over alone defines nothing; the def makes the
+  // prim real).
+  if (target.specifier() == PrimSpecifier::Over &&
+      source.specifier() == PrimSpecifier::Def) {
+    target.set_specifier(PrimSpecifier::Def);
+  }
+
   // Copy properties (source overrides target for time-sampled props).
   // Preserves valueless slots (connection-only / declared-only attributes),
   // their declared type names, and connection targets for USDC fidelity.
@@ -219,6 +259,22 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
   if (source.meta().active != target.meta().active) {
     target.meta().active = source.meta().active;
   }
+
+  // Variant sets + selections ride along (weaker: only when the target has
+  // none of its own). A referenced prim whose content lives in variants
+  // (e.g. UE mesh assets: geometry inside variantSet "LOD") must keep its
+  // selection so the caller's ApplyVariants pass — which runs AFTER
+  // reference resolution — can bake the chosen variant.
+  if (target.meta().variantSets().empty() &&
+      !source.meta().variantSets().empty()) {
+    target.meta().variantSets() = source.meta().variantSets();
+    if (target.meta().variantSelection.empty()) {
+      target.meta().variantSelection = source.meta().variantSelection;
+    }
+    if (target.meta().variantSelections().empty()) {
+      target.meta().variantSelections() = source.meta().variantSelections();
+    }
+  }
 }
 
 void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
@@ -251,13 +307,13 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
       }
       ResolveArcsForPrim(layer, *cls, anchor_path, depth + 1);
       CopyLocalOpinions(prim, *cls);
-      GraftSubtree(layer, inh, self);
+      GraftSubtree(layer, anchor_path, inh, self);
     }
   }
 
   // Variants (if the reader populated variant content).
   if (options_.resolve_variants) {
-    ApplyVariants(prim, layer, depth);
+    ApplyVariants(prim, layer, anchor_path, depth);
   }
 
   // Specializes (weakest) — same-layer, fill only what is still missing.
@@ -271,7 +327,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
       }
       ResolveArcsForPrim(layer, *spec, anchor_path, depth + 1);
       CopyLocalOpinions(prim, *spec);
-      GraftSubtree(layer, sp, self);
+      GraftSubtree(layer, anchor_path, sp, self);
     }
   }
 
@@ -306,7 +362,7 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     if (tp == self) return;  // self-reference
     ResolveArcsForPrim(layer, *target, anchor_path, depth + 1);
     CopyLocalOpinions(prim, *target);
-    GraftSubtree(layer, tp, self);
+    GraftSubtree(layer, anchor_path, tp, self);
     return;
   }
 
@@ -334,7 +390,7 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     return;
   }
   CopyLocalOpinions(prim, *target);
-  GraftSubtree(*ext, tp, self);
+  GraftSubtree(*ext, resolved, tp, self);
 
   // Layer offset (applied at evaluation time via prim metadata).
   if (!arc.layer_offset.empty()) {
@@ -347,7 +403,8 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
   PopStack();
 }
 
-void Compositor::GraftSubtree(const Layer& src, const std::string& src_root,
+void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
+                              const std::string& src_root,
                               const std::string& dst_root) {
   // Copy every descendant of src_root in `src` to the matching path under
   // dst_root, buffered in pending_graft_ (added after pass 2). Local overrides
@@ -371,11 +428,12 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_root,
     if (!graft_paths_.insert(new_path).second) continue;  // already grafted
     PrimSpec g = d->Clone();
     g.set_path(Path(new_path));
-    pending_graft_.push_back(std::move(g));
+    pending_graft_.push_back(PendingGraft{std::move(g), src_anchor});
   }
 }
 
-bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
+bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
+                               const std::string& anchor_path, int depth) {
   (void)layer;
   (void)depth;
   if (!options_.resolve_variants) return true;
@@ -422,7 +480,29 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer, int depth) {
     if (const PrimSpec* h = layer.prim_at_path(holder)) {
       CopyLocalOpinions(prim, *h);
     }
-    GraftSubtree(layer, holder, prim.path().str());
+    GraftSubtree(layer, anchor_path, holder, prim.path().str());
+
+    // The holder (and its children) may have JUST been grafted from a
+    // referenced layer in this same pass and still sit in the pending buffer
+    // (e.g. a UE mesh asset whose LOD variant content arrives via an external
+    // reference). Apply from the pending entries: copy the holder's own
+    // opinions and re-root its descendants under the prim, dropping the
+    // "{vset=sel}" path segment. Unselected variant content keeps its brace
+    // path and is filtered out at append time.
+    const std::string hprefix = holder + "/";
+    const std::string dst = prim.path().str();
+    for (auto& pg : pending_graft_) {
+      const std::string& pp = pg.prim.path().str();
+      if (pp == holder) {
+        CopyLocalOpinions(prim, pg.prim);
+      } else if (pp.size() > hprefix.size() &&
+                 pp.compare(0, hprefix.size(), hprefix) == 0) {
+        std::string new_path = dst + "/" + pp.substr(hprefix.size());
+        if (graft_paths_.insert(new_path).second) {
+          pg.prim.set_path(Path(new_path));
+        }
+      }
+    }
   }
 
   return true;

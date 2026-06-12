@@ -379,7 +379,81 @@ composition.
 
 ---
 
-## 4. Verification
+## 4. UnrealEngine USD Stage exports
+
+A fourth scene class beyond the three above: UE's "Export Level → USD" writes a
+binary-crate root with thousands of per-instance `prepend references` into
+per-asset `SM_*.usd` files (geometry inline under a `variantSet "LOD"`, one
+selected LOD) plus `MI_*.usd` UsdPreviewSurface materials and 2k-textures.
+Multi-GB scenes (1–3 GB on disk, 250–750 textures) compose to 4k–13k meshes.
+Two UE-specific path pathologies, and the fixes (commit `3f314f0be`):
+
+- **Escaping parent-relative arcs**: references are authored against the export
+  machine's directory layout (e.g. `@../../../../../USD_Exports/<Scene>/Assets/
+  mesh.usd@`), which resolves outside the scene root and silently composed
+  nothing. The resolver now applies a **suffix fallback** on a literal-resolution
+  miss: strip the un-anchorable prefix (leading `../` runs, Windows drive,
+  `/`), then retry progressively shorter path suffixes — longest first, down to
+  the basename — against the search paths (`Assets/mesh.usd` matches under the
+  scene root). Default on; `tusdcat --no-asset-path-fallback` opts out. Each
+  rebase is surfaced as a deduped warning, and total misses warn once per path.
+- **Drive-prefixed paths** (`@F:/USD_Exports/...@`): with
+  `allow_parent_relative_paths`, the security validator now demotes the drive
+  prefix to a relative path instead of rejecting, and the same suffix fallback
+  rebases it.
+
+The fallback lives in `AssetResolutionResolver::resolve()` so every consumer —
+tusdcat/tusdzconvert flatten, `CompositionGraph`, and the wasm in-memory
+resolver (browser folder upload) — inherits it with no duplicated logic.
+
+## 5. USDZ conversion at scale (texture pipeline + wasm heap)
+
+Findings from converting multi-GB scene folders to USDZ (native `tusdzconvert`,
+the Node/wasm CLI, and headless-Chrome in-tab):
+
+### 5.1 Texture re-encode parallelization (commit `627d0472b`)
+
+PNG re-encode of hundreds of 2k textures was the wall-clock bottleneck
+(sequential single-thread: 15–44 min). Now:
+
+- **Native**: texture packing runs in three phases — sequential dedupe/UDIM/
+  asset reads → `ProcessTexture` on a `std::thread` pool → sequential archive
+  naming/stats — byte-identical output to the sequential order.
+  `UsdzConvertOptions::num_threads` (0 = all cores), `tusdzconvert -numThreads`.
+  Pair with `-DTINYUSDZ_WITH_FPNGE=ON` to replace the scalar-fpng encoder
+  (`FPNG_NO_SSE=1`). A 731-texture 2.5 GB scene: **33 s** vs 43 m 53 s via the
+  sequential wasm CLI.
+- **Node CLI**: `--texture-codec js` runs PNG decode / gamma-aware box resize /
+  encode on a `worker_threads` pool (pngjs + node's native zlib); non-PNG falls
+  back to the wasm path. 14–25× on PNG-heavy scenes, ~25–35 % larger output
+  (zlib-6 vs fpng).
+- **Browser**: the same `textureProcessor` hook (now driven with bounded
+  concurrency) accepts a `createImageBitmap` + OffscreenCanvas processor
+  (`web/js/src/texture-processor-browser.mjs`): 5–9× over in-tab wasm fpng.
+  Benchmarked hw (ANGLE/Vulkan) vs SwiftShader with
+  `web/js/tests/bench-usdzconvert-browser.mjs`: **a wash** — Chrome's image
+  codecs are CPU-side either way; only the sub-second canvas raster touches the
+  GPU. The pipeline is codec-bound, not raster-bound.
+
+### 5.2 wasm large-heap fixes (commits `3f314f0be`, `627d0472b`)
+
+- wasm32's 2 GB ceiling cannot hold a composed multi-GB scene folder; wasm64 is
+  required (`TINYUSDZ_WASM64=1`; in-tab needs Chrome ≥133 memory64).
+- wasm64 `MAXIMUM_MEMORY` raised 8 GB → **16 GB** (address-space reservation
+  only, with `ALLOW_MEMORY_GROWTH`): the in-heap folder flatten of a 2.5 GB
+  scene requests ~10 GB.
+- `-sMALLOC=emmalloc` → **dlmalloc** for wasm64: emmalloc asserts
+  (`debug_region_is_consistent` in `emmalloc_free`) once the heap grows past
+  ~8 GB; dlmalloc completes the identical run.
+- Node's `fs.writeFileSync` caps a single write at 2³¹−1 bytes; the CLI writes
+  >2 GiB USDZ outputs in 1 GiB `fs.writeSync` chunks.
+
+With these, a 2.5 GB UE-export folder converts to a 2.67 GB passthrough USDZ
+in-process on wasm64 in ~64 s (and validates by re-loading).
+
+---
+
+## 6. Verification
 
 ```
 cd build && cmake --build . -j16
@@ -391,4 +465,10 @@ cd build && ctest -R feat-large-scene --output-on-failure
 # --load-some=N streams deferred proxy geometry on demand.
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
+# suffix-fallback unit tests (§4):
+cd build && ./unit-test-tinyusdz ioutil_asset_path_suffix_candidates_test \
+                                 comp_reference_suffix_fallback_test
+# browser conversion bench (§5):
+cd web/js && xvfb-run -a node tests/bench-usdzconvert-browser.mjs --hw \
+  --scene <scene-dir> --root <root.usd> --case browser:png:1024
 ```

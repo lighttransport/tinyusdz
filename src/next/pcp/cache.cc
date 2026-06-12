@@ -169,7 +169,7 @@ struct Cache::Impl {
     return idx;
   }
 
-  std::unordered_map<std::string, std::unique_ptr<PrimIndex>> index_cache;
+  std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
 
   // Phase 10: lazily-composed per-prim specs + their composed child names,
@@ -1138,59 +1138,77 @@ struct Cache::Impl {
 
   // `src_path` is where composition opinions are gathered; `out_path` is where
   // the composed prim is placed (differs when a relocate renames it).
-  void BuildStageRec(const Path &src_path, const Path &out_path, Layer *out,
-                     uint32_t parent_idx, bool is_root, uint32_t depth,
-                     std::string *warn, std::string *err) {
-    // Namespace-depth backstop: an arc-induced namespace that keeps growing
-    // (e.g. an ancestor cycle a stronger check missed) must surface as an
-    // error, never as C++ stack exhaustion.
-    if (depth > options.max_namespace_depth) {
-      AddIssue(ErrorCode::MaxDepthExceeded, out_path.str(),
-               "BuildStage max namespace depth exceeded at: " + out_path.str(),
-               err);
-      return;
-    }
-    const std::vector<Src> &srcs = SourcesForPath(src_path, warn, err);
+  struct BuildStageWork {
+    Path src_path;
+    Path out_path;
+    uint32_t parent_idx = 0;
+    bool is_root = false;
+    uint32_t depth = 0;
+  };
 
-    PrimSpec spec(out_path.name());
-    spec.set_path(out_path);
-    std::vector<std::string> children = ComposeInto(srcs, &spec);
+  void BuildStage(Layer *out, const BuildStageWork &root_work,
+                  std::string *warn, std::string *err) {
+    std::vector<BuildStageWork> stack;
+    stack.push_back(root_work);
 
-    // Instancing: register this prim. If it is an instance (not the prototype of
-    // its group), link it to the prototype and do NOT duplicate its subtree --
-    // children are provided by the prototype (UsdPrim follows instance_prototype).
-    RegisterInstance(out_path.str(), srcs);
-    bool is_instance = false;
-    {
-      auto pit = prototype_of.find(out_path.str());
-      if (pit != prototype_of.end() && pit->second != out_path.str()) {
-        spec.meta().instance_prototype() = pit->second;
-        is_instance = true;
+    while (!stack.empty()) {
+      BuildStageWork w = stack.back();
+      stack.pop_back();
+
+      // Namespace-depth backstop: an arc-induced namespace that keeps growing
+      // (e.g. an ancestor cycle a stronger check missed) must surface as an
+      // error, never as C++ stack exhaustion.
+      if (w.depth > options.max_namespace_depth) {
+        AddIssue(ErrorCode::MaxDepthExceeded, w.out_path.str(),
+                 "BuildStage max namespace depth exceeded at: " + w.out_path.str(),
+                 err);
+        continue;
       }
-    }
+      const std::vector<Src> &srcs = SourcesForPath(w.src_path, warn, err);
 
-    uint32_t idx = out->add_prim(std::move(spec));
-    if (is_root) {
-      out->add_root(idx);
-    } else {
-      out->set_parent(idx, parent_idx);
-    }
+      PrimSpec spec(w.out_path.name());
+      spec.set_path(w.out_path);
+      std::vector<std::string> children = ComposeInto(srcs, &spec);
 
-    if (is_instance) return;  // prototype provides the subtree
+      // Instancing: register this prim. If it is an instance (not the prototype
+      // of its group), link it to the prototype and do NOT duplicate its subtree
+      // -- children are provided by the prototype (UsdPrim follows
+      // instance_prototype).
+      RegisterInstance(w.out_path.str(), srcs);
+      bool is_instance = false;
+      {
+        auto pit = prototype_of.find(w.out_path.str());
+        if (pit != prototype_of.end() && pit->second != w.out_path.str()) {
+          spec.meta().instance_prototype() = pit->second;
+          is_instance = true;
+        }
+      }
 
-    for (const std::string &cn : children) {
-      Path child_src = src_path.append_child(cn);
-      Path child_out;
-      auto rit = relocates_map.find(child_src.str());
-      if (rit != relocates_map.end() &&
-          Path(rit->second).parent().str() == out_path.str()) {
-        // Same-parent relocate: keep the source opinions, rename in output.
-        child_out = Path(rit->second);
+      uint32_t idx = out->add_prim(std::move(spec));
+      if (w.is_root) {
+        out->add_root(idx);
       } else {
-        child_out = out_path.append_child(cn);
+        out->set_parent(idx, w.parent_idx);
       }
-      BuildStageRec(child_src, child_out, out, idx, /*is_root=*/false,
-                    depth + 1, warn, err);
+
+      if (is_instance) continue;  // prototype provides the subtree
+
+      // Push children in reverse order so the first child processes first
+      // (preserving the original visitation order).
+      for (auto it = children.rbegin(); it != children.rend(); ++it) {
+        const std::string &cn = *it;
+        Path child_src = w.src_path.append_child(cn);
+        Path child_out;
+        auto rit = relocates_map.find(child_src.str());
+        if (rit != relocates_map.end() &&
+            Path(rit->second).parent().str() == w.out_path.str()) {
+          child_out = Path(rit->second);
+        } else {
+          child_out = w.out_path.append_child(cn);
+        }
+        stack.push_back({child_src, child_out, idx, /*is_root=*/false,
+                         w.depth + 1});
+      }
     }
   }
 
@@ -1218,8 +1236,8 @@ struct Cache::Impl {
       }
     }
     for (const std::string &nm : root_names) {
-      BuildStageRec(Path("/" + nm), Path("/" + nm), out.get(), 0,
-                    /*is_root=*/true, /*depth=*/1, warn, err);
+      BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
+                 warn, err);
     }
 
     out->finalize();
@@ -1306,9 +1324,11 @@ struct Cache::Impl {
   // cache. Composed values are identical to a serial run. Non-threaded builds (or
   // num_threads <= 1) use the plain serial loop.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
-                          std::string *err) {
-    NEXT_PCP_LOCK(api_mu_);
+                           std::string *err) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+    // Use unique_lock (not lock_guard) so we can release api_mu_ during the
+    // parallel build and reacquire it for the merge.
+    std::unique_lock<PcpMutex> wlk(api_mu_);
     int nt = options.num_threads;
     if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
     if (nt > 1) {
@@ -1374,6 +1394,12 @@ struct Cache::Impl {
           workers.push_back(std::move(wp));
         }
 
+        // Release api_mu_ during the parallel build so that concurrent API
+        // calls (ComputePrimIndex, SourcesForPath, etc.) are not blocked.
+        // Workers operate on private Impls and only borrow the thread-safe
+        // shared registry; they never touch shared cache state.
+        wlk.unlock();
+
         std::vector<std::thread> bts;
         bts.reserve(static_cast<size_t>(W));
         for (int t = 0; t < W; ++t) {
@@ -1388,6 +1414,9 @@ struct Cache::Impl {
           });
         }
         for (auto &t : bts) t.join();
+
+        // Reacquire api_mu_ for the serial merge into shared cache state.
+        wlk.lock();
 
         // Merge in input order (chunks are contiguous and ascending).
         for (int t = 0; t < W; ++t) {
@@ -1410,8 +1439,18 @@ struct Cache::Impl {
         return true;
       }
     }
+#else
+    {
+      NEXT_PCP_LOCK(api_mu_);
+      for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
+    }
 #endif
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    // The thread-enabled serial fallback reaches here with `wlk` already
+    // holding api_mu_. Do not take NEXT_PCP_LOCK again: the default mutex is
+    // intentionally non-recursive.
     for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
+#endif
     return true;
   }
 
@@ -1450,8 +1489,11 @@ struct Cache::Impl {
     const std::string base = prim_path.str();
     std::set<std::string> to_drop;
 
-    for (const auto &kv : index_cache) {
-      if (IsAtOrUnder(kv.first, base)) to_drop.insert(kv.first);
+    // index_cache is a std::map (sorted). Use lower_bound to scan only entries
+    // at/under base instead of the entire map (Fix #12).
+    for (auto it = index_cache.lower_bound(base);
+         it != index_cache.end() && IsAtOrUnder(it->first, base); ++it) {
+      to_drop.insert(it->first);
     }
     for (const auto &kv : site_to_indices) {
       if (IsAtOrUnder(kv.first.prim_path, base)) {
@@ -1494,11 +1536,14 @@ struct Cache::Impl {
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
-    // Conservative: a referenced layer feeds many prims' sources, and its spec
-    // contents just changed.
-    sources_cache.clear();
+    // spec_cache_ keys are (stack_idx, site), not prim paths; layer contents
+    // changed so clear it entirely.
     spec_cache_.clear();
-    composed_cache_.clear();  // Phase 10: composed specs read from these sources.
+    // Sources and lazy composed specs can be populated without a PrimIndex, so
+    // site_to_indices is not a complete dependency map for them. Be conservative
+    // until lazy composition records its own layer-site dependencies.
+    sources_cache.clear();
+    composed_cache_.clear();
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
     reg_->Drop(layer_id);

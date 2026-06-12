@@ -13,3 +13,4 @@ src/tinyusdz/tinyusdz_64.js
 
 # Patch scripts (temporary)
 apply-nodematerial-patch.sh
+tests/bench-usdzconvert/

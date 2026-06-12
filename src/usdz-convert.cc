@@ -4,12 +4,15 @@
 #include "usdz-convert.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <deque>
 #include <fstream>
 #include <map>
 #include <set>
+#include <thread>
 #include <utility>
 
 #include "tinyusdz.hh"
@@ -663,9 +666,27 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
   Layer src_layer = root_layer;
 
+  // Like tusdcat, assets resolve against the local filesystem where USD's
+  // parent-relative references (`@../common/foo.usd@`) are legitimate; the
+  // resolver suffix-fallback additionally rebases paths authored against
+  // another machine's layout (e.g. UE exports).
+  tinyusdz::SublayersCompositionOptions sublayer_options;
+  sublayer_options.allow_parent_relative_paths = true;
+  tinyusdz::ReferencesCompositionOptions references_options;
+  references_options.allow_parent_relative_paths = true;
+  tinyusdz::PayloadCompositionOptions payload_options;
+  payload_options.allow_parent_relative_paths = true;
+
+  // Parse each referenced file once across the whole fixed-point loop; all
+  // arcs to the same file share one copy of the heavy attribute data (COW).
+  std::map<std::string, Layer> layer_cache;
+  references_options.layer_cache = &layer_cache;
+  payload_options.layer_cache = &layer_cache;
+
   if (!src_layer.metas().subLayers.empty()) {
     Layer tmp;
-    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err)) {
+    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
+                                      sublayer_options)) {
       return false;
     }
     src_layer = std::move(tmp);
@@ -678,7 +699,11 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_references()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, warn, err)) {
+      // InPlace: consumes src_layer (no internal arcs) instead of holding
+      // input + output copies — halves the peak of the pass.
+      if (!tinyusdz::CompositeReferencesInPlace(
+              resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
+              warn, err, references_options)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -687,7 +712,9 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_payload()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, warn, err)) {
+      if (!tinyusdz::CompositePayloadInPlace(
+              resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
+              warn, err, payload_options)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -784,6 +811,94 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 // Process one texture's bytes: optionally decode -> resize -> re-encode.
 // On success fills `out_bytes` and `out_ext` (lowercase, no dot) and sets the
 // resize/reencode flags. Falls back to passthrough on decode failure.
+// Bounded producer/consumer pool for texture jobs. `produce(job)` runs on the
+// calling thread (asset resolvers are not thread-safe) at most 2*num_threads
+// jobs ahead of the workers' `run(job)`, so peak memory holds a window of
+// in-flight source buffers instead of the whole texture set. Returns false
+// when `produce` reports a hard error (workers are drained first).
+template <typename Job, typename ProduceFn, typename RunFn>
+bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
+                           const ProduceFn &produce, const RunFn &run) {
+  size_t num_threads =
+      (num_threads_option > 0)
+          ? size_t(num_threads_option)
+          : size_t((std::max)(1u, std::thread::hardware_concurrency()));
+  num_threads = (std::min)(num_threads, jobs.size());
+
+  if (num_threads <= 1) {
+    for (Job &job : jobs) {
+      if (!produce(job)) {
+        return false;
+      }
+      run(job);
+    }
+    return true;
+  }
+
+  const size_t window = num_threads * 2;
+  std::mutex mtx;
+  std::condition_variable cv;
+  size_t produced = 0;   // jobs whose bytes are ready
+  size_t completed = 0;  // jobs workers have finished
+  std::atomic<size_t> next_job{0};
+  bool produce_failed = false;
+
+  std::vector<std::thread> workers;
+  workers.reserve(num_threads);
+  for (size_t t = 0; t < num_threads; t++) {
+    workers.emplace_back([&]() {
+      while (true) {
+        size_t idx = next_job.fetch_add(1);
+        if (idx >= jobs.size()) {
+          break;
+        }
+        {
+          std::unique_lock<std::mutex> lock(mtx);
+          cv.wait(lock, [&] { return produced > idx || produce_failed; });
+          if (idx >= produced) {
+            break;  // producer bailed before reaching this job
+          }
+        }
+        run(jobs[idx]);
+        {
+          std::lock_guard<std::mutex> lock(mtx);
+          completed++;
+        }
+        cv.notify_all();
+      }
+    });
+  }
+
+  bool ok = true;
+  for (size_t i = 0; i < jobs.size() && ok; i++) {
+    {
+      std::unique_lock<std::mutex> lock(mtx);
+      cv.wait(lock, [&] { return produced - completed < window; });
+    }
+    ok = produce(jobs[i]);
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      if (ok) {
+        produced++;
+      } else {
+        produce_failed = true;
+      }
+    }
+    cv.notify_all();
+  }
+  if (!ok) {
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      produce_failed = true;
+    }
+    cv.notify_all();
+  }
+  for (std::thread &worker : workers) {
+    worker.join();
+  }
+  return ok;
+}
+
 bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
                     const std::string &src_ext_lower,
                     const UsdzConvertOptions &opts, const std::string &uri,
@@ -1276,10 +1391,46 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   std::vector<std::map<std::string, std::string>> texture_remaps;
   texture_remaps.resize(packages.size());
 
+  // Texture packing runs in three phases so the heavy per-texture
+  // decode/resize/encode can use a worker pool:
+  //   1. (sequential) dedupe, UDIM expansion, asset reads -> job list
+  //   2. (parallel)   ProcessTexture per job
+  //   3. (sequential, in job order) archive naming, stats, remaps
+  // Phase 1/3 stay sequential because they touch the resolver and the shared
+  // assets/remap maps; ProcessTexture is a pure transform of the input bytes.
+  struct TextureJob {
+    std::string authored_path;  // representative authored path (first ref)
+    std::string source_path;
+    std::string archive_name;  // pre-collision-resolution name
+    std::vector<uint8_t> src_bytes;
+    std::string src_ext;
+    // refs (package_index, authored_path) to remap to this job's result
+    std::vector<std::pair<size_t, std::string>> refs;
+    size_t package_index{0};  // for the lazy phase-2 read (base_dir)
+    bool skipped{false};      // unreadable-but-safe path; left as missing ref
+    // results (phase 2)
+    std::vector<uint8_t> out_bytes;
+    std::string out_ext;
+    bool resized{false};
+    bool reencoded{false};
+    bool ok{false};
+    std::string pwarn;
+  };
+
+  std::vector<TextureJob> jobs;
+  std::map<std::string, size_t> source_to_job;
+
   for (const TextureRef &ref : texture_refs) {
     auto existing = source_to_archive.find(ref.source_path);
     if (existing != source_to_archive.end()) {
       texture_remaps[ref.package_index][ref.authored_path] = existing->second;
+      continue;
+    }
+
+    auto pending = source_to_job.find(ref.source_path);
+    if (pending != source_to_job.end()) {
+      jobs[pending->second].refs.emplace_back(ref.package_index,
+                                              ref.authored_path);
       continue;
     }
 
@@ -1309,45 +1460,84 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
       archive_name = SanitizeArchiveName(ref.authored_path);
     }
 
-    std::vector<uint8_t> src_bytes;
-    std::string rerr;
-    if (!ReadAssetBytesWithBase(resolver, ref.authored_path,
-                                packages[ref.package_index].base_dir,
-                                &src_bytes, warn, &rerr)) {
-      const std::string missing_ref =
-          SafeMissingArchiveReference(ref.authored_path, search_paths);
-      if (missing_ref.empty()) {
-        if (err) {
-          *err = "Unsafe texture path could not be packed: " +
-                 ref.authored_path + " (" + rerr + ")";
-        }
-        return false;
-      }
-      texture_remaps[ref.package_index][ref.authored_path] = missing_ref;
-      if (warn) {
-        *warn += "Skipping unreadable texture '" + ref.authored_path + "': " +
-                 rerr + "\n";
-      }
-      continue;
-    }
+    TextureJob job;
+    job.authored_path = ref.authored_path;
+    job.source_path = ref.source_path;
+    job.package_index = ref.package_index;
+    job.archive_name = std::move(archive_name);
+    // Asset bytes are read lazily by the phase-2 producer (bounded window).
+    job.src_ext = to_lower(io::GetFileExtension(ref.authored_path));
+    job.refs.emplace_back(ref.package_index, ref.authored_path);
+    source_to_job[ref.source_path] = jobs.size();
+    jobs.push_back(std::move(job));
+  }
 
-    const std::string src_ext = to_lower(io::GetFileExtension(ref.authored_path));
-    std::vector<uint8_t> out_bytes;
-    std::string out_ext;
-    bool resized = false;
-    bool reencoded = false;
-    std::string pwarn;
-    if (!ProcessTexture(src_bytes, src_ext, options, ref.authored_path,
-                        &out_bytes, &out_ext, &resized, &reencoded, &pwarn)) {
-      if (warn) *warn += "Failed to process texture " + ref.authored_path + "\n";
+  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
+  // (the resolver is not thread-safe), workers decode/resize/encode; at most
+  // 2*num_threads source buffers are in flight.
+  {
+    auto run_job = [&options](TextureJob &job) {
+      if (job.skipped) {
+        return;
+      }
+      job.ok = ProcessTexture(job.src_bytes, job.src_ext, options,
+                              job.authored_path, &job.out_bytes, &job.out_ext,
+                              &job.resized, &job.reencoded, &job.pwarn);
+      std::vector<uint8_t>().swap(job.src_bytes);
+    };
+
+    auto produce_job = [&](TextureJob &job) -> bool {
+      std::string rerr;
+      if (!ReadAssetBytesWithBase(resolver, job.authored_path,
+                                  packages[job.package_index].base_dir,
+                                  &job.src_bytes, warn, &rerr)) {
+        const std::string missing_ref =
+            SafeMissingArchiveReference(job.authored_path, search_paths);
+        if (missing_ref.empty()) {
+          if (err) {
+            *err = "Unsafe texture path could not be packed: " +
+                   job.authored_path + " (" + rerr + ")";
+          }
+          return false;
+        }
+        for (const auto &r : job.refs) {
+          texture_remaps[r.first][r.second] = missing_ref;
+        }
+        if (warn) {
+          *warn += "Skipping unreadable texture '" + job.authored_path + "': " +
+                   rerr + "\n";
+        }
+        job.skipped = true;
+      }
+      return true;
+    };
+
+    if (!RunBoundedTextureJobs(jobs, options.num_threads, produce_job,
+                               run_job)) {
+      return false;
+    }
+  }
+
+  // Phase 3: archive naming, stats and remaps, deterministically in job order.
+  for (TextureJob &job : jobs) {
+    if (job.skipped) {
+      continue;  // unreadable; already warned + safe missing reference left
+    }
+    if (!job.ok) {
+      if (warn) {
+        *warn += "Failed to process texture " + job.authored_path + "\n";
+      }
       continue;
     }
-    if (warn) *warn += pwarn;
+    if (warn) *warn += job.pwarn;
+
+    std::string archive_name = std::move(job.archive_name);
+    std::string out_ext = std::move(job.out_ext);
 
     if (options.arkit_compatible && !IsAllowedARKitTextureExt(out_ext)) {
       if (err) {
         *err = "ARKit-compatible USDZ cannot package texture '" +
-               ref.authored_path + "' with unsupported output extension '" +
+               job.authored_path + "' with unsupported output extension '" +
                out_ext + "'.";
       }
       return false;
@@ -1362,27 +1552,29 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
 
     std::string unique_name = archive_name;
     uint32_t suffix = 1;
-    while (assets.count(unique_name) && assets[unique_name] != out_bytes) {
+    while (assets.count(unique_name) && assets[unique_name] != job.out_bytes) {
       unique_name = MakeCollisionArchiveName(archive_name, suffix++);
     }
     archive_name = unique_name;
 
-    assets[archive_name] = std::move(out_bytes);
-    source_to_archive[ref.source_path] = archive_name;
-    texture_remaps[ref.package_index][ref.authored_path] = archive_name;
+    assets[archive_name] = std::move(job.out_bytes);
+    source_to_archive[job.source_path] = archive_name;
+    for (const auto &r : job.refs) {
+      texture_remaps[r.first][r.second] = archive_name;
+    }
 
     if (stats) {
       stats->num_textures++;
-      if (resized) stats->num_textures_resized++;
-      if (reencoded) {
+      if (job.resized) stats->num_textures_resized++;
+      if (job.reencoded) {
         stats->num_textures_reencoded++;
       } else {
         stats->num_textures_passthrough++;
       }
     }
-    Log(options.verbose, "  " + ref.authored_path + " -> " + archive_name +
-                             (resized ? " [resized]" : "") +
-                             (reencoded ? " [reencoded]" : " [passthrough]"));
+    Log(options.verbose, "  " + job.authored_path + " -> " + archive_name +
+                             (job.resized ? " [resized]" : "") +
+                             (job.reencoded ? " [reencoded]" : " [passthrough]"));
   }
 
   for (size_t i = 0; i < packages.size(); i++) {
@@ -1722,9 +1914,35 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
+  // Texture packing runs in three phases so the heavy per-texture
+  // decode/resize/encode can use a worker pool (options.num_threads):
+  //   1. (sequential) dedupe, UDIM expansion, budget lookups, asset reads
+  //   2. (parallel)   ProcessTexture per job
+  //   3. (sequential, in job order) archive naming, stats, remaps
+  // Phase 1/3 stay sequential because they touch the resolver and the shared
+  // assets/remap maps; ProcessTexture is a pure transform of the input bytes.
+  struct FlattenTextureJob {
+    std::string orig;
+    std::string archive_name;  // pre-collision-resolution name
+    std::vector<uint8_t> src_bytes;
+    std::string src_ext;
+    bool needs_process{false};  // false: out_* prefilled (budget mode)
+    bool skipped{false};        // unreadable-but-safe path; left as missing ref
+    // results
+    std::vector<uint8_t> out_bytes;
+    std::string out_ext;
+    bool resized{false};
+    bool reencoded{false};
+    bool ok{false};
+    std::string pwarn;
+  };
+
+  std::vector<FlattenTextureJob> texture_jobs;
+  std::set<std::string> queued_paths;
+
   for (const std::string &orig : texture_paths) {
-    if (path_to_archive.count(orig)) {
-      continue;  // already processed
+    if (path_to_archive.count(orig) || queued_paths.count(orig)) {
+      continue;  // already processed or queued
     }
 
     // UDIM texture: expand to tiles, pack each, and rewrite the authored
@@ -1746,12 +1964,10 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       continue;
     }
 
-    std::string archive_name =
+    FlattenTextureJob job;
+    job.orig = orig;
+    job.archive_name =
         SanitizeArchiveName(RelativeToSearchPath(orig, search_paths));
-
-    std::vector<uint8_t> out_bytes;
-    std::string out_ext;
-    bool resized = false, reencoded = false;
 
     if (budget_mode) {
       auto it = fitted.find(orig);
@@ -1759,44 +1975,86 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
         // Unreadable safe relative path; leave the original reference unchanged.
         continue;
       }
-      out_bytes = it->second.first;
-      out_ext = it->second.second;
-      resized = (options.fit_strategy == FitStrategy::Size);
-      reencoded = true;
+      job.out_bytes = it->second.first;
+      job.out_ext = it->second.second;
+      job.resized = (options.fit_strategy == FitStrategy::Size);
+      job.reencoded = true;
+      job.ok = true;
     } else {
-      std::string src_ext = to_lower(io::GetFileExtension(orig));
-      std::vector<uint8_t> src_bytes;
+      job.src_ext = to_lower(io::GetFileExtension(orig));
+      // Asset bytes are read lazily by the phase-2 producer (bounded window)
+      // so peak memory holds a handful of textures, not the whole set.
+      job.needs_process = true;
+    }
+
+    queued_paths.insert(orig);
+    texture_jobs.push_back(std::move(job));
+  }
+
+  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
+  // (the resolver is not thread-safe), workers decode/resize/encode; at most
+  // 2*num_threads source buffers are in flight.
+  {
+    auto run_job = [&options](FlattenTextureJob &job) {
+      if (!job.needs_process || job.skipped) {
+        return;  // budget mode prefilled the result, or the read was skipped
+      }
+      job.ok = ProcessTexture(job.src_bytes, job.src_ext, options, job.orig,
+                              &job.out_bytes, &job.out_ext, &job.resized,
+                              &job.reencoded, &job.pwarn);
+      std::vector<uint8_t>().swap(job.src_bytes);
+    };
+
+    // Returns false only on the hard "unsafe path" error; unreadable-but-safe
+    // paths mark the job skipped (reference left pointing at the missing name).
+    auto produce_job = [&](FlattenTextureJob &job) -> bool {
+      if (!job.needs_process) {
+        return true;
+      }
       std::string rerr;
-      if (!ReadAssetBytes(resolver, orig, &src_bytes, warn, &rerr)) {
+      if (!ReadAssetBytes(resolver, job.orig, &job.src_bytes, warn, &rerr)) {
         const std::string missing_ref =
-            SafeMissingArchiveReference(orig, search_paths);
+            SafeMissingArchiveReference(job.orig, search_paths);
         if (missing_ref.empty()) {
           if (err) {
-            (*err) = "Unsafe texture path could not be packed: " + orig +
+            (*err) = "Unsafe texture path could not be packed: " + job.orig +
                      " (" + rerr + ")";
           }
           return false;
         }
-        path_to_archive[orig] = missing_ref;
+        path_to_archive[job.orig] = missing_ref;
         if (warn) {
-          (*warn) += "Skipping unreadable texture '" + orig + "': " + rerr + "\n";
+          (*warn) += "Skipping unreadable texture '" + job.orig + "': " + rerr + "\n";
         }
-        // Leave safe missing references untouched instead of creating broken
-        // sanitized references to assets that are not present in the archive.
-        continue;
+        job.skipped = true;
       }
-      std::string pwarn;
-      if (!ProcessTexture(src_bytes, src_ext, options, orig, &out_bytes, &out_ext,
-                     &resized, &reencoded, &pwarn)) {
-        if (warn) (*warn) += "Failed to process texture " + orig + "\n";
-        continue;
-      }
-      if (warn) (*warn) += pwarn;
+      return true;
+    };
+
+    if (!RunBoundedTextureJobs(texture_jobs, options.num_threads, produce_job,
+                               run_job)) {
+      return false;
     }
+  }
+
+  // Phase 3: archive naming, stats and remaps, deterministically in job order.
+  for (FlattenTextureJob &job : texture_jobs) {
+    if (job.skipped) {
+      continue;  // unreadable; already warned + safe missing reference left
+    }
+    if (!job.ok) {
+      if (warn) (*warn) += "Failed to process texture " + job.orig + "\n";
+      continue;
+    }
+    if (warn) (*warn) += job.pwarn;
+
+    std::string archive_name = std::move(job.archive_name);
+    std::string out_ext = std::move(job.out_ext);
+    std::vector<uint8_t> out_bytes = std::move(job.out_bytes);
 
     if (options.arkit_compatible && !IsAllowedARKitTextureExt(out_ext)) {
       if (err) {
-        *err = "ARKit-compatible USDZ cannot package texture '" + orig +
+        *err = "ARKit-compatible USDZ cannot package texture '" + job.orig +
                "' with unsupported output extension '" + out_ext + "'.";
       }
       return false;
@@ -1837,20 +2095,20 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     archive_name = unique_name;
 
     assets[archive_name] = std::move(out_bytes);
-    path_to_archive[orig] = archive_name;
+    path_to_archive[job.orig] = archive_name;
 
     if (stats) {
       stats->num_textures++;
-      if (resized) stats->num_textures_resized++;
-      if (reencoded) {
+      if (job.resized) stats->num_textures_resized++;
+      if (job.reencoded) {
         stats->num_textures_reencoded++;
       } else {
         stats->num_textures_passthrough++;
       }
     }
-    Log(options.verbose, "  " + orig + " -> " + archive_name +
-                             (resized ? " [resized]" : "") +
-                             (reencoded ? " [reencoded]" : " [passthrough]"));
+    Log(options.verbose, "  " + job.orig + " -> " + archive_name +
+                             (job.resized ? " [resized]" : "") +
+                             (job.reencoded ? " [reencoded]" : " [passthrough]"));
   }
 
   // --- Rewrite texture file paths to the archive-relative names ---
@@ -2061,6 +2319,11 @@ bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
   // No warnings to emit; PackChannels returns errors only.
   (void)warn;
   return true;
+}
+
+size_t RemapLayerTextureAssetPaths(
+    Layer &layer, const std::map<std::string, std::string> &remap) {
+  return RemapLayerAssetPaths(layer, remap);
 }
 
 }  // namespace usdz

@@ -338,8 +338,8 @@ struct PathHasher {
     // Uses the private _variant_part / _variant_selection_part directly
     // (Path declares these structs as friends) to avoid the per-call
     // std::string allocation in variant_part(). See concern 5 in review.md.
-    hash_combine(seed, std::hash<std::string>()(path._variant_part));
-    hash_combine(seed, std::hash<std::string>()(path._variant_selection_part));
+    hash_combine(seed, std::hash<std::string>()(path.variant_part_raw()));
+    hash_combine(seed, std::hash<std::string>()(path.variant_selection_raw()));
 
     return seed;
   }
@@ -352,8 +352,8 @@ struct PathKeyEqual {
     //ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
     ret &= lhs.is_valid() == rhs.is_valid();
     // See concern 5 in review.md. See note in PathHasher about friendship.
-    ret &= lhs._variant_part == rhs._variant_part;
-    ret &= lhs._variant_selection_part == rhs._variant_selection_part;
+    ret &= lhs.variant_part_raw() == rhs.variant_part_raw();
+    ret &= lhs.variant_selection_raw() == rhs.variant_selection_raw();
 
     return ret;
   }
