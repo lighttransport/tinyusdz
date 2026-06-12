@@ -146,6 +146,7 @@ void App::applyLoaded(bool ok, bool progressive) {
 
   if (ok) {
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
+    readAnimationRange();  // start/end/fps; resets playback to paused at start
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
     if (draw_.hasBounds) {
@@ -288,6 +289,9 @@ void App::finishLoadIfReady() {
 }
 
 void App::cancelAndJoinLoad() {
+  // A pending file load supersedes any in-flight playback re-evaluation (which
+  // reads loaded_ on a worker thread): stop it before loaded_ is replaced.
+  cancelAndJoinReconvert();
   if (loadThread_.joinable()) {
     loadCtrl_.cancel.store(true);
     loadThread_.join();
@@ -296,6 +300,120 @@ void App::cancelAndJoinLoad() {
   loadFinished_.store(false);
   pendingLoaded_.reset();
   pendingDraw_.reset();
+}
+
+void App::readAnimationRange() {
+  const auto& m = loaded_.render.meta;
+  animFps_ = m.timeCodesPerSecond > 0.0 ? m.timeCodesPerSecond : 24.0;
+  if (m.startTimeCode.has_value() && m.endTimeCode.has_value() &&
+      m.endTimeCode.value() > m.startTimeCode.value()) {
+    animStart_ = m.startTimeCode.value();
+    animEnd_ = m.endTimeCode.value();
+    hasAnimation_ = true;
+  } else {
+    animStart_ = animEnd_ = 0.0;
+    hasAnimation_ = false;
+  }
+  animTime_ = animStart_;
+  reconvApplied_ = animStart_;
+  animPlaying_ = false;
+  reconvHasRequest_ = false;
+  haveLastFrameTime_ = false;
+}
+
+void App::advancePlayback(float dtSec) {
+  if (!hasAnimation_ || !animPlaying_) return;
+  const double span = animEnd_ - animStart_;
+  animTime_ += static_cast<double>(dtSec) * animFps_ *
+               static_cast<double>(animSpeed_);
+  if (animTime_ > animEnd_) {
+    if (animLoop_ && span > 0.0) {
+      animTime_ = animStart_ + std::fmod(animTime_ - animStart_, span);
+    } else {
+      animTime_ = animEnd_;
+      animPlaying_ = false;
+    }
+  } else if (animTime_ < animStart_) {
+    animTime_ = animStart_;
+  }
+  requestReconvert(animTime_);
+}
+
+void App::requestReconvert(double t) {
+  // Skip while a fresh file load is streaming (loaded_/draw_ are in flux); the
+  // worker would also race the load writing loaded_.
+  if (!loaded_.ok || loadActive_) return;
+  reconvRequested_ = t;
+  reconvHasRequest_ = true;
+  if (!reconvActive_) startReconvertAsync(t);
+}
+
+void App::startReconvertAsync(double t) {
+  reconvActive_ = true;
+  reconvInFlight_ = t;
+  reconvHasRequest_ = false;
+  reconvFinished_.store(false);
+  reconvOk_.store(false);
+  reconvCtrl_.cancel.store(false);
+  reconvCtrl_.resetProgress();
+  reconvDraw_ = std::make_unique<DrawScene>();
+  DrawScene* dp = reconvDraw_.get();
+  const bool rt = rtPath_;
+  // Worker reads loaded_ (stage/mmap/filepath) read-only; the main thread keeps
+  // loaded_ alive and joins this worker (cancelAndJoinReconvert) before any
+  // reload. RenderSceneAtTime skips texture decode and fills only dp->meshes.
+  reconvThread_ = std::thread([this, t, dp, rt]() {
+    std::string w, e;
+    const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_);
+    reconvOk_.store(ok, std::memory_order_relaxed);
+    reconvFinished_.store(true, std::memory_order_release);
+  });
+}
+
+void App::finishReconvertIfReady() {
+  if (!reconvActive_) return;
+  if (!reconvFinished_.load(std::memory_order_acquire)) return;
+  if (reconvThread_.joinable()) reconvThread_.join();
+  reconvActive_ = false;
+
+  if (reconvOk_.load(std::memory_order_relaxed) && !reconvCtrl_.cancel.load() &&
+      reconvDraw_) {
+    // Swap in the re-evaluated geometry while keeping the initial load's
+    // materials/textures (they don't animate). draw_ is mutated in place so the
+    // GUI's pointer (and selection/visibility state) stays valid — do NOT call
+    // setScene here.
+    draw_.meshes = std::move(reconvDraw_->meshes);
+    draw_.triangleCount = reconvDraw_->triangleCount;
+    draw_.truncated = reconvDraw_->truncated;
+    if (reconvDraw_->hasBounds) {
+      draw_.hasBounds = true;
+      for (int i = 0; i < 3; ++i) {
+        draw_.aabbMin[i] = reconvDraw_->aabbMin[i];
+        draw_.aabbMax[i] = reconvDraw_->aabbMax[i];
+      }
+    }
+    reconvApplied_ = reconvInFlight_;
+    std::string uerr;
+    renderer_->uploadScene(draw_, &uerr);  // camera untouched (no refit)
+  }
+  reconvDraw_.reset();
+
+  // Coalesce: if playback advanced past the time we just computed, start the
+  // next re-evaluation toward the latest requested time.
+  if (reconvHasRequest_ && reconvRequested_ != reconvApplied_ && !loadActive_) {
+    startReconvertAsync(reconvRequested_);
+  }
+}
+
+void App::cancelAndJoinReconvert() {
+  if (reconvThread_.joinable()) {
+    reconvCtrl_.cancel.store(true);
+    reconvThread_.join();
+  }
+  reconvActive_ = false;
+  reconvFinished_.store(false);
+  reconvHasRequest_ = false;
+  reconvDraw_.reset();
 }
 
 void App::openFileDialog() {
@@ -414,6 +532,31 @@ int App::run(const std::string& initialFile, int maxFrames,
     // GPU a little per frame so the UI stays responsive (progressive upload).
     finishLoadIfReady();
     stepProgressiveUpload();
+    finishReconvertIfReady();  // swap in re-evaluated animation geometry
+
+    // Advance the playback clock and request a re-evaluation at the new time
+    // (interactive only; headless renders a fixed --time frame deterministically).
+    if (!headless_) {
+      const auto now = std::chrono::steady_clock::now();
+      float dt = haveLastFrameTime_
+                     ? std::chrono::duration<float>(now - lastFrameTime_).count()
+                     : 0.0f;
+      lastFrameTime_ = now;
+      haveLastFrameTime_ = true;
+      if (dt > 0.1f) dt = 0.1f;  // clamp after stalls/load hitches
+      advancePlayback(dt);
+    }
+
+    // Feed the GUI the current playback state (drawn this frame).
+    Gui::TimelineInfo tl;
+    tl.hasAnimation = hasAnimation_;
+    tl.start = animStart_;
+    tl.end = animEnd_;
+    tl.fps = animFps_;
+    tl.current = animTime_;
+    tl.playing = animPlaying_;
+    tl.converting = reconvActive_;
+    gui_.setTimeline(tl);
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;
@@ -448,6 +591,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool cancelLoad = gui_.wantCancelLoad();
     const bool loadAllPayloads = gui_.wantLoadAllPayloads();
     std::vector<std::string> payloadReqs = gui_.takePayloadLoadRequests();
+    // Timeline actions.
+    const bool togglePlay = gui_.wantTogglePlay();
+    const bool stopPlay = gui_.wantStop();
+    const bool hasSeek = gui_.hasSeek();
+    const double seekTime = gui_.seekTime();
+    animLoop_ = gui_.loopPlayback();
+    animSpeed_ = gui_.playSpeed();
     gui_.clearActions();
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
@@ -455,6 +605,22 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
+
+    // Timeline: play/pause, stop (reset to start), and scrub.
+    if (hasAnimation_) {
+      if (togglePlay) animPlaying_ = !animPlaying_;
+      if (stopPlay) {
+        animPlaying_ = false;
+        animTime_ = animStart_;
+        requestReconvert(animTime_);
+      }
+      if (hasSeek) {
+        animTime_ = seekTime;
+        if (animTime_ < animStart_) animTime_ = animStart_;
+        if (animTime_ > animEnd_) animTime_ = animEnd_;
+        requestReconvert(animTime_);
+      }
+    }
 
     // Lazy payload on-demand load: recompose with the requested payloads added.
     // Skipped while a load is in flight (loaded_ would be the outgoing scene).

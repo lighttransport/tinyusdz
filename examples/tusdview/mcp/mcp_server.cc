@@ -94,6 +94,13 @@ json MCPServer::buildToolsList() const {
       {{"paths", {{"type", "array"},
                   {"items", {{"type", "string"}}},
                   {"description", "Deferred-payload prim paths (omit = all)"}}}}));
+  tools.push_back(tool(
+      "timeline",
+      "Control animation playback. op=play | pause | stop (reset to start) | "
+      "seek {time}. Returns the playback state (playing, time, start, end, fps).",
+      {{"op", strProp("play | pause | stop | seek")},
+       {"time", numProp("target time code (seek)")}},
+      json::array({"op"})));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -215,6 +222,8 @@ void MCPServer::drain() {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {
         payload = host_->mcpLoadPayloads(cmd->args, err);
+      } else if (t == "timeline") {
+        payload = host_->mcpTimeline(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);
