@@ -1585,11 +1585,14 @@ namespace value {
 /// any_value — Purpose-built type-erased container for USD value types.
 ///
 /// Replaces linb::any with a design tailored for TinyUSDZ:
-/// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most binary-serializable values)
+/// - 16-byte SBO buffer: scalars/float3 and smaller stay inline; everything
+///   bigger (strings, vectors, matrices) lives in a refcounted heap holder
+///   shared copy-on-write between copies — sizeof(any_value) = 24, and
+///   copying a Value is O(1) for all heap-stored payloads
 /// - A single shared per-type descriptor pointer (TypeDesc*): destroy/copy/move
 ///   ops plus type-id/underlying-id/name/sizeof/is_inline. The descriptor is one
 ///   static instance per stored type (vague linkage), so each any_value holds only
-///   { 48-byte buffer + one pointer } = 56 bytes (was ~96 with 7 inline members),
+///   { 16-byte buffer + one pointer } = 24 bytes,
 ///   and copy/move just propagate the pointer instead of seven fields.
 ///
 class any_value {
@@ -1716,7 +1719,7 @@ class any_value {
   }
 
  private:
-  static constexpr size_t kBufferSize = 48;
+  static constexpr size_t kBufferSize = 16;
   static constexpr size_t kBufferAlign = 8;
 
   using name_fn_t = std::string (*)();
