@@ -219,6 +219,8 @@ public:
     value_offsets_.clear();
     arrays_passed_through_ = 0;
     arrays_reencoded_ = 0;
+    block_dedup_.clear();
+    blocks_deduped_ = 0;
     // Reserve block index 0 (empty placeholder). The writer emits empty arrays
     // as a ValueRep with payload==0 / non-inlined (pxrUSD's empty-array marker);
     // reserving index 0 ensures no real block is ever referenced by payload 0,
@@ -400,6 +402,7 @@ public:
     result_.field_count = fields_.size();
     result_.arrays_passed_through = arrays_passed_through_;
     result_.arrays_reencoded = arrays_reencoded_;
+    result_.blocks_deduped = blocks_deduped_;
 
     return result_;
   }
@@ -451,9 +454,63 @@ private:
   uint64_t value_start_offset_ = 0; // absolute file offset of VALUE section start
   std::vector<uint64_t> value_offsets_; // offset in VALUE section for each data block
 
+  // Append `block` to value_data_ unless an existing block has identical bytes;
+  // returns the (shared or new) block index. Must NOT be used for blocks that
+  // are patched in place after creation (the TimeSamples indirection header):
+  // sharing one would apply the index->offset patch twice.
+  uint64_t InternBlock(DataBlock&& block) {
+    const size_t n = block.size();
+    if (n == 0) {
+      // Never share the empty block: payload 0 is the reserved empty-array
+      // marker and a zero-length block at a nonzero offset has no meaning.
+      uint64_t idx = value_data_.size();
+      value_data_.push_back(std::move(block));
+      return idx;
+    }
+    const uint8_t* p = block.bytes();
+    const uint64_t h = HashBlockBytes(p, n);
+    auto range = block_dedup_.equal_range(h);
+    for (auto it = range.first; it != range.second; ++it) {
+      const DataBlock& ex = value_data_[it->second];
+      if (ex.size() == n && std::memcmp(ex.bytes(), p, n) == 0) {
+        ++blocks_deduped_;
+        return it->second;
+      }
+    }
+    uint64_t idx = value_data_.size();
+    value_data_.push_back(std::move(block));
+    block_dedup_.emplace(h, idx);
+    return idx;
+  }
+
   // Lazy-array write accounting.
   size_t arrays_passed_through_ = 0;
   size_t arrays_reencoded_ = 0;
+
+  // Cross-spec block dedup: content hash -> block indices with that hash.
+  // Flattened composition duplicates referenced array payloads per instance;
+  // content-addressing the VALUE blocks writes each distinct payload once.
+  std::unordered_multimap<uint64_t, uint64_t> block_dedup_;
+  size_t blocks_deduped_ = 0;
+
+  static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {
+    // FNV-1a over (length, head, tail) — cheap on multi-MB blocks; candidates
+    // are confirmed with a full memcmp, so collisions only cost compares.
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const uint8_t* q, size_t m) {
+      for (size_t i = 0; i < m; ++i) { h ^= q[i]; h *= 1099511628211ull; }
+    };
+    mix(reinterpret_cast<const uint8_t*>(&n), sizeof(n));
+    if (n <= 512) {
+      mix(p, n);
+    } else {
+      mix(p, 256);
+      mix(p + n / 2 - 128, 256);
+      mix(p + n - 256, 256);
+    }
+    return h;
+  }
+
 
   // ============================================================
   // Table building
@@ -587,8 +644,7 @@ private:
     block.type = type;
     block.data.resize(size);
     std::memcpy(block.data.data(), data, size);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build an explicit PathListOp value_data_ block for relationship/connection
@@ -612,8 +668,7 @@ private:
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build a VariantSelectionMap value_data_ block (CrateTypeId 45):
@@ -633,8 +688,7 @@ private:
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build a TokenVector field ([u64 count][u32 token_idx]*count) — used for
@@ -649,8 +703,7 @@ private:
       uint32_t tok = InternToken(names[i]);
       std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
     }
-    uint64_t data_idx = value_data_.size();
-    value_data_.push_back({TypeId::Token, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
@@ -692,8 +745,7 @@ private:
         ti++;
       }
     }
-    uint64_t times_block_idx = value_data_.size();
-    value_data_.push_back({TypeId::Double, std::move(times_data)});
+    uint64_t times_block_idx = InternBlock({TypeId::Double, std::move(times_data)});
 
     std::vector<ValueRep> sample_reps(num_samples);
     ti = 0;
@@ -928,8 +980,7 @@ private:
     block.src = lr->source;  // pins the source buffer alive until the write
     block.src_offset = lr->block_offset;
     block.src_len = lr->block_len;
-    uint64_t idx = value_data_.size();
-    value_data_.push_back(std::move(block));
+    uint64_t idx = InternBlock(std::move(block));
 
     *out_rep = ValueRep::Make(lr->crate_type, idx, /*array=*/true,
                               /*inlined=*/false, lr->rep.is_compressed());
@@ -1268,11 +1319,10 @@ private:
       }
 
       if (!arr_data.empty()) {
-        uint64_t idx = value_data_.size();
         DataBlock block;
         block.type = type_id;
         block.data = std::move(arr_data);
-        value_data_.push_back(std::move(block));
+        uint64_t idx = InternBlock(std::move(block));
         // Return non-inline value rep (index will be resolved to offset later)
         return ValueRep::Make(crate_type, idx, true, false, data_compressed);
       }
@@ -1519,8 +1569,7 @@ private:
           uint32_t tok_idx = InternToken(prim.meta().apiSchemas[i]);
           std::memcpy(api_data.data() + 8 + i * 4, &tok_idx, 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(api_data)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(api_data)});
 
         CrateField f;
         f.token_index.value = InternToken("apiSchemas");
@@ -1611,8 +1660,7 @@ private:
           uint32_t tok = InternToken(prop_names[i]);
           std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
         CrateField pf;
         pf.token_index.value = InternToken("properties");
         pf.value_rep =
@@ -1667,8 +1715,7 @@ private:
         for (size_t i = 0; i < n; ++i) {
           std::memcpy(raw.data() + 8 + i * 4, &root_child_tokens[i], 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
 
         CrateField pc_field;
         pc_field.token_index.value = InternToken("primChildren");
@@ -1721,8 +1768,7 @@ private:
         for (size_t k = 0; k < child_tokens.size(); ++k) {
           std::memcpy(raw.data() + 8 + k * 4, &child_tokens[k], 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
 
         CrateField f;
         f.token_index.value = InternToken("primChildren");
