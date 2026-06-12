@@ -30,6 +30,10 @@ struct FlattenStats {
   size_t prim_count = 0;
   size_t arrays_passed_through = 0;  // arrays copied verbatim from the source
   size_t arrays_reencoded = 0;       // lazy arrays that fell back to re-encode
+  // Non-fatal composition errors (unresolved/unloadable external arcs). The
+  // flatten still succeeds with those arcs skipped; callers should surface
+  // these so silent partial composition is visible.
+  std::vector<std::string> composition_errors;
 };
 
 /// Options controlling the flatten pipeline.
@@ -38,7 +42,23 @@ struct FlattenOptions {
   CrateWriteOptions write;          // version must stay in the supported range
   CompositionOptions composition;   // LIVRPS / payload / variant options
   bool flatten = true;              // false => just re-serialize the root layer
+
+  // Multi-file composition: external reference/payload arcs resolve through
+  // `resolver` (anchor-relative + search paths) and load through
+  // `layer_loader` (see MakeFileSystemLayerLoader). When unset (default),
+  // external arcs are skipped — the historical single-file behavior.
+  LayerLoader layer_loader;
+  AssetResolver* resolver = nullptr;
+  // Anchor for arcs authored in the root layer (its resolved file path);
+  // empty = resolve against the resolver search paths only.
+  std::string root_anchor_path;
 };
+
+/// Filesystem-backed LayerLoader for native multi-file flattens: reads the
+/// resolved path and parses it as a (lazy) USDC crate. The loaded layer keeps
+/// its source bytes alive via the crate data source, so arrays still pass
+/// through verbatim. USDA dependencies are not supported by this loader yet.
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts = {});
 
 /// Read a USDC buffer, (optionally) flatten it, and write a USDC buffer, keeping
 /// numeric arrays as lazy references throughout so they are copied straight

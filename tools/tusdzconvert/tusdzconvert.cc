@@ -90,6 +90,7 @@ void PrintUsage(const char *prog) {
       "  -textureFormat <keep|png|jpeg>  Output texture format (default: keep).\n"
       "  -pngEncoder <fpnge|fpng>  PNG encoder backend (default: fpnge when available).\n"
       "  -jpegQuality <1-100>      JPEG quality when (re-)encoding (default: 90).\n"
+      "  -numThreads <N>           Texture worker threads (default 0 = all cores; 1 = sequential).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
       "\n"
       "Fit textures to a total size budget:\n"
@@ -464,6 +465,7 @@ int main(int argc, char **argv) {
   parser.add_option("-textureFormat", true, "keep|png|jpeg");
   parser.add_option("-pngEncoder", true, "fpnge|fpng");
   parser.add_option("-jpegQuality", true, "1-100");
+  parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
   parser.add_option("-targetTextureSize", true, "Total texture budget (e.g. 100MB)");
   parser.add_option("-fitStrategy", true, "size|quality");
@@ -617,6 +619,15 @@ int main(int argc, char **argv) {
     if (!ParseIntStrict(q, &opts.jpeg_quality)) opts.jpeg_quality = 0;
     if (opts.jpeg_quality < 1 || opts.jpeg_quality > 100) {
       std::cerr << "ERROR: -jpegQuality must be 1-100 (got '" << q << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-numThreads")) {
+    std::string n;
+    parser.get("-numThreads", n);
+    if (!ParseIntStrict(n, &opts.num_threads) || opts.num_threads < 0) {
+      std::cerr << "ERROR: -numThreads must be a non-negative integer (got '"
+                << n << "').\n";
       return 1;
     }
   }

@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { convertFolderToUSDZ, loadWasm, parseByteSize } from '../src/usdzconvert.js';
+import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm, parseByteSize } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
 // CLI runs with plain `node`. TINYUSDZ_WASM64=1 selects the 64-bit (8 GB) glue
@@ -53,10 +53,20 @@ Convert options:
                            (0 = keep the conservative ~100 MB WASM default).
                            Needed for very large scenes.
   --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
-  --pipeline <legacy|next> Flatten pipeline (default: legacy). 'next' uses the
+  --url-list <file.json>   Streaming source as URLs: [{key,url}...], [url...],
+                           or {baseUrl, files}. Implies network fetch per asset.
+  --pipeline <legacy|next|stream|stream-next> Flatten pipeline (default: legacy).
+                           'stream': lazy folder/url-list source — USD layers
+                           only in memory; textures fetched->processed->
+                           zip-appended one at a time (lowest peak RSS;
+                           requires -o and flatten). 'next' uses the
                            experimental low-memory lazy-ValueRep path for a single
                            .usdz with a top-level USDC root; falls back to legacy
-                           otherwise. Also via TINYUSDZ_PIPELINE env.
+                           otherwise. 'stream-next': the stream source combined
+                           with the next multi-asset compose+flatten in wasm
+                           (USDC layers only, --texture-format keep); falls back
+                           to the legacy stream compose when the input doesn't
+                           qualify. Also via TINYUSDZ_PIPELINE env.
   --stream-textures        Re-encode/resize textures one at a time and repack in
                            JS, so decoded images never accumulate in the WASM
                            heap. This is the DEFAULT for a single .usdz with
@@ -74,6 +84,10 @@ Convert options:
                            (-o); falls back to buffering otherwise.
   --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
+  --texture-codec <wasm|js>  Texture pipeline: wasm (default, sequential) or
+                           js (PNG via worker_threads pool + pngjs/node zlib,
+                           parallel; non-PNG falls back to wasm)
+  --texture-jobs <N>       Worker threads for --texture-codec js (default: cores-1)
   --no-reencode            Copy unmodified textures through unchanged
   -v, --verbose            Verbose logging
   -h, --help               Show this help
@@ -117,6 +131,11 @@ function parseArgs() {
     // (or --no-stream-write) disables it.
     streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
+    // 'wasm' (default): textures go through the single-threaded WASM
+    // convertImage. 'js': PNG work runs on a worker_threads pool (pngjs +
+    // node:zlib), in parallel; non-PNG textures still fall back to WASM.
+    textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'wasm',
+    textureJobs: 0,  // 0 = cpu count - 1
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -143,6 +162,9 @@ function parseArgs() {
     else if (a === '--no-stream-textures') o.streamTextures = false;
     else if (a === '--stream-write') o.streamWrite = true;
     else if (a === '--no-stream-write') o.streamWrite = false;
+    else if (a === '--texture-codec') o.textureCodec = args[++i];
+    else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
+    else if (a === '--url-list') o.urlList = args[++i];
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
     else if (a === '--pack-channels') o.packChannels = parseInt(args[++i], 10) || 0;
@@ -157,6 +179,112 @@ function parseArgs() {
 }
 
 // Recursively read a directory into a Map<relPath, Uint8Array>.
+// fs.writeFileSync caps a single write at 2^31-1 bytes; a passthrough .usdz of
+// a multi-GB scene exceeds that. Write in <2 GiB chunks instead.
+function writeFileChunked(path, bytes) {
+  const CHUNK = 1 << 30;  // 1 GiB
+  const fd = fs.openSync(path, 'w');
+  try {
+    for (let pos = 0; pos < bytes.length; pos += CHUNK) {
+      const n = Math.min(CHUNK, bytes.length - pos);
+      fs.writeSync(fd, bytes, pos, n, pos);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Lazy streaming sources for --pipeline stream: keys are listed up front,
+// bytes are fetched on demand (fs read or HTTP), never all-at-once.
+function folderSource(dir) {
+  const keys = [];
+  const walk = (cur, prefix) => {
+    for (const entry of fs.readdirSync(cur, { withFileTypes: true })) {
+      const full = path.join(cur, entry.name);
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(full, rel);
+      else if (entry.isFile()) keys.push(rel);
+    }
+  };
+  walk(dir, '');
+  return {
+    keys,
+    fetch: async (key) => new Uint8Array(await fs.promises.readFile(path.join(dir, key))),
+  };
+}
+
+// --url-list file: JSON, either [{key, url}, ...], ["url", ...] (key = path
+// part after the last common base), or { baseUrl, files: ["rel", ...] }.
+function urlListSource(file) {
+  const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let entries;
+  if (Array.isArray(spec)) {
+    entries = spec.map((e) => (typeof e === 'string')
+      ? { key: decodeURIComponent(new URL(e).pathname.replace(/^\//, '')), url: e }
+      : e);
+  } else if (spec && spec.baseUrl && Array.isArray(spec.files)) {
+    const base = spec.baseUrl.replace(/\/?$/, '/');
+    entries = spec.files.map((rel) => ({ key: rel, url: new URL(rel, base).href }));
+  } else {
+    throw new Error('--url-list must be [{key,url}...], [url...], or {baseUrl, files}');
+  }
+  const byKey = new Map(entries.map((e) => [e.key, e.url]));
+  return {
+    keys: [...byKey.keys()],
+    fetch: async (key) => {
+      const res = await fetch(byKey.get(key));
+      if (!res.ok) throw new Error(`fetch ${byKey.get(key)}: HTTP ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+  };
+}
+
+async function runStreamingConvert(native, o) {
+  const log = o.verbose ? (m) => console.log(m) : () => {};
+  const source = o.urlList ? urlListSource(o.urlList) : folderSource(o.input);
+  if (!o.output) { console.error('--pipeline stream requires -o <output.usdz>'); process.exit(1); }
+
+  let streamFd = null, streamBytes = 0;
+  const ensureFd = () => { if (streamFd === null) streamFd = fs.openSync(o.output, 'w'); };
+  const zipSink = {
+    write: (chunk) => { ensureFd(); fs.writeSync(streamFd, chunk, 0, chunk.length, streamBytes); streamBytes += chunk.length; },
+    patch: (pos, chunk) => { ensureFd(); fs.writeSync(streamFd, chunk, 0, chunk.length, pos); },
+  };
+
+  let texturePool = null;
+  if (o.textureCodec === 'js') {
+    const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
+    texturePool = createNodeTextureProcessor({ concurrency: o.textureJobs || 0 });
+    log(`texture codec: js (${texturePool.concurrency} worker(s))`);
+  }
+
+  try {
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: o.root || undefined,
+      maxTextureSize: o.resize,
+      resizeColorspace: o.resizeColorspace,
+      reencode: o.reencode,
+      textureFormat: o.textureFormat,
+      jpegQuality: o.jpegQuality,
+      pngEncoder: o.pngEncoder,
+      maxUsdcMb: o.maxUsdcMb,
+      maxMemMb: o.maxMemMb,
+      pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
+      streamWrite: o.streamWrite,
+      textureProcessor: texturePool ? texturePool.processor : undefined,
+      textureConcurrency: texturePool ? texturePool.concurrency : 4,
+      zipSink,
+      log,
+    });
+    if (streamFd !== null) fs.closeSync(streamFd);
+    console.log(`Wrote ${o.output} (${streamBytes} bytes, streamed) — root: ${stats.rootPath}, ` +
+      `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
+      `audio: ${stats.audio}, other assets: ${stats.otherAssets}`);
+  } finally {
+    if (texturePool) texturePool.destroy();
+  }
+}
+
 function readDirToMap(dir) {
   const map = new Map();
   const walk = (cur, prefix) => {
@@ -222,8 +350,17 @@ async function main() {
     return;
   }
 
-  if (!o.input) { console.error('Error: input directory or USD file required.'); printHelp(); process.exit(1); }
-  if (!fs.existsSync(o.input)) { console.error('Not found: ' + o.input); process.exit(1); }
+  if (!o.input && !o.urlList) { console.error('Error: input directory or USD file (or --url-list) required.'); printHelp(); process.exit(1); }
+  if (o.input && !fs.existsSync(o.input)) { console.error('Not found: ' + o.input); process.exit(1); }
+
+  // --pipeline stream: lazy source (folder walk or URL list); USD layers only
+  // go into memory for composition, textures are fetched -> processed ->
+  // appended to the output zip one at a time. Lowest peak RSS for
+  // texture-heavy scene folders. Requires flatten; root must be a bare USD.
+  if (o.pipeline === 'stream' || o.pipeline === 'stream-next') {
+    await runStreamingConvert(native, o);
+    return;
+  }
 
   // Build the asset map and determine the root USD's relative path.
   let assetMap, rootRel;
@@ -271,29 +408,50 @@ async function main() {
       }
     : undefined;
 
-  const { usdz, streamedToSink, stats } = await convertFolderToUSDZ(native, assetMap, {
-    rootPath: rootRel,
-    maxTextureSize: o.resize,
-    resizeColorspace: o.resizeColorspace,
-    targetTextureBytes: o.targetSize,
-    fitStrategy: o.fitStrategy,
-    fitMinTextureSize: o.fitMinSize,
-    fitMinQuality: o.fitMinQuality,
-    reencode: o.reencode,
-    textureFormat: o.textureFormat,
-    rootLayerFormat: o.rootLayerFormat,
-    arkitCompatible: o.arkitCompatible,
-    flatten: o.flatten,
-    pngEncoder: o.pngEncoder,
-    jpegQuality: o.jpegQuality,
-    maxUsdcMb: o.maxUsdcMb,
-    maxMemMb: o.maxMemMb,
-    pipeline: o.pipeline,
-    streamTextures: o.streamTextures,
-    streamWrite: o.streamWrite,
-    zipSink,
-    log,
-  });
+  // --texture-codec js: PNG decode/resize/encode on a worker_threads pool
+  // (pngjs + node:zlib), parallel across textures. Non-PNG inputs fall back
+  // to the WASM convertImage path inside convertFolderToUSDZ.
+  let texturePool = null;
+  if (o.textureCodec === 'js') {
+    const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
+    texturePool = createNodeTextureProcessor({ concurrency: o.textureJobs || 0 });
+    log(`texture codec: js (${texturePool.concurrency} worker(s))`);
+  } else if (o.textureCodec && o.textureCodec !== 'wasm') {
+    console.error(`--texture-codec must be wasm or js (got '${o.textureCodec}')`);
+    process.exit(1);
+  }
+
+  let convertResult;
+  try {
+    convertResult = await convertFolderToUSDZ(native, assetMap, {
+      rootPath: rootRel,
+      maxTextureSize: o.resize,
+      resizeColorspace: o.resizeColorspace,
+      targetTextureBytes: o.targetSize,
+      fitStrategy: o.fitStrategy,
+      fitMinTextureSize: o.fitMinSize,
+      fitMinQuality: o.fitMinQuality,
+      reencode: o.reencode,
+      textureFormat: o.textureFormat,
+      rootLayerFormat: o.rootLayerFormat,
+      arkitCompatible: o.arkitCompatible,
+      flatten: o.flatten,
+      pngEncoder: o.pngEncoder,
+      jpegQuality: o.jpegQuality,
+      maxUsdcMb: o.maxUsdcMb,
+      maxMemMb: o.maxMemMb,
+      pipeline: o.pipeline,
+      streamTextures: o.streamTextures,
+      streamWrite: o.streamWrite,
+      textureProcessor: texturePool ? texturePool.processor : undefined,
+      textureConcurrency: texturePool ? texturePool.concurrency : 0,
+      zipSink,
+      log,
+    });
+  } finally {
+    if (texturePool) texturePool.destroy();
+  }
+  const { usdz, streamedToSink, stats } = convertResult;
 
   const statLine = `root: ${stats.rootPath}, textures: ${stats.textures}, ` +
     `resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
@@ -306,7 +464,7 @@ async function main() {
     if (streamFd !== null) fs.closeSync(streamFd);  // sink opened but path bailed
     const outPath = o.output ||
       `${stats.rootPath.split('/').pop().replace(/\.(usd|usda|usdc|usdz)$/i, '')}.usdz`;
-    fs.writeFileSync(outPath, usdz);
+    writeFileChunked(outPath, usdz);
     console.log(`Wrote ${outPath} (${usdz.length} bytes) — ${statLine}`);
   }
 }

@@ -105,6 +105,9 @@ option(TINYUSDZ_WITH_TYDRA
 option(TINYUSDZ_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
+option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
+       "Use next::pcp::Cache backend for LargeSceneLoader (experimental; links tinyusdz_next)."
+       OFF)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -797,6 +800,22 @@ if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
   # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+endif()
+
+# Image decode/resize/encode TUs are the hot path of texture re-encode (USDZ
+# conversion of large scenes). MinSizeRel/-Oz builds (e.g. the wasm targets)
+# cripple them (PNG transcode drops to ~2 MP/s), for a few hundred KB of code
+# size: compile just these TUs at -O3 regardless of build type.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/image-loader.cc       # stb_image decode
+    ${PROJECT_SOURCE_DIR}/src/image-writer.cc       # stb_image_write / fpng entry
+    ${PROJECT_SOURCE_DIR}/src/image-util.cc         # stb_image_resize
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc # streaming PNG transcode/resize
+    ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc # ResizeImage
+    ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp     # fpng PNG encoder
+    ${PROJECT_SOURCE_DIR}/src/external/miniz.c      # zlib inflate/deflate (PNG transcode)
+    PROPERTIES COMPILE_OPTIONS "-O3")
 endif()
 
 # fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
@@ -1651,6 +1670,13 @@ if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
 endif()
 
 #
+# Optional: next::pcp::Cache backend for LargeSceneLoader
+#
+if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next tinyusdz_next_build)
+endif()
+
+#
 # CMake's Object libary have some issue on MSVC build, so build STATIC and SHARED lib indepdendently.
 #
 
@@ -1777,6 +1803,12 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_PCP)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_PCP")
+  endif()
+
+  if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PUBLIC "TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE")
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_next)
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}

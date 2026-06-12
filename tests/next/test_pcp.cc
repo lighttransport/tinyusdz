@@ -272,6 +272,53 @@ static void test_compose_prim_dependency_invalidate() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_compose_prim_invalidate_layer_without_index() {
+  std::cout << "test_compose_prim_invalidate_layer_without_index..." << std::endl;
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("A", "Mesh");
+    ab.end_prim();
+    ab.finalize();
+  }
+
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*root);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("R", "");
+    rb.current()->meta().references.push_back("@asset@</A>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &p, const std::string &) { return p; });
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("asset", asset);
+
+  std::string warn, err;
+  const PrimSpec *before = cache.ComposePrim(Path("/World/R"), &warn, &err);
+  assert(before && before->property_value("freshLayerOpinion") == nullptr);
+  assert(!cache.HasComputedPrimIndex(Path("/World/R")) &&
+         "test must exercise lazy composition without PrimIndex dependencies");
+
+  PrimSpec *a = asset->prim_at_path_mutable("/A");
+  assert(a);
+  a->add_property("freshLayerOpinion", Value(int32_t(7)));
+  cache.InvalidateLayer("asset");
+  cache.PreloadLayer("asset", asset);
+
+  const PrimSpec *after = cache.ComposePrim(Path("/World/R"), &warn, &err);
+  assert(after && after->property_value("freshLayerOpinion") &&
+         "InvalidateLayer must drop lazy ComposePrim caches even without a PrimIndex");
+  std::cout << "  OK" << std::endl;
+}
+
 // Phase 10 (A2): lazy attribute evaluation through the cache -- resolve a
 // prim's attribute value (default + time-sample interpolation) and follow a
 // connection across lazily-composed prims, all WITHOUT BuildStage.
@@ -2101,6 +2148,7 @@ int main() {
   test_prototype_order_independent();
   test_compose_prim_lazy();
   test_compose_prim_dependency_invalidate();
+  test_compose_prim_invalidate_layer_without_index();
   test_eval_attribute_lazy();
   test_specialize_chain();
   test_cross_layer_arc_dedup();
