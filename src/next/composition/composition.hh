@@ -159,7 +159,15 @@ private:
   // subtree prims to append to the result after the pass (cannot add during
   // iteration). Cleared at the start of each Compose().
   std::set<std::string> arc_resolved_;
-  std::vector<PrimSpec> pending_graft_;
+  // Grafted subtrees buffered during pass 2 (appended afterwards). The anchor
+  // (resolved path of the layer the subtree came from) rides along so a later
+  // pass can resolve the grafted prims' OWN arcs — e.g. a referenced mesh file
+  // whose material prims reference `../../Materials/x.usd` relative to itself.
+  struct PendingGraft {
+    PrimSpec prim;
+    std::string anchor;
+  };
+  std::vector<PendingGraft> pending_graft_;
   std::set<std::string> graft_paths_;
 
   // Internal composition methods
@@ -179,9 +187,11 @@ private:
   void ResolveRefArc(Layer& layer, PrimSpec& prim, const CompositionArc& arc,
                      const std::string& anchor_path, int depth);
   // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
-  void GraftSubtree(const Layer& src, const std::string& src_root,
+  void GraftSubtree(const Layer& src, const std::string& src_anchor,
+                    const std::string& src_root,
                     const std::string& dst_root);
-  bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
+  bool ApplyVariants(PrimSpec& prim, const Layer& layer,
+                     const std::string& anchor_path, int depth);
 
   // Parse layer offset string into offset and scale
   static void ParseLayerOffset(const std::string& offset_str,
