@@ -102,6 +102,7 @@ class App
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -132,6 +133,21 @@ class App
   void applyLoaded(bool ok, bool progressive);  // upload + bind on the main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   void cancelAndJoinLoad();
+
+  // --- Animation playback ---
+  // Read the time range (start/end/fps) from the freshly loaded scene; resets
+  // playback to a paused state at the start time.
+  void readAnimationRange();
+  // Advance the playback clock by `dtSec` and request a re-evaluation at the new
+  // time (called once per frame while playing).
+  void advancePlayback(float dtSec);
+  // Coalesced request to re-evaluate geometry at time code `t`: starts a worker
+  // if idle, else records the latest wanted time (applied when the current one
+  // finishes). No-op while a file load is streaming.
+  void requestReconvert(double t);
+  void startReconvertAsync(double t);
+  void finishReconvertIfReady();   // swap in completed geometry, preserve camera
+  void cancelAndJoinReconvert();   // stop a running reconvert worker
 
   Backend backend_;
   GLFWwindow* window_{nullptr};
@@ -166,6 +182,30 @@ class App
   std::unique_ptr<DrawScene> pendingDraw_;
   std::string loadingPath_;
   std::chrono::steady_clock::time_point loadStart_;
+
+  // Animation playback (main-thread owned unless noted).
+  bool hasAnimation_{false};
+  bool animPlaying_{false};
+  bool animLoop_{true};
+  float animSpeed_{1.0f};
+  double animStart_{0.0};
+  double animEnd_{0.0};
+  double animFps_{24.0};
+  double animTime_{0.0};         // current time code being shown
+  std::chrono::steady_clock::time_point lastFrameTime_;
+  bool haveLastFrameTime_{false};
+
+  // Coalesced async re-evaluation of geometry at a time code (playback/scrub).
+  std::thread reconvThread_;
+  LoadControl reconvCtrl_;
+  std::atomic<bool> reconvFinished_{false};
+  bool reconvActive_{false};       // a reconvert worker is running
+  double reconvInFlight_{0.0};     // time code the running worker computes
+  double reconvRequested_{0.0};    // latest requested time code
+  bool reconvHasRequest_{false};   // a (re)convert is wanted
+  double reconvApplied_{0.0};      // time code currently shown
+  std::unique_ptr<DrawScene> reconvDraw_;
+  std::atomic<bool> reconvOk_{false};
 
   // Progressive GPU upload (interactive path): stream meshes then textures.
   bool progressiveActive_{false};

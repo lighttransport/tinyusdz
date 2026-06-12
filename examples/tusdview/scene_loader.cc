@@ -260,12 +260,23 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
 }
 
 // Convert out->stage to RenderScene + DrawScene (shared by load and
-// recompose). Returns false with out->err set on failure.
-bool ConvertStageToScene(const std::string& path, LoadedScene* out,
-                         DrawScene* draw, bool rtPath, LoadControl* ctrl) {
-  tinyusdz::tydra::RenderSceneConverterEnv env(out->stage);
+// recompose). Returns false with *err set on failure. Reads `stage` (const) +
+// `mmap`/`path` for USDZ asset resolution; writes geometry to `draw` and the
+// full RenderScene to `render`. `timecode` selects the evaluation time (NaN =
+// static default). `loadTextures=false` skips texture image decode (used by
+// playback re-evaluation, which keeps the initial load's textures).
+bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
+                             const std::string& path,
+                             const std::shared_ptr<tinyusdz::io::MMapFileHandle>& mmap,
+                             double timecode, bool rtPath, bool loadTextures,
+                             tinyusdz::tydra::RenderScene* render, DrawScene* draw,
+                             std::string* warn, std::string* err,
+                             LoadControl* ctrl) {
+  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   env.set_search_paths({DirName(path)});
+  env.timecode = timecode;
+  env.scene_config.load_texture_assets = loadTextures;
 
   // USDZ assets (textures, audio, ...) live *inside* the .usdz archive. Register
   // the archive's internal asset map with the resolver so embedded textures
@@ -274,26 +285,26 @@ bool ConvertStageToScene(const std::string& path, LoadedScene* out,
   // (the resolver retains a pointer to it); it is a local here, and conversion
   // happens before this function returns.
   tinyusdz::USDZAsset usdzAsset;
-  if (HasUsdzExtension(path)) {
+  if (loadTextures && HasUsdzExtension(path)) {
     std::string uwarn, uerr;
     bool gotInfo = false;
-    if (out->mmap) {
-      // Zero-copy: reference the mmap (kept alive in out->mmap through the
+    if (mmap) {
+      // Zero-copy: reference the mmap (kept alive by the caller through the
       // conversion below).
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromMemory(
-          out->mmap->addr, static_cast<size_t>(out->mmap->size),
+          mmap->addr, static_cast<size_t>(mmap->size),
           /*asset_on_memory=*/true, &usdzAsset, &uwarn, &uerr);
     } else {
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
     }
     if (gotInfo) {
       if (!tinyusdz::SetupUSDZAssetResolution(env.asset_resolver, &usdzAsset)) {
-        out->warn += "Failed to set up USDZ asset resolution; embedded textures "
-                     "may not load.\n";
+        *warn += "Failed to set up USDZ asset resolution; embedded textures "
+                 "may not load.\n";
       }
     } else {
-      out->warn += "Failed to read USDZ asset info" +
-                   (uerr.empty() ? std::string() : ": " + uerr) + "\n";
+      *warn += "Failed to read USDZ asset info" +
+               (uerr.empty() ? std::string() : ": " + uerr) + "\n";
     }
   }
 
@@ -350,31 +361,43 @@ bool ConvertStageToScene(const std::string& path, LoadedScene* out,
   }
 
   // Streaming convert: builds `draw` incrementally as meshes/materials/textures
-  // are produced (and fully populates out->render). Falls back to the monolithic
+  // are produced (and fully populates *render). Falls back to the monolithic
   // path if no DrawScene sink was requested.
   const bool converted =
-      draw ? BuildDrawSceneStreaming(converter, env, &out->render, draw, ctrl)
-           : converter.ConvertToRenderScene(env, &out->render);
+      draw ? BuildDrawSceneStreaming(converter, env, render, draw, ctrl)
+           : converter.ConvertToRenderScene(env, render);
   if (!converted) {
     if (ctrl && ctrl->cancel.load()) {
-      out->err = "Load cancelled.";
+      *err = "Load cancelled.";
     } else if (budgetHit) {
-      out->err = "Aborted: conversion exceeded the time budget (scene too large).";
+      *err = "Aborted: conversion exceeded the time budget (scene too large).";
     } else {
-      out->err = converter.GetError();
+      *err = converter.GetError();
     }
     if (!converter.GetWarning().empty()) {
-      out->warn += converter.GetWarning();
+      *warn += converter.GetWarning();
     }
-    if (out->err.empty()) {
-      out->err = "RenderScene conversion failed for: " + path;
+    if (err->empty()) {
+      *err = "RenderScene conversion failed for: " + path;
     }
     return false;
   }
   if (!converter.GetWarning().empty()) {
-    out->warn += converter.GetWarning();
+    *warn += converter.GetWarning();
   }
+  return true;
+}
 
+// Convert out->stage to RenderScene + DrawScene at `timecode` (out->stage,
+// out->mmap, out->render, out->warn/err are the load targets).
+bool ConvertStageToScene(const std::string& path, double timecode,
+                         LoadedScene* out, DrawScene* draw, bool rtPath,
+                         LoadControl* ctrl) {
+  if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
+                               /*loadTextures=*/true, &out->render, draw,
+                               &out->warn, &out->err, ctrl)) {
+    return false;
+  }
   out->ok = true;
   return true;
 }
@@ -408,7 +431,7 @@ bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
     return false;
   }
 
-  return ConvertStageToScene(path, out, draw, rtPath, ctrl);
+  return ConvertStageToScene(path, opts.timecode, out, draw, rtPath, ctrl);
 }
 
 bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
@@ -437,7 +460,20 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
     return false;
   }
 
-  return ConvertStageToScene(path, out, draw, rtPath, ctrl);
+  return ConvertStageToScene(path, opts.timecode, out, draw, rtPath, ctrl);
+}
+
+bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
+                       DrawScene* draw, std::string* warn, std::string* err,
+                       LoadControl* ctrl) {
+  if (draw) *draw = DrawScene{};
+  // Discard the rebuilt RenderScene (geometry flows through `draw`); textures
+  // are not re-decoded (loadTextures=false), so the caller keeps the initial
+  // load's textures/materials.
+  tinyusdz::tydra::RenderScene scratch;
+  return ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
+                                 rtPath, /*loadTextures=*/false, &scratch, draw,
+                                 warn, err, ctrl);
 }
 
 }  // namespace tusdview

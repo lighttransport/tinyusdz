@@ -38,6 +38,8 @@ int main(int argc, char** argv) {
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
+  std::optional<double> timeCode;         // --time T: evaluate the scene at this
+                                          // time code (animated screenshots)
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) {
@@ -77,6 +79,10 @@ int main(int argc, char** argv) {
       deferPayloads = false;
     } else if (std::strcmp(argv[i], "--defer-references") == 0) {
       deferReferences = true;
+    } else if ((std::strcmp(argv[i], "--time") == 0 ||
+                std::strcmp(argv[i], "--frame") == 0) &&
+               (i + 1) < argc) {
+      timeCode = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
@@ -94,7 +100,7 @@ int main(int argc, char** argv) {
           "[--screenshot out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
-          "[--defer-references]\n"
+          "[--defer-references] [--time CODE]\n"
           "                [--headless] [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
@@ -111,6 +117,9 @@ int main(int argc, char** argv) {
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
+          "  --time CODE   Evaluate the scene at this USD time code (animated "
+          "transforms/points/skinning). Useful with --frames for a screenshot at "
+          "a specific frame. Interactive runs play from the Timeline panel.\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n");
@@ -189,6 +198,7 @@ int main(int argc, char** argv) {
     // Explicit opt-in only (no headless default flip): deferring references is
     // non-standard, so honor the flag verbatim even for --frames runs.
     lo.deferReferences = deferReferences;
+    if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);

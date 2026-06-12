@@ -2,6 +2,7 @@
 // tusdview - load a USD file into a Stage and convert it to a Tydra RenderScene.
 #pragma once
 
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -38,6 +39,12 @@ struct LoadOptions {
   // Prim paths (composed-layer full paths) whose deferred arcs to load when
   // payloadPolicy == Whitelist.
   std::set<std::string> payloadWhitelist;
+  // USD time code to evaluate the scene at (animated transforms / points /
+  // skinning / value clips are sampled here). NaN (TimeCode::Default) = static
+  // default values. Used for the initial load (e.g. --time for a headless
+  // screenshot at a specific frame); interactive playback re-evaluates via
+  // RenderSceneAtTime().
+  double timecode{std::numeric_limits<double>::quiet_NaN()};
 };
 
 // A payload/reference arc that was skipped during composition.
@@ -109,5 +116,17 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
                            const LoadOptions& opts, LoadedScene* out,
                            DrawScene* draw, bool rtPath = false,
                            LoadControl* ctrl = nullptr);
+
+// Re-evaluate an already-loaded scene at `timecode` and build geometry into
+// `draw` (animation playback / scrubbing). Reads `src.stage` only (const) — safe
+// to call on a worker thread while the main thread keeps `src` alive and does
+// not reload it. Texture image loading is skipped (load_texture_assets=false):
+// materials/textures don't animate, so only mesh geometry/transforms/skinning
+// are rebuilt; callers keep the textures from the initial load. `draw->materials`
+// and `draw->textures` are therefore left empty — only `draw->meshes` (+ bounds)
+// are produced. Returns false with `*err` set on failure.
+bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
+                       DrawScene* draw, std::string* warn, std::string* err,
+                       LoadControl* ctrl = nullptr);
 
 }  // namespace tusdview
