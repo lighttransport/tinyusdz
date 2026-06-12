@@ -16,7 +16,12 @@ displays it with an ImGui docking UI.
   thread. Headless/`--frames` runs load payloads eagerly so screenshots are
   complete. `--load-payloads` / `--defer-payloads` override either default;
   `--no-composition` loads the root layer only (legacy fast path, also used for
-  `.usdz` archives for now).
+  `.usdz` archives for now). `--defer-references` extends the same lazy machinery
+  to `references` arcs (the **Payloads** panel's **Arc** column shows
+  `payload`/`reference`); it is **opt-in only and non-standard** — USD assumes
+  references always resolve, so most scene content stays unloaded until you
+  request it. Deferred references load on demand exactly like payloads (one
+  whitelist drives both: loading a prim resolves its payloads and references).
 
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional
@@ -170,6 +175,7 @@ cmake --build build -j16 --target tusdview
 # USD composition / lazy payloads:
 ./build/tusdview --load-payloads scene.usda         # compose payloads eagerly
 ./build/tusdview --defer-payloads scene.usda        # lazy payloads (interactive default)
+./build/tusdview --defer-references scene.usda       # also defer references (opt-in, non-standard)
 ./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
 # Headless full-window screenshot (UI + viewport, GL backend):
@@ -299,7 +305,7 @@ Tools (`tools/list` for schemas):
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
-| `load_payloads {paths?}` | load deferred USD payloads (omit `paths` = all; async, poll `get_scene_info`, which also reports `deferred_payloads`) |
+| `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 
 Example:
 

@@ -901,7 +901,7 @@ void Gui::drawPayloads() {
     return;
   }
 
-  ImGui::Text("Deferred payloads: %zu", comp.deferred.size());
+  ImGui::Text("Deferred arcs: %zu", comp.deferred.size());
   if (!comp.loadedPayloads.empty()) {
     ImGui::SameLine();
     ImGui::TextDisabled("(%zu loaded)", comp.loadedPayloads.size());
@@ -912,16 +912,17 @@ void Gui::drawPayloads() {
   }
   ImGui::Separator();
 
-  if (ImGui::BeginTable("##payloads", 3,
+  if (ImGui::BeginTable("##payloads", 4,
                         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
                             ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
     ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("Arc", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableSetupColumn("Prim");
     ImGui::TableSetupColumn("Asset");
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
     for (size_t i = 0; i < comp.deferred.size(); ++i) {
-      const DeferredPayload& d = comp.deferred[i];
+      const DeferredArc& d = comp.deferred[i];
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
       ImGui::PushID(static_cast<int>(i));
@@ -929,6 +930,8 @@ void Gui::drawPayloads() {
         payloadLoadRequests_.push_back(d.primPath);
       }
       ImGui::PopID();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(d.arc);
       ImGui::TableNextColumn();
       ImGui::TextUnformatted(d.primPath.c_str());
       ImGui::TableNextColumn();
