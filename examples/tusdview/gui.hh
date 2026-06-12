@@ -48,10 +48,17 @@ class Gui {
     bool converting{false};  // a re-evaluation worker is running
   };
 
+  struct SkinningInfo {
+    SkinningMode requested{SkinningMode::Auto};
+    SkinningMode effective{SkinningMode::CPU};
+    std::string reason;
+  };
+
   // (Re)bind the scene being viewed. Resets selection.
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
+  void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
 
   // Build all panels for one frame.
@@ -76,11 +83,14 @@ class Gui {
   double seekTime() const { return seekTime_; }
   bool loopPlayback() const { return loop_; }
   float playSpeed() const { return speed_; }
+  bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
+  SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
     wantLoadAllPayloads_ = false;
     payloadLoadRequests_.clear();
     wantTogglePlay_ = wantStop_ = hasSeek_ = false;
+    hasSkinningModeRequest_ = false;
   }
 
   // Selection: set focus by absolute prim path (meshIndex < 0 = look up by path);
@@ -188,6 +198,9 @@ class Gui {
 
   // Timeline / playback.
   TimelineInfo timeline_;
+  SkinningInfo skinning_;
+  bool hasSkinningModeRequest_{false};
+  SkinningMode requestedSkinningMode_{SkinningMode::Auto};
   bool wantTogglePlay_{false};
   bool wantStop_{false};
   bool hasSeek_{false};

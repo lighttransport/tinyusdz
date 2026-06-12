@@ -21,6 +21,7 @@ namespace tusdview {
 enum class Backend { GL, Vulkan };
 
 enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2 };
+enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
 // Unlit, vertex-colored line vertex for debug helpers (grid, axes, bboxes).
 // Drawn as GL_LINES / VK_PRIMITIVE_TOPOLOGY_LINE_LIST in world space.
@@ -34,6 +35,7 @@ struct RendererCaps {
   bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
   bool flipViewportV{false};       // GL FBO textures are bottom-up
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
+  bool supportsGpuSkinning{false};
 };
 
 struct RenderFrameParams {
@@ -93,6 +95,7 @@ class Renderer {
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
+  virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
 
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).

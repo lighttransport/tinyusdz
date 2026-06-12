@@ -122,6 +122,15 @@ const char* NavModeLabel(int mode) {
   }
 }
 
+const char* SkinningModeLabel(SkinningMode mode) {
+  switch (mode) {
+    case SkinningMode::CPU: return "CPU";
+    case SkinningMode::GPU: return "GPU";
+    case SkinningMode::Auto:
+    default: return "Auto";
+  }
+}
+
 }  // namespace
 
 void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
@@ -263,6 +272,21 @@ void Gui::drawDockspaceAndMenu() {
       const bool rtOn = renderer_ && renderer_->rayTracingActive();
       if (ImGui::MenuItem("Ray tracing (Vulkan)", nullptr, rtOn, rtAvail)) {
         if (renderer_) renderer_->setRayTracing(!rtOn);
+      }
+      if (ImGui::BeginMenu("Skinning")) {
+        auto item = [&](SkinningMode mode, const char* label) {
+          if (ImGui::MenuItem(label, nullptr, skinning_.requested == mode)) {
+            hasSkinningModeRequest_ = true;
+            requestedSkinningMode_ = mode;
+          }
+        };
+        item(SkinningMode::Auto, "Auto");
+        item(SkinningMode::CPU, "CPU");
+        item(SkinningMode::GPU, "GPU");
+        ImGui::Separator();
+        ImGui::TextDisabled("Effective: %s", SkinningModeLabel(skinning_.effective));
+        if (!skinning_.reason.empty()) ImGui::TextDisabled("%s", skinning_.reason.c_str());
+        ImGui::EndMenu();
       }
       ImGui::Separator();
       ImGui::MenuItem("Navigation help overlay", "F1", &showNavHelp_);
@@ -999,6 +1023,10 @@ void Gui::drawStats() {
   ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
               1000.0f / ImGui::GetIO().Framerate);
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
+  ImGui::Text("Skinning: %s requested, %s effective",
+              SkinningModeLabel(skinning_.requested),
+              SkinningModeLabel(skinning_.effective));
+  if (!skinning_.reason.empty()) ImGui::TextDisabled("%s", skinning_.reason.c_str());
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());

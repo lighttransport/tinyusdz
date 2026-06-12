@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   bool deferReferences = false;           // --defer-references (explicit opt-in)
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
+  tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) {
@@ -83,6 +84,18 @@ int main(int argc, char** argv) {
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
       timeCode = std::atof(argv[++i]);
+    } else if (std::strcmp(argv[i], "--skinning") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "cpu") == 0) {
+        skinningMode = tusdview::SkinningMode::CPU;
+      } else if (std::strcmp(mode, "gpu") == 0) {
+        skinningMode = tusdview::SkinningMode::GPU;
+      } else if (std::strcmp(mode, "auto") == 0) {
+        skinningMode = tusdview::SkinningMode::Auto;
+      } else {
+        LOGE("--skinning must be auto, cpu, or gpu");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
@@ -100,7 +113,7 @@ int main(int argc, char** argv) {
           "[--screenshot out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
-          "[--defer-references] [--time CODE]\n"
+          "[--defer-references] [--time CODE] [--skinning auto|cpu|gpu]\n"
           "                [--headless] [--mcp-stdio] [--mcp-http[=PORT]] [--mcp] "
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
@@ -120,6 +133,7 @@ int main(int argc, char** argv) {
           "  --time CODE   Evaluate the scene at this USD time code (animated "
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
+          "  --skinning MODE  Skinning path: auto (default), cpu, or gpu.\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n");
@@ -212,6 +226,7 @@ int main(int argc, char** argv) {
   }
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
+  app.setSkinningMode(skinningMode);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setHeadless(headless);

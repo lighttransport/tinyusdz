@@ -101,6 +101,10 @@ json MCPServer::buildToolsList() const {
       {{"op", strProp("play | pause | stop | seek")},
        {"time", numProp("target time code (seek)")}},
       json::array({"op"})));
+  tools.push_back(tool(
+      "skinning",
+      "Query or set the viewer skinning mode. Omit mode to query; mode=auto|cpu|gpu.",
+      {{"mode", strProp("auto | cpu | gpu")}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -224,6 +228,8 @@ void MCPServer::drain() {
         payload = host_->mcpLoadPayloads(cmd->args, err);
       } else if (t == "timeline") {
         payload = host_->mcpTimeline(cmd->args, err);
+      } else if (t == "skinning") {
+        payload = host_->mcpSkinning(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

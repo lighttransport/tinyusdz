@@ -22,6 +22,7 @@ class GLRenderer final : public Renderer {
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
@@ -35,10 +36,11 @@ class GLRenderer final : public Renderer {
 
  private:
   struct GLMesh {
-    GLuint vao{0}, vbo{0}, ebo{0};
+    GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     bool doubleSided{false};
+    bool skinned{false};
   };
   struct GLMaterial {
     float baseColor[3]{0.8f, 0.8f, 0.8f};
@@ -64,8 +66,11 @@ class GLRenderer final : public Renderer {
   GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1};
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
+  GLint uSkinningEnabled_{-1};
 
-  GLuint whiteTex_{0};
+  GLuint whiteTex_{0}, boneTex_{0};
+  int boneTexHeight_{0};
+  bool skinningFrameEnabled_{false};
 
   // Unlit line program for debug helpers (grid/axes/bbox).
   GLuint lineProgram_{0};

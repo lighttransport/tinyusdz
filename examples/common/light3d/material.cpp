@@ -186,21 +186,47 @@ const char* getMaterialVertexShaderGL330() {
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec3 aUV;
+layout(location = 3) in uvec4 aJoint;
+layout(location = 4) in vec4 aWeight;
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
 uniform mat3 uNormalMatrix;
+uniform sampler2D uBoneTex;
+uniform bool uSkinningEnabled;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
 
+mat4 fetchBone(uint idx) {
+    int y = int(idx);
+    return mat4(
+        texelFetch(uBoneTex, ivec2(0, y), 0),
+        texelFetch(uBoneTex, ivec2(1, y), 0),
+        texelFetch(uBoneTex, ivec2(2, y), 0),
+        texelFetch(uBoneTex, ivec2(3, y), 0));
+}
+
 void main() {
-    vec4 worldPos = uModel * vec4(aPosition, 1.0);
+    vec3 pos = aPosition;
+    vec3 nrm = aNormal;
+    float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
+    uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
+    if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < textureSize(uBoneTex, 0).y) {
+        mat4 skin =
+            fetchBone(aJoint.x) * aWeight.x +
+            fetchBone(aJoint.y) * aWeight.y +
+            fetchBone(aJoint.z) * aWeight.z +
+            fetchBone(aJoint.w) * aWeight.w;
+        pos = (skin * vec4(aPosition, 1.0)).xyz;
+        nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+    }
+    vec4 worldPos = uModel * vec4(pos, 1.0);
     vWorldPos = worldPos.xyz;
-    vNormal = normalize(uNormalMatrix * aNormal);
+    vNormal = normalize(uNormalMatrix * nrm);
     vUV = aUV.xy;
-    gl_Position = uModelViewProj * vec4(aPosition, 1.0);
+    gl_Position = uModelViewProj * vec4(pos, 1.0);
 }
 )glsl";
 }

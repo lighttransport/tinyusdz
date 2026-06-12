@@ -2266,6 +2266,31 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
+  # tusdview CPU/GPU skinning screenshot parity. This is intentionally
+  # registered only for Linux GUI builds with xvfb-run available: OpenGL needs a
+  # window/context, and xvfb supplies a headless X server while preserving the
+  # normal hardware-rendered window path.
+  #
+  if(UNIX AND NOT APPLE AND TARGET tusdview)
+    find_program(TINYUSDZ_XVFB_RUN xvfb-run)
+    if(TINYUSDZ_XVFB_RUN)
+      add_test(
+        NAME tusdview-skinning-screenshot-diff
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
+                --app "$<TARGET_FILE:tusdview>"
+                --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                --out-dir "${CMAKE_BINARY_DIR}/Testing/tusdview-skinning"
+                --backend gl
+                --frames 4
+                --time 12
+                --xvfb-run "${TINYUSDZ_XVFB_RUN}"
+        )
+    else()
+      message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
+    endif()
+  endif()
+
+  #
   # Guard that src/usd-preview-surface-inputs.inc (the validator's table) stays
   # in sync with src/usd-preview-surface-schema.json. Fails if a schema edit was
   # not followed by `python3 scripts/gen-usd-preview-surface-inputs.py`.
