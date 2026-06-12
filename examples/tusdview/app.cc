@@ -13,6 +13,7 @@
 #include "imgui_impl_glfw.h"
 #include "log.hh"
 #include "mesh_build.hh"
+#include "skinning.hh"
 
 #if defined(HAVE_NFD)
 #include "nfd.h"
@@ -147,6 +148,19 @@ void App::applyLoaded(bool ok, bool progressive) {
   if (ok) {
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
     readAnimationRange();  // start/end/fps; resets playback to paused at start
+    if (std::isfinite(loadOpts_.timecode)) {
+      animTime_ = loadOpts_.timecode;
+      reconvApplied_ = animTime_;
+    }
+    updateSkinningEffective();
+    if (skinningEffective_ == SkinningMode::GPU) {
+      LOGI("skinning: GPU (%s)", skinningReason_.c_str());
+      updateGpuSkinningFrameIfNeeded();
+    } else if (skinningRequested_ == SkinningMode::GPU) {
+      LOGW("skinning: requested GPU, using CPU (%s)", skinningReason_.c_str());
+    } else {
+      LOGI("skinning: CPU (%s)", skinningReason_.c_str());
+    }
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
     if (draw_.hasBounds) {
@@ -213,8 +227,33 @@ void App::loadFileBlocking(const std::string& path) {
   loadCtrl_.resetProgress();
   LoadedScene tmp;
   DrawScene drawTmp;
+  LoadOptions opts = loadOpts_;
+  const bool gpuRestLoad = std::isfinite(loadOpts_.timecode) &&
+                           skinningRequested_ == SkinningMode::GPU;
+  if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
   // Streaming convert+build in one pass (also fully populates tmp.render).
-  const bool ok = LoadUSD(path, loadOpts_, &tmp, &drawTmp, rtPath_, &loadCtrl_);
+  bool ok = LoadUSD(path, opts, &tmp, &drawTmp, rtPath_, &loadCtrl_);
+  if (ok && gpuRestLoad) {
+    const bool gpuEligible =
+        renderer_ && renderer_->caps().supportsGpuSkinning &&
+        !renderer_->rayTracingActive() && SceneHasSkeletalSkinning(tmp.render) &&
+        !SceneHasBlendShapes(tmp.render) && !SceneHasNonSkeletalAnimation(tmp.render) &&
+        drawTmp.boneMatrixCount > 0;
+    if (!gpuEligible) {
+      DrawScene cpuDraw;
+      std::string w, e;
+      if (RenderSceneAtTime(tmp, loadOpts_.timecode, rtPath_, &cpuDraw, &w, &e,
+                            &loadCtrl_)) {
+        cpuDraw.materials = drawTmp.materials;
+        cpuDraw.textures = drawTmp.textures;
+        drawTmp = std::move(cpuDraw);
+      } else {
+        tmp.warn += w;
+        tmp.err = e;
+        ok = false;
+      }
+    }
+  }
   loaded_ = std::move(tmp);
   draw_ = ok ? std::move(drawTmp) : DrawScene{};
   applyLoaded(ok, /*progressive=*/false);
@@ -234,7 +273,10 @@ void App::startLoadAsync(const std::string& path) {
   // Worker touches only CPU data (no GL/VK), so this is thread-safe. The
   // streaming load convert+builds the DrawScene (dp) in one pass.
   const bool rt = rtPath_;
-  const LoadOptions opts = loadOpts_;
+  LoadOptions opts = loadOpts_;
+  if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
+    opts.timecode = std::numeric_limits<double>::quiet_NaN();
+  }
   loadThread_ = std::thread([this, path, opts, lp, dp, rt]() {
     LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
     loadFinished_.store(true, std::memory_order_release);
@@ -321,6 +363,66 @@ void App::readAnimationRange() {
   haveLastFrameTime_ = false;
 }
 
+const char* App::skinningModeName(SkinningMode mode) const {
+  switch (mode) {
+    case SkinningMode::GPU: return "gpu";
+    case SkinningMode::CPU: return "cpu";
+    case SkinningMode::Auto:
+    default: return "auto";
+  }
+}
+
+bool App::wantsGpuSkinningLoad() const {
+  return skinningRequested_ == SkinningMode::GPU ||
+         skinningRequested_ == SkinningMode::Auto;
+}
+
+void App::updateSkinningEffective() {
+  skinningEffective_ = SkinningMode::CPU;
+  skinningReason_ = "CPU skinning selected";
+  skinFrame_ = SkinningFrameCPU{};
+  skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
+  lastRtActiveForSkinning_ = renderer_ && renderer_->rayTracingActive();
+  if (renderer_) renderer_->uploadSkinningFrame(skinFrame_);
+
+  if (skinningRequested_ == SkinningMode::CPU) return;
+  if (!renderer_ || !renderer_->caps().supportsGpuSkinning) {
+    skinningReason_ = "GPU skinning unsupported by renderer";
+    return;
+  }
+  if (renderer_->rayTracingActive()) {
+    skinningReason_ = "ray tracing uses CPU-skinned BLAS geometry";
+    return;
+  }
+  if (!loaded_.ok || !SceneHasSkeletalSkinning(loaded_.render)) {
+    skinningReason_ = "scene has no skeletal skinning";
+    return;
+  }
+  if (SceneHasBlendShapes(loaded_.render)) {
+    skinningReason_ = "blendshape animation uses CPU fallback";
+    return;
+  }
+  if (SceneHasNonSkeletalAnimation(loaded_.render)) {
+    skinningReason_ = "non-skeletal animation uses CPU reconvert fallback";
+    return;
+  }
+  if (draw_.boneMatrixCount <= 0) {
+    skinningReason_ = "draw scene has no GPU bone matrix layout";
+    return;
+  }
+  skinningEffective_ = SkinningMode::GPU;
+  skinningReason_ = "GPU skeletal skinning";
+}
+
+void App::updateGpuSkinningFrameIfNeeded() {
+  if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
+  if (skinFrame_.enabled && skinFrameTime_ == animTime_) return;
+  if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_)) {
+    skinFrameTime_ = animTime_;
+    renderer_->uploadSkinningFrame(skinFrame_);
+  }
+}
+
 void App::advancePlayback(float dtSec) {
   if (!hasAnimation_ || !animPlaying_) return;
   const double span = animEnd_ - animStart_;
@@ -343,6 +445,11 @@ void App::requestReconvert(double t) {
   // Skip while a fresh file load is streaming (loaded_/draw_ are in flux); the
   // worker would also race the load writing loaded_.
   if (!loaded_.ok || loadActive_) return;
+  if (skinningEffective_ == SkinningMode::GPU) {
+    reconvApplied_ = t;
+    skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
+    return;
+  }
   reconvRequested_ = t;
   reconvHasRequest_ = true;
   if (!reconvActive_) startReconvertAsync(t);
@@ -546,6 +653,13 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (dt > 0.1f) dt = 0.1f;  // clamp after stalls/load hitches
       advancePlayback(dt);
     }
+    if (renderer_ && renderer_->rayTracingActive() != lastRtActiveForSkinning_) {
+      updateSkinningEffective();
+      if (skinningEffective_ != SkinningMode::GPU && hasAnimation_) {
+        requestReconvert(animTime_);
+      }
+    }
+    updateGpuSkinningFrameIfNeeded();
 
     // Feed the GUI the current playback state (drawn this frame).
     Gui::TimelineInfo tl;
@@ -557,6 +671,11 @@ int App::run(const std::string& initialFile, int maxFrames,
     tl.playing = animPlaying_;
     tl.converting = reconvActive_;
     gui_.setTimeline(tl);
+    Gui::SkinningInfo si;
+    si.requested = skinningRequested_;
+    si.effective = skinningEffective_;
+    si.reason = skinningReason_;
+    gui_.setSkinning(si);
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;
@@ -596,6 +715,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool stopPlay = gui_.wantStop();
     const bool hasSeek = gui_.hasSeek();
     const double seekTime = gui_.seekTime();
+    const bool hasSkinningModeRequest = gui_.hasSkinningModeRequest();
+    const SkinningMode requestedSkinningMode = gui_.requestedSkinningMode();
     animLoop_ = gui_.loopPlayback();
     animSpeed_ = gui_.playSpeed();
     gui_.clearActions();
@@ -603,6 +724,15 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
 #endif
     if (cancelLoad) loadCtrl_.cancel.store(true);
+    if (hasSkinningModeRequest) {
+      skinningRequested_ = requestedSkinningMode;
+      updateSkinningEffective();
+      if (skinningEffective_ == SkinningMode::GPU) {
+        cancelAndJoinReconvert();
+        updateGpuSkinningFrameIfNeeded();
+      }
+      else if (hasAnimation_) requestReconvert(animTime_);
+    }
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
 

@@ -36,6 +36,7 @@ class VulkanRenderer final : public Renderer {
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
@@ -55,6 +56,10 @@ class VulkanRenderer final : public Renderer {
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
     VkDeviceMemory vboMem{VK_NULL_HANDLE};
+    VkBuffer jointVbo{VK_NULL_HANDLE};
+    VkDeviceMemory jointVboMem{VK_NULL_HANDLE};
+    VkBuffer weightVbo{VK_NULL_HANDLE};
+    VkDeviceMemory weightVboMem{VK_NULL_HANDLE};
     VkBuffer ebo{VK_NULL_HANDLE};
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     std::vector<DrawSubmesh> submeshes;
@@ -71,6 +76,7 @@ class VulkanRenderer final : public Renderer {
     uint32_t indexCount{0};
     int matId{-1};       // material id of the mesh's first submesh (RT shading)
     float normalMat[9];  // inverse-transpose of world 3x3 (object->world normals)
+    bool skinned{false};
   };
 
   // setup helpers
@@ -117,7 +123,10 @@ class VulkanRenderer final : public Renderer {
                         VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false);
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
+  bool createBoneTextureImage(int height, const float* data, VkImage* outImg,
+                              VkDeviceMemory* outMem, VkImageView* outView);
   VkDescriptorSet allocTexDescriptor(VkImageView view);
+  VkDescriptorSet allocSkinDescriptor(VkImageView view);
   VkCommandBuffer beginOneShot();
   void endOneShot(VkCommandBuffer cb);
   VkShaderModule createShader(const uint32_t* code, size_t bytes);
@@ -184,7 +193,9 @@ class VulkanRenderer final : public Renderer {
   // Textures (base color). One combined-image-sampler descriptor per texture,
   // plus a default 1x1 white texture for untextured submeshes.
   VkDescriptorSetLayout texSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout skinSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
+  VkDescriptorPool skinPool_{VK_NULL_HANDLE};
   VkImage whiteImg_{VK_NULL_HANDLE};
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};
@@ -194,6 +205,12 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
+
+  VkImage boneImg_{VK_NULL_HANDLE};
+  VkDeviceMemory boneMem_{VK_NULL_HANDLE};
+  VkImageView boneView_{VK_NULL_HANDLE};
+  VkDescriptorSet boneDesc_{VK_NULL_HANDLE};
+  int boneTexHeight_{0};
 
   // Commands & sync
   VkCommandPool commandPool_{VK_NULL_HANDLE};

@@ -10,15 +10,34 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
+#include "gpu_scene.hh"
 #include "stage.hh"
 #include "tydra/render-data.hh"
+#include "value-types.hh"
 
 namespace tusdview {
 
 // True if any mesh in `render` carries skeletal skinning data or blendshape
 // targets (i.e. would deform over time). Cheap topology check.
 bool SceneHasDeformation(const tinyusdz::tydra::RenderScene& render);
+bool SceneHasSkeletalSkinning(const tinyusdz::tydra::RenderScene& render);
+bool SceneHasBlendShapes(const tinyusdz::tydra::RenderScene& render);
+bool SceneHasNonSkeletalAnimation(const tinyusdz::tydra::RenderScene& render);
+
+// Per-skeleton skinning matrices:
+// skinMat[j] = inverse(bind[j]) * posedWorld[j] (USD row-vector convention).
+bool BuildSkinningMatrices(const tinyusdz::tydra::RenderScene& render,
+                           int skelId, double timecode,
+                           std::vector<tinyusdz::value::matrix4d>* skinOut);
+
+// Pack the per-frame GPU bone texture from `render` into `frame`, using the
+// per-mesh skin layout stored in `draw`. Also updates skinned mesh and scene
+// AABBs in `draw` so GUI/MCP bounds match the displayed GPU-skinned pose.
+bool BuildGpuSkinningFrame(const tinyusdz::tydra::RenderScene& render,
+                           DrawScene* draw, double timecode,
+                           SkinningFrameCPU* frame);
 
 // Deform every skinned / blendshaped mesh in `render` to its pose at
 // `timecode`: applies animated blendshape offsets (weights read from the

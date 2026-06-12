@@ -625,8 +625,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  plci.setLayoutCount = 1;
-  plci.pSetLayouts = &texSetLayout_;
+  VkDescriptorSetLayout setLayouts[2] = {texSetLayout_, skinSetLayout_};
+  plci.setLayoutCount = 2;
+  plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
   VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_),
@@ -649,20 +650,28 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   stages[1].module = fs;
   stages[1].pName = "main";
 
-  VkVertexInputBindingDescription bind{};
-  bind.binding = 0;
-  bind.stride = sizeof(DrawVertex);
-  bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[3]{};
+  VkVertexInputBindingDescription bind[3]{};
+  bind[0].binding = 0;
+  bind[0].stride = sizeof(DrawVertex);
+  bind[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  bind[1].binding = 1;
+  bind[1].stride = 4 * sizeof(uint32_t);
+  bind[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  bind[2].binding = 2;
+  bind[2].stride = 4 * sizeof(float);
+  bind[2].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[5]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
+  attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_UINT, 0};
+  attrs[4] = {4, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 1;
-  vin.pVertexBindingDescriptions = &bind;
-  vin.vertexAttributeDescriptionCount = 3;
+  vin.vertexBindingDescriptionCount = 3;
+  vin.pVertexBindingDescriptions = bind;
+  vin.vertexAttributeDescriptionCount = 5;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -908,6 +917,18 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &texSetLayout_),
            "tex descriptor set layout");
 
+  VkDescriptorSetLayoutBinding sb{};
+  sb.binding = 0;
+  sb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sb.descriptorCount = 1;
+  sb.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  VkDescriptorSetLayoutCreateInfo slci{};
+  slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  slci.bindingCount = 1;
+  slci.pBindings = &sb;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &slci, nullptr, &skinSetLayout_),
+           "skin descriptor set layout");
+
   // One combined-image-sampler set per texture (cap = pool size); reset+realloc
   // on each uploadScene.
   const uint32_t kMaxTexSets = 1024;
@@ -921,6 +942,17 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   pci.pPoolSizes = &ps;
   VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &texPool_),
            "tex descriptor pool");
+
+  VkDescriptorPoolSize sps{};
+  sps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sps.descriptorCount = 4;
+  VkDescriptorPoolCreateInfo spci{};
+  spci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  spci.maxSets = 4;
+  spci.poolSizeCount = 1;
+  spci.pPoolSizes = &sps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &spci, nullptr, &skinPool_),
+           "skin descriptor pool");
   return true;
 }
 
@@ -956,6 +988,31 @@ VkDescriptorSet VulkanRenderer::allocTexDescriptor(VkImageView view) {
   ai.descriptorPool = texPool_;
   ai.descriptorSetCount = 1;
   ai.pSetLayouts = &texSetLayout_;
+  VkDescriptorSet ds = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
+  VkDescriptorImageInfo info{};
+  info.sampler = sampler_;
+  info.imageView = view;
+  info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkWriteDescriptorSet w{};
+  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w.dstSet = ds;
+  w.dstBinding = 0;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w.pImageInfo = &info;
+  vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  return ds;
+}
+
+VkDescriptorSet VulkanRenderer::allocSkinDescriptor(VkImageView view) {
+  if (!skinPool_ || !skinSetLayout_) return VK_NULL_HANDLE;
+  vkResetDescriptorPool(device_, skinPool_, 0);
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = skinPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &skinSetLayout_;
   VkDescriptorSet ds = VK_NULL_HANDLE;
   if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
   VkDescriptorImageInfo info{};
@@ -1055,6 +1112,89 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
 }
 
+bool VulkanRenderer::createBoneTextureImage(int height, const float* data,
+                                            VkImage* outImg, VkDeviceMemory* outMem,
+                                            VkImageView* outView) {
+  if (height <= 0 || !data) return false;
+  const VkDeviceSize size = static_cast<VkDeviceSize>(height) * 16 * sizeof(float);
+
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &staging,
+                        &stagingMem)) {
+    return false;
+  }
+
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  ici.extent = {4u, static_cast<uint32_t>(height), 1u};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, *outImg, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device_, &mai, nullptr, outMem);
+  vkBindImageMemory(device_, *outImg, *outMem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {4u, static_cast<uint32_t>(height), 1u};
+  vkCmdCopyBufferToImage(cb, staging, *outImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                         &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                       1, &toRead);
+  endOneShot(cb);
+
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = *outImg;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  vci.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+}
+
 bool VulkanRenderer::createWhiteTexture(std::string* err) {
   light3d::Image w;
   w.width = 1;
@@ -1074,6 +1214,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.backend_name = "Vulkan";
   caps_.usesZeroToOneDepth = true;
   caps_.flipViewportV = false;  // we Y-flip via a negative-height viewport
+  caps_.supportsGpuSkinning = true;
 
   // Resolve the Vulkan loader at runtime (dlopen libvulkan / vulkan-1.dll). No
   // link-time dependency on the Vulkan SDK. Fails cleanly when no ICD/loader is
@@ -1108,6 +1249,11 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createPipeline(err)) return false;       // needs texSetLayout_
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
+  {
+    SkinningFrameCPU ident;
+    ident.enabled = false;
+    uploadSkinningFrame(ident);
+  }
 
   // Ray tracing (ray query) resources, when the device + shader support it.
   if (rtSupported_) {
@@ -1222,6 +1368,10 @@ void VulkanRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.vbo) vkDestroyBuffer(device_, m.vbo, nullptr);
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
+    if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
+    if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
+    if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
+    if (m.weightVboMem) vkFreeMemory(device_, m.weightVboMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
     if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
@@ -1289,11 +1439,38 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
 }
 
+void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
+  if (!device_) return;
+  const bool valid = skin.enabled && skin.matrixCount > 0 &&
+                     skin.rgba32f.size() >= static_cast<size_t>(skin.matrixCount) * 16;
+  const int h = valid ? skin.matrixCount : 1;
+  const float ident[16] = {
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1};
+  const float* data = valid ? skin.rgba32f.data() : ident;
+
+  vkDeviceWaitIdle(device_);
+  if (boneView_) { vkDestroyImageView(device_, boneView_, nullptr); boneView_ = VK_NULL_HANDLE; }
+  if (boneImg_) { vkDestroyImage(device_, boneImg_, nullptr); boneImg_ = VK_NULL_HANDLE; }
+  if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
+  boneDesc_ = VK_NULL_HANDLE;
+  boneTexHeight_ = 0;
+
+  if (createBoneTextureImage(h, data, &boneImg_, &boneMem_, &boneView_)) {
+    boneDesc_ = allocSkinDescriptor(boneView_);
+    boneTexHeight_ = h;
+  }
+}
+
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (sm.vertices.empty() || sm.indices.empty()) return;
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
+               sm.jointWt.size() == sm.vertices.size() * 4;
 
   // When RT is supported the vertex/index buffers double as BLAS build input and
   // SSBOs read by the ray-query shader (device addresses).
@@ -1310,8 +1487,38 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                         sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_)) {
     return;
   }
+  std::vector<uint32_t> zeroJoints;
+  std::vector<float> zeroWeights;
+  const uint32_t* joints = sm.jointIdx.data();
+  const float* weights = sm.jointWt.data();
+  if (!gm.skinned) {
+    zeroJoints.assign(sm.vertices.size() * 4, 0u);
+    zeroWeights.assign(sm.vertices.size() * 4, 0.0f);
+    joints = zeroJoints.data();
+    weights = zeroWeights.data();
+  }
+  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, joints,
+                        &gm.jointVbo, &gm.jointVboMem)) {
+    vkDestroyBuffer(device_, gm.vbo, nullptr);
+    vkFreeMemory(device_, gm.vboMem, nullptr);
+    return;
+  }
+  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, weights,
+                        &gm.weightVbo, &gm.weightVboMem)) {
+    vkDestroyBuffer(device_, gm.jointVbo, nullptr);
+    vkFreeMemory(device_, gm.jointVboMem, nullptr);
+    vkDestroyBuffer(device_, gm.vbo, nullptr);
+    vkFreeMemory(device_, gm.vboMem, nullptr);
+    return;
+  }
   if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t), eboUsage,
                         sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_)) {
+    vkDestroyBuffer(device_, gm.weightVbo, nullptr);
+    vkFreeMemory(device_, gm.weightVboMem, nullptr);
+    vkDestroyBuffer(device_, gm.jointVbo, nullptr);
+    vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
@@ -1975,6 +2182,10 @@ void VulkanRenderer::present() {
     VkRect2D sc{{0, 0}, {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_)}};
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    if (boneDesc_ != VK_NULL_HANDLE) {
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                              1, 1, &boneDesc_, 0, nullptr);
+    }
 
     light3d::Mat4 P = ToMat4(proj_);
     light3d::Mat4 V = ToMat4(view_);
@@ -1987,8 +2198,9 @@ void VulkanRenderer::present() {
       light3d::Mat4 MVP = P * V * W;
       float nmat9[9];
       NormalMatrix3(mesh.world, nmat9);
-      VkDeviceSize off = 0;
-      vkCmdBindVertexBuffers(cb, 0, 1, &mesh.vbo, &off);
+      VkDeviceSize offs[3] = {0, 0, 0};
+      VkBuffer bufs[3] = {mesh.vbo, mesh.jointVbo, mesh.weightVbo};
+      vkCmdBindVertexBuffers(cb, 0, 3, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
         // Bind the submesh's base-color texture (white if untextured).
@@ -2311,14 +2523,19 @@ void VulkanRenderer::shutdown() {
   destroyOffscreen();
   if (imguiInited_) {
     ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    if (!headless_) ImGui_ImplGlfw_Shutdown();
     imguiInited_ = false;
   }
   if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }
   if (whiteImg_) { vkDestroyImage(device_, whiteImg_, nullptr); whiteImg_ = VK_NULL_HANDLE; }
   if (whiteMem_) { vkFreeMemory(device_, whiteMem_, nullptr); whiteMem_ = VK_NULL_HANDLE; }
+  if (boneView_) { vkDestroyImageView(device_, boneView_, nullptr); boneView_ = VK_NULL_HANDLE; }
+  if (boneImg_) { vkDestroyImage(device_, boneImg_, nullptr); boneImg_ = VK_NULL_HANDLE; }
+  if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
   if (texPool_) { vkDestroyDescriptorPool(device_, texPool_, nullptr); texPool_ = VK_NULL_HANDLE; }
+  if (skinPool_) { vkDestroyDescriptorPool(device_, skinPool_, nullptr); skinPool_ = VK_NULL_HANDLE; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
+  if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }

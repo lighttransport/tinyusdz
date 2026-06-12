@@ -75,6 +75,9 @@ json App::mcpSceneInfo(const json&, std::string&) {
               {"has_bounds", draw_.hasBounds}};
   out["aabb_min"] = arr3(draw_.aabbMin);
   out["aabb_max"] = arr3(draw_.aabbMax);
+  out["skinning_requested"] = skinningModeName(skinningRequested_);
+  out["skinning_effective"] = skinningModeName(skinningEffective_);
+  out["skinning_reason"] = skinningReason_;
   if (draw_.truncated) out["truncated"] = true;
   if (hasAnimation_) {
     out["has_animation"] = true;
@@ -95,6 +98,36 @@ json App::mcpSceneInfo(const json&, std::string&) {
     out["deferred_payloads"] = deferred;
   }
   return out;
+}
+
+json App::mcpSkinning(const json& args, std::string& err) {
+  if (args.contains("mode")) {
+    if (!args["mode"].is_string()) {
+      err = "skinning: mode must be auto, cpu, or gpu";
+      return json::object();
+    }
+    const std::string mode = args["mode"].get<std::string>();
+    if (mode == "auto") {
+      skinningRequested_ = SkinningMode::Auto;
+    } else if (mode == "cpu") {
+      skinningRequested_ = SkinningMode::CPU;
+    } else if (mode == "gpu") {
+      skinningRequested_ = SkinningMode::GPU;
+    } else {
+      err = "skinning: mode must be auto, cpu, or gpu";
+      return json::object();
+    }
+    updateSkinningEffective();
+    if (skinningEffective_ == SkinningMode::GPU) {
+      cancelAndJoinReconvert();
+      updateGpuSkinningFrameIfNeeded();
+    } else if (hasAnimation_) {
+      requestReconvert(animTime_);
+    }
+  }
+  return json{{"requested", skinningModeName(skinningRequested_)},
+              {"effective", skinningModeName(skinningEffective_)},
+              {"reason", skinningReason_}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {

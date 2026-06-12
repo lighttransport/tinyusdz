@@ -39,10 +39,19 @@ struct DrawMeshCPU {
   std::string absPath;
 
   std::vector<DrawVertex> vertices;
+  // Optional GPU skinning attributes, parallel to `vertices`.
+  // `jointIdx` stores four absolute bone-matrix texture row indices per vertex;
+  // `jointWt` stores the corresponding normalized weights. Empty = unskinned.
+  std::vector<uint32_t> jointIdx;
+  std::vector<float> jointWt;
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
   std::vector<DrawSubmesh> submeshes;
 
   float world[16];  // column-major (light3d::Mat4 layout), world transform
+  // USD row-vector matrix copied with the same convention as `world`.
+  float skinGeomBind[16];
+  int skelId{-1};
+  int skinMatrixBase{-1};  // first matrix row in DrawScene's bone texture layout
   float aabbMin[3]{0, 0, 0};
   float aabbMax[3]{0, 0, 0};
   bool doubleSided{false};
@@ -80,6 +89,7 @@ struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawMaterialCPU> materials;
   std::vector<DrawTextureCPU> textures;
+  int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};
@@ -95,6 +105,12 @@ struct DrawScene {
   bool truncated{false};
 
   bool empty() const { return meshes.empty(); }
+};
+
+struct SkinningFrameCPU {
+  int matrixCount{0};  // texture height; width is always 4 RGBA texels
+  std::vector<float> rgba32f;  // matrixCount * 4 texels * 4 floats
+  bool enabled{false};
 };
 
 }  // namespace tusdview
