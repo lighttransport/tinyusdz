@@ -341,6 +341,7 @@ export class ZipStreamWriter {
     this._enc = new TextEncoder();
   }
   _emit(bytes) { this._write(bytes); this.offset += bytes.length; }
+  canStream() { return !!this._patch; }  // addEntryStreaming needs a seekable sink
   addEntry(name, data) {
     const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
     assertZip32Size(name, u8.length);
@@ -1584,16 +1585,46 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);
     log(`streaming: ${usdKeys.length} USD layer(s), ${(usdBytesTotal / 1e6).toFixed(1)} MB in cache; textures stream on demand`);
 
-    // 2. Compose/flatten.
-    if (!usd.loadAsLayerFromBinary(rootBytes, rootPath.split('/').pop())) {
-      throw new Error('Failed to load USD: ' + usd.error());
+    // 1.5 Opt-in next multi-asset pipeline: compose/flatten/write happen inside
+    // one wasm call (nextFlattenMultiBufferToSink) with external arcs resolved
+    // against the asset cache the loop above just fed. Dependency layers are
+    // consumed from the cache as they load and arrays pass through verbatim,
+    // so the heap stays near the input bytes instead of the legacy composed +
+    // re-encoded copies. Requires a USDC root and textureFormat 'keep' (the
+    // next-composed layer never surfaces to JS, so texture-rename remapping
+    // can't be applied); declines back to the legacy path otherwise.
+    let nextRoot = null;  // { uuid, anchor } when the next pipeline is armed
+    if (opts.pipeline === 'next') {
+      const rootIsUSDC = rootBytes.length >= 8 &&
+        rootBytes[0] === 0x50 && rootBytes[1] === 0x58 && rootBytes[2] === 0x52 &&
+        rootBytes[3] === 0x2d && rootBytes[4] === 0x55 && rootBytes[5] === 0x53 &&
+        rootBytes[6] === 0x44 && rootBytes[7] === 0x43;  // "PXR-USDC"
+      if (rootIsUSDC && textureFormat === 'keep' &&
+          typeof usd.nextFlattenMultiBufferToSink === 'function') {
+        const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
+          ? Number(opts.maxMemMb) * 1024 * 1024 : 0;
+        const uuid = nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
+        if (uuid !== null) nextRoot = { uuid, anchor: assetNameFor(rootPath) };
+        else log('next: zero-copy alloc declined; using the legacy streaming path.');
+      } else {
+        log('next pipeline unavailable for this input (non-USDC root, texture ' +
+            'format change, or old wasm); using the legacy streaming path.');
+      }
     }
-    composeToFixedPoint(usd);
-    // Composition is done: drop the previous-iteration source layer (a full
-    // copy of the composed scene) and the USD-layer bytes in the wasm asset
-    // cache — only the composed layer is used from here on.
-    if (typeof usd.releaseSourceLayer === 'function') usd.releaseSourceLayer();
-    if (typeof usd.clearAssets === 'function') usd.clearAssets();
+
+    // 2. Compose/flatten (legacy path; skipped when the next pipeline is armed —
+    //    it composes inside the flatten call at step 4/5).
+    if (!nextRoot) {
+      if (!usd.loadAsLayerFromBinary(rootBytes, rootPath.split('/').pop())) {
+        throw new Error('Failed to load USD: ' + usd.error());
+      }
+      composeToFixedPoint(usd);
+      // Composition is done: drop the previous-iteration source layer (a full
+      // copy of the composed scene) and the USD-layer bytes in the wasm asset
+      // cache — only the composed layer is used from here on.
+      if (typeof usd.releaseSourceLayer === 'function') usd.releaseSourceLayer();
+      if (typeof usd.clearAssets === 'function') usd.clearAssets();
+    }
 
     // 3. Precompute texture output names; remap renamed references in the
     //    composed layer before the root is written.
@@ -1620,15 +1651,59 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
 
     // 4. Export the flattened root as a bare USDC buffer (JS-side zip). The
     //    flattened root inlines every dependency layer, so size it from the
-    //    total USD bytes, not the root file alone.
-    const rootOut = exportUSDCOutsideWasmHeap(usd, usdBytesTotal, opts, log, 'layer');
+    //    total USD bytes, not the root file alone. (The next pipeline instead
+    //    flattens+writes inside one wasm call at step 5, streamed when the
+    //    sink is patch-capable.)
+    const rootOut = nextRoot
+      ? null : exportUSDCOutsideWasmHeap(usd, usdBytesTotal, opts, log, 'layer');
+    if (!nextRoot) {
+      log(`streaming: composed root exported; wasm heap ` +
+          `${Math.round((native.HEAPU8 ? native.HEAPU8.length : 0) / 1048576)} MiB`);
+    }
     const rootName = rootPath.split('/').pop().replace(/\.(usda|usd)$/i, '.usdc');
 
     // 5. Stream the zip: root first, then textures one at a time.
     const chunks = [];
     const sink = opts.zipSink || ((bytes) => { chunks.push(bytes.slice ? bytes.slice() : new Uint8Array(bytes)); });
     const zw = new ZipStreamWriter(sink);
-    zw.addEntry(rootName, rootOut);
+    if (nextRoot) {
+      const lazy = opts.nextEager !== true;
+      const canStreamWrite = opts.streamWrite !== false && zw.canStream();
+      let s = null;
+      if (canStreamWrite) {
+        // Once streaming starts a failure corrupts the archive, so errors
+        // throw rather than fall back (same contract as the single-usdz path).
+        zw.addEntryStreaming(rootName, (emit) => {
+          s = usd.nextFlattenMultiBufferToSink(
+            nextRoot.uuid, nextRoot.anchor, lazy,
+            (view) => { emit(view); return true; });
+          if (!s || !s.success) {
+            throw new Error('next multi flatten failed: ' + (s && s.error));
+          }
+        });
+      } else {
+        s = usd.nextFlattenMultiBufferToSink(nextRoot.uuid, nextRoot.anchor, lazy, null);
+        if (!s || !s.success) {
+          throw new Error('next multi flatten failed: ' + (s && s.error));
+        }
+        zw.addEntry(rootName, new Uint8Array(s.data));
+      }
+      if (typeof usd.clearAssets === 'function') usd.clearAssets();
+      stats.pipeline = 'next';
+      stats.arraysPassedThrough = s.arraysPassedThrough;
+      stats.arraysReencoded = s.arraysReencoded;
+      log(`next multi flatten: ${rootName} ${s.inputBytes} -> ${s.outputBytes} bytes, ` +
+          `${s.primCount} prims (passthrough=${s.arraysPassedThrough}, ` +
+          `reencoded=${s.arraysReencoded})${canStreamWrite ? ' [stream-write]' : ''}; ` +
+          `wasm heap ${Math.round((native.HEAPU8 ? native.HEAPU8.length : 0) / 1048576)} MiB`);
+      if (s.compositionErrorCount > 0) {
+        log(`next multi flatten: ${s.compositionErrorCount} composition error(s) ` +
+            '(arcs skipped):');
+        for (const e of s.compositionErrors || []) log(`  ${e}`);
+      }
+    } else {
+      zw.addEntry(rootName, rootOut);
+    }
 
     const pickResizeCs = makeResizeCsPicker(native, rootBytes, opts);
     const wantResize = (opts.maxTextureSize || 0) > 0;
