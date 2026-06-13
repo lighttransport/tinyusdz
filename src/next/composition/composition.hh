@@ -145,6 +145,12 @@ public:
   /// Get a cached layer (loads if not cached)
   const Layer* GetCachedLayer(const std::string& path);
 
+  /// Get an external layer with its OWN composition arcs (references / payloads
+  /// / inherits / specializes) already expanded, variant selection deferred to
+  /// the referencing prim. Cached; falls back to the raw layer when it has no
+  /// such arcs or a composition cycle is detected.
+  const Layer* GetComposedExternalLayer(const std::string& path);
+
   /// Clear the layer cache
   void ClearCache();
 
@@ -159,6 +165,15 @@ private:
 
   // Layer cache: resolved path -> layer
   std::map<std::string, std::unique_ptr<Layer>> layer_cache_;
+
+  // Cache of external layers with their OWN arcs already expanded (variants
+  // deferred), and the set of paths currently being so composed (cross-layer
+  // cycle guard). Shared (shared_ptr) with the sub-Compositors that compose
+  // referenced layers, so the cache and cycle guard span the whole recursion.
+  // Lazily created on first external reference.
+  std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
+      composed_ext_cache_;
+  std::shared_ptr<std::set<std::string>> composing_ext_;
 
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;

@@ -12,6 +12,27 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+// Does any prim in `layer` author a composition arc that must be expanded
+// (references / payloads / inherits / specializes)? Variants are intentionally
+// excluded: their selection is deferred to the referencing prim, so a
+// variants-only external layer needs no pre-composition.
+bool LayerHasComposableArcs(const Layer& layer) {
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
+    if (!p) continue;
+    const auto& m = p->meta();
+    if (!m.references.empty() || !m.payloads.empty() || !m.inherits.empty() ||
+        !m.specializes.empty()) {
+      return true;
+    }
+  }
+  return !layer.meta().subLayers.empty();
+}
+
+}  // namespace
+
 // ============================================================
 // Compositor
 // ============================================================
@@ -297,20 +318,65 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
       target.meta().clips() = cs.clips();
   }
 
-  // Variant sets + selections ride along (weaker: only when the target has
-  // none of its own). A referenced prim whose content lives in variants
-  // (e.g. UE mesh assets: geometry inside variantSet "LOD") must keep its
-  // selection so the caller's ApplyVariants pass — which runs AFTER
-  // reference resolution — can bake the chosen variant.
-  if (target.meta().variantSets().empty() &&
-      !source.meta().variantSets().empty()) {
-    target.meta().variantSets() = source.meta().variantSets();
-    if (target.meta().variantSelection.empty()) {
-      target.meta().variantSelection = source.meta().variantSelection;
+  // Variant sets + selections ride along from the weaker `source`, MERGED
+  // per-set / per-variant (not all-or-nothing). The target (stronger) keeps its
+  // own opinions; the source fills in what is absent. This matters because a
+  // stronger layer may DECLARE a variantSet with empty variant blocks while the
+  // actual variant CONTENT is authored in a weaker layer reached via
+  // payload/reference (e.g. Pixar Kitchen_set: Chair.usd declares empty
+  // ChairA/ChairB blocks, the geometry lives in Chair.geom.usd two arcs deeper).
+  // An all-or-nothing copy would drop that content because the target "already
+  // has" the (empty) set. The selection itself is left to the referencing prim
+  // (ApplyVariants runs after arc resolution and is strongest).
+  if (!source.meta().variantSets().empty()) {
+    std::vector<VariantSetData>& tsets = target.meta().variantSets();
+    for (const auto& ssvs : source.meta().variantSets()) {
+      VariantSetData* tvs = nullptr;
+      for (auto& t : tsets) {
+        if (t.name == ssvs.name) { tvs = &t; break; }
+      }
+      if (!tvs) {
+        tsets.push_back(ssvs);  // whole set is new to the target
+        continue;
+      }
+      if (tvs->selected.empty()) tvs->selected = ssvs.selected;
+      for (const auto& svar : ssvs.variants) {
+        VariantData* tvar = nullptr;
+        for (auto& v : tvs->variants) {
+          if (v.name == svar.name) { tvar = &v; break; }
+        }
+        if (!tvar) {
+          tvs->variants.push_back(svar);  // variant option new to the target
+          continue;
+        }
+        // Shared variant option: fill-absent its content.
+        for (const auto& sp : svar.properties) {
+          bool have = false;
+          for (const auto& tp : tvar->properties) {
+            if (tp.first == sp.first) { have = true; break; }
+          }
+          if (!have) tvar->properties.push_back(sp);
+        }
+        for (const auto& sr : svar.relationships) {
+          if (!tvar->relationships.count(sr.first)) {
+            tvar->relationships[sr.first] = sr.second;
+          }
+        }
+        if (!tvar->content && svar.content) tvar->content = svar.content;
+        if (tvar->doc.empty() && !svar.doc.empty()) tvar->doc = svar.doc;
+        if (tvar->variantSets.empty() && !svar.variantSets.empty()) {
+          tvar->variantSets = svar.variantSets;
+        }
+      }
     }
-    if (target.meta().variantSelections().empty()) {
-      target.meta().variantSelections() = source.meta().variantSelections();
-    }
+  }
+  if (target.meta().variantSelection.empty() &&
+      !source.meta().variantSelection.empty()) {
+    target.meta().variantSelection = source.meta().variantSelection;
+  }
+  if (!source.meta().variantSelections().empty() &&
+      target.meta().variantSelections().empty()) {
+    target.meta().variantSelections() = source.meta().variantSelections();
   }
 }
 
@@ -368,17 +434,22 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
     }
   }
 
-  // Flatten: drop the now-resolved arcs so they are not re-emitted. Variant
-  // sets/selection are baked too (the selected opinions are now local).
+  // Flatten: drop the now-resolved arcs so they are not re-emitted.
   prim.meta().references.clear();
   prim.meta().payloads.clear();
   prim.meta().inherits.clear();
   prim.meta().specializes.clear();
-  // variantSets lives in the lazily-allocated ext; only touch it (the mutable
-  // accessor would otherwise allocate an empty ext for every ext-free prim)
-  // when an ext already exists.
-  if (prim.meta().has_ext()) prim.meta().variantSets().clear();
-  prim.meta().variantSelection.clear();
+  // Variant sets/selection are consumed ONLY when variants were actually baked
+  // (resolve_variants). When variant resolution is DEFERRED (a referenced layer
+  // composed by GetComposedExternalLayer, whose variant selection belongs to the
+  // referencing prim), the variant metadata must survive so it can be merged
+  // into — and baked by — the host. variantSets lives in the lazily-allocated
+  // ext; only touch it (the mutable accessor would otherwise allocate an empty
+  // ext for every ext-free prim) when an ext already exists.
+  if (options_.resolve_variants) {
+    if (prim.meta().has_ext()) prim.meta().variantSets().clear();
+    prim.meta().variantSelection.clear();
+  }
 }
 
 void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
@@ -411,7 +482,12 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     return;
   }
   PushStack(resolved);
-  const Layer* ext = GetCachedLayer(resolved);
+  // Compose the external target's OWN arcs first (references / payloads /
+  // inherits / specializes), variants deferred, so a referenced asset whose
+  // content arrives through its own payload or nested references is fully
+  // expanded before its opinions are merged here. Mirrors the internal-arc path
+  // above, which resolves the target's arcs via ResolveArcsForPrim.
+  const Layer* ext = GetComposedExternalLayer(resolved);
   if (!ext) {
     AddError("Failed to load reference: " + arc.asset_path, self,
              arc.asset_path, arc.type);
@@ -608,8 +684,61 @@ const Layer* Compositor::GetCachedLayer(const std::string& path) {
   return result;
 }
 
+const Layer* Compositor::GetComposedExternalLayer(
+    const std::string& resolved_path) {
+  if (!composed_ext_cache_) {
+    composed_ext_cache_ =
+        std::make_shared<std::map<std::string, std::shared_ptr<Layer>>>();
+  }
+  if (!composing_ext_) {
+    composing_ext_ = std::make_shared<std::set<std::string>>();
+  }
+
+  auto cit = composed_ext_cache_->find(resolved_path);
+  if (cit != composed_ext_cache_->end()) return cit->second.get();
+
+  const Layer* raw = GetCachedLayer(resolved_path);
+  if (!raw) return nullptr;
+
+  // Nothing to expand → graft the raw layer directly (no clone/compose cost).
+  if (!LayerHasComposableArcs(*raw)) return raw;
+
+  // Cross-layer cycle guard: already composing this path → fall back to raw so
+  // the recursion terminates (the in-progress layer's own arcs still resolve in
+  // the outer composition that owns it).
+  if (composing_ext_->count(resolved_path)) return raw;
+  composing_ext_->insert(resolved_path);
+
+  // Compose the external layer in its OWN anchor context so its references /
+  // payloads resolve relative to itself, but DEFER variant selection: the
+  // referencing prim's selection is stronger and is applied by the host's
+  // ApplyVariants pass after grafting. A fresh sub-Compositor is used because
+  // Compose() resets per-run state (arc_resolved_/pending_graft_/...) that the
+  // outer composition is still mid-pass on; the composed-layer cache and the
+  // cycle guard are shared so the whole recursion sees them.
+  Compositor sub;
+  sub.resolver_ = resolver_;
+  sub.layer_loader_ = layer_loader_;
+  CompositionOptions opts = options_;
+  opts.resolve_variants = false;
+  sub.options_ = opts;
+  sub.composed_ext_cache_ = composed_ext_cache_;
+  sub.composing_ext_ = composing_ext_;
+
+  std::unique_ptr<Layer> composed = sub.Compose(*raw, resolved_path);
+  for (const auto& e : sub.errors_) errors_.push_back(e);
+  composing_ext_->erase(resolved_path);
+
+  if (!composed) return raw;  // fall back to raw on failure
+  std::shared_ptr<Layer> shared(std::move(composed));
+  const Layer* ptr = shared.get();
+  (*composed_ext_cache_)[resolved_path] = std::move(shared);
+  return ptr;
+}
+
 void Compositor::ClearCache() {
   layer_cache_.clear();
+  if (composed_ext_cache_) composed_ext_cache_->clear();
 }
 
 void Compositor::AddError(const std::string& msg, const std::string& prim_path,
