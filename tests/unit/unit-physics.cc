@@ -21,6 +21,7 @@
 #include "tydra/physics-to-json.hh"
 #include "tydra/urdf-to-usd.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -71,9 +72,12 @@ static bool get_prop_num(const std::map<std::string, Property> &props,
   if (it == props.end()) return false;
   if (!it->second.is_attribute()) return false;
   const auto &attr = it->second.get_attribute();
-  if (auto v = attr.get_value<int>())    { *out = static_cast<double>(*v); return true; }
-  if (auto v = attr.get_value<float>())  { *out = static_cast<double>(*v); return true; }
-  if (auto v = attr.get_value<double>()) { *out = *v; return true; }
+  if (auto v = attr.get_value<int>())      { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<uint32_t>()) { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<int64_t>())  { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<uint64_t>()) { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<float>())    { *out = static_cast<double>(*v); return true; }
+  if (auto v = attr.get_value<double>())   { *out = *v; return true; }
   return false;
 }
 
@@ -1568,14 +1572,40 @@ def PhysicsRevoluteJoint "Joint" (
   TEST_CHECK(joint != nullptr);
   if (!joint) return;
 
-  // DriveAPI and LimitAPI attributes are stored in props since they use
-  // multi-apply namespace syntax (physics:drive:rotX:*)
-  // Verify the props map contains them
+  // DriveAPI and LimitAPI attributes use multi-apply namespace syntax
+  // (physics:drive:rotX:*) and are preserved verbatim in the generic props map
+  // for round-trip.
   TEST_CHECK(joint->props.count("physics:drive:rotX:type") > 0 ||
              joint->props.count("physics:drive:rotX:maxForce") > 0 ||
              joint->props.count("physics:drive:rotX:stiffness") > 0);
   TEST_CHECK(joint->props.count("physics:limit:rotX:low") > 0 ||
              joint->props.count("physics:limit:rotX:high") > 0);
+
+  // Phase 1a: the reconstruct path now ALSO populates the typed
+  // PhysicsJointBase::drives / ::limits maps (a read-model on top of props).
+  TEST_CHECK(joint->drives.count("rotX") == 1);
+  if (joint->drives.count("rotX") == 1) {
+    const PhysicsDriveAPI &d = joint->drives.at("rotX");
+    TEST_CHECK(d.dof == "rotX");
+    TEST_CHECK(d.type.get_value().str() == "force");
+    auto mf = d.maxForce.get_value();
+    auto tp = d.targetPosition.get_value();
+    auto st = d.stiffness.get_value();
+    auto dp = d.damping.get_value();
+    TEST_CHECK(mf.has_value() && approx_eq(mf.value(), 100.0));
+    TEST_CHECK(tp.has_value() && approx_eq(tp.value(), 1.57));
+    TEST_CHECK(st.has_value() && approx_eq(st.value(), 50.0));
+    TEST_CHECK(dp.has_value() && approx_eq(dp.value(), 10.0));
+  }
+  TEST_CHECK(joint->limits.count("rotX") == 1);
+  if (joint->limits.count("rotX") == 1) {
+    const PhysicsLimitAPI &l = joint->limits.at("rotX");
+    TEST_CHECK(l.dof == "rotX");
+    auto lo = l.low.get_value();
+    auto hi = l.high.get_value();
+    TEST_CHECK(lo.has_value() && approx_eq(lo.value(), -1.57));
+    TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 1.57));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2336,6 +2366,875 @@ void physics_urdf_upaxis_axis_invariant_test(void) {
         TEST_CHECK(approx_eq(g.value()[1], -1.0));
         TEST_CHECK(approx_eq(g.value()[2], 0.0));
       }
+    }
+  }
+}
+
+// ===========================================================================
+// Large-scene crate-writer regression canaries.
+//
+// The "large scale scene support" work rewired the crate writer's value store
+// (cross-spec VALUE-block dedup `1d61a59dc`, COW array storage `73cf5f680`,
+// diet PrimVar `5af6afd43`, 16-byte Path SBO `bbaf277a8`). Physics attributes
+// that are NOT re-emitted as typed structs by sconv-physics.cc round-trip
+// through the generic stage-converter props pass + that value store, so a
+// mis-association or value-sharing bug there would surface as a silently wrong
+// physics value after USDC write. These tests author physics scenes, push them
+// through usdc_roundtrip(), and assert VALUES (not just presence). The scalar
+// values are chosen to be "dedup-collision-prone" (e.g. mass=2.5, density=1000
+// are values likely to also appear on unrelated specs).
+// ===========================================================================
+
+// R1. PhysicsRigidBodyAPI + PhysicsMassAPI value survival through USDC.
+void physics_rigidbody_mass_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Cube "Body" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:rigidBodyEnabled = 0
+        float physics:mass = 2.5
+        float physics:density = 1000
+        point3f physics:centerOfMass = (0.1, 0.2, 0.3)
+        float3 physics:diagonalInertia = (1, 2, 3)
+        quatf physics:principalAxes = (1, 0, 0, 0)
+        vector3f physics:velocity = (0.5, 0, 0)
+        vector3f physics:angularVelocity = (0, 0, 1)
+        bool physics:startsAsleep = 1
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/World/Body", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+
+  PhysicsRigidBodyAPI rb;
+  TEST_CHECK(GetPhysicsRigidBodyAPI(*prim, &rb));
+  TEST_CHECK(rb.rigidBodyEnabled.get_value() == false);
+  TEST_CHECK(rb.startsAsleep.get_value() == true);
+  {
+    auto m = rb.mass.get_value();
+    TEST_CHECK(m.has_value() && approx_eq(m.value(), 2.5));
+    auto d = rb.density.get_value();
+    TEST_CHECK(d.has_value() && approx_eq(d.value(), 1000.0));
+    auto com = rb.centerOfMass.get_value();
+    TEST_CHECK(com.has_value());
+    if (com.has_value()) {
+      TEST_CHECK(approx_eq(com.value()[0], 0.1));
+      TEST_CHECK(approx_eq(com.value()[1], 0.2));
+      TEST_CHECK(approx_eq(com.value()[2], 0.3));
+    }
+    auto in = rb.diagonalInertia.get_value();
+    TEST_CHECK(in.has_value());
+    if (in.has_value()) {
+      TEST_CHECK(approx_eq(in.value()[0], 1.0));
+      TEST_CHECK(approx_eq(in.value()[1], 2.0));
+      TEST_CHECK(approx_eq(in.value()[2], 3.0));
+    }
+    TEST_CHECK(rb.principalAxes.get_value().has_value());
+  }
+
+  // PhysicsMassAPI reads the same physics:mass/physics:density (density_) keys.
+  PhysicsMassAPI mass;
+  TEST_CHECK(GetPhysicsMassAPI(*prim, &mass));
+  TEST_CHECK(approx_eq(mass.mass.get_value(), 2.5));
+  TEST_CHECK(approx_eq(mass.density_.get_value(), 1000.0));
+}
+
+// R2. PhysicsMaterialAPI + PhysicsCollisionAPI + PhysicsMeshCollisionAPI.
+// staticFriction/dynamicFriction are near-valued floats — a prime false-share
+// candidate for the dedup pass.
+void physics_collision_material_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Material "Rubber" (
+        prepend apiSchemas = ["PhysicsMaterialAPI"]
+    )
+    {
+        float physics:staticFriction = 0.6
+        float physics:dynamicFriction = 0.5
+        float physics:restitution = 0.2
+        float physics:density = 900
+    }
+
+    def Mesh "Collider" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+    )
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        bool physics:collisionEnabled = 1
+        uniform token physics:approximation = "convexHull"
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto mr = stage.GetPrimAtPath(Path("/World/Rubber", ""));
+  TEST_CHECK(bool(mr));
+  if (mr) {
+    PhysicsMaterialAPI mat;
+    TEST_CHECK(GetPhysicsMaterialAPI(**mr, &mat));
+    auto sf = mat.staticFriction.get_value();
+    auto df = mat.dynamicFriction.get_value();
+    auto rest = mat.restitution.get_value();
+    auto den = mat.density.get_value();
+    TEST_CHECK(sf.has_value() && approx_eq(sf.value(), 0.6));
+    TEST_CHECK(df.has_value() && approx_eq(df.value(), 0.5));
+    TEST_CHECK(rest.has_value() && approx_eq(rest.value(), 0.2));
+    TEST_CHECK(den.has_value() && approx_eq(den.value(), 900.0));
+  }
+
+  auto cr = stage.GetPrimAtPath(Path("/World/Collider", ""));
+  TEST_CHECK(bool(cr));
+  if (cr) {
+    PhysicsCollisionAPI col;
+    TEST_CHECK(GetPhysicsCollisionAPI(**cr, &col));
+    TEST_CHECK(col.collisionEnabled.get_value() == true);
+    PhysicsMeshCollisionAPI mcol;
+    TEST_CHECK(GetPhysicsMeshCollisionAPI(**cr, &mcol));
+    // approximation is TypedAttributeWithFallback<token> -> get_value() is the
+    // token (fallback "none" when unauthored).
+    TEST_CHECK(mcol.approximation.get_value().str() == "convexHull");
+  }
+}
+
+// R3. Multi-apply physics:drive:<dof>:* / physics:limit:<dof>:* value survival
+// through USDC (the generic props pass for namespaced keys — highest-risk).
+void physics_drive_limit_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "Joint" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:rotX"]
+)
+{
+    rel physics:body0 = </Arm>
+    rel physics:body1 = </Forearm>
+    token physics:axis = "X"
+
+    token physics:drive:rotX:type = "force"
+    float physics:drive:rotX:maxForce = 100
+    float physics:drive:rotX:targetPosition = 1.57
+    float physics:drive:rotX:stiffness = 50
+    float physics:drive:rotX:damping = 10
+
+    float physics:limit:rotX:low = -1.57
+    float physics:limit:rotX:high = 1.57
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/Joint", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  // Values survive in the generic props map.
+  double v = 0.0;
+  TEST_CHECK(get_prop_num(joint->props, "physics:drive:rotX:maxForce", &v));
+  TEST_CHECK(approx_eq(v, 100.0));
+  TEST_CHECK(get_prop_num(joint->props, "physics:drive:rotX:targetPosition", &v));
+  TEST_CHECK(approx_eq(v, 1.57));
+  TEST_CHECK(get_prop_num(joint->props, "physics:drive:rotX:stiffness", &v));
+  TEST_CHECK(approx_eq(v, 50.0));
+  TEST_CHECK(get_prop_num(joint->props, "physics:drive:rotX:damping", &v));
+  TEST_CHECK(approx_eq(v, 10.0));
+  TEST_CHECK(get_prop_num(joint->props, "physics:limit:rotX:low", &v));
+  TEST_CHECK(approx_eq(v, -1.57));
+  TEST_CHECK(get_prop_num(joint->props, "physics:limit:rotX:high", &v));
+  TEST_CHECK(approx_eq(v, 1.57));
+
+  // After Phase 1a (typed-map population) these also populate joint->drives /
+  // joint->limits. Assert when present so this test tightens automatically.
+  if (!joint->drives.empty()) {
+    auto it = joint->drives.find("rotX");
+    TEST_CHECK(it != joint->drives.end());
+    if (it != joint->drives.end()) {
+      TEST_CHECK(it->second.dof == "rotX");
+      auto mf = it->second.maxForce.get_value();
+      TEST_CHECK(mf.has_value() && approx_eq(mf.value(), 100.0));
+      auto tp = it->second.targetPosition.get_value();
+      TEST_CHECK(tp.has_value() && approx_eq(tp.value(), 1.57));
+    }
+  }
+  if (!joint->limits.empty()) {
+    auto it = joint->limits.find("rotX");
+    TEST_CHECK(it != joint->limits.end());
+    if (it != joint->limits.end()) {
+      auto lo = it->second.low.get_value();
+      auto hi = it->second.high.get_value();
+      TEST_CHECK(lo.has_value() && approx_eq(lo.value(), -1.57));
+      TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 1.57));
+    }
+  }
+}
+
+// R4. Joint local frames (point3f localPos + quatf localRot) + body rels.
+// Compares a direct parse against a USDC round-trip so the assertion is
+// convention-agnostic for quats while still catching value corruption.
+void physics_joints_localframe_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "Rev"
+{
+    rel physics:body0 = </A>
+    rel physics:body1 = </B>
+    point3f physics:localPos0 = (1, 2, 3)
+    point3f physics:localPos1 = (-1, -2, -3)
+    quatf physics:localRot0 = (0.70710677, 0.70710677, 0, 0)
+    quatf physics:localRot1 = (1, 0, 0, 0)
+    token physics:axis = "X"
+}
+
+def PhysicsPrismaticJoint "Prism"
+{
+    rel physics:body0 = </B>
+    rel physics:body1 = </C>
+    point3f physics:localPos0 = (0.5, 0, 0)
+    quatf physics:localRot0 = (0, 1, 0, 0)
+    token physics:axis = "Z"
+}
+
+def PhysicsDistanceJoint "Dist"
+{
+    rel physics:body0 = </C>
+    rel physics:body1 = </D>
+    float physics:minDistance = 0.1
+    float physics:maxDistance = 2.5
+}
+)";
+  Stage direct, rt;
+  std::string warn, err;
+  TEST_CHECK(parse_usda(usda, &direct, &warn, &err));
+  bool ok = usdc_roundtrip(usda, &rt, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  // Revolute: localPos0 exact, localRot0 == direct parse (convention-agnostic),
+  // body rel targets intact.
+  {
+    auto dr = direct.GetPrimAtPath(Path("/Rev", ""));
+    auto rr = rt.GetPrimAtPath(Path("/Rev", ""));
+    TEST_CHECK(bool(dr) && bool(rr));
+    if (dr && rr) {
+      const auto *dj = (*dr)->as<PhysicsRevoluteJoint>();
+      const auto *rj = (*rr)->as<PhysicsRevoluteJoint>();
+      TEST_CHECK(dj && rj);
+      if (dj && rj) {
+        auto p = rj->localPos0.get_value();
+        TEST_CHECK(p.has_value());
+        if (p.has_value()) {
+          TEST_CHECK(approx_eq(p.value()[0], 1.0));
+          TEST_CHECK(approx_eq(p.value()[1], 2.0));
+          TEST_CHECK(approx_eq(p.value()[2], 3.0));
+        }
+        auto qd = dj->localRot0.get_value();
+        auto qr = rj->localRot0.get_value();
+        TEST_CHECK(qd.has_value() && qr.has_value());
+        if (qd.has_value() && qr.has_value()) {
+          for (size_t i = 0; i < 4; i++) {
+            TEST_CHECK(approx_eq(qr.value()[i], qd.value()[i]));
+          }
+        }
+        TEST_CHECK(rj->body0.authored() && rj->body1.authored());
+        auto t0 = rj->body0.get_targetPaths();
+        TEST_CHECK(t0.size() == 1 && t0[0].prim_part() == "/A");
+      }
+    }
+  }
+
+  // Prismatic localRot0 == direct parse.
+  {
+    auto dr = direct.GetPrimAtPath(Path("/Prism", ""));
+    auto rr = rt.GetPrimAtPath(Path("/Prism", ""));
+    if (dr && rr) {
+      const auto *dj = (*dr)->as<PhysicsPrismaticJoint>();
+      const auto *rj = (*rr)->as<PhysicsPrismaticJoint>();
+      if (dj && rj) {
+        auto qd = dj->localRot0.get_value();
+        auto qr = rj->localRot0.get_value();
+        TEST_CHECK(qd.has_value() && qr.has_value());
+        if (qd.has_value() && qr.has_value()) {
+          for (size_t i = 0; i < 4; i++) {
+            TEST_CHECK(approx_eq(qr.value()[i], qd.value()[i]));
+          }
+        }
+      }
+    }
+  }
+
+  // Distance joint min/max.
+  {
+    auto rr = rt.GetPrimAtPath(Path("/Dist", ""));
+    TEST_CHECK(bool(rr));
+    if (rr) {
+      const auto *dj = (*rr)->as<PhysicsDistanceJoint>();
+      TEST_CHECK(dj != nullptr);
+      if (dj) {
+        auto lo = dj->minDistance.get_value();
+        auto hi = dj->maxDistance.get_value();
+        TEST_CHECK(lo.has_value() && approx_eq(lo.value(), 0.1));
+        TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 2.5));
+      }
+    }
+  }
+}
+
+// R5. PhysicsCollisionGroup mergeGroup/invert/filteredGroups rel +
+// colliders collection includes survive USDC (rel-target vectors are a
+// separate crate section from scalar values).
+void physics_collision_group_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsCollisionGroup "GroupA" (
+    prepend apiSchemas = ["CollectionAPI:colliders"]
+)
+{
+    token physics:mergeGroup = "armA"
+    bool physics:invertFilteredGroups = 1
+    rel physics:filteredGroups = [</GroupB>]
+    rel collection:colliders:includes = [</Body1>, </Body2>]
+}
+
+def PhysicsCollisionGroup "GroupB" {}
+def Cube "Body1" {}
+def Cube "Body2" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/GroupA", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+  const auto *grp = prim->as<PhysicsCollisionGroup>();
+  TEST_CHECK(grp != nullptr);
+  if (!grp) return;
+
+  auto mg = grp->mergeGroup.get_value();
+  TEST_CHECK(mg.has_value() && mg.value().str() == "armA");
+  TEST_CHECK(grp->invertFilteredGroups.get_value() == true);
+  TEST_CHECK(grp->filteredGroups.authored());
+
+  std::vector<Path> includes, excludes;
+  TEST_CHECK(GetPhysicsCollidersCollection(*prim, &includes, &excludes));
+  TEST_CHECK(includes.size() == 2);
+  if (includes.size() == 2) {
+    TEST_CHECK(includes[0].full_path_name() == "/Body1");
+    TEST_CHECK(includes[1].full_path_name() == "/Body2");
+  }
+}
+
+// R6. PhysicsScene carrying MjcSceneAPI + NewtonSceneAPI + NewtonKaminoSceneAPI
+// simultaneously, round-tripped. Locks the typed re-emit path (sconv-physics.cc)
+// AND dedup across co-resident sibling API blocks on one prim.
+void physics_scene_full_mjc_newton_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsScene "Sim" (
+    prepend apiSchemas = ["MjcSceneAPI", "NewtonSceneAPI", "NewtonKaminoSceneAPI"]
+)
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+
+    uniform double mjc:option:timestep = 0.002
+    uniform token mjc:option:integrator = "implicit"
+    uniform int mjc:option:iterations = 150
+    uniform bool mjc:flag:contact = 1
+
+    uniform int newton:maxSolverIterations = 48
+    uniform int newton:timeStepsPerSecond = 360
+    bool newton:gravityEnabled = true
+    uniform float newton:kamino:constraints:alpha = 0.5
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/Sim", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const Prim *prim = *result;
+  const auto *scene = prim->as<PhysicsScene>();
+  TEST_CHECK(scene != nullptr);
+  if (!scene) return;
+
+  TEST_CHECK(scene->mjcScene.has_value());
+  TEST_CHECK(scene->newtonScene.has_value());
+  TEST_CHECK(scene->newtonKaminoScene.has_value());
+  if (scene->mjcScene.has_value()) {
+    const auto &m = scene->mjcScene.value();
+    TEST_CHECK(approx_eq(m.timestep.get_value(), 0.002));
+    TEST_CHECK(m.integrator.get_value().str() == "implicit");
+    TEST_CHECK(m.iterations.get_value() == 150);
+    TEST_CHECK(m.flag_contact.get_value() == true);
+  }
+  if (scene->newtonScene.has_value()) {
+    const auto &n = scene->newtonScene.value();
+    TEST_CHECK(n.maxSolverIterations.get_value() == 48);
+    TEST_CHECK(n.timeStepsPerSecond.get_value() == 360);
+    TEST_CHECK(n.gravityEnabled.get_value() == true);
+  }
+  if (scene->newtonKaminoScene.has_value()) {
+    TEST_CHECK(approx_eq(scene->newtonKaminoScene.value().constraintsAlpha.get_value(), 0.5));
+  }
+  // gravity (typed PhysicsScene attrs) also survive.
+  auto g = scene->gravityDirection.get_value();
+  TEST_CHECK(g.has_value());
+  if (g.has_value()) TEST_CHECK(approx_eq(g.value()[2], -1.0));
+  TEST_CHECK(approx_eq(scene->gravityMagnitude.get_value().value_or(0.0f), 9.81));
+}
+
+// R7. Tydra physics-to-JSON export works on a crate-reconstructed stage
+// (not just a freshly-USDA-parsed one).
+void physics_to_json_after_usdc_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsScene "Scene"
+{
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+    uniform double mjc:option:timestep = 0.002
+}
+
+def Scope "Joints"
+{
+    def PhysicsRevoluteJoint "Hinge"
+    {
+        rel physics:body0 = </Body0>
+        rel physics:body1 = </Body1>
+        token physics:axis = "Z"
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::string json, json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  TEST_CHECK(!json.empty());
+  if (!json.empty()) {
+    TEST_CHECK(json.find("\"physicsScene\"") != std::string::npos);
+    TEST_CHECK(json.find("\"gravityMagnitude\"") != std::string::npos);
+    TEST_CHECK(json.find("\"joints\"") != std::string::npos);
+    TEST_CHECK(json.find("\"timestep\"") != std::string::npos);
+  }
+}
+
+// R8. PhysX scene-level + rigidbody-level generic-prop preservation through
+// USDC (documents the "physx survives as generic props" contract — gap 1f).
+void physx_scene_rigidbody_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def PhysicsScene "Scene"
+    {
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.81
+        custom uint physxScene:timeStepsPerSecond = 120
+        custom float physxScene:bounceThreshold = 0.2
+        custom token physxScene:broadphaseType = "MBP"
+    }
+
+    def Cube "Body" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        float physics:mass = 1.0
+        custom float physxRigidBody:maxLinearVelocity = 50.0
+        custom float physxRigidBody:sleepThreshold = 0.01
+        custom bool physxRigidBody:disableGravity = 0
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto sr = stage.GetPrimAtPath(Path("/World/Scene", ""));
+  TEST_CHECK(bool(sr));
+  if (sr) {
+    const auto *scene = (*sr)->as<PhysicsScene>();
+    TEST_CHECK(scene != nullptr);
+    if (scene) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(scene->props, "physxScene:timeStepsPerSecond", &v));
+      TEST_CHECK(approx_eq(v, 120.0));
+      TEST_CHECK(get_prop_num(scene->props, "physxScene:bounceThreshold", &v));
+      TEST_CHECK(approx_eq(v, 0.2));
+      TEST_CHECK(scene->props.count("physxScene:broadphaseType") > 0);
+    }
+  }
+
+  auto br = stage.GetPrimAtPath(Path("/World/Body", ""));
+  TEST_CHECK(bool(br));
+  if (br) {
+    const auto *cube = (*br)->as<GeomCube>();
+    TEST_CHECK(cube != nullptr);
+    if (cube) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(cube->props, "physxRigidBody:maxLinearVelocity", &v));
+      TEST_CHECK(approx_eq(v, 50.0));
+      TEST_CHECK(get_prop_num(cube->props, "physxRigidBody:sleepThreshold", &v));
+      TEST_CHECK(approx_eq(v, 0.01));
+      TEST_CHECK(cube->props.count("physxRigidBody:disableGravity") > 0);
+    }
+  }
+}
+
+// ===========================================================================
+// Phase 1d: MJCF <tendon>/<equality>/<contact> -> USD conversion.
+// JSON->USD half (the shared converter). The XML->JSON half is exercised by
+// the urdf-to-usd CLI ctest and the JS parser tests.
+// ===========================================================================
+
+// MJCF <tendon><fixed> -> MjcTendon prim under /World/Tendons.
+void urdf_json_mjcf_tendon_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "TendonBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" }, { "name": "l" }, { "name": "r" } ],
+  "joints": [
+    { "name": "jl", "type": "revolute", "parent": "base", "child": "l",
+      "axis": [0,1,0], "axisToken": "Y" },
+    { "name": "jr", "type": "revolute", "parent": "base", "child": "r",
+      "axis": [0,1,0], "axisToken": "Y" }
+  ],
+  "tendons": [
+    { "name": "couple", "type": "fixed", "stiffness": 120, "damping": 3,
+      "range": [-1, 1],
+      "joints": [ {"joint": "jl", "coef": 1.0}, {"joint": "jr", "coef": -1.0} ] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Tendons/couple", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const Prim *p = *r;
+  TEST_CHECK(p->is<MjcTendon>());
+  const auto *t = p->as<MjcTendon>();
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+  TEST_CHECK(t->type.get_value().str() == "fixed");
+  TEST_CHECK(approx_eq(t->stiffness.get_value(), 120.0));
+  TEST_CHECK(approx_eq(t->damping.get_value(), 3.0));
+  TEST_CHECK(approx_eq(t->range_min.get_value(), -1.0));
+  TEST_CHECK(approx_eq(t->range_max.get_value(), 1.0));
+  TEST_CHECK(t->path.authored());
+  auto targets = t->path.get_targetPaths();
+  TEST_CHECK(targets.size() == 2);
+  if (targets.size() == 2) {
+    TEST_CHECK(targets[0].prim_part() == "/World/Joints/jl");
+    TEST_CHECK(targets[1].prim_part() == "/World/Joints/jr");
+  }
+  auto coef = t->path_coef.get_value();
+  TEST_CHECK(coef.has_value());
+  if (coef.has_value()) {
+    TEST_CHECK(coef.value().size() == 2);
+    if (coef.value().size() == 2) {
+      TEST_CHECK(approx_eq(coef.value()[0], 1.0));
+      TEST_CHECK(approx_eq(coef.value()[1], -1.0));
+    }
+  }
+}
+
+// MJCF <equality> connect/weld/joint -> Xform host prims with MjcEquality*API.
+void urdf_json_mjcf_equality_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "EqBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" }, { "name": "l" }, { "name": "r" } ],
+  "joints": [
+    { "name": "jl", "type": "revolute", "parent": "base", "child": "l", "axisToken": "Y" },
+    { "name": "jr", "type": "revolute", "parent": "base", "child": "r", "axisToken": "Y" }
+  ],
+  "equalities": [
+    { "name": "mirror", "type": "joint", "joint1": "jl", "joint2": "jr",
+      "polycoef": [0, -1, 0, 0, 0], "solref": [0.02, 1] },
+    { "name": "lockit", "type": "weld", "body1": "l", "body2": "r",
+      "torquescale": 0.5, "anchor": [0, 0, 0] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto mr = stage.GetPrimAtPath(Path("/World/Equalities/mirror", ""));
+  TEST_CHECK(bool(mr));
+  if (mr) {
+    const Prim *p = *mr;
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcEqualityJointAPI));
+    const auto *x = p->as<Xform>();
+    TEST_CHECK(x != nullptr);
+    if (x) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(x->props, "mjc:coef1", &v));
+      TEST_CHECK(approx_eq(v, -1.0));
+      // target rel -> the two joints
+      auto it = x->props.find("mjc:target");
+      TEST_CHECK(it != x->props.end());
+    }
+  }
+
+  auto wr = stage.GetPrimAtPath(Path("/World/Equalities/lockit", ""));
+  TEST_CHECK(bool(wr));
+  if (wr) {
+    const Prim *p = *wr;
+    TEST_CHECK(has_api(p, APISchemas::APIName::MjcEqualityWeldAPI));
+    const auto *x = p->as<Xform>();
+    if (x) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(x->props, "mjc:torqueScale", &v));
+      TEST_CHECK(approx_eq(v, 0.5));
+    }
+  }
+}
+
+// ===========================================================================
+// Phase 1c: full (non-diagonal) inertia tensor -> diagonalInertia (principal
+// moments) + principalAxes (eigenvector quaternion). Correctness gate: rebuild
+// R*diag*R^T from the authored attrs and assert it matches the input tensor.
+// ===========================================================================
+void urdf_json_fullinertia_diagonalize_test(void) {
+  // Symmetric M = [[4,1,0],[1,4,0],[0,0,6]] -> eigenvalues {3,5,6}.
+  // fullInertia = [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] = [4,4,6,1,0,0].
+  const char *robot_json = R"JSON({
+  "name": "InertiaBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [
+    { "name": "base",
+      "inertial": { "mass": 2.0, "centerOfMass": [0,0,0],
+                    "fullInertia": [4, 4, 6, 1, 0, 0],
+                    "diagonalInertia": [4, 4, 6] } }
+  ],
+  "joints": []
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Links/base", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *xf = (*r)->as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+
+  // Read diagonalInertia (float3) + principalAxes (quatf).
+  auto di_it = xf->props.find("physics:diagonalInertia");
+  auto pa_it = xf->props.find("physics:principalAxes");
+  TEST_CHECK(di_it != xf->props.end());
+  TEST_CHECK(pa_it != xf->props.end());
+  if (di_it == xf->props.end() || pa_it == xf->props.end()) return;
+
+  auto di = di_it->second.get_attribute().get_value<value::float3>();
+  auto pa = pa_it->second.get_attribute().get_value<value::quatf>();
+  TEST_CHECK(di.has_value() && pa.has_value());
+  if (!di.has_value() || !pa.has_value()) return;
+
+  // Eigenvalues must be a permutation of {3,5,6}.
+  double evals[3] = {di.value()[0], di.value()[1], di.value()[2]};
+  std::sort(evals, evals + 3);
+  TEST_CHECK(approx_eq(evals[0], 3.0));
+  TEST_CHECK(approx_eq(evals[1], 5.0));
+  TEST_CHECK(approx_eq(evals[2], 6.0));
+
+  // Rebuild R from the quaternion, then M_rec = R * diag(eval) * R^T and
+  // compare against the input symmetric tensor.
+  const double w = pa.value().real;
+  const double x = pa.value().imag[0];
+  const double y = pa.value().imag[1];
+  const double z = pa.value().imag[2];
+  const double R[3][3] = {
+      {1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+      {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+      {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+  const double d[3] = {di.value()[0], di.value()[1], di.value()[2]};
+  double Mrec[3][3];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      double s = 0.0;
+      for (int k = 0; k < 3; k++) s += R[i][k] * d[k] * R[j][k];
+      Mrec[i][j] = s;
+    }
+  const double Min[3][3] = {{4, 1, 0}, {1, 4, 0}, {0, 0, 6}};
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) {
+      TEST_CHECK(approx_eq(Mrec[i][j], Min[i][j]));
+    }
+}
+
+// ===========================================================================
+// Phase 3b: schema-coverage tests for previously-unasserted APIs.
+// ===========================================================================
+
+// PhysicsArticulationRootAPI + NewtonArticulationRootAPI marker schemas survive
+// parse and USDC round-trip.
+void physics_articulation_root_api_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Xform "Robot" (
+        prepend apiSchemas = ["PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
+    )
+    {
+        bool newton:selfCollisionEnabled = 0
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+  auto r = stage.GetPrimAtPath(Path("/World/Robot", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const Prim *p = *r;
+  TEST_CHECK(has_api(p, APISchemas::APIName::PhysicsArticulationRootAPI));
+  TEST_CHECK(has_api(p, APISchemas::APIName::NewtonArticulationRootAPI));
+}
+
+// MjcEquality{Connect,Weld,Joint}API applied schemas + their mjc:* attributes
+// survive parse and USDC round-trip (generic-prop preservation contract).
+void mjc_equality_api_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def Xform "Connect" (
+    prepend apiSchemas = ["MjcEqualityConnectAPI"]
+)
+{
+    rel mjc:target = </BodyB>
+    double[] mjc:solref = [0.02, 1.0]
+}
+
+def Xform "Weld" (
+    prepend apiSchemas = ["MjcEqualityWeldAPI"]
+)
+{
+    rel mjc:target = </BodyB>
+    float mjc:torqueScale = 0.75
+}
+
+def Xform "JointEq" (
+    prepend apiSchemas = ["MjcEqualityJointAPI"]
+)
+{
+    double mjc:coef0 = 0.0
+    double mjc:coef1 = -1.0
+}
+
+def Cube "BodyB" {}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto cr = stage.GetPrimAtPath(Path("/Connect", ""));
+  TEST_CHECK(bool(cr));
+  if (cr) TEST_CHECK(has_api(*cr, APISchemas::APIName::MjcEqualityConnectAPI));
+
+  auto wr = stage.GetPrimAtPath(Path("/Weld", ""));
+  TEST_CHECK(bool(wr));
+  if (wr) {
+    TEST_CHECK(has_api(*wr, APISchemas::APIName::MjcEqualityWeldAPI));
+    const auto *x = (*wr)->as<Xform>();
+    if (x) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(x->props, "mjc:torqueScale", &v));
+      TEST_CHECK(approx_eq(v, 0.75));
+    }
+  }
+
+  auto jr = stage.GetPrimAtPath(Path("/JointEq", ""));
+  TEST_CHECK(bool(jr));
+  if (jr) {
+    TEST_CHECK(has_api(*jr, APISchemas::APIName::MjcEqualityJointAPI));
+    const auto *x = (*jr)->as<Xform>();
+    if (x) {
+      double v = 0.0;
+      TEST_CHECK(get_prop_num(x->props, "mjc:coef1", &v));
+      TEST_CHECK(approx_eq(v, -1.0));
     }
   }
 }

@@ -143,3 +143,85 @@ await testAsync('MJCF ball joints and joint actuators are exported to payload', 
     assert.equal(stats.actuators, 1);
   });
 });
+
+await testAsync('MJCF multiple joints per body -> intermediate-link chain', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="MultiDof">
+  <worldbody>
+    <body name="base">
+      <body name="slider">
+        <joint name="lift" type="slide" axis="0 0 1" range="0 0.5"/>
+        <joint name="twist" type="hinge" axis="0 0 1" range="-90 90"/>
+        <geom name="g" type="sphere" size="0.05"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    // Two joints chained via one massless intermediate link.
+    assert.equal(payload.joints.length, 2);
+    const lift = payload.joints.find((j) => j.name === 'lift');
+    const twist = payload.joints.find((j) => j.name === 'twist');
+    assert.ok(lift && twist, 'both joints present');
+    assert.equal(lift.type, 'prismatic');
+    assert.equal(twist.type, 'revolute');
+    assert.equal(lift.parent, 'base');
+    assert.equal(lift.child, 'slider__mjcdof_1');
+    assert.equal(twist.parent, 'slider__mjcdof_1');
+    assert.equal(twist.child, 'slider');
+    assert.ok(payload.links.some((l) => l.name === 'slider__mjcdof_1'), 'intermediate link emitted');
+  });
+});
+
+await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Constraints">
+  <worldbody>
+    <body name="base">
+      <inertial pos="0 0 0" mass="2" fullinertia="4 4 6 1 0 0"/>
+      <geom name="bg" type="sphere" size="0.1"/>
+      <body name="l"><joint name="jl" type="hinge" axis="0 1 0"/><geom type="sphere" size="0.05"/></body>
+      <body name="r"><joint name="jr" type="hinge" axis="0 1 0"/><geom type="sphere" size="0.05"/></body>
+    </body>
+  </worldbody>
+  <tendon>
+    <fixed name="couple" stiffness="120" damping="3" range="-1 1">
+      <joint joint="jl" coef="1"/>
+      <joint joint="jr" coef="-1"/>
+    </fixed>
+  </tendon>
+  <equality>
+    <joint name="mirror" joint1="jl" joint2="jr" polycoef="0 -1 0 0 0"/>
+    <weld name="lockit" body1="l" body2="r" torquescale="0.5"/>
+  </equality>
+  <contact>
+    <exclude body1="l" body2="r"/>
+  </contact>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    // Tendon
+    assert.equal(payload.tendons.length, 1);
+    assert.equal(payload.tendons[0].type, 'fixed');
+    assert.equal(payload.tendons[0].joints.length, 2);
+    assert.equal(payload.tendons[0].joints[0].coef, 1);
+    assert.equal(payload.tendons[0].joints[1].coef, -1);
+    assert.equal(payload.tendons[0].stiffness, 120);
+    // Equality
+    assert.equal(payload.equalities.length, 2);
+    const mirror = payload.equalities.find((e) => e.name === 'mirror');
+    const lockit = payload.equalities.find((e) => e.name === 'lockit');
+    assert.equal(mirror.type, 'joint');
+    assert.deepEqual(mirror.polycoef, [0, -1, 0, 0, 0]);
+    assert.equal(lockit.type, 'weld');
+    assert.equal(lockit.torquescale, 0.5);
+    // Contact exclude -> filteredPairs
+    assert.equal(payload.filteredPairs.length, 1);
+    assert.equal(payload.filteredPairs[0].body1, 'l');
+    // fullinertia carried as 6 components
+    assert.deepEqual(payload.links[0].inertial.fullInertia, [4, 4, 6, 1, 0, 0]);
+    // sourceFormat tag
+    assert.equal(payload.sourceFormat, 'mjcf');
+  });
+});
