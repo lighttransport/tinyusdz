@@ -1133,22 +1133,99 @@ function parseMujocoTendons(root) {
   if (!tendonRoot) return [];
   const out = [];
   for (const node of childElements(tendonRoot)) {
-    if (node.name !== 'fixed') {
-      console.warn(`MJCF <tendon><${node.name}> is not converted (only <fixed> tendons are supported).`);
-      continue;
-    }
-    const jlist = [];
-    for (const j of childElements(node, 'joint')) {
-      if (!j.attrs.joint) continue;
-      jlist.push({ joint: j.attrs.joint, coef: numberAttr(j.attrs, 'coef', 1) });
-    }
-    if (!jlist.length) continue;
+    if (node.name !== 'fixed' && node.name !== 'spatial') continue;
     const range = parseNumbers(node.attrs.range, []);
-    const tendon = { name: node.attrs.name || `tendon_${out.length}`, type: 'fixed', joints: jlist };
+    const tendon = { name: node.attrs.name || `tendon_${out.length}`, type: node.name };
+    if (node.name === 'fixed') {
+      const jlist = [];
+      for (const j of childElements(node, 'joint')) {
+        if (!j.attrs.joint) continue;
+        jlist.push({ joint: j.attrs.joint, coef: numberAttr(j.attrs, 'coef', 1) });
+      }
+      if (!jlist.length) continue;
+      tendon.joints = jlist;
+    } else {
+      // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints.
+      const path = [];
+      for (const w of childElements(node)) {
+        if (w.name === 'site' && w.attrs.site) path.push({ site: w.attrs.site });
+        else if (w.name === 'geom') {
+          const wp = { geom: w.attrs.geom || '' };
+          if (w.attrs.sidesite) wp.sidesite = w.attrs.sidesite;
+          path.push(wp);
+        }
+      }
+      if (path.length < 2) continue;
+      tendon.path = path;
+      if (node.attrs.width) tendon.width = numberAttr(node.attrs, 'width');
+      const rgba = parseNumbers(node.attrs.rgba, []);
+      if (rgba.length >= 4) tendon.rgba = rgba.slice(0, 4);
+    }
     if (Number.isFinite(numberAttr(node.attrs, 'stiffness'))) tendon.stiffness = numberAttr(node.attrs, 'stiffness');
     if (Number.isFinite(numberAttr(node.attrs, 'damping'))) tendon.damping = numberAttr(node.attrs, 'damping');
     if (range.length >= 2) tendon.range = [range[0], range[1]];
     out.push(tendon);
+  }
+  return out;
+}
+
+// MJCF <site> in bodies -> site payload entries with a baked world transform
+// (the routing points for spatial/muscle tendons). Recurses the body tree.
+function collectMujocoSites(worldbody) {
+  const out = [];
+  const visit = (bodyNode, parentWorld) => {
+    const bodyWorld = new THREE.Matrix4().copy(parentWorld).multiply(matrixFromPoseAttrs(bodyNode.attrs));
+    for (const s of childElements(bodyNode, 'site')) {
+      if (!s.attrs.name) continue;
+      const siteWorld = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(s.attrs));
+      const site = { name: s.attrs.name, matrix: matrixToUSDArray(siteWorld) };
+      if (s.attrs.group !== undefined) site.group = parseInt(s.attrs.group, 10) || 0;
+      const size = parseNumbers(s.attrs.size, []);
+      if (size.length) site.size = size[0];
+      out.push(site);
+    }
+    for (const child of childElements(bodyNode, 'body')) visit(child, bodyWorld);
+  };
+  for (const body of childElements(worldbody, 'body')) visit(body, new THREE.Matrix4());
+  return out;
+}
+
+// MJCF <general>/<muscle> (and tendon/site-targeted) actuators -> MjcActuator
+// payload entries, preserving the MuJoCo gain/bias/lengthrange parameters.
+function parseMujocoMuscleActuators(root) {
+  const actRoot = firstChild(root, 'actuator');
+  if (!actRoot) return [];
+  const out = [];
+  for (const node of childElements(actRoot)) {
+    const type = node.name;
+    const tendon = node.attrs.tendon || '';
+    const site = node.attrs.site || '';
+    const joint = node.attrs.joint || '';
+    const isMjc = type === 'muscle' || type === 'general' || tendon || site;
+    if (!isMjc) continue;
+    const a = {
+      name: node.attrs.name || `${type}_${joint || tendon || site}`,
+      actuatorType: type
+    };
+    if (joint) a.targetJoint = joint;
+    if (tendon) a.targetTendon = tendon;
+    if (site) a.targetSite = site;
+    const gainprm = parseNumbers(node.attrs.gainprm, []);
+    if (gainprm.length) a.gainPrm = gainprm;
+    const biasprm = parseNumbers(node.attrs.biasprm, []);
+    if (biasprm.length) a.biasPrm = biasprm;
+    const lengthrange = parseNumbers(node.attrs.lengthrange, []);
+    if (lengthrange.length >= 2) a.lengthRange = [lengthrange[0], lengthrange[1]];
+    const ctrlrange = parseNumbers(node.attrs.ctrlrange, []);
+    if (ctrlrange.length >= 2) a.ctrlRange = [ctrlrange[0], ctrlrange[1]];
+    const forcerange = parseNumbers(node.attrs.forcerange, []);
+    if (forcerange.length >= 2) a.forceRange = [forcerange[0], forcerange[1]];
+    const gear = parseNumbers(node.attrs.gear, []);
+    if (gear.length) a.gear = gear;
+    if (node.attrs.gaintype) a.gainType = node.attrs.gaintype;
+    if (node.attrs.biastype) a.biasType = node.attrs.biastype;
+    if (node.attrs.dyntype) a.dynType = node.attrs.dyntype;
+    out.push(a);
   }
   return out;
 }
@@ -1365,6 +1442,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const tendons = parseMujocoTendons(root);
   const equalities = parseMujocoEqualities(root);
   const filteredPairs = parseMujocoContactExcludes(root);
+  const sites = collectMujocoSites(worldbody);
+  const mjcActuators = parseMujocoMuscleActuators(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1522,6 +1601,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (tendons.length) payload.tendons = tendons;
   if (equalities.length) payload.equalities = equalities;
   if (filteredPairs.length) payload.filteredPairs = filteredPairs;
+  if (sites.length) payload.sites = sites;
+  if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   return {
     payload,
     stats: {
@@ -1531,7 +1612,9 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       collisions: collisionCount,
       actuators: actuators.length,
       tendons: tendons.length,
-      equalities: equalities.length
+      equalities: equalities.length,
+      sites: sites.length,
+      mjcActuators: mjcActuators.length
     }
   };
 }

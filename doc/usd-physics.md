@@ -494,7 +494,10 @@ status line) instead of being dropped silently:
 | MJCF non-diagonal `fullinertia` | diagonalized into `physics:diagonalInertia` (principal moments) + `physics:principalAxes` (eigenvector quaternion), the lossless USD representation |
 | URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
 | MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
-| MJCF `<tendon><fixed>` | converted to an `MjcTendon` prim under `/World/Tendons` (`mjc:path` rel to the coupled joints, `mjc:path:coef`, stiffness/damping/range). Spatial tendons (sites) still warn and skip |
+| MJCF `<tendon><fixed>` | `MjcTendon` (type=fixed) under `/World/Tendons` — `mjc:path`→coupled joints, `mjc:path:coef`, stiffness/damping/range |
+| MJCF `<tendon><spatial>` (muscles) | `MjcTendon` (type=spatial) routed through `<site>` markers (`/World/Sites`, `MjcSiteAPI`); wrap `<geom sidesite>` via the sidesite point; pulleys not modeled. Visualized as polylines in the web demo source view |
+| MJCF `<site>` | `GeomSphere` marker under `/World/Sites` + `MjcSiteAPI` (the routing points for spatial tendons) |
+| MJCF `<actuator><muscle>` / `<general class="muscle">` | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) |
 | MJCF `<equality>` (connect/weld/joint) | converted to an Xform host prim under `/World/Equalities` carrying the matching `MjcEquality{Connect,Weld,Joint}API` + `mjc:*` attributes |
 | MJCF `<contact><exclude>` | converted to `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) on the first body |
 
