@@ -1656,7 +1656,17 @@ function parseMujocoMaterials(root, baseDir = '', opts = {}) {
     for (const k of ['metallic', 'roughness', 'specular', 'emission', 'reflectance']) {
       if (m.attrs[k] !== undefined) mat[k] = numberAttr(m.attrs, k);
     }
-    if (m.attrs.texture && texFiles.has(m.attrs.texture)) mat.texture = texFiles.get(m.attrs.texture);
+    if (m.attrs.texture && texFiles.has(m.attrs.texture)) {
+      // Emit a portable, source-relative reference (e.g. "assets/foo.png") for
+      // inputs:file so the exported usda/usdc opens beside its assets; keep the
+      // absolute source in textureAbs (ignored by the converter) so usdz export
+      // can embed the bytes.
+      const abs = texFiles.get(m.attrs.texture);
+      let rel = baseDir ? path.relative(baseDir, abs) : path.basename(abs);
+      if (!rel || rel.startsWith('..')) rel = path.basename(abs);
+      mat.texture = rel.split(path.sep).join('/');
+      mat.textureAbs = abs;
+    }
     out.push(mat);
   }
   return out;
@@ -2520,6 +2530,21 @@ async function main() {
   if (opts.verify) verifyUSDA(native, stats);
 
   const formats = opts.format === 'all' ? ['usda', 'usdc', 'usdz'] : [opts.format];
+
+  // For usdz output, feed referenced texture bytes into the WASM asset cache so
+  // exportAsUSDZ() embeds them (the archive name matches the relative inputs:file
+  // reference). usda/usdc reference the same relative path and resolve it on disk.
+  if (formats.includes('usdz') && native.setAsset) {
+    for (const m of payload.materials || []) {
+      if (!m.texture || !m.textureAbs) continue;
+      try {
+        native.setAsset(m.texture, new Uint8Array(fs.readFileSync(m.textureAbs)));
+      } catch (e) {
+        console.warn(`texture not embedded into usdz: ${m.textureAbs}: ${e.message}`);
+      }
+    }
+  }
+
   const basePath = resolveOutputPath(inputPath, opts.format, opts.outputFile);
   for (const format of formats) {
     const outPath = opts.format === 'all' ? `${basePath}.${format}` : basePath;
