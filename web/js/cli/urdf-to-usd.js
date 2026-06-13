@@ -1085,8 +1085,17 @@ function buildMujocoActuators(root) {
   const actuators = [];
   for (const actuatorRoot of childElements(root, 'actuator')) {
     for (const actNode of childElements(actuatorRoot)) {
+      const type = actNode.name;
       const joint = actNode.attrs.joint || '';
       const name = actNode.attrs.name || `${actNode.name}_${joint || actuators.length}`;
+      // Mirror the C++ parser's exclusivity: muscle/general/plugin/adhesion/
+      // cylinder/intvelocity/damper (and any tendon/site/body target) go to the
+      // MjcActuator path (parseMujocoMuscleActuators), not the Newton PD path.
+      const isMjc = type === 'muscle' || type === 'general' || type === 'adhesion'
+        || type === 'cylinder' || type === 'intvelocity' || type === 'damper'
+        || type === 'plugin' || actNode.attrs.tendon || actNode.attrs.site
+        || actNode.attrs.body;
+      if (isMjc) continue;
       if (!joint) {
         console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
         continue;
@@ -1204,7 +1213,7 @@ function parseMujocoMuscleActuators(root) {
     const body = node.attrs.body || '';
     const isMjc = type === 'muscle' || type === 'general' || type === 'adhesion'
       || type === 'cylinder' || type === 'intvelocity' || type === 'damper'
-      || tendon || site || body;
+      || type === 'plugin' || tendon || site || body;
     if (!isMjc) continue;
     const a = {
       name: node.attrs.name || `${type}_${joint || tendon || site || body}`,
@@ -1230,7 +1239,36 @@ function parseMujocoMuscleActuators(root) {
     if (node.attrs.gaintype) a.gainType = node.attrs.gaintype;
     if (node.attrs.biastype) a.biasType = node.attrs.biastype;
     if (node.attrs.dyntype) a.dynType = node.attrs.dyntype;
+    // Engine-plugin actuator (<plugin plugin=".." instance="..">).
+    if (node.attrs.plugin) a.plugin = node.attrs.plugin;
+    if (node.attrs.instance) a.instance = node.attrs.instance;
     out.push(a);
+  }
+  return out;
+}
+
+// <extension><plugin plugin="..."><instance name="..."><config key= value=>
+// -> plugin-instance declarations (referenced by <actuator><plugin instance=..>).
+function parseMujocoPlugins(root) {
+  const ext = firstChild(root, 'extension');
+  if (!ext) return [];
+  const out = [];
+  for (const pluginNode of childElements(ext, 'plugin')) {
+    const pluginId = pluginNode.attrs.plugin || '';
+    for (const inst of childElements(pluginNode, 'instance')) {
+      const instName = inst.attrs.name || '';
+      if (!instName) continue;
+      const p = { instance: instName };
+      if (pluginId) p.plugin = pluginId;
+      const config = {};
+      for (const cfg of childElements(inst, 'config')) {
+        const key = cfg.attrs.key || '';
+        if (!key) continue;
+        config[key] = cfg.attrs.value || '';
+      }
+      if (Object.keys(config).length) p.config = config;
+      out.push(p);
+    }
   }
   return out;
 }
@@ -1647,6 +1685,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const filteredPairs = parseMujocoContactExcludes(root);
   const contactPairs = parseMujocoContactPairs(root);
   const custom = parseMujocoCustom(root);
+  const plugins = parseMujocoPlugins(root);
   const sites = [];
   const mjcActuators = parseMujocoMuscleActuators(root);
   const mjcScene = parseMujocoSceneOptions(root);
@@ -1829,6 +1868,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (filteredPairs.length) payload.filteredPairs = filteredPairs;
   if (contactPairs.length) payload.contactPairs = contactPairs;
   if (Object.keys(custom).length) payload.custom = custom;
+  if (plugins.length) payload.plugins = plugins;
   if (sites.length) payload.sites = sites;
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;

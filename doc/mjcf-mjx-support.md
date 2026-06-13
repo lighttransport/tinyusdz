@@ -68,7 +68,7 @@ Legend:
 | `<spatial><pulley divisor>` | — | Missing |
 | **`<actuator><muscle>` / `<general class="muscle">`** | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) | Full |
 | `<actuator><motor/position/velocity>` (joint) | `NewtonActuator` (PD: kp/kv, force/ctrl range) | Full |
-| `<actuator><general/cylinder/adhesion/damper/intvelocity>` (joint/tendon/site) | `MjcActuator` (params preserved) | Partial (gain/bias/range preserved; type-specific dynamics not interpreted) |
+| `<actuator><general/cylinder/adhesion/damper/intvelocity/plugin>` (joint/tendon/site/body) | `MjcActuator` (all gain/bias/transmission/range params + `mjc:plugin`/`mjc:instance`) | Partial (params preserved + USDC-round-trip; type-specific dynamics not interpreted) |
 
 ## Constraints & contacts
 
@@ -96,7 +96,7 @@ Legend:
 > sidesite>` wraps) — are **fully supported** today via the spatial-tendon + site
 > path above (the spring behavior is preserved as tendon stiffness/springlength).
 > True FEM/`<flex>` deformables remain Missing.
-| `<plugin>` / `<extension>` (engine plugins) | Missing | Preserve as `mjc:plugin:*` custom data |
+| `<plugin>` / `<extension>` (engine plugins, e.g. `mujoco.pid`) | **Preserved** | `<actuator><plugin>` -> `MjcActuator` with `mjc:plugin`/`mjc:instance`; `<extension><plugin><instance><config>` -> `/World/MjcPlugins` `mjc:plugin:<instance>:plugin` + `:config:<key>`. Round-trips through USDA+USDC (recovers shadow_dexee's PID hand actuators) |
 
 ## MuJoCo MJX notes
 

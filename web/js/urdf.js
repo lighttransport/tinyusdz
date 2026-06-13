@@ -2389,6 +2389,29 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     if (numeric.length) customPayload.numeric = numeric;
     if (text.length) customPayload.text = text;
   }
+  // <extension><plugin plugin="..."><instance name="..."><config key= value=>
+  // -> plugin-instance declarations (engine plugins, e.g. shadow_dexee PID).
+  const pluginsPayload = [];
+  const extensionEl = firstChildElement(root, 'extension');
+  if (extensionEl) {
+    for (const pluginNode of childElements(extensionEl, 'plugin')) {
+      const pluginId = pluginNode.getAttribute('plugin') || '';
+      for (const inst of childElements(pluginNode, 'instance')) {
+        const instName = inst.getAttribute('name') || '';
+        if (!instName) continue;
+        const p = { instance: instName };
+        if (pluginId) p.plugin = pluginId;
+        const config = {};
+        for (const cfg of childElements(inst, 'config')) {
+          const key = cfg.getAttribute('key') || '';
+          if (!key) continue;
+          config[key] = cfg.getAttribute('value') || '';
+        }
+        if (Object.keys(config).length) p.config = config;
+        pluginsPayload.push(p);
+      }
+    }
+  }
   // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
   // <include>); collect lights/cameras from them all, not just the first.
   const lightsPayload = [];
@@ -2424,7 +2447,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     ...(materialsPayload.length ? { materials: materialsPayload } : {}),
     ...(sensorsPayload.length ? { sensors: sensorsPayload } : {}),
     ...(contactPairsPayload.length ? { contactPairs: contactPairsPayload } : {}),
-    ...(Object.keys(customPayload).length ? { custom: customPayload } : {})
+    ...(Object.keys(customPayload).length ? { custom: customPayload } : {}),
+    ...(pluginsPayload.length ? { plugins: pluginsPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

@@ -1225,6 +1225,7 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
     const bool is_mjc = (type == "muscle" || type == "general" ||
                          type == "adhesion" || type == "cylinder" ||
                          type == "intvelocity" || type == "damper" ||
+                         type == "plugin" ||
                          !tendon.empty() || !site.empty() || !body.empty());
     if (is_mjc && mjc_actuators) {
       const std::string fallback_target =
@@ -1257,6 +1258,10 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
       if (HasAttr(act_node, "dyntype")) a["dynType"] = Attr(act_node, "dyntype");
       if (HasAttr(act_node, "gaintype")) a["gainType"] = Attr(act_node, "gaintype");
       if (HasAttr(act_node, "biastype")) a["biasType"] = Attr(act_node, "biastype");
+      // Engine-plugin actuator (<plugin plugin=".." instance="..">): preserve the
+      // plugin id + referenced <extension> instance name.
+      if (HasAttr(act_node, "plugin")) a["plugin"] = Attr(act_node, "plugin");
+      if (HasAttr(act_node, "instance")) a["instance"] = Attr(act_node, "instance");
       mjc_actuators->push_back(std::move(a));
       if (stats) stats->actuators++;
       continue;
@@ -1456,6 +1461,33 @@ void AddMujocoCustomJson(const pugi::xml_node &root, nlohmann::json *custom) {
   }
   if (!numerics.empty()) (*custom)["numeric"] = std::move(numerics);
   if (!texts.empty()) (*custom)["text"] = std::move(texts);
+}
+
+// <extension><plugin plugin="..."><instance name="..."><config key= value=>
+// -> JSON plugin-instance declarations. The instance config (e.g. a PID's
+// kp/ki/kd) is what an <actuator><plugin instance=".."> references.
+void AddMujocoPluginsJson(const pugi::xml_node &root, nlohmann::json *plugins) {
+  if (!plugins) return;
+  const auto extension = Child(root, "extension");
+  if (!extension) return;
+  for (const auto &plugin_node : Children(extension, "plugin")) {
+    const std::string plugin_id = Attr(plugin_node, "plugin");
+    for (const auto &inst : Children(plugin_node, "instance")) {
+      const std::string inst_name = Attr(inst, "name");
+      if (inst_name.empty()) continue;
+      nlohmann::json p = nlohmann::json::object();
+      p["instance"] = inst_name;
+      if (!plugin_id.empty()) p["plugin"] = plugin_id;
+      nlohmann::json config = nlohmann::json::object();
+      for (const auto &cfg : Children(inst, "config")) {
+        const std::string key = Attr(cfg, "key");
+        if (key.empty()) continue;
+        config[key] = Attr(cfg, "value");
+      }
+      if (!config.empty()) p["config"] = std::move(config);
+      plugins->push_back(std::move(p));
+    }
+  }
 }
 
 // MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
@@ -1880,6 +1912,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   AddMujocoContactPairsJson(root, &contact_pairs, stats);
   nlohmann::json custom = nlohmann::json::object();
   AddMujocoCustomJson(root, &custom);
+  nlohmann::json plugins = nlohmann::json::array();
+  AddMujocoPluginsJson(root, &plugins);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1905,6 +1939,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
   if (!contact_pairs.empty()) (*payload)["contactPairs"] = std::move(contact_pairs);
   if (!custom.empty()) (*payload)["custom"] = std::move(custom);
+  if (!plugins.empty()) (*payload)["plugins"] = std::move(plugins);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);
@@ -2005,6 +2040,6 @@ int main(int argc, char **argv) {
   std::cout << "Converted " << payload.value("name", std::string("scene")) << ": "
             << stats.links << " links, " << stats.joints << " joints, "
             << stats.visuals << " visual meshes, " << stats.collisions
-            << " collisions, " << stats.actuators << " Newton actuators.\n";
+            << " collisions, " << stats.actuators << " actuators.\n";
   return EXIT_SUCCESS;
 }

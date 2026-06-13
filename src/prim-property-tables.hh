@@ -586,7 +586,9 @@
   X("mjc:gainPrm", gainPrm) \
   X("mjc:biasPrm", biasPrm) \
   X("mjc:actEarly", actEarly) \
-  X("mjc:inheritRange", inheritRange)
+  X("mjc:inheritRange", inheritRange) \
+  X("mjc:plugin", plugin) \
+  X("mjc:instance", instance)
 
 #define MJC_ACTUATOR_RELS(X) \
   X("mjc:target", target) \
