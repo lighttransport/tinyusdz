@@ -421,6 +421,50 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     }
   }
 
+  // --- Blendshape targets, remapped to DrawVertex order (for GPU morph) ---
+  if (!mesh.targets.empty()) {
+    // point index -> the DrawVertices that came from it (single-index: 1:1;
+    // facevarying: one per face-vertex referencing the point).
+    std::vector<std::vector<uint32_t>> p2v(nPoints);
+    if (mesh.is_single_indexable) {
+      for (uint32_t i = 0; i < nPoints && i < dm.vertices.size(); ++i) {
+        p2v[i].push_back(i);
+      }
+    } else {
+      for (uint32_t k = 0; k < srcIndices.size(); ++k) {
+        const uint32_t pidx = srcIndices[k];
+        if (pidx < nPoints) p2v[pidx].push_back(k);
+      }
+    }
+    for (const auto& kv : mesh.targets) {
+      const tydra::ShapeTarget& tgt = kv.second;
+      const size_t no = tgt.pointOffsets.size();
+      const size_t nno = tgt.normalOffsets.size();
+      MorphTargetCPU mt;
+      mt.name = kv.first;
+      for (size_t e = 0; e < tgt.pointIndices.size() && e < no; ++e) {
+        const uint32_t pidx = tgt.pointIndices[e];
+        if (pidx >= nPoints) continue;
+        for (uint32_t dv : p2v[pidx]) {
+          mt.vtx.push_back(dv);
+          mt.dpos.push_back(tgt.pointOffsets[e][0]);
+          mt.dpos.push_back(tgt.pointOffsets[e][1]);
+          mt.dpos.push_back(tgt.pointOffsets[e][2]);
+          if (e < nno) {
+            mt.dnrm.push_back(tgt.normalOffsets[e][0]);
+            mt.dnrm.push_back(tgt.normalOffsets[e][1]);
+            mt.dnrm.push_back(tgt.normalOffsets[e][2]);
+          } else {
+            mt.dnrm.push_back(0.0f);
+            mt.dnrm.push_back(0.0f);
+            mt.dnrm.push_back(0.0f);
+          }
+        }
+      }
+      if (!mt.vtx.empty()) dm.morphs.push_back(std::move(mt));
+    }
+  }
+
   // --- Submeshes (group triangles by material) ---
   const size_t triCount = dm.indices.size() / 3;
   if (mesh.material_subsetMap.empty()) {

@@ -96,6 +96,11 @@ class Renderer {
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
+  // Replace mesh `meshIndex`'s vertex buffer in place (same vertex count) — used
+  // for per-frame GPU blendshape morph (positions/normals re-derived on the CPU
+  // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
+  virtual void updateMeshVertices(int /*meshIndex*/,
+                                  const std::vector<DrawVertex>& /*verts*/) {}
 
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).

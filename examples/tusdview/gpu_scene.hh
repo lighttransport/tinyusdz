@@ -34,11 +34,24 @@ struct DrawSubmesh {
   int materialId{-1};  // index into DrawScene::materials (-1 = default material)
 };
 
+// One blendshape target in DrawVertex order (sparse), for per-frame GPU morph.
+// `vtx[i]` is the affected DrawVertex; `dpos`/`dnrm` hold its position/normal
+// offset (3 floats each, parallel to `vtx`). `dnrm` may be all-zero.
+struct MorphTargetCPU {
+  std::string name;  // BlendShape prim name == SkelAnimation weight key
+  std::vector<uint32_t> vtx;
+  std::vector<float> dpos;
+  std::vector<float> dnrm;
+};
+
 struct DrawMeshCPU {
   std::string name;
   std::string absPath;
 
-  std::vector<DrawVertex> vertices;
+  std::vector<DrawVertex> vertices;  // rest pose (GPU morph re-derives from this)
+  // Blendshape targets remapped to DrawVertex order; empty = no blendshapes.
+  // The GPU path morphs `vertices` per frame and re-uploads them.
+  std::vector<MorphTargetCPU> morphs;
   // Optional GPU skinning attributes, parallel to `vertices`.
   // `jointIdx` stores four absolute bone-matrix texture row indices per vertex;
   // `jointWt` stores the corresponding normalized weights. Empty = unskinned.

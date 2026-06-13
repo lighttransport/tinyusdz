@@ -220,6 +220,40 @@ point3f TransformPointRow(const point3f& p, const matrix4d& m) {
                  static_cast<float>(oz)};
 }
 
+// Recompute smooth normals from `mv`'s (morphed) positions over `dm.indices`,
+// then orient each to the rest normal (in dm.vertices) so winding is preserved.
+void RegenNormalsOriented(const DrawMeshCPU& dm, std::vector<DrawVertex>* mv) {
+  const size_t n = mv->size();
+  std::vector<float> nrm(n * 3, 0.0f);
+  for (size_t t = 0; t + 2 < dm.indices.size(); t += 3) {
+    const uint32_t i0 = dm.indices[t], i1 = dm.indices[t + 1],
+                   i2 = dm.indices[t + 2];
+    if (i0 >= n || i1 >= n || i2 >= n) continue;
+    const DrawVertex& a = (*mv)[i0];
+    const DrawVertex& b = (*mv)[i1];
+    const DrawVertex& c = (*mv)[i2];
+    const float e1[3] = {b.px - a.px, b.py - a.py, b.pz - a.pz};
+    const float e2[3] = {c.px - a.px, c.py - a.py, c.pz - a.pz};
+    const float fn[3] = {e1[1] * e2[2] - e1[2] * e2[1],
+                         e1[2] * e2[0] - e1[0] * e2[2],
+                         e1[0] * e2[1] - e1[1] * e2[0]};
+    for (uint32_t idx : {i0, i1, i2}) {
+      nrm[idx * 3 + 0] += fn[0];
+      nrm[idx * 3 + 1] += fn[1];
+      nrm[idx * 3 + 2] += fn[2];
+    }
+  }
+  for (size_t i = 0; i < n; ++i) {
+    float x = nrm[i * 3 + 0], y = nrm[i * 3 + 1], z = nrm[i * 3 + 2];
+    const float len = std::sqrt(x * x + y * y + z * z);
+    if (len <= 1e-8f) continue;  // degenerate: keep rest normal
+    x /= len; y /= len; z /= len;
+    const DrawVertex& rest = dm.vertices[i];
+    if (x * rest.nx + y * rest.ny + z * rest.nz < 0.0f) { x = -x; y = -y; z = -z; }
+    (*mv)[i].nx = x; (*mv)[i].ny = y; (*mv)[i].nz = z;
+  }
+}
+
 void TransformPointWorld(const float m[16], const point3f& p, float out[3]) {
   out[0] = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
   out[1] = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
@@ -265,17 +299,61 @@ bool SceneHasNonSkeletalAnimation(const tydra::RenderScene& render) {
   return false;
 }
 
-bool BuildGpuSkinningFrame(const tydra::RenderScene& render, DrawScene* draw,
-                           double timecode, SkinningFrameCPU* frame) {
+bool BuildGpuSkinningFrame(
+    const tydra::RenderScene& render, const tinyusdz::Stage& stage,
+    DrawScene* draw, double timecode, SkinningFrameCPU* frame,
+    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
-  if (matrices <= 0) {
-    *frame = SkinningFrameCPU{};
-    return false;
+  if (matrices > 0) {
+    frame->matrixCount = matrices;
+    frame->rgba32f.assign(static_cast<size_t>(matrices) * 16, 0.0f);
+    frame->enabled = true;
+  } else {
+    *frame = SkinningFrameCPU{};  // morph-only scene: no bone texture
   }
-  frame->matrixCount = matrices;
-  frame->rgba32f.assign(static_cast<size_t>(matrices) * 16, 0.0f);
-  frame->enabled = true;
+
+  // Blendshape weights at this time (gathered once; empty if no morphs wanted).
+  std::unordered_map<std::string, float> blendWeights;
+  bool gatheredBlend = false;
+  // Morphed rest vertices per mesh (DrawVertex order), keyed by mesh index.
+  // Used for both bounds and GPU re-upload; absent meshes use rest vertices.
+  std::unordered_map<int, std::vector<DrawVertex>> morphed;
+  if (morphedOut) {
+    for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+      DrawMeshCPU& dm = draw->meshes[mi];
+      if (dm.morphs.empty()) continue;
+      if (!gatheredBlend) {
+        blendWeights = GatherBlendWeights(stage, timecode);
+        gatheredBlend = true;
+      }
+      std::vector<DrawVertex> mv = dm.vertices;  // start from rest
+      bool anyMorph = false;
+      for (const MorphTargetCPU& mt : dm.morphs) {
+        auto wit = blendWeights.find(mt.name);
+        if (wit == blendWeights.end() || wit->second == 0.0f) continue;
+        const float w = wit->second;
+        anyMorph = true;
+        for (size_t e = 0; e < mt.vtx.size(); ++e) {
+          const uint32_t v = mt.vtx[e];
+          if (v >= mv.size()) continue;
+          mv[v].px += w * mt.dpos[e * 3 + 0];
+          mv[v].py += w * mt.dpos[e * 3 + 1];
+          mv[v].pz += w * mt.dpos[e * 3 + 2];
+        }
+      }
+      // Regenerate smooth normals from the morphed positions (matching the CPU
+      // path, which clears normals so the packer rebuilds them from posed
+      // geometry), orienting each to the rest normal to keep winding.
+      if (anyMorph) RegenNormalsOriented(dm, &mv);
+      morphed.emplace(static_cast<int>(mi), std::move(mv));
+    }
+  }
+  // Mesh `mi`'s base (morphed-or-rest) vertices for bounds/skin reads.
+  auto baseVerts = [&](int mi, const DrawMeshCPU& dm) -> const std::vector<DrawVertex>& {
+    auto it = morphed.find(mi);
+    return it != morphed.end() ? it->second : dm.vertices;
+  };
 
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
   std::unordered_map<int, std::vector<matrix4d>> composedByBase;
@@ -302,7 +380,9 @@ bool BuildGpuSkinningFrame(const tydra::RenderScene& render, DrawScene* draw,
   }
 
   bool sceneFirst = true;
-  for (DrawMeshCPU& dm : draw->meshes) {
+  for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+    DrawMeshCPU& dm = draw->meshes[mi];
+    const std::vector<DrawVertex>& verts = baseVerts(static_cast<int>(mi), dm);
     bool meshFirst = true;
     float mn[3] = {std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max(),
@@ -322,14 +402,14 @@ bool BuildGpuSkinningFrame(const tydra::RenderScene& render, DrawScene* draw,
     };
 
     const bool skinned = dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
-                         dm.jointIdx.size() == dm.vertices.size() * 4 &&
-                         dm.jointWt.size() == dm.vertices.size() * 4;
+                         dm.jointIdx.size() == verts.size() * 4 &&
+                         dm.jointWt.size() == verts.size() * 4;
     const auto bit = skinned ? composedByBase.find(dm.skinMatrixBase)
                              : composedByBase.end();
     if (skinned && bit != composedByBase.end()) {
       const std::vector<matrix4d>& mats = bit->second;
-      for (size_t vi = 0; vi < dm.vertices.size(); ++vi) {
-        const DrawVertex& v = dm.vertices[vi];
+      for (size_t vi = 0; vi < verts.size(); ++vi) {
+        const DrawVertex& v = verts[vi];
         const point3f p{v.px, v.py, v.pz};
         point3f acc{0.0f, 0.0f, 0.0f};
         float sum = 0.0f;
@@ -349,7 +429,7 @@ bool BuildGpuSkinningFrame(const tydra::RenderScene& render, DrawScene* draw,
         update(sum > 0.0f ? acc : p);
       }
     } else {
-      for (const DrawVertex& v : dm.vertices) {
+      for (const DrawVertex& v : verts) {
         update(point3f{v.px, v.py, v.pz});
       }
     }
@@ -369,6 +449,13 @@ bool BuildGpuSkinningFrame(const tydra::RenderScene& render, DrawScene* draw,
     }
   }
   draw->hasBounds = !sceneFirst;
+
+  if (morphedOut) {
+    morphedOut->clear();
+    for (auto& kv : morphed) {
+      morphedOut->emplace_back(kv.first, std::move(kv.second));
+    }
+  }
   return true;
 }
 

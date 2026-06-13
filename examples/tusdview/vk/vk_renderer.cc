@@ -1464,6 +1464,24 @@ void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
   }
 }
 
+void VulkanRenderer::updateMeshVertices(int meshIndex,
+                                        const std::vector<DrawVertex>& verts) {
+  if (!device_ || meshIndex < 0 ||
+      meshIndex >= static_cast<int>(meshes_.size())) {
+    return;
+  }
+  VkMeshGPU& gm = meshes_[static_cast<size_t>(meshIndex)];
+  if (gm.vbo == VK_NULL_HANDLE || verts.size() != gm.vertexCount) return;
+  // GPU morph is gated to the non-RT path, so the vbo is not a live BLAS input;
+  // wait idle (as uploadSkinningFrame does) then refill the host-visible buffer.
+  vkDeviceWaitIdle(device_);
+  void* mapped = nullptr;
+  const VkDeviceSize bytes = verts.size() * sizeof(DrawVertex);
+  if (vkMapMemory(device_, gm.vboMem, 0, bytes, 0, &mapped) != VK_SUCCESS) return;
+  std::memcpy(mapped, verts.data(), static_cast<size_t>(bytes));
+  vkUnmapMemory(device_, gm.vboMem);
+}
+
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (sm.vertices.empty() || sm.indices.empty()) return;
   VkMeshGPU gm;
