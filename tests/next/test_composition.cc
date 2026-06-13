@@ -382,6 +382,131 @@ static void test_variant_roundtrip() {
         "grafted child retains its property after round-trip");
 }
 
+// A modelingVariant set with two options ("ChairA"/"ChairB"); each option
+// carries a distinguishing "which" property only when `populated`.
+static VariantSetData MakeModelingVariantSet(bool populated) {
+  VariantSetData vsd;
+  vsd.name = "modelingVariant";
+  VariantData a; a.name = "ChairA";
+  VariantData b; b.name = "ChairB";
+  if (populated) {
+    a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
+    b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
+  }
+  vsd.variants.push_back(std::move(a));
+  vsd.variants.push_back(std::move(b));
+  return vsd;
+}
+
+// Regression (Pixar Kitchen_set Chair.usd): a variant selection authored on the
+// REFERENCING prim must win over the referenced asset's OWN default selection.
+//   /C1 references @geom@</Chair>, selects non-default "ChairB"
+//   geom/Chair: populated variantSet + its own (weaker) default "ChairA"
+// The main backend (examples/tusdcat) regressed on the larger Kitchen_set chain;
+// the next backend composes all arcs per-prim before ApplyVariants, so the local
+// selection is still present when the variant is baked. Confirms that here.
+static void test_variant_selection_over_reference() {
+  std::cout << "[variants: local selection wins over referenced default]\n";
+  Layer root;
+  {
+    PrimSpec c1 = MakePrim("/C1", "Xform");
+    c1.meta().references.push_back("@geom@</Chair>");
+    c1.meta().variantSelection = "modelingVariant=ChairB";  // strong, non-default
+    root.add_prim(std::move(c1));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+        // Referenced asset: populated variantSet + its own default "ChairA".
+        auto l = std::make_unique<Layer>();
+        PrimSpec chair = MakePrim("/Chair", "Xform");
+        chair.meta().variantSelection = "modelingVariant=ChairA";
+        chair.meta().variantSets().push_back(
+            MakeModelingVariantSet(/*populated=*/true));
+        l->add_prim(std::move(chair));
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* which = out ? PropOf(*out, "/C1", "which") : nullptr;
+  CHECK(which != nullptr,
+        "/C1.which present (selected variant's opinion applied to host)");
+  if (which) {
+    const std::string* s = which->as_string();
+    CHECK(s && *s == "I_am_ChairB",
+          std::string("local 'ChairB' wins over referenced default 'ChairA' "
+                      "(got '") +
+              (s ? *s : std::string("<non-string>")) + "')");
+  }
+}
+
+// Regression: the next backend must resolve the arcs authored on an
+// EXTERNALLY-referenced target (its payload / nested references), not just the
+// arcs on the prim itself. The exact Pixar Kitchen_set Chair.usd shape:
+//   /C1 references @asset@</Chair>, selects non-default "ChairB"
+//   asset/Chair: EMPTY variant blocks + payload -> @payload@ + own default "ChairA"
+//   payload/Chair: references @geom@</Chair>
+//   geom/Chair: POPULATED variantSet + own (weakest) default "ChairA"
+// GetComposedExternalLayer() composes each referenced layer's own arcs (variants
+// deferred) before its opinions are merged into the host, and CopyLocalOpinions
+// merges variantSet CONTENT per-variant so the deep populated blocks fill the
+// asset's empty ones. The host then bakes its own "ChairB" selection.
+static void test_variant_ref_payload_chain() {
+  std::cout << "[variants: selection across ref->payload->ref chain]\n";
+  Layer root;
+  {
+    PrimSpec c1 = MakePrim("/C1", "Xform");
+    c1.meta().references.push_back("@asset@</Chair>");
+    c1.meta().variantSelection = "modelingVariant=ChairB";
+    root.add_prim(std::move(c1));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        if (path.find("asset") != std::string::npos) {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().payloads.push_back("@payload@</Chair>");
+          chair.meta().variantSelection = "modelingVariant=ChairA";
+          chair.meta().variantSets().push_back(
+              MakeModelingVariantSet(/*populated=*/false));
+          l->add_prim(std::move(chair));
+        } else if (path.find("payload") != std::string::npos) {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().references.push_back("@geom@</Chair>");
+          l->add_prim(std::move(chair));
+        } else {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().variantSelection = "modelingVariant=ChairA";
+          chair.meta().variantSets().push_back(
+              MakeModelingVariantSet(/*populated=*/true));
+          l->add_prim(std::move(chair));
+        }
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* which = out ? PropOf(*out, "/C1", "which") : nullptr;
+  CHECK(which != nullptr,
+        "/C1.which present (deep populated variant content reached the host "
+        "through the ref->payload->ref chain)");
+  if (which) {
+    const std::string* s = which->as_string();
+    CHECK(s && *s == "I_am_ChairB",
+          std::string("local 'ChairB' wins across the full ref+payload chain "
+                      "(got '") +
+              (s ? *s : std::string("<non-string>")) + "', want 'I_am_ChairB')");
+  }
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -393,6 +518,8 @@ int main() {
   test_variants_multiset();
   test_variant_subprim();
   test_variant_roundtrip();
+  test_variant_selection_over_reference();
+  test_variant_ref_payload_chain();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";
