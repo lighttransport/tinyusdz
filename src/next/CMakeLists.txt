@@ -313,6 +313,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(bench_pcp_compose PRIVATE tinyusdz_next)
 
+    add_executable(bench_extref_compose
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_extref_compose.cc
+    )
+    target_link_libraries(bench_extref_compose PRIVATE tinyusdz_next)
+
     add_executable(test_schemas
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
     )
