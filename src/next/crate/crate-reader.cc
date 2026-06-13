@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace tinyusdz {
 namespace next {
@@ -210,6 +211,15 @@ private:
   // u32 val_str_idx) * count] -> (variantSet, selection) pairs.
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
+
+  // Decode a TokenListOp (CrateTypeId 32): [u8 header][present token vectors].
+  // Returns the effective additive list (explicit + added + prepended +
+  // appended); deleted/ordered are read and discarded.
+  bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
+
+  // Decode a binary VtDictionary (CrateTypeId 31): [u64 count][(u32 key_str_idx,
+  // u64 value ValueRep) * count]. Values are decoded recursively.
+  bool DecodeDictionary(ValueRep rep, Value& out, int depth);
 
   void AddError(const std::string& msg);
   void AddWarning(const std::string& msg);
@@ -818,6 +828,72 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       return true;
     }
 
+    case CrateTypeId::Invalid:     // an empty VtValue (e.g. an empty dict entry)
+    case CrateTypeId::ValueBlock:  // a blocked (None) value
+      out = Value();
+      return true;
+
+    // TokenVector / StringVector / DoubleVector: std::vector<T> stored as a
+    // non-array value ([u64 count][elements]); an empty vector inlines as
+    // payload 0.
+    case CrateTypeId::TokenVector:
+    case CrateTypeId::StringVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeTokenArray(std::vector<std::string>{});
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      std::vector<uint32_t> idxs(static_cast<size_t>(n));
+      size_t bytes;
+      if (!safe::mul(static_cast<size_t>(n), sizeof(uint32_t), &bytes)) return false;
+      if (n && !reader_->read(idxs.data(), bytes)) return false;
+      std::vector<std::string> data(static_cast<size_t>(n));
+      for (size_t i = 0; i < n; i++) {
+        std::string s;
+        // TokenVector indexes the token table; StringVector the string table.
+        if (type_id == CrateTypeId::TokenVector) {
+          if (idxs[i] >= tokens_.size()) return false;
+          s = tokens_.str(idxs[i]);
+        } else {
+          GetString(idxs[i], s);
+        }
+        data[i] = std::move(s);
+      }
+      out = Value::MakeTokenArray(std::move(data));
+      return true;
+    }
+
+    case CrateTypeId::DoubleVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeDoubleArray(std::vector<double>{});
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      std::vector<double> data(static_cast<size_t>(n));
+      size_t bytes;
+      if (!safe::mul(static_cast<size_t>(n), sizeof(double), &bytes)) return false;
+      if (n && !reader_->read(data.data(), bytes)) return false;
+      out = Value::MakeDoubleArray(std::move(data));
+      return true;
+    }
+
+    case CrateTypeId::TokenListOp:
+    case CrateTypeId::StringListOp: {
+      std::vector<std::string> toks;
+      if (!DecodeTokenListOp(rep, toks)) return false;
+      out = Value::MakeTokenArray(std::move(toks));
+      return true;
+    }
+
+    case CrateTypeId::Dictionary:
+      return DecodeDictionary(rep, out, 0);
+
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
       return false;
@@ -925,11 +1001,49 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     return reader_->read(dst, static_cast<size_t>(count) * elem_size);
   };
 
+  // Decode a compressed floating-point array (pxrUSD format): [i8 code] then
+  // 'i' -> compressed int32s cast to T; 't' -> [u32 lutSize][T lut][compressed
+  // u32 indices]. Fills `count` elements of T into `dst`.
+  auto read_compressed_floating = [&](auto* dst) -> bool {
+    using T = typename std::remove_pointer<decltype(dst)>::type;
+    int8_t code = 0;
+    if (!reader_->read_i8(code)) return false;
+    if (code == 'i') {
+      std::vector<uint32_t> ints(static_cast<size_t>(count));
+      if (!read_compressed_u32(ints.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
+      }
+      return true;
+    }
+    if (code == 't') {
+      uint32_t lut_size = 0;
+      if (!reader_->read_u32(lut_size)) return false;
+      if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
+      std::vector<T> lut(lut_size);
+      size_t lut_bytes;
+      if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
+      if (!reader_->read(lut.data(), lut_bytes)) return false;
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (!read_compressed_u32(idxs.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        if (idxs[i] >= lut_size) return false;
+        dst[i] = lut[idxs[i]];
+      }
+      return true;
+    }
+    AddWarning("Unknown compressed floating-point array code");
+    return false;
+  };
+
   switch (type_id) {
     case CrateTypeId::Float: {
-      if (compressed) { AddWarning("Compressed float arrays not supported"); return false; }
       std::vector<float> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(float))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(float))) {
+        return false;
+      }
       out = Value::MakeFloatArray(std::move(data));
       return true;
     }
@@ -966,9 +1080,12 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Double: {
-      if (compressed) { AddWarning("Compressed double arrays not supported"); return false; }
       std::vector<double> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(double))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(double))) {
+        return false;
+      }
       out = Value::MakeDoubleArray(std::move(data));
       return true;
     }
@@ -1957,16 +2074,20 @@ bool CrateReader::Impl::BuildStage() {
         }
       } else if (field.first == "customLayerData" ||
                  field.first == "expressionVariables") {
-        const std::string* s = field.second.as_string();
-        if (!s) s = field.second.as_token();
-        if (s) {
-          Value d = ParseDictText(*s);
-          if (d.is_dictionary()) {
-            if (field.first == "customLayerData")
-              layer.meta().customLayerData = std::move(d);
-            else
-              layer.meta().expressionVariables = std::move(d);
-          }
+        // pxr-authored: binary VtDictionary; next-authored: USDA dict text.
+        Value d;
+        if (field.second.is_dictionary()) {
+          d = std::move(field.second);
+        } else if (const std::string* s = field.second.as_string()) {
+          d = ParseDictText(*s);
+        } else if (const std::string* s = field.second.as_token()) {
+          d = ParseDictText(*s);
+        }
+        if (d.is_dictionary()) {
+          if (field.first == "customLayerData")
+            layer.meta().customLayerData = std::move(d);
+          else
+            layer.meta().expressionVariables = std::move(d);
         }
       } else if (field.first == "doc") {
         if (const std::string* s = field.second.as_string())
@@ -2211,9 +2332,13 @@ bool CrateReader::Impl::BuildStage() {
       } else if (f.first == "customData") {
         Value v;
         if (UnpackValue(f.second, v)) {
-          const std::string* s = v.as_string();
-          if (!s) s = v.as_token();
-          if (s) ai.custom_data = ParseDictText(*s);
+          if (v.is_dictionary()) {
+            ai.custom_data = std::move(v);
+          } else if (const std::string* s = v.as_string()) {
+            ai.custom_data = ParseDictText(*s);
+          } else if (const std::string* s = v.as_token()) {
+            ai.custom_data = ParseDictText(*s);
+          }
         }
       }
     }
@@ -2380,20 +2505,25 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (field.first == "customData" || field.first == "assetInfo" ||
             field.first == "sdrMetadata" || field.first == "clips") {
-          const std::string* s = field.second.as_string();
-          if (!s) s = field.second.as_token();
-          if (s) {
-            Value d = ParseDictText(*s);
-            if (d.is_dictionary()) {
-              if (field.first == "customData")
-                ps->meta().customData() = std::move(d);
-              else if (field.first == "assetInfo")
-                ps->meta().assetInfo() = std::move(d);
-              else if (field.first == "sdrMetadata")
-                ps->meta().sdrMetadata() = std::move(d);
-              else
-                ps->meta().clips() = std::move(d);
-            }
+          // pxr-authored: a binary VtDictionary (already decoded to a Dictionary
+          // Value). next-authored: USDA dict text in a String field.
+          Value d;
+          if (field.second.is_dictionary()) {
+            d = std::move(field.second);
+          } else if (const std::string* s = field.second.as_string()) {
+            d = ParseDictText(*s);
+          } else if (const std::string* s = field.second.as_token()) {
+            d = ParseDictText(*s);
+          }
+          if (d.is_dictionary()) {
+            if (field.first == "customData")
+              ps->meta().customData() = std::move(d);
+            else if (field.first == "assetInfo")
+              ps->meta().assetInfo() = std::move(d);
+            else if (field.first == "sdrMetadata")
+              ps->meta().sdrMetadata() = std::move(d);
+            else
+              ps->meta().clips() = std::move(d);
           }
           continue;
         }
@@ -2741,6 +2871,98 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     GetString(v, val);
     out.emplace_back(std::move(key), std::move(val));
   }
+  return true;
+}
+
+bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
+                                          std::vector<std::string>& out) {
+  const CrateTypeId tid = rep.type_id();
+  if (tid != CrateTypeId::TokenListOp && tid != CrateTypeId::StringListOp) {
+    return false;
+  }
+  if (rep.payload() == 0) return true;  // empty listop
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  const bool is_token = (tid == CrateTypeId::TokenListOp);
+  // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
+  auto read_run = [&](bool keep) -> bool {
+    uint64_t n = 0;
+    if (!reader_->read_u64(n)) return false;
+    if (n > options_.max_array_elements) return false;
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!reader_->read_u32(idx)) return false;
+      if (!keep) continue;
+      std::string s;
+      if (is_token) {
+        if (idx >= tokens_.size()) return false;
+        s = tokens_.str(idx);
+      } else {
+        GetString(idx, s);
+      }
+      out.push_back(std::move(s));
+    }
+    return true;
+  };
+
+  // ListOpHeader bits / read order match DecodeReferenceListOp.
+  uint8_t bits = 0;
+  if (!reader_->read_u8(bits)) return false;
+  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
+                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  if ((bits & kHasExplicit) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !read_run(true)) return false;
+  if ((bits & kHasPrepended) && !read_run(true)) return false;
+  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasDeleted) && !read_run(false)) return false;
+  if ((bits & kHasOrdered) && !read_run(false)) return false;
+  return true;
+}
+
+bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
+  if (rep.type_id() != CrateTypeId::Dictionary) return false;
+  if (depth > 64) return false;
+  if (rep.payload() == 0) {
+    out = Value::MakeDictionary();
+    return true;
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint64_t count = 0;
+  if (!reader_->read_u64(count)) return false;
+  if (count > options_.max_array_elements) return false;
+
+  // Each entry is [u32 keyStringIdx][u64 value ValueRep]. Read the fixed-size
+  // block fully first (decoding a value seeks away from the block), then decode
+  // the values. NOTE: pxr's recursive dict-value packing is not fully decoded
+  // here — entries whose value does not resolve to a concrete Value are dropped
+  // rather than stored as a misleading empty/None entry.
+  std::vector<std::pair<std::string, uint64_t>> entries;
+  entries.reserve(static_cast<size_t>(count));
+  for (uint64_t i = 0; i < count; ++i) {
+    uint32_t kidx = 0;
+    if (!reader_->read_u32(kidx)) return false;
+    uint64_t vrep_raw = 0;
+    if (!reader_->read_u64(vrep_raw)) return false;
+    std::string key;
+    GetString(kidx, key);
+    entries.emplace_back(std::move(key), vrep_raw);
+  }
+
+  Value dv = Value::MakeDictionary();
+  Dict* d = dv.as_dictionary();
+  for (auto& e : entries) {
+    ValueRep vr(e.second);
+    Value cv;
+    if (vr.type_id() == CrateTypeId::Dictionary) {
+      DecodeDictionary(vr, cv, depth + 1);
+    } else if (vr.type_id() != CrateTypeId::Invalid) {
+      UnpackValue(vr, cv);
+    }
+    if (!cv.is_empty()) d->set(std::move(e.first), std::move(cv));
+  }
+  // If nothing resolved, leave `out` empty so the caller stores no (misleading
+  // empty) dictionary; otherwise hand back what decoded.
+  if (!d->empty()) out = std::move(dv);
   return true;
 }
 
