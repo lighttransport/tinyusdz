@@ -36,17 +36,23 @@ namespace {
 // Computes one final-level child value (geometry or a vertex primvar) for the
 // canonical child id `id`: vertex-child id in [0,V), edge-child V+e, face-child
 // V+E+f. `vals`/`stride` select the channel (geometry uses stride 3).
+// `centroids` (when non-null) holds this channel's precomputed per-face
+// centroids (`stride` floats each); the Catmull-Clark vertex/edge masks consume
+// each incident face's centroid, so they index it instead of recomputing.
 inline void ComputeChildValue(const Options &opts, const Topology &topo,
                               const uint32_t *fvi, const float *vals,
                               uint32_t stride, const SharpnessCtx &sharp,
                               bool is_vertex_pv, uint32_t id, uint32_t V,
-                              uint32_t E, float *out) {
+                              uint32_t E, const float *centroids, float *out) {
   const bool catmark = (opts.scheme == Scheme::CatmullClark);
   const bool loop = (opts.scheme == Scheme::Loop);
   // "varying" primvars use linear (bilinear) masks regardless of scheme.
   const bool linear = !is_vertex_pv;
   float scratch[4];
   auto face_child = [&](uint32_t g) -> const float * {
+    if (centroids) {
+      return &centroids[size_t(g) * stride];
+    }
     ComputeFaceChild(topo, fvi, vals, stride, g, scratch);
     return scratch;
   };
@@ -75,6 +81,13 @@ inline void ComputeChildValue(const Options &opts, const Topology &topo,
     return;
   }
   // face child (quad split only; Loop has no face children)
+  if (centroids) {
+    const float *src = &centroids[size_t(id - V - E) * stride];
+    for (uint32_t c = 0; c < stride; c++) {
+      out[c] = src[c];
+    }
+    return;
+  }
   ComputeFaceChild(topo, fvi, vals, stride, id - V - E, out);
 }
 
@@ -121,9 +134,41 @@ struct Emitter {
 
   std::vector<uint8_t> pv_is_vertex;  // per primvar: smooth(true)/varying(false)
 
+  // Per-face centroids for each channel (geometry + vertex primvars), precomputed
+  // once for the resident final level. Empty unless use_centroids is set.
+  bool use_centroids = false;
+  std::vector<float> geom_centroids;            // num_faces * 3
+  std::vector<std::vector<float>> pv_centroids;  // per channel: num_faces * stride
+
   void Init() {
     pv_buf.resize(num_pv);
     fvar_buf.resize(num_fvar);
+  }
+
+  // Precompute per-face centroids for every channel. The Catmull-Clark
+  // vertex/edge masks reference each incident face's centroid, and centroids do
+  // not change between batches, so this replaces O(valence) recomputes per
+  // vertex-child with a single indexed load. Memory is num_faces * stride per
+  // channel -- bounded by the resident working set (<< the unmaterialized
+  // level-N output), so the streaming memory bound is preserved.
+  void PrecomputeCentroids() {
+    if (!use_centroids) {
+      return;
+    }
+    const uint32_t nf = topo->num_faces;
+    geom_centroids.resize(size_t(nf) * 3);
+    for (uint32_t f = 0; f < nf; f++) {
+      ComputeFaceChild(*topo, fvi, geom, 3, f, &geom_centroids[size_t(f) * 3]);
+    }
+    pv_centroids.resize(num_pv);
+    for (uint32_t c = 0; c < num_pv; c++) {
+      const uint32_t st = pv_stride[c];
+      pv_centroids[c].resize(size_t(nf) * st);
+      for (uint32_t f = 0; f < nf; f++) {
+        ComputeFaceChild(*topo, fvi, (*pvs)[c].data(), st, f,
+                         &pv_centroids[c][size_t(f) * st]);
+      }
+    }
   }
 
   // Push the fvar tuples of one child-face corner `k` (per channel). `fc[c]`
@@ -189,7 +234,8 @@ struct Emitter {
       memcpy(p, &geom[size_t(canonical_id) * 3], sizeof(float) * 3);
     } else {
       ComputeChildValue(*opts, *topo, fvi, geom, 3, sharp, /*is_vertex_pv=*/true,
-                        canonical_id, V, E, p);
+                        canonical_id, V, E,
+                        use_centroids ? geom_centroids.data() : nullptr, p);
     }
     positions.push_back(p[0]);
     positions.push_back(p[1]);
@@ -209,7 +255,8 @@ struct Emitter {
                sizeof(float) * stride);
       } else {
         ComputeChildValue(*opts, *topo, fvi, (*pvs)[c].data(), stride, sharp,
-                          pv_is_vertex[c], canonical_id, V, E, v);
+                          pv_is_vertex[c], canonical_id, V, E,
+                          use_centroids ? pv_centroids[c].data() : nullptr, v);
       }
       std::vector<float> &buf = pv_buf[c];
       for (uint32_t k = 0; k < stride; k++) {
@@ -793,16 +840,25 @@ Result RefineStream(const MeshView &mesh,
     if (r != Result::Success) {
       return r;
     }
-    // Owned-face positions need `level` base-face rings of stencil support;
-    // seamless limit normals need `level + 1`. Clamp up to that minimum so an
-    // explicit too-small halo_rings can't silently corrupt block borders.
-    const uint32_t min_rings =
-        uint32_t(options.level) + (stream_options.want_normals ? 1u : 0u);
-    uint32_t halo_rings = stream_options.halo_rings
-                              ? stream_options.halo_rings
-                              : uint32_t(options.level + 1);
-    if (halo_rings < min_rings) {
-      halo_rings = min_rings;
+    // Stencil support is LOCAL and level-independent: an owned face's refined
+    // vertices -- and, for limit normals, their final-level 1-ring -- depend
+    // only on the 1-ring of base faces around that face. Child vertices cluster
+    // toward their parent as the level rises, so the base-face footprint never
+    // grows past one ring. One vertex-adjacency ring (GatherHalo rings == 1)
+    // already covers that 1-ring, so it is the proven-sufficient floor; we
+    // default to one extra ring of margin. Verified bit-identical to whole-mesh
+    // Refine (positions + limit normals) across tori / open / holed / semi-sharp
+    // creased meshes at levels 1..4 with a single ring.
+    //
+    // (The previous `level + 1` policy was correct but inflated the per-block
+    // working set super-linearly with level -- e.g. a 7-ring halo at level 6 --
+    // defeating block mode's "bound the working set" purpose at high levels.)
+    constexpr uint32_t kHaloFloor = 1;    // proven-sufficient minimum
+    constexpr uint32_t kHaloDefault = 2;  // floor + one ring of margin
+    uint32_t halo_rings =
+        stream_options.halo_rings ? stream_options.halo_rings : kHaloDefault;
+    if (halo_rings < kHaloFloor) {
+      halo_rings = kHaloFloor;
     }
     for (uint32_t fstart = 0; fstart < mesh.num_faces;
          fstart += stream_options.block_faces) {
@@ -989,6 +1045,12 @@ Result RefineStream(const MeshView &mesh,
       em.sharp = sharp;
       em.V = topo.num_points;
       em.E = topo.num_edges;
+      // Catmull-Clark vertex/edge masks consume incident face centroids; these
+      // are invariant across batches, so precompute them once per channel
+      // (bounded by the resident working set) instead of O(valence) recomputes
+      // per vertex-child. Bilinear/Loop don't re-consume centroids.
+      em.use_centroids = catmark;
+      em.PrecomputeCentroids();
       // Resident-level vertex limit normals: exact at vertex-children, blended
       // at edge/face-children (smooth schemes only). Bounded by the working
       // set; not the full level-N output.

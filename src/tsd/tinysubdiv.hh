@@ -272,11 +272,14 @@ struct StreamOptions {
 
   // Block mode: bound the WORKING set (not just the output) for very large base
   // meshes. When > 0, base faces are refined in blocks of `block_faces`, each
-  // with a halo of `halo_rings` neighbouring base-face rings (0 => level + 1)
-  // so owned faces keep full stencil support. Peak is then one block-plus-halo
-  // refinement, independent of total mesh size. Blocked output duplicates
-  // vertices at block borders (vertex_source is block-local); analytic normals
-  // keep shading seamless. (faceVarying/primvar-less geometry path.)
+  // with a halo of `halo_rings` neighbouring base-face rings so owned faces keep
+  // full stencil support. Subdivision's support is local: one base-face ring is
+  // sufficient at any level (the floor), so `halo_rings == 0` defaults to 2 (one
+  // ring of margin) and the halo -- hence the peak working set -- stays bounded
+  // independent of both total mesh size AND refinement level. Blocked output
+  // duplicates vertices at block borders (vertex_source is block-local);
+  // analytic normals keep shading seamless. (faceVarying/primvar-less geometry
+  // path.)
   uint32_t block_faces = 0;
   uint32_t halo_rings = 0;
 };
