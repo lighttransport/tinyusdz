@@ -81,7 +81,7 @@ Legend:
 
 | MJCF | Status | Notes |
 |---|---|---|
-| `<sensor>` (touch/accel/gyro/jointpos/framepos/…) | Missing | Large taxonomy; candidates for a `MjcSensor` prim + `MjcSensorAPI` |
+| `<sensor>` (all kinds: touch/accel/gyro/velocimeter/jointpos/jointvel/actuatorpos/frc/framepos/framequat/subtreecom/…) | **Full** | one typed `MjcSensor` prim per sensor under `/World/Sensors`; kind in `mjc:type`, measured object in `mjc:objtype`/`mjc:objname` (+ `mjc:reftype`/`mjc:refname`), `mjc:cutoff`/`mjc:noise`/`mjc:group`/`mjc:user`. Round-trips through USDA+USDC |
 | `<light>` (directional→`DistantLight`, point/spot→`SphereLight`+cone) | **Full** | color from `diffuse`, castshadow, emission oriented by `dir`, baked world xform |
 | `<camera>` (fovy→aperture, orthographic) | **Full** | `UsdGeomCamera` with baked world xform |
 | `<asset><material>` (rgba/metallic/roughness/emission) | **Partial** | `UsdShade` Material + `UsdPreviewSurface` under `/World/Materials`, bound to visual geoms via `material:binding`. **Texture maps** (`<asset><texture>` file/builtin + UV) are the remaining follow-on |

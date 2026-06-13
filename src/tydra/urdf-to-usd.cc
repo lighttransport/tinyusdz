@@ -1335,6 +1335,42 @@ bool AddMjcKeyframeFromJson(Prim &keyframes_prim, const nlohmann::json &k_json,
   return true;
 }
 
+// MJCF <sensor> child -> MjcSensor prim. A single typed prim covers all sensor
+// kinds; the kind is `mjc:type` (the element name) and the measured object is
+// `mjc:objtype`/`mjc:objname` (+ reftype/refname for frame sensors). JSON:
+//   { name, type, objtype, objname, reftype, refname, group, cutoff, noise, user }.
+bool AddMjcSensorFromJson(Prim &sensors_prim, const nlohmann::json &s_json,
+                          std::set<std::string> &used_names, size_t index,
+                          std::string *err) {
+  MjcSensor sensor;
+  sensor.name = UniqueUSDIdentifier(
+      JsonString(s_json, "name", "sensor_" + std::to_string(index)), used_names,
+      "sensor");
+  auto tok = [&](const char *k, auto &field) {
+    const std::string v = JsonString(s_json, k);
+    if (!v.empty()) field.set_value(value::token(v));
+  };
+  tok("type", sensor.type);
+  tok("objtype", sensor.objType);
+  tok("objname", sensor.objName);
+  tok("reftype", sensor.refType);
+  tok("refname", sensor.refName);
+  int g = 0;
+  if (JsonIntFromObjectOrParent(s_json, "", "group", &g)) sensor.group.set_value(g);
+  double v = 0.0;
+  if (JsonNumber(s_json, "cutoff", &v)) sensor.cutoff.set_value(v);
+  if (JsonNumber(s_json, "noise", &v)) sensor.noise.set_value(v);
+  const auto user = JsonDoubleArray(s_json, "user");
+  if (!user.empty()) sensor.user.set_value(user);
+
+  std::string add_err;
+  if (!sensors_prim.add_child(Prim(sensor), true, &add_err)) {
+    SetErr(err, "Failed to add MjcSensor `" + sensor.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
 // Build a row-vector local->world transform for a light whose emission axis
 // (USD light -Z) points along the world-space `dir`, positioned at the world
 // matrix's translation. `world` is the baked body*light frame (row-major,
@@ -2267,6 +2303,25 @@ bool ConvertURDFJsonToUSDStage(
     has_keyframes = !keyframes_prim.children().empty();
   }
 
+  // MJCF <sensor> -> /World/Sensors (MjcSensor prims).
+  const nlohmann::json &sensors_json =
+      (root.contains("sensors") && root["sensors"].is_array()) ? root["sensors"]
+                                                               : empty_array;
+  Prim sensors_prim;
+  bool has_sensors = false;
+  if (!sensors_json.empty()) {
+    Xform scope;
+    scope.name = "Sensors";
+    sensors_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < sensors_json.size(); i++) {
+      if (!AddMjcSensorFromJson(sensors_prim, sensors_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_sensors = !sensors_prim.children().empty();
+  }
+
   // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
   const nlohmann::json &lights_json =
       (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
@@ -2391,6 +2446,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_materials &&
         !world_prim.add_child(std::move(materials_prim), true, &add_err)) {
       SetErr(err, "Failed to add Materials scope: " + add_err);
+      return false;
+    }
+    if (has_sensors &&
+        !world_prim.add_child(std::move(sensors_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Sensors scope: " + add_err);
       return false;
     }
   }

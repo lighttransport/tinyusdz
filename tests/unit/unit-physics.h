@@ -73,3 +73,6 @@ void urdf_json_mjc_lights_cameras_test(void);
 
 // <asset><material> -> UsdShade Material + binding
 void urdf_json_mjc_materials_test(void);
+
+// <sensor> -> MjcSensor typed prim
+void urdf_json_mjc_sensors_test(void);

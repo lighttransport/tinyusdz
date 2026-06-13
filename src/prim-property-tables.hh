@@ -634,6 +634,18 @@
   X("mjc:mpos", mpos) \
   X("mjc:mquat", mquat)
 
+// MjcSensor attributes
+#define MJC_SENSOR_TYPED_ATTRS(X) \
+  X("mjc:type", type) \
+  X("mjc:objtype", objType) \
+  X("mjc:objname", objName) \
+  X("mjc:reftype", refType) \
+  X("mjc:refname", refName) \
+  X("mjc:group", group) \
+  X("mjc:cutoff", cutoff) \
+  X("mjc:noise", noise) \
+  X("mjc:user", user)
+
 // ============================================================================
 // Newton Physics Property Tables
 // ============================================================================

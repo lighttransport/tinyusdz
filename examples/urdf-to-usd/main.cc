@@ -79,6 +79,7 @@ struct Stats {
   size_t sites{0};
   size_t keyframes{0};
   size_t materials{0};
+  size_t sensors{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1391,6 +1392,41 @@ void CollectMujocoSitesJson(const pugi::xml_node &body_node,
 
 bool MjcBoolAttr(const std::string &v);  // defined below
 
+// MJCF <sensor> children -> JSON sensor entries consumed by the converter's
+// AddMjcSensorFromJson -> MjcSensor prim. The sensor kind is the element name;
+// the measured object is captured via objtype/objname (frame sensors carry them
+// explicitly, others attach via site/joint/actuator/tendon/body/geom).
+void AddMujocoSensorsJson(const pugi::xml_node &root, nlohmann::json *sensors,
+                          Stats *stats) {
+  if (!sensors) return;
+  const auto sensor_root = Child(root, "sensor");
+  if (!sensor_root) return;
+  for (const auto &s_node : sensor_root.children()) {
+    const std::string type = s_node.name();
+    if (type.empty()) continue;
+    nlohmann::json s = {{"type", type}};
+    s["name"] = Attr(s_node, "name", type + "_" + std::to_string(sensors->size()));
+    if (HasAttr(s_node, "objtype")) {
+      s["objtype"] = Attr(s_node, "objtype");
+      s["objname"] = Attr(s_node, "objname");
+    } else {
+      // Infer objtype from the attachment attribute the sensor type uses.
+      for (const char *k : {"site", "joint", "actuator", "tendon", "body", "geom"}) {
+        if (HasAttr(s_node, k)) { s["objtype"] = k; s["objname"] = Attr(s_node, k); break; }
+      }
+    }
+    if (HasAttr(s_node, "reftype")) s["reftype"] = Attr(s_node, "reftype");
+    if (HasAttr(s_node, "refname")) s["refname"] = Attr(s_node, "refname");
+    if (HasAttr(s_node, "group")) s["group"] = static_cast<int>(ParseDoubleAttr(s_node, "group", 0.0));
+    if (HasAttr(s_node, "cutoff")) s["cutoff"] = ParseDoubleAttr(s_node, "cutoff", 0.0);
+    if (HasAttr(s_node, "noise")) s["noise"] = ParseDoubleAttr(s_node, "noise", 0.0);
+    const auto user = ParseDoubles(Attr(s_node, "user"));
+    if (!user.empty()) s["user"] = user;
+    sensors->push_back(std::move(s));
+    if (stats) stats->sensors++;
+  }
+}
+
 // MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
 // world matrix, consumed by the converter's AddLightFromJson/AddCameraFromJson.
 // `frame_world` is the world transform of `frame_node`'s frame.
@@ -1758,6 +1794,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json lights = nlohmann::json::array();
   nlohmann::json cameras = nlohmann::json::array();
   nlohmann::json materials = nlohmann::json::array();
+  nlohmann::json sensors = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1773,6 +1810,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                  &cameras);
   AddMujocoMaterialsJson(root, &materials, stats);
+  AddMujocoSensorsJson(root, &sensors, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1795,6 +1833,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!lights.empty()) (*payload)["lights"] = std::move(lights);
   if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
   if (!materials.empty()) (*payload)["materials"] = std::move(materials);
+  if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

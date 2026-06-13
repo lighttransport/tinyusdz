@@ -142,6 +142,7 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(NewtonActuator)
   GET_PRIM_PROPS(MjcTendon)
   GET_PRIM_PROPS(MjcKeyframe)
+  GET_PRIM_PROPS(MjcSensor)
   // UsdSkel — required so authored attributes in the props map (joints,
   // jointNames, blendShapeWeights, etc.) survive the USDC writer when the
   // typed-builtin fields are unauthored.
@@ -1371,6 +1372,7 @@ bool CrateWriter::ExtractPrimProperties(
     GET_SPEC(NewtonActuator)
     GET_SPEC(MjcTendon)
     GET_SPEC(MjcKeyframe)
+    GET_SPEC(MjcSensor)
 #undef GET_SPEC
 spec_resolved:;
   }
@@ -1515,6 +1517,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMjcTendonProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcKeyframe") {
     return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcSensor") {
+    return ExtractMjcSensorProperties(prim, prim_path, fields, err);
   // AR/Interactive (Apple Preliminary_*)
   } else if (type_name == "Preliminary_PhysicsGravitationalForce") {
     return ExtractPreliminaryGravitationalForceProperties(prim, prim_path, fields, err);
