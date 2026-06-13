@@ -3,6 +3,7 @@
 
 #include "../tinyusdz.hh"
 #include "../stage.hh"
+#include "../pprint-enum.hh"
 
 #if defined(TINYUSDZ_WITH_QJS)
 
@@ -19,7 +20,6 @@
 #endif
 
 #include "external/quickjs-ng/quickjs.h"
-#include "external/quickjs-ng/quickjs-libc.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -31,8 +31,11 @@
 
 #include <sstream>
 #include <functional>
+#include <cstdio>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+
+#include "mcp-tools-diff.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -48,15 +51,22 @@ JSValue JSONToJSValue(JSContext *ctx, const nlohmann::json &j) {
 }
 
 nlohmann::json JSValueToJSON(JSContext *ctx, JSValue val) {
-  const char *json_str = JS_ToCString(ctx, val);
-  if (!json_str) return nullptr;
-  nlohmann::json j;
-  try {
-    j = nlohmann::json::parse(json_str);
-  } catch (...) {
-    j = nullptr;
+  // Serialize via JSON.stringify: JS_ToCString on an object/array yields
+  // "[object Object]" (invalid JSON). undefined stringifies to a NULL/"undefined"
+  // result -> treated as null. Non-throwing parse (built with -fno-exceptions).
+  JSValue json_val = JS_JSONStringify(ctx, val, JS_UNDEFINED, JS_UNDEFINED);
+  if (JS_IsException(json_val)) {
+    JS_FreeValue(ctx, json_val);
+    return nullptr;
   }
-  JS_FreeCString(ctx, json_str);
+  nlohmann::json j = nullptr;
+  const char *json_str = JS_ToCString(ctx, json_val);
+  if (json_str) {
+    j = nlohmann::json::parse(json_str, nullptr, false);
+    if (j.is_discarded()) j = nullptr;
+    JS_FreeCString(ctx, json_str);
+  }
+  JS_FreeValue(ctx, json_val);
   return j;
 }
 
@@ -66,6 +76,7 @@ nlohmann::json JSValueToJSON(JSContext *ctx, JSValue val) {
 // These global pointers are set before executing each script. Since
 // QuickJS is single-threaded per runtime, this is safe within a session.
 static Stage *g_js_stage = nullptr;
+static mcp::DiffSession *g_js_diff = nullptr;
 
 // ---------------------------------------------------------------------------
 // JS function: tinyusdz.stage.info()
@@ -165,14 +176,14 @@ static JSValue js_prim_list(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
 
   const Prim *prim = nullptr;
   std::string err;
-  if (!g_js_stage->find_prim_at_path(path, &prim, &err)) {
+  if (!g_js_stage->find_prim_at_path(path, prim, &err)) {
     return JS_ThrowTypeError(ctx, "Prim not found: %s", path_str.c_str());
   }
 
@@ -202,20 +213,20 @@ static JSValue js_prim_get(JSContext *ctx, JSValueConst this_val,
   std::string path_str(s);
   JS_FreeCString(ctx, s);
 
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
 
   const Prim *prim = nullptr;
   std::string err;
-  if (!g_js_stage->find_prim_at_path(path, &prim, &err)) {
+  if (!g_js_stage->find_prim_at_path(path, prim, &err)) {
     return JS_ThrowTypeError(ctx, "Prim not found: %s", path_str.c_str());
   }
 
   nlohmann::json j;
   j["name"] = prim->element_name();
-  j["path"] = prim->absolute_path().full_path();
+  j["path"] = prim->absolute_path().full_path_name();
   j["type"] = prim->prim_type_name();
   switch (prim->specifier()) {
     case Specifier::Def: j["specifier"] = "def"; break;
@@ -289,13 +300,13 @@ static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
 
   std::string err;
-  if (!g_js_stage->find_prim_at_path(path, &prim, &err)) {
+  if (!g_js_stage->find_prim_at_path(path, prim, &err)) {
     return JS_ThrowTypeError(ctx, "Prim not found: %s", path_str.c_str());
   }
 
@@ -320,7 +331,7 @@ static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
 static void CollectPrimsByType(const Prim &prim, const std::string &type_name,
                                std::vector<std::string> &results) {
   if (prim.prim_type_name() == type_name) {
-    results.push_back(prim.absolute_path().full_path());
+    results.push_back(prim.absolute_path().full_path_name());
   }
   for (const auto &child : prim.children()) {
     CollectPrimsByType(child, type_name, results);
@@ -373,6 +384,84 @@ static void RegisterObject(JSContext *ctx, JSValue parent, const char *name,
   JS_SetPropertyStr(ctx, parent, name, obj);
 }
 
+// ---------------------------------------------------------------------------
+// JS function: tinyusdz.diff.summary()
+// ---------------------------------------------------------------------------
+static JSValue js_diff_summary(JSContext *ctx, JSValueConst this_val, int argc,
+                               JSValueConst *argv, int magic,
+                               JSValueConst *func_data) {
+  (void)this_val; (void)argc; (void)argv; (void)magic; (void)func_data;
+  if (!g_js_diff) {
+    return JS_ThrowTypeError(ctx, "No diff loaded (call diff_open first)");
+  }
+  nlohmann::json out;
+  mcp::DiffComputeSummary(*g_js_diff, out);
+  return JSONToJSValue(ctx, out);
+}
+
+// ---------------------------------------------------------------------------
+// JS function: tinyusdz.diff.paths(filter?)
+// ---------------------------------------------------------------------------
+static JSValue js_diff_paths(JSContext *ctx, JSValueConst this_val, int argc,
+                             JSValueConst *argv, int magic,
+                             JSValueConst *func_data) {
+  (void)this_val; (void)magic; (void)func_data;
+  if (!g_js_diff) {
+    return JS_ThrowTypeError(ctx, "No diff loaded (call diff_open first)");
+  }
+  nlohmann::json filter = nlohmann::json::object();
+  if (argc >= 1 && !JS_IsUndefined(argv[0]) && !JS_IsNull(argv[0])) {
+    filter = JSValueToJSON(ctx, argv[0]);
+    if (!filter.is_object()) filter = nlohmann::json::object();
+  }
+  nlohmann::json out;
+  mcp::DiffComputePaths(*g_js_diff, filter, out);
+  return JSONToJSValue(ctx, out);
+}
+
+// ---------------------------------------------------------------------------
+// JS function: tinyusdz.diff.prim(path)
+// ---------------------------------------------------------------------------
+static JSValue js_diff_prim(JSContext *ctx, JSValueConst this_val, int argc,
+                            JSValueConst *argv, int magic,
+                            JSValueConst *func_data) {
+  (void)this_val; (void)magic; (void)func_data;
+  if (!g_js_diff) {
+    return JS_ThrowTypeError(ctx, "No diff loaded (call diff_open first)");
+  }
+  if (argc < 1 || !JS_IsString(argv[0])) {
+    return JS_ThrowTypeError(ctx, "diff.prim() requires a path string");
+  }
+  const char *s = JS_ToCString(ctx, argv[0]);
+  if (!s) return JS_EXCEPTION;
+  std::string path(s);
+  JS_FreeCString(ctx, s);
+
+  nlohmann::json out;
+  mcp::DiffComputePrim(*g_js_diff, path, out);
+  return JSONToJSValue(ctx, out);
+}
+
+// ---------------------------------------------------------------------------
+// console.{log,info,warn,error}(...) -> stderr
+// ---------------------------------------------------------------------------
+static JSValue js_console_log(JSContext *ctx, JSValueConst this_val, int argc,
+                              JSValueConst *argv, int magic,
+                              JSValueConst *func_data) {
+  (void)this_val; (void)magic; (void)func_data;
+  std::string line;
+  for (int i = 0; i < argc; i++) {
+    const char *s = JS_ToCString(ctx, argv[i]);
+    if (s) {
+      if (i) line += ' ';
+      line += s;
+      JS_FreeCString(ctx, s);
+    }
+  }
+  std::fprintf(stderr, "%s\n", line.c_str());
+  return JS_UNDEFINED;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -400,8 +489,19 @@ bool InitJSEngine(JSEngineState &engine, std::string &err) {
     return false;
   }
 
-  // Initialize standard library (console.log, etc.)
-  js_std_add_helpers(ctx, 0, nullptr);
+  // Minimal console.{log,info,warn,error} -> stderr. We deliberately avoid
+  // quickjs-libc's js_std_add_helpers (not built into the library, and its
+  // console writes to stdout, which would corrupt the stdio MCP transport).
+  {
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue console = JS_NewObject(ctx);
+    RegisterFunction(ctx, console, "log", js_console_log, 1);
+    RegisterFunction(ctx, console, "info", js_console_log, 1);
+    RegisterFunction(ctx, console, "warn", js_console_log, 1);
+    RegisterFunction(ctx, console, "error", js_console_log, 1);
+    JS_SetPropertyStr(ctx, global, "console", console);
+    JS_FreeValue(ctx, global);
+  }
 
   engine.runtime = rt;
   engine.context = ctx;
@@ -473,6 +573,48 @@ bool RegisterUSDModule(JSEngineState &engine, Stage *stage,
 
   // Set the module
   JS_SetPropertyStr(ctx, global, "tinyusdz", tinyusdz);
+  JS_FreeValue(ctx, global);
+
+  return true;
+}
+
+// ===========================================================================
+// Public: RegisterDiffModule
+// ===========================================================================
+// Attach a `tinyusdz.diff.{summary,paths,prim}` submodule bound to `diff`.
+// Creates the `tinyusdz` global if it does not already exist (e.g. a diff-only
+// session with no stage), otherwise augments it in place.
+bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
+                        std::string &err) {
+  if (!engine.initialized) {
+    err = "JS engine not initialized";
+    return false;
+  }
+
+  JSContext *ctx = static_cast<JSContext *>(engine.context);
+  g_js_diff = diff;
+
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue tinyusdz = JS_GetPropertyStr(ctx, global, "tinyusdz");
+  const bool created = JS_IsUndefined(tinyusdz);
+  if (created) {
+    tinyusdz = JS_NewObject(ctx);
+  }
+
+  JSValue diff_mod = JS_NewObject(ctx);
+  RegisterFunction(ctx, diff_mod, "summary", js_diff_summary, 0);
+  RegisterFunction(ctx, diff_mod, "paths", js_diff_paths, 1);
+  RegisterFunction(ctx, diff_mod, "prim", js_diff_prim, 1);
+  RegisterObject(ctx, tinyusdz, "diff", diff_mod);
+
+  if (created) {
+    // Transfers our `tinyusdz` reference to the global.
+    JS_SetPropertyStr(ctx, global, "tinyusdz", tinyusdz);
+  } else {
+    // We augmented the existing global object in place; release our extra ref
+    // obtained from JS_GetPropertyStr.
+    JS_FreeValue(ctx, tinyusdz);
+  }
   JS_FreeValue(ctx, global);
 
   return true;

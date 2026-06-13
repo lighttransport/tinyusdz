@@ -744,6 +744,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
@@ -1419,6 +1421,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
