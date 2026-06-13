@@ -1950,6 +1950,45 @@ function makeMuscleGroup(data) {
 // MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
 function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
 
+// MJCF <light>/<camera> -> exportPayload lights/cameras with a baked world
+// matrix (-> UsdLux + GeomCamera in the converted USD).
+function collectMujocoLightsCameras(worldbody) {
+  const lights = [];
+  const cameras = [];
+  const visit = (node, world) => {
+    for (const l of childElements(node, 'light')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(l)));
+      const directional = mjcBoolAttr(l.getAttribute('directional') || 'false');
+      const light = {
+        name: l.getAttribute('name') || 'light',
+        type: l.getAttribute('type') || (directional ? 'directional' : 'spot'),
+        matrix: matrixToUSDArray(m),
+        dir: parseNumbers(l.getAttribute('dir'), [0, 0, -1]).slice(0, 3)
+      };
+      const diffuse = parseNumbers(l.getAttribute('diffuse'), []);
+      if (diffuse.length >= 3) light.color = diffuse.slice(0, 3);
+      if (l.getAttribute('castshadow') !== null) light.castshadow = mjcBoolAttr(l.getAttribute('castshadow'));
+      if (l.getAttribute('cutoff') !== null) light.cutoff = Number(l.getAttribute('cutoff'));
+      lights.push(light);
+    }
+    for (const c of childElements(node, 'camera')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(c)));
+      const cam = { name: c.getAttribute('name') || 'camera', matrix: matrixToUSDArray(m) };
+      if (c.getAttribute('fovy') !== null) cam.fovy = Number(c.getAttribute('fovy'));
+      if (c.getAttribute('projection') === 'orthographic'
+          || (c.getAttribute('orthographic') !== null && mjcBoolAttr(c.getAttribute('orthographic')))) {
+        cam.orthographic = true;
+      }
+      cameras.push(cam);
+    }
+    for (const b of childElements(node, 'body')) {
+      visit(b, new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(b))));
+    }
+  };
+  visit(worldbody, new THREE.Matrix4());
+  return { lights, cameras };
+}
+
 // MJCF <option>/<option><flag>/<compiler> -> exportPayload.mjcScene, consumed by
 // the C++ converter's ApplyMjcSceneOptions -> MjcSceneAPI (so the converted USD
 // carries the full simulation options, not just timestep).
@@ -2279,6 +2318,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
+  const worldbodyEl = firstChildElement(root, 'worldbody');
+  const { lights: lightsPayload, cameras: camerasPayload } =
+    worldbodyEl ? collectMujocoLightsCameras(worldbodyEl) : { lights: [], cameras: [] };
   // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
   // from group.homeKeyframe above, which is only used to pose the source view.
   const keyframesPayload = [];
@@ -2299,7 +2341,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     joints,
     actuators,
     ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
-    ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {})
+    ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
+    ...(lightsPayload.length ? { lights: lightsPayload } : {}),
+    ...(camerasPayload.length ? { cameras: camerasPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

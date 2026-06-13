@@ -13,6 +13,7 @@
 #include "unit-physics.h"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdc-writer.hh"
 #include "core/prim.hh"
@@ -3216,6 +3217,53 @@ void urdf_json_mjcf_muscle_export_test(void) {
       if (gp.has_value() && gp.value().size() >= 3) {
         TEST_CHECK(approx_eq(gp.value()[2], 916.8));
       }
+    }
+  }
+}
+
+// MJCF <light>/<camera> -> UsdLux (DistantLight/SphereLight) + GeomCamera.
+void urdf_json_mjc_lights_cameras_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "LitBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "joints": [],
+  "lights": [
+    { "name": "sun", "type": "directional",
+      "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,3,1],
+      "dir": [0,0,-1], "color": [0.8, 0.8, 0.7], "castshadow": true },
+    { "name": "bulb", "type": "point",
+      "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 1,0,2,1], "color": [1,1,1] }
+  ],
+  "cameras": [
+    { "name": "cam", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,-2,1,1], "fovy": 60 }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto sun = stage.GetPrimAtPath(Path("/World/Lights/sun", ""));
+  TEST_CHECK(bool(sun));
+  if (sun) TEST_CHECK((*sun)->is<DistantLight>());
+
+  auto bulb = stage.GetPrimAtPath(Path("/World/Lights/bulb", ""));
+  TEST_CHECK(bool(bulb));
+  if (bulb) TEST_CHECK((*bulb)->is<SphereLight>());
+
+  auto cam = stage.GetPrimAtPath(Path("/World/Cameras/cam", ""));
+  TEST_CHECK(bool(cam));
+  if (cam) {
+    TEST_CHECK((*cam)->is<GeomCamera>());
+    const auto *gc = (*cam)->as<GeomCamera>();
+    TEST_CHECK(gc != nullptr);
+    if (gc) {
+      // Camera placed via a baked world transform (xformOp:transform).
+      TEST_CHECK(!gc->xformOps.empty());
     }
   }
 }

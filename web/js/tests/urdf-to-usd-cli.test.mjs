@@ -226,6 +226,34 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF <light>/<camera> -> lights/cameras payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Lit">
+  <worldbody>
+    <light name="sun" directional="true" pos="0 0 3" dir="0 0 -1" diffuse="0.8 0.8 0.7"/>
+    <camera name="cam" pos="0 -2 1" fovy="60"/>
+    <body name="b">
+      <light name="bulb" pos="0 0 1" diffuse="1 1 1"/>
+      <geom type="sphere" size="0.1"/>
+    </body>
+  </worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.equal(payload.lights.length, 2);
+    const sun = payload.lights.find((l) => l.name === 'sun');
+    const bulb = payload.lights.find((l) => l.name === 'bulb');
+    assert.equal(sun.type, 'directional');
+    assert.deepEqual(sun.color, [0.8, 0.8, 0.7]);
+    assert.equal(sun.matrix.length, 16);
+    assert.equal(bulb.type, 'spot');  // non-directional default
+    assert.equal(payload.cameras.length, 1);
+    assert.equal(payload.cameras[0].name, 'cam');
+    assert.equal(payload.cameras[0].fovy, 60);
+    assert.equal(payload.cameras[0].matrix.length, 16);
+  });
+});
+
 await testAsync('MJCF <keyframe> -> keyframes payload', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>
