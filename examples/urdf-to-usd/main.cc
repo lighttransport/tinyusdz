@@ -65,6 +65,7 @@ struct MeshAsset {
 struct MeshData {
   std::vector<float> positions;
   std::vector<float> normals;
+  std::vector<float> uvs;  // 2 per vertex (st), parallel to positions; empty if none
   std::vector<int32_t> indices;
 };
 
@@ -729,6 +730,8 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
   }
 
   std::vector<std::array<float, 3>> vertices;
+  std::vector<std::array<float, 2>> texcoords;  // vt (u,v)
+  bool all_have_uv = true;  // drop UVs unless every face-vertex has a vt index
   std::string line;
   while (std::getline(ifs, line)) {
     std::stringstream ss(line);
@@ -738,34 +741,62 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       std::array<float, 3> v{{0.0f, 0.0f, 0.0f}};
       ss >> v[0] >> v[1] >> v[2];
       vertices.push_back(v);
+    } else if (tag == "vt") {
+      std::array<float, 2> t{{0.0f, 0.0f}};
+      ss >> t[0] >> t[1];
+      texcoords.push_back(t);
     } else if (tag == "f") {
-      std::vector<int> face;
+      std::vector<int> face;      // vertex indices
+      std::vector<int> face_uv;   // parallel vt indices (-1 if absent)
       std::string tok;
       while (ss >> tok) {
         const size_t slash = tok.find('/');
-        {
-          nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
-          if (!idx_opt.has_value()) {
-            std::cerr << "Invalid face vertex index: " << tok << "\n";
-            return false;
-          }
-          int idx_val = idx_opt.value();
-          face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
+        nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
+        if (!idx_opt.has_value()) {
+          std::cerr << "Invalid face vertex index: " << tok << "\n";
+          return false;
         }
+        const int idx_val = idx_opt.value();
+        face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
+        // OBJ face token: v/vt/vn (vt optional). Parse the vt field.
+        int vt = -1;
+        if (slash != std::string::npos) {
+          const size_t slash2 = tok.find('/', slash + 1);
+          const std::string vt_str = tok.substr(
+              slash + 1, slash2 == std::string::npos ? std::string::npos : slash2 - slash - 1);
+          nonstd::optional<int> vt_opt = vt_str.empty() ? nonstd::nullopt : tinyusdz::atoi(vt_str);
+          if (vt_opt.has_value()) {
+            vt = vt_opt.value() > 0 ? vt_opt.value() - 1
+                                    : static_cast<int>(texcoords.size()) + vt_opt.value();
+          }
+        }
+        if (vt < 0) all_have_uv = false;
+        face_uv.push_back(vt);
       }
       for (size_t i = 1; i + 1 < face.size(); i++) {
         const int tri[3] = {face[0], face[i], face[i + 1]};
-        for (int vi : tri) {
+        const int triuv[3] = {face_uv[0], face_uv[i], face_uv[i + 1]};
+        for (int k = 0; k < 3; k++) {
+          const int vi = tri[k];
           if (vi < 0 || size_t(vi) >= vertices.size()) continue;
           const auto &v = vertices[size_t(vi)];
           mesh->positions.push_back(v[0]);
           mesh->positions.push_back(v[1]);
           mesh->positions.push_back(v[2]);
+          const int ti = triuv[k];
+          if (ti >= 0 && size_t(ti) < texcoords.size()) {
+            mesh->uvs.push_back(texcoords[size_t(ti)][0]);
+            mesh->uvs.push_back(texcoords[size_t(ti)][1]);
+          } else {
+            mesh->uvs.push_back(0.0f);
+            mesh->uvs.push_back(0.0f);
+          }
           mesh->indices.push_back(static_cast<int32_t>(mesh->indices.size()));
         }
       }
     }
   }
+  if (!all_have_uv || texcoords.empty()) mesh->uvs.clear();
   return !mesh->positions.empty();
 }
 
@@ -784,13 +815,13 @@ nlohmann::json MeshPayloadToJson(const MeshPayload &payload) {
         {"matrix", payload.matrix},
         {"shape", payload.shape}};
   }
-  return {
-      {"name", payload.name},
-      {"matrix", payload.matrix},
-      {"geometry",
-       {{"positions", payload.mesh.positions},
-        {"normals", payload.mesh.normals},
-        {"indices", payload.mesh.indices}}}};
+  nlohmann::json geometry = {{"positions", payload.mesh.positions},
+                             {"normals", payload.mesh.normals},
+                             {"indices", payload.mesh.indices}};
+  if (!payload.mesh.uvs.empty()) geometry["uvs"] = payload.mesh.uvs;
+  return {{"name", payload.name},
+          {"matrix", payload.matrix},
+          {"geometry", std::move(geometry)}};
 }
 
 // --- MJCF <default> class resolution ---------------------------------------
@@ -1830,11 +1861,28 @@ nlohmann::json BuildMjcSceneJson(const pugi::xml_node &root) {
 // MJCF <asset><material> -> JSON material entries consumed by the converter's
 // AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface). Color/PBR-scalar
 // only; texture maps are a documented follow-on.
-void AddMujocoMaterialsJson(const pugi::xml_node &root, nlohmann::json *materials,
-                            Stats *stats) {
+void AddMujocoMaterialsJson(const pugi::xml_node &root, const fs::path &base_dir,
+                            nlohmann::json *materials, Stats *stats) {
   if (!materials) return;
   const auto asset = Child(root, "asset");
   if (!asset) return;
+  // Resolve <texture name file=...> to an absolute path so a material's
+  // `texture` becomes a UsdUVTexture in the converter. Builtin (file-less)
+  // textures are skipped (no image to reference).
+  std::string tdir;
+  if (const auto compiler = Child(root, "compiler")) {
+    tdir = Attr(compiler, "texturedir");
+    if (tdir.empty()) tdir = Attr(compiler, "assetdir");
+  }
+  const fs::path tex_dir = tdir.empty() ? base_dir : base_dir / tdir;
+  const auto index = BuildMeshIndex(base_dir);
+  std::map<std::string, std::string> tex_files;
+  for (const auto &t_node : Children(asset, "texture")) {
+    const std::string tname = Attr(t_node, "name");
+    const std::string tfile = Attr(t_node, "file");
+    if (tname.empty() || tfile.empty()) continue;
+    tex_files[tname] = ResolveMeshPath(base_dir, tex_dir, tfile, index).string();
+  }
   for (const auto &m_node : Children(asset, "material")) {
     const std::string name = Attr(m_node, "name");
     if (name.empty()) continue;
@@ -1846,6 +1894,11 @@ void AddMujocoMaterialsJson(const pugi::xml_node &root, nlohmann::json *material
     if (HasAttr(m_node, "specular")) mat["specular"] = ParseDoubleAttr(m_node, "specular", 0.0);
     if (HasAttr(m_node, "emission")) mat["emission"] = ParseDoubleAttr(m_node, "emission", 0.0);
     if (HasAttr(m_node, "reflectance")) mat["reflectance"] = ParseDoubleAttr(m_node, "reflectance", 0.0);
+    const std::string tref = Attr(m_node, "texture");
+    if (!tref.empty()) {
+      const auto it = tex_files.find(tref);
+      if (it != tex_files.end()) mat["texture"] = it->second;
+    }
     materials->push_back(std::move(mat));
     if (stats) stats->materials++;
   }
@@ -2441,7 +2494,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
   AddMujocoKeyframesJson(root, &keyframes, stats);
-  AddMujocoMaterialsJson(root, &materials, stats);
+  AddMujocoMaterialsJson(root, input_filename.parent_path(), &materials, stats);
   AddMujocoSensorsJson(root, &sensors, stats);
   AddMujocoContactPairsJson(root, &contact_pairs, stats);
   nlohmann::json custom = nlohmann::json::object();

@@ -1632,9 +1632,21 @@ function parseMujocoSensors(root) {
 }
 
 // MJCF <asset><material> -> material payload entries (-> UsdShade Material).
-function parseMujocoMaterials(root) {
+function parseMujocoMaterials(root, baseDir = '', opts = {}) {
   const asset = firstChild(root, 'asset');
   if (!asset) return [];
+  // Resolve <texture name file=...> to an absolute path so a material's texture
+  // becomes a UsdUVTexture (builtin/file-less textures are skipped).
+  const compiler = firstChild(root, 'compiler');
+  const texDir = compiler?.attrs.texturedir || compiler?.attrs.assetdir || '';
+  const texBaseDir = path.resolve(baseDir, texDir);
+  const meshIndex = buildMeshIndex(baseDir);
+  const texFiles = new Map();
+  for (const t of childElements(asset, 'texture')) {
+    if (t.attrs.name && t.attrs.file) {
+      texFiles.set(t.attrs.name, resolveMujocoMeshFile(t.attrs.file, texBaseDir, baseDir, opts, meshIndex));
+    }
+  }
   const out = [];
   for (const m of childElements(asset, 'material')) {
     if (!m.attrs.name) continue;
@@ -1644,6 +1656,7 @@ function parseMujocoMaterials(root) {
     for (const k of ['metallic', 'roughness', 'specular', 'emission', 'reflectance']) {
       if (m.attrs[k] !== undefined) mat[k] = numberAttr(m.attrs, k);
     }
+    if (m.attrs.texture && texFiles.has(m.attrs.texture)) mat.texture = texFiles.get(m.attrs.texture);
     out.push(mat);
   }
   return out;
@@ -2038,7 +2051,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     lights.push(...lc.lights);
     cameras.push(...lc.cameras);
   }
-  const materials = parseMujocoMaterials(root);
+  const materials = parseMujocoMaterials(root, baseDir, opts);
   const sensors = parseMujocoSensors(root);
   let visualCount = 0;
   let collisionCount = 0;
