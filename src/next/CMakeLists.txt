@@ -278,6 +278,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
 
+    add_executable(test_complex_usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_complex_usda.cc
+    )
+    target_link_libraries(test_complex_usda PRIVATE tinyusdz_next)
+
     add_executable(test_lazy_array
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_array.cc
     )
@@ -433,6 +438,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_complex_usda COMMAND test_complex_usda
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_lazy_array COMMAND test_lazy_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas COMMAND test_schemas
@@ -471,11 +478,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     --mode load
                     --tusdcat "$<TARGET_FILE:next_usdcat>"
                     --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
-                    # Regression ratchet, not a quality bar: 219 of 280 corpus
-                    # files fail today on known next parser gaps (see
-                    # corpus-parse-results/summary.md). Lower this as gaps
-                    # close; raising it requires justification.
-                    --max-fail 220
+                    # Regression ratchet, not a quality bar: 24 of 280 corpus
+                    # files fail today on the remaining next parser gaps (variant
+                    # option bodies that contain child prims; a few nested
+                    # metadata edge cases) — see corpus-parse-results/summary.md.
+                    # Lower this as gaps close; raising it requires justification.
+                    --max-fail 30
         )
     endif()
 endif()

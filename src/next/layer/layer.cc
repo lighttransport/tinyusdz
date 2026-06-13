@@ -61,6 +61,19 @@ void Layer::sort_prims_by_path() {
   path_to_index_.clear();
 }
 
+Layer Layer::Clone() const {
+  Layer out;
+  out.prims_.reserve(prims_.size());
+  for (const PrimSpec& prim : prims_) {
+    out.prims_.push_back(prim.Clone());
+  }
+  out.root_indices_ = root_indices_;
+  out.meta_ = meta_;
+  out.finalized_ = finalized_;
+  out.build_path_index();
+  return out;
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 

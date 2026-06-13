@@ -24,8 +24,22 @@ struct LayerMeta {
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
 
+  // Optional stage metadata (parity with the mature reader). The *_set flags
+  // distinguish "authored" from "default" so the writer re-emits only authored
+  // opinions.
+  double framesPerSecond = 24.0;
+  bool framesPerSecond_set = false;
+  double kilogramsPerUnit = 1.0;
+  bool kilogramsPerUnit_set = false;
+  std::string colorConfiguration;   // asset path
+  std::string colorManagementSystem;  // token
+
   std::string doc;
   std::string comment;
+
+  // Dictionary-valued stage metadata (Dictionary Value; empty when unauthored).
+  Value customLayerData;
+  Value expressionVariables;
 
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
@@ -78,6 +92,11 @@ public:
   /// compressed-paths encoding requires this; composition appends grafted
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
+
+  /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
+  /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed
+  /// large arrays.
+  Layer Clone() const;
 
   // ============================================================
   // Access

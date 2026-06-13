@@ -23,7 +23,14 @@ struct StageMeta {
   double timeCodesPerSecond = 24.0;
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
+  double framesPerSecond = 24.0;
+  bool framesPerSecond_set = false;
+  double kilogramsPerUnit = 1.0;
+  bool kilogramsPerUnit_set = false;
+  std::string colorConfiguration;
+  std::string colorManagementSystem;
   std::string doc;
+  std::string comment;
 };
 
 /// Prim handle for stage traversal

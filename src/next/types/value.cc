@@ -73,6 +73,22 @@ inline void DetachArray(char* s) {
   if (h.use_count() > 1) h = h->clone();
 }
 
+// Dictionary values are held by a shared_ptr<Dict> in the SBO slot — the same
+// copy-on-write model as arrays (cheap copy during composition; detach on first
+// mutation). A nested dict is itself just another shared_ptr handle, so the
+// recursive structure never threatens the SBO size.
+using DictHandle = std::shared_ptr<Dict>;
+inline DictHandle* DictSlot(char* s) {
+  return reinterpret_cast<DictHandle*>(s);
+}
+inline const DictHandle* DictSlot(const char* s) {
+  return reinterpret_cast<const DictHandle*>(s);
+}
+inline void DetachDict(char* s) {
+  DictHandle& h = *DictSlot(s);
+  if (h.use_count() > 1) h = std::make_shared<Dict>(*h);
+}
+
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
   return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
@@ -382,6 +398,20 @@ Value Value::MakeAssetPath(std::string&& s) {
   return v;
 }
 
+Value Value::MakeDictionary() {
+  Value v;
+  v.type_id_ = TypeId::Dictionary;
+  new (v.storage_) DictHandle(std::make_shared<Dict>());
+  return v;
+}
+
+Value Value::MakeDictionary(Dict&& d) {
+  Value v;
+  v.type_id_ = TypeId::Dictionary;
+  new (v.storage_) DictHandle(std::make_shared<Dict>(std::move(d)));
+  return v;
+}
+
 Value Value::MakePoint3f(float x, float y, float z) {
   Value v;
   v.type_id_ = TypeId::Point3f;
@@ -662,6 +692,8 @@ void Value::destroy() {
     // Drop the shared_ptr reference (frees the buffer iff this was the last
     // owner — the copy-on-write release).
     ArraySlot(storage_)->~ArrayHandle();
+  } else if (type_id_ == TypeId::Dictionary) {
+    DictSlot(storage_)->~DictHandle();
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
   }
@@ -691,6 +723,8 @@ void Value::copy_from(const Value& other) {
     // Copy-on-write: share the same buffer, just bump the refcount. The
     // element data is NOT copied; a later mutable access detaches.
     new (storage_) ArrayHandle(*ArraySlot(other.storage_));
+  } else if (other.type_id_ == TypeId::Dictionary) {
+    new (storage_) DictHandle(*DictSlot(other.storage_));  // refcount++ (CoW)
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{reinterpret_cast<const StringStorage*>(other.storage_)->value};
   } else {
@@ -712,6 +746,9 @@ void Value::move_from(Value&& other) noexcept {
   } else if (other.is_lazy_) {
     // Steal the raw LazyArrayRef* (lazy arrays are not shared_ptr-backed).
     std::memcpy(storage_, other.storage_, sizeof(void*));
+  } else if (other.type_id_ == TypeId::Dictionary) {
+    new (storage_) DictHandle(std::move(*DictSlot(other.storage_)));
+    DictSlot(other.storage_)->~DictHandle();
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{std::move(reinterpret_cast<StringStorage*>(other.storage_)->value)};
     reinterpret_cast<StringStorage*>(other.storage_)->~StringStorage();
@@ -784,6 +821,10 @@ void* Value::data_ptr() {
     DetachArray(storage_);  // mutable raw access: privatize the buffer
     return ArraySlot(storage_)->get();
   }
+  if (type_id_ == TypeId::Dictionary) {
+    DetachDict(storage_);
+    return DictSlot(storage_)->get();
+  }
   return storage_;
 }
 
@@ -791,6 +832,9 @@ const void* Value::data_ptr() const {
   ensure_materialized();
   if (is_array_) {
     return ArraySlot(storage_)->get();
+  }
+  if (type_id_ == TypeId::Dictionary) {
+    return DictSlot(storage_)->get();
   }
   return storage_;
 }
@@ -845,6 +889,17 @@ const std::string* Value::as_token() const {
 const std::string* Value::as_asset_path() const {
   if (type_id_ != TypeId::AssetPath || is_array_) return nullptr;
   return &reinterpret_cast<const StringStorage*>(storage_)->value;
+}
+
+const Dict* Value::as_dictionary() const {
+  if (type_id_ != TypeId::Dictionary) return nullptr;
+  return DictSlot(storage_)->get();
+}
+
+Dict* Value::as_dictionary() {
+  if (type_id_ != TypeId::Dictionary) return nullptr;
+  DetachDict(storage_);
+  return DictSlot(storage_)->get();
 }
 
 // Vector accessors
@@ -1065,6 +1120,19 @@ bool Value::operator==(const Value& other) const {
     return false;
   }
 
+  if (type_id_ == TypeId::Dictionary) {
+    const Dict* a = as_dictionary();
+    const Dict* b = other.as_dictionary();
+    if (!a || !b) return a == b;
+    if (a == b) return true;  // same shared buffer
+    if (a->entries.size() != b->entries.size()) return false;
+    for (size_t i = 0; i < a->entries.size(); ++i) {
+      if (a->entries[i].first != b->entries[i].first) return false;
+      if (!(a->entries[i].second == b->entries[i].second)) return false;
+    }
+    return true;
+  }
+
   if (UsesStringStorage(type_id_)) {
     return reinterpret_cast<const StringStorage*>(storage_)->value ==
            reinterpret_cast<const StringStorage*>(other.storage_)->value;
@@ -1158,6 +1226,20 @@ uint64_t Value::hash() const {
                           s.size());
           h *= 1099511628211ULL;
         }
+      }
+    }
+    return h;
+  }
+
+  // Hash dictionary entries recursively (order-sensitive, matching operator==).
+  if (type_id_ == TypeId::Dictionary) {
+    if (const Dict* d = as_dictionary()) {
+      for (const auto& kv : d->entries) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
+                        kv.first.size());
+        h *= 1099511628211ULL;
+        h ^= kv.second.hash();
+        h *= 1099511628211ULL;
       }
     }
     return h;
