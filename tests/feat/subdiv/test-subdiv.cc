@@ -2267,6 +2267,130 @@ void test_stream_block_abort() {
   CHECK(ctx.calls == 1);  // stopped after the first batch, not all 9 blocks
 }
 
+// ---------------------------------------------------------------------------
+// Block + halo with normals: every owned-face limit normal must equal whole-
+// mesh bulk ComputeLimitNormals at the same position. Block mode emits TRUE
+// limit normals (a per-block ComputeLimitNormals), so a vertex shared between
+// blocks shades identically -> shading is seamless across borders. The
+// want_normals block path was previously uncovered (test_stream_blocked_matches
+// _bulk asserts positions/topology only). Curved/creased/irregular meshes at
+// several levels give the normals something to actually vary over.
+// ---------------------------------------------------------------------------
+
+struct NormalCollect {
+  std::vector<float> positions;  // flat xyz, all emitted verts (with dup)
+  std::vector<float> normals;    // flat xyz, parallel to positions
+  bool had_normals = true;
+};
+
+bool NormalSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  NormalCollect *c = static_cast<NormalCollect *>(user);
+  if (!b->normals) {
+    c->had_normals = false;
+    return true;
+  }
+  for (uint32_t v = 0; v < b->num_vertices; v++) {
+    c->positions.push_back(b->positions[3 * v]);
+    c->positions.push_back(b->positions[3 * v + 1]);
+    c->positions.push_back(b->positions[3 * v + 2]);
+    c->normals.push_back(b->normals[3 * v]);
+    c->normals.push_back(b->normals[3 * v + 1]);
+    c->normals.push_back(b->normals[3 * v + 2]);
+  }
+  return true;
+}
+
+void test_stream_blocked_normals() {
+  using tinyusdz::tsd::ComputeLimitNormals;
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::QuadTorus(10, 8));       // closed, curved, all valence-4
+  meshes.push_back(corpus::CreasedCube(2.0f, "bncc"));  // semi-sharp creases
+  meshes.push_back(corpus::Icosahedron());          // extraordinary verts (val 5)
+  meshes.push_back(corpus::TriGrid(8, 8, "bntg"));  // boundary + curvature
+
+  const uint32_t block_sizes[2] = {1u, 3u};
+  // halo_rings 1 == the proven-sufficient floor (a single base-face ring); 0 ==
+  // the default (2). Exercising 1 directly guards that the minimal halo still
+  // yields bulk-identical positions AND limit normals at every level.
+  const uint32_t halo_opts[2] = {0u, 1u};
+
+  for (const corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::CatmullClark};
+    bool all_tris = true;
+    for (uint32_t cnt : m.face_vertex_counts) all_tris = all_tris && (cnt == 3);
+    if (all_tris) schemes.push_back(Scheme::Loop);
+
+    for (Scheme scheme : schemes) {
+      for (int level = 1; level <= 3; level++) {
+        Options opts;
+        opts.scheme = scheme;
+        opts.level = level;
+        opts.remove_holes = true;
+
+        RefinedMesh bulk;
+        std::string err;
+        CHECK(Refine(ToView(m), opts, &bulk, &err) == Result::Success);
+        std::vector<float> bulk_n;
+        CHECK(ComputeLimitNormals(ToView(m), opts, bulk, &bulk_n, &err) ==
+              Result::Success);
+        // Exact position -> bulk limit normal.
+        std::map<std::array<float, 3>, std::array<float, 3>> nmap;
+        for (uint32_t v = 0; v < bulk.points.size() / 3; v++) {
+          nmap[{bulk.points[3 * v], bulk.points[3 * v + 1],
+                bulk.points[3 * v + 2]}] = {
+              bulk_n[3 * v], bulk_n[3 * v + 1], bulk_n[3 * v + 2]};
+        }
+
+        for (uint32_t bf : block_sizes) {
+          for (uint32_t hr : halo_opts) {
+            StreamOptions so;
+            so.block_faces = bf;
+            so.halo_rings = hr;
+            so.want_normals = true;
+            so.emit_triangles = false;
+            NormalCollect col;
+            CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so,
+                               NormalSinkFn, &col, &err) == Result::Success);
+
+            const std::string tag =
+                m.name + "/" + (scheme == Scheme::Loop ? "loop" : "cc") + "/L" +
+                std::to_string(level) + "/bf" + std::to_string(bf) + "/hr" +
+                std::to_string(hr);
+            CHECK_MSG(col.had_normals, tag);
+            const uint32_t ev = uint32_t(col.positions.size() / 3);
+            CHECK_MSG(ev > 0, tag);
+            double maxdiff = 0.0;
+            bool all_found = true;
+            for (uint32_t e = 0; e < ev; e++) {
+              std::array<float, 3> key = {col.positions[3 * e],
+                                          col.positions[3 * e + 1],
+                                          col.positions[3 * e + 2]};
+              auto it = nmap.find(key);
+              if (it == nmap.end()) {
+                all_found = false;
+                continue;
+              }
+              const double dx = double(col.normals[3 * e]) - it->second[0];
+              const double dy = double(col.normals[3 * e + 1]) - it->second[1];
+              const double dz = double(col.normals[3 * e + 2]) - it->second[2];
+              const double d = std::fabs(dx) + std::fabs(dy) + std::fabs(dz);
+              if (d > maxdiff) maxdiff = d;
+            }
+            CHECK_MSG(all_found, tag);
+            // Block normals are the per-block ComputeLimitNormals; with full
+            // stencil support they are bit-identical to whole-mesh bulk (fp
+            // noise only). A border that lost support would diverge by O(0.1+).
+            CHECK_MSG(maxdiff < 1e-4, tag);
+          }
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -2349,6 +2473,7 @@ int main() {
   TEST(test_stream_level0_passthrough);
   TEST(test_stream_normals);
   TEST(test_stream_blocked_matches_bulk);
+  TEST(test_stream_blocked_normals);
   TEST(test_stream_fvar);
   TEST(test_stream_level0_mixed_arity);
   TEST(test_stream_block_abort);
