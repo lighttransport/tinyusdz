@@ -26,6 +26,7 @@ import {
   parseUSDZEntries,
   buildUSDZWithNewRoot,
 } from '../src/usdzconvert.js';
+import { createNodeTextureProcessor } from '../src/texture-processor-node.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -270,6 +271,39 @@ test('only usdz files', () => {
 });
 
 // ============================================================
+console.log('createNodeTextureProcessor (worker pool)');
+// ============================================================
+await testAsync('node texture processor resizes PNGs across a worker pool and destroys cleanly', async () => {
+  const { PNG } = await import('pngjs');
+  const W = 32, H = 32;
+  const img = new PNG({ width: W, height: H });
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    img.data[o] = (i * 7) & 255; img.data[o + 1] = (i * 13) & 255;
+    img.data[o + 2] = (i * 29) & 255; img.data[o + 3] = 255;
+  }
+  const src = new Uint8Array(PNG.sync.write(img));
+
+  const { processor, destroy, concurrency } = createNodeTextureProcessor({ concurrency: 2 });
+  try {
+    assert.equal(concurrency, 2);
+    // More jobs than workers, launched together, exercises acquire/release and
+    // the waiter queue across the refactored pool (spawn/fail/release).
+    const results = await Promise.all([0, 1, 2, 3].map(() => processor({
+      data: src, maxTextureSize: 8, reencode: true, textureFormat: 'png',
+      resizeColorspace: 'srgb',
+    })));
+    for (const r of results) {
+      assert.ok(r && r.data && r.resized, 'each job should return a resized result');
+      const out = PNG.sync.read(Buffer.from(r.data));
+      assert.ok(Math.max(out.width, out.height) <= 8, 'output should be <= 8px');
+    }
+  } finally {
+    destroy();
+  }
+});
+
+// ============================================================
 console.log('Integration: loadWasm + convertFolderToUSDZ');
 // ============================================================
 const wasmJs = path.resolve(__dirname, '../src/tinyusdz/tinyusdz.js');
@@ -487,6 +521,64 @@ def Xform "fromSub"
     assert.ok(entries.has('textures/01.jpg'), 'referenced texture should be packed');
     assert.ok(!entries.has('textures/unused.jpg'), 'unused texture should not be packed');
     assert.ok(!entries.has('unused.usdc'), 'unused USD layer should not be packed');
+  });
+
+  // Regression: a texture that fails to fetch during the bounded prefetch must
+  // surface as a clean rejection, not a process-killing unhandledRejection. The
+  // pump launches up to `width` processOne() promises before awaiting them FIFO,
+  // so a non-head failure used to reject an un-awaited promise (Node >=15 then
+  // terminates the process). Here a.png fetches fine while b.png/c.png fail; all
+  // three are launched before a.png is awaited.
+  await testAsync('stream-next reports a clean error (no unhandledRejection) when a prefetched texture fetch fails', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const png = new Uint8Array(native.repackChannels({ channels: 3, width: 8, height: 8,
+      r: { const: 10 }, g: { const: 20 }, b: { const: 30 } }).data);
+    const rootBytes = new TextEncoder().encode(usdaContent);  // texture-less cube
+    const failKeys = new Set(['b.png', 'c.png']);
+    const get = (key) => {
+      if (key === 'scene.usda') return rootBytes;
+      if (key === 'a.png') return png;
+      if (failKeys.has(key)) throw new Error(`disk read error for ${key}`);
+      return null;
+    };
+    const source = {
+      keys: ['scene.usda', 'a.png', 'b.png', 'c.png'],
+      fetchSync: get,  // sync; used only for the USD root layer
+      async fetch(key) {
+        if (key === 'a.png') {
+          // Delay the head texture past a macrotask so the non-head rejections
+          // sit unhandled across an event-loop turn — the exact pre-fix crash
+          // window. Without this the loop may re-attach a handler in the same
+          // microtask drain and Node would never flag the rejection.
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return png;
+        }
+        return get(key);  // b.png / c.png throw -> rejected promise
+      },
+    };
+
+    let unhandled = null;
+    const onUnhandled = (err) => { unhandled = err; };
+    process.on('unhandledRejection', onUnhandled);
+    let threw = null;
+    try {
+      await convertSourceToUSDZStreaming(native, source, {
+        rootPath: 'scene.usda', pipeline: 'next',
+        reencode: false, textureFormat: 'keep',
+        zipSink: makeMemoryZipSink().sink,
+      });
+    } catch (e) {
+      threw = e;
+    }
+    // Drain the task queue so any stray rejection would surface before we check.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    process.removeListener('unhandledRejection', onUnhandled);
+
+    assert.ok(threw, 'conversion should reject when a referenced texture cannot be fetched');
+    assert.match(threw.message, /b\.png/,
+      `error should name the failed texture, got: ${threw && threw.message}`);
+    assert.equal(unhandled, null,
+      `no unhandledRejection should escape (got: ${unhandled && unhandled.message})`);
   });
 
   await testAsync('convertFolderToUSDZ errors on no USD file', async () => {

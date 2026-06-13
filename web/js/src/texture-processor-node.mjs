@@ -17,11 +17,13 @@ export function createNodeTextureProcessor(opts = {}) {
   const idle = [];
   const waiters = [];
   let nextId = 1;
+  let destroyed = false;
 
-  for (let i = 0; i < concurrency; i++) {
+  function spawn() {
     const w = new Worker(new URL('./texture-worker-node.mjs', import.meta.url));
     w.unref();
     w.inflight = new Map();
+    w.dead = false;
     w.on('message', (msg) => {
       const pending = w.inflight.get(msg.id);
       if (!pending) return;
@@ -29,16 +31,40 @@ export function createNodeTextureProcessor(opts = {}) {
       release(w);
       pending.resolve(msg);
     });
-    w.on('error', (err) => {
-      for (const pending of w.inflight.values()) pending.reject(err);
-      w.inflight.clear();
-      release(w);
+    w.on('error', (err) => fail(w, err));
+    // A worker can vanish without an 'error' (e.g. OOM kill / process.exit in
+    // the worker); without this its in-flight jobs would hang forever.
+    w.on('exit', (code) => {
+      if (w.dead || destroyed) return;
+      fail(w, new Error(`texture worker exited unexpectedly (code ${code})`));
     });
     workers.push(w);
-    idle.push(w);
+    return w;
+  }
+
+  // A worker crashed or exited: reject its in-flight jobs, drop it from the pool
+  // (a dead worker must never be recycled — postMessage to it would hang), and
+  // unless we are tearing down, spawn a replacement so pool size and any queued
+  // waiters are still served.
+  function fail(w, err) {
+    if (w.dead) return;
+    w.dead = true;
+    for (const pending of w.inflight.values()) pending.reject(err);
+    w.inflight.clear();
+    const wi = workers.indexOf(w);
+    if (wi !== -1) workers.splice(wi, 1);
+    const ii = idle.indexOf(w);
+    if (ii !== -1) idle.splice(ii, 1);
+    try { w.terminate(); } catch { /* already gone */ }
+    if (!destroyed) release(spawn());
+  }
+
+  for (let i = 0; i < concurrency; i++) {
+    idle.push(spawn());
   }
 
   function release(w) {
+    if (w.dead) return;  // never hand a dead worker back out
     const waiter = waiters.shift();
     if (waiter) {
       waiter(w);
@@ -87,7 +113,11 @@ export function createNodeTextureProcessor(opts = {}) {
   }
 
   function destroy() {
-    for (const w of workers) w.terminate();
+    destroyed = true;
+    for (const w of workers) {
+      w.dead = true;  // suppress respawn from the 'exit' handler
+      w.terminate();
+    }
     workers.length = 0;
     idle.length = 0;
   }
