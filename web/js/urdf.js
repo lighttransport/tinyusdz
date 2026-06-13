@@ -1193,6 +1193,110 @@ function parseNumbers(text, fallback = []) {
   return values.length ? values : fallback;
 }
 
+// Attributes whose value is a name or a reference to one (prefixed on <attach>).
+const ATTACH_REF_ATTRS = new Set([
+  'name', 'class', 'childclass', 'material', 'mesh', 'hfield', 'texture',
+  'joint', 'joint1', 'joint2', 'site', 'site1', 'site2', 'refsite', 'sidesite',
+  'tendon', 'tendon1', 'tendon2', 'body', 'body1', 'body2', 'geom', 'geom1',
+  'geom2', 'objname']);
+
+function prefixAttachSubtree(node, prefix, radToDeg) {
+  if (node.nodeType !== 1) return;
+  for (const attr of Array.from(node.attributes)) {
+    if (ATTACH_REF_ATTRS.has(attr.name) && attr.value) {
+      node.setAttribute(attr.name, prefix + attr.value);
+    }
+  }
+  if (radToDeg) {
+    // Child authored angles in radians; the merged model is parsed in degrees.
+    const k = 180 / Math.PI;
+    const e = node.getAttribute('euler');
+    if (e) { const v = parseNumbers(e, []); if (v.length === 3) node.setAttribute('euler', v.map((x) => x * k).join(' ')); }
+    const aa = node.getAttribute('axisangle');
+    if (aa) { const v = parseNumbers(aa, []); if (v.length === 4) { v[3] *= k; node.setAttribute('axisangle', v.join(' ')); } }
+  }
+  for (const c of childElements(node)) prefixAttachSubtree(c, prefix, radToDeg);
+}
+
+function findBodyByNameDeep(node, name) {
+  for (const b of childElements(node, 'body')) {
+    if (b.getAttribute('name') === name) return b;
+    const r = findBodyByNameDeep(b, name);
+    if (r) return r;
+  }
+  return null;
+}
+
+// MJCF <asset><model name file> + <attach model body prefix>: graft the child
+// model's named body subtree at the attach point, prefixing every name +
+// reference, and merge the child's defaults/assets/tendons/actuators/etc.
+// Mirrors the C++ ExpandAttachments. Used by iit_softfoot/scene.xml.
+async function expandMujocoAttachments(root, baseDir) {
+  const models = new Map();
+  for (const m of root.querySelectorAll('asset model')) {
+    const name = m.getAttribute('name');
+    const file = m.getAttribute('file');
+    if (name && file) models.set(name, file);
+  }
+  const attaches = Array.from(root.querySelectorAll('attach'));
+  if (!attaches.length) return;
+
+  const compilerEl = firstChildElement(root, 'compiler');
+  const parentRadian = (compilerEl?.getAttribute('angle') || 'degree').toLowerCase() === 'radian';
+  const ownerDoc = root.ownerDocument;
+
+  for (const attach of attaches) {
+    const modelName = attach.getAttribute('model');
+    const bodyName = attach.getAttribute('body') || '';
+    const prefix = attach.getAttribute('prefix') || '';
+    const file = models.get(modelName);
+    if (!file) { console.warn(`MJCF <attach>: unknown model "${modelName}"`); continue; }
+    const childPath = joinPath(baseDir, file);
+    const entry = resolveAssetEntry(childPath) || resolveAssetEntry(file);
+    if (!entry) { console.warn(`MJCF <attach>: model file not found: ${file}`); continue; }
+
+    const childDir = dirname(entry.rel);
+    const childExpanded = await expandMujocoIncludes(await entry.file.text(), childDir);
+    const childRoot = parseXMLDocument(childExpanded).documentElement;
+    const cc = firstChildElement(childRoot, 'compiler');
+    const childMeshdir = cc?.getAttribute('meshdir') || cc?.getAttribute('assetdir') || '';
+    const childRadian = (cc?.getAttribute('angle') || 'degree').toLowerCase() === 'radian';
+    const radToDeg = childRadian && !parentRadian;
+
+    // Rewrite child mesh/hfield file paths so they resolve against the merged
+    // model's asset folder (the child's dir + its meshdir).
+    for (const tag of ['mesh', 'hfield', 'skin']) {
+      for (const a of childRoot.querySelectorAll(`asset ${tag}`)) {
+        const f = a.getAttribute('file');
+        if (f) a.setAttribute('file', joinPath(joinPath(childDir, childMeshdir), f));
+      }
+    }
+
+    prefixAttachSubtree(childRoot, prefix, radToDeg);
+
+    let found = null;
+    for (const wb of childRoot.querySelectorAll('worldbody')) {
+      found = findBodyByNameDeep(wb, prefix + bodyName);
+      if (found) break;
+    }
+    if (!found) { console.warn(`MJCF <attach>: body "${bodyName}" not found in "${modelName}"`); continue; }
+
+    attach.parentNode.insertBefore(ownerDoc.importNode(found, true), attach);
+    attach.parentNode.removeChild(attach);
+
+    for (const sec of ['default', 'asset', 'tendon', 'actuator', 'sensor', 'equality', 'contact', 'keyframe']) {
+      const childSec = firstChildElement(childRoot, sec);
+      if (!childSec) continue;
+      let mainSec = firstChildElement(root, sec);
+      if (!mainSec) { mainSec = ownerDoc.createElement(sec); root.appendChild(mainSec); }
+      for (const c of childElements(childSec)) {
+        if (c.localName === 'model') continue;
+        mainSec.appendChild(ownerDoc.importNode(c, true));
+      }
+    }
+  }
+}
+
 function parseURDFMetadata(text) {
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   const robotEl = doc.querySelector('robot');
@@ -2156,6 +2260,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     throw new Error(`Expected MJCF <mujoco> root, got <${root.localName || 'unknown'}>.`);
   }
 
+  // Graft <attach> sub-models into the tree before any semantic parsing.
+  await expandMujocoAttachments(root, baseDir);
+
   // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
   const compilerEl = firstChildElement(root, 'compiler');
   const angleAttr = (compilerEl?.getAttribute('angle') || 'degree').toLowerCase();
@@ -2232,6 +2339,63 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // site name -> { pos: THREE.Vector3 in model space } for muscle/tendon routing.
   const sitesByName = new Map();
   state.muscleObjects = [];
+
+  // Bake one <geom> into a link's THREE object + its payload. Shared by the
+  // per-body traversal and the worldbody-level (static) geom collection.
+  async function processGeomForLink(geomNode, linkObject, linkPayload, linkName, childClass, bodyWorldMatrix, geomIndex) {
+    const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
+    const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
+    const isVisual = classifyMujocoGeom(geomAttrs);
+    let payloads = null;
+    if (!isVisual) {
+      payloads = shapePayloadForMujocoGeom(
+        geomAttrs,
+        new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
+        geomName
+      );
+    }
+    if (!payloads) payloads = await mujocoGeomPayloads(geomAttrs, meshAssets, geomName, bodyWorldMatrix);
+
+    const object = await loadMujocoGeomObject(geomAttrs, meshAssets, geomName);
+    object.name = geomName;
+    applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
+    linkObject.add(object);
+    const geomRgba = effectiveGeomRgba(geomAttrs);
+    const geomGroup = mujocoGeomGroup(geomAttrs, isVisual);
+    const geomIsCollider = isMujocoCollider(geomAttrs);
+    object.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.userData.urdfOwnerLink = linkObject;
+      obj.userData.urdfOwnerLinkName = linkName;
+      obj.userData.urdfCollision = !isVisual;
+      obj.userData.mujocoGroup = geomGroup;
+      if (isVisual) {
+        if (geomRgba) applyRgbaToMesh(obj, geomRgba);
+        state.visualMeshes.push(obj);
+      } else if (!geomIsCollider) {
+        if (geomRgba) applyRgbaToMesh(obj, geomRgba);
+        state.collisionMeshes.push(obj);
+      } else {
+        obj.userData.originalMaterial = obj.material;
+        obj.material = collisionMaterial;
+        state.collisionMeshes.push(obj);
+      }
+    });
+
+    if (isVisual) {
+      if (geomAttrs.material) {
+        for (const p of payloads) p.material = geomAttrs.material;
+      }
+      linkPayload.visuals.push(...payloads);
+      visualCount += payloads.length;
+    } else {
+      for (const payload of payloads) {
+        payload.approximation = payload.approximation || 'convexHull';
+      }
+      linkPayload.collisions.push(...payloads);
+      collisionCount += payloads.length;
+    }
+  }
 
   async function visitBody(
     bodyNode,
@@ -2345,67 +2509,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     let geomIndex = 0;
     for (const geomNode of childElements(bodyNode, 'geom')) {
-      const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
-      const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = classifyMujocoGeom(geomAttrs);
-      let payloads = null;
-      if (!isVisual) {
-        payloads = shapePayloadForMujocoGeom(
-          geomAttrs,
-          new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
-          geomName
-        );
-      }
-      if (!payloads) payloads = await mujocoGeomPayloads(geomAttrs, meshAssets, geomName, bodyWorldMatrix);
-
-      const object = await loadMujocoGeomObject(geomAttrs, meshAssets, geomName);
-      object.name = geomName;
-      applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
-      linkObject.add(object);
-      const geomRgba = effectiveGeomRgba(geomAttrs);
-      const geomGroup = mujocoGeomGroup(geomAttrs, isVisual);
-      const geomIsCollider = isMujocoCollider(geomAttrs);
-      object.traverse((obj) => {
-        if (!obj.isMesh) return;
-        obj.userData.urdfOwnerLink = linkObject;
-        obj.userData.urdfOwnerLinkName = linkName;
-        obj.userData.urdfCollision = !isVisual;
-        // Tag the MuJoCo display group so the viewer can toggle by group id.
-        obj.userData.mujocoGroup = geomGroup;
-        if (isVisual) {
-          // Tint by the geom/material rgba + honor alpha (transparent legs etc).
-          if (geomRgba) applyRgbaToMesh(obj, geomRgba);
-          state.visualMeshes.push(obj);
-        } else if (!geomIsCollider) {
-          // A non-collider auxiliary geom (e.g. iit_softfoot's group-4
-          // virtual_pulley cylinders) is a decoration, not a collider: show it
-          // in its own rgba, NOT the red collision overlay.
-          if (geomRgba) applyRgbaToMesh(obj, geomRgba);
-          state.collisionMeshes.push(obj);
-        } else {
-          obj.userData.originalMaterial = obj.material;
-          obj.material = collisionMaterial;
-          state.collisionMeshes.push(obj);
-        }
-      });
-
-      if (isVisual) {
-        if (geomAttrs.material) {
-          for (const p of payloads) p.material = geomAttrs.material;
-        }
-        linkPayload.visuals.push(...payloads);
-        visualCount += payloads.length;
-      } else {
-        // Default approximation `convexHull` matches the writer in
-        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
-        // mujoco-usd-converter convention. Per-geom overrides via
-        // payload.approximation are preserved.
-        for (const payload of payloads) {
-          payload.approximation = payload.approximation || 'convexHull';
-        }
-        linkPayload.collisions.push(...payloads);
-        collisionCount += payloads.length;
-      }
+      await processGeomForLink(geomNode, linkObject, linkPayload, linkName, childClass, bodyWorldMatrix, geomIndex);
       geomIndex++;
     }
 
@@ -2435,6 +2539,22 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       await visitBody(bodyNode, group);
     }
   }
+
+  // World-fixed geoms directly under <worldbody> (floor/ground/obstacles) belong
+  // to no body; collect them onto a single static "world" link group so scenes
+  // show their ground. Mirrors the CLI's AddWorldbodyGeomsLink.
+  const worldGroup = new THREE.Group();
+  worldGroup.name = 'world';
+  const worldLinkPayload = { name: 'world', static: true, inertial: { mass: 0 }, visuals: [], collisions: [] };
+  let worldGeomIndex = 0;
+  for (const worldbody of childElements(root, 'worldbody')) {
+    for (const geomNode of childElements(worldbody, 'geom')) {
+      await processGeomForLink(geomNode, worldGroup, worldLinkPayload, 'world', '', new THREE.Matrix4(), worldGeomIndex);
+      worldGeomIndex++;
+    }
+  }
+  if (worldGroup.children.length) group.add(worldGroup);
+  if (worldLinkPayload.visuals.length || worldLinkPayload.collisions.length) links.push(worldLinkPayload);
 
   // Muscle / spatial-tendon visualization (e.g. ms_human_700, iit_softfoot).
   // Drawn as polylines through the routing sites, in model space, added to the
