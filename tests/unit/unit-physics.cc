@@ -3221,6 +3221,41 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
+void urdf_json_mjc_contact_pair_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "PairBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "joints": [],
+  "contactPairs": [
+    { "name": "foot_floor", "geom1": "foot", "geom2": "floor",
+      "condim": 6, "friction": [1, 0.005, 0.0001], "solref": [0.02, 1], "margin": 0.001 }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+  auto r = stage.GetPrimAtPath(Path("/World/Contacts/foot_floor", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *x = (*r)->as<Xform>();
+  TEST_CHECK(x != nullptr);
+  if (x) {
+    double v = 0.0;
+    TEST_CHECK(get_prop_num(x->props, "mjc:condim", &v));
+    TEST_CHECK(approx_eq(v, 6.0));
+    TEST_CHECK(get_prop_num(x->props, "mjc:margin", &v));
+    TEST_CHECK(approx_eq(v, 0.001));
+    TEST_CHECK(x->props.count("mjc:geom1") > 0);
+    TEST_CHECK(x->props.count("mjc:friction") > 0);
+  }
+}
+
 // MJCF <adhesion>/<cylinder>/... actuators -> MjcActuator (body/joint target).
 void urdf_json_mjc_actuator_types_test(void) {
   const char *robot_json = R"JSON({

@@ -79,3 +79,6 @@ void urdf_json_mjc_sensors_test(void);
 
 // adhesion/cylinder/... actuator coverage
 void urdf_json_mjc_actuator_types_test(void);
+
+// <contact><pair> conversion
+void urdf_json_mjc_contact_pair_test(void);

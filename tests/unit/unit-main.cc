@@ -966,6 +966,7 @@ TEST_LIST = {
   { "urdf_json_mjc_materials_test", urdf_json_mjc_materials_test },
   { "urdf_json_mjc_sensors_test", urdf_json_mjc_sensors_test },
   { "urdf_json_mjc_actuator_types_test", urdf_json_mjc_actuator_types_test },
+  { "urdf_json_mjc_contact_pair_test", urdf_json_mjc_contact_pair_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
