@@ -2118,12 +2118,17 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     // Accumulate the body-chain world transform (this body relative to parent,
     // composed onto the parent's world frame).
     const bodyWorld = new THREE.Matrix4().copy(parentWorld).multiply(matrixFromPoseAttrs(bodyNode.attrs));
+    // A <freejoint> (or <joint type="free">) -> 6-DOF floating base: not joined
+    // to its parent. Marked so the converter emits a free articulation root.
+    const hasFree = !!firstChild(bodyNode, 'freejoint')
+      || childElements(bodyNode, 'joint').some((j) => j.attrs.type === 'free');
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
       visuals: [],
       collisions: []
     };
+    if (hasFree) linkPayload.floating = true;
     if (bodyNode.attrs.mocap !== undefined && mjcBoolAttr(bodyNode.attrs.mocap)) {
       linkPayload.mocap = true;
     }
@@ -2136,7 +2141,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
     links.push(linkPayload);
 
-    if (parentName) {
+    if (parentName && !hasFree) {
       const jointNodes = childElements(bodyNode, 'joint');
       const bodyOrigin = parseNumbers(bodyNode.attrs.pos, [0, 0, 0]);
       const bodyMatrix = matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs));

@@ -40,7 +40,7 @@ Legend:
 | `<inertial fullinertia>` (off-diagonal) | Jacobi-diagonalized → `diagonalInertia` + `principalAxes` | Full |
 | `<joint hinge/slide>` | `PhysicsRevolute/PrismaticJoint` | Full |
 | `<joint ball>` | `PhysicsSphericalJoint` | Partial (cone-limit only; 3-DOF can't be slider-driven) |
-| `<freejoint>` / `<joint type="free">` | root body / `PhysicsArticulationRootAPI` (non-root → fixed + warn) | Partial |
+| `<freejoint>` / `<joint type="free">` | 6-DOF floating base: the body is a free `PhysicsArticulationRootAPI` (not joined to its parent) carrying `mjc:freeJoint=1`, distinguishing it from a fixed/anchored base (a parentless link without the flag) | Full |
 | **multiple `<joint>` per body** | chain of single-DOF joints via massless intermediate link Xforms | Full |
 | `<joint>` limit/range/ref/damping/armature/stiffness/frictionloss | typed limits + `MjcJointAPI` + `physxLimit:*`/`state:*` mirror | Full |
 | `<frame>` (MuJoCo 3 grouping transform) | dissolved at parse time: the frame transform is composed into each child's pose (pos+quat, fromto, childclass) and the children lifted to the frame's parent | Full |

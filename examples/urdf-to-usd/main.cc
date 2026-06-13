@@ -1989,11 +1989,21 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
   const std::string body_name =
       Attr(body_node, "name", "body_" + std::to_string(stats->links));
+  // A <freejoint> (or <joint type="free">) makes this body a 6-DOF floating
+  // base: it is NOT joined to its parent. Mark it so the converter emits a free
+  // articulation root (vs a fixed base, which has no such joint).
+  bool has_free = static_cast<bool>(Child(body_node, "freejoint"));
+  if (!has_free) {
+    for (const auto &jn : Children(body_node, "joint")) {
+      if (ToLower(Attr(jn, "type")) == "free") { has_free = true; break; }
+    }
+  }
   nlohmann::json link = {
       {"name", body_name},
       {"inertial", InertialToJson(body_node)},
       {"visuals", nlohmann::json::array()},
       {"collisions", nlohmann::json::array()}};
+  if (has_free) link["floating"] = true;
   // MuJoCo mocap body (driven externally; not simulated). Flag it so the USD
   // link records mjc:mocap.
   if (MjcBoolAttr(Attr(body_node, "mocap", "false"))) link["mocap"] = true;
@@ -2012,7 +2022,7 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
 
   links->push_back(std::move(link));
   stats->links++;
-  if (!parent_name.empty()) {
+  if (!parent_name.empty() && !has_free) {
     const std::vector<double> body_matrix = PoseMatrix(body_node, ctx);
     const std::array<double, 3> body_pos =
         ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
