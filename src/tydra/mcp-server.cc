@@ -198,6 +198,15 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     mcp_sess_id = get_header_value(request_info, "mcp-session-id");
     DCOUT("mcp-session-id " << mcp_sess_id);
   }
+
+  // CORS: echo the request Origin so a browser demo (e.g. the Vite dev server
+  // on a different port) can talk to this local server. Local dev tool; this
+  // does not widen access beyond what the bind address already exposes.
+  std::string cors_origin = "*";
+  if (has_header(request_info, "Origin")) {
+    const std::string o = get_header_value(request_info, "Origin");
+    if (!o.empty()) cors_origin = o;
+  }
   
   // Handle POST requests for JSON-RPC
   if (strcmp(request_info->request_method, "POST") == 0) {
@@ -254,22 +263,27 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
         mg_printf(conn,
                   "HTTP/1.1 200 OK\r\n"
                   "Content-Type: application/json\r\n"
+                  "Access-Control-Allow-Origin: %s\r\n"
+                  "Access-Control-Expose-Headers: mcp-session-id\r\n"
                   "mcp-session-id: %s\r\n"
                   "Content-Length: %d\r\n"
                   "\r\n"
                   "%s",
+                  cors_origin.c_str(),
                   sess_id.c_str(),
                   static_cast<int>(response_json.length()),
                   response_json.c_str());
       }
-      
+
       else {
         mg_printf(conn,
                   "HTTP/1.1 200 OK\r\n"
                   "Content-Type: application/json\r\n"
+                  "Access-Control-Allow-Origin: %s\r\n"
                   "Content-Length: %d\r\n"
                   "\r\n"
                   "%s",
+                  cors_origin.c_str(),
                   static_cast<int>(response_json.length()),
                   response_json.c_str());
       }
@@ -282,10 +296,13 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   if (strcmp(request_info->request_method, "OPTIONS") == 0) {
     mg_printf(conn,
               "HTTP/1.1 200 OK\r\n"
-              "Access-Control-Allow-Origin: http://localhost\r\n"
+              "Access-Control-Allow-Origin: %s\r\n"
               "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
               "Access-Control-Allow-Headers: Content-Type, mcp-session-id\r\n"
-              "\r\n");
+              "Access-Control-Expose-Headers: mcp-session-id\r\n"
+              "Access-Control-Max-Age: 86400\r\n"
+              "\r\n",
+              cors_origin.c_str());
     return 200;
   }
   
