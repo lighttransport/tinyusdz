@@ -3221,6 +3221,48 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <adhesion>/<cylinder>/... actuators -> MjcActuator (body/joint target).
+void urdf_json_mjc_actuator_types_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "ActBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" }, { "name": "foot" } ],
+  "joints": [ { "name": "ankle", "type": "revolute", "parent": "base", "child": "foot", "axisToken": "Y" } ],
+  "mjcActuators": [
+    { "name": "grip", "actuatorType": "adhesion", "targetBody": "foot", "gainPrm": [5.0] },
+    { "name": "piston", "actuatorType": "cylinder", "targetJoint": "ankle", "ctrlRange": [0, 1] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto gr = stage.GetPrimAtPath(Path("/World/MjcActuators/grip", ""));
+  TEST_CHECK(bool(gr));
+  if (gr) {
+    const auto *a = (*gr)->as<MjcActuator>();
+    TEST_CHECK(a != nullptr);
+    if (a) {
+      TEST_CHECK(a->target.authored());
+      auto tg = a->target.get_targetPaths();
+      TEST_CHECK(tg.size() == 1 && tg[0].prim_part() == "/World/Links/foot");
+    }
+  }
+  auto pr = stage.GetPrimAtPath(Path("/World/MjcActuators/piston", ""));
+  TEST_CHECK(bool(pr));
+  if (pr) {
+    const auto *a = (*pr)->as<MjcActuator>();
+    if (a && a->target.authored()) {
+      auto tg = a->target.get_targetPaths();
+      TEST_CHECK(tg.size() == 1 && tg[0].prim_part() == "/World/Joints/ankle");
+    }
+  }
+}
+
 // MJCF <sensor> -> MjcSensor prims (typed schema) under /World/Sensors.
 void urdf_json_mjc_sensors_test(void) {
   const char *robot_json = R"JSON({
