@@ -1215,24 +1215,32 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
     const std::string joint = Attr(act_node, "joint");
     const std::string tendon = Attr(act_node, "tendon");
     const std::string site = Attr(act_node, "site");
+    const std::string body = Attr(act_node, "body");
 
-    // Muscle / general / tendon- or site-targeted actuators -> MjcActuator,
-    // preserving the MuJoCo gain/bias/lengthrange parameters (e.g. ms_human_700
-    // muscles are `<general class="muscle" tendon=.. gainprm=.. biasprm=..>`).
-    // Joint-targeted position/velocity/motor actuators keep the Newton PD path.
+    // Muscle/general/adhesion/cylinder/intvelocity/damper, or any tendon-/site-/
+    // body-targeted actuator -> MjcActuator (preserves the MuJoCo gain/bias/
+    // lengthrange params; e.g. ms_human_700 muscles, flybody adhesion). Plain
+    // joint-targeted position/velocity/motor actuators keep the Newton PD path.
     const bool is_mjc = (type == "muscle" || type == "general" ||
-                         !tendon.empty() || !site.empty());
+                         type == "adhesion" || type == "cylinder" ||
+                         type == "intvelocity" || type == "damper" ||
+                         !tendon.empty() || !site.empty() || !body.empty());
     if (is_mjc && mjc_actuators) {
       const std::string fallback_target =
-          !joint.empty() ? joint : (!tendon.empty() ? tendon : site);
+          !joint.empty() ? joint
+                         : (!tendon.empty() ? tendon
+                                            : (!site.empty() ? site : body));
       nlohmann::json a = nlohmann::json::object();
       a["name"] = Attr(act_node, "name", type + "_" + fallback_target);
       a["actuatorType"] = type;
       if (!joint.empty()) a["targetJoint"] = joint;
       if (!tendon.empty()) a["targetTendon"] = tendon;
       if (!site.empty()) a["targetSite"] = site;
+      if (!body.empty()) a["targetBody"] = body;
       const auto gainprm = ParseDoubles(Attr(act_node, "gainprm"));
       if (!gainprm.empty()) a["gainPrm"] = gainprm;
+      else if (HasAttr(act_node, "gain"))  // <adhesion gain=..> scalar
+        a["gainPrm"] = {ParseDoubleAttr(act_node, "gain", 0.0)};
       const auto biasprm = ParseDoubles(Attr(act_node, "biasprm"));
       if (!biasprm.empty()) a["biasPrm"] = biasprm;
       const auto lengthrange = ParseDoubles(Attr(act_node, "lengthrange"));

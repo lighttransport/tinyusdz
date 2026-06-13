@@ -1244,6 +1244,7 @@ bool AddMjcActuatorFromJson(
     const std::map<std::string, std::string> &joint_name_to_usd,
     const std::map<std::string, std::string> &tendon_name_to_usd,
     const std::map<std::string, std::string> &site_name_to_usd,
+    const std::map<std::string, std::string> &link_name_to_usd,
     std::set<std::string> &used_names, size_t index, std::string *warn,
     std::string *err) {
   MjcActuator act;
@@ -1256,6 +1257,7 @@ bool AddMjcActuatorFromJson(
   const std::string t_tendon = JsonString(a_json, "targetTendon");
   const std::string t_joint = JsonString(a_json, "targetJoint");
   const std::string t_site = JsonString(a_json, "targetSite");
+  const std::string t_body = JsonString(a_json, "targetBody");
   if (!t_tendon.empty()) {
     auto it = tendon_name_to_usd.find(t_tendon);
     if (it != tendon_name_to_usd.end())
@@ -1268,6 +1270,10 @@ bool AddMjcActuatorFromJson(
     auto it = site_name_to_usd.find(t_site);
     if (it != site_name_to_usd.end())
       targets.emplace_back("/World/Sites/" + it->second, "");
+  } else if (!t_body.empty()) {  // <adhesion body=..>
+    auto it = link_name_to_usd.find(t_body);
+    if (it != link_name_to_usd.end())
+      targets.emplace_back("/World/Links/" + it->second, "");
   }
   if (!targets.empty()) act.target.set(std::move(targets));
 
@@ -2275,7 +2281,8 @@ bool ConvertURDFJsonToUSDStage(
     for (size_t i = 0; i < mjc_actuators_json.size(); i++) {
       if (!AddMjcActuatorFromJson(mjc_actuators_prim, mjc_actuators_json[i],
                                   joint_name_to_usd, tendon_name_to_usd,
-                                  site_name_to_usd, used, i, warn, err)) {
+                                  site_name_to_usd, link_name_to_usd, used, i,
+                                  warn, err)) {
         return false;
       }
     }
