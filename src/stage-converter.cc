@@ -420,7 +420,17 @@ bool CrateWriter::ConvertSinglePrim(
   }
 
   Path prim_path(abs_path_str, "");
+  // prim_type_name() carries the parser-set / user-set string, but is empty for
+  // in-memory authored prims (e.g. those built by the tydra converters). Fall
+  // back to the typed schema name — mirrors ExtractPrimProperties — so the
+  // type-specific spec emitters below (Material outputs, Shader inputs) run for
+  // programmatically-built prims too. Without this, an authored UsdShade
+  // network round-trips through USDA but loses every shader input/output on
+  // USDC/USDZ write (only `info:id` survived via the generic prop path).
   std::string type_name = prim.prim_type_name();
+  if (type_name.empty()) {
+    type_name = prim.type_name();
+  }
 
   // All specs this prim contributes (its Prim spec + Attribute/Relationship/
   // Connection specs) are appended to spec_data_ within this call. Record the
