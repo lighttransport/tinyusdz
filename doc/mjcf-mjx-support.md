@@ -82,7 +82,8 @@ Legend:
 | MJCF | Status | Notes |
 |---|---|---|
 | `<sensor>` (touch/accel/gyro/jointpos/framepos/…) | Missing | Large taxonomy; candidates for a `MjcSensor` prim + `MjcSensorAPI` |
-| `<camera>` / `<light>` | Missing | Map to `UsdGeomCamera` / `UsdLux*` |
+| `<light>` (directional→`DistantLight`, point/spot→`SphereLight`+cone) | **Full** | color from `diffuse`, castshadow, emission oriented by `dir`, baked world xform |
+| `<camera>` (fovy→aperture, orthographic) | **Full** | `UsdGeomCamera` with baked world xform |
 | `<asset><texture/material>` | Missing (MJCF side) | Geom rgba only; PBR material binding TBD |
 | `<asset><skin>` | Missing | Map to `UsdSkel` |
 | `<deformable>/<flexcomp>/<flex>` (MuJoCo 3 FEM soft bodies) | Missing | No USD physics soft-body schema; needs design |

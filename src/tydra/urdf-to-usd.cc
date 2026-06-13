@@ -24,6 +24,7 @@
 #include "mjcPhysics.hh"
 #include "stage.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 #include "usdPhysics.hh"
 #include "value-types.hh"
 #include "xform.hh"
@@ -1333,6 +1334,132 @@ bool AddMjcKeyframeFromJson(Prim &keyframes_prim, const nlohmann::json &k_json,
   return true;
 }
 
+// Build a row-vector local->world transform for a light whose emission axis
+// (USD light -Z) points along the world-space `dir`, positioned at the world
+// matrix's translation. `world` is the baked body*light frame (row-major,
+// translation in row 3); `local_dir` is the MJCF <light dir> in that frame.
+value::matrix4d LightTransformMatrix(const value::matrix4d &world,
+                                     const std::array<double, 3> &local_dir) {
+  // Rotate local_dir by the world frame's upper-3x3 (row-vector: v' = v * R).
+  double wd[3];
+  for (int j = 0; j < 3; j++) {
+    wd[j] = local_dir[0] * world.m[0][j] + local_dir[1] * world.m[1][j] +
+            local_dir[2] * world.m[2][j];
+  }
+  auto norm = [](double v[3]) {
+    double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (n > 1e-12) { v[0] /= n; v[1] /= n; v[2] /= n; }
+  };
+  norm(wd);
+  // USD light emits along -Z, so the local Z axis (world) = -dir.
+  double z[3] = {-wd[0], -wd[1], -wd[2]};
+  // Pick an up reference not parallel to z.
+  double up[3] = {0, 0, 1};
+  if (std::fabs(z[2]) > 0.95) { up[0] = 0; up[1] = 1; up[2] = 0; }
+  double x[3] = {up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2],
+                 up[0] * z[1] - up[1] * z[0]};
+  norm(x);
+  double y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2],
+                 z[0] * x[1] - z[1] * x[0]};
+  value::matrix4d m;
+  Identity(&m);
+  for (int j = 0; j < 3; j++) {
+    m.m[0][j] = x[j];
+    m.m[1][j] = y[j];
+    m.m[2][j] = z[j];
+    m.m[3][j] = world.m[3][j];  // world translation
+  }
+  return m;
+}
+
+// MJCF <light> -> UsdLux: directional -> DistantLight, point/spot -> SphereLight
+// (spot gets a shaping cone). Color from <light diffuse>. JSON:
+//   { name, type, matrix:[16 world], dir:[3 local], color:[3], castshadow, cutoff }.
+bool AddLightFromJson(Prim &lights_prim, const nlohmann::json &l_json,
+                      std::set<std::string> &used_names, size_t index,
+                      std::string *err) {
+  const std::string usd_name = UniqueUSDIdentifier(
+      JsonString(l_json, "name", "light_" + std::to_string(index)), used_names,
+      "light");
+  const std::string type = JsonString(l_json, "type", "spot");
+  const value::matrix4d world = MatrixFromUSDArray(JsonDoubleArray(l_json, "matrix"));
+  std::array<double, 3> dir{0, 0, -1};
+  const auto d = JsonDoubleArray(l_json, "dir");
+  if (d.size() >= 3) dir = {d[0], d[1], d[2]};
+  const value::matrix4d xform = LightTransformMatrix(world, dir);
+
+  value::color3f color{1.0f, 1.0f, 1.0f};
+  const auto c = JsonFloatArray(l_json, "color");
+  if (c.size() >= 3) color = {c[0], c[1], c[2]};
+  bool castshadow = true;
+  JsonBool(l_json, "castshadow", &castshadow);
+
+  std::string add_err;
+  if (type == "directional") {
+    DistantLight light;
+    light.name = usd_name;
+    light.color.set_value(Animatable<value::color3f>(color));
+    light.shadowEnable.set_value(Animatable<bool>(castshadow));
+    AddTransformOp(light, xform);
+    if (!lights_prim.add_child(Prim(usd_name, light), true, &add_err)) {
+      SetErr(err, "Failed to add light `" + usd_name + "`: " + add_err);
+      return false;
+    }
+  } else {
+    SphereLight light;
+    light.name = usd_name;
+    light.radius.set_value(Animatable<float>(0.02f));  // near-point
+    light.color.set_value(Animatable<value::color3f>(color));
+    light.shadowEnable.set_value(Animatable<bool>(castshadow));
+    if (type == "spot") {
+      double cutoff = 45.0;
+      JsonNumber(l_json, "cutoff", &cutoff);
+      light.shapingConeAngle.set_value(Animatable<float>(static_cast<float>(cutoff)));
+    }
+    AddTransformOp(light, xform);
+    if (!lights_prim.add_child(Prim(usd_name, light), true, &add_err)) {
+      SetErr(err, "Failed to add light `" + usd_name + "`: " + add_err);
+      return false;
+    }
+  }
+  return true;
+}
+
+// MJCF <camera> -> UsdGeomCamera. fovy (vertical, degrees) -> verticalAperture
+// for the default focalLength; orthographic projection honored. JSON:
+//   { name, matrix:[16 world], fovy, orthographic }.
+bool AddCameraFromJson(Prim &cameras_prim, const nlohmann::json &c_json,
+                       std::set<std::string> &used_names, size_t index,
+                       std::string *err) {
+  GeomCamera cam;
+  cam.name = UniqueUSDIdentifier(
+      JsonString(c_json, "name", "camera_" + std::to_string(index)), used_names,
+      "camera");
+  AddTransformOp(cam, MatrixFromUSDArray(JsonDoubleArray(c_json, "matrix")));
+  double fovy = 45.0;
+  if (JsonNumber(c_json, "fovy", &fovy) && fovy > 0.0 && fovy < 180.0) {
+    // verticalAperture = 2 * focalLength * tan(fovy/2). Keep the default
+    // focalLength (50mm) and derive a matching vertical aperture (and a square
+    // horizontal aperture as a sensor-agnostic default).
+    const double f = 50.0;
+    const double va = 2.0 * f * std::tan(fovy * 0.5 * 3.14159265358979323846 / 180.0);
+    cam.focalLength.set_value(Animatable<float>(static_cast<float>(f)));
+    cam.verticalAperture.set_value(Animatable<float>(static_cast<float>(va)));
+    cam.horizontalAperture.set_value(Animatable<float>(static_cast<float>(va)));
+  }
+  bool ortho = false;
+  if (JsonBool(c_json, "orthographic", &ortho) && ortho) {
+    cam.projection.set_value(Animatable<GeomCamera::Projection>(
+        GeomCamera::Projection::Orthographic));
+  }
+  std::string add_err;
+  if (!cameras_prim.add_child(Prim(cam), true, &add_err)) {
+    SetErr(err, "Failed to add camera `" + cam.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
@@ -2072,6 +2199,42 @@ bool ConvertURDFJsonToUSDStage(
     has_keyframes = !keyframes_prim.children().empty();
   }
 
+  // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
+  const nlohmann::json &lights_json =
+      (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
+                                                             : empty_array;
+  const nlohmann::json &cameras_json =
+      (root.contains("cameras") && root["cameras"].is_array()) ? root["cameras"]
+                                                               : empty_array;
+  Prim lights_prim;
+  bool has_lights = false;
+  if (!lights_json.empty()) {
+    Xform scope;
+    scope.name = "Lights";
+    lights_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < lights_json.size(); i++) {
+      if (!AddLightFromJson(lights_prim, lights_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_lights = !lights_prim.children().empty();
+  }
+  Prim cameras_prim;
+  bool has_cameras = false;
+  if (!cameras_json.empty()) {
+    Xform scope;
+    scope.name = "Cameras";
+    cameras_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < cameras_json.size(); i++) {
+      if (!AddCameraFromJson(cameras_prim, cameras_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_cameras = !cameras_prim.children().empty();
+  }
+
   // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
   Prim equalities_prim;
   bool has_equalities = false;
@@ -2124,6 +2287,16 @@ bool ConvertURDFJsonToUSDStage(
     if (has_keyframes &&
         !world_prim.add_child(std::move(keyframes_prim), true, &add_err)) {
       SetErr(err, "Failed to add Keyframes scope: " + add_err);
+      return false;
+    }
+    if (has_lights &&
+        !world_prim.add_child(std::move(lights_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Lights scope: " + add_err);
+      return false;
+    }
+    if (has_cameras &&
+        !world_prim.add_child(std::move(cameras_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Cameras scope: " + add_err);
       return false;
     }
   }

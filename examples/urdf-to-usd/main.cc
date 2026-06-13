@@ -1388,6 +1388,49 @@ void CollectMujocoSitesJson(const pugi::xml_node &body_node,
   }
 }
 
+bool MjcBoolAttr(const std::string &v);  // defined below
+
+// MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
+// world matrix, consumed by the converter's AddLightFromJson/AddCameraFromJson.
+// `frame_world` is the world transform of `frame_node`'s frame.
+void CollectMujocoLightsCamerasJson(const pugi::xml_node &frame_node,
+                                    const std::vector<double> &frame_world,
+                                    const Context &ctx, nlohmann::json *lights,
+                                    nlohmann::json *cameras) {
+  for (const auto &l : Children(frame_node, "light")) {
+    nlohmann::json light = nlohmann::json::object();
+    light["name"] = Attr(l, "name", "light");
+    std::string type = Attr(l, "type");
+    if (type.empty())
+      type = MjcBoolAttr(Attr(l, "directional", "false")) ? "directional" : "spot";
+    light["type"] = type;
+    light["matrix"] = MultiplyMatrix(frame_world, PoseMatrix(l, ctx));
+    const auto dir = ParseDouble3(Attr(l, "dir"), {{0.0, 0.0, -1.0}});
+    light["dir"] = {dir[0], dir[1], dir[2]};
+    const auto diffuse = ParseDoubles(Attr(l, "diffuse"));
+    if (diffuse.size() >= 3) light["color"] = {diffuse[0], diffuse[1], diffuse[2]};
+    if (HasAttr(l, "castshadow"))
+      light["castshadow"] = MjcBoolAttr(Attr(l, "castshadow"));
+    if (HasAttr(l, "cutoff")) light["cutoff"] = ParseDoubleAttr(l, "cutoff", 45.0);
+    lights->push_back(std::move(light));
+  }
+  for (const auto &c : Children(frame_node, "camera")) {
+    nlohmann::json cam = nlohmann::json::object();
+    cam["name"] = Attr(c, "name", "camera");
+    cam["matrix"] = MultiplyMatrix(frame_world, PoseMatrix(c, ctx));
+    if (HasAttr(c, "fovy")) cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
+    const std::string proj = Attr(c, "projection");
+    if (proj == "orthographic" || MjcBoolAttr(Attr(c, "orthographic", "false")))
+      cam["orthographic"] = true;
+    cameras->push_back(std::move(cam));
+  }
+  for (const auto &child : Children(frame_node, "body")) {
+    const std::vector<double> body_world =
+        MultiplyMatrix(frame_world, PoseMatrix(child, ctx));
+    CollectMujocoLightsCamerasJson(child, body_world, ctx, lights, cameras);
+  }
+}
+
 // MJCF <equality> -> JSON entries consumed by AddMjcEqualityFromJson.
 void AddMujocoEqualityJson(const pugi::xml_node &root, nlohmann::json *equalities,
                            Stats *stats) {
@@ -1685,6 +1728,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json sites = nlohmann::json::array();
   nlohmann::json mjc_actuators = nlohmann::json::array();
   nlohmann::json keyframes = nlohmann::json::array();
+  nlohmann::json lights = nlohmann::json::array();
+  nlohmann::json cameras = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1697,6 +1742,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
   AddMujocoKeyframesJson(root, &keyframes, stats);
+  CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
+                                 &cameras);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1716,6 +1763,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json mjc_scene = BuildMjcSceneJson(root);
   if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
   if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
+  if (!lights.empty()) (*payload)["lights"] = std::move(lights);
+  if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

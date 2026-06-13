@@ -1249,6 +1249,43 @@ function parseMujocoKeyframes(root) {
 // MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
 function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
 
+// MJCF <light>/<camera> (in worldbody or nested bodies) -> payload lights/cameras
+// with a baked world matrix, consumed by the C++ converter's AddLightFromJson /
+// AddCameraFromJson (UsdLux + GeomCamera).
+function collectMujocoLightsCameras(worldbody) {
+  const lights = [];
+  const cameras = [];
+  const visit = (node, world) => {
+    for (const l of childElements(node, 'light')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(l.attrs));
+      const type = l.attrs.type
+        || (mjcBoolAttr(l.attrs.directional || 'false') ? 'directional' : 'spot');
+      const light = { name: l.attrs.name || 'light', type, matrix: matrixToUSDArray(m) };
+      light.dir = parseNumbers(l.attrs.dir, [0, 0, -1]).slice(0, 3);
+      const diffuse = parseNumbers(l.attrs.diffuse, []);
+      if (diffuse.length >= 3) light.color = diffuse.slice(0, 3);
+      if (l.attrs.castshadow !== undefined) light.castshadow = mjcBoolAttr(l.attrs.castshadow);
+      if (l.attrs.cutoff !== undefined) light.cutoff = numberAttr(l.attrs, 'cutoff');
+      lights.push(light);
+    }
+    for (const c of childElements(node, 'camera')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(c.attrs));
+      const cam = { name: c.attrs.name || 'camera', matrix: matrixToUSDArray(m) };
+      if (c.attrs.fovy !== undefined) cam.fovy = numberAttr(c.attrs, 'fovy');
+      if (c.attrs.projection === 'orthographic'
+          || (c.attrs.orthographic !== undefined && mjcBoolAttr(c.attrs.orthographic))) {
+        cam.orthographic = true;
+      }
+      cameras.push(cam);
+    }
+    for (const b of childElements(node, 'body')) {
+      visit(b, new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(b.attrs)));
+    }
+  };
+  visit(worldbody, new THREE.Matrix4());
+  return { lights, cameras };
+}
+
 // MJCF <option>/<option><flag>/<compiler> -> payload.mjcScene {option,flag,compiler}
 // consumed by the C++ converter's ApplyMjcSceneOptions -> MjcSceneAPI.
 function parseMujocoSceneOptions(root) {
@@ -1516,6 +1553,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const mjcActuators = parseMujocoMuscleActuators(root);
   const mjcScene = parseMujocoSceneOptions(root);
   const keyframes = parseMujocoKeyframes(root);
+  const { lights, cameras } = collectMujocoLightsCameras(worldbody);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1677,6 +1715,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;
   if (keyframes.length) payload.keyframes = keyframes;
+  if (lights.length) payload.lights = lights;
+  if (cameras.length) payload.cameras = cameras;
   return {
     payload,
     stats: {

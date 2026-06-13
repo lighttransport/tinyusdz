@@ -67,3 +67,6 @@ void urdf_json_mjc_scene_options_test(void);
 
 // <keyframe> -> MjcKeyframe
 void urdf_json_mjc_keyframe_export_test(void);
+
+// <light>/<camera> -> UsdLux + GeomCamera
+void urdf_json_mjc_lights_cameras_test(void);
