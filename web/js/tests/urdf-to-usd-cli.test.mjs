@@ -501,3 +501,28 @@ await testAsync('MJCF <extension><plugin> + <actuator><plugin> -> plugins + mjcA
     assert.equal((payload.actuators || []).length, 0);
   });
 });
+
+await testAsync('MJCF <geom type="hfield"> in worldbody -> static "world" link mesh', async () => {
+  await withTempDir(async (dir) => {
+    // Inline heightfield (nrow/ncol/elevation) avoids a PNG fixture; the geom is
+    // a direct <worldbody> child (world-fixed floor), not inside a <body>.
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Terrain">
+  <asset>
+    <hfield name="terrain" nrow="3" ncol="3" size="2 2 1 0.1"
+      elevation="0 0 0  0 1 0  0 0 0"/>
+  </asset>
+  <worldbody>
+    <geom name="floor" type="hfield" hfield="terrain" material="ground"/>
+  </worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    const world = payload.links.find((l) => l.name === 'world');
+    assert.ok(world, 'a static "world" link is synthesized for worldbody geoms');
+    assert.equal(world.static, true);
+    // The hfield tessellated into a single visual mesh (referenced by meshRef).
+    assert.equal(world.visuals.length, 1);
+    assert.ok(world.visuals[0].meshRef, 'hfield geom became a mesh');
+    assert.equal(world.visuals[0].material, 'ground');
+  });
+});

@@ -3398,6 +3398,62 @@ void urdf_json_mjc_plugin_test(void) {
   }
 }
 
+// A link flagged "static" (the synthetic "world" link holding worldbody-level
+// floor/ground/hfield geoms) must convert to a static collider:
+// physics:rigidBodyEnabled=false and NO articulation-root API. A normal
+// parentless link stays a dynamic articulation root.
+void physics_static_world_link_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "FloorBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [
+    { "name": "world", "static": true, "inertial": { "mass": 0 },
+      "visuals": [ { "name": "floor",
+        "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+        "geometry": { "positions": [-1,-1,0, 1,-1,0, 1,1,0, -1,1,0],
+                      "normals": [0,0,1, 0,0,1, 0,0,1, 0,0,1],
+                      "indices": [0,1,2, 0,2,3] } } ],
+      "collisions": [] },
+    { "name": "base" }
+  ],
+  "joints": []
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  // Static world link: not an articulation root, rigid body disabled.
+  auto wr = stage.GetPrimAtPath(Path("/World/Links/world", ""));
+  TEST_CHECK(bool(wr));
+  if (wr) {
+    const Prim *w = *wr;
+    TEST_CHECK(!has_api(w, APISchemas::APIName::PhysicsArticulationRootAPI));
+    const auto *wx = w->as<Xform>();
+    TEST_CHECK(wx != nullptr);
+    if (wx) {
+      auto it = wx->props.find("physics:rigidBodyEnabled");
+      TEST_CHECK(it != wx->props.end());
+      if (it != wx->props.end() && it->second.is_attribute()) {
+        auto v = it->second.get_attribute().get_value<bool>();
+        TEST_CHECK(v.has_value() && v.value() == false);
+      }
+      // the worldbody-level floor mesh landed under the static link
+      TEST_CHECK(!w->children().empty());
+    }
+  }
+
+  // A normal parentless link is still a dynamic articulation root.
+  auto br = stage.GetPrimAtPath(Path("/World/Links/base", ""));
+  TEST_CHECK(bool(br));
+  if (br) {
+    TEST_CHECK(has_api(*br, APISchemas::APIName::PhysicsArticulationRootAPI));
+  }
+}
+
 // MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
 void urdf_json_mjc_contact_pair_test(void) {
   const char *robot_json = R"JSON({
