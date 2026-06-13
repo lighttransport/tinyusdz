@@ -179,6 +179,30 @@ jobs:
 
         echo "All tests passed!"
 
+  # Build the optional MCP server + QuickJS configuration (both default OFF).
+  # This config is not covered by the default build, so it can silently bit-rot
+  # against core API changes; build + test it here to catch that early.
+  build-mcp-qjs:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_mcp -S . \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTINYUSDZ_WITH_MCP_SERVER=On \
+          -DTINYUSDZ_WITH_QJS=On \
+          -DTINYUSDZ_WITH_TYDRA=On \
+          -DTINYUSDZ_BUILD_TOOLS=On \
+          -DTINYUSDZ_BUILD_EXAMPLES=On \
+          -DTINYUSDZ_BUILD_TESTS=On
+    - name: make
+      run: cmake --build build_mcp -j2
+    - name: tests
+      run: cd build_mcp && ctest --output-on-failure
+
   # ARM64 ASan build — disabled. Deprecated; re-enable when the asan
   # runtime setup on the ubuntu-24.04-arm runner is sorted out.
   # build-arm64-asan:

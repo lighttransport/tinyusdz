@@ -45,6 +45,11 @@ bool DiffPaths(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 bool DiffPrim(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
               std::string &err);
 
+// diff_tree: subtree rollup of change counts under a path (navigable overview).
+//   args: { path?(default "/"), depth?(default 2) }
+bool DiffTree(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+              std::string &err);
+
 // diff_text / diff_json: full rendered diff (escape hatch; token-heavy).
 bool DiffText(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
               std::string &err);
@@ -58,6 +63,8 @@ void DiffComputeSummary(const DiffSession &d, nlohmann::json &out);
 void DiffComputePaths(const DiffSession &d, const nlohmann::json &filter,
                       nlohmann::json &out);
 void DiffComputePrim(const DiffSession &d, const std::string &path,
+                     nlohmann::json &out);
+void DiffComputeTree(const DiffSession &d, const std::string &root, int depth,
                      nlohmann::json &out);
 
 }  // namespace mcp

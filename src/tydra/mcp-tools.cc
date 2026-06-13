@@ -1395,11 +1395,27 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
         str_prop("Keep only paths containing this substring");
     schema["properties"]["kind"] = str_prop(
         "Filter by change-kind substring: added|deleted|modified|prim|prop");
+    schema["properties"]["group_by"] = str_prop(
+        "If set, return aggregated {key,count} groups instead of a path list: "
+        "reason | property | prim | kind");
     schema["properties"]["offset"] = int_prop("Pagination offset (default 0)");
     schema["properties"]["limit"] =
         int_prop("Max paths to return (default 200)");
     add_tool("diff_paths",
-             "Filtered, paginated list of changed paths from the cached diff.",
+             "Filtered, paginated list of changed paths from the cached diff. "
+             "Pass group_by to get aggregated counts instead.",
+             schema);
+  }
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] =
+        str_prop("Subtree root (default \"/\")");
+    schema["properties"]["depth"] =
+        int_prop("Levels below root to roll up (default 2)");
+    add_tool("diff_tree",
+             "Subtree rollup of change counts under a path (navigable "
+             "overview: which subtrees changed most).",
              schema);
   }
   {
@@ -1753,6 +1769,7 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   if (tool_name == "diff_summary") return DiffSummary(ctx, args, result, err);
   if (tool_name == "diff_paths") return DiffPaths(ctx, args, result, err);
   if (tool_name == "diff_prim") return DiffPrim(ctx, args, result, err);
+  if (tool_name == "diff_tree") return DiffTree(ctx, args, result, err);
   if (tool_name == "diff_text") return DiffText(ctx, args, result, err);
   if (tool_name == "diff_json") return DiffJson(ctx, args, result, err);
 
