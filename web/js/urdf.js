@@ -514,6 +514,34 @@ function applyRgbaToMesh(mesh, info) {
   mesh.material = Array.isArray(mesh.material) ? mesh.material.map(apply) : apply(mesh.material);
 }
 
+const _rgbCss = (c) => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
+
+function makeCanvas2D(size) {
+  const canvas = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(size, size)
+    : Object.assign(document.createElement('canvas'), { width: size, height: size });
+  return { canvas, ctx: canvas.getContext('2d') };
+}
+
+// MuJoCo builtin "checker": a 2x2 checkerboard of rgb1/rgb2 (material texrepeat
+// tiles it). Returns a THREE.CanvasTexture.
+function makeCheckerTexture(def) {
+  const { canvas, ctx } = makeCanvas2D(256);
+  ctx.fillStyle = _rgbCss(def.rgb1); ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = _rgbCss(def.rgb2);
+  ctx.fillRect(0, 0, 128, 128); ctx.fillRect(128, 128, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
+// MuJoCo builtin "gradient": vertical rgb1 (top) -> rgb2 (bottom).
+function makeGradientTexture(def) {
+  const { canvas, ctx } = makeCanvas2D(256);
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, _rgbCss(def.rgb1)); g.addColorStop(1, _rgbCss(def.rgb2));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(canvas);
+}
+
 function makeMissingMesh(path) {
   const group = new THREE.Group();
   group.name = `missing_${path || 'mesh'}`;
@@ -2434,6 +2462,23 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // <asset><material name rgba emission>: name -> {rgba, emission}, to color
   // geoms that reference a material rather than a direct rgba (e.g. ms_human_700
   // bones, iit_softfoot's emissive "green pulleys").
+  // <asset><texture> name -> definition (builtin checker/gradient or file).
+  const textureDefs = new Map();
+  for (const t of root.querySelectorAll('asset texture')) {
+    const name = t.getAttribute('name') || t.getAttribute('file');
+    if (!name) continue;
+    textureDefs.set(name, {
+      type: t.getAttribute('type') || '2d',
+      builtin: t.getAttribute('builtin') || 'none',
+      file: t.getAttribute('file') || '',
+      rgb1: parseNumbers(t.getAttribute('rgb1'), [0.8, 0.8, 0.8]),
+      rgb2: parseNumbers(t.getAttribute('rgb2'), [0.5, 0.5, 0.5]),
+      markrgb: parseNumbers(t.getAttribute('markrgb'), [0, 0, 0]),
+      mark: t.getAttribute('mark') || 'none',
+      width: Number(t.getAttribute('width')) || 0,
+      height: Number(t.getAttribute('height')) || 0
+    });
+  }
   const materialDefs = new Map();
   for (const m of root.querySelectorAll('asset material')) {
     const name = m.getAttribute('name');
@@ -2442,21 +2487,46 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const emission = Number(m.getAttribute('emission'));
     materialDefs.set(name, {
       rgba: rgba.length >= 3 ? rgba : null,
-      emission: Number.isFinite(emission) ? emission : 0
+      emission: Number.isFinite(emission) ? emission : 0,
+      texture: m.getAttribute('texture') || '',
+      texrepeat: parseNumbers(m.getAttribute('texrepeat'), [1, 1])
     });
   }
-  // A geom's effective display color {rgba, emission}: its own `rgba` (no
-  // emission), else its material, else null (keep the loader's neutral default —
-  // don't recolor uncolored geoms, so models without explicit colors render as
-  // before).
+  // A geom's effective display material {rgba, emission, texDef, texrepeat}: its
+  // own `rgba` (no emission/texture), else its <material> (which may carry a
+  // texture), else null (keep the loader's neutral default).
   const effectiveGeomRgba = (attrs) => {
     const direct = parseNumbers(attrs.rgba, []);
     if (direct.length >= 3) return { rgba: direct, emission: 0 };
     if (attrs.material && materialDefs.has(attrs.material)) {
       const d = materialDefs.get(attrs.material);
-      if (d.rgba) return d;
+      const tex = d.texture && textureDefs.get(d.texture);
+      if (d.rgba || tex) return { ...d, texDef: tex || null };
     }
     return null;
+  };
+  // Build (and cache) a THREE.Texture for a <texture> def: builtin checker/
+  // gradient via canvas, or a file texture loaded from the asset folder.
+  const textureCache = new Map();
+  const getMujocoTexture = async (def) => {
+    if (!def) return null;
+    const key = def.file || `${def.builtin}:${def.rgb1.join()}:${def.rgb2.join()}`;
+    if (textureCache.has(key)) return textureCache.get(key);
+    let tex = null;
+    if (def.file) {
+      const file = resolveAssetFile(def.file);
+      if (file) {
+        try { tex = await new THREE.TextureLoader().loadAsync(objectURLForFile(file)); }
+        catch (e) { console.warn(`MJCF texture load failed: ${def.file}`, e); }
+      }
+    } else if (def.builtin === 'checker') {
+      tex = makeCheckerTexture(def);
+    } else if (def.builtin === 'gradient') {
+      tex = makeGradientTexture(def);
+    }
+    if (tex) { tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; }
+    textureCache.set(key, tex);
+    return tex;
   };
   const actuators = buildMujocoActuators(root);
   const group = new THREE.Group();
@@ -2537,6 +2607,28 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
         state.collisionMeshes.push(obj);
       }
     });
+
+    // Apply a material's texture (builtin checker/gradient or file) to the
+    // visual meshes — e.g. the iconic checkered ground plane, or robot skins.
+    if (isVisual && geomRgba?.texDef) {
+      const tex = await getMujocoTexture(geomRgba.texDef);
+      if (tex) {
+        const rep = geomRgba.texrepeat || [1, 1];
+        object.traverse((obj) => {
+          if (!obj.isMesh || !obj.material) return;
+          const mat = obj.material.clone ? obj.material.clone() : obj.material;
+          const t = tex.clone();
+          t.needsUpdate = true;
+          t.wrapS = THREE.RepeatWrapping;
+          t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(rep[0] || 1, rep[1] || 1);
+          mat.map = t;
+          if (mat.color) mat.color.setRGB(1, 1, 1);  // show the texture untinted
+          mat.needsUpdate = true;
+          obj.material = mat;
+        });
+      }
+    }
 
     if (isVisual) {
       if (geomAttrs.material) {
