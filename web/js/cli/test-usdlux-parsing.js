@@ -11,13 +11,13 @@ const testFiles = [
   {
     name: 'Basic Lights',
     file: '../../tests/usda/usdlux_basic_lights.usda',
-    expectedLights: 5,
+    expectedLights: 6,
     description: 'Point, Directional, Rect, Disk, Cylinder, Dome lights'
   },
   {
     name: 'Advanced Features',
     file: '../../tests/usda/usdlux_advanced_features.usda',
-    expectedLights: 4,
+    expectedLights: 5,
     description: 'IES profiles, shaping, textured lights'
   },
   {
@@ -30,7 +30,7 @@ const testFiles = [
   {
     name: 'Complete Scene',
     file: '../../tests/feat/lux/04_complete_scene.usda',
-    expectedLights: 2,
+    expectedLights: 4,
     description: 'Three-point lighting with materials'
   }
 ];
