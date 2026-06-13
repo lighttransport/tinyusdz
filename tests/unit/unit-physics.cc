@@ -3261,6 +3261,64 @@ void urdf_json_mjc_mocap_custom_test(void) {
   }
 }
 
+// Regression canary: an MjcActuator's transmission/gain/bias/range attributes
+// must survive a USDC round-trip. The crate writer's ExtractMjcActuatorProperties
+// formerly emitted only group/target/dyn/gain/biasType, silently dropping
+// ctrlRange/forceRange/gainPrm/biasPrm/gear/lengthRange on write.
+void physics_mjc_actuator_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def "World"
+{
+    def Scope "MjcActuators"
+    {
+        def MjcActuator "act0"
+        {
+            uniform double mjc:ctrlRange:min = 0
+            uniform double mjc:ctrlRange:max = 0.04
+            uniform double mjc:forceRange:min = -200
+            uniform double mjc:forceRange:max = 200
+            uniform double mjc:lengthRange:min = 0.18
+            uniform double mjc:lengthRange:max = 0.29
+            uniform double[] mjc:gear = [1, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [350, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -350, -10]
+        }
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("usdc roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+
+  auto ar = stage.GetPrimAtPath(Path("/World/MjcActuators/act0", ""));
+  TEST_CHECK(bool(ar));
+  if (!ar) return;
+  const auto *a = (*ar)->as<MjcActuator>();
+  TEST_CHECK(a != nullptr);
+  if (!a) return;
+  TEST_CHECK(approx_eq(a->ctrlRange_min.get_value(), 0.0));
+  TEST_CHECK(approx_eq(a->ctrlRange_max.get_value(), 0.04));
+  TEST_CHECK(approx_eq(a->forceRange_min.get_value(), -200.0));
+  TEST_CHECK(approx_eq(a->forceRange_max.get_value(), 200.0));
+  TEST_CHECK(approx_eq(a->lengthRange_min.get_value(), 0.18));
+  TEST_CHECK(approx_eq(a->lengthRange_max.get_value(), 0.29));
+  auto gear = a->gear.get_value();
+  TEST_CHECK(gear.has_value() && gear.value().size() == 6);
+  auto gp = a->gainPrm.get_value();
+  TEST_CHECK(gp.has_value());
+  if (gp.has_value() && gp.value().size() >= 3) {
+    TEST_CHECK(approx_eq(gp.value()[0], 350.0));
+  }
+  auto bp = a->biasPrm.get_value();
+  TEST_CHECK(bp.has_value());
+  if (bp.has_value() && bp.value().size() >= 3) {
+    TEST_CHECK(approx_eq(bp.value()[1], -350.0));
+  }
+}
+
 // MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
 void urdf_json_mjc_contact_pair_test(void) {
   const char *robot_json = R"JSON({

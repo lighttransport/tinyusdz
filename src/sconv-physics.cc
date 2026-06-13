@@ -340,9 +340,35 @@ bool CrateWriter::ExtractMjcActuatorProperties(
   if (!a) { if (err) *err = "Failed to cast to MjcActuator"; return false; }
   EXTRACT_FALLBACK(a->group, "mjc:group");
   EXTRACT_REL(a->target, "mjc:target");
+  EXTRACT_REL(a->refSite, "mjc:refSite");
+  EXTRACT_REL(a->sliderSite, "mjc:sliderSite");
   EXTRACT_TOKEN_FALLBACK(a->dynType, "mjc:dynType");
   EXTRACT_TOKEN_FALLBACK(a->gainType, "mjc:gainType");
   EXTRACT_TOKEN_FALLBACK(a->biasType, "mjc:biasType");
+  // The remaining typed attributes were previously dropped on USDC write (only
+  // group/target/dyn/gain/bias above survived), losing ctrlRange/forceRange/
+  // gainPrm/biasPrm/gear/lengthRange/etc. through a crate round-trip. Emit each
+  // authored field so a converted MjcActuator round-trips losslessly.
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->ctrlLimited, "mjc:ctrlLimited");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->forceLimited, "mjc:forceLimited");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->actLimited, "mjc:actLimited");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->ctrlRange_min, "mjc:ctrlRange:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->ctrlRange_max, "mjc:ctrlRange:max");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->forceRange_min, "mjc:forceRange:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->forceRange_max, "mjc:forceRange:max");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->actRange_min, "mjc:actRange:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->actRange_max, "mjc:actRange:max");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->lengthRange_min, "mjc:lengthRange:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->lengthRange_max, "mjc:lengthRange:max");
+  EXTRACT_TYPED(a->gear, "mjc:gear");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->crankLength, "mjc:crankLength");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->jointInParent, "mjc:jointInParent");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->actDim, "mjc:actDim");
+  EXTRACT_TYPED(a->dynPrm, "mjc:dynPrm");
+  EXTRACT_TYPED(a->gainPrm, "mjc:gainPrm");
+  EXTRACT_TYPED(a->biasPrm, "mjc:biasPrm");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->actEarly, "mjc:actEarly");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->inheritRange, "mjc:inheritRange");
   return true;
 }
 
