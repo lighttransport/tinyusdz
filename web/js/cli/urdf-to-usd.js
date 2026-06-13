@@ -1433,6 +1433,28 @@ function parseMujocoContactExcludes(root) {
   return out;
 }
 
+// MJCF <contact><pair geom1 geom2 ...> -> contactPairs entries.
+function parseMujocoContactPairs(root) {
+  const contactRoot = firstChild(root, 'contact');
+  if (!contactRoot) return [];
+  const out = [];
+  for (const node of childElements(contactRoot, 'pair')) {
+    if (!node.attrs.geom1 || !node.attrs.geom2) continue;
+    const pr = { name: node.attrs.name || `pair_${out.length}`, geom1: node.attrs.geom1, geom2: node.attrs.geom2 };
+    if (node.attrs.condim !== undefined) pr.condim = Math.round(numberAttr(node.attrs, 'condim'));
+    if (node.attrs.margin !== undefined) pr.margin = numberAttr(node.attrs, 'margin');
+    if (node.attrs.gap !== undefined) pr.gap = numberAttr(node.attrs, 'gap');
+    const friction = parseNumbers(node.attrs.friction, []);
+    if (friction.length) pr.friction = friction;
+    const solref = parseNumbers(node.attrs.solref, []);
+    if (solref.length) pr.solref = solref;
+    const solimp = parseNumbers(node.attrs.solimp, []);
+    if (solimp.length) pr.solimp = solimp;
+    out.push(pr);
+  }
+  return out;
+}
+
 async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
   const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
   // Bake the body-chain world transform into the geom matrix: the USD converter
@@ -1601,6 +1623,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const tendons = parseMujocoTendons(root);
   const equalities = parseMujocoEqualities(root);
   const filteredPairs = parseMujocoContactExcludes(root);
+  const contactPairs = parseMujocoContactPairs(root);
   const sites = collectMujocoSites(worldbody);
   const mjcActuators = parseMujocoMuscleActuators(root);
   const mjcScene = parseMujocoSceneOptions(root);
@@ -1769,6 +1792,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (tendons.length) payload.tendons = tendons;
   if (equalities.length) payload.equalities = equalities;
   if (filteredPairs.length) payload.filteredPairs = filteredPairs;
+  if (contactPairs.length) payload.contactPairs = contactPairs;
   if (sites.length) payload.sites = sites;
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;

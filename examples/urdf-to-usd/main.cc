@@ -80,6 +80,7 @@ struct Stats {
   size_t keyframes{0};
   size_t materials{0};
   size_t sensors{0};
+  size_t contact_pairs{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1527,6 +1528,33 @@ void AddMujocoContactExcludesJson(const pugi::xml_node &root,
   }
 }
 
+// MJCF <contact><pair> -> JSON entries consumed by AddContactPairFromJson. An
+// explicit collision pair between two geoms with its own friction/solver params.
+void AddMujocoContactPairsJson(const pugi::xml_node &root,
+                               nlohmann::json *pairs, Stats *stats) {
+  if (!pairs) return;
+  const auto contact_root = Child(root, "contact");
+  if (!contact_root) return;
+  for (const auto &p : Children(contact_root, "pair")) {
+    const std::string g1 = Attr(p, "geom1");
+    const std::string g2 = Attr(p, "geom2");
+    if (g1.empty() || g2.empty()) continue;
+    nlohmann::json pr = {{"geom1", g1}, {"geom2", g2}};
+    pr["name"] = Attr(p, "name", "pair_" + std::to_string(pairs->size()));
+    if (HasAttr(p, "condim")) pr["condim"] = static_cast<int>(ParseDoubleAttr(p, "condim", 3.0));
+    if (HasAttr(p, "margin")) pr["margin"] = ParseDoubleAttr(p, "margin", 0.0);
+    if (HasAttr(p, "gap")) pr["gap"] = ParseDoubleAttr(p, "gap", 0.0);
+    const auto friction = ParseDoubles(Attr(p, "friction"));
+    if (!friction.empty()) pr["friction"] = friction;
+    const auto solref = ParseDoubles(Attr(p, "solref"));
+    if (!solref.empty()) pr["solref"] = solref;
+    const auto solimp = ParseDoubles(Attr(p, "solimp"));
+    if (!solimp.empty()) pr["solimp"] = solimp;
+    pairs->push_back(std::move(pr));
+    if (stats) stats->contact_pairs++;
+  }
+}
+
 // Normalize a MuJoCo boolean/flag attribute: <flag x="enable|disable"> and
 // <compiler x="true|false"> both occur; map enable/true/1 -> true.
 bool MjcBoolAttr(const std::string &v) {
@@ -1803,6 +1831,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json cameras = nlohmann::json::array();
   nlohmann::json materials = nlohmann::json::array();
   nlohmann::json sensors = nlohmann::json::array();
+  nlohmann::json contact_pairs = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1819,6 +1848,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
                                  &cameras);
   AddMujocoMaterialsJson(root, &materials, stats);
   AddMujocoSensorsJson(root, &sensors, stats);
+  AddMujocoContactPairsJson(root, &contact_pairs, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1842,6 +1872,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
   if (!materials.empty()) (*payload)["materials"] = std::move(materials);
   if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
+  if (!contact_pairs.empty()) (*payload)["contactPairs"] = std::move(contact_pairs);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);
