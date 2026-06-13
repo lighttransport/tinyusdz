@@ -1049,12 +1049,22 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
     return false;
   }
 
-  // Parse optional metadata
+  // Parse optional metadata block: ( [list-op] key = value ... ). Known simple
+  // fields are stored on the VariantData; the rest (apiSchemas, kind, variants,
+  // references, ...) are consumed robustly so the body still parses.
   if (Check(TokenType::OpenParen)) {
     lexer_->next();
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
+      // Optional list-op qualifier before the key.
+      (void)(Match(TokenType::Prepend) || Match(TokenType::Append) ||
+             Match(TokenType::Delete) || Match(TokenType::Reorder) ||
+             Match(TokenType::Add));
+
       std::string key;
-      if (!lexer_->expect(TokenType::Identifier, key)) break;
+      if (!lexer_->expect(TokenType::Identifier, key)) {
+        if (!AtEnd()) lexer_->next();  // make progress on an unexpected token
+        continue;
+      }
       if (!Match(TokenType::Equals)) break;
 
       if (key == "active") {
@@ -1067,9 +1077,15 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         if (result.success && result.value.as_bool()) {
           out->hidden = *result.value.as_bool();
         }
+      } else if (key == "doc" || key == "documentation") {
+        std::string v;
+        if (lexer_->expect(TokenType::String, v)) out->doc = v;
       } else {
-        TypeId t;
-        ParseGenericValue(*lexer_, t);
+        // Consume the value: a bracketed list / dict / paren block or a single
+        // token, plus a trailing PathRef and layer-offset paren for arcs.
+        SkipValueLike();
+        while (Check(TokenType::PathRef)) lexer_->next();
+        if (Check(TokenType::OpenParen)) SkipValueLike();
       }
     }
     Match(TokenType::CloseParen);
