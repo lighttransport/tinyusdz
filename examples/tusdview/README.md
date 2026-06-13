@@ -35,14 +35,21 @@ displays it with an ImGui docking UI.
   so only geometry/transforms are rebuilt. This animates **time-sampled
   transforms** (`xformOp` timeSamples), **deforming meshes** (time-sampled
   `points`), **value clips**, and **skeletal + blendshape animation**.
-  Skinning is applied on the **CPU** (`skinning.cc`): Tydra delivers the
-  rest-pose mesh plus skeleton/animation data, then each posed frame the viewer
-  evaluates joint transforms (and blendshape weights, read from the stage's
-  `SkelAnimation` since Tydra does not emit them) and runs linear-blend skinning
-  (`SkinPointsLBS`) over the rest points — normals are regenerated from the
-  posed geometry. For a static frame at a specific time (e.g. a headless
-  screenshot), use `--time CODE` (alias `--frame`), which bakes the posed
-  geometry too.
+  Skinning (`skinning.cc`) runs on the **GPU by default** (`--skinning
+  auto|cpu|gpu`): the rest mesh is uploaded once with per-vertex joint
+  indices/weights, and each posed frame the viewer computes the skinning
+  matrices (`inverse(bind)·posedWorld`, joint poses from the animation /
+  blendshape weights from the stage's `SkelAnimation`, which Tydra does not
+  emit), uploads them as an RGBA32F **bone-matrix texture**, and the vertex
+  shader does linear-blend skinning. **Blendshapes** are applied on the GPU path
+  too: the affected meshes' rest vertices are morphed on the CPU (sparse
+  weighted offsets, normals regenerated from the posed geometry) and re-uploaded
+  per frame, then GPU-skinned. The **CPU** path (`SkinPointsLBS`, full re-pose +
+  upload) is the fallback and is used when the renderer lacks GPU skinning, for
+  the **ray-tracing** technique, or for scenes that also have **non-skeletal
+  (xform/deform) animation**. For a static frame at a specific time (e.g. a
+  headless screenshot), use `--time CODE` (alias `--frame`), which bakes the
+  posed geometry too.
 
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional

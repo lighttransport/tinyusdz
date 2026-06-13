@@ -37,6 +37,8 @@ class VulkanRenderer final : public Renderer {
   void appendMesh(const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
+  void updateMeshVertices(int meshIndex,
+                          const std::vector<DrawVertex>& verts) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;

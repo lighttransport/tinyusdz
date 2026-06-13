@@ -155,7 +155,6 @@ void App::applyLoaded(bool ok, bool progressive) {
     updateSkinningEffective();
     if (skinningEffective_ == SkinningMode::GPU) {
       LOGI("skinning: GPU (%s)", skinningReason_.c_str());
-      updateGpuSkinningFrameIfNeeded();
     } else if (skinningRequested_ == SkinningMode::GPU) {
       LOGW("skinning: requested GPU, using CPU (%s)", skinningReason_.c_str());
     } else {
@@ -163,14 +162,6 @@ void App::applyLoaded(bool ok, bool progressive) {
     }
     const std::string& up = loaded_.render.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
-    if (draw_.hasBounds) {
-      // Size the near/far planes from the full scene radius, then frame it.
-      const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
-      const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
-      const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
-      camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
-      camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
-    }
   }
 
   if (ok && progressive) {
@@ -193,6 +184,22 @@ void App::applyLoaded(bool ok, bool progressive) {
     } else {
       LOGE("load failed: %s", loaded_.err.c_str());
     }
+  }
+  // Pose the GPU frame now that the renderer holds the meshes (the per-mesh
+  // morph vertex upload needs them present; the bone texture is global). For the
+  // progressive path meshes stream in over later frames — the main loop re-poses
+  // once streaming completes (skinFrameTime_ stays NaN until then).
+  if (ok && skinningEffective_ == SkinningMode::GPU && !progressiveActive_) {
+    updateGpuSkinningFrameIfNeeded();
+  }
+  // Frame the camera AFTER the GPU pose updates draw_ bounds (so an animated
+  // load, e.g. --time, frames the posed geometry, matching the CPU bake path).
+  if (ok && draw_.hasBounds) {
+    const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+    const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+    const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+    camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
+    camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
   }
   gui_.setScene(&loaded_, &draw_);
 }
@@ -234,11 +241,13 @@ void App::loadFileBlocking(const std::string& path) {
   // Streaming convert+build in one pass (also fully populates tmp.render).
   bool ok = LoadUSD(path, opts, &tmp, &drawTmp, rtPath_, &loadCtrl_);
   if (ok && gpuRestLoad) {
+    const bool skeletal = SceneHasSkeletalSkinning(tmp.render);
+    const bool morph = SceneHasBlendShapes(tmp.render);
     const bool gpuEligible =
         renderer_ && renderer_->caps().supportsGpuSkinning &&
-        !renderer_->rayTracingActive() && SceneHasSkeletalSkinning(tmp.render) &&
-        !SceneHasBlendShapes(tmp.render) && !SceneHasNonSkeletalAnimation(tmp.render) &&
-        drawTmp.boneMatrixCount > 0;
+        !renderer_->rayTracingActive() && (skeletal || morph) &&
+        !SceneHasNonSkeletalAnimation(tmp.render) &&
+        (!skeletal || drawTmp.boneMatrixCount > 0);
     if (!gpuEligible) {
       DrawScene cpuDraw;
       std::string w, e;
@@ -394,32 +403,41 @@ void App::updateSkinningEffective() {
     skinningReason_ = "ray tracing uses CPU-skinned BLAS geometry";
     return;
   }
-  if (!loaded_.ok || !SceneHasSkeletalSkinning(loaded_.render)) {
-    skinningReason_ = "scene has no skeletal skinning";
-    return;
-  }
-  if (SceneHasBlendShapes(loaded_.render)) {
-    skinningReason_ = "blendshape animation uses CPU fallback";
+  const bool skeletal = SceneHasSkeletalSkinning(loaded_.render);
+  const bool morph = SceneHasBlendShapes(loaded_.render);
+  if (!loaded_.ok || (!skeletal && !morph)) {
+    skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
   if (SceneHasNonSkeletalAnimation(loaded_.render)) {
     skinningReason_ = "non-skeletal animation uses CPU reconvert fallback";
     return;
   }
-  if (draw_.boneMatrixCount <= 0) {
+  if (skeletal && draw_.boneMatrixCount <= 0) {
     skinningReason_ = "draw scene has no GPU bone matrix layout";
     return;
   }
   skinningEffective_ = SkinningMode::GPU;
-  skinningReason_ = "GPU skeletal skinning";
+  skinningReason_ = skeletal && morph ? "GPU skeletal + blendshape skinning"
+                    : morph           ? "GPU blendshape morph"
+                                      : "GPU skeletal skinning";
 }
 
 void App::updateGpuSkinningFrameIfNeeded() {
   if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
-  if (skinFrame_.enabled && skinFrameTime_ == animTime_) return;
-  if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_)) {
+  // Per-mesh morph re-uploads need the meshes present in the renderer; wait for
+  // progressive streaming to finish (the bone texture alone is safe earlier).
+  if (progressiveActive_ && SceneHasBlendShapes(loaded_.render)) return;
+  if (skinFrameTime_ == animTime_) return;  // already posed for this time
+  const bool hasMorph = SceneHasBlendShapes(loaded_.render);
+  std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
+  if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
+                            &skinFrame_, hasMorph ? &morphed : nullptr)) {
     skinFrameTime_ = animTime_;
     renderer_->uploadSkinningFrame(skinFrame_);
+    for (auto& mv : morphed) {
+      renderer_->updateMeshVertices(mv.first, mv.second);
+    }
   }
 }
 

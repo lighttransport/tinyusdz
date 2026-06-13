@@ -35,9 +35,17 @@ bool BuildSkinningMatrices(const tinyusdz::tydra::RenderScene& render,
 // Pack the per-frame GPU bone texture from `render` into `frame`, using the
 // per-mesh skin layout stored in `draw`. Also updates skinned mesh and scene
 // AABBs in `draw` so GUI/MCP bounds match the displayed GPU-skinned pose.
-bool BuildGpuSkinningFrame(const tinyusdz::tydra::RenderScene& render,
-                           DrawScene* draw, double timecode,
-                           SkinningFrameCPU* frame);
+//
+// Blendshapes: for each mesh carrying `morphs`, the rest vertices are morphed
+// to their pose at `timecode` (weights read from the Stage's SkelAnimation
+// prims) and returned in `morphedOut` as (meshIndex, morphedVertices) so the
+// caller can re-upload them; the GPU vertex shader then skins the morphed
+// input. Bounds account for the morph. Pass `morphedOut == nullptr` to skip
+// blendshapes (skeletal only).
+bool BuildGpuSkinningFrame(
+    const tinyusdz::tydra::RenderScene& render, const tinyusdz::Stage& stage,
+    DrawScene* draw, double timecode, SkinningFrameCPU* frame,
+    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut);
 
 // Deform every skinned / blendshaped mesh in `render` to its pose at
 // `timecode`: applies animated blendshape offsets (weights read from the
