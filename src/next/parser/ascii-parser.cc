@@ -1075,16 +1075,43 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
     Match(TokenType::CloseParen);
   }
 
-  // Parse variant body: { properties, relationships, nested variantSets }
+  // Parse variant body: { properties, relationships, nested variantSets,
+  // child prims }
   if (!Match(TokenType::OpenBrace)) {
     AddError("Expected '{' for variant option body");
     return false;
   }
 
+  // Child prims inside a variant body are parsed into a content Layer whose
+  // "__self__" root maps onto the host prim during composition (the shared
+  // prim parser is temporarily redirected at this layer).
+  std::unique_ptr<Layer> content_layer;
+  std::unique_ptr<LayerBuilder> content_builder;
+
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
     const Token& tok = lexer_->peek();
 
-    if (tok.type == TokenType::Rel) {
+    if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
+        tok.type == TokenType::Class) {
+      if (!content_layer) {
+        content_layer.reset(new Layer());
+        content_builder.reset(new LayerBuilder(*content_layer));
+        content_builder->begin_prim("__self__", "", PrimSpecifier::Over);
+      }
+      // Redirect the shared prim parser into the content layer. Moving the
+      // owning unique_ptrs does not move the Layer pointee, so content_builder's
+      // Layer& stays valid across the swap.
+      std::unique_ptr<Layer> host_layer = std::move(layer_);
+      std::unique_ptr<LayerBuilder> host_builder = std::move(builder_);
+      layer_ = std::move(content_layer);
+      builder_ = std::move(content_builder);
+      bool ok = ParsePrim();
+      content_layer = std::move(layer_);
+      content_builder = std::move(builder_);
+      layer_ = std::move(host_layer);
+      builder_ = std::move(host_builder);
+      if (!ok) return false;
+    } else if (tok.type == TokenType::Rel) {
       lexer_->next();
       std::string rel_name;
       if (!ParseNamespacedName(&rel_name, "relationship name")) break;
@@ -1155,6 +1182,12 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
     } else {
       lexer_->next();
     }
+  }
+
+  if (content_layer) {
+    content_builder->end_prim();  // pop __self__
+    content_builder->finalize();
+    out->content = std::shared_ptr<Layer>(content_layer.release());
   }
 
   return Match(TokenType::CloseBrace);
