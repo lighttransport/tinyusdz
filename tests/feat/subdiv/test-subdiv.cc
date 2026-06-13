@@ -1668,6 +1668,12 @@ struct StreamCollect {
   std::vector<uint32_t> face_indices;  // canonical, emission order
   std::vector<uint32_t> face_counts;
   std::vector<uint32_t> face_source;
+  // Normals (global by canonical id) + a seam check: a canonical id emitted in
+  // multiple batches must carry the same normal each time.
+  bool has_normals = false;
+  bool seam_ok = true;
+  std::vector<float> normals;
+  std::vector<uint8_t> n_written;
 };
 
 bool StreamSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
@@ -1678,6 +1684,23 @@ bool StreamSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
       c->written[gid] = 1;
       for (int k = 0; k < 3; k++) {
         c->points[size_t(gid) * 3 + size_t(k)] = b->positions[size_t(i) * 3 + size_t(k)];
+      }
+      if (b->normals && gid < c->n_written.size()) {
+        c->has_normals = true;
+        if (c->n_written[gid]) {
+          for (int k = 0; k < 3; k++) {
+            if (c->normals[size_t(gid) * 3 + size_t(k)] !=
+                b->normals[size_t(i) * 3 + size_t(k)]) {
+              c->seam_ok = false;
+            }
+          }
+        } else {
+          c->n_written[gid] = 1;
+          for (int k = 0; k < 3; k++) {
+            c->normals[size_t(gid) * 3 + size_t(k)] =
+                b->normals[size_t(i) * 3 + size_t(k)];
+          }
+        }
       }
       if (c->pv_stride && b->num_vertex_primvars == 1) {
         for (uint32_t k = 0; k < c->pv_stride; k++) {
@@ -1816,6 +1839,101 @@ void test_stream_level0_passthrough() {
   CHECK(col.points == m.points);
 }
 
+void test_stream_normals() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::Cube());
+  meshes.push_back(corpus::Icosahedron());
+  meshes.push_back(corpus::CreasedCube(2.0f, "ncc"));
+  meshes.push_back(corpus::QuadGrid(3, 3, "ng"));
+
+  const uint32_t batch_sizes[2] = {1u, 1u << 20};
+  for (const corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::CatmullClark};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      all_tris = all_tris && (c == 3);
+    }
+    if (all_tris) {
+      schemes.push_back(Scheme::Loop);
+    }
+    for (Scheme scheme : schemes) {
+      for (uint32_t bs : batch_sizes) {
+        Options opts;
+        opts.scheme = scheme;
+        opts.level = 3;
+        opts.remove_holes = false;
+        // Size from a bulk refine.
+        RefinedMesh bulk;
+        std::string err;
+        CHECK(Refine(ToView(m), opts, &bulk, &err) == Result::Success);
+
+        StreamOptions so;
+        so.batch_faces = bs;
+        so.emit_triangles = true;
+        so.want_normals = true;
+        StreamCollect col;
+        col.npoints = uint32_t(bulk.points.size() / 3);
+        col.points.assign(bulk.points.size(), 0.0f);
+        col.written.assign(col.npoints, 0);
+        col.normals.assign(bulk.points.size(), 0.0f);
+        col.n_written.assign(col.npoints, 0);
+        CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, StreamSinkFn, &col,
+                           &err) == Result::Success);
+        const std::string tag = m.name + "/bs" + std::to_string(bs);
+        CHECK_MSG(col.has_normals, tag);
+        // Seamless: a canonical id duplicated across batches has one normal.
+        CHECK_MSG(col.seam_ok, tag);
+        // Every emitted normal is unit length.
+        bool unit = true;
+        for (uint32_t v = 0; v < col.npoints; v++) {
+          if (!col.n_written[v]) {
+            continue;
+          }
+          const float len = std::sqrt(col.normals[3 * v] * col.normals[3 * v] +
+                                      col.normals[3 * v + 1] * col.normals[3 * v + 1] +
+                                      col.normals[3 * v + 2] * col.normals[3 * v + 2]);
+          unit = unit && (std::fabs(len - 1.0f) < 1e-3f);
+        }
+        CHECK_MSG(unit, tag);
+      }
+    }
+  }
+
+  // Planar grid: every streamed limit normal is +/- z (exact).
+  corpus::Mesh grid = corpus::QuadGrid(4, 4, "nflat");
+  for (size_t i = 0; i < grid.points.size() / 3; i++) {
+    grid.points[i * 3 + 2] = 0.0f;
+  }
+  Options opts;
+  opts.level = 2;
+  opts.remove_holes = false;
+  RefinedMesh bulk;
+  std::string err;
+  CHECK(Refine(ToView(grid), opts, &bulk, &err) == Result::Success);
+  StreamOptions so;
+  so.want_normals = true;
+  so.emit_triangles = true;
+  StreamCollect col;
+  col.npoints = uint32_t(bulk.points.size() / 3);
+  col.points.assign(bulk.points.size(), 0.0f);
+  col.written.assign(col.npoints, 0);
+  col.normals.assign(bulk.points.size(), 0.0f);
+  col.n_written.assign(col.npoints, 0);
+  CHECK(RefineStream(ToView(grid), nullptr, 0, opts, so, StreamSinkFn, &col,
+                     &err) == Result::Success);
+  for (uint32_t v = 0; v < col.npoints; v++) {
+    if (!col.n_written[v]) {
+      continue;
+    }
+    CHECK(std::fabs(col.normals[3 * v]) < 1e-4f);
+    CHECK(std::fabs(col.normals[3 * v + 1]) < 1e-4f);
+    CHECK(std::fabs(std::fabs(col.normals[3 * v + 2]) - 1.0f) < 1e-4f);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1896,6 +2014,7 @@ int main() {
   // Streaming refinement
   TEST(test_stream_matches_bulk);
   TEST(test_stream_level0_passthrough);
+  TEST(test_stream_normals);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

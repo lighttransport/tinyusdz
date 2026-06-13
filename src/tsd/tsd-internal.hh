@@ -271,6 +271,19 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
 Result RefineFVarSplitOnce(FVarSplitState *state, const Options &opts,
                            bool more_levels, std::string *err);
 
+// --- Limit normals -----------------------------------------------------------
+
+// Closed-form limit normals (xyz per vertex) for every vertex of `positions`
+// under the given topology + sharpness. The topology/sharpness/positions must
+// be a self-consistent level (typically the final refined level). Shared by
+// ComputeLimitNormals (final level) and streaming refinement (resident
+// level-(N-1) state). out_normals is assigned topo.num_points*3 floats.
+void ComputeVertexLimitNormals(const Topology &topo, const uint32_t *fvi,
+                               const std::vector<float> &edge_sharp,
+                               const std::vector<float> &vert_sharp,
+                               const float *positions, const Options &options,
+                               std::vector<float> *out_normals);
+
 // --- Overflow-safe sizing ----------------------------------------------------
 
 // a + b with overflow check against 2^32-1; returns false on overflow.
