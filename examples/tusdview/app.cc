@@ -246,7 +246,6 @@ void App::loadFileBlocking(const std::string& path) {
     const bool gpuEligible =
         renderer_ && renderer_->caps().supportsGpuSkinning &&
         !renderer_->rayTracingActive() && (skeletal || morph) &&
-        !SceneHasNonSkeletalAnimation(tmp.render) &&
         (!skeletal || drawTmp.boneMatrixCount > 0);
     if (!gpuEligible) {
       DrawScene cpuDraw;
@@ -409,10 +408,6 @@ void App::updateSkinningEffective() {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
-  if (SceneHasNonSkeletalAnimation(loaded_.render)) {
-    skinningReason_ = "non-skeletal animation uses CPU reconvert fallback";
-    return;
-  }
   if (skeletal && draw_.boneMatrixCount <= 0) {
     skinningReason_ = "draw scene has no GPU bone matrix layout";
     return;
@@ -425,11 +420,21 @@ void App::updateSkinningEffective() {
 
 void App::updateGpuSkinningFrameIfNeeded() {
   if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
-  // Per-mesh morph re-uploads need the meshes present in the renderer; wait for
-  // progressive streaming to finish (the bone texture alone is safe earlier).
-  if (progressiveActive_ && SceneHasBlendShapes(loaded_.render)) return;
-  if (skinFrameTime_ == animTime_) return;  // already posed for this time
   const bool hasMorph = SceneHasBlendShapes(loaded_.render);
+  const bool mixed = SceneHasNonSkeletalAnimation(loaded_.render);
+  // Per-mesh morph/world updates need the meshes present in the renderer; wait
+  // for progressive streaming to finish (the bone texture alone is safe early).
+  if (progressiveActive_ && (hasMorph || mixed)) return;
+  if (skinFrameTime_ == animTime_) return;  // already posed for this time
+
+  // Node/xform animation alongside skinning: re-evaluate the animated mesh world
+  // transforms (no geometry re-pack) and push them to the renderer.
+  if (mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
+    for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+      renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
+    }
+  }
+
   std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
   if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
                             &skinFrame_, hasMorph ? &morphed : nullptr)) {
