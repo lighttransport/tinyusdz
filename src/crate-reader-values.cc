@@ -1083,6 +1083,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        size_t apaths_bytes;
+        if (!safe::n_to_size<value::AssetPath>(n, &apaths_bytes)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::AssetPath)");
+        }
+        CHECK_MEMORY_USAGE(apaths_bytes);
         std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
@@ -1157,6 +1162,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        size_t tokens_bytes;
+        if (!safe::n_to_size<value::token>(n, &tokens_bytes)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::token)");
+        }
+        CHECK_MEMORY_USAGE(tokens_bytes);
         std::vector<value::token> tokens(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
@@ -1202,6 +1212,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        size_t strs_bytes;
+        if (!safe::n_to_size<std::string>(n, &strs_bytes)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(std::string)");
+        }
+        CHECK_MEMORY_USAGE(strs_bytes);
         std::vector<std::string> stringArray(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
@@ -2893,6 +2908,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("TokenVector(index) = " << indices);
 
+      size_t tv_bytes;
+      if (!safe::n_to_size<value::token>(indices.size(), &tv_bytes)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::token)");
+      }
+      CHECK_MEMORY_USAGE(tv_bytes);
       std::vector<value::token> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
         if (auto tokv = GetToken(indices[i])) {
