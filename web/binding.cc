@@ -9986,9 +9986,16 @@ class SubdivStreamer {
   // boundary: 0=edgeAndCorner, 1=edgeOnly, 2=none.
   // uvValues: Float32Array (stride 2) or null/empty for no texturing.
   // uvIndices: Uint32Array (per face-corner) or null for identity.
+  // batchFaces: parent faces per output batch (0 => default).
+  // blockFaces: >0 bounds the WORKING set -- refine in blocks of this many base
+  //             faces plus a halo, so peak heap is independent of mesh size and
+  //             level (for huge meshes). 0 => whole-mesh streaming.
+  // haloRings: block halo radius (0 => library default); ignored if blockFaces=0.
   // onBatch(positions, normals|null, indices, faceSource, uv|null,
   //         numVertices, numFaces, batchIndex): typed-array views valid only
   //         for the call. `uv` is per-corner (parallel to indices) when present.
+  //         In block mode, vertex_source/indices are block-local (border verts
+  //         are duplicated); the JS side concatenates batches as usual.
   // Returns "" on success, else an error message.
   std::string refineStream(const emscripten::val &points,
                            const emscripten::val &fvc,
@@ -9996,7 +10003,8 @@ class SubdivStreamer {
                            const emscripten::val &uvValues,
                            const emscripten::val &uvIndices, int scheme,
                            int boundary, int level, int batchFaces,
-                           bool wantNormals, emscripten::val onBatch) {
+                           int blockFaces, int haloRings, bool wantNormals,
+                           emscripten::val onBatch) {
     namespace tsd = tinyusdz::tsd;
 
     std::vector<float> pts;
@@ -10051,6 +10059,12 @@ class SubdivStreamer {
     so.emit_triangles = true;
     so.want_normals = wantNormals;
     so.dedup_within_batch = true;
+    // Block mode: bound the WORKING set (not just the output) for very large
+    // meshes -- refine in blocks of `blockFaces` base faces with a `haloRings`
+    // halo (0 => the library's level-independent default). 0 => whole-mesh
+    // streaming. Streams geometry, normals, and faceVarying (UVs) alike.
+    so.block_faces = (blockFaces > 0) ? uint32_t(blockFaces) : 0u;
+    so.halo_rings = (haloRings > 0) ? uint32_t(haloRings) : 0u;
 
     struct SinkCtx {
       emscripten::val *cb;
