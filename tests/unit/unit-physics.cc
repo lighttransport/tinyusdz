@@ -3221,6 +3221,46 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF mocap body -> mjc:mocap on the link; <custom> -> /World/MjcCustom.
+void urdf_json_mjc_mocap_custom_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "MocapBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "target", "mocap": true }, { "name": "base" } ],
+  "joints": [],
+  "custom": {
+    "numeric": [ { "name": "max_contact_points", "data": [8] } ],
+    "text": [ { "name": "description", "data": "demo" } ]
+  }
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto mr = stage.GetPrimAtPath(Path("/World/Links/target", ""));
+  TEST_CHECK(bool(mr));
+  if (mr) {
+    const auto *x = (*mr)->as<Xform>();
+    if (x) {
+      auto it = x->props.find("mjc:mocap");
+      TEST_CHECK(it != x->props.end());
+    }
+  }
+  auto cr = stage.GetPrimAtPath(Path("/World/MjcCustom", ""));
+  TEST_CHECK(bool(cr));
+  if (cr) {
+    const auto *x = (*cr)->as<Xform>();
+    if (x) {
+      TEST_CHECK(x->props.count("mjc:custom:max_contact_points") > 0);
+      TEST_CHECK(x->props.count("mjc:customtext:description") > 0);
+    }
+  }
+}
+
 // MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
 void urdf_json_mjc_contact_pair_test(void) {
   const char *robot_json = R"JSON({

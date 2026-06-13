@@ -226,6 +226,28 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF mocap body + <custom> -> payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="MC">
+  <custom>
+    <numeric name="max_contact_points" data="8"/>
+    <text name="description" data="demo"/>
+  </custom>
+  <worldbody>
+    <body name="target" mocap="true"><geom type="sphere" size="0.05"/></body>
+  </worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    const target = payload.links.find((l) => l.name === 'target');
+    assert.equal(target.mocap, true);
+    assert.ok(payload.custom);
+    assert.equal(payload.custom.numeric[0].name, 'max_contact_points');
+    assert.deepEqual(payload.custom.numeric[0].data, [8]);
+    assert.equal(payload.custom.text[0].data, 'demo');
+  });
+});
+
 await testAsync('MJCF <contact><pair> -> contactPairs payload', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>

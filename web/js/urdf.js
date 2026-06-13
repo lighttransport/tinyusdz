@@ -2115,6 +2115,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       visuals: [],
       collisions: []
     };
+    if (bodyAttrs.mocap !== undefined && mjcBoolAttr(bodyAttrs.mocap)) {
+      linkPayload.mocap = true;
+    }
 
     const pivot = new THREE.Group();
     pivot.name = `${linkName}_joint`;
@@ -2370,9 +2373,31 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
     contactPairsPayload.push(pr);
   }
-  const worldbodyEl = firstChildElement(root, 'worldbody');
-  const { lights: lightsPayload, cameras: camerasPayload } =
-    worldbodyEl ? collectMujocoLightsCameras(worldbodyEl) : { lights: [], cameras: [] };
+  const customPayload = {};
+  const customRootEl = firstChildElement(root, 'custom');
+  if (customRootEl) {
+    const numeric = [];
+    for (const n of childElements(customRootEl, 'numeric')) {
+      if (!n.getAttribute('name')) continue;
+      numeric.push({ name: n.getAttribute('name'), data: parseNumbers(n.getAttribute('data'), []) });
+    }
+    const text = [];
+    for (const t of childElements(customRootEl, 'text')) {
+      if (!t.getAttribute('name')) continue;
+      text.push({ name: t.getAttribute('name'), data: t.getAttribute('data') || '' });
+    }
+    if (numeric.length) customPayload.numeric = numeric;
+    if (text.length) customPayload.text = text;
+  }
+  // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
+  // <include>); collect lights/cameras from them all, not just the first.
+  const lightsPayload = [];
+  const camerasPayload = [];
+  for (const worldbodyEl of childElements(root, 'worldbody')) {
+    const lc = collectMujocoLightsCameras(worldbodyEl);
+    lightsPayload.push(...lc.lights);
+    camerasPayload.push(...lc.cameras);
+  }
   // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
   // from group.homeKeyframe above, which is only used to pose the source view.
   const keyframesPayload = [];
@@ -2398,7 +2423,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
     ...(materialsPayload.length ? { materials: materialsPayload } : {}),
     ...(sensorsPayload.length ? { sensors: sensorsPayload } : {}),
-    ...(contactPairsPayload.length ? { contactPairs: contactPairsPayload } : {})
+    ...(contactPairsPayload.length ? { contactPairs: contactPairsPayload } : {}),
+    ...(Object.keys(customPayload).length ? { custom: customPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

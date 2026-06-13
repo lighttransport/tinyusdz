@@ -1436,6 +1436,28 @@ void AddMujocoSensorsJson(const pugi::xml_node &root, nlohmann::json *sensors,
   }
 }
 
+// MJCF <custom><numeric|text> -> JSON consumed by the converter to preserve
+// model metadata / MJX compile knobs (e.g. max_contact_points) as mjc:custom:*.
+void AddMujocoCustomJson(const pugi::xml_node &root, nlohmann::json *custom) {
+  if (!custom) return;
+  const auto custom_root = Child(root, "custom");
+  if (!custom_root) return;
+  nlohmann::json numerics = nlohmann::json::array();
+  for (const auto &n : Children(custom_root, "numeric")) {
+    const std::string name = Attr(n, "name");
+    if (name.empty()) continue;
+    numerics.push_back({{"name", name}, {"data", ParseDoubles(Attr(n, "data"))}});
+  }
+  nlohmann::json texts = nlohmann::json::array();
+  for (const auto &t : Children(custom_root, "text")) {
+    const std::string name = Attr(t, "name");
+    if (name.empty()) continue;
+    texts.push_back({{"name", name}, {"data", Attr(t, "data")}});
+  }
+  if (!numerics.empty()) (*custom)["numeric"] = std::move(numerics);
+  if (!texts.empty()) (*custom)["text"] = std::move(texts);
+}
+
 // MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
 // world matrix, consumed by the converter's AddLightFromJson/AddCameraFromJson.
 // `frame_world` is the world transform of `frame_node`'s frame.
@@ -1680,6 +1702,9 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       {"inertial", InertialToJson(body_node)},
       {"visuals", nlohmann::json::array()},
       {"collisions", nlohmann::json::array()}};
+  // MuJoCo mocap body (driven externally; not simulated). Flag it so the USD
+  // link records mjc:mocap.
+  if (MjcBoolAttr(Attr(body_node, "mocap", "false"))) link["mocap"] = true;
 
   for (const auto &geom_node : Children(body_node, "geom")) {
     const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
@@ -1800,8 +1825,10 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   }
 
   const auto assets = CollectMujocoAssets(root, input_filename.parent_path());
-  const auto worldbody = Child(root, "worldbody");
-  if (!worldbody) {
+  // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
+  // <include>) into a single world; visit them all, not just the first.
+  const auto worldbodies = Children(root, "worldbody");
+  if (worldbodies.empty()) {
     if (err) *err = "MJCF has no <worldbody>.";
     return false;
   }
@@ -1832,23 +1859,27 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json materials = nlohmann::json::array();
   nlohmann::json sensors = nlohmann::json::array();
   nlohmann::json contact_pairs = nlohmann::json::array();
-  for (const auto &body : Children(worldbody, "body")) {
-    if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
-                         &links, &joints, stats, err)) {
-      return false;
+  for (const auto &worldbody : worldbodies) {
+    for (const auto &body : Children(worldbody, "body")) {
+      if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
+                           &links, &joints, stats, err)) {
+        return false;
+      }
+      CollectMujocoSitesJson(body, IdentityMatrix(), ctx, &sites, stats);
     }
-    CollectMujocoSitesJson(body, IdentityMatrix(), ctx, &sites, stats);
+    CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
+                                   &cameras);
   }
   AddMujocoActuatorsJson(root, &actuators, &mjc_actuators, stats);
   AddMujocoTendonsJson(root, ctx, &tendons, stats);
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
   AddMujocoKeyframesJson(root, &keyframes, stats);
-  CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
-                                 &cameras);
   AddMujocoMaterialsJson(root, &materials, stats);
   AddMujocoSensorsJson(root, &sensors, stats);
   AddMujocoContactPairsJson(root, &contact_pairs, stats);
+  nlohmann::json custom = nlohmann::json::object();
+  AddMujocoCustomJson(root, &custom);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1873,6 +1904,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!materials.empty()) (*payload)["materials"] = std::move(materials);
   if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
   if (!contact_pairs.empty()) (*payload)["contactPairs"] = std::move(contact_pairs);
+  if (!custom.empty()) (*payload)["custom"] = std::move(custom);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

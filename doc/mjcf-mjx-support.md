@@ -25,7 +25,8 @@ Legend:
 | `<statistic>` | — | Missing (viewer hints: extent/center/meansize) |
 | `<visual>` (rgba/quality/headlight/map) | — | Missing (render hints) |
 | `<default>` class tree (geom/joint/site/tendon/muscle/general) | resolved/inlined at parse time | Full (geom/joint/site/tendon); muscle/general via class merge |
-| `<custom><numeric|text|tuple>` | — | Missing (MJX reads some, e.g. `max_contact_points`) |
+| `<custom><numeric|text>` | `/World/MjcCustom` Xform: `mjc:custom:<name>` (double[]) / `mjc:customtext:<name>` (token) | Preserved (MJX knobs e.g. `max_contact_points` round-trip; `<tuple>` still dropped) |
+| multiple `<worldbody>` / `<include>` merge | all `<worldbody>` blocks (local + included) merged into one world | Full |
 | `<keyframe><key qpos/qvel/act/ctrl/mpos/mquat>` | `MjcKeyframe` prim | Full |
 | up-axis (Z-up source → Y-up stage) | single corrective root `RotateX(-90)` | Full |
 
@@ -43,6 +44,7 @@ Legend:
 | **multiple `<joint>` per body** | chain of single-DOF joints via massless intermediate link Xforms | Full |
 | `<joint>` limit/range/ref/damping/armature/stiffness/frictionloss | typed limits + `MjcJointAPI` + `physxLimit:*`/`state:*` mirror | Full |
 | `<frame>` (MuJoCo 3 grouping) | flattened into child transforms | Partial |
+| `<body mocap="true">` | `mjc:mocap=1` on the link `Xform` (mocap target body) | Full |
 
 ## Geoms / shapes
 
@@ -75,7 +77,7 @@ Legend:
 | `<equality><connect/weld/joint>` | `MjcEquality{Connect,Weld,Joint}API` host Xform + `mjc:target` rel | Full |
 | `<equality><tendon/distance/flex>` | — | Missing |
 | `<contact><exclude>` | `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) | Full |
-| `<contact><pair>` (explicit pair + friction/solref) | — | Missing |
+| `<contact><pair>` (explicit pair + friction/solref/solimp/condim) | `/World/Contacts` `MjcContactPair` prim (`mjc:geom1`/`mjc:geom2` + friction/solref/solimp/condim/gap/margin) | Full |
 
 ## Sensors, deformables, misc (not yet converted)
 

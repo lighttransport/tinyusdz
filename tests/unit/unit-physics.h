@@ -82,3 +82,6 @@ void urdf_json_mjc_actuator_types_test(void);
 
 // <contact><pair> conversion
 void urdf_json_mjc_contact_pair_test(void);
+
+// mocap body + <custom> conversion
+void urdf_json_mjc_mocap_custom_test(void);
