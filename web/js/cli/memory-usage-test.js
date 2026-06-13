@@ -23,6 +23,7 @@ async function testMemoryUsage() {
             console.log('Running memory usage tests with different array sizes...\n');
             
             // Test with different array sizes
+            const defaultArraySize = 10000;
             const arraySizes = [100, 10000, 100000, 10000000];
             
             for (const arraySize of arraySizes) {
@@ -58,7 +59,7 @@ async function testMemoryUsage() {
             console.log('Full test with default array size (showing all value types)');
             console.log('='.repeat(60));
             
-            const defaultResults = usd.testValueMemoryUsage();
+            const defaultResults = usd.testValueMemoryUsage(defaultArraySize);
             if (defaultResults && defaultResults.tests) {
                 defaultResults.tests.forEach((test, index) => {
                     console.log(`${index + 1}. ${test.name}: ${formatBytes(test.bytes)}`);

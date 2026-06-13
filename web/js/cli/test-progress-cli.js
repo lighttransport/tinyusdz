@@ -129,7 +129,7 @@ async function runTest(testName, usdData, filename = 'test.usda') {
   resetProgressState();
 
   // Dynamic import to allow callbacks to be set
-  const createTinyUSDZ = (await import('./src/tinyusdz/tinyusdz.js')).default;
+  const createTinyUSDZ = (await import('../src/tinyusdz/tinyusdz.js')).default;
 
   // Initialize WASM module with EM_JS callbacks
   const tinyusdz = await createTinyUSDZ({
@@ -214,7 +214,7 @@ async function runFileTest(filePath) {
 
   resetProgressState();
 
-  const createTinyUSDZ = (await import('./src/tinyusdz/tinyusdz.js')).default;
+  const createTinyUSDZ = (await import('../src/tinyusdz/tinyusdz.js')).default;
 
   const tinyusdz = await createTinyUSDZ({
     onTydraProgress: (info) => {
