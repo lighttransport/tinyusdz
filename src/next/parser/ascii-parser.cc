@@ -407,6 +407,16 @@ bool AsciiParser::Impl::ParsePrimContents() {
       continue;
     }
 
+    // Optional list-op qualifier before a body relationship/attribute, e.g.
+    // `prepend rel prototypes = <...>`. Consume it; the relationship/attribute
+    // is parsed on the next iteration. (List-op semantics for body
+    // relationships are not yet modeled.)
+    if (tok.type == TokenType::Prepend || tok.type == TokenType::Append ||
+        tok.type == TokenType::Delete || tok.type == TokenType::Add) {
+      lexer_->next();
+      continue;
+    }
+
     // Check for variantSet body
     if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
       lexer_->next();
