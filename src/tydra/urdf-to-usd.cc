@@ -26,6 +26,7 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdPhysics.hh"
+#include "usdShade.hh"
 #include "value-types.hh"
 #include "xform.hh"
 
@@ -1460,6 +1461,62 @@ bool AddCameraFromJson(Prim &cameras_prim, const nlohmann::json &c_json,
   return true;
 }
 
+// MJCF <asset><material> -> UsdShade Material + child UsdPreviewSurface shader
+// under /World/Materials. Color/PBR-scalar only (rgba/metallic/roughness/
+// emission); texture maps are a documented follow-on. Geoms bind via a
+// deterministic /World/Materials/<sanitized-name> path (see AddMeshFromJson).
+bool AddMaterialFromJson(Prim &materials_prim, const nlohmann::json &m_json,
+                         std::set<std::string> &used_names, size_t index,
+                         std::string *err) {
+  const std::string src =
+      JsonString(m_json, "name", "material_" + std::to_string(index));
+  const std::string usd = SanitizeUSDIdentifier(src, "material");
+  if (!used_names.insert(usd).second) return true;  // MJCF names are unique
+
+  Material mat;
+  mat.name = usd;
+  Shader shader;
+  shader.name = "PreviewSurface";
+  shader.info_id = kUsdPreviewSurface;
+
+  UsdPreviewSurface ps;
+  ps.outputsSurface.set_authored(true);
+  const auto rgba = JsonFloatArray(m_json, "rgba");
+  value::color3f base{0.8f, 0.8f, 0.8f};
+  if (rgba.size() >= 3) {
+    base = value::color3f{rgba[0], rgba[1], rgba[2]};
+    ps.diffuseColor.set_value(Animatable<value::color3f>(base));
+  }
+  if (rgba.size() >= 4) ps.opacity.set_value(Animatable<float>(rgba[3]));
+  double v = 0.0;
+  if (JsonNumber(m_json, "metallic", &v))
+    ps.metallic.set_value(Animatable<float>(static_cast<float>(v)));
+  if (JsonNumber(m_json, "roughness", &v))
+    ps.roughness.set_value(Animatable<float>(static_cast<float>(v)));
+  double emission = 0.0;
+  if (JsonNumber(m_json, "emission", &emission) && emission > 0.0) {
+    ps.emissiveColor.set_value(Animatable<value::color3f>(value::color3f{
+        base[0] * static_cast<float>(emission),
+        base[1] * static_cast<float>(emission),
+        base[2] * static_cast<float>(emission)}));
+  }
+  shader.value = std::move(ps);
+  mat.surface.set(Path("/World/Materials/" + usd + "/PreviewSurface",
+                       "outputs:surface"));
+
+  Prim mat_prim(mat);
+  std::string add_err;
+  if (!mat_prim.add_child(Prim(shader), true, &add_err)) {
+    SetErr(err, "Failed to add shader for material `" + usd + "`: " + add_err);
+    return false;
+  }
+  if (!materials_prim.add_child(std::move(mat_prim), true, &add_err)) {
+    SetErr(err, "Failed to add material `" + usd + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
@@ -1575,6 +1632,17 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
     AddCollisionAPIs(mesh, true, mesh_json, mjcf_source);
   } else {
     AddAPISchemas(mesh.metas(), {{APISchemas::APIName::MjcImageableAPI, ""}});
+    // Bind a UsdShade material (MJCF <geom material=..> -> /World/Materials/<m>).
+    // Material names are unique in MJCF, so a deterministic sanitized path lets
+    // us bind without threading a name map; the material prim is emitted later.
+    const std::string mat_name = JsonString(mesh_json, "material");
+    if (!mat_name.empty()) {
+      Relationship mat_rel;
+      mat_rel.set(Path("/World/Materials/" +
+                       SanitizeUSDIdentifier(mat_name, "material"), ""));
+      mesh.set_materialBinding(mat_rel);
+      AppendAPISchema(mesh.metas(), APISchemas::APIName::MaterialBindingAPI);
+    }
     if (mjcf_source) {
       int32_t group = 0;
       if (JsonIntFromObjectOrParent(mesh_json, "mjc", "group", &group) ||
@@ -2235,6 +2303,27 @@ bool ConvertURDFJsonToUSDStage(
     has_cameras = !cameras_prim.children().empty();
   }
 
+  // MJCF <asset><material> -> /World/Materials (UsdShade Material). Geoms bind
+  // via /World/Materials/<sanitized-name> (set in AddMeshFromJson).
+  const nlohmann::json &materials_json =
+      (root.contains("materials") && root["materials"].is_array())
+          ? root["materials"]
+          : empty_array;
+  Prim materials_prim;
+  bool has_materials = false;
+  if (!materials_json.empty()) {
+    Xform scope;
+    scope.name = "Materials";
+    materials_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < materials_json.size(); i++) {
+      if (!AddMaterialFromJson(materials_prim, materials_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_materials = !materials_prim.children().empty();
+  }
+
   // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
   Prim equalities_prim;
   bool has_equalities = false;
@@ -2297,6 +2386,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_cameras &&
         !world_prim.add_child(std::move(cameras_prim), true, &add_err)) {
       SetErr(err, "Failed to add Cameras scope: " + add_err);
+      return false;
+    }
+    if (has_materials &&
+        !world_prim.add_child(std::move(materials_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Materials scope: " + add_err);
       return false;
     }
   }

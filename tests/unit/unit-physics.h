@@ -70,3 +70,6 @@ void urdf_json_mjc_keyframe_export_test(void);
 
 // <light>/<camera> -> UsdLux + GeomCamera
 void urdf_json_mjc_lights_cameras_test(void);
+
+// <asset><material> -> UsdShade Material + binding
+void urdf_json_mjc_materials_test(void);

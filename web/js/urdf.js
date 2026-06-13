@@ -2238,6 +2238,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       });
 
       if (isVisual) {
+        if (geomAttrs.material) {
+          for (const p of payloads) p.material = geomAttrs.material;
+        }
         linkPayload.visuals.push(...payloads);
         visualCount += payloads.length;
       } else {
@@ -2318,6 +2321,18 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
+  const materialsPayload = [];
+  for (const m of root.querySelectorAll('asset material')) {
+    if (!m.getAttribute('name')) continue;
+    const mat = { name: m.getAttribute('name') };
+    const rgba = parseNumbers(m.getAttribute('rgba'), []);
+    if (rgba.length >= 4) mat.rgba = rgba.slice(0, 4);
+    for (const k of ['metallic', 'roughness', 'specular', 'emission', 'reflectance']) {
+      const v = m.getAttribute(k);
+      if (v !== null) mat[k] = Number(v);
+    }
+    materialsPayload.push(mat);
+  }
   const worldbodyEl = firstChildElement(root, 'worldbody');
   const { lights: lightsPayload, cameras: camerasPayload } =
     worldbodyEl ? collectMujocoLightsCameras(worldbodyEl) : { lights: [], cameras: [] };
@@ -2343,7 +2358,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
     ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
     ...(lightsPayload.length ? { lights: lightsPayload } : {}),
-    ...(camerasPayload.length ? { cameras: camerasPayload } : {})
+    ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
+    ...(materialsPayload.length ? { materials: materialsPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

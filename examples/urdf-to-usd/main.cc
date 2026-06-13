@@ -78,6 +78,7 @@ struct Stats {
   size_t contact_excludes{0};
   size_t sites{0};
   size_t keyframes{0};
+  size_t materials{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1538,6 +1539,30 @@ nlohmann::json BuildMjcSceneJson(const pugi::xml_node &root) {
   return ms;
 }
 
+// MJCF <asset><material> -> JSON material entries consumed by the converter's
+// AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface). Color/PBR-scalar
+// only; texture maps are a documented follow-on.
+void AddMujocoMaterialsJson(const pugi::xml_node &root, nlohmann::json *materials,
+                            Stats *stats) {
+  if (!materials) return;
+  const auto asset = Child(root, "asset");
+  if (!asset) return;
+  for (const auto &m_node : Children(asset, "material")) {
+    const std::string name = Attr(m_node, "name");
+    if (name.empty()) continue;
+    nlohmann::json mat = {{"name", name}};
+    const auto rgba = ParseDoubles(Attr(m_node, "rgba"));
+    if (rgba.size() >= 4) mat["rgba"] = {rgba[0], rgba[1], rgba[2], rgba[3]};
+    if (HasAttr(m_node, "metallic")) mat["metallic"] = ParseDoubleAttr(m_node, "metallic", 0.0);
+    if (HasAttr(m_node, "roughness")) mat["roughness"] = ParseDoubleAttr(m_node, "roughness", 0.5);
+    if (HasAttr(m_node, "specular")) mat["specular"] = ParseDoubleAttr(m_node, "specular", 0.0);
+    if (HasAttr(m_node, "emission")) mat["emission"] = ParseDoubleAttr(m_node, "emission", 0.0);
+    if (HasAttr(m_node, "reflectance")) mat["reflectance"] = ParseDoubleAttr(m_node, "reflectance", 0.0);
+    materials->push_back(std::move(mat));
+    if (stats) stats->materials++;
+  }
+}
+
 // MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> JSON keyframe entries
 // consumed by the converter's AddMjcKeyframeFromJson -> MjcKeyframe prim.
 void AddMujocoKeyframesJson(const pugi::xml_node &root, nlohmann::json *keyframes,
@@ -1602,6 +1627,8 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
     if (visual) {
       nlohmann::json visual_json = MeshPayloadToJson(payload);
       AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
+      const std::string mat = Eff(geom_node, cls, "material");
+      if (!mat.empty()) visual_json["material"] = mat;
       link["visuals"].push_back(std::move(visual_json));
       stats->visuals++;
     } else {
@@ -1730,6 +1757,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json keyframes = nlohmann::json::array();
   nlohmann::json lights = nlohmann::json::array();
   nlohmann::json cameras = nlohmann::json::array();
+  nlohmann::json materials = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1744,6 +1772,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   AddMujocoKeyframesJson(root, &keyframes, stats);
   CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                  &cameras);
+  AddMujocoMaterialsJson(root, &materials, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1765,6 +1794,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
   if (!lights.empty()) (*payload)["lights"] = std::move(lights);
   if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
+  if (!materials.empty()) (*payload)["materials"] = std::move(materials);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

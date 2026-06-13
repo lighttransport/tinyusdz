@@ -1230,6 +1230,24 @@ function parseMujocoMuscleActuators(root) {
   return out;
 }
 
+// MJCF <asset><material> -> material payload entries (-> UsdShade Material).
+function parseMujocoMaterials(root) {
+  const asset = firstChild(root, 'asset');
+  if (!asset) return [];
+  const out = [];
+  for (const m of childElements(asset, 'material')) {
+    if (!m.attrs.name) continue;
+    const mat = { name: m.attrs.name };
+    const rgba = parseNumbers(m.attrs.rgba, []);
+    if (rgba.length >= 4) mat.rgba = rgba.slice(0, 4);
+    for (const k of ['metallic', 'roughness', 'specular', 'emission', 'reflectance']) {
+      if (m.attrs[k] !== undefined) mat[k] = numberAttr(m.attrs, k);
+    }
+    out.push(mat);
+  }
+  return out;
+}
+
 // MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> keyframe payload entries.
 function parseMujocoKeyframes(root) {
   const kfRoot = firstChild(root, 'keyframe');
@@ -1554,6 +1572,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const mjcScene = parseMujocoSceneOptions(root);
   const keyframes = parseMujocoKeyframes(root);
   const { lights, cameras } = collectMujocoLightsCameras(worldbody);
+  const materials = parseMujocoMaterials(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1598,7 +1617,11 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
         payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts, bodyWorld);
       }
       if (isVisual) {
-        linkPayload.visuals.push(...payloads.map((payload) => addMujocoPhysicsAttrs(payload, geomNode)));
+        linkPayload.visuals.push(...payloads.map((payload) => {
+          const p = addMujocoPhysicsAttrs(payload, geomNode);
+          if (effAttrs.material) p.material = effAttrs.material;
+          return p;
+        }));
         visualCount += payloads.length;
       } else {
         // Default approximation `convexHull` matches the convention in
@@ -1717,6 +1740,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (keyframes.length) payload.keyframes = keyframes;
   if (lights.length) payload.lights = lights;
   if (cameras.length) payload.cameras = cameras;
+  if (materials.length) payload.materials = materials;
   return {
     payload,
     stats: {

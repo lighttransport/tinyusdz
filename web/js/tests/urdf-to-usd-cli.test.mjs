@@ -226,6 +226,32 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF <asset><material> -> materials payload + geom ref', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Mat">
+  <asset>
+    <material name="red" rgba="1 0 0 1" metallic="0.2" roughness="0.8"/>
+    <material name="blue" rgba="0 0 1 1"/>
+  </asset>
+  <worldbody>
+    <body name="b">
+      <geom type="box" size="0.1 0.1 0.1" material="red"/>
+    </body>
+  </worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.equal(payload.materials.length, 2);
+    const red = payload.materials.find((m) => m.name === 'red');
+    assert.deepEqual(red.rgba, [1, 0, 0, 1]);
+    assert.equal(red.metallic, 0.2);
+    assert.equal(red.roughness, 0.8);
+    // The box visual references the material.
+    const vis = payload.links[0].visuals.find((v) => v.material === 'red');
+    assert.ok(vis, 'visual geom references material red');
+  });
+});
+
 await testAsync('MJCF <light>/<camera> -> lights/cameras payload', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>
