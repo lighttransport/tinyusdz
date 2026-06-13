@@ -59,6 +59,18 @@ bool DestroyJSEngine(JSEngineState &engine);
 bool RegisterUSDModule(JSEngineState &engine, Stage *stage, std::string &err);
 
 // ---------------------------------------------------------------------------
+// Register the tinyusdz.diff.* submodule against a cached layer diff.
+// After this, JS scripts can use:
+//   tinyusdz.diff.summary()
+//   tinyusdz.diff.paths(filter?)   // {reason?, path_substr?, kind?, offset?, limit?}
+//   tinyusdz.diff.prim(path)
+// Creates the tinyusdz global if absent (diff-only session), else augments it.
+// ---------------------------------------------------------------------------
+namespace mcp { struct DiffSession; }
+bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
+                        std::string &err);
+
+// ---------------------------------------------------------------------------
 // Execute JavaScript and capture the return value as JSON.
 // The script runs in the engine's JS context and can access the registered
 // tinyusdz.* module.

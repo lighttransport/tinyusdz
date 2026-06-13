@@ -18,12 +18,26 @@ int main(int argc, char **argv) {
   argparser::ArgParser parser;
   parser.add_option("--port", true, "Port number for the MCP server");
   parser.add_option("--host", true, "Hostname(default `localhost`)");
+  parser.add_option("--stdio", false,
+                    "Use stdio transport (newline-delimited JSON-RPC on "
+                    "stdin/stdout) instead of HTTP");
 
   if (!parser.parse(argc, argv)) {
     std::cerr << "Error parsing arguments." << std::endl;
     parser.print_help();
     return -1;
 
+  }
+
+  // stdio transport: blocks until stdin closes. Protocol on stdout; keep
+  // diagnostics off stdout so they never corrupt the JSON-RPC stream.
+  if (parser.is_set("--stdio")) {
+    tydra::mcp::MCPServer server;
+    if (!server.run_stdio()) {
+      std::cerr << "Failed to run MCP server (stdio).\n";
+      return -1;
+    }
+    return 0;
   }
 
   int port = 8085;
