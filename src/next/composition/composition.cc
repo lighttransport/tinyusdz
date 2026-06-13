@@ -33,6 +33,13 @@ bool LayerHasComposableArcs(const Layer& layer) {
   return !layer.meta().subLayers.empty();
 }
 
+// Is `path` equal to `root` or a descendant of it?
+bool PathInSubtree(const std::string& path, const std::string& root,
+                   const std::string& root_slash) {
+  return path == root || (path.size() > root_slash.size() &&
+                          path.compare(0, root_slash.size(), root_slash) == 0);
+}
+
 // Does the prim at `root_path` in `layer`, OR any of its descendants, author a
 // composable arc? Lets a reference to an arc-free prim of an otherwise
 // arc-bearing library layer skip whole-layer pre-composition (composing an
@@ -41,14 +48,66 @@ bool SubtreeHasComposableArcs(const Layer& layer, const std::string& root_path) 
   const std::string prefix = root_path + "/";
   for (size_t i = 0; i < layer.prim_count(); ++i) {
     const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
-    if (!p) continue;
-    const std::string& pp = p->path().str();
-    const bool in_subtree =
-        pp == root_path ||
-        (pp.size() > prefix.size() && pp.compare(0, prefix.size(), prefix) == 0);
-    if (in_subtree && PrimHasComposableArcs(*p)) return true;
+    if (p && PathInSubtree(p->path().str(), root_path, prefix) &&
+        PrimHasComposableArcs(*p)) {
+      return true;
+    }
   }
   return false;
+}
+
+// Can the prim at `root_path` (+ descendants) be composed IN ISOLATION — i.e.
+// does every composition arc it authors resolve either externally, or to a prim
+// WITHIN the subtree? Only then is composing just the subtree identical to
+// composing it inside the whole layer, so the unreferenced bulk of a large
+// library layer need not be materialized. Conservative: sublayers, any
+// inherit/specialize (these target class prims that virtually always live
+// outside the subtree), or any INTERNAL reference/payload whose target escapes
+// the subtree make it false (→ whole-layer composition, which is always safe).
+bool SubtreeIsSelfContained(const Layer& layer, const std::string& root_path) {
+  if (!layer.meta().subLayers.empty()) return false;
+  const std::string prefix = root_path + "/";
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
+    if (!p || !PathInSubtree(p->path().str(), root_path, prefix)) continue;
+    const auto& m = p->meta();
+    if (!m.inherits.empty() || !m.specializes.empty()) return false;
+    for (const auto& r : m.references) {
+      const CompositionArc a = Compositor::ParseReference(r);
+      if (a.is_internal && !PathInSubtree(a.prim_path, root_path, prefix)) {
+        return false;
+      }
+    }
+    for (const auto& pl : m.payloads) {
+      const CompositionArc a = Compositor::ParsePayload(pl);
+      if (a.is_internal && !PathInSubtree(a.prim_path, root_path, prefix)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Clone the prim at `root_path` and its descendants into a fresh layer (paths
+// kept; `root_path` prim is the layer root). Used to compose a self-contained
+// referenced subtree alone. child_indices on the clones reference the source
+// layer and are stale, but composition (flat iteration + path lookups, with
+// GraftSubtree validating / falling back to a path scan) does not rely on them
+// — the same way Compose()'s own output carries stale child_indices.
+std::unique_ptr<Layer> ExtractSubtree(const Layer& src,
+                                      const std::string& root_path) {
+  auto out = std::make_unique<Layer>();
+  const std::string prefix = root_path + "/";
+  for (size_t i = 0; i < src.prim_count(); ++i) {
+    const PrimSpec* p = src.prim(static_cast<uint32_t>(i));
+    if (!p) continue;
+    const std::string& pp = p->path().str();
+    if (!PathInSubtree(pp, root_path, prefix)) continue;
+    const uint32_t idx = out->add_prim(p->Clone());
+    if (pp == root_path) out->add_root(idx);
+  }
+  out->build_path_index();
+  return out;
 }
 
 }  // namespace
@@ -516,12 +575,16 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
   // inherits / specializes), variants deferred, so a referenced asset whose
   // content arrives through its own payload or nested references is fully
   // expanded before its opinions are merged here (mirrors the internal-arc path
-  // above). Skip it when the referenced SUBTREE has no arcs: composing an
-  // arc-free subtree is identical to grafting it raw, so a big multi-prim
-  // library layer is not materialized just to pull one self-contained prim.
+  // above). Cost-scaled to what is actually needed:
+  //   - subtree has NO arcs        → graft the raw layer (compose is identical);
+  //   - subtree is self-contained  → compose ONLY that subtree (a big library
+  //                                  layer is not materialized for one prim);
+  //   - otherwise                  → compose the whole layer (always safe).
   const Layer* ext = raw;
   if (SubtreeHasComposableArcs(*raw, tp)) {
-    ext = GetComposedExternalLayer(resolved);
+    ext = SubtreeIsSelfContained(*raw, tp)
+              ? GetComposedExternalLayer(resolved, tp)
+              : GetComposedExternalLayer(resolved, std::string());
     if (!ext) ext = raw;  // fall back to raw on composition failure
   }
   const PrimSpec* target = ext->prim_at_path(tp);
@@ -713,7 +776,7 @@ const Layer* Compositor::GetCachedLayer(const std::string& path) {
 }
 
 const Layer* Compositor::GetComposedExternalLayer(
-    const std::string& resolved_path) {
+    const std::string& resolved_path, const std::string& subtree_root) {
   if (!composed_ext_cache_) {
     composed_ext_cache_ =
         std::make_shared<std::map<std::string, std::shared_ptr<Layer>>>();
@@ -722,28 +785,46 @@ const Layer* Compositor::GetComposedExternalLayer(
     composing_ext_ = std::make_shared<std::set<std::string>>();
   }
 
-  auto cit = composed_ext_cache_->find(resolved_path);
+  // Cache/cycle key: whole-layer composes share one entry; a self-contained
+  // subtree compose is keyed per (layer, subtree) since it materializes only
+  // that subtree. ('\x1f' = unit separator, never a valid path/asset char.)
+  const std::string key = subtree_root.empty()
+                              ? resolved_path
+                              : resolved_path + '\x1f' + subtree_root;
+
+  auto cit = composed_ext_cache_->find(key);
   if (cit != composed_ext_cache_->end()) return cit->second.get();
 
   const Layer* raw = GetCachedLayer(resolved_path);
   if (!raw) return nullptr;
 
   // Nothing to expand → graft the raw layer directly (no clone/compose cost).
-  if (!LayerHasComposableArcs(*raw)) return raw;
+  // (Subtree callers already verified the subtree has arcs.)
+  if (subtree_root.empty() && !LayerHasComposableArcs(*raw)) return raw;
 
-  // Cross-layer cycle guard: already composing this path → fall back to raw so
+  // Cross-layer cycle guard: already composing this key → fall back to raw so
   // the recursion terminates (the in-progress layer's own arcs still resolve in
   // the outer composition that owns it).
-  if (composing_ext_->count(resolved_path)) return raw;
-  composing_ext_->insert(resolved_path);
+  if (composing_ext_->count(key)) return raw;
+  composing_ext_->insert(key);
 
-  // Compose the external layer in its OWN anchor context so its references /
+  // Compose the external content in its OWN anchor context so its references /
   // payloads resolve relative to itself, but DEFER variant selection: the
   // referencing prim's selection is stronger and is applied by the host's
   // ApplyVariants pass after grafting. A fresh sub-Compositor is used because
   // Compose() resets per-run state (arc_resolved_/pending_graft_/...) that the
   // outer composition is still mid-pass on; the composed-layer cache and the
   // cycle guard are shared so the whole recursion sees them.
+  //
+  // When `subtree_root` is set the input is just that (self-contained) subtree,
+  // so a large multi-prim library is not materialized to pull one prim from it.
+  std::unique_ptr<Layer> extracted;
+  const Layer* input = raw;
+  if (!subtree_root.empty()) {
+    extracted = ExtractSubtree(*raw, subtree_root);
+    input = extracted.get();
+  }
+
   Compositor sub;
   sub.resolver_ = resolver_;
   sub.layer_loader_ = layer_loader_;
@@ -753,14 +834,14 @@ const Layer* Compositor::GetComposedExternalLayer(
   sub.composed_ext_cache_ = composed_ext_cache_;
   sub.composing_ext_ = composing_ext_;
 
-  std::unique_ptr<Layer> composed = sub.Compose(*raw, resolved_path);
+  std::unique_ptr<Layer> composed = sub.Compose(*input, resolved_path);
   for (const auto& e : sub.errors_) errors_.push_back(e);
-  composing_ext_->erase(resolved_path);
+  composing_ext_->erase(key);
 
   if (!composed) return raw;  // fall back to raw on failure
   std::shared_ptr<Layer> shared(std::move(composed));
   const Layer* ptr = shared.get();
-  (*composed_ext_cache_)[resolved_path] = std::move(shared);
+  (*composed_ext_cache_)[key] = std::move(shared);
   return ptr;
 }
 

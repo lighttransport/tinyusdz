@@ -37,10 +37,11 @@ static long peak_rss_kb() {
   return ru.ru_maxrss;  // kilobytes on Linux
 }
 
-// Library: L prims under /Lib. Most are arc-free Mesh with a big points array;
-// every 200th carries an external reference to @shader@</S>, so the LAYER has
-// composable arcs even though the prims a root typically references do not.
-static std::unique_ptr<Layer> MakeLib(size_t L, size_t verts) {
+// Library: L prims under /Lib, each an arc-free Mesh with a big points array.
+// When `all_arcs` every prim also carries an external reference to @shader@</S>
+// (so every prim is arc-bearing but SELF-CONTAINED); otherwise only every 200th
+// does (so the LAYER has arcs even though most prims do not).
+static std::unique_ptr<Layer> MakeLib(size_t L, size_t verts, bool all_arcs) {
   std::vector<float> points(verts * 3, 1.0f);
   auto lib = std::make_unique<Layer>();
   LayerBuilder lb(*lib);
@@ -48,7 +49,9 @@ static std::unique_ptr<Layer> MakeLib(size_t L, size_t verts) {
   for (size_t i = 0; i < L; ++i) {
     lb.begin_prim("P" + std::to_string(i), "Mesh");
     lb.add_property("points", Value::MakeFloat3Array(points));
-    if (i % 200 == 0) lb.current()->meta().references.push_back("@shader@</S>");
+    if (all_arcs || i % 200 == 0) {
+      lb.current()->meta().references.push_back("@shader@</S>");
+    }
     lb.end_prim();
   }
   lb.end_prim();
@@ -70,16 +73,25 @@ int main(int argc, char** argv) {
   size_t L = argc > 1 ? std::stoul(argv[1]) : 8000;
   size_t K = argc > 2 ? std::stoul(argv[2]) : 100;
   size_t verts = argc > 3 ? std::stoul(argv[3]) : 512;
+  // mode "arcfree" (default): reference arc-free prims  -> exercises the
+  //   subtree-arc check (arc-free referenced prim grafts raw).
+  // mode "arcref":            reference arc-bearing self-contained prims ->
+  //   exercises subtree-scoped composition (compose just the referenced prim's
+  //   subtree, not the whole library).
+  const std::string mode = argc > 4 ? argv[4] : "arcfree";
+  const bool all_arcs = (mode == "arcref");
 
-  // Root references K ARC-FREE library prims (odd indices, never %200==0).
   auto root = std::make_unique<Layer>();
   {
     LayerBuilder rb(*root);
     rb.begin_prim("World", "Xform");
     for (size_t i = 0; i < K; ++i) {
+      // arcfree: odd indices (never %200==0, so arc-free).
+      // arcref:  spread across the library; every prim is arc-bearing.
+      size_t idx = all_arcs ? (i * 7 + 1) % L : (i * 2 + 1);
       rb.begin_prim("R" + std::to_string(i), "");
       rb.current()->meta().references.push_back(
-          "@lib@</Lib/P" + std::to_string(i * 2 + 1) + ">");
+          "@lib@</Lib/P" + std::to_string(idx) + ">");
       rb.end_prim();
     }
     rb.end_prim();
@@ -90,16 +102,17 @@ int main(int argc, char** argv) {
   comp.SetLayerLoader(
       [&](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
         if (path.find("shader") != std::string::npos) return MakeShader();
-        return MakeLib(L, verts);
+        return MakeLib(L, verts, all_arcs);
       });
 
   auto out = comp.Compose(*root);
   size_t composed = out ? out->prim_count() : 0;
   std::printf(
-      "extref L=%zu K=%zu verts=%zu  composed_prims=%zu (want ~%zu)  "
+      "extref mode=%s L=%zu K=%zu verts=%zu  composed_prims=%zu (want ~%zu)  "
       "peak_rss=%ld KB  errors=%zu\n",
-      L, K, verts, composed, K + 1, peak_rss_kb(), comp.GetErrors().size());
-  // composed_prims ~ K+1 confirms the unreferenced library bulk was not
-  // materialized (the subtree-scoped arc check grafted arc-free prims raw).
+      mode.c_str(), L, K, verts, composed, K + 1, peak_rss_kb(),
+      comp.GetErrors().size());
+  // composed_prims ~ K+1 confirms only the referenced subtrees were
+  // materialized — the unreferenced library bulk was never composed/cloned.
   return (out && comp.GetErrors().empty()) ? 0 : 1;
 }

@@ -507,6 +507,95 @@ static void test_variant_ref_payload_chain() {
   }
 }
 
+// Subtree-scoped external composition: a SELF-CONTAINED arc-bearing prim of a
+// multi-prim library composes alone (only its subtree is materialized; the
+// library's other prims are not needed) and yields the same result as composing
+// it inside the whole layer. AssetA's only arc is an EXTERNAL reference, so it
+// is self-contained; the library also holds an unrelated /Base and a
+// NON-self-contained /AssetC to ensure they are neither needed nor leaked.
+static void test_extref_self_contained_subtree() {
+  std::cout << "[extref: self-contained subtree composed alone]\n";
+  Layer root;
+  {
+    PrimSpec r = MakePrim("/R", "Xform");
+    r.meta().references.push_back("@lib@</AssetA>");
+    root.add_prim(std::move(r));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        if (path.find("shader") != std::string::npos) {
+          PrimSpec s = MakePrim("/S", "Shader");
+          s.add_property("mat", Value(std::string("red")));
+          l->add_prim(std::move(s));
+        } else {
+          PrimSpec a = MakePrim("/AssetA", "Xform");
+          a.meta().references.push_back("@shader@</S>");  // external → self-contained
+          l->add_prim(std::move(a));
+          PrimSpec ag = MakePrim("/AssetA/Geom", "Mesh");  // a descendant to graft
+          ag.add_property("n", Value(int32_t(5)));
+          l->add_prim(std::move(ag));
+          PrimSpec base = MakePrim("/Base", "Xform");
+          base.add_property("base", Value(int32_t(7)));
+          l->add_prim(std::move(base));
+          PrimSpec c = MakePrim("/AssetC", "Xform");
+          c.meta().references.push_back("</Base>");  // internal → NOT self-contained
+          l->add_prim(std::move(c));
+        }
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* mat = out ? PropOf(*out, "/R", "mat") : nullptr;
+  CHECK(mat && mat->as_string() && *mat->as_string() == "red",
+        "self-contained AssetA's external ref resolved via subtree compose");
+  CHECK(out && out->prim_at_path("/R/Geom") != nullptr,
+        "AssetA's descendant grafted from the extracted subtree");
+  CHECK(PropOf(*out, "/R/Geom", "n") != nullptr,
+        "grafted descendant carries its property");
+  CHECK(out && out->prim_at_path("/R/Base") == nullptr,
+        "unrelated library sibling not leaked into the host");
+}
+
+// Fallback: a referenced prim whose INTERNAL reference escapes its subtree is
+// NOT self-contained and must compose against the whole layer so the sibling
+// target resolves.
+static void test_extref_non_self_contained_fallback() {
+  std::cout << "[extref: non-self-contained subtree falls back to whole layer]\n";
+  Layer root;
+  {
+    PrimSpec r = MakePrim("/R", "Xform");
+    r.meta().references.push_back("@lib@</AssetC>");
+    root.add_prim(std::move(r));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        PrimSpec base = MakePrim("/Base", "Xform");
+        base.add_property("base", Value(int32_t(7)));
+        l->add_prim(std::move(base));
+        PrimSpec c = MakePrim("/AssetC", "Xform");
+        c.meta().references.push_back("</Base>");  // internal ref to a sibling
+        l->add_prim(std::move(c));
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* base = out ? PropOf(*out, "/R", "base") : nullptr;
+  CHECK(base && base->as_int() && *base->as_int() == 7,
+        "AssetC's internal ref to sibling /Base resolved via whole-layer compose");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -520,6 +609,8 @@ int main() {
   test_variant_roundtrip();
   test_variant_selection_over_reference();
   test_variant_ref_payload_chain();
+  test_extref_self_contained_subtree();
+  test_extref_non_self_contained_fallback();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";
