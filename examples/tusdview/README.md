@@ -44,12 +44,14 @@ displays it with an ImGui docking UI.
   shader does linear-blend skinning. **Blendshapes** are applied on the GPU path
   too: the affected meshes' rest vertices are morphed on the CPU (sparse
   weighted offsets, normals regenerated from the posed geometry) and re-uploaded
-  per frame, then GPU-skinned. The **CPU** path (`SkinPointsLBS`, full re-pose +
-  upload) is the fallback and is used when the renderer lacks GPU skinning, for
-  the **ray-tracing** technique, or for scenes that also have **non-skeletal
-  (xform/deform) animation**. For a static frame at a specific time (e.g. a
-  headless screenshot), use `--time CODE` (alias `--frame`), which bakes the
-  posed geometry too.
+  per frame, then GPU-skinned. **Animated node transforms** (a moving SkelRoot /
+  parent Xform) are posed on the GPU path too: the affected mesh world matrices
+  are re-evaluated from the stage each frame (`BuildXformNodeFromStage`, no
+  geometry re-pack). The **CPU** path (`SkinPointsLBS`, full re-pose + upload) is
+  the fallback, used when the renderer lacks GPU skinning or for the
+  **ray-tracing** technique (whose BLAS needs baked vertices). For a static frame
+  at a specific time (e.g. a headless screenshot), use `--time CODE` (alias
+  `--frame`), which bakes the posed geometry too.
 
 - **Dockable Unity-like layout** (Dear ImGui docking branch):
   - **Hierarchy** browser — the Stage prim tree (name + type), with an optional

@@ -47,6 +47,14 @@ bool BuildGpuSkinningFrame(
     DrawScene* draw, double timecode, SkinningFrameCPU* frame,
     std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut);
 
+// Update each draw mesh's world transform to its value at `timecode`, evaluated
+// from the Stage's xform hierarchy. For scenes whose node transforms animate
+// alongside GPU skeletal skinning (e.g. a moving SkelRoot), this poses node
+// motion without a geometry re-pack. Returns true if any world changed; the
+// renderer must be told separately (Renderer::updateMeshWorld).
+bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
+                              double timecode);
+
 // Deform every skinned / blendshaped mesh in `render` to its pose at
 // `timecode`: applies animated blendshape offsets (weights read from the
 // Stage's SkelAnimation prims) then linear-blend skinning (joint poses from

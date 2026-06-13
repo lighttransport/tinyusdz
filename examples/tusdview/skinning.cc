@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -457,6 +458,39 @@ bool BuildGpuSkinningFrame(
     }
   }
   return true;
+}
+
+namespace {
+void FlattenXformWorlds(const tydra::XformNode& n,
+                        std::unordered_map<std::string, matrix4d>& out) {
+  out[n.absolute_path.full_path_name()] = n.get_world_matrix();
+  for (const tydra::XformNode& c : n.children) FlattenXformWorlds(c, out);
+}
+}  // namespace
+
+bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
+                              double timecode) {
+  if (!draw) return false;
+  tydra::XformNode root;
+  if (!tydra::BuildXformNodeFromStage(stage, &root, timecode)) return false;
+  std::unordered_map<std::string, matrix4d> worlds;
+  FlattenXformWorlds(root, worlds);
+  bool changed = false;
+  for (DrawMeshCPU& dm : draw->meshes) {
+    auto it = worlds.find(dm.absPath);
+    if (it == worlds.end()) continue;
+    float w[16];
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        w[i * 4 + j] = static_cast<float>(it->second.m[i][j]);
+      }
+    }
+    if (std::memcmp(dm.world, w, sizeof(w)) != 0) {
+      std::memcpy(dm.world, w, sizeof(w));
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 void DeformSkinnedMeshes(const tinyusdz::Stage& stage,

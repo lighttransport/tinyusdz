@@ -1482,6 +1482,13 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   vkUnmapMemory(device_, gm.vboMem);
 }
 
+void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  VkMeshGPU& gm = meshes_[static_cast<size_t>(meshIndex)];
+  std::memcpy(gm.world, world, sizeof(float) * 16);
+  NormalMatrix3(gm.world, gm.normalMat);  // keep normal matrix in sync
+}
+
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (sm.vertices.empty() || sm.indices.empty()) return;
   VkMeshGPU gm;

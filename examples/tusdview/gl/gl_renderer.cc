@@ -262,6 +262,14 @@ void GLRenderer::updateMeshVertices(int meshIndex,
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
+void GLRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  // GL recomputes the normal matrix from `world` each draw, so storing the new
+  // world is enough.
+  std::memcpy(meshes_[static_cast<size_t>(meshIndex)].world, world,
+              sizeof(float) * 16);
+}
+
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;
