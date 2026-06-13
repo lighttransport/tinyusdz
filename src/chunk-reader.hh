@@ -9,6 +9,8 @@
 #include <list>
 #include <memory>
 #include <mutex>
+
+#include "tsa-mutex.hh"
 #include <string>
 #include <vector>
 
@@ -168,7 +170,7 @@ public:
   /// If buffer is provided and all data is cached, performs the read.
   /// If buffer is provided but data is not cached, returns required chunks list.
   ///
-  nonstd::expected<ReadResult, std::string> Read(size_t offset, size_t size, uint8_t* buffer = nullptr);
+  nonstd::expected<ReadResult, std::string> Read(size_t offset, size_t size, uint8_t* buffer = nullptr) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Read data from the stream (legacy interface for compatibility)
@@ -179,7 +181,7 @@ public:
   /// @param[in] force_load If true, loads required chunks via callback
   /// @return Expected containing number of bytes read, or error string
   ///
-  nonstd::expected<size_t, std::string> ReadDirect(size_t offset, size_t size, uint8_t* buffer, bool force_load = true);
+  nonstd::expected<size_t, std::string> ReadDirect(size_t offset, size_t size, uint8_t* buffer, bool force_load = true) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Read a single byte
@@ -188,7 +190,7 @@ public:
   /// @param[out] value The byte value
   /// @return Expected containing true on success, or error string
   ///
-  nonstd::expected<bool, std::string> ReadByte(size_t offset, uint8_t* value);
+  nonstd::expected<bool, std::string> ReadByte(size_t offset, uint8_t* value) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Read 2 bytes (16-bit value)
@@ -197,7 +199,7 @@ public:
   /// @param[out] value The 16-bit value
   /// @return Expected containing true on success, or error string
   ///
-  nonstd::expected<bool, std::string> Read2(size_t offset, uint16_t* value);
+  nonstd::expected<bool, std::string> Read2(size_t offset, uint16_t* value) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Read 4 bytes (32-bit value)
@@ -206,7 +208,7 @@ public:
   /// @param[out] value The 32-bit value
   /// @return Expected containing true on success, or error string
   ///
-  nonstd::expected<bool, std::string> Read4(size_t offset, uint32_t* value);
+  nonstd::expected<bool, std::string> Read4(size_t offset, uint32_t* value) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Read 8 bytes (64-bit value)
@@ -215,7 +217,7 @@ public:
   /// @param[out] value The 64-bit value
   /// @return Expected containing true on success, or error string
   ///
-  nonstd::expected<bool, std::string> Read8(size_t offset, uint64_t* value);
+  nonstd::expected<bool, std::string> Read8(size_t offset, uint64_t* value) TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Seek to a position in the stream
@@ -250,7 +252,7 @@ public:
   ///
   /// Clear all cached chunks
   ///
-  void ClearCache();
+  void ClearCache() TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Get statistics about cache performance
@@ -277,14 +279,14 @@ public:
   ///
   /// @return Current cache size
   ///
-  size_t GetCacheSize() const;
+  size_t GetCacheSize() const TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Get the number of chunks currently in cache
   ///
   /// @return Number of cached chunks
   ///
-  size_t GetCachedChunkCount() const;
+  size_t GetCachedChunkCount() const TUSDZ_REQUIRES_NOT(cache_mutex_);
 
   ///
   /// Load specific chunks into cache
@@ -555,7 +557,7 @@ private:
   size_t current_offset_;
 
   // Hybrid cache management
-  mutable std::mutex cache_mutex_;
+  mutable Mutex cache_mutex_;
   
   // Cache size allocations
   size_t sliding_window_size_;
