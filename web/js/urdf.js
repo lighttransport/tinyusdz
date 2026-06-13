@@ -41,6 +41,8 @@ const state = {
   collisionMeshes: [],
   visualMeshes: [],
   muscleObjects: [],
+  usdMuscleObjects: [],
+  muscleLineData: null,
   settings: {
     upAxis: 'Z',
     showVisuals: true,
@@ -258,6 +260,9 @@ function clearRobot() {
   state.jointValues = {};
   state.collisionMeshes = [];
   state.visualMeshes = [];
+  for (const obj of state.muscleObjects) clearObjectFromGroup(robotGroup, obj);
+  state.muscleObjects = [];
+  state.muscleLineData = null;
   jointControlsEl.innerHTML = '';
   updateButtonStates();
   clearGhosts();
@@ -271,6 +276,8 @@ function clearUSD() {
   if (state.usdRestObject && state.usdRestObject !== state.usdObject) {
     disposeObject(state.usdRestObject);
   }
+  for (const obj of state.usdMuscleObjects) clearObjectFromGroup(usdGroup, obj);
+  state.usdMuscleObjects = [];
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
@@ -1871,18 +1878,19 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-// Build a Three.js visualization of MuJoCo spatial tendons (muscles, e.g.
-// ms_human_700): each <tendon><spatial> routes through an ordered sequence of
-// <site>s (and optional wrap <geom sidesite=...>), so we draw a polyline
-// through the resolved site world positions, colored by the tendon's rgba
-// (resolved from <default><tendon rgba=...>). All segments merge into one
-// LineSegments (single draw call) so thousands of muscles stay cheap.
+// Compute merged line-segment data for MuJoCo spatial tendons (muscles, e.g.
+// ms_human_700 / iit_softfoot): each <tendon><spatial> routes through an
+// ordered sequence of <site>s (and optional wrap <geom sidesite=...>), so we
+// emit a polyline through the resolved site world positions, colored by the
+// tendon's rgba (resolved from <default><tendon rgba=...>). All segments merge
+// into one buffer (one draw call) so thousands of muscles stay cheap.
 // `sitesByName` maps site name -> { pos: THREE.Vector3 (model-space) }.
-// Returns a THREE.Group (added under the model root, so it inherits the same
-// up-axis orientation as the body meshes) or null when there are no tendons.
-function buildMuscleVisualization(root, sitesByName) {
-  // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
-  // only tracks geom/joint, so read the tendon default directly here).
+// Returns { positions, colors, tendonCount } (model-space) or null. The data is
+// reused to draw the muscles on BOTH the MJCF source and the converted-USD
+// view, which share the same model coordinate space.
+function computeMuscleLineData(root, sitesByName) {
+  // Tendon default rgba from <default><tendon ...> (collectMujocoDefaults only
+  // tracks geom/joint, so read the tendon default directly here).
   let defRgba = [0.95, 0.3, 0.3, 1];
   const rootDefault = firstChildElement(root, 'default');
   const defTendon = rootDefault ? firstChildElement(rootDefault, 'tendon') : null;
@@ -1918,17 +1926,24 @@ function buildMuscleVisualization(root, sitesByName) {
     }
   }
   if (!positions.length) return null;
+  return { positions, colors, tendonCount };
+}
 
+// Build a THREE.Group of muscle LineSegments from computeMuscleLineData() data.
+// Cloned per view (source + USD) since a BufferGeometry can't be shared across
+// two scenes with independent disposal.
+function makeMuscleGroup(data) {
+  if (!data || !data.positions.length) return null;
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions.slice(), 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(data.colors.slice(), 3));
   const material = new THREE.LineBasicMaterial({ vertexColors: true });
   const lines = new THREE.LineSegments(geometry, material);
   lines.name = 'mjcf_muscles';
   const muscleGroup = new THREE.Group();
   muscleGroup.name = 'muscles';
   muscleGroup.add(lines);
-  muscleGroup.userData.tendonCount = tendonCount;
+  muscleGroup.userData.tendonCount = data.tendonCount;
   return muscleGroup;
 }
 
@@ -2174,11 +2189,15 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
   }
 
-  // Muscle / spatial-tendon visualization (e.g. ms_human_700). Drawn as polylines
-  // through the routing sites, in model space, added to the model root so it
-  // rides the same up-axis orientation as the body meshes.
+  // Muscle / spatial-tendon visualization (e.g. ms_human_700, iit_softfoot).
+  // Drawn as polylines through the routing sites, in model space, added to the
+  // model root so it rides the same up-axis orientation as the body meshes. The
+  // line data is stashed in state so the converted-USD view can draw the same
+  // muscles (it shares the model coordinate space).
   let muscleTendonCount = 0;
-  const muscleGroup = buildMuscleVisualization(root, sitesByName);
+  const muscleData = computeMuscleLineData(root, sitesByName);
+  state.muscleLineData = muscleData;
+  const muscleGroup = makeMuscleGroup(muscleData);
   if (muscleGroup) {
     muscleGroup.visible = state.settings.showMuscles;
     group.add(muscleGroup);
@@ -2335,6 +2354,7 @@ function applyVisibility() {
 
 function applyMuscleVisibility() {
   for (const obj of state.muscleObjects) obj.visible = state.settings.showMuscles;
+  for (const obj of state.usdMuscleObjects) obj.visible = state.settings.showMuscles;
 }
 
 function currentFitObjects() {
@@ -3688,6 +3708,18 @@ async function convertSourceToUSD(format = 'usdc') {
     }
   } catch (err) {
     console.warn('USD Physics articulation skipped:', err);
+  }
+  // Draw the muscle/spatial-tendon polylines on the USD view too. The converted
+  // USD carries the muscle topology (MjcTendon + MjcSite prims), but the site
+  // markers are guide-purpose (not rendered); reuse the model-space line data
+  // computed at MJCF-parse time (both views share the model coordinate space).
+  if (state.muscleLineData) {
+    const usdMuscle = makeMuscleGroup(state.muscleLineData);
+    if (usdMuscle) {
+      usdMuscle.visible = state.settings.showMuscles;
+      usdGroup.add(usdMuscle);
+      state.usdMuscleObjects.push(usdMuscle);
+    }
   }
   state.usdIsConverted = true;
   updateButtonStates();
