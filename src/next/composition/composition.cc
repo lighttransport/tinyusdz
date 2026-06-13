@@ -14,21 +14,41 @@ namespace next {
 
 namespace {
 
-// Does any prim in `layer` author a composition arc that must be expanded
-// (references / payloads / inherits / specializes)? Variants are intentionally
-// excluded: their selection is deferred to the referencing prim, so a
-// variants-only external layer needs no pre-composition.
+// Does the prim author a composition arc that must be expanded (references /
+// payloads / inherits / specializes)? Variants are intentionally excluded: their
+// selection is deferred to the referencing prim, so a variants-only prim needs
+// no pre-composition.
+bool PrimHasComposableArcs(const PrimSpec& p) {
+  const auto& m = p.meta();
+  return !m.references.empty() || !m.payloads.empty() || !m.inherits.empty() ||
+         !m.specializes.empty();
+}
+
+// Does any prim in `layer` (or a sublayer) author a composable arc?
 bool LayerHasComposableArcs(const Layer& layer) {
   for (size_t i = 0; i < layer.prim_count(); ++i) {
     const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
-    if (!p) continue;
-    const auto& m = p->meta();
-    if (!m.references.empty() || !m.payloads.empty() || !m.inherits.empty() ||
-        !m.specializes.empty()) {
-      return true;
-    }
+    if (p && PrimHasComposableArcs(*p)) return true;
   }
   return !layer.meta().subLayers.empty();
+}
+
+// Does the prim at `root_path` in `layer`, OR any of its descendants, author a
+// composable arc? Lets a reference to an arc-free prim of an otherwise
+// arc-bearing library layer skip whole-layer pre-composition (composing an
+// arc-free subtree changes nothing, so grafting the raw layer is identical).
+bool SubtreeHasComposableArcs(const Layer& layer, const std::string& root_path) {
+  const std::string prefix = root_path + "/";
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
+    if (!p) continue;
+    const std::string& pp = p->path().str();
+    const bool in_subtree =
+        pp == root_path ||
+        (pp.size() > prefix.size() && pp.compare(0, prefix.size(), prefix) == 0);
+    if (in_subtree && PrimHasComposableArcs(*p)) return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -482,20 +502,28 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     return;
   }
   PushStack(resolved);
-  // Compose the external target's OWN arcs first (references / payloads /
-  // inherits / specializes), variants deferred, so a referenced asset whose
-  // content arrives through its own payload or nested references is fully
-  // expanded before its opinions are merged here. Mirrors the internal-arc path
-  // above, which resolves the target's arcs via ResolveArcsForPrim.
-  const Layer* ext = GetComposedExternalLayer(resolved);
-  if (!ext) {
+  const Layer* raw = GetCachedLayer(resolved);
+  if (!raw) {
     AddError("Failed to load reference: " + arc.asset_path, self,
              arc.asset_path, arc.type);
     PopStack();
     return;
   }
   std::string tp = arc.prim_path;
-  if (tp.empty()) tp = "/" + ext->meta().defaultPrim;
+  if (tp.empty()) tp = "/" + raw->meta().defaultPrim;
+
+  // Compose the external target's OWN arcs first (references / payloads /
+  // inherits / specializes), variants deferred, so a referenced asset whose
+  // content arrives through its own payload or nested references is fully
+  // expanded before its opinions are merged here (mirrors the internal-arc path
+  // above). Skip it when the referenced SUBTREE has no arcs: composing an
+  // arc-free subtree is identical to grafting it raw, so a big multi-prim
+  // library layer is not materialized just to pull one self-contained prim.
+  const Layer* ext = raw;
+  if (SubtreeHasComposableArcs(*raw, tp)) {
+    ext = GetComposedExternalLayer(resolved);
+    if (!ext) ext = raw;  // fall back to raw on composition failure
+  }
   const PrimSpec* target = ext->prim_at_path(tp);
   if (!target) {
     AddError("Referenced prim not found: " + tp, self, arc.asset_path, arc.type);
