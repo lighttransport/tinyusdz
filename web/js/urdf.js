@@ -1423,6 +1423,9 @@ function attrsFromElement(el) {
 // MuJoCo <compiler> context for angle units + euler sequence. Set per-parse in
 // parseMJCFWithMeshes; defaults match MuJoCo (degrees, "xyz").
 let mjcfPoseCtx = { toRad: Math.PI / 180, eulerseq: 'xyz' };
+// <asset><hfield> name -> { nrow, ncol, size, data } for the current model,
+// populated (async, PNG-decoded) by parseMJCFWithMeshes.
+let mjcfHFields = new Map();
 
 function eulerQuatFromSeq(angles, seq, toRad) {
   const axisFor = (c) => (c === 'x' ? new THREE.Vector3(1, 0, 0)
@@ -1856,9 +1859,128 @@ function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   return null;
 }
 
+// Tessellate a heightfield's top surface into a THREE.BufferGeometry, matching
+// the CLI's buildHFieldGeometry / C++ TessellateHField exactly: x in [-rx,rx]
+// over ncol, y in [-ry,ry] over nrow, z = normalized*elevation_z, with smooth
+// per-vertex normals from the (edge-correct) height gradient.
+function buildHFieldGeometry(hf) {
+  const nr = hf.nrow, nc = hf.ncol;
+  const rx = hf.size[0], ry = hf.size[1], ez = hf.size[2] ?? 1;
+  const dx = (2 * rx) / (nc - 1), dy = (2 * ry) / (nr - 1);
+  const H = (r, c) => {
+    r = Math.max(0, Math.min(nr - 1, r));
+    c = Math.max(0, Math.min(nc - 1, c));
+    return hf.data[r * nc + c] * ez;
+  };
+  const positions = new Float32Array(nr * nc * 3);
+  const normals = new Float32Array(nr * nc * 3);
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const i = (r * nc + c) * 3;
+      positions[i] = -rx + c * dx;
+      positions[i + 1] = -ry + r * dy;
+      positions[i + 2] = H(r, c);
+      const cl = Math.max(0, c - 1), cr = Math.min(nc - 1, c + 1);
+      const rb = Math.max(0, r - 1), rt = Math.min(nr - 1, r + 1);
+      const hx = (H(r, cr) - H(r, cl)) / ((cr - cl) * dx);
+      const hy = (H(rt, c) - H(rb, c)) / ((rt - rb) * dy);
+      let nx = -hx, ny = -hy, nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normals[i] = nx / len; normals[i + 1] = ny / len; normals[i + 2] = nz / len;
+    }
+  }
+  const indices = new Uint32Array((nr - 1) * (nc - 1) * 6);
+  let k = 0;
+  for (let r = 0; r < nr - 1; r++) {
+    for (let c = 0; c < nc - 1; c++) {
+      const v00 = r * nc + c, v01 = r * nc + (c + 1);
+      const v10 = (r + 1) * nc + c, v11 = (r + 1) * nc + (c + 1);
+      indices[k++] = v00; indices[k++] = v01; indices[k++] = v11;
+      indices[k++] = v00; indices[k++] = v11; indices[k++] = v10;
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geom.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geom;
+}
+
+// Decode an image File to a grayscale (luminance) pixel array via the browser's
+// image pipeline (createImageBitmap + canvas), for <asset><hfield file=.png>.
+async function decodeImageToGray(file) {
+  const bitmap = await createImageBitmap(file);
+  const w = bitmap.width, h = bitmap.height;
+  const canvas = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(w, h)
+    : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  const px = ctx.getImageData(0, 0, w, h).data;  // RGBA, rows top-to-bottom
+  bitmap.close?.();
+  const gray = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    gray[i] = Math.round(0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2]);
+  }
+  return { width: w, height: h, gray };
+}
+
+// Collect <asset><hfield> (name -> { nrow, ncol, size, data[0..1] }). File-based
+// fields decode a PNG (rows reversed: MuJoCo row 0 = -y edge); inline fields use
+// nrow/ncol/elevation. Async because the browser image decode is async.
+async function collectMujocoHFields(root) {
+  const compiler = firstChildElement(root, 'compiler');
+  const meshDir = compiler?.getAttribute('meshdir') || compiler?.getAttribute('assetdir') || '';
+  const hfields = new Map();
+  for (const asset of childElements(root, 'asset')) {
+    for (const hf of childElements(asset, 'hfield')) {
+      const file = hf.getAttribute('file') || '';
+      const name = hf.getAttribute('name') || (file ? file.split('/').pop().replace(/\.[^.]+$/, '') : '');
+      if (!name) continue;
+      const size = parseNumbers(hf.getAttribute('size'), [1, 1, 1, 0.1]);
+      let nrow = 0, ncol = 0, data = null;
+      if (file) {
+        const entry = resolveAssetEntry(joinPath(meshDir, file)) || resolveAssetEntry(file);
+        if (entry) {
+          try {
+            const png = await decodeImageToGray(entry.file);
+            ncol = png.width; nrow = png.height;
+            data = new Float32Array(nrow * ncol);
+            for (let r = 0; r < nrow; r++) {
+              for (let c = 0; c < ncol; c++) {
+                data[r * ncol + c] = png.gray[c + (nrow - 1 - r) * ncol];
+              }
+            }
+          } catch (err) {
+            console.warn(`MJCF hfield decode failed for ${file}:`, err);
+          }
+        }
+      } else {
+        nrow = Math.trunc(Number(hf.getAttribute('nrow')) || 0);
+        ncol = Math.trunc(Number(hf.getAttribute('ncol')) || 0);
+        const elev = parseNumbers(hf.getAttribute('elevation'), []);
+        if (nrow > 0 && ncol > 0 && elev.length === nrow * ncol) data = Float32Array.from(elev);
+      }
+      if (nrow > 1 && ncol > 1 && data) {
+        let emin = Infinity, emax = -Infinity;
+        for (const v of data) { if (v < emin) emin = v; if (v > emax) emax = v; }
+        const range = emax - emin;
+        for (let i = 0; i < data.length; i++) { data[i] -= emin; if (range > 1e-9) data[i] /= range; }
+        hfields.set(name, { nrow, ncol, size, data });
+      }
+    }
+  }
+  return hfields;
+}
+
 async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
+  if (geomType === 'hfield') {
+    const hf = mjcfHFields.get(attrs.hfield);
+    if (!hf) return makeMissingMesh(attrs.hfield || fallbackName);
+    return primitiveObjectFromGeometry(buildHFieldGeometry(hf), fallbackName);
+  }
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return makeMissingMesh(attrs.mesh || fallbackName);
@@ -2262,6 +2384,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
   // Graft <attach> sub-models into the tree before any semantic parsing.
   await expandMujocoAttachments(root, baseDir);
+  // Decode <asset><hfield> (PNG/inline) for <geom type="hfield"> tessellation.
+  mjcfHFields = await collectMujocoHFields(root);
 
   // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
   const compilerEl = firstChildElement(root, 'compiler');
