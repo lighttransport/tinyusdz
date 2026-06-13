@@ -2931,38 +2931,43 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   if (!reader_->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
 
-  // Each entry is [u32 keyStringIdx][u64 value ValueRep]. Read the fixed-size
-  // block fully first (decoding a value seeks away from the block), then decode
-  // the values. NOTE: pxr's recursive dict-value packing is not fully decoded
-  // here — entries whose value does not resolve to a concrete Value are dropped
-  // rather than stored as a misleading empty/None entry.
-  std::vector<std::pair<std::string, uint64_t>> entries;
-  entries.reserve(static_cast<size_t>(count));
+  // pxr WriteMap layout: [u64 count] then per entry [u32 keyStringIdx] followed
+  // by a Write(VtValue): an int64 forward offset, the nested value data, then
+  // the 8-byte ValueRep (_RecursiveWrite). So entries are *variable*-stride: the
+  // ValueRep lives at (valStart + recOffset) and the next entry begins right
+  // after it. We must read sequentially and restore the position after each
+  // value decode (which seeks to the ValueRep's payload elsewhere).
+  Value dv = Value::MakeDictionary();
+  Dict* d = dv.as_dictionary();
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t kidx = 0;
     if (!reader_->read_u32(kidx)) return false;
-    uint64_t vrep_raw = 0;
-    if (!reader_->read_u64(vrep_raw)) return false;
     std::string key;
     GetString(kidx, key);
-    entries.emplace_back(std::move(key), vrep_raw);
-  }
 
-  Value dv = Value::MakeDictionary();
-  Dict* d = dv.as_dictionary();
-  for (auto& e : entries) {
-    ValueRep vr(e.second);
+    const size_t val_start = reader_->position();
+    uint64_t rec_off_raw = 0;
+    if (!reader_->read_u64(rec_off_raw)) return false;
+    const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
+    const size_t rep_pos =
+        static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
+    if (!reader_->seek(rep_pos)) return false;
+    uint64_t vrep_raw = 0;
+    if (!reader_->read_u64(vrep_raw)) return false;
+    const size_t next_entry_pos = reader_->position();  // rep_pos + 8
+
+    ValueRep vr(vrep_raw);
     Value cv;
     if (vr.type_id() == CrateTypeId::Dictionary) {
       DecodeDictionary(vr, cv, depth + 1);
     } else if (vr.type_id() != CrateTypeId::Invalid) {
       UnpackValue(vr, cv);
     }
-    if (!cv.is_empty()) d->set(std::move(e.first), std::move(cv));
+    d->set(std::move(key), std::move(cv));
+
+    if (!reader_->seek(next_entry_pos)) return false;  // resume after this value
   }
-  // If nothing resolved, leave `out` empty so the caller stores no (misleading
-  // empty) dictionary; otherwise hand back what decoded.
-  if (!d->empty()) out = std::move(dv);
+  out = std::move(dv);
   return true;
 }
 
