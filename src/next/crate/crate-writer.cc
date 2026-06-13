@@ -10,6 +10,7 @@
 #include "lazy-array.hh"
 #include "../layer/property-index.hh"
 #include "../types/type-id.hh"
+#include "../writer/value-printer.hh"  // PrintValue (dict-as-USDA-text encoding)
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
@@ -904,6 +905,39 @@ private:
 
       if (has_ts) flds.push_back(BuildTimeSamplesField(prim, slot.name_id));
 
+      // Per-property metadata (interpolation/elementSize/colorSpace/customData).
+      if (const PropMeta* pm = prim.property_meta(slot.name_id)) {
+        auto tok_field = [&](const char* name, const std::string& v) {
+          CrateField f;
+          f.token_index.value = InternToken(name);
+          f.value_rep =
+              ValueRep::Make(CrateTypeId::Token, InternToken(v), false, true);
+          flds.push_back(f);
+        };
+        if (pm->authored & PropMeta::kInterpolation)
+          tok_field("interpolation", pm->interpolation);
+        if (pm->authored & PropMeta::kColorSpace)
+          tok_field("colorSpace", pm->colorSpace);
+        if (pm->authored & PropMeta::kElementSize) {
+          CrateField f;
+          f.token_index.value = InternToken("elementSize");
+          f.value_rep = ValueRep::Make(
+              CrateTypeId::Int,
+              static_cast<uint64_t>(static_cast<uint32_t>(pm->elementSize)),
+              false, true);
+          flds.push_back(f);
+        }
+        if ((pm->authored & PropMeta::kCustomData) &&
+            pm->customData.is_dictionary()) {
+          CrateField f;
+          f.token_index.value = InternToken("customData");
+          f.value_rep = ValueRep::Make(
+              CrateTypeId::String, InternString(PrintValue(pm->customData)),
+              false, true);
+          flds.push_back(f);
+        }
+      }
+
       EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
       emitted.insert(prop_name);
@@ -1539,6 +1573,42 @@ private:
         fields_.push_back(f);
       }
 
+      // framesPerSecond / kilogramsPerUnit (only when authored).
+      if (layer.meta().framesPerSecond_set) {
+        CrateField f;
+        f.token_index.value = InternToken("framesPerSecond");
+        double v = layer.meta().framesPerSecond;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (layer.meta().kilogramsPerUnit_set) {
+        CrateField f;
+        f.token_index.value = InternToken("kilogramsPerUnit");
+        double v = layer.meta().kilogramsPerUnit;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Dictionary-valued stage metadata (USDA-text in a String field).
+      auto add_layer_dict = [&](const char* name, const Value& v) {
+        if (!v.is_dictionary() || !v.as_dictionary() ||
+            v.as_dictionary()->empty()) {
+          return;
+        }
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = ValueRep::Make(CrateTypeId::String,
+                                     InternString(PrintValue(v)), false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_layer_dict("customLayerData", layer.meta().customLayerData);
+      add_layer_dict("expressionVariables", layer.meta().expressionVariables);
+
       // doc
       if (!layer.meta().doc.empty()) {
         CrateField f;
@@ -1779,6 +1849,47 @@ private:
       if (!prim.meta().comment().empty()) {
         add_string_field("comment", prim.meta().comment());
       }
+
+      // kind (token), displayName (string), instanceable (bool).
+      if (!prim.meta().kind().empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("kind");
+        f.value_rep = ValueRep::Make(CrateTypeId::Token,
+                                     InternToken(prim.meta().kind()), false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (!prim.meta().displayName().empty()) {
+        add_string_field("displayName", prim.meta().displayName());
+      }
+      if (prim.meta().instanceable) {
+        CrateField f;
+        f.token_index.value = InternToken("instanceable");
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Dictionary-valued metadata: encode as USDA dict text in a String field
+      // (next-private; the matching reader parses it back with ParseDict). This
+      // sidesteps the binary VtDictionary's recursive offset patching while
+      // staying fully type-preserving.
+      auto add_dict_field = [&](const char* name, const Value& v) {
+        if (!v.is_dictionary() || !v.as_dictionary() ||
+            v.as_dictionary()->empty()) {
+          return;
+        }
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = ValueRep::Make(CrateTypeId::String,
+                                     InternString(PrintValue(v)), false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_dict_field("customData", prim.meta().customData());
+      add_dict_field("assetInfo", prim.meta().assetInfo());
+      add_dict_field("sdrMetadata", prim.meta().sdrMetadata());
+      add_dict_field("clips", prim.meta().clips());
       // variantSelection: a VariantSelectionMap of each set's selected variant.
       // The reader rebuilds the VariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The

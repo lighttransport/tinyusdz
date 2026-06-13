@@ -9,6 +9,8 @@
 #include "stream-reader.hh"
 #include "../types/type-info.hh"
 #include "../layer/layer.hh"
+#include "../parser/lexer.hh"          // dict-as-USDA-text decode
+#include "../parser/value-parser.hh"  // ParseDict
 
 #include "safe-arithmetic.hh"
 
@@ -22,6 +24,15 @@
 
 namespace tinyusdz {
 namespace next {
+
+// Decode a dictionary that was written as USDA dict text in a String field
+// (see crate-writer add_dict_field). Returns an empty Value on failure.
+static Value ParseDictText(const std::string& text) {
+  if (text.empty()) return Value();
+  Lexer lexer(text.data(), text.size());
+  ParseResult r = ParseDict(lexer);
+  return r.success ? std::move(r.value) : Value();
+}
 
 // ============================================================
 // TokenPool (Phase 8.2: TfToken-lite)
@@ -1932,6 +1943,31 @@ bool CrateReader::Impl::BuildStage() {
       } else if (field.first == "endTimeCode") {
         const double* d = field.second.as_double();
         if (d) layer.meta().endTimeCode = *d;
+      } else if (field.first == "framesPerSecond") {
+        const double* d = field.second.as_double();
+        if (d) {
+          layer.meta().framesPerSecond = *d;
+          layer.meta().framesPerSecond_set = true;
+        }
+      } else if (field.first == "kilogramsPerUnit") {
+        const double* d = field.second.as_double();
+        if (d) {
+          layer.meta().kilogramsPerUnit = *d;
+          layer.meta().kilogramsPerUnit_set = true;
+        }
+      } else if (field.first == "customLayerData" ||
+                 field.first == "expressionVariables") {
+        const std::string* s = field.second.as_string();
+        if (!s) s = field.second.as_token();
+        if (s) {
+          Value d = ParseDictText(*s);
+          if (d.is_dictionary()) {
+            if (field.first == "customLayerData")
+              layer.meta().customLayerData = std::move(d);
+            else
+              layer.meta().expressionVariables = std::move(d);
+          }
+        }
       } else if (field.first == "doc") {
         if (const std::string* s = field.second.as_string())
           layer.meta().doc = *s;
@@ -2055,6 +2091,14 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::string> connection_targets;
     bool uniform = false;
     std::vector<std::pair<double, Value>> time_samples;
+    // Per-property metadata (round-tripped via attribute spec fields).
+    std::string interpolation;
+    std::string color_space;
+    int32_t element_size = 1;
+    bool has_interpolation = false;
+    bool has_color_space = false;
+    bool has_element_size = false;
+    Value custom_data;  // dictionary
   };
   struct RelInfo {
     std::string name;
@@ -2139,6 +2183,37 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        }
+      } else if (f.first == "interpolation") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) {
+            ai.interpolation = *s;
+            ai.has_interpolation = true;
+          }
+        }
+      } else if (f.first == "colorSpace") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) {
+            ai.color_space = *s;
+            ai.has_color_space = true;
+          }
+        }
+      } else if (f.first == "elementSize") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const int32_t* i = v.as_int()) {
+            ai.element_size = *i;
+            ai.has_element_size = true;
+          }
+        }
+      } else if (f.first == "customData") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          const std::string* s = v.as_string();
+          if (!s) s = v.as_token();
+          if (s) ai.custom_data = ParseDictText(*s);
         }
       }
     }
@@ -2284,6 +2359,44 @@ bool CrateReader::Impl::BuildStage() {
             ps->meta().comment() = *s;
           continue;
         }
+        if (field.first == "kind") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().kind() = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().kind() = *s;
+          continue;
+        }
+        if (field.first == "displayName") {
+          if (const std::string* s = field.second.as_string())
+            ps->meta().displayName() = *s;
+          else if (const std::string* s = field.second.as_token())
+            ps->meta().displayName() = *s;
+          continue;
+        }
+        if (field.first == "instanceable") {
+          if (const bool* b = field.second.as_bool())
+            ps->meta().instanceable = *b;
+          continue;
+        }
+        if (field.first == "customData" || field.first == "assetInfo" ||
+            field.first == "sdrMetadata" || field.first == "clips") {
+          const std::string* s = field.second.as_string();
+          if (!s) s = field.second.as_token();
+          if (s) {
+            Value d = ParseDictText(*s);
+            if (d.is_dictionary()) {
+              if (field.first == "customData")
+                ps->meta().customData() = std::move(d);
+              else if (field.first == "assetInfo")
+                ps->meta().assetInfo() = std::move(d);
+              else if (field.first == "sdrMetadata")
+                ps->meta().sdrMetadata() = std::move(d);
+              else
+                ps->meta().clips() = std::move(d);
+            }
+          }
+          continue;
+        }
         if (field.first == "variantSets") {
           // Writer stores the variant-set names only; reconstruct name entries.
           std::vector<std::string> names;
@@ -2342,6 +2455,27 @@ bool CrateReader::Impl::BuildStage() {
         }
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));
+        }
+        // Per-property metadata.
+        if (ai.has_interpolation || ai.has_color_space || ai.has_element_size ||
+            ai.custom_data.is_dictionary()) {
+          PropMeta& pm = ps->ensure_property_meta(ai.name);
+          if (ai.has_interpolation) {
+            pm.interpolation = ai.interpolation;
+            pm.authored |= PropMeta::kInterpolation;
+          }
+          if (ai.has_color_space) {
+            pm.colorSpace = ai.color_space;
+            pm.authored |= PropMeta::kColorSpace;
+          }
+          if (ai.has_element_size) {
+            pm.elementSize = ai.element_size;
+            pm.authored |= PropMeta::kElementSize;
+          }
+          if (ai.custom_data.is_dictionary()) {
+            pm.customData = std::move(ai.custom_data);
+            pm.authored |= PropMeta::kCustomData;
+          }
         }
       }
     }
