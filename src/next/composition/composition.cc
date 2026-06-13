@@ -409,16 +409,30 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
   // (ApplyVariants runs after arc resolution and is strongest).
   if (!source.meta().variantSets().empty()) {
     std::vector<VariantSetData>& tsets = target.meta().variantSets();
+    // The host (target) may express its selection as the legacy variantSelection
+    // STRING rather than a per-set `selected`. The crate reader sets both, but a
+    // host carrying only the string must still win over a referenced asset's
+    // (weaker) per-set `selected`, which would otherwise ride along this copy and
+    // take precedence in ApplyVariants. Suppress the source `selected` for the
+    // set the host's string already selects (ApplyVariants then falls back to the
+    // host's string).
+    const VariantSelection target_sel =
+        ParseVariantSelection(target.meta().variantSelection);
     for (const auto& ssvs : source.meta().variantSets()) {
+      const bool host_string_selects =
+          !target_sel.variant_set.empty() && ssvs.name == target_sel.variant_set;
       VariantSetData* tvs = nullptr;
       for (auto& t : tsets) {
         if (t.name == ssvs.name) { tvs = &t; break; }
       }
       if (!tvs) {
         tsets.push_back(ssvs);  // whole set is new to the target
+        if (host_string_selects) tsets.back().selected.clear();  // host wins
         continue;
       }
-      if (tvs->selected.empty()) tvs->selected = ssvs.selected;
+      if (tvs->selected.empty() && !host_string_selects) {
+        tvs->selected = ssvs.selected;
+      }
       for (const auto& svar : ssvs.variants) {
         VariantData* tvar = nullptr;
         for (auto& v : tvs->variants) {

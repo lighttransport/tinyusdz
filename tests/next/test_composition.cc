@@ -596,6 +596,85 @@ static void test_extref_non_self_contained_fallback() {
         "AssetC's internal ref to sibling /Base resolved via whole-layer compose");
 }
 
+// The crate (USDC) reader records a variant selection as BOTH a per-set
+// VariantSetData.selected AND the legacy variantSelection string. A host that
+// overrides a referenced asset's variant must win regardless of which form it
+// carries; the asset's (weaker) per-set `selected` must not ride along the
+// CopyLocalOpinions variantSet merge and defeat the override in ApplyVariants
+// (which prefers vs.selected over the legacy string).
+static void test_variant_selected_field_over_reference() {
+  std::cout << "[variants: host selection wins over referenced vs.selected]\n";
+
+  // A modelingVariant set carrying its own per-set `selected` (reader form).
+  auto makeSet = [](const std::string& sel) {
+    VariantSetData vsd;
+    vsd.name = "modelingVariant";
+    vsd.selected = sel;
+    VariantData a; a.name = "ChairA";
+    a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
+    VariantData b; b.name = "ChairB";
+    b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
+    vsd.variants.push_back(std::move(a));
+    vsd.variants.push_back(std::move(b));
+    return vsd;
+  };
+  // Referenced asset always selects its OWN default "ChairA" via vs.selected.
+  auto loader = [&](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+    auto l = std::make_unique<Layer>();
+    PrimSpec ch = MakePrim("/Chair", "Xform");
+    ch.meta().variantSets().push_back(makeSet("ChairA"));
+    ch.meta().variantSelection = "modelingVariant=ChairA";
+    l->add_prim(std::move(ch));
+    l->finalize();
+    return l;
+  };
+  auto whichOf = [](const Layer* out, const std::string& prim) {
+    const Value* w = out ? PropOf(*out, prim, "which") : nullptr;
+    return (w && w->as_string()) ? *w->as_string() : std::string("<none>");
+  };
+
+  // (1) reader-consistent host: BOTH per-set selected AND the string = "ChairB".
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H1", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    c.meta().variantSets().push_back(makeSet("ChairB"));
+    c.meta().variantSelection = "modelingVariant=ChairB";
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H1") == "I_am_ChairB",
+          "host vs.selected 'ChairB' wins over referenced vs.selected 'ChairA'");
+  }
+
+  // (2) string-only host: the asset's per-set `selected` must NOT defeat the
+  // host's legacy variantSelection (the hardened merge suppresses it).
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H2", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    c.meta().variantSelection = "modelingVariant=ChairB";  // string only
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H2") == "I_am_ChairB",
+          "host variantSelection string 'ChairB' wins over referenced vs.selected");
+  }
+
+  // (3) control: host does NOT override → the asset's own default ChairA stands
+  // (the hardening must not suppress a referenced selection the host didn't override).
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H3", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H3") == "I_am_ChairA",
+          "no host override → referenced default 'ChairA' applies");
+  }
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -611,6 +690,7 @@ int main() {
   test_variant_ref_payload_chain();
   test_extref_self_contained_subtree();
   test_extref_non_self_contained_fallback();
+  test_variant_selected_field_over_reference();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";
