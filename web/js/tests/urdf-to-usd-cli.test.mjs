@@ -226,6 +226,36 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF <sensor> -> sensors payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Sens">
+  <worldbody>
+    <body name="b"><joint name="j" type="hinge"/><site name="imu"/><geom type="sphere" size="0.1"/></body>
+  </worldbody>
+  <sensor>
+    <gyro name="g" site="imu" cutoff="34.9" noise="0.01"/>
+    <jointpos name="jp" joint="j"/>
+    <framepos name="fp" objtype="body" objname="b" reftype="body" refname="world"/>
+  </sensor>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.equal(payload.sensors.length, 3);
+    const g = payload.sensors.find((s) => s.name === 'g');
+    assert.equal(g.type, 'gyro');
+    assert.equal(g.objtype, 'site');
+    assert.equal(g.objname, 'imu');
+    assert.equal(g.cutoff, 34.9);
+    const jp = payload.sensors.find((s) => s.name === 'jp');
+    assert.equal(jp.type, 'jointpos');
+    assert.equal(jp.objtype, 'joint');
+    const fp = payload.sensors.find((s) => s.name === 'fp');
+    assert.equal(fp.type, 'framepos');
+    assert.equal(fp.reftype, 'body');
+    assert.equal(fp.refname, 'world');
+  });
+});
+
 await testAsync('MJCF <asset><material> -> materials payload + geom ref', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>

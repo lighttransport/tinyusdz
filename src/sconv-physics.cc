@@ -397,6 +397,24 @@ bool CrateWriter::ExtractMjcKeyframeProperties(
   return true;
 }
 
+bool CrateWriter::ExtractMjcSensorProperties(
+    const Prim &prim, const Path &prim_path,
+    crate::FieldValuePairVector &fields, std::string *err) {
+  const MjcSensor *s = prim.data().as<MjcSensor>();
+  if (!s) { if (err) *err = "Failed to cast to MjcSensor"; return false; }
+  EXTRACT_TOKEN_FALLBACK(s->type, "mjc:type");
+  EXTRACT_TOKEN_FALLBACK(s->objType, "mjc:objtype");
+  EXTRACT_TOKEN_FALLBACK(s->objName, "mjc:objname");
+  EXTRACT_TOKEN_FALLBACK(s->refType, "mjc:reftype");
+  EXTRACT_TOKEN_FALLBACK(s->refName, "mjc:refname");
+  EXTRACT_FALLBACK(s->group, "mjc:group");
+  EXTRACT_FALLBACK(s->cutoff, "mjc:cutoff");
+  EXTRACT_FALLBACK(s->noise, "mjc:noise");
+  EXTRACT_TYPED(s->user, "mjc:user");
+  (void)prim_path;
+  return true;
+}
+
 #undef EXTRACT_TYPED
 #undef EXTRACT_FALLBACK
 #undef EXTRACT_REL

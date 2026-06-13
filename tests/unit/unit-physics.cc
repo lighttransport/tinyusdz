@@ -3221,6 +3221,73 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <sensor> -> MjcSensor prims (typed schema) under /World/Sensors.
+void urdf_json_mjc_sensors_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "SensBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "joints": [],
+  "sensors": [
+    { "name": "imu_gyro", "type": "gyro", "objtype": "site", "objname": "imu",
+      "cutoff": 34.9, "noise": 0.01 },
+    { "name": "hip_pos", "type": "jointpos", "objtype": "joint", "objname": "hip" },
+    { "name": "torso_pos", "type": "framepos", "objtype": "body", "objname": "torso",
+      "reftype": "body", "refname": "world" }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto gr = stage.GetPrimAtPath(Path("/World/Sensors/imu_gyro", ""));
+  TEST_CHECK(bool(gr));
+  if (gr) {
+    TEST_CHECK((*gr)->is<MjcSensor>());
+    const auto *s = (*gr)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->type.get_value().str() == "gyro");
+      TEST_CHECK(s->objType.get_value().str() == "site");
+      TEST_CHECK(s->objName.get_value().str() == "imu");
+      TEST_CHECK(approx_eq(s->cutoff.get_value(), 34.9));
+      TEST_CHECK(approx_eq(s->noise.get_value(), 0.01));
+    }
+  }
+  auto fr = stage.GetPrimAtPath(Path("/World/Sensors/torso_pos", ""));
+  TEST_CHECK(bool(fr));
+  if (fr) {
+    const auto *s = (*fr)->as<MjcSensor>();
+    if (s) {
+      TEST_CHECK(s->type.get_value().str() == "framepos");
+      TEST_CHECK(s->refType.get_value().str() == "body");
+      TEST_CHECK(s->refName.get_value().str() == "world");
+    }
+  }
+  // USDC round-trip preserves the sensor prim + typed fields.
+  Stage rt;
+  std::string w2, e2;
+  if (usdc_roundtrip(R"(#usda 1.0
+def "World" { def MjcSensor "g" { uniform token mjc:type = "gyro"
+    uniform token mjc:objtype = "site"
+    uniform double mjc:cutoff = 12.5 } })", &rt, &w2, &e2)) {
+    auto r = rt.GetPrimAtPath(Path("/World/g", ""));
+    TEST_CHECK(bool(r));
+    if (r) {
+      const auto *s = (*r)->as<MjcSensor>();
+      TEST_CHECK(s != nullptr);
+      if (s) {
+        TEST_CHECK(s->type.get_value().str() == "gyro");
+        TEST_CHECK(approx_eq(s->cutoff.get_value(), 12.5));
+      }
+    }
+  }
+}
+
 // MJCF <asset><material> -> UsdShade Material (UsdPreviewSurface) + geom binding.
 void urdf_json_mjc_materials_test(void) {
   const char *robot_json = R"JSON({

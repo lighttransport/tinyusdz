@@ -127,6 +127,8 @@ std::string to_string(const MjcTendon &tendon, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent = 0,
                       bool closing_brace = true);
+std::string to_string(const MjcSensor &sensor, const uint32_t indent = 0,
+                      bool closing_brace = true);
 
 // AR/Interactive prim to_string (defined in pprint-ar.cc)
 std::string to_string(const Preliminary_PhysicsGravitationalForce &prim, const uint32_t indent = 0,

@@ -464,6 +464,26 @@ std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent,
   return ss.str();
 }
 
+std::string to_string(const MjcSensor &sensor, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  PRINT_PRIM_HEADER(sensor, "MjcSensor");
+
+  ss << print_typed_attr(sensor.type, "mjc:type", indent + 1);
+  ss << print_typed_attr(sensor.objType, "mjc:objtype", indent + 1);
+  ss << print_typed_attr(sensor.objName, "mjc:objname", indent + 1);
+  ss << print_typed_attr(sensor.refType, "mjc:reftype", indent + 1);
+  ss << print_typed_attr(sensor.refName, "mjc:refname", indent + 1);
+  ss << print_typed_attr(sensor.group, "mjc:group", indent + 1);
+  ss << print_typed_attr(sensor.cutoff, "mjc:cutoff", indent + 1);
+  ss << print_typed_attr(sensor.noise, "mjc:noise", indent + 1);
+  ss << print_typed_attr(sensor.user, "mjc:user", indent + 1);
+
+  PRINT_PRIM_FOOTER(sensor);
+  return ss.str();
+}
+
 #undef PRINT_PRIM_HEADER
 #undef PRINT_PRIM_FOOTER
 

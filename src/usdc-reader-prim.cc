@@ -459,6 +459,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(NewtonActuator, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcTendon, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(MjcKeyframe, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(MjcSensor, typeName, prim_name, spec)
   // AR/Interactive (Apple Preliminary_*)
   RECONSTRUCT_PRIM(Preliminary_PhysicsGravitationalForce, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Preliminary_InfiniteColliderPlane, typeName, prim_name, spec)
