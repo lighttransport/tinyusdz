@@ -225,3 +225,49 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
     assert.equal(payload.sourceFormat, 'mjcf');
   });
 });
+
+await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Muscle">
+  <default><tendon rgba="0.95 0.3 0.3 1" width="0.005"/></default>
+  <worldbody>
+    <body name="pelvis">
+      <site name="m_p1" pos="0 0 0.1"/>
+      <geom type="sphere" size="0.05"/>
+      <body name="femur" pos="0 0 -0.3">
+        <joint name="hip" type="hinge" axis="0 1 0"/>
+        <site name="m_p2" pos="0.05 0 -0.2"/>
+        <geom type="capsule" fromto="0 0 0 0 0 -0.4" size="0.04"/>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <spatial name="glute_tendon" stiffness="10">
+      <site site="m_p1"/>
+      <site site="m_p2"/>
+    </spatial>
+  </tendon>
+  <actuator>
+    <general name="glute" class="muscle" tendon="glute_tendon"
+             lengthrange="0.18 0.29" gainprm="0.75 1.05 916.8" biasprm="0.75 1.05 916.8" ctrlrange="0 1"/>
+  </actuator>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    // Sites (with baked world matrices)
+    assert.equal(payload.sites.length, 2);
+    assert.ok(payload.sites.find((s) => s.name === 'm_p1'));
+    assert.ok(payload.sites.find((s) => s.name === 'm_p2'));
+    assert.equal(payload.sites[0].matrix.length, 16);
+    // Spatial tendon routed through the two sites
+    assert.equal(payload.tendons.length, 1);
+    assert.equal(payload.tendons[0].type, 'spatial');
+    assert.equal(payload.tendons[0].path.length, 2);
+    assert.equal(payload.tendons[0].path[0].site, 'm_p1');
+    // Muscle actuator targeting the tendon
+    assert.equal(payload.mjcActuators.length, 1);
+    assert.equal(payload.mjcActuators[0].targetTendon, 'glute_tendon');
+    assert.deepEqual(payload.mjcActuators[0].gainPrm, [0.75, 1.05, 916.8]);
+    assert.deepEqual(payload.mjcActuators[0].lengthRange, [0.18, 0.29]);
+  });
+});
