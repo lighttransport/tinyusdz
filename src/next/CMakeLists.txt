@@ -288,6 +288,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_roundtrip_fidelity PRIVATE tinyusdz_next)
 
+    add_executable(test_crate_dict
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_dict.cc
+    )
+    target_link_libraries(test_crate_dict PRIVATE tinyusdz_next)
+
     add_executable(test_lazy_array
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_array.cc
     )
@@ -446,6 +451,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_complex_usda COMMAND test_complex_usda
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_roundtrip_fidelity COMMAND test_roundtrip_fidelity
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_crate_dict COMMAND test_crate_dict
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_lazy_array COMMAND test_lazy_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
