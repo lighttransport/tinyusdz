@@ -4404,10 +4404,29 @@ function exportNativeStage(native, format, payload = null) {
   };
 }
 
+// Feed referenced texture bytes into the WASM asset cache so exportAsUSDZ()
+// embeds them into the package (the archive name matches the relative
+// inputs:file reference the converter authored). usda/usdc don't need this —
+// they reference the texture by the same relative path on disk.
+async function registerTextureAssets(native, payload) {
+  if (!native.setAsset) return;
+  for (const m of payload.materials || []) {
+    if (!m.texture) continue;
+    const file = resolveAssetEntry(m.texture)?.file;
+    if (!file) continue;
+    try {
+      native.setAsset(m.texture, new Uint8Array(await file.arrayBuffer()));
+    } catch (err) {
+      console.warn(`texture not embedded into usdz: ${m.texture}: ${err.message}`);
+    }
+  }
+}
+
 async function createUSDBytesFromSource(format) {
   const native = await ensureNativeExporter();
   const payload = buildCurrentExportPayload();
   registerNativeMeshBuffers(native, payload);
+  if (format === 'usdz') await registerTextureAssets(native, payload);
   setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
   const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
   if (!ok) throw new Error(native.error());
