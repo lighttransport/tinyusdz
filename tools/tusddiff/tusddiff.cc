@@ -34,6 +34,11 @@ void print_usage() {
   std::cout << "OPTIONS:\n";
   std::cout << "  --json      Output diff in JSON format\n";
   std::cout << "  --quiet     Suppress diff output, exit code only\n";
+  std::cout << "  --ulps N    Floating-point tolerance in ULPs (default 1).\n";
+  std::cout << "              Absorbs ~1 ULP rounding (e.g. pxr quaternion/xform).\n";
+  std::cout << "              Use 0 for bitwise-exact comparison.\n";
+  std::cout << "  --eps F     Absolute floating-point tolerance (overrides/ORs ULP).\n";
+  std::cout << "  --no-meta   Do not compare metadata (attr/prim/layer).\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -62,6 +67,7 @@ int main(int argc, char **argv) {
   bool json_output = false;
   bool quiet = false;
   std::string file1, file2;
+  tinyusdz::tydra::DiffOptions diff_opts;
 
   // Parse command line arguments
   for (size_t i = 0; i < args.size(); i++) {
@@ -72,6 +78,32 @@ int main(int argc, char **argv) {
       json_output = true;
     } else if (args[i] == "--quiet") {
       quiet = true;
+    } else if (args[i] == "--no-meta") {
+      diff_opts.compareMetadata = false;
+    } else if (args[i] == "--ulps") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "Error: --ulps requires a value\n";
+        return 2;
+      }
+      try {
+        unsigned long u = std::stoul(args[++i]);
+        diff_opts.floatUlps = static_cast<uint32_t>(u);
+        diff_opts.doubleUlps = static_cast<uint64_t>(u);
+      } catch (...) {
+        std::cerr << "Error: --ulps value must be a non-negative integer\n";
+        return 2;
+      }
+    } else if (args[i] == "--eps") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "Error: --eps requires a value\n";
+        return 2;
+      }
+      try {
+        diff_opts.absEps = std::stod(args[++i]);
+      } catch (...) {
+        std::cerr << "Error: --eps value must be a number\n";
+        return 2;
+      }
     } else if (file1.empty()) {
       file1 = args[i];
     } else if (file2.empty()) {
@@ -115,17 +147,22 @@ int main(int argc, char **argv) {
   // Perform diff
   tinyusdz::HashMap<std::string, tinyusdz::tydra::PrimSpecDiff> psDiffs;
   tinyusdz::HashMap<std::string, tinyusdz::tydra::PropDiff> propDiffs;
-  tinyusdz::tydra::Diff(layer1, layer2, psDiffs, propDiffs);
+  tinyusdz::tydra::LayerMetaDiff layerMetaDiff;
+  tinyusdz::tydra::Diff(layer1, layer2, psDiffs, propDiffs, diff_opts,
+                        &layerMetaDiff);
 
-  bool has_diffs = !psDiffs.empty() || !propDiffs.empty();
+  bool has_diffs =
+      !psDiffs.empty() || !propDiffs.empty() || layerMetaDiff.changed();
 
   if (!quiet) {
     if (json_output) {
-      std::string jsonDiff = tinyusdz::tydra::DiffToJSON(layer1, layer2, file1, file2);
+      std::string jsonDiff =
+          tinyusdz::tydra::DiffToJSON(layer1, layer2, file1, file2, diff_opts);
       std::cout << jsonDiff;
     } else {
       if (has_diffs) {
-        std::string textDiff = tinyusdz::tydra::DiffToText(layer1, layer2, file1, file2);
+        std::string textDiff =
+            tinyusdz::tydra::DiffToText(layer1, layer2, file1, file2, diff_opts);
         std::cout << textDiff;
       } else {
         std::cout << "No differences found." << std::endl;
