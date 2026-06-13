@@ -61,7 +61,7 @@ Legend:
 |---|---|---|
 | `<site>` (in body) | `GeomSphere` marker under `/World/Sites` + `MjcSiteAPI` (baked world xform) | Full |
 | `<tendon><fixed>` (joint coupling) | `MjcTendon` type=fixed, `mjc:path`→joints, `mjc:path:coef` | Full |
-| **`<tendon><spatial>` (muscle path)** | `MjcTendon` type=spatial, `mjc:path`→routing sites, rgba/width | Full + **Viz** (red polylines through sites in the source view) |
+| **`<tendon><spatial>` (muscle path)** | `MjcTendon` type=spatial, `mjc:path`→routing sites, rgba/width | Full + **Viz** (red polylines through the sites, drawn on **both** the MJCF-source and converted-USD views) |
 | `<spatial><geom sidesite=..>` wrap | routed via the sidesite via-point | Partial (wrap-surface geometry not modeled) |
 | `<spatial><pulley divisor>` | — | Missing |
 | **`<actuator><muscle>` / `<general class="muscle">`** | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) | Full |
@@ -85,7 +85,14 @@ Legend:
 | `<camera>` / `<light>` | Missing | Map to `UsdGeomCamera` / `UsdLux*` |
 | `<asset><texture/material>` | Missing (MJCF side) | Geom rgba only; PBR material binding TBD |
 | `<asset><skin>` | Missing | Map to `UsdSkel` |
-| `<deformable>/<flexcomp>/<flex>` (MuJoCo 3 soft bodies) | Missing | No USD physics soft-body schema; needs design |
+| `<deformable>/<flexcomp>/<flex>` (MuJoCo 3 FEM soft bodies) | Missing | No USD physics soft-body schema; needs design |
+
+> **Soft bodies — note.** Not every "soft" MuJoCo model uses `<flex>`. Tendon-driven
+> compliant mechanisms — e.g. **`iit_softfoot`** (a chain of rigid phalanx bodies
+> coupled by elastic `<tendon><spatial>` cables through ~200 sites + `<geom
+> sidesite>` wraps) — are **fully supported** today via the spatial-tendon + site
+> path above (the spring behavior is preserved as tendon stiffness/springlength).
+> True FEM/`<flex>` deformables remain Missing.
 | `<plugin>` / `<extension>` (engine plugins) | Missing | Preserve as `mjc:plugin:*` custom data |
 
 ## MuJoCo MJX notes
