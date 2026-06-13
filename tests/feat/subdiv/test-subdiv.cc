@@ -2318,23 +2318,71 @@ void test_stream_blocked_fvar() {
     }
   }
 
-  // faceVarying streaming at level 0 is rejected (level 0 is passthrough).
-  {
-    corpus::Mesh m = corpus::UVSeamGrid();
-    FVarChannelView fv;
-    fv.values = m.fvar_uv.data();
-    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
-    fv.indices = m.fvar_indices.data();
-    fv.stride = 2;
-    fv.interpolation = FVarLinearInterpolation::All;
-    Options opts;
-    opts.scheme = Scheme::CatmullClark;
-    opts.level = 0;
-    StreamOptions so;
-    StreamCollect sink;
-    std::string err;
-    CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, StreamSinkFn,
-                       &sink, &err) == Result::InvalidArgument);
+}
+
+// ---------------------------------------------------------------------------
+// Level-0 faceVarying: a passthrough emits the base channel verbatim (every
+// mode, native or fan-triangulated). Each emitted corner's (position, fvar) must
+// be a base/bulk corner pair. (Previously rejected; reuses the block-fvar sink.)
+// ---------------------------------------------------------------------------
+
+void test_stream_level0_fvar() {
+  using tinyusdz::tsd::FVarChannelView;
+  using tinyusdz::tsd::FVarLinearInterpolation;
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::UVSeamGrid());
+  meshes.push_back(corpus::UVCube());
+  meshes.push_back(corpus::UVTriGrid());
+  // Mode is irrelevant at level 0 (no refinement); spot-check a smooth, a
+  // smooth-corners, and the linear mode.
+  const FVarLinearInterpolation modes[3] = {FVarLinearInterpolation::CornersPlus1,
+                                            FVarLinearInterpolation::None,
+                                            FVarLinearInterpolation::All};
+
+  for (const corpus::Mesh &m : meshes) {
+    for (int mi = 0; mi < 3; mi++) {
+      FVarChannelView fv;
+      fv.values = m.fvar_uv.data();
+      fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+      fv.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
+      fv.stride = 2;
+      fv.interpolation = modes[mi];
+
+      Options opts;
+      opts.scheme = Scheme::CatmullClark;  // level 0 is passthrough; scheme moot
+      opts.level = 0;
+      opts.remove_holes = false;
+
+      RefinedMesh bulk;
+      std::string err;
+      CHECK(Refine(ToView(m), &fv, 1, nullptr, 0, opts, &bulk, &err) ==
+            Result::Success);
+      std::multimap<std::array<float, 3>, std::array<float, 2>> bm;
+      for (size_t i = 0; i < bulk.face_vertex_indices.size(); i++) {
+        const uint32_t vid = bulk.face_vertex_indices[i];
+        bm.insert({{bulk.points[3 * vid], bulk.points[3 * vid + 1],
+                    bulk.points[3 * vid + 2]},
+                   {bulk.fvar[0][i * 2], bulk.fvar[0][i * 2 + 1]}});
+      }
+
+      for (int et = 0; et < 2; et++) {  // native faces and fan-triangulated
+        StreamOptions so;
+        so.emit_triangles = (et == 1);
+        so.want_normals = false;
+        BlockFvarCollect col;
+        col.bulk = &bm;
+        CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so,
+                           BlockFvarSinkFn, &col, &err) == Result::Success);
+        const std::string tag =
+            m.name + "/m" + std::to_string(mi) + "/et" + std::to_string(et);
+        CHECK_MSG(col.tot > 0, tag);
+        CHECK_MSG(col.miss == 0, tag);
+        CHECK_MSG(col.maxd < 1e-6, tag);  // passthrough => exact
+      }
+    }
   }
 }
 
@@ -2622,6 +2670,7 @@ int main() {
   TEST(test_stream_blocked_normals);
   TEST(test_stream_fvar);
   TEST(test_stream_blocked_fvar);
+  TEST(test_stream_level0_fvar);
   TEST(test_stream_level0_mixed_arity);
   TEST(test_stream_block_abort);
 
