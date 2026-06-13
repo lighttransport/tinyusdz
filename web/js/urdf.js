@@ -1485,6 +1485,35 @@ function matrixFromPoseAttrs(attrs = {}) {
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
 }
 
+// A MuJoCo 3 <frame> is a pure coordinate transform applied to its children (not
+// a body). Dissolve each frame by composing its transform into every child's
+// pose and lifting the children to the frame's parent, so downstream traversal
+// never sees a <frame>. Needs mjcfPoseCtx set (uses the compiler angle units).
+function flattenMujocoFrames(parent) {
+  for (const c of Array.from(childElements(parent))) flattenMujocoFrames(c);
+  for (const frame of Array.from(childElements(parent, 'frame'))) {
+    const fm = matrixFromPoseAttrs(attrsFromElement(frame));
+    const fcc = frame.getAttribute('childclass');
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+    for (const gc of Array.from(childElements(frame))) {
+      const cm = new THREE.Matrix4().multiplyMatrices(fm, matrixFromPoseAttrs(attrsFromElement(gc)));
+      cm.decompose(pos, quat, scl);
+      gc.setAttribute('pos', `${pos.x} ${pos.y} ${pos.z}`);
+      gc.setAttribute('quat', `${quat.w} ${quat.x} ${quat.y} ${quat.z}`);  // MuJoCo wxyz
+      for (const a of ['euler', 'axisangle', 'xyaxes', 'zaxis']) gc.removeAttribute(a);
+      const ft = parseNumbers(gc.getAttribute('fromto'), []);
+      if (ft.length === 6) {
+        const p0 = new THREE.Vector3(ft[0], ft[1], ft[2]).applyMatrix4(fm);
+        const p1 = new THREE.Vector3(ft[3], ft[4], ft[5]).applyMatrix4(fm);
+        gc.setAttribute('fromto', `${p0.x} ${p0.y} ${p0.z} ${p1.x} ${p1.y} ${p1.z}`);
+      }
+      if (fcc && !gc.getAttribute('childclass') && !gc.getAttribute('class')) gc.setAttribute('childclass', fcc);
+      parent.insertBefore(gc, frame);  // DOM move
+    }
+    parent.removeChild(frame);
+  }
+}
+
 function decomposeMatrix(matrix) {
   const position = new THREE.Vector3();
   const quaternion = new THREE.Quaternion();
@@ -2394,6 +2423,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     toRad: angleAttr === 'radian' ? 1 : Math.PI / 180,
     eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
   };
+
+  // Dissolve <frame> grouping transforms (needs the angle ctx above).
+  for (const worldbody of childElements(root, 'worldbody')) flattenMujocoFrames(worldbody);
 
   warnUnsupportedMujocoElements(root);
 

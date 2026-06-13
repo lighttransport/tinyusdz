@@ -43,7 +43,7 @@ Legend:
 | `<freejoint>` / `<joint type="free">` | root body / `PhysicsArticulationRootAPI` (non-root → fixed + warn) | Partial |
 | **multiple `<joint>` per body** | chain of single-DOF joints via massless intermediate link Xforms | Full |
 | `<joint>` limit/range/ref/damping/armature/stiffness/frictionloss | typed limits + `MjcJointAPI` + `physxLimit:*`/`state:*` mirror | Full |
-| `<frame>` (MuJoCo 3 grouping) | flattened into child transforms | Partial |
+| `<frame>` (MuJoCo 3 grouping transform) | dissolved at parse time: the frame transform is composed into each child's pose (pos+quat, fromto, childclass) and the children lifted to the frame's parent | Full |
 | `<body mocap="true">` | `mjc:mocap=1` on the link `Xform` (mocap target body) | Full |
 
 ## Geoms / shapes
