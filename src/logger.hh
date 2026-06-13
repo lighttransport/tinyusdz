@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <ctime>
 
+#include "tsa-mutex.hh"
+
 // Simple logging management class
 namespace tinyusdz {
 namespace logging {
@@ -109,7 +111,7 @@ class TraceManager {
  private:
   std::unordered_map<std::string, std::vector<TraceRecord>> records_by_tag_;
   std::unordered_map<std::string, bool> tag_enabled_map_;  // Per-tag enable/disable
-  std::mutex mutex_;
+  mutable Mutex mutex_;
   bool enabled_ = true;  // Global enable/disable
   TraceReportFormat report_format_ = TraceReportFormat::PlainText;  // Default to plain text
   TraceEventLogging event_logging_ = TraceEventLogging::None;  // Default to no event logging
@@ -133,8 +135,8 @@ class TraceManager {
   TraceManager(const TraceManager&) = delete;
   TraceManager& operator=(const TraceManager&) = delete;
   
-  void setEnabled(bool enabled) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void setEnabled(bool enabled) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     enabled_ = enabled;
   }
   
@@ -143,8 +145,8 @@ class TraceManager {
   }
   
   // Enable/disable tracing for specific tag (and optionally subtag)
-  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     std::string key = tag;
     if (!subtag.empty()) {
       key += "::" + subtag;
@@ -153,10 +155,10 @@ class TraceManager {
   }
   
   // Check if a specific tag (and optionally subtag) is enabled
-  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const {
+  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
     if (!enabled_) return false;  // Global disable overrides everything
     
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+    MutexLockGuard lock(mutex_);
     
     // Check for exact match with subtag
     std::string key = tag;
@@ -179,50 +181,50 @@ class TraceManager {
   }
   
   // Clear all per-tag settings
-  void clearTagSettings() {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void clearTagSettings() TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     tag_enabled_map_.clear();
   }
   
   // Get all tag settings
-  std::unordered_map<std::string, bool> getTagSettings() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+  std::unordered_map<std::string, bool> getTagSettings() const TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     return tag_enabled_map_;
   }
   
   // Set report format
-  void setReportFormat(TraceReportFormat format) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void setReportFormat(TraceReportFormat format) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     report_format_ = format;
   }
   
   // Get report format
-  TraceReportFormat getReportFormat() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+  TraceReportFormat getReportFormat() const TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     return report_format_;
   }
   
   // Set event logging mode
-  void setEventLogging(TraceEventLogging mode) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void setEventLogging(TraceEventLogging mode) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     event_logging_ = mode;
   }
   
   // Get event logging mode
-  TraceEventLogging getEventLogging() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+  TraceEventLogging getEventLogging() const TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     return event_logging_;
   }
   
   // Set log level for trace events
-  void setEventLogLevel(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void setEventLogLevel(LogLevel level) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     event_log_level_ = level;
   }
   
   // Get log level for trace events
-  LogLevel getEventLogLevel() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+  LogLevel getEventLogLevel() const TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     return event_log_level_;
   }
   
@@ -282,10 +284,10 @@ class TraceManager {
     }
   }
   
-  void addRecord(const TraceRecord& record) {
+  void addRecord(const TraceRecord& record) TUSDZ_REQUIRES_NOT(mutex_) {
     if (!isTagEnabled(record.tag, record.subtag)) return;
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    MutexLockGuard lock(mutex_);
     std::string key = record.tag;
     if (!record.subtag.empty()) {
       key += "::" + record.subtag;
@@ -293,12 +295,12 @@ class TraceManager {
     records_by_tag_[key].push_back(record);
   }
   
-  void clearRecords() {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void clearRecords() TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     records_by_tag_.clear();
   }
   
-  void printSummary(std::ostream& out = std::cout) {
+  void printSummary(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
     if (report_format_ == TraceReportFormat::JSON) {
       printSummaryJSON(out);
     } else {
@@ -306,8 +308,8 @@ class TraceManager {
     }
   }
   
-  void printSummaryPlainText(std::ostream& out = std::cout) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void printSummaryPlainText(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     
     out << "\n=== Trace Summary ===\n";
     for (const auto& kv : records_by_tag_) {
@@ -337,8 +339,8 @@ class TraceManager {
     out << "====================\n";
   }
   
-  void printSummaryJSON(std::ostream& out = std::cout) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void printSummaryJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     
     out << "{\n";
     out << "  \"trace_summary\": {\n";
@@ -380,8 +382,8 @@ class TraceManager {
   }
   
   // Get detailed records in JSON format
-  void printDetailedJSON(std::ostream& out = std::cout) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  void printDetailedJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     
     out << "{\n";
     out << "  \"trace_records\": [\n";
@@ -464,8 +466,8 @@ class TraceManager {
  public:
   
   std::vector<TraceRecord> getRecords(const std::string& tag, 
-                                      const std::string& subtag = "") const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+                                      const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
+    MutexLockGuard lock(mutex_);
     
     std::string key = tag;
     if (!subtag.empty()) {

@@ -86,7 +86,7 @@ nonstd::expected<ChunkReader::ReadResult, std::string> ChunkReader::Read(size_t 
 
   // Check which chunks are not in cache
   {
-    std::lock_guard<std::mutex> lock(cache_mutex_);
+    MutexLockGuard lock(cache_mutex_);
 
     for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
       // Check caches directly without calling IsChunkCached to avoid mutex issues
@@ -195,7 +195,7 @@ nonstd::expected<size_t, std::string> ChunkReader::ReadDirect(size_t offset, siz
       chunk = chunk_result.value();
     } else {
       // Only use cached chunks
-      std::lock_guard<std::mutex> lock(cache_mutex_);
+      MutexLockGuard lock(cache_mutex_);
 
       // Try to find chunk in any cache
       chunk = FindInSlidingWindow(chunk_id);
@@ -340,7 +340,7 @@ void ChunkReader::Prefetch(size_t offset, size_t size) {
   size_t end_offset = std::min(offset + size, total_size_);
   size_t end_chunk = GetChunkId(end_offset);
 
-  std::unique_lock<std::mutex> lock(cache_mutex_);
+  std::unique_lock<Mutex> lock(cache_mutex_);
 
   // Prefetch chunks into preload cache
   for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
@@ -363,7 +363,7 @@ void ChunkReader::Prefetch(size_t offset, size_t size) {
 }
 
 void ChunkReader::ClearCache() {
-  std::lock_guard<std::mutex> lock(cache_mutex_);
+  MutexLockGuard lock(cache_mutex_);
 
   // Clear sliding window
   if (sliding_window_) {
@@ -427,12 +427,12 @@ bool ChunkReader::IsChunkCached(size_t chunk_id) const {
 }
 
 size_t ChunkReader::GetCacheSize() const {
-  std::lock_guard<std::mutex> lock(cache_mutex_);
+  MutexLockGuard lock(cache_mutex_);
   return current_sliding_window_size_ + current_random_cache_size_ + current_preload_size_;
 }
 
 size_t ChunkReader::GetCachedChunkCount() const {
-  std::lock_guard<std::mutex> lock(cache_mutex_);
+  MutexLockGuard lock(cache_mutex_);
   size_t total = 0;
 
   if (sliding_window_) {
@@ -477,7 +477,7 @@ ChunkReader::LoadChunk(size_t chunk_id) {
 
 nonstd::expected<std::shared_ptr<ChunkReader::Chunk>, std::string>
 ChunkReader::GetChunk(size_t chunk_id) {
-  std::unique_lock<std::mutex> lock(cache_mutex_);
+  std::unique_lock<Mutex> lock(cache_mutex_);
 
   // Detect access pattern
   DetectAccessPattern(chunk_id);
