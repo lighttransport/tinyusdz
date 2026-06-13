@@ -2772,6 +2772,13 @@ bool HasVariants(const Layer &layer) {
   return layer.check_unresolved_variant();
 }
 
+bool ShouldDeferVariantComposition(const Layer &layer, bool references_enabled,
+                                   bool payload_enabled) {
+  if (references_enabled && layer.check_unresolved_references()) return true;
+  if (payload_enabled && layer.check_unresolved_payload()) return true;
+  return false;
+}
+
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
 
 bool HasSpecializes(const Layer &layer) {

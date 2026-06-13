@@ -2432,6 +2432,16 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Driver-level counterpart: run the tusdcat binary end-to-end on the same
+    # fixtures so a regression of the variant-deferral in the iterative flatten
+    # driver (not just the library) is caught. The C++ test above drives the
+    # library with its own deferred loop and would not notice a driver revert.
+    if(UNIX AND TARGET tusdcat)
+      add_test(NAME feat-variant-chain-driver
+               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
+                       $<TARGET_FILE:tusdcat> ${PROJECT_SOURCE_DIR})
+    endif()
+
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)
