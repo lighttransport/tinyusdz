@@ -2039,16 +2039,21 @@ void test_stream_blocked_matches_bulk() {
           }
 
           for (uint32_t bf : block_sizes) {
+           // recursive_blocks is an opt-in memory/time trade; its output must be
+           // bit-identical to the default (materializing) block path -> bulk.
+           for (int rec = 0; rec < 2; rec++) {
             StreamOptions so;
             so.block_faces = bf;
             so.emit_triangles = false;
             so.want_normals = false;
+            so.recursive_blocks = (rec == 1);
             BlockCollect col;
             CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so, BlockSinkFn,
                                &col, &err) == Result::Success);
 
             const std::string tag = m.name + "/L" + std::to_string(level) +
-                                    "/bf" + std::to_string(bf);
+                                    "/bf" + std::to_string(bf) +
+                                    (rec ? "/rec" : "");
             // Every emitted vertex matches a bulk vertex exactly.
             const uint32_t ev = uint32_t(col.positions.size() / 3);
             std::vector<uint32_t> to_bulk(ev, 0xFFFFFFFFu);
@@ -2087,6 +2092,7 @@ void test_stream_blocked_matches_bulk() {
               }
             }
             CHECK_MSG(ok && (blk_faces == bulk_faces), tag);
+           }
           }
         }
       }
