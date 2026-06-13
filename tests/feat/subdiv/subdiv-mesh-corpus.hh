@@ -361,6 +361,25 @@ inline Mesh UVDartGrid() {
   return m;
 }
 
+// 2x1 quad grid whose fvar seam runs along the single shared edge (1,4) and
+// terminates at the boundary vertices: the two faces use the SAME fvar value at
+// v1 but DIFFERENT values at v4. v1's only interior edge is the seam edge, so
+// merging across it (one-endpoint test) vs treating the edge as discontinuous
+// (both-endpoint test, OpenSubdiv) is observable here. Regression for the fvar
+// span continuity rule (corners merge only when value ids agree at BOTH ends).
+inline Mesh PartialSeamQuads() {
+  Mesh m = QuadGrid(2, 1, "partial_seam_quads");
+  // Faces: f0 = (0,1,4,3), f1 = (1,2,5,4). Shared edge (1,4).
+  // Per-corner fvar value ids: match at v1 (id 1), differ at v4 (2 vs 6).
+  m.fvar_indices = {0, 1, 2, 3, 1, 4, 5, 6};
+  m.fvar_uv.clear();
+  for (uint32_t id = 0; id < 7; id++) {
+    m.fvar_uv.push_back(0.13f * float(id) + 0.01f * float(id % 3));
+    m.fvar_uv.push_back(0.21f * float(id) + 0.07f);
+  }
+  return m;
+}
+
 // Creased cube with UV islands: exercises crease/fvar interaction.
 inline Mesh UVCreasedCube() {
   Mesh m = UVCube();

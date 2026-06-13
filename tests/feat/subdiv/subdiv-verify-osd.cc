@@ -748,6 +748,7 @@ int main(int argc, char **argv) {
   meshes.push_back(corpus::UVSeamGrid());
   meshes.push_back(corpus::UVCube());
   meshes.push_back(corpus::UVDartGrid());
+  meshes.push_back(corpus::PartialSeamQuads());
   meshes.push_back(corpus::UVCreasedCube());
   meshes.push_back(corpus::Icosahedron());
   meshes.push_back(corpus::TriGrid(4, 3, "tri_grid_4x3"));

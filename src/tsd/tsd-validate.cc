@@ -54,9 +54,11 @@ Result ValidateInput(const MeshView &mesh,
     return Fail(Result::InvalidArgument, err,
                 "options.level out of range [0, 10].");
   }
-  if (options.max_vertices == 0 || options.max_faces == 0) {
+  if (options.max_vertices == 0 || options.max_faces == 0 ||
+      options.max_face_vertex_indices == 0) {
     return Fail(Result::InvalidArgument, err,
-                "options.max_vertices/max_faces must be non-zero.");
+                "options.max_vertices/max_faces/max_face_vertex_indices must "
+                "be non-zero.");
   }
 
   if (!mesh.points || mesh.num_points == 0) {
@@ -91,6 +93,10 @@ Result ValidateInput(const MeshView &mesh,
     if (corner_sum > (std::numeric_limits<uint32_t>::max)()) {
       return Fail(Result::LimitExceeded, err,
                   "base mesh corner count exceeds 32-bit index space.");
+    }
+    if (corner_sum > options.max_face_vertex_indices) {
+      return Fail(Result::LimitExceeded, err,
+                  "base mesh exceeds options.max_face_vertex_indices.");
     }
   }
   if (corner_sum != mesh.num_face_vertex_indices) {

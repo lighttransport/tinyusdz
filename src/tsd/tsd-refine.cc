@@ -355,10 +355,13 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
         loop ? (uint64_t(topo.num_faces) * 4) : uint64_t(fvi.size());
     const uint64_t child_corners64 = child_faces64 * (loop ? 3 : 4);
     if (child_points64 > options.max_vertices ||
-        child_faces64 > options.max_faces || child_points64 > 0xFFFFFFFFull ||
+        child_faces64 > options.max_faces ||
+        child_corners64 > options.max_face_vertex_indices ||
+        child_points64 > 0xFFFFFFFFull ||
         child_corners64 > 0xFFFFFFFFull) {
       return Fail(Result::LimitExceeded, err,
-                  "refinement exceeds max_vertices/max_faces caps.");
+                  "refinement exceeds max_vertices/max_faces/"
+                  "max_face_vertex_indices caps.");
     }
 
     // --- Child topology -------------------------------------------------------

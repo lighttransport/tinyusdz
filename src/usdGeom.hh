@@ -578,6 +578,12 @@ struct GeomMesh : GPrim {
     SubdivisionSchemeNone,  // "none"
   };
 
+  // catmullClark-only `triangleSubdivisionRule`.
+  enum class TriangleSubdivisionRule {
+    CatmullClark,  // "catmullClark"
+    Smooth,        // "smooth"
+  };
+
   //
   // Predefined attribs.
   //
@@ -678,6 +684,9 @@ struct GeomMesh : GPrim {
       faceVaryingLinearInterpolation{
           FaceVaryingLinearInterpolation::
               CornersPlus1};  // token faceVaryingLinearInterpolation
+  TypedAttributeWithFallback<TriangleSubdivisionRule> triangleSubdivisionRule{
+      TriangleSubdivisionRule::
+          CatmullClark};  // uniform token triangleSubdivisionRule
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
   nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
