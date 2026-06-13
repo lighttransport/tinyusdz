@@ -215,6 +215,7 @@ function refine(cm, opts) {
 		textured ? opts.uvValues : null,
 		textured ? (opts.uvIndices || null) : null,
 		opts.scheme, opts.boundary, opts.level, opts.batchFaces,
+		opts.blockFaces || 0, opts.haloRings || 0,
 		opts.wantNormals, onBatch);
 	const t1 = performance.now();
 	if (err) { throw new Error(err); }
@@ -325,6 +326,7 @@ const state = {
 	wantNormals: true,
 	streaming: true,
 	batchFaces: 2048,
+	blockFaces: 0,  // 0 = whole-mesh streaming; >0 = block mode (bounds working set)
 	showWireframe: false,
 };
 
@@ -367,6 +369,8 @@ function updateMesh() {
 		boundary: BOUNDARY_ID[state.boundary],
 		level: state.subdivisionLevel,
 		batchFaces: state.streaming ? state.batchFaces : 1 << 30,
+		blockFaces: state.streaming ? state.blockFaces : 0,
+		haloRings: 0,  // 0 => library's level-independent default (2 rings)
 		wantNormals: state.wantNormals,
 		uvValues: wantTexture ? cm.uvValues : null,
 		uvIndices: wantTexture ? cm.uvIndices : null,
@@ -429,7 +433,9 @@ function updateStats(refined) {
 	const vram = estVramBytes(refined);
 	setText('estVram', fmtBytes(vram) + ' / 2.00 GB', vram > VRAM_BUDGET);
 	setStatus((refined.textured ? 'textured · ' : '') +
-		(state.streaming ? `streaming (${state.batchFaces} f/batch)` : 'bulk (single batch)'));
+		(state.streaming ? `streaming (${state.batchFaces} f/batch)` : 'bulk (single batch)') +
+		(state.streaming && state.blockFaces > 0
+			? ` · block ${state.blockFaces} f (bounded working set)` : ''));
 }
 
 // ===========================================================================
@@ -452,6 +458,10 @@ const memFolder = gui.addFolder('Memory (wasm streaming)');
 memFolder.add(state, 'wantNormals').name('Analytic Normals').onChange(updateMesh);
 memFolder.add(state, 'streaming').name('Streaming').onChange(updateMesh);
 memFolder.add(state, 'batchFaces', [256, 1024, 2048, 8192, 65536]).name('Faces / batch').onChange(updateMesh);
+// Block mode bounds the WORKING set (not just the output): refine in blocks of
+// N base faces + halo, so peak heap is independent of mesh size and level.
+// 0 = off (whole-mesh streaming). Works with textured (faceVarying) meshes too.
+memFolder.add(state, 'blockFaces', [0, 16, 64, 256]).name('Block faces (0=off)').onChange(updateMesh);
 memFolder.open();
 
 // ===========================================================================
