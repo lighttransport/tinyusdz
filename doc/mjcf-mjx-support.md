@@ -88,6 +88,7 @@ Legend:
 | `<light>` (directional→`DistantLight`, point/spot→`SphereLight`+cone) | **Full** | color from `diffuse`, castshadow, emission oriented by `dir`, baked world xform |
 | `<camera>` (fovy→aperture, orthographic) | **Full** | `UsdGeomCamera` with baked world xform |
 | `<asset><material>` (rgba/metallic/roughness/emission) | **Partial** | `UsdShade` Material + `UsdPreviewSurface` under `/World/Materials`, bound to visual geoms via `material:binding`. **Texture maps** (`<asset><texture>` file/builtin + UV) are the remaining follow-on |
+| `<asset><model>` + `<attach model body prefix>` (sub-model composition) | **Full** | child model loaded + its named body subtree grafted at the attach point, every name/reference prefixed, child `<default>`/`<asset>`/`<tendon>`/`<actuator>`/`<equality>` merged; child radian euler/axisangle converted to the parent's angle units; mesh paths rebased. Used by `iit_softfoot/scene.xml`. Joint range/ref keep child units (limits only); a root body's joint-to-world is still not emitted |
 | `<asset><skin>` | Missing | Map to `UsdSkel` |
 | `<deformable>/<flexcomp>/<flex>` (MuJoCo 3 FEM soft bodies) | Missing | No USD physics soft-body schema; needs design |
 

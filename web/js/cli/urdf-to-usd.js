@@ -862,6 +862,104 @@ function stripMujocoDocumentRoot(xml) {
   return withoutDecl.slice(openEnd + 1, close);
 }
 
+// --- MJCF <attach> sub-model composition (mirrors C++ ExpandAttachments) ----
+const ATTACH_REF_ATTRS = new Set([
+  'name', 'class', 'childclass', 'material', 'mesh', 'hfield', 'texture',
+  'joint', 'joint1', 'joint2', 'site', 'site1', 'site2', 'refsite', 'sidesite',
+  'tendon', 'tendon1', 'tendon2', 'body', 'body1', 'body2', 'geom', 'geom1',
+  'geom2', 'objname']);
+
+function cloneXMLTree(node, parent = null) {
+  const c = { name: node.name, attrs: { ...node.attrs }, children: [], parent };
+  c.children = node.children.map((ch) => cloneXMLTree(ch, c));
+  return c;
+}
+
+function prefixAttachTree(node, prefix, radToDeg) {
+  for (const k of Object.keys(node.attrs)) {
+    if (ATTACH_REF_ATTRS.has(k) && node.attrs[k]) node.attrs[k] = prefix + node.attrs[k];
+  }
+  if (radToDeg) {
+    const kk = 180 / Math.PI;
+    if (node.attrs.euler) { const v = parseNumbers(node.attrs.euler, []); if (v.length === 3) node.attrs.euler = v.map((x) => x * kk).join(' '); }
+    if (node.attrs.axisangle) { const v = parseNumbers(node.attrs.axisangle, []); if (v.length === 4) { v[3] *= kk; node.attrs.axisangle = v.join(' '); } }
+  }
+  for (const c of node.children) prefixAttachTree(c, prefix, radToDeg);
+}
+
+function findBodyByNameTree(node, name) {
+  for (const b of childElements(node, 'body')) {
+    if (b.attrs.name === name) return b;
+    const r = findBodyByNameTree(b, name);
+    if (r) return r;
+  }
+  return null;
+}
+
+function expandMujocoAttachments(root, baseDir, opts = {}) {
+  const models = new Map();
+  for (const asset of childElements(root, 'asset')) {
+    for (const m of childElements(asset, 'model')) {
+      if (m.attrs.name && m.attrs.file) models.set(m.attrs.name, m.attrs.file);
+    }
+  }
+  const attaches = [];
+  (function find(n) {
+    for (const c of n.children) {
+      if (c.name === 'attach') attaches.push(c);
+      find(c);
+    }
+  })(root);
+  if (!attaches.length) return;
+
+  const parentCompiler = firstChild(root, 'compiler');
+  const parentRadian = (parentCompiler?.attrs.angle || 'degree').toLowerCase() === 'radian';
+
+  for (const attach of attaches) {
+    const file = models.get(attach.attrs.model);
+    if (!file) { console.warn(`MJCF <attach>: unknown model "${attach.attrs.model}"`); continue; }
+    const childPath = assertSafeReadPath(path.resolve(baseDir, file), opts, baseDir, 'MJCF attach model');
+    const childDir = path.dirname(childPath);
+    const childRoot = parseXMLTree(expandMujocoIncludes(fs.readFileSync(childPath, 'utf8'), childDir, opts));
+    const cc = firstChild(childRoot, 'compiler');
+    const childMeshdir = cc?.attrs.meshdir || cc?.attrs.assetdir || '';
+    const childRadian = (cc?.attrs.angle || 'degree').toLowerCase() === 'radian';
+    const radToDeg = childRadian && !parentRadian;
+
+    for (const asset of childElements(childRoot, 'asset')) {
+      for (const tag of ['mesh', 'hfield', 'skin']) {
+        for (const a of childElements(asset, tag)) {
+          if (a.attrs.file) a.attrs.file = path.resolve(childDir, childMeshdir, a.attrs.file);
+        }
+      }
+    }
+    prefixAttachTree(childRoot, attach.attrs.prefix || '', radToDeg);
+
+    const target = (attach.attrs.prefix || '') + (attach.attrs.body || '');
+    let found = null;
+    for (const wb of childElements(childRoot, 'worldbody')) {
+      found = findBodyByNameTree(wb, target);
+      if (found) break;
+    }
+    if (!found) { console.warn(`MJCF <attach>: body "${attach.attrs.body}" not found in "${attach.attrs.model}"`); continue; }
+
+    const parent = attach.parent;
+    const idx = parent.children.indexOf(attach);
+    parent.children.splice(idx, 1, cloneXMLTree(found, parent));
+
+    for (const sec of ['default', 'asset', 'tendon', 'actuator', 'sensor', 'equality', 'contact', 'keyframe']) {
+      const childSec = firstChild(childRoot, sec);
+      if (!childSec) continue;
+      let mainSec = firstChild(root, sec);
+      if (!mainSec) { mainSec = { name: sec, attrs: {}, children: [], parent: root }; root.children.push(mainSec); }
+      for (const c of childElements(childSec)) {
+        if (c.name === 'model') continue;
+        mainSec.children.push(cloneXMLTree(c, mainSec));
+      }
+    }
+  }
+}
+
 // Basename -> path index of mesh files under baseDir. Last-resort fallback for
 // scenes whose <mesh file> paths are relative to an included file's directory
 // (e.g. ms_human_700: assets/asset/*.xml referencing "../geometry/*.stl").
@@ -1861,6 +1959,8 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   opts = optsWithDefaultReadRoot(opts, baseDir);
   const expanded = expandMujocoIncludes(xmlText, baseDir, opts);
   const root = parseXMLTree(expanded);
+  // Graft <attach> sub-models before semantic parsing.
+  expandMujocoAttachments(root, baseDir, opts);
   if (root.name !== 'mujoco') {
     throw new Error('Expected <mujoco> root for MJCF input.');
   }
@@ -2097,6 +2197,18 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   }
   if (worldLink.visuals.length || worldLink.collisions.length) {
     links.push(worldLink);
+  }
+
+  // Drop Newton joint-actuators whose target joint was not exported (e.g. a root
+  // body's joint-to-world, which this converter doesn't emit — iit_softfoot's
+  // `position_load` on the `load` slide). The shared converter skips them
+  // anyway; filtering keeps the stats and verification honest.
+  const exportedJointNames = new Set(joints.map((j) => j.name));
+  for (let i = actuators.length - 1; i >= 0; i--) {
+    if (actuators[i].joint && !exportedJointNames.has(actuators[i].joint)) {
+      console.warn(`MJCF actuator "${actuators[i].name}" targets unexported joint "${actuators[i].joint}"; skipped.`);
+      actuators.splice(i, 1);
+    }
   }
 
   const payload = {
