@@ -755,6 +755,7 @@ TEST_LIST = {
   { "usdc_writer_layer_empty_shader_outputs_test", usdc_writer_layer_empty_shader_outputs_test },
   { "usdc_writer_material_outputs_test", usdc_writer_material_outputs_test },
   { "usdc_writer_uvtexture_test", usdc_writer_uvtexture_test },
+  { "usdc_writer_inmemory_shader_inputs_test", usdc_writer_inmemory_shader_inputs_test },
   { "usdc_writer_primvarreader_test", usdc_writer_primvarreader_test },
   { "usdc_writer_transform2d_test", usdc_writer_transform2d_test },
   { "usdc_writer_previewsurface_full_test", usdc_writer_previewsurface_full_test },

@@ -1897,7 +1897,21 @@ void AddMujocoMaterialsJson(const pugi::xml_node &root, const fs::path &base_dir
     const std::string tref = Attr(m_node, "texture");
     if (!tref.empty()) {
       const auto it = tex_files.find(tref);
-      if (it != tex_files.end()) mat["texture"] = it->second;
+      if (it != tex_files.end()) {
+        // Emit a portable, source-relative reference (e.g. "assets/foo.png")
+        // for inputs:file so the exported usda/usdc opens beside its assets
+        // instead of carrying a machine-specific absolute path. Keep the
+        // absolute source in `texture_abs` (ignored by the converter) so usdz
+        // export can embed the bytes into the package.
+        const fs::path abs_tex = fs::absolute(it->second);
+        std::error_code ec;
+        const fs::path rel = fs::relative(abs_tex, base_dir, ec);
+        const std::string rel_s = rel.generic_string();
+        mat["texture"] = (ec || rel_s.empty() || rel_s.rfind("..", 0) == 0)
+                             ? abs_tex.filename().string()
+                             : rel_s;
+        mat["texture_abs"] = abs_tex.string();
+      }
     }
     materials->push_back(std::move(mat));
     if (stats) stats->materials++;
@@ -2550,7 +2564,9 @@ fs::path OutputPath(const Options &opts, const std::string &format) {
 }
 
 bool SaveStage(const tinyusdz::Stage &stage, const fs::path &filename,
-               const std::string &format, std::string *err) {
+               const std::string &format,
+               const std::map<std::string, std::vector<uint8_t>> &assets,
+               std::string *err) {
   std::string warn;
   bool ok = false;
   if (format == "usda") {
@@ -2558,7 +2574,8 @@ bool SaveStage(const tinyusdz::Stage &stage, const fs::path &filename,
   } else if (format == "usdc") {
     ok = tinyusdz::usdc::SaveAsUSDCToFile(filename.string(), stage, &warn, err);
   } else if (format == "usdz") {
-    const std::map<std::string, std::vector<uint8_t>> assets;
+    // Embed referenced textures so the .usdz is self-contained; the archive
+    // names match the (relative) inputs:file references in the stage.
     ok = tinyusdz::SaveAsUSDZToFile(filename.string(), stage, assets, &warn, err);
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
@@ -2612,12 +2629,32 @@ int main(int argc, char **argv) {
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
 
+  // Gather referenced texture bytes (keyed by their relative archive name) so a
+  // usdz output is a self-contained package. usda/usdc reference the texture by
+  // the same relative path and resolve it beside the .usd on disk.
+  std::map<std::string, std::vector<uint8_t>> tex_assets;
+  if (payload.contains("materials")) {
+    for (const auto &m : payload["materials"]) {
+      if (!m.contains("texture") || !m.contains("texture_abs")) continue;
+      const std::string arc = m["texture"].get<std::string>();
+      if (arc.empty() || tex_assets.count(arc)) continue;
+      std::string bytes;
+      std::string rerr;
+      if (ReadFile(fs::path(m["texture_abs"].get<std::string>()), &bytes, &rerr)) {
+        tex_assets[arc] =
+            std::vector<uint8_t>(bytes.begin(), bytes.end());
+      } else {
+        std::cerr << "WARN: texture not embedded into usdz: " << rerr << "\n";
+      }
+    }
+  }
+
   const std::vector<std::string> formats =
       opts.format == "all" ? std::vector<std::string>{"usda", "usdc", "usdz"}
                            : std::vector<std::string>{opts.format};
   for (const std::string &format : formats) {
     const fs::path out = OutputPath(opts, format);
-    if (!SaveStage(stage, out, format, &err)) {
+    if (!SaveStage(stage, out, format, tex_assets, &err)) {
       std::cerr << "urdf-to-usd: failed to write " << out << ": " << err << "\n";
       return EXIT_FAILURE;
     }
