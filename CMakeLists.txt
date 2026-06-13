@@ -2398,6 +2398,16 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # tydra value-level diff API (ULP tolerance, metadata reasons, value display)
+    if(TINYUSDZ_WITH_TYDRA)
+      add_executable(feat-diff tests/feat/diff/test-diff.cc)
+      add_sanitizers(feat-diff)
+      target_link_libraries(feat-diff PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_include_directories(feat-diff PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-diff COMMAND feat-diff
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
+
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)

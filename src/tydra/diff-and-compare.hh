@@ -4,6 +4,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <utility>
 
 #include "core/prim-spec.hh"
 #include "core/layer-types.hh"
@@ -114,6 +116,16 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
                        const std::string &lhs_name = "left",
                        const std::string &rhs_name = "right",
                        const DiffOptions &opts = {});
+
+///
+/// Given two rendered values that may be long and share a long common prefix
+/// (e.g. asset paths), return a pair of display strings centered on the first
+/// differing offset, with elided common regions marked by an ellipsis. Makes
+/// the actual difference visible instead of truncating both to an identical
+/// prefix. If both fit in `window`, they are returned unchanged.
+///
+std::pair<std::string, std::string> CenterValuePairForDiff(
+    const std::string &lhs, const std::string &rhs, size_t window = 240);
 
 } // namespace tydra
 } // namespace tinyusdz

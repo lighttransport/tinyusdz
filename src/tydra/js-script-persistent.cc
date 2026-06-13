@@ -443,6 +443,35 @@ static JSValue js_diff_prim(JSContext *ctx, JSValueConst this_val, int argc,
 }
 
 // ---------------------------------------------------------------------------
+// JS function: tinyusdz.diff.tree({path?, depth?})
+// ---------------------------------------------------------------------------
+static JSValue js_diff_tree(JSContext *ctx, JSValueConst this_val, int argc,
+                            JSValueConst *argv, int magic,
+                            JSValueConst *func_data) {
+  (void)this_val; (void)magic; (void)func_data;
+  if (!g_js_diff) {
+    return JS_ThrowTypeError(ctx, "No diff loaded (call diff_open first)");
+  }
+  std::string root = "/";
+  int depth = 2;
+  if (argc >= 1 && JS_IsObject(argv[0])) {
+    nlohmann::json o = JSValueToJSON(ctx, argv[0]);
+    if (o.is_object()) {
+      if (o.contains("path") && o["path"].is_string()) {
+        root = o["path"].get<std::string>();
+      }
+      if (o.contains("depth") && o["depth"].is_number()) {
+        depth = o["depth"].get<int>();
+      }
+    }
+  }
+  if (root.empty()) root = "/";
+  nlohmann::json out;
+  mcp::DiffComputeTree(*g_js_diff, root, depth, out);
+  return JSONToJSValue(ctx, out);
+}
+
+// ---------------------------------------------------------------------------
 // console.{log,info,warn,error}(...) -> stderr
 // ---------------------------------------------------------------------------
 static JSValue js_console_log(JSContext *ctx, JSValueConst this_val, int argc,
@@ -605,6 +634,7 @@ bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
   RegisterFunction(ctx, diff_mod, "summary", js_diff_summary, 0);
   RegisterFunction(ctx, diff_mod, "paths", js_diff_paths, 1);
   RegisterFunction(ctx, diff_mod, "prim", js_diff_prim, 1);
+  RegisterFunction(ctx, diff_mod, "tree", js_diff_tree, 1);
   RegisterObject(ctx, tinyusdz, "diff", diff_mod);
 
   if (created) {
