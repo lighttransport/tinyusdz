@@ -1863,7 +1863,17 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       log(`streaming: skipped ${plans.length - texturePlans.length} unreferenced texture asset(s)`);
     }
     const processOne = async (plan) => {
-      const bytes = await source.fetch(plan.path);
+      let bytes;
+      try {
+        bytes = await source.fetch(plan.path);
+      } catch (err) {
+        // Resolve to a sentinel — never reject. This promise is pre-launched by
+        // the bounded-prefetch pump but awaited FIFO, so a non-head rejection
+        // would sit unhandled until the loop reaches it, tripping Node's default
+        // unhandledRejection policy and killing the process. The consume loop
+        // turns this sentinel into a clean error instead.
+        return { error: err };
+      }
       let outBytes = bytes;
       let resized = false, reencoded = false;
       if (typeof opts.textureProcessor === 'function') {
@@ -1885,19 +1895,27 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
         }
       }
       if (outBytes === bytes && wantWork(plan.format)) {
-        const res = native.convertImage(bytes, {
-          maxSize: opts.maxTextureSize || 0,
-          format: plan.format,
-          pngEncoder: opts.pngEncoder || 'auto',
-          jpegQuality: opts.jpegQuality || 90,
-          resizeColorspace: pickResizeCs(plan.name),
-        });
+        let res = null;
+        try {
+          res = native.convertImage(bytes, {
+            maxSize: opts.maxTextureSize || 0,
+            format: plan.format,
+            pngEncoder: opts.pngEncoder || 'auto',
+            jpegQuality: opts.jpegQuality || 90,
+            resizeColorspace: pickResizeCs(plan.name),
+          });
+        } catch (err) {
+          // A synchronous throw here would reject this pre-launched promise the
+          // same way a failed fetch does; treat it like a convertImage failure
+          // and pass the original through.
+          log(`  ${plan.name}: convertImage threw (${err && err.message ? err.message : err}); passing original through`);
+        }
         if (res && res.success) {
           outBytes = new Uint8Array(res.data);
           resized = !!res.resized;
           reencoded = true;
-        } else {
-          log(`  ${plan.name}: convertImage failed (${res && res.error}); passing original through`);
+        } else if (res) {
+          log(`  ${plan.name}: convertImage failed (${res.error}); passing original through`);
         }
       }
       return { outBytes, resized, reencoded };
@@ -1915,7 +1933,14 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     while (inflight.length) {
       const { plan, promise } = inflight.shift();
       // eslint-disable-next-line no-await-in-loop
-      const { outBytes, resized, reencoded } = await promise;
+      const r = await promise;
+      if (r.error) {
+        // A referenced texture could not be fetched — fail cleanly rather than
+        // emit an archive missing the asset. Any remaining in-flight jobs resolve
+        // to sentinels (they never reject), so abandoning them here is safe.
+        throw new Error(`streaming: failed to fetch texture '${plan.path}': ${r.error && r.error.message ? r.error.message : r.error}`);
+      }
+      const { outBytes, resized, reencoded } = r;
       zw.addEntry(plan.outName, outBytes);
       stats.textures++;
       if (resized) stats.resized++;
