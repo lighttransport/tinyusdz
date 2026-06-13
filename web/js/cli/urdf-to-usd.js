@@ -1235,6 +1235,26 @@ function parseMujocoMuscleActuators(root) {
   return out;
 }
 
+// MJCF <custom><numeric|text> -> { numeric:[{name,data}], text:[{name,data}] }.
+function parseMujocoCustom(root) {
+  const customRoot = firstChild(root, 'custom');
+  if (!customRoot) return {};
+  const out = {};
+  const numeric = [];
+  for (const n of childElements(customRoot, 'numeric')) {
+    if (!n.attrs.name) continue;
+    numeric.push({ name: n.attrs.name, data: parseNumbers(n.attrs.data, []) });
+  }
+  const text = [];
+  for (const t of childElements(customRoot, 'text')) {
+    if (!t.attrs.name) continue;
+    text.push({ name: t.attrs.name, data: t.attrs.data || '' });
+  }
+  if (numeric.length) out.numeric = numeric;
+  if (text.length) out.text = text;
+  return out;
+}
+
 // MJCF <sensor> children -> sensor payload entries (-> MjcSensor prims).
 function parseMujocoSensors(root) {
   const sensorRoot = firstChild(root, 'sensor');
@@ -1612,8 +1632,10 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
   const defaults = parseMujocoDefaults(root);
   const meshAssets = collectMujocoAssets(root, baseDir, opts);
-  const worldbody = firstChild(root, 'worldbody');
-  if (!worldbody) {
+  // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
+  // <include>) into a single world; visit them all, not just the first.
+  const worldbodies = childElements(root, 'worldbody');
+  if (worldbodies.length === 0) {
     throw new Error('MJCF input has no <worldbody>.');
   }
 
@@ -1624,11 +1646,19 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const equalities = parseMujocoEqualities(root);
   const filteredPairs = parseMujocoContactExcludes(root);
   const contactPairs = parseMujocoContactPairs(root);
-  const sites = collectMujocoSites(worldbody);
+  const custom = parseMujocoCustom(root);
+  const sites = [];
   const mjcActuators = parseMujocoMuscleActuators(root);
   const mjcScene = parseMujocoSceneOptions(root);
   const keyframes = parseMujocoKeyframes(root);
-  const { lights, cameras } = collectMujocoLightsCameras(worldbody);
+  const lights = [];
+  const cameras = [];
+  for (const worldbody of worldbodies) {
+    sites.push(...collectMujocoSites(worldbody));
+    const lc = collectMujocoLightsCameras(worldbody);
+    lights.push(...lc.lights);
+    cameras.push(...lc.cameras);
+  }
   const materials = parseMujocoMaterials(root);
   const sensors = parseMujocoSensors(root);
   let visualCount = 0;
@@ -1648,6 +1678,9 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       visuals: [],
       collisions: []
     };
+    if (bodyNode.attrs.mocap !== undefined && mjcBoolAttr(bodyNode.attrs.mocap)) {
+      linkPayload.mocap = true;
+    }
 
     let geomIndex = 0;
     for (const rawGeomNode of childElements(bodyNode, 'geom')) {
@@ -1775,8 +1808,10 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     }
   }
 
-  for (const bodyNode of childElements(worldbody, 'body')) {
-    await visitBody(bodyNode);
+  for (const worldbody of worldbodies) {
+    for (const bodyNode of childElements(worldbody, 'body')) {
+      await visitBody(bodyNode);
+    }
   }
 
   const payload = {
@@ -1793,6 +1828,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (equalities.length) payload.equalities = equalities;
   if (filteredPairs.length) payload.filteredPairs = filteredPairs;
   if (contactPairs.length) payload.contactPairs = contactPairs;
+  if (Object.keys(custom).length) payload.custom = custom;
   if (sites.length) payload.sites = sites;
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;

@@ -1987,6 +1987,11 @@ bool ConvertURDFJsonToUSDStage(
                                      });
     AddAttr(link_xform.props, "physics:rigidBodyEnabled", true);
     AddAttr(link_xform.props, "physics:startsAsleep", false);
+    // MuJoCo mocap body (externally driven, not simulated).
+    bool is_mocap = false;
+    if (JsonBool(link_json, "mocap", &is_mocap) && is_mocap) {
+      AddAttr(link_xform.props, "mjc:mocap", true, /*uniform=*/true);
+    }
     if (!child_links.count(link_name)) {
       AppendAPISchema(link_xform.metas(),
                       APISchemas::APIName::PhysicsArticulationRootAPI);
@@ -2384,6 +2389,33 @@ bool ConvertURDFJsonToUSDStage(
     has_contacts = !contacts_prim.children().empty();
   }
 
+  // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX knobs).
+  Prim custom_prim;
+  bool has_custom = false;
+  if (const nlohmann::json *custom = JsonObjectOrNull(root, "custom")) {
+    Xform scope;
+    scope.name = "MjcCustom";
+    if (custom->contains("numeric") && (*custom)["numeric"].is_array()) {
+      for (const auto &n : (*custom)["numeric"]) {
+        const std::string nm = JsonString(n, "name");
+        if (nm.empty()) continue;
+        AddAttr(scope.props, "mjc:custom:" + nm, JsonDoubleArray(n, "data"));
+      }
+    }
+    if (custom->contains("text") && (*custom)["text"].is_array()) {
+      for (const auto &t : (*custom)["text"]) {
+        const std::string nm = JsonString(t, "name");
+        if (nm.empty()) continue;
+        AddAttr(scope.props, "mjc:customtext:" + nm,
+                value::token(JsonString(t, "data")));
+      }
+    }
+    if (!scope.props.empty()) {
+      custom_prim = Prim(scope);
+      has_custom = true;
+    }
+  }
+
   // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
   const nlohmann::json &lights_json =
       (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
@@ -2518,6 +2550,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_contacts &&
         !world_prim.add_child(std::move(contacts_prim), true, &add_err)) {
       SetErr(err, "Failed to add Contacts scope: " + add_err);
+      return false;
+    }
+    if (has_custom &&
+        !world_prim.add_child(std::move(custom_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcCustom scope: " + add_err);
       return false;
     }
   }
