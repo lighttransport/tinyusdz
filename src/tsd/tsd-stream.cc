@@ -650,8 +650,12 @@ struct Submesh {
   std::vector<int32_t> corner_indices;
   std::vector<float> corner_sharpnesses;
   std::vector<int32_t> hole_indices;
+  // Per faceVarying channel: sliced values (referenced subset, remapped) +
+  // per-submesh-corner indices into them (preserves the seam topology).
+  std::vector<std::vector<float>> fvar_values;
+  std::vector<std::vector<uint32_t>> fvar_indices;
 
-  void Reset(uint32_t num_pv) {
+  void Reset(uint32_t num_pv, uint32_t num_fvar) {
     points.clear();
     fvc.clear();
     fvi.clear();
@@ -666,6 +670,14 @@ struct Submesh {
     pvs.resize(num_pv);
     for (auto &p : pvs) {
       p.clear();
+    }
+    fvar_values.resize(num_fvar);
+    fvar_indices.resize(num_fvar);
+    for (auto &v : fvar_values) {
+      v.clear();
+    }
+    for (auto &i : fvar_indices) {
+      i.clear();
     }
   }
 };
@@ -682,6 +694,8 @@ struct BlockSetup {
   const MeshView *mesh = nullptr;
   const Topology *topo = nullptr;
   const CreaseEdges *creases = nullptr;
+  const FVarChannelView *fvar = nullptr;
+  uint32_t num_fvar = 0;
 
   uint32_t gen = 0;
   std::vector<uint32_t> face_gen;  // face in submesh iff face_gen[f] == gen
@@ -697,14 +711,31 @@ struct BlockSetup {
   std::vector<uint32_t> vcrease_off, vcrease;
   std::vector<uint32_t> vcorner_off, vcorner;
   std::vector<uint8_t> is_hole;
+  // Per fvar channel: value-remap stamps (a global fvar value id is in this
+  // submesh iff fv_gen[c][id] == gen; its submesh id is fvloc[c][id]).
+  std::vector<std::vector<uint32_t>> fv_gen, fvloc;
 
-  void Init(const MeshView &m, const Topology &t, const CreaseEdges &cr) {
+  void Init(const MeshView &m, const Topology &t, const CreaseEdges &cr,
+            const FVarChannelView *fvar_channels, uint32_t num_fvar_channels) {
     mesh = &m;
     topo = &t;
     creases = &cr;
+    fvar = fvar_channels;
+    num_fvar = num_fvar_channels;
     face_gen.assign(t.num_faces, 0);
     vert_gen.assign(m.num_points, 0);
     vloc.resize(m.num_points);
+    fv_gen.assign(num_fvar, {});
+    fvloc.assign(num_fvar, {});
+    for (uint32_t c = 0; c < num_fvar; c++) {
+      // Identity channels carry one value per corner; their value ids range over
+      // [0, num_face_vertex_indices) regardless of `num_values`.
+      const uint32_t nv = fvar_channels[c].indices
+                              ? fvar_channels[c].num_values
+                              : m.num_face_vertex_indices;
+      fv_gen[c].assign(nv, 0);
+      fvloc[c].resize(nv);
+    }
     is_hole.assign(t.num_faces, 0);
     for (uint32_t i = 0; i < m.num_holes; i++) {
       const uint32_t h = uint32_t(m.hole_indices[i]);
@@ -797,7 +828,7 @@ struct BlockSetup {
   void Build(const VertexPrimvarView *vertex_primvars, uint32_t num_pv,
              uint32_t fstart, uint32_t fend, Submesh *sub) {
     const MeshView &m = *mesh;
-    sub->Reset(num_pv);
+    sub->Reset(num_pv, num_fvar);
     sub_verts.clear();
     for (uint32_t g : halo) {
       const uint32_t b = topo->face_offsets[g];
@@ -821,6 +852,23 @@ struct BlockSetup {
           sub_verts.push_back(v);
         }
         sub->fvi.push_back(vloc[v]);
+        // faceVarying is per-corner: slice the (possibly indexed) value for this
+        // global corner, deduplicating shared values so the seam topology (which
+        // corners share a value) is preserved on the submesh.
+        for (uint32_t c = 0; c < num_fvar; c++) {
+          const uint32_t st = fvar[c].stride;
+          const uint32_t vid =
+              fvar[c].indices ? fvar[c].indices[b + k] : (b + k);
+          if (fv_gen[c][vid] != gen) {
+            fv_gen[c][vid] = gen;
+            fvloc[c][vid] = uint32_t(sub->fvar_values[c].size() / st);
+            const float *fsrc = &fvar[c].values[size_t(vid) * st];
+            for (uint32_t s = 0; s < st; s++) {
+              sub->fvar_values[c].push_back(fsrc[s]);
+            }
+          }
+          sub->fvar_indices[c].push_back(fvloc[c][vid]);
+        }
       }
       sub->sub_to_global.push_back(g);
       sub->owned.push_back((g >= fstart && g < fend) ? 1 : 0);
@@ -874,6 +922,10 @@ bool EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
   const uint32_t nf = uint32_t(refined.face_vertex_counts.size());
   const uint32_t arity =
       nf ? uint32_t(refined.face_vertex_indices.size() / nf) : 0;
+  // faceVarying (per refined corner, parallel to face_vertex_indices): forward
+  // owned faces' values through the *F emit variants.
+  const uint32_t nfvar = em.num_fvar;
+  std::vector<const float *> fc(nfvar);
   for (uint32_t f = 0; f < nf; f++) {
     const uint32_t sub_base = refined.face_source[f];
     if (!owned[sub_base]) {
@@ -881,7 +933,16 @@ bool EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
     }
     const uint32_t gsrc = sub_to_global[sub_base];
     const uint32_t *c = &refined.face_vertex_indices[size_t(f) * arity];
-    if (loop) {
+    if (nfvar) {
+      for (uint32_t ch = 0; ch < nfvar; ch++) {
+        fc[ch] = &refined.fvar[ch][size_t(f) * arity * em.fvar_stride[ch]];
+      }
+      if (loop) {
+        em.EmitTriF(c[0], c[1], c[2], gsrc, fc);
+      } else {
+        em.EmitQuadF(c[0], c[1], c[2], c[3], gsrc, fc);
+      }
+    } else if (loop) {
       em.EmitTri(c[0], c[1], c[2], gsrc);
     } else {
       em.EmitQuad(c[0], c[1], c[2], c[3], gsrc);
@@ -966,20 +1027,27 @@ Result RefineStream(const MeshView &mesh,
     }
   }
 
-  // faceVarying: only the linear path (the "all" mode, or any mode under
-  // bilinear) streams here; smooth seam-split channels fall back to bulk.
-  for (uint32_t c = 0; c < num_fvar_channels; c++) {
-    const bool linear =
-        (!smooth_scheme ||
-         fvar_channels[c].interpolation == FVarLinearInterpolation::All);
-    if (!linear) {
-      return Fail(Result::InvalidArgument, err,
-                  "smooth faceVarying is not streamable; use Refine.");
+  // Block mode refines each submesh with bulk Refine, which handles ALL fvar
+  // modes (linear and smooth seam-split); the non-block per-level streaming path
+  // only carries linear fvar inline.
+  const bool block_mode = (stream_options.block_faces > 0 &&
+                           stream_options.block_faces < mesh.num_faces &&
+                           options.level >= 1);
+
+  // faceVarying constraints. Outside block mode, only the linear path streams
+  // here (the "all" mode, or any mode under bilinear); smooth seam-split channels
+  // must use the bulk Refine. Level 0 is a passthrough (no refinement), so fvar
+  // there should use Refine regardless.
+  if (!block_mode) {
+    for (uint32_t c = 0; c < num_fvar_channels; c++) {
+      const bool linear =
+          (!smooth_scheme ||
+           fvar_channels[c].interpolation == FVarLinearInterpolation::All);
+      if (!linear) {
+        return Fail(Result::InvalidArgument, err,
+                    "smooth faceVarying is not streamable; use Refine.");
+      }
     }
-  }
-  if (num_fvar_channels && stream_options.block_faces > 0) {
-    return Fail(Result::InvalidArgument, err,
-                "faceVarying streaming is not supported in block mode.");
   }
   if (num_fvar_channels && options.level == 0) {
     return Fail(Result::InvalidArgument, err,
@@ -1011,8 +1079,7 @@ Result RefineStream(const MeshView &mesh,
   em.Init();
 
   // --- Block + halo mode: bound the working set, not just the output ---------
-  if (stream_options.block_faces > 0 &&
-      stream_options.block_faces < mesh.num_faces && options.level >= 1) {
+  if (block_mode) {
     Topology base_topo;
     r = BuildTopology(mesh.face_vertex_counts, mesh.num_faces,
                       mesh.face_vertex_indices, mesh.num_face_vertex_indices,
@@ -1049,13 +1116,16 @@ Result RefineStream(const MeshView &mesh,
     // level-(N-1) state) instead of materializing the full level-N submesh.
     // Niche memory/time trade (see StreamOptions::recursive_blocks); only the
     // geometry/primvar path recurses -- exact limit normals need the materialized
-    // refine, so want_normals on a smooth scheme keeps the bulk route.
+    // refine, so want_normals on a smooth scheme keeps the bulk route, and fvar
+    // is forwarded from the materialized refine (not the inner stream).
     const bool block_recurse = stream_options.recursive_blocks &&
-                               !(stream_options.want_normals && smooth_scheme);
+                               !(stream_options.want_normals && smooth_scheme) &&
+                               num_fvar_channels == 0;
     BlockSetup bs;
-    bs.Init(mesh, base_topo, creases);
+    bs.Init(mesh, base_topo, creases, fvar_channels, num_fvar_channels);
     Submesh sub;
     std::vector<VertexPrimvarView> spv(num_vertex_primvars);
+    std::vector<FVarChannelView> sfv(num_fvar_channels);
     for (uint32_t fstart = 0; fstart < mesh.num_faces;
          fstart += stream_options.block_faces) {
       const uint32_t fend =
@@ -1095,6 +1165,14 @@ Result RefineStream(const MeshView &mesh,
         spv[c].stride = vertex_primvars[c].stride;
         spv[c].varying = vertex_primvars[c].varying;
       }
+      for (uint32_t c = 0; c < num_fvar_channels; c++) {
+        const uint32_t st = fvar_channels[c].stride;
+        sfv[c].values = sub.fvar_values[c].data();
+        sfv[c].num_values = uint32_t(sub.fvar_values[c].size() / st);
+        sfv[c].indices = sub.fvar_indices[c].data();
+        sfv[c].stride = st;
+        sfv[c].interpolation = fvar_channels[c].interpolation;
+      }
 
       if (block_recurse) {
         // Stream the submesh's final level (peak bounded by its level-(N-1)
@@ -1125,7 +1203,8 @@ Result RefineStream(const MeshView &mesh,
         }
       } else {
         RefinedMesh refined;
-        r = Refine(sv, nullptr, 0,
+        r = Refine(sv, num_fvar_channels ? sfv.data() : nullptr,
+                   num_fvar_channels,
                    num_vertex_primvars ? spv.data() : nullptr,
                    num_vertex_primvars, options, &refined, err);
         if (r != Result::Success) {

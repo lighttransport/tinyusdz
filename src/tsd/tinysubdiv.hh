@@ -278,8 +278,9 @@ struct StreamOptions {
   // ring of margin) and the halo -- hence the peak working set -- stays bounded
   // independent of both total mesh size AND refinement level. Blocked output
   // duplicates vertices at block borders (vertex_source is block-local);
-  // analytic normals keep shading seamless. (faceVarying/primvar-less geometry
-  // path.)
+  // analytic normals keep shading seamless. Geometry, vertex/varying primvars,
+  // limit normals, and ALL faceVarying modes (linear and smooth seam-split, via
+  // the per-block bulk refine) stream in block mode.
   uint32_t block_faces = 0;
   uint32_t halo_rings = 0;
 
@@ -298,11 +299,12 @@ struct StreamOptions {
 };
 
 // Streaming refinement. `fvar_channels`/`vertex_primvars` may be null when
-// their count is 0. faceVarying is streamed only for linear modes (the "all"
-// mode, or any mode under bilinear); a smooth seam-split faceVarying channel
-// returns InvalidArgument (use the bulk Refine). faceVarying is emitted
-// per-corner (StreamBatch::fvar, parallel to indices) and is not supported in
-// block mode (block_faces > 0).
+// their count is 0. faceVarying is emitted per-corner (StreamBatch::fvar,
+// parallel to indices). In the non-block path only linear modes stream (the
+// "all" mode, or any mode under bilinear); a smooth seam-split channel returns
+// InvalidArgument there (use the bulk Refine). Block mode (block_faces > 0)
+// streams ALL faceVarying modes -- it refines each block with the bulk Refine.
+// faceVarying streaming requires level >= 1 (level 0 is a passthrough).
 Result RefineStream(const MeshView &mesh, const FVarChannelView *fvar_channels,
                     uint32_t num_fvar_channels,
                     const VertexPrimvarView *vertex_primvars,
