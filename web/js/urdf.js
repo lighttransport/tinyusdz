@@ -2333,6 +2333,28 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     }
     materialsPayload.push(mat);
   }
+  const sensorsPayload = [];
+  const sensorRootEl = firstChildElement(root, 'sensor');
+  if (sensorRootEl) {
+    for (const node of childElements(sensorRootEl)) {
+      const type = node.localName;
+      if (!type) continue;
+      const s = { type, name: node.getAttribute('name') || `${type}_${sensorsPayload.length}` };
+      if (node.getAttribute('objtype') !== null) {
+        s.objtype = node.getAttribute('objtype');
+        if (node.getAttribute('objname') !== null) s.objname = node.getAttribute('objname');
+      } else {
+        for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+          if (node.getAttribute(k) !== null) { s.objtype = k; s.objname = node.getAttribute(k); break; }
+        }
+      }
+      if (node.getAttribute('reftype') !== null) s.reftype = node.getAttribute('reftype');
+      if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      if (node.getAttribute('cutoff') !== null) s.cutoff = Number(node.getAttribute('cutoff'));
+      if (node.getAttribute('noise') !== null) s.noise = Number(node.getAttribute('noise'));
+      sensorsPayload.push(s);
+    }
+  }
   const worldbodyEl = firstChildElement(root, 'worldbody');
   const { lights: lightsPayload, cameras: camerasPayload } =
     worldbodyEl ? collectMujocoLightsCameras(worldbodyEl) : { lights: [], cameras: [] };
@@ -2359,7 +2381,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
     ...(lightsPayload.length ? { lights: lightsPayload } : {}),
     ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
-    ...(materialsPayload.length ? { materials: materialsPayload } : {})
+    ...(materialsPayload.length ? { materials: materialsPayload } : {}),
+    ...(sensorsPayload.length ? { sensors: sensorsPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

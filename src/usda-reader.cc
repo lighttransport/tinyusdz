@@ -1062,6 +1062,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<NewtonActuator>();
   RegisterReconstructCallback<MjcTendon>();
   RegisterReconstructCallback<MjcKeyframe>();
+  RegisterReconstructCallback<MjcSensor>();
 
   // AR/Interactive (Apple Preliminary_*)
   RegisterReconstructCallback<Preliminary_PhysicsGravitationalForce>();

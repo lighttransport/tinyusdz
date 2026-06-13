@@ -1230,6 +1230,35 @@ function parseMujocoMuscleActuators(root) {
   return out;
 }
 
+// MJCF <sensor> children -> sensor payload entries (-> MjcSensor prims).
+function parseMujocoSensors(root) {
+  const sensorRoot = firstChild(root, 'sensor');
+  if (!sensorRoot) return [];
+  const out = [];
+  for (const node of childElements(sensorRoot)) {
+    const type = node.name;
+    if (!type) continue;
+    const s = { type, name: node.attrs.name || `${type}_${out.length}` };
+    if (node.attrs.objtype !== undefined) {
+      s.objtype = node.attrs.objtype;
+      if (node.attrs.objname !== undefined) s.objname = node.attrs.objname;
+    } else {
+      for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+        if (node.attrs[k] !== undefined) { s.objtype = k; s.objname = node.attrs[k]; break; }
+      }
+    }
+    if (node.attrs.reftype !== undefined) s.reftype = node.attrs.reftype;
+    if (node.attrs.refname !== undefined) s.refname = node.attrs.refname;
+    if (node.attrs.group !== undefined) s.group = Math.round(numberAttr(node.attrs, 'group'));
+    if (node.attrs.cutoff !== undefined) s.cutoff = numberAttr(node.attrs, 'cutoff');
+    if (node.attrs.noise !== undefined) s.noise = numberAttr(node.attrs, 'noise');
+    const user = parseNumbers(node.attrs.user, []);
+    if (user.length) s.user = user;
+    out.push(s);
+  }
+  return out;
+}
+
 // MJCF <asset><material> -> material payload entries (-> UsdShade Material).
 function parseMujocoMaterials(root) {
   const asset = firstChild(root, 'asset');
@@ -1573,6 +1602,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const keyframes = parseMujocoKeyframes(root);
   const { lights, cameras } = collectMujocoLightsCameras(worldbody);
   const materials = parseMujocoMaterials(root);
+  const sensors = parseMujocoSensors(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1741,6 +1771,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (lights.length) payload.lights = lights;
   if (cameras.length) payload.cameras = cameras;
   if (materials.length) payload.materials = materials;
+  if (sensors.length) payload.sensors = sensors;
   return {
     payload,
     stats: {

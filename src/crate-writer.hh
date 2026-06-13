@@ -533,6 +533,7 @@ private:
   bool ExtractNewtonActuatorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractMjcTendonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractMjcKeyframeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMjcSensorProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract AR/Interactive prim properties (Apple Preliminary_*)
   bool ExtractPreliminaryGravitationalForceProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);

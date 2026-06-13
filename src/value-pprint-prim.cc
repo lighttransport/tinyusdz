@@ -76,6 +76,7 @@ namespace value {
   __FUNC(NewtonActuator)        \
   __FUNC(MjcTendon)             \
   __FUNC(MjcKeyframe)           \
+  __FUNC(MjcSensor)             \
   __FUNC(Preliminary_PhysicsGravitationalForce) \
   __FUNC(Preliminary_InfiniteColliderPlane) \
   __FUNC(Preliminary_ReferenceImage) \

@@ -126,6 +126,7 @@ RECONSTRUCT_PRIM_DECL(MjcActuator);
 RECONSTRUCT_PRIM_DECL(NewtonActuator);
 RECONSTRUCT_PRIM_DECL(MjcTendon);
 RECONSTRUCT_PRIM_DECL(MjcKeyframe);
+RECONSTRUCT_PRIM_DECL(MjcSensor);
 // AR/Interactive (Apple Preliminary_*)
 RECONSTRUCT_PRIM_DECL(Preliminary_PhysicsGravitationalForce);
 RECONSTRUCT_PRIM_DECL(Preliminary_InfiniteColliderPlane);
@@ -250,6 +251,7 @@ DEFINE_PRIM_TYPE(MjcActuator, kMjcActuator, value::TYPE_ID_MJC_ACTUATOR);
 DEFINE_PRIM_TYPE(NewtonActuator, kNewtonActuator, value::TYPE_ID_NEWTON_ACTUATOR);
 DEFINE_PRIM_TYPE(MjcTendon, kMjcTendon, value::TYPE_ID_MJC_TENDON);
 DEFINE_PRIM_TYPE(MjcKeyframe, kMjcKeyframe, value::TYPE_ID_MJC_KEYFRAME);
+DEFINE_PRIM_TYPE(MjcSensor, kMjcSensor, value::TYPE_ID_MJC_SENSOR);
 // AR/Interactive (Apple Preliminary_*)
 DEFINE_PRIM_TYPE(Preliminary_PhysicsGravitationalForce, kPreliminary_PhysicsGravitationalForce, value::TYPE_ID_PRELIMINARY_GRAVITATIONAL_FORCE);
 DEFINE_PRIM_TYPE(Preliminary_InfiniteColliderPlane, kPreliminary_InfiniteColliderPlane, value::TYPE_ID_PRELIMINARY_INFINITE_COLLIDER_PLANE);
@@ -1418,6 +1420,7 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(MjcActuator)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NewtonActuator)
 USDA_EXTERN_REGISTER_RECONSTRUCT(MjcTendon)
 USDA_EXTERN_REGISTER_RECONSTRUCT(MjcKeyframe)
+USDA_EXTERN_REGISTER_RECONSTRUCT(MjcSensor)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Preliminary_PhysicsGravitationalForce)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Preliminary_InfiniteColliderPlane)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Preliminary_ReferenceImage)

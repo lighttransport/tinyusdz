@@ -46,6 +46,7 @@ namespace tinyusdz {
 constexpr auto kMjcActuator = "MjcActuator";
 constexpr auto kMjcTendon = "MjcTendon";
 constexpr auto kMjcKeyframe = "MjcKeyframe";
+constexpr auto kMjcSensor = "MjcSensor";
 
 //
 // ============================================================
@@ -391,6 +392,49 @@ struct MjcKeyframe {
   std::vector<value::token> _properties;
 };
 
+// MjcSensor — MuJoCo sensor. A single concrete prim covers all sensor types
+// (gyro/accelerometer/framepos/jointpos/...); the specific type is the
+// `mjc:type` token (the MJCF element name). The measured object is captured by
+// `mjc:objtype`/`mjc:objname` (+ `mjc:reftype`/`mjc:refname` for frame sensors).
+struct MjcSensor {
+  std::string name;
+  Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};
+
+  void set_name(const std::string &name_) { name = name_; }
+  const std::string &get_name() const { return name; }
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
+  TypedAttributeWithFallback<value::token> type{value::token("")};      // mjc:type (sensor kind)
+  TypedAttributeWithFallback<value::token> objType{value::token("")};   // mjc:objtype
+  TypedAttributeWithFallback<value::token> objName{value::token("")};   // mjc:objname
+  TypedAttributeWithFallback<value::token> refType{value::token("")};   // mjc:reftype
+  TypedAttributeWithFallback<value::token> refName{value::token("")};   // mjc:refname
+  TypedAttributeWithFallback<int> group{0};                             // mjc:group
+  TypedAttributeWithFallback<double> cutoff{0.0};                       // mjc:cutoff
+  TypedAttributeWithFallback<double> noise{0.0};                        // mjc:noise
+  TypedAttribute<std::vector<double>> user;                             // mjc:user
+
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  std::map<std::string, Property> props;
+
+  PrimMeta meta;
+  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const { return meta; }
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
+};
+
 namespace value {
 
 // Register mjcPhysics Prim types.
@@ -398,6 +442,7 @@ namespace value {
 DEFINE_TYPE_TRAIT(MjcActuator, kMjcActuator, TYPE_ID_MJC_ACTUATOR, 1);
 DEFINE_TYPE_TRAIT(MjcTendon, kMjcTendon, TYPE_ID_MJC_TENDON, 1);
 DEFINE_TYPE_TRAIT(MjcKeyframe, kMjcKeyframe, TYPE_ID_MJC_KEYFRAME, 1);
+DEFINE_TYPE_TRAIT(MjcSensor, kMjcSensor, TYPE_ID_MJC_SENSOR, 1);
 
 // NOTE: Do not #undef DEFINE_TYPE_TRAIT here — usdPhysics.hh includes this
 // file and needs the macro for its own type registrations.

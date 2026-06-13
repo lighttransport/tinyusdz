@@ -964,6 +964,7 @@ TEST_LIST = {
   { "urdf_json_mjc_keyframe_export_test", urdf_json_mjc_keyframe_export_test },
   { "urdf_json_mjc_lights_cameras_test", urdf_json_mjc_lights_cameras_test },
   { "urdf_json_mjc_materials_test", urdf_json_mjc_materials_test },
+  { "urdf_json_mjc_sensors_test", urdf_json_mjc_sensors_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
