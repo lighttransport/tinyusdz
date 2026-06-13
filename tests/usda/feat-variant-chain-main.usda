@@ -1,0 +1,15 @@
+#usda 1.0
+
+# Regression: a variant selection authored on the REFERENCING prim ("ChairB")
+# must win over the referenced asset's own default selection ("ChairA"), even
+# when the populated variantSet lives several arcs deep (reference -> empty
+# variant blocks + payload -> reference -> populated variantSet). Mirrors
+# Pixar's Kitchen_set Chair.usd payload chain. See feat-variant-payload-chain.
+def "C1" (
+    prepend references = @feat-variant-chain-asset.usda@</Chair>
+    variants = {
+        string modelingVariant = "ChairB"
+    }
+)
+{
+}

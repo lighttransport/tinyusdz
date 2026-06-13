@@ -1,0 +1,17 @@
+#usda 1.0
+
+def Xform "Chair" (
+    prepend payload = @feat-variant-chain-payload.usda@</Chair>
+    variants = {
+        string modelingVariant = "ChairA"
+    }
+    prepend variantSets = "modelingVariant"
+)
+{
+    variantSet "modelingVariant" = {
+        "ChairA" {
+        }
+        "ChairB" {
+        }
+    }
+}
