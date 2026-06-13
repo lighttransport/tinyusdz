@@ -1,0 +1,63 @@
+#usda 1.0
+(
+    doc = "MjcTendon (fixed) coupling two joints, plus a multi-DOF body modeled as a chain of single-DOF joints through a massless intermediate link — the structure the MJCF->USD converter emits for a body with multiple <joint> children."
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Scope "Links"
+    {
+        def Xform "base" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsArticulationRootAPI"]
+        )
+        {
+            float physics:mass = 1.0
+        }
+        def Xform "slider__mjcdof_1" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+        }
+        def Xform "slider" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            float physics:mass = 0.5
+        }
+    }
+
+    def Scope "Joints"
+    {
+        def PhysicsPrismaticJoint "lift"
+        {
+            rel physics:body0 = </World/Links/base>
+            rel physics:body1 = </World/Links/slider__mjcdof_1>
+            token physics:axis = "Z"
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 0.5
+        }
+        def PhysicsRevoluteJoint "twist"
+        {
+            rel physics:body0 = </World/Links/slider__mjcdof_1>
+            rel physics:body1 = </World/Links/slider>
+            token physics:axis = "Z"
+            float physics:lowerLimit = -90
+            float physics:upperLimit = 90
+        }
+    }
+
+    def Scope "Tendons"
+    {
+        def MjcTendon "couple"
+        {
+            uniform token mjc:type = "fixed"
+            rel mjc:path = [</World/Joints/lift>, </World/Joints/twist>]
+            int[] mjc:path:indices = [0, 1]
+            double[] mjc:path:coef = [1.0, -1.0]
+            double mjc:stiffness = 120.0
+            double mjc:damping = 3.0
+        }
+    }
+}

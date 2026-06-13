@@ -1,0 +1,119 @@
+#usda 1.0
+# EXPECT-OK
+(
+    doc = "A correct, feature-rich UsdPhysics scene: PhysicsScene (MjcSceneAPI + NewtonSceneAPI), RigidBody/Mass/Collision/Material APIs, every joint type with valid limits, multi-apply Drive/Limit APIs, and a collision group. Proves the physics validators do not false-positive on a valid scene."
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def PhysicsScene "Scene" (
+        prepend apiSchemas = ["MjcSceneAPI", "NewtonSceneAPI"]
+    )
+    {
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.81
+        uniform double mjc:option:timestep = 0.002
+        uniform token mjc:option:integrator = "implicit"
+        uniform int newton:maxSolverIterations = 32
+        uniform int newton:timeStepsPerSecond = 240
+    }
+
+    def Material "Rubber" (
+        prepend apiSchemas = ["PhysicsMaterialAPI"]
+    )
+    {
+        float physics:staticFriction = 0.8
+        float physics:dynamicFriction = 0.6
+        float physics:restitution = 0.1
+        float physics:density = 1100
+    }
+
+    def Cube "Base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+    )
+    {
+        bool physics:rigidBodyEnabled = 1
+        float physics:mass = 5.0
+        point3f physics:centerOfMass = (0, 0, 0.1)
+        float3 physics:diagonalInertia = (0.4, 0.4, 0.2)
+        quatf physics:principalAxes = (1, 0, 0, 0)
+        bool physics:collisionEnabled = 1
+    }
+
+    def Mesh "Link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+    )
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        float physics:mass = 1.0
+        uniform token physics:approximation = "convexHull"
+    }
+
+    def Scope "Joints"
+    {
+        def PhysicsRevoluteJoint "Hinge" (
+            prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:rotX"]
+        )
+        {
+            rel physics:body0 = </World/Base>
+            rel physics:body1 = </World/Link>
+            token physics:axis = "X"
+            float physics:lowerLimit = -45
+            float physics:upperLimit = 45
+            token physics:drive:rotX:type = "force"
+            float physics:drive:rotX:maxForce = 100
+            float physics:drive:rotX:targetPosition = 0
+            float physics:drive:rotX:stiffness = 50
+            float physics:drive:rotX:damping = 5
+            float physics:limit:rotX:low = -45
+            float physics:limit:rotX:high = 45
+        }
+
+        def PhysicsPrismaticJoint "Slider"
+        {
+            rel physics:body0 = </World/Base>
+            rel physics:body1 = </World/Link>
+            token physics:axis = "Z"
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 0.5
+        }
+
+        def PhysicsSphericalJoint "Ball"
+        {
+            rel physics:body0 = </World/Base>
+            rel physics:body1 = </World/Link>
+            token physics:axis = "Y"
+            float physics:coneAngle0Limit = 30
+            float physics:coneAngle1Limit = 20
+        }
+
+        def PhysicsFixedJoint "Weld"
+        {
+            rel physics:body0 = </World/Base>
+            rel physics:body1 = </World/Link>
+        }
+
+        def PhysicsDistanceJoint "Rope"
+        {
+            rel physics:body0 = </World/Base>
+            rel physics:body1 = </World/Link>
+            float physics:minDistance = 0.1
+            float physics:maxDistance = 2.0
+        }
+    }
+
+    def PhysicsCollisionGroup "GroupA"
+    {
+        token physics:mergeGroup = "armA"
+        bool physics:invertFilteredGroups = 0
+        rel physics:filteredGroups = [</World/GroupB>]
+    }
+
+    def PhysicsCollisionGroup "GroupB"
+    {
+    }
+}

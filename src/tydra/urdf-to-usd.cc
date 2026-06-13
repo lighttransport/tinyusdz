@@ -342,6 +342,97 @@ void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
   xformable.xformOps.push_back(op);
 }
 
+// Jacobi eigenvalue decomposition of a symmetric 3x3 matrix. Outputs the
+// eigenvalues `eval[i]` and their eigenvectors as the columns of `evec`
+// (orthonormal). Used to diagonalize a full inertia tensor into principal
+// moments (eigenvalues) + a principal-axes rotation (eigenvectors).
+void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
+                           double evec[3][3]) {
+  double a[3][3];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) a[i][j] = in[i][j];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) evec[i][j] = (i == j) ? 1.0 : 0.0;
+
+  for (int sweep = 0; sweep < 100; sweep++) {
+    double off = std::fabs(a[0][1]) + std::fabs(a[0][2]) + std::fabs(a[1][2]);
+    if (off < 1e-18) break;
+    for (int p = 0; p < 2; p++) {
+      for (int q = p + 1; q < 3; q++) {
+        if (std::fabs(a[p][q]) < 1e-300) continue;
+        const double theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+        const double t = (theta >= 0.0 ? 1.0 : -1.0) /
+                         (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
+        const double c = 1.0 / std::sqrt(t * t + 1.0);
+        const double s = t * c;
+        // Apply the Givens rotation a := Jᵀ a J for indices (p, q).
+        const double app = a[p][p], aqq = a[q][q], apq = a[p][q];
+        a[p][p] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+        a[q][q] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+        a[p][q] = a[q][p] = 0.0;
+        const int r = 3 - p - q;  // the third index
+        const double arp = a[r][p], arq = a[r][q];
+        a[r][p] = a[p][r] = c * arp - s * arq;
+        a[r][q] = a[q][r] = s * arp + c * arq;
+        // Accumulate the eigenvectors.
+        for (int k = 0; k < 3; k++) {
+          const double ekp = evec[k][p], ekq = evec[k][q];
+          evec[k][p] = c * ekp - s * ekq;
+          evec[k][q] = s * ekp + c * ekq;
+        }
+      }
+    }
+  }
+  for (int i = 0; i < 3; i++) eval[i] = a[i][i];
+}
+
+// Convert a 3x3 rotation matrix (columns = orthonormal basis) into a quatf.
+// Forces a right-handed (det +1) frame so the quaternion is well-formed.
+value::quatf RotationMatrixToQuatf(double r[3][3]) {
+  // Ensure proper rotation: if det < 0, flip the third column.
+  const double det =
+      r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) -
+      r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) +
+      r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+  if (det < 0.0) {
+    r[0][2] = -r[0][2];
+    r[1][2] = -r[1][2];
+    r[2][2] = -r[2][2];
+  }
+  const double tr = r[0][0] + r[1][1] + r[2][2];
+  double w, x, y, z;
+  if (tr > 0.0) {
+    double S = std::sqrt(tr + 1.0) * 2.0;
+    w = 0.25 * S;
+    x = (r[2][1] - r[1][2]) / S;
+    y = (r[0][2] - r[2][0]) / S;
+    z = (r[1][0] - r[0][1]) / S;
+  } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+    double S = std::sqrt(1.0 + r[0][0] - r[1][1] - r[2][2]) * 2.0;
+    w = (r[2][1] - r[1][2]) / S;
+    x = 0.25 * S;
+    y = (r[0][1] + r[1][0]) / S;
+    z = (r[0][2] + r[2][0]) / S;
+  } else if (r[1][1] > r[2][2]) {
+    double S = std::sqrt(1.0 + r[1][1] - r[0][0] - r[2][2]) * 2.0;
+    w = (r[0][2] - r[2][0]) / S;
+    x = (r[0][1] + r[1][0]) / S;
+    y = 0.25 * S;
+    z = (r[1][2] + r[2][1]) / S;
+  } else {
+    double S = std::sqrt(1.0 + r[2][2] - r[0][0] - r[1][1]) * 2.0;
+    w = (r[1][0] - r[0][1]) / S;
+    x = (r[0][2] + r[2][0]) / S;
+    y = (r[1][2] + r[2][1]) / S;
+    z = 0.25 * S;
+  }
+  value::quatf q;
+  q.real = static_cast<float>(w);
+  q.imag = value::float3{static_cast<float>(x), static_cast<float>(y),
+                         static_cast<float>(z)};
+  return q;
+}
+
 template <typename GeomT>
 void AddCollisionAPIs(GeomT &geom, bool mesh_collision,
                       const nlohmann::json &src, bool mjcf_source) {
@@ -806,6 +897,157 @@ bool AddNewtonActuatorFromJson(
   return true;
 }
 
+// MJCF <tendon><fixed> -> MjcTendon prim. The "fixed" tendon couples joints
+// with per-joint coefficients (Sum_i coef_i * q_i is constrained); we map the
+// referenced joints into the mjc:path rel and the coefficients into
+// mjc:path:coef. Spatial tendons (sites) are not yet emitted — a warning is
+// raised by the parser. JSON shape:
+//   { "name", "type":"fixed", "joints":[{"joint","coef"},...],
+//     "stiffness","damping","range":[lo,hi],"limited","frictionloss","margin",
+//     "springlength":[...] }
+bool AddMjcTendonFromJson(
+    Prim &tendons_prim, const nlohmann::json &t_json,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    size_t index, std::string *warn, std::string *err) {
+  MjcTendon tendon;
+  tendon.name = SanitizeUSDIdentifier(
+      JsonString(t_json, "name", "tendon_" + std::to_string(index)), "tendon");
+  tendon.type.set_value(value::token(JsonString(t_json, "type", "fixed")));
+
+  std::vector<Path> joint_targets;
+  std::vector<double> coefs;
+  if (t_json.contains("joints") && t_json["joints"].is_array()) {
+    for (const auto &je : t_json["joints"]) {
+      if (!je.is_object()) continue;
+      const std::string jname = JsonString(je, "joint");
+      auto it = joint_name_to_usd.find(jname);
+      if (it == joint_name_to_usd.end()) {
+        AppendWarn(warn, "Tendon `" + tendon.name + "` references joint `" +
+                             jname + "` that was not exported; skipping it.\n");
+        continue;
+      }
+      joint_targets.emplace_back("/World/Joints/" + it->second, "");
+      double coef = 1.0;
+      JsonNumber(je, "coef", &coef);
+      coefs.push_back(coef);
+    }
+  }
+  if (joint_targets.empty()) {
+    AppendWarn(warn, "Skipping tendon `" + tendon.name +
+                         "`: no referenced joint was exported.\n");
+    return true;
+  }
+  tendon.path.set(std::move(joint_targets));
+  tendon.path_coef.set_value(coefs);
+
+  double v = 0.0;
+  if (JsonNumber(t_json, "stiffness", &v)) tendon.stiffness.set_value(v);
+  if (JsonNumber(t_json, "damping", &v)) tendon.damping.set_value(v);
+  if (JsonNumber(t_json, "frictionloss", &v)) tendon.frictionloss.set_value(v);
+  if (JsonNumber(t_json, "margin", &v)) tendon.margin.set_value(v);
+  if (JsonNumber(t_json, "armature", &v)) tendon.armature.set_value(v);
+  if (t_json.contains("range") && t_json["range"].is_array() &&
+      t_json["range"].size() >= 2) {
+    tendon.range_min.set_value(t_json["range"][0].get<double>());
+    tendon.range_max.set_value(t_json["range"][1].get<double>());
+    tendon.limited.set_value(value::token("true"));
+  }
+  if (t_json.contains("limited")) {
+    tendon.limited.set_value(value::token(JsonString(t_json, "limited", "auto")));
+  }
+  std::vector<double> springlen = JsonDoubleArray(t_json, "springlength");
+  if (!springlen.empty()) tendon.springlength.set_value(springlen);
+
+  std::string add_err;
+  if (!tendons_prim.add_child(Prim(tendon), true, &add_err)) {
+    SetErr(err, "Failed to add tendon `" + tendon.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <equality> -> an Xform host prim carrying the matching MjcEquality*API
+// applied schema plus mjc:* attrs in the generic props map (these round-trip
+// through the generic props pass, mirroring the physx:* preservation contract).
+// connect/weld relate two bodies; joint relates two joints. JSON shape:
+//   { "name","type":"connect|weld|joint",
+//     "body1","body2","anchor":[x,y,z],            (connect/weld)
+//     "joint1","joint2","polycoef":[c0..c4],        (joint)
+//     "torquescale",                                 (weld)
+//     "solref":[...],"solimp":[...] }
+bool AddMjcEqualityFromJson(
+    Prim &equalities_prim, const nlohmann::json &e_json,
+    const std::map<std::string, std::string> &link_name_to_usd,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    size_t index, std::string *warn, std::string *err) {
+  const std::string type = JsonString(e_json, "type", "connect");
+  Xform host;
+  host.name = SanitizeUSDIdentifier(
+      JsonString(e_json, "name", "equality_" + std::to_string(index)),
+      "equality");
+
+  APISchemas::APIName api_name = APISchemas::APIName::MjcEqualityConnectAPI;
+  if (type == "weld") api_name = APISchemas::APIName::MjcEqualityWeldAPI;
+  else if (type == "joint") api_name = APISchemas::APIName::MjcEqualityJointAPI;
+  AppendAPISchema(host.metas(), api_name);
+
+  // Resolve the two related entities into rel targets so the constraint topology
+  // survives. connect/weld -> bodies (links); joint -> joints.
+  auto resolve_link = [&](const std::string &n, std::vector<Path> *out) {
+    auto it = link_name_to_usd.find(n);
+    if (it != link_name_to_usd.end())
+      out->emplace_back("/World/Links/" + it->second, "");
+  };
+  auto resolve_joint = [&](const std::string &n, std::vector<Path> *out) {
+    auto it = joint_name_to_usd.find(n);
+    if (it != joint_name_to_usd.end())
+      out->emplace_back("/World/Joints/" + it->second, "");
+  };
+
+  std::vector<Path> targets;
+  if (type == "joint") {
+    resolve_joint(JsonString(e_json, "joint1"), &targets);
+    resolve_joint(JsonString(e_json, "joint2"), &targets);
+  } else {
+    resolve_link(JsonString(e_json, "body1"), &targets);
+    resolve_link(JsonString(e_json, "body2"), &targets);
+  }
+  if (!targets.empty()) {
+    Relationship rel;
+    rel.set(targets);
+    host.props["mjc:target"] = Property(std::move(rel), false);
+  }
+
+  // Type-specific scalar/array attrs as generic mjc:* props.
+  double v = 0.0;
+  if (type == "weld" && JsonNumber(e_json, "torquescale", &v)) {
+    AddAttr(host.props, "mjc:torqueScale", static_cast<float>(v));
+  }
+  if (type == "joint" && e_json.contains("polycoef") &&
+      e_json["polycoef"].is_array()) {
+    const auto &pc = e_json["polycoef"];
+    const char *coef_names[5] = {"mjc:coef0", "mjc:coef1", "mjc:coef2",
+                                 "mjc:coef3", "mjc:coef4"};
+    for (size_t i = 0; i < pc.size() && i < 5; i++) {
+      if (pc[i].is_number()) AddAttr(host.props, coef_names[i], pc[i].get<double>());
+    }
+  }
+  std::vector<double> solref = JsonDoubleArray(e_json, "solref");
+  if (!solref.empty()) AddAttr(host.props, "mjc:solref", solref);
+  std::vector<double> solimp = JsonDoubleArray(e_json, "solimp");
+  if (!solimp.empty()) AddAttr(host.props, "mjc:solimp", solimp);
+  std::vector<double> anchor = JsonDoubleArray(e_json, "anchor");
+  if (!anchor.empty()) AddAttr(host.props, "mjc:anchor", anchor);
+
+  std::string add_err;
+  if (!equalities_prim.add_child(Prim(host), true, &add_err)) {
+    SetErr(err, "Failed to add equality `" + host.name + "`: " + add_err);
+    return false;
+  }
+  (void)warn;
+  return true;
+}
+
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
@@ -1078,6 +1320,14 @@ bool ConvertURDFJsonToUSDStage(
       (root.contains("actuators") && root["actuators"].is_array())
           ? root["actuators"]
           : empty_array;
+  const nlohmann::json &tendons_json =
+      (root.contains("tendons") && root["tendons"].is_array())
+          ? root["tendons"]
+          : empty_array;
+  const nlohmann::json &equalities_json =
+      (root.contains("equalities") && root["equalities"].is_array())
+          ? root["equalities"]
+          : empty_array;
   const std::string source_format = JsonString(root, "sourceFormat");
   const bool mjcf_source = (source_format == "mjcf" ||
                             source_format == "MJCF" ||
@@ -1196,10 +1446,32 @@ bool ConvertURDFJsonToUSDStage(
         AddAttr(link_xform.props, "physics:centerOfMass",
                 value::point3f{com[0], com[1], com[2]});
       }
-      std::vector<float> inertia = JsonFloatArray(inertial, "diagonalInertia");
-      if (inertia.size() >= 3) {
+      // Full (non-diagonal) inertia tensor: diagonalize into principal moments
+      // (physics:diagonalInertia) + a principal-axes rotation
+      // (physics:principalAxes), the lossless USD representation. Falls back to
+      // the diagonal-only path when only diaginertia was authored.
+      std::vector<double> fullI = JsonDoubleArray(inertial, "fullInertia");
+      if (fullI.size() >= 6) {
+        // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
+        const double m[3][3] = {{fullI[0], fullI[3], fullI[4]},
+                                {fullI[3], fullI[1], fullI[5]},
+                                {fullI[4], fullI[5], fullI[2]}};
+        double eval[3];
+        double evec[3][3];
+        JacobiEigenSymmetric3(m, eval, evec);
         AddAttr(link_xform.props, "physics:diagonalInertia",
-                value::float3{inertia[0], inertia[1], inertia[2]});
+                value::float3{static_cast<float>(eval[0]),
+                              static_cast<float>(eval[1]),
+                              static_cast<float>(eval[2])});
+        AddAttr(link_xform.props, "physics:principalAxes",
+                RotationMatrixToQuatf(evec));
+      } else {
+        std::vector<float> inertia =
+            JsonFloatArray(inertial, "diagonalInertia");
+        if (inertia.size() >= 3) {
+          AddAttr(link_xform.props, "physics:diagonalInertia",
+                  value::float3{inertia[0], inertia[1], inertia[2]});
+        }
       }
     }
 
@@ -1429,6 +1701,39 @@ bool ConvertURDFJsonToUSDStage(
     }
     has_actuators = !actuators_prim.children().empty();
   }
+
+  // MJCF <tendon> -> /World/Tendons/<name> (MjcTendon prims).
+  Prim tendons_prim;
+  bool has_tendons = false;
+  if (!tendons_json.empty()) {
+    Xform tendons_scope;
+    tendons_scope.name = "Tendons";
+    tendons_prim = Prim(tendons_scope);
+    for (size_t i = 0; i < tendons_json.size(); i++) {
+      if (!AddMjcTendonFromJson(tendons_prim, tendons_json[i], joint_name_to_usd,
+                                i, warn, err)) {
+        return false;
+      }
+    }
+    has_tendons = !tendons_prim.children().empty();
+  }
+
+  // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
+  Prim equalities_prim;
+  bool has_equalities = false;
+  if (!equalities_json.empty()) {
+    Xform equalities_scope;
+    equalities_scope.name = "Equalities";
+    equalities_prim = Prim(equalities_scope);
+    for (size_t i = 0; i < equalities_json.size(); i++) {
+      if (!AddMjcEqualityFromJson(equalities_prim, equalities_json[i],
+                                  link_name_to_usd, joint_name_to_usd, i, warn,
+                                  err)) {
+        return false;
+      }
+    }
+    has_equalities = !equalities_prim.children().empty();
+  }
   {
     std::string add_err;
     if (!world_prim.add_child(Prim(scene), true, &add_err) ||
@@ -1440,6 +1745,16 @@ bool ConvertURDFJsonToUSDStage(
     if (has_actuators &&
         !world_prim.add_child(std::move(actuators_prim), true, &add_err)) {
       SetErr(err, "Failed to add Newton actuator scope: " + add_err);
+      return false;
+    }
+    if (has_tendons &&
+        !world_prim.add_child(std::move(tendons_prim), true, &add_err)) {
+      SetErr(err, "Failed to add tendon scope: " + add_err);
+      return false;
+    }
+    if (has_equalities &&
+        !world_prim.add_child(std::move(equalities_prim), true, &add_err)) {
+      SetErr(err, "Failed to add equality scope: " + add_err);
       return false;
     }
   }

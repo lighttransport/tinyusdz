@@ -37,3 +37,24 @@ void urdf_json_spherical_joint_export_test(void);
 void urdf_json_newton_api_export_test(void);
 void urdf_json_mjcf_contact_export_test(void);
 void physics_urdf_upaxis_axis_invariant_test(void);
+
+// Large-scene crate-writer regression canaries
+void physics_rigidbody_mass_usdc_roundtrip_test(void);
+void physics_collision_material_usdc_roundtrip_test(void);
+void physics_drive_limit_usdc_roundtrip_test(void);
+void physics_joints_localframe_usdc_roundtrip_test(void);
+void physics_collision_group_usdc_roundtrip_test(void);
+void physics_scene_full_mjc_newton_usdc_roundtrip_test(void);
+void physics_to_json_after_usdc_test(void);
+void physx_scene_rigidbody_roundtrip_test(void);
+
+// Phase 1d: MJCF tendon / equality conversion (JSON->USD)
+void urdf_json_mjcf_tendon_export_test(void);
+void urdf_json_mjcf_equality_export_test(void);
+
+// Phase 1c: full inertia tensor diagonalization
+void urdf_json_fullinertia_diagonalize_test(void);
+
+// Phase 3b: schema-coverage tests
+void physics_articulation_root_api_test(void);
+void mjc_equality_api_test(void);

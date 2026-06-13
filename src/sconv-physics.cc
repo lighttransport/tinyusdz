@@ -53,6 +53,17 @@ namespace experimental {
   fields.push_back({(name), _cv}); \
 } while(0)
 
+// Like EXTRACT_FALLBACK / EXTRACT_TOKEN_FALLBACK, but only emit when the
+// attribute was actually authored. Used for large API structs (e.g. the ~60
+// field MjcSceneAPI) where unconditionally writing every fallback would bloat
+// the crate and turn unauthored attrs into authored-with-default on read-back.
+#define EXTRACT_FALLBACK_IF_AUTHORED(attr, name) do { \
+  if ((attr).authored()) { EXTRACT_FALLBACK(attr, name); } \
+} while(0)
+#define EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(attr, name) do { \
+  if ((attr).authored()) { EXTRACT_TOKEN_FALLBACK(attr, name); } \
+} while(0)
+
 // Helper: write a RelationshipProperty as a separate relationship spec
 // (relationships must be separate SpecType::Relationship specs, not prim fields)
 #define EXTRACT_REL(rp, name) do { \
@@ -75,6 +86,81 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
   }
   EXTRACT_TYPED(scene->gravityDirection, "physics:gravityDirection");
   EXTRACT_TYPED(scene->gravityMagnitude, "physics:gravityMagnitude");
+  // MjcSceneAPI mirror: the reconstruct path consumes mjc:option/flag/compiler
+  // props into the typed MjcSceneAPI struct and removes them from `props`, so
+  // the generic props-map pass never re-emits them. Re-emit the authored
+  // fields here so a MuJoCo PhysicsScene survives USDC round-trip (previously
+  // these were silently dropped on write). Mirrors EXTRACT_JOINT_BASE's mjc
+  // block for joints and pprint-physics.cc's print_mjc_scene_api for USDA.
+  if (scene->mjcScene.has_value()) {
+    const auto &_m = scene->mjcScene.value();
+    // option:*
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.timestep, "mjc:option:timestep");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.impratio, "mjc:option:impratio");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.wind, "mjc:option:wind");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.magnetic, "mjc:option:magnetic");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.density, "mjc:option:density");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.viscosity, "mjc:option:viscosity");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.o_margin, "mjc:option:o_margin");
+    EXTRACT_TYPED(_m.o_solref, "mjc:option:o_solref");
+    EXTRACT_TYPED(_m.o_solimp, "mjc:option:o_solimp");
+    EXTRACT_TYPED(_m.o_friction, "mjc:option:o_friction");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.integrator, "mjc:option:integrator");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.cone, "mjc:option:cone");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.jacobian, "mjc:option:jacobian");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.solver, "mjc:option:solver");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.iterations, "mjc:option:iterations");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.tolerance, "mjc:option:tolerance");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.ls_iterations, "mjc:option:ls_iterations");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.ls_tolerance, "mjc:option:ls_tolerance");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.noslip_iterations, "mjc:option:noslip_iterations");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.noslip_tolerance, "mjc:option:noslip_tolerance");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.ccd_iterations, "mjc:option:ccd_iterations");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.ccd_tolerance, "mjc:option:ccd_tolerance");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.sdf_iterations, "mjc:option:sdf_iterations");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.sdf_initpoints, "mjc:option:sdf_initpoints");
+    EXTRACT_TYPED(_m.actuatorgroupdisable, "mjc:option:actuatorgroupdisable");
+    // flag:*
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_constraint, "mjc:flag:constraint");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_equality, "mjc:flag:equality");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_frictionloss, "mjc:flag:frictionloss");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_limit, "mjc:flag:limit");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_contact, "mjc:flag:contact");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_spring, "mjc:flag:spring");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_damper, "mjc:flag:damper");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_gravity, "mjc:flag:gravity");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_clampctrl, "mjc:flag:clampctrl");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_warmstart, "mjc:flag:warmstart");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_filterparent, "mjc:flag:filterparent");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_actuation, "mjc:flag:actuation");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_refsafe, "mjc:flag:refsafe");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_sensor, "mjc:flag:sensor");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_midphase, "mjc:flag:midphase");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_nativeccd, "mjc:flag:nativeccd");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_eulerdamp, "mjc:flag:eulerdamp");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_autoreset, "mjc:flag:autoreset");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_island, "mjc:flag:island");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_override, "mjc:flag:override");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_energy, "mjc:flag:energy");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_fwdinv, "mjc:flag:fwdinv");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_invdiscrete, "mjc:flag:invdiscrete");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.flag_multiccd, "mjc:flag:multiccd");
+    // compiler:*
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_autoLimits, "mjc:compiler:autoLimits");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_boundMass, "mjc:compiler:boundMass");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_boundInertia, "mjc:compiler:boundInertia");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_setTotalMass, "mjc:compiler:setTotalMass");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_useThread, "mjc:compiler:useThread");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_balanceInertia, "mjc:compiler:balanceInertia");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.compiler_angle, "mjc:compiler:angle");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_fitAABB, "mjc:compiler:fitAABB");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_fuseStatic, "mjc:compiler:fuseStatic");
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.compiler_inertiaFromGeom, "mjc:compiler:inertiaFromGeom");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_alignFree, "mjc:compiler:alignFree");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_inertiaGroupRangeMin, "mjc:compiler:inertiaGroupRange:min");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_inertiaGroupRangeMax, "mjc:compiler:inertiaGroupRange:max");
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.compiler_saveInertial, "mjc:compiler:saveInertial");
+  }
   if (scene->newtonScene.has_value()) {
     const auto &_n = scene->newtonScene.value();
     EXTRACT_FALLBACK(_n.maxSolverIterations, "newton:maxSolverIterations");

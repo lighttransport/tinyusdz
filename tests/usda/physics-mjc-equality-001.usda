@@ -1,0 +1,45 @@
+#usda 1.0
+(
+    doc = "MuJoCo equality constraints: connect / weld / joint applied API schemas with their mjc:* attributes. Mirrors the MJCF <equality> -> USD conversion output."
+    defaultPrim = "World"
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Scope "Equalities"
+    {
+        def Xform "connectAB" (
+            prepend apiSchemas = ["MjcEqualityConnectAPI"]
+        )
+        {
+            rel mjc:target = [</World/Links/a>, </World/Links/b>]
+            double[] mjc:solref = [0.02, 1.0]
+            double[] mjc:solimp = [0.9, 0.95, 0.001, 0.5, 2.0]
+        }
+
+        def Xform "weldAB" (
+            prepend apiSchemas = ["MjcEqualityWeldAPI"]
+        )
+        {
+            rel mjc:target = [</World/Links/a>, </World/Links/b>]
+            float mjc:torqueScale = 1.0
+        }
+
+        def Xform "coupleJoints" (
+            prepend apiSchemas = ["MjcEqualityJointAPI"]
+        )
+        {
+            rel mjc:target = [</World/Joints/j1>, </World/Joints/j2>]
+            double mjc:coef0 = 0.0
+            double mjc:coef1 = -1.0
+            double mjc:coef2 = 0.0
+        }
+    }
+
+    def Scope "Links"
+    {
+        def Cube "a" {}
+        def Cube "b" {}
+    }
+}
