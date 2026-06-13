@@ -214,6 +214,7 @@ function refine(cm, opts) {
 		cm.points, cm.fvc, cm.fvi,
 		textured ? opts.uvValues : null,
 		textured ? (opts.uvIndices || null) : null,
+		opts.uvInterp || 0,
 		opts.scheme, opts.boundary, opts.level, opts.batchFaces,
 		opts.blockFaces || 0, opts.haloRings || 0,
 		opts.wantNormals, onBatch);
@@ -323,6 +324,7 @@ const state = {
 	baseMesh: 'uv_grid',
 	textured: true,
 	textureSize: 2048,
+	uvInterp: 'smooth',  // 'linear' (bilinear) or 'smooth' (seam-split, USD default)
 	wantNormals: true,
 	streaming: true,
 	batchFaces: 2048,
@@ -374,6 +376,7 @@ function updateMesh() {
 		wantNormals: state.wantNormals,
 		uvValues: wantTexture ? cm.uvValues : null,
 		uvIndices: wantTexture ? cm.uvIndices : null,
+		uvInterp: state.uvInterp === 'smooth' ? 1 : 0,
 	};
 
 	let refined;
@@ -432,7 +435,7 @@ function updateStats(refined) {
 	setText('timeMs', refined.timeMs.toFixed(1) + ' ms');
 	const vram = estVramBytes(refined);
 	setText('estVram', fmtBytes(vram) + ' / 2.00 GB', vram > VRAM_BUDGET);
-	setStatus((refined.textured ? 'textured · ' : '') +
+	setStatus((refined.textured ? `textured (${state.uvInterp} UV) · ` : '') +
 		(state.streaming ? `streaming (${state.batchFaces} f/batch)` : 'bulk (single batch)') +
 		(state.streaming && state.blockFaces > 0
 			? ` · block ${state.blockFaces} f (bounded working set)` : ''));
@@ -452,6 +455,10 @@ gui.add(state, 'showWireframe').name('Show Wireframe').onChange(updateMesh);
 const texFolder = gui.addFolder('Texture (faceVarying UVs)');
 texFolder.add(state, 'textured').name('Textured').onChange(updateMesh);
 texFolder.add(state, 'textureSize', [512, 1024, 2048, 4096]).name('Texture size').onChange(updateMesh);
+// faceVarying UV interpolation: linear (bilinear per corner) vs smooth
+// seam-split (UVs follow the limit surface, less distortion on curved regions).
+// Both stream; smooth uses the per-channel split-mesh path.
+texFolder.add(state, 'uvInterp', ['linear', 'smooth']).name('UV interpolation').onChange(updateMesh);
 texFolder.open();
 
 const memFolder = gui.addFolder('Memory (wasm streaming)');
