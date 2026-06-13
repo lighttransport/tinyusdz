@@ -2295,6 +2295,14 @@ void physics_urdf_upaxis_axis_invariant_test(void) {
     TEST_CHECK(convert("Z", "[0, 0, -1]", &stage));
     TEST_CHECK(stage.metas().upAxis.get_value() == Axis::Z);
 
+    // SI unit scale (MuJoCo is meters/kilograms) must be AUTHORED, not just left
+    // at the in-memory fallback — otherwise it is not written to the layer and
+    // usdchecker's StageMetadataChecker fails ("does not specify metersPerUnit").
+    TEST_CHECK(stage.metas().metersPerUnit.authored());
+    TEST_CHECK(stage.metas().metersPerUnit.get_value() == 1.0);
+    TEST_CHECK(stage.metas().kilogramsPerUnit.authored());
+    TEST_CHECK(stage.metas().kilogramsPerUnit.get_value() == 1.0);
+
     std::string axis;
     TEST_CHECK(joint_axis(&stage, &axis));
     TEST_CHECK(axis == "Z");  // pass-through
