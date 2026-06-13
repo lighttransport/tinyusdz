@@ -216,9 +216,15 @@ inline Result Refine(const MeshView &mesh, const Options &options,
 // lets deep refinement fit in wasm32's 2GB. Geometry and "vertex"/"varying"
 // primvars are streamed; faceVarying is not yet supported here (use Refine).
 //
+// With StreamOptions::want_normals, closed-form limit normals are emitted
+// (catmullClark/loop): exact at vertex-children, a normalized blend of the two
+// (or n) parent-vertex limit normals at edge-/face-children. They are bounded
+// by the working set (not the full level-N output) and seamless across batches.
+//
 // Shared final-level vertices are deduplicated only within a batch, so a vertex
 // on a batch boundary is emitted by each batch that touches it (the canonical
-// global child id is reported in StreamBatch::vertex_source for welding).
+// global child id is reported in StreamBatch::vertex_source for welding; the
+// normal is keyed by that id, so duplicates always shade identically).
 
 struct StreamPrimvar {
   uint32_t stride = 0;

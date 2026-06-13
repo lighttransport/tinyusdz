@@ -87,9 +87,13 @@ struct Emitter {
   const uint32_t *pv_stride = nullptr;
   SharpnessCtx sharp;
   uint32_t V = 0, E = 0;
+  bool want_normals = false;
+  // Resident level-(N-1) vertex limit normals (catmark/loop), size V*3 or null.
+  const float *parent_normals = nullptr;
 
   // --- batch buffers (reused) ---
   std::vector<float> positions;
+  std::vector<float> normals;
   std::vector<std::vector<float>> pv_buf;
   std::vector<uint32_t> vsource;
   std::vector<uint32_t> indices;
@@ -104,6 +108,45 @@ struct Emitter {
 
   void Init() {
     pv_buf.resize(num_pv);
+  }
+
+  // Limit normal for a final-level canonical id: exact at vertex-children
+  // (the limit normal at the parent vertex is the same surface point), a
+  // normalized blend of parent-vertex normals at edge/face-children. Keyed by
+  // canonical id, so a batch-duplicated vertex always gets the same normal.
+  void ChildNormal(uint32_t id, float *out) const {
+    auto put = [&](float x, float y, float z) {
+      const float len = std::sqrt(x * x + y * y + z * z);
+      const float s = (len > 0.0f) ? (1.0f / len) : 0.0f;
+      out[0] = x * s;
+      out[1] = y * s;
+      out[2] = z * s;
+    };
+    if (id < V) {
+      out[0] = parent_normals[size_t(id) * 3];
+      out[1] = parent_normals[size_t(id) * 3 + 1];
+      out[2] = parent_normals[size_t(id) * 3 + 2];
+      return;
+    }
+    if (id < V + E) {
+      const uint32_t e = id - V;
+      const uint32_t a = topo->edge_verts[2 * e], b = topo->edge_verts[2 * e + 1];
+      put(parent_normals[size_t(a) * 3] + parent_normals[size_t(b) * 3],
+          parent_normals[size_t(a) * 3 + 1] + parent_normals[size_t(b) * 3 + 1],
+          parent_normals[size_t(a) * 3 + 2] + parent_normals[size_t(b) * 3 + 2]);
+      return;
+    }
+    const uint32_t f = id - V - E;
+    const uint32_t begin = topo->face_offsets[f];
+    const uint32_t n = topo->face_offsets[f + 1] - begin;
+    float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+    for (uint32_t k = 0; k < n; k++) {
+      const uint32_t vid = fvi[begin + k];
+      sx += parent_normals[size_t(vid) * 3];
+      sy += parent_normals[size_t(vid) * 3 + 1];
+      sz += parent_normals[size_t(vid) * 3 + 2];
+    }
+    put(sx, sy, sz);
   }
 
   uint32_t Local(uint32_t canonical_id) {
@@ -124,6 +167,13 @@ struct Emitter {
     positions.push_back(p[0]);
     positions.push_back(p[1]);
     positions.push_back(p[2]);
+    if (want_normals && parent_normals) {
+      float nrm[3];
+      ChildNormal(canonical_id, nrm);
+      normals.push_back(nrm[0]);
+      normals.push_back(nrm[1]);
+      normals.push_back(nrm[2]);
+    }
     for (uint32_t c = 0; c < num_pv; c++) {
       const uint32_t stride = pv_stride[c];
       float v[4];
@@ -191,7 +241,7 @@ struct Emitter {
     batch.batch_index = batch_index;
     batch.num_vertices = uint32_t(positions.size() / 3);
     batch.positions = positions.data();
-    batch.normals = nullptr;
+    batch.normals = (want_normals && parent_normals) ? normals.data() : nullptr;
     batch.vertex_source = vsource.data();
     std::vector<StreamPrimvar> pv_views(num_pv);
     for (uint32_t c = 0; c < num_pv; c++) {
@@ -209,6 +259,7 @@ struct Emitter {
     const bool keep_going = sink(user, &batch);
     batch_index++;
     positions.clear();
+    normals.clear();
     for (auto &b : pv_buf) {
       b.clear();
     }
@@ -465,6 +516,16 @@ Result RefineStream(const MeshView &mesh,
       em.sharp = sharp;
       em.V = topo.num_points;
       em.E = topo.num_edges;
+      // Resident-level vertex limit normals: exact at vertex-children, blended
+      // at edge/face-children (smooth schemes only). Bounded by the working
+      // set; not the full level-N output.
+      std::vector<float> parent_normals;
+      if (stream_options.want_normals && smooth_scheme) {
+        ComputeVertexLimitNormals(topo, fvi.data(), edge_sharp, vert_sharp,
+                                  geom.data(), options, &parent_normals);
+        em.want_normals = true;
+        em.parent_normals = parent_normals.data();
+      }
       return StreamFinalLevel(em, hole, face_source, options.remove_holes);
     }
 
