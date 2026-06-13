@@ -15,6 +15,7 @@ namespace tinyusdz {
 namespace next {
 
 struct LazyArrayRef;  // crate/lazy-array.hh
+struct Dict;          // recursive USD dictionary (defined below)
 
 /// Value class - type-erased container for USD values
 /// Uses Small Buffer Optimization to avoid heap allocation for small types
@@ -93,6 +94,12 @@ public:
   static Value MakeAssetPath(const std::string& s);
   static Value MakeAssetPath(std::string&& s);
 
+  // Dictionary (recursive key->Value map; insertion-ordered for round-trip).
+  // Stored behind a shared_ptr<Dict> in the SBO with copy-on-write, so copying
+  // a dict-valued Value bumps a refcount and never deep-copies until mutated.
+  static Value MakeDictionary();
+  static Value MakeDictionary(Dict&& d);
+
   // Semantic type factories (same storage as vectors)
   static Value MakePoint3f(float x, float y, float z);
   static Value MakePoint3d(double x, double y, double z);
@@ -161,6 +168,9 @@ public:
 
   /// Check if this is an array value
   bool is_array() const { return is_array_; }
+
+  /// Check if this is a dictionary value
+  bool is_dictionary() const { return type_id_ == TypeId::Dictionary; }
 
   /// Get array size (0 if not an array)
   size_t array_size() const { return is_array_ ? array_size_ : 0; }
@@ -238,6 +248,11 @@ public:
   const std::string* as_token() const;
   const std::string* as_asset_path() const;
 
+  // Dictionary access (nullptr if not a dictionary). The mutable accessor
+  // copy-on-write-detaches before returning a writable view.
+  const Dict* as_dictionary() const;
+  Dict* as_dictionary();
+
   // Array accessors
   const std::vector<float>* as_float_array() const;
   const std::vector<int32_t>* as_int_array() const;
@@ -302,6 +317,35 @@ private:
 
   void* data_ptr();
   const void* data_ptr() const;
+};
+
+/// Recursive USD dictionary. Entries are kept in insertion order so the writer
+/// re-emits them exactly as authored. A value may itself be a Dictionary.
+struct Dict {
+  std::vector<std::pair<std::string, Value>> entries;
+
+  const Value* find(const std::string& key) const {
+    for (const auto& kv : entries) {
+      if (kv.first == key) return &kv.second;
+    }
+    return nullptr;
+  }
+  Value* find(const std::string& key) {
+    for (auto& kv : entries) {
+      if (kv.first == key) return &kv.second;
+    }
+    return nullptr;
+  }
+  /// Replace the value for an existing key, or append a new entry.
+  void set(std::string key, Value v) {
+    if (Value* existing = find(key)) {
+      *existing = std::move(v);
+    } else {
+      entries.emplace_back(std::move(key), std::move(v));
+    }
+  }
+  size_t size() const { return entries.size(); }
+  bool empty() const { return entries.empty(); }
 };
 
 }  // namespace next

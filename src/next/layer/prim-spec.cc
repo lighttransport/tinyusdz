@@ -357,6 +357,11 @@ PrimSpec PrimSpec::Clone() const {
   c.connections_ = connections_;
   c.prop_type_names_ = prop_type_names_;
 
+  // Deep copy per-property metadata (unique_ptr side table).
+  for (const auto& kv : prop_metas_) {
+    if (kv.second) c.prop_metas_[kv.first] = std::make_unique<PropMeta>(*kv.second);
+  }
+
   // Deep copy children
   c.child_indices_ = child_indices_;
 
@@ -537,6 +542,27 @@ const std::string* PrimSpec::property_type_name(const std::string& prop_name) co
   PropNameId tn_id;
   tn_id.id = it->second;
   return &GetPropNameTable().get(tn_id);
+}
+
+const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = prop_metas_.find(name_id.id);
+  if (it == prop_metas_.end()) return nullptr;
+  return it->second.get();
+}
+
+const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
+  return property_meta(GetPropNameTable().find(prop_name));
+}
+
+PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
+  std::unique_ptr<PropMeta>& slot = prop_metas_[name_id.id];
+  if (!slot) slot = std::make_unique<PropMeta>();
+  return *slot;
+}
+
+PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
+  return ensure_property_meta(GetPropNameTable().intern(prop_name));
 }
 
 void PrimSpec::add_child_index(uint32_t index) {

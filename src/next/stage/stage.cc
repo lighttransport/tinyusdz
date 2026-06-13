@@ -266,7 +266,14 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.timeCodesPerSecond = lm.timeCodesPerSecond;
   meta_.startTimeCode = lm.startTimeCode;
   meta_.endTimeCode = lm.endTimeCode;
+  meta_.framesPerSecond = lm.framesPerSecond;
+  meta_.framesPerSecond_set = lm.framesPerSecond_set;
+  meta_.kilogramsPerUnit = lm.kilogramsPerUnit;
+  meta_.kilogramsPerUnit_set = lm.kilogramsPerUnit_set;
+  meta_.colorConfiguration = lm.colorConfiguration;
+  meta_.colorManagementSystem = lm.colorManagementSystem;
   meta_.doc = lm.doc;
+  meta_.comment = lm.comment;
 }
 
 UsdPrim Stage::GetPseudoRoot() const {
