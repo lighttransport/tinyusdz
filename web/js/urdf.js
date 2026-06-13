@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -474,6 +475,27 @@ async function loadSTLMeshFromFile(file) {
   group.name = mesh.name;
   group.add(mesh);
   return group;
+}
+
+// Apply a MuJoCo geom/material rgba to a visual mesh: tint the (cloned)
+// material and, when alpha < 1, render it transparent — so e.g. ms_human_700's
+// semi-transparent leg bones show the muscles behind them, matching the MuJoCo
+// viewer. Materials are already cloned per-geom (cloneRenderableObject), but we
+// clone again defensively before mutating.
+function applyRgbaToMesh(mesh, rgba) {
+  if (!mesh?.isMesh || !mesh.material || !rgba) return;
+  const apply = (src) => {
+    const mat = src.clone ? src.clone() : src;
+    if (mat.color && rgba.length >= 3) mat.color.setRGB(rgba[0], rgba[1], rgba[2]);
+    const alpha = rgba.length >= 4 ? rgba[3] : 1;
+    if (alpha < 1) {
+      mat.transparent = true;
+      mat.opacity = alpha;
+      mat.depthWrite = false;
+    }
+    return mat;
+  };
+  mesh.material = Array.isArray(mesh.material) ? mesh.material.map(apply) : apply(mesh.material);
 }
 
 function makeMissingMesh(path) {
@@ -1889,22 +1911,31 @@ function buildMujocoActuators(root) {
 // reused to draw the muscles on BOTH the MJCF source and the converted-USD
 // view, which share the same model coordinate space.
 function computeMuscleLineData(root, sitesByName) {
-  // Tendon default rgba from <default><tendon ...> (collectMujocoDefaults only
-  // tracks geom/joint, so read the tendon default directly here).
+  // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
+  // only tracks geom/joint, so read the tendon default directly here). MuJoCo's
+  // tendon `width` is the rendered tube RADIUS.
   let defRgba = [0.95, 0.3, 0.3, 1];
+  let defWidth = 0.003;
   const rootDefault = firstChildElement(root, 'default');
   const defTendon = rootDefault ? firstChildElement(rootDefault, 'tendon') : null;
   if (defTendon?.getAttribute('rgba')) {
     defRgba = parseNumbers(defTendon.getAttribute('rgba'), defRgba);
   }
+  if (defTendon?.getAttribute('width')) {
+    defWidth = Number(defTendon.getAttribute('width')) || defWidth;
+  }
 
+  // Per-segment parallel arrays: positions (6 each: a,b), rgba (4 each), radii.
   const positions = [];
-  const colors = [];
+  const rgba = [];
+  const radii = [];
   let tendonCount = 0;
   for (const tendonRoot of childElements(root, 'tendon')) {
     for (const spatial of childElements(tendonRoot, 'spatial')) {
-      const rgba = spatial.getAttribute('rgba')
+      const col = spatial.getAttribute('rgba')
         ? parseNumbers(spatial.getAttribute('rgba'), defRgba) : defRgba;
+      const width = spatial.getAttribute('width')
+        ? (Number(spatial.getAttribute('width')) || defWidth) : defWidth;
       // Resolve the ordered waypoints: <site> by name, and <geom sidesite=...>
       // wraps approximated by their sidesite (the via point on the wrap surface).
       const pts = [];
@@ -1920,29 +1951,72 @@ function computeMuscleLineData(root, sitesByName) {
       for (let i = 0; i + 1 < pts.length; i++) {
         positions.push(pts[i].x, pts[i].y, pts[i].z,
                        pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
-        colors.push(rgba[0], rgba[1], rgba[2], rgba[0], rgba[1], rgba[2]);
+        rgba.push(col[0], col[1], col[2], col[3] ?? 1);
+        radii.push(width);
       }
       tendonCount++;
     }
   }
   if (!positions.length) return null;
-  return { positions, colors, tendonCount };
+  return { positions, rgba, radii, tendonCount };
 }
 
-// Build a THREE.Group of muscle LineSegments from computeMuscleLineData() data.
-// Cloned per view (source + USD) since a BufferGeometry can't be shared across
-// two scenes with independent disposal.
+const MUSCLE_TUBE_AXIS = new THREE.Vector3(0, 1, 0);
+
+// Build a THREE.Group of muscle tubes from computeMuscleLineData() data: each
+// spatial-tendon segment becomes a small cylinder (radius = tendon width),
+// merged into a single mesh (one draw call) with per-vertex RGBA so a tendon's
+// alpha<1 renders transparent. Built fresh per view (source + USD) since a
+// BufferGeometry can't be shared across two scenes with independent disposal.
 function makeMuscleGroup(data) {
-  if (!data || !data.positions.length) return null;
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions.slice(), 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(data.colors.slice(), 3));
-  const material = new THREE.LineBasicMaterial({ vertexColors: true });
-  const lines = new THREE.LineSegments(geometry, material);
-  lines.name = 'mjcf_muscles';
+  if (!data || !data.radii.length) return null;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const mid = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const unitScale = new THREE.Vector3(1, 1, 1);
+  const xform = new THREE.Matrix4();
+  const segGeos = [];
+  let anyTransparent = false;
+  for (let s = 0; s < data.radii.length; s++) {
+    a.set(data.positions[6 * s], data.positions[6 * s + 1], data.positions[6 * s + 2]);
+    b.set(data.positions[6 * s + 3], data.positions[6 * s + 4], data.positions[6 * s + 5]);
+    dir.subVectors(b, a);
+    const len = dir.length();
+    if (len < 1e-9) continue;
+    const r = data.radii[s];
+    const geo = new THREE.CylinderGeometry(r, r, len, 6, 1, false);
+    q.setFromUnitVectors(MUSCLE_TUBE_AXIS, dir.divideScalar(len));
+    mid.addVectors(a, b).multiplyScalar(0.5);
+    geo.applyMatrix4(xform.compose(mid, q, unitScale));
+    const cr = data.rgba[4 * s], cg = data.rgba[4 * s + 1];
+    const cb = data.rgba[4 * s + 2], ca = data.rgba[4 * s + 3];
+    if (ca < 1) anyTransparent = true;
+    const n = geo.attributes.position.count;
+    const colArr = new Float32Array(n * 4);
+    for (let v = 0; v < n; v++) {
+      colArr[4 * v] = cr; colArr[4 * v + 1] = cg;
+      colArr[4 * v + 2] = cb; colArr[4 * v + 3] = ca;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colArr, 4));
+    segGeos.push(geo);
+  }
+  if (!segGeos.length) return null;
+  const merged = BufferGeometryUtils.mergeGeometries(segGeos, false);
+  for (const g of segGeos) g.dispose();
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.5,
+    metalness: 0.0,
+    transparent: anyTransparent,
+    depthWrite: !anyTransparent
+  });
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.name = 'mjcf_muscles';
   const muscleGroup = new THREE.Group();
   muscleGroup.name = 'muscles';
-  muscleGroup.add(lines);
+  muscleGroup.add(mesh);
   muscleGroup.userData.tendonCount = data.tendonCount;
   return muscleGroup;
 }
@@ -2059,6 +2133,23 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
+  // <asset><material name rgba>: name -> rgba, to color geoms that reference a
+  // material rather than carrying a direct rgba (e.g. ms_human_700 bones).
+  const materialRgba = new Map();
+  for (const m of root.querySelectorAll('asset material')) {
+    const name = m.getAttribute('name');
+    const rgba = parseNumbers(m.getAttribute('rgba'), []);
+    if (name && rgba.length >= 3) materialRgba.set(name, rgba);
+  }
+  // A geom's effective display rgba: its own `rgba`, else its material's rgba,
+  // else null (keep the loader's neutral default — don't recolor uncolored
+  // geoms, so models without explicit colors render as before).
+  const effectiveGeomRgba = (attrs) => {
+    const direct = parseNumbers(attrs.rgba, []);
+    if (direct.length >= 3) return direct;
+    if (attrs.material && materialRgba.has(attrs.material)) return materialRgba.get(attrs.material);
+    return null;
+  };
   const actuators = buildMujocoActuators(root);
   const group = new THREE.Group();
   group.name = root.getAttribute('model') || filename.replace(/\.[^.]+$/, '') || 'mujoco_scene';
@@ -2226,12 +2317,15 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       object.name = geomName;
       applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
       linkObject.add(object);
+      const geomRgba = effectiveGeomRgba(geomAttrs);
       object.traverse((obj) => {
         if (!obj.isMesh) return;
         obj.userData.urdfOwnerLink = linkObject;
         obj.userData.urdfOwnerLinkName = linkName;
         obj.userData.urdfCollision = !isVisual;
         if (isVisual) {
+          // Tint by the geom/material rgba + honor alpha (transparent legs etc).
+          if (geomRgba) applyRgbaToMesh(obj, geomRgba);
           state.visualMeshes.push(obj);
         } else {
           obj.userData.originalMaterial = obj.material;
