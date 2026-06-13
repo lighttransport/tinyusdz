@@ -3221,6 +3221,52 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <asset><material> -> UsdShade Material (UsdPreviewSurface) + geom binding.
+void urdf_json_mjc_materials_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "MatBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [
+    { "name": "base", "visuals": [
+      { "name": "box",
+        "positions": [0,0,0, 1,0,0, 0,1,0],
+        "indices": [0,1,2],
+        "material": "red" }
+    ] }
+  ],
+  "joints": [],
+  "materials": [
+    { "name": "red", "rgba": [1, 0, 0, 1], "metallic": 0.2, "roughness": 0.8 }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  // Material prim + child UsdPreviewSurface shader.
+  auto mr = stage.GetPrimAtPath(Path("/World/Materials/red", ""));
+  TEST_CHECK(bool(mr));
+  if (mr) {
+    TEST_CHECK((*mr)->is<Material>());
+    auto sr = stage.GetPrimAtPath(Path("/World/Materials/red/PreviewSurface", ""));
+    TEST_CHECK(bool(sr));
+    if (sr) TEST_CHECK((*sr)->is<Shader>());
+  }
+  // Visual mesh bound to the material.
+  auto vr = stage.GetPrimAtPath(Path("/World/Links/base/box", ""));
+  TEST_CHECK(bool(vr));
+  if (vr) {
+    TEST_CHECK((*vr)->is<GeomMesh>());
+    const auto *mesh = (*vr)->as<GeomMesh>();
+    TEST_CHECK(mesh != nullptr);
+    if (mesh) TEST_CHECK(mesh->has_materialBinding());
+  }
+}
+
 // MJCF <light>/<camera> -> UsdLux (DistantLight/SphereLight) + GeomCamera.
 void urdf_json_mjc_lights_cameras_test(void) {
   const char *robot_json = R"JSON({
