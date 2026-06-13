@@ -81,9 +81,9 @@
 				<strong>Controls:</strong>
 				<ul>
 					<li><strong>Mouse</strong>: Orbit camera</li>
-					<li><strong>Right Panel</strong>: Adjust subdivision levels (0-5)</li>
+					<li><strong>Right Panel</strong>: Subdivision level (0-7), scheme, boundary</li>
+					<li><strong>Memory panel</strong>: Streaming on/off + faces-per-batch</li>
 					<li><strong>Toggle Wireframe</strong>: See mesh topology</li>
-					<li><strong>Select Scheme</strong>: Switch between algorithms</li>
 				</ul>
 			</div>
 
@@ -107,13 +107,23 @@
 					<div>Faces: <span id="faceCount">-</span></div>
 					<div>Triangles: <span id="triCount">-</span></div>
 					<div>Subdivision Level: <span id="levelDisplay">-</span></div>
+					<div>Stream batches: <span id="batchCount">-</span></div>
+					<div>WASM heap (peak): <span id="heapMB">-</span></div>
+					<div>Refine time: <span id="timeMs">-</span></div>
+					<div>Status: <span id="status">…</span></div>
 				</div>
 			</div>
 
 			<div class="section" style="font-size: 11px; color: #aaa;">
 				<p>
-					This demo uses dependency-free subdivision implementation compatible with USD format.
-					All subdivision happens in JavaScript using the same algorithms as the C++ backend.
+					Subdivision runs in <span class="highlight">WebAssembly</span> using
+					tinyusdz's <code>tinysubdiv</code> (the OpenSubdiv-verified C++ library),
+					in a <span class="highlight">streaming</span> mode: the refined surface
+					is emitted to JavaScript in bounded batches, so the wasm heap never holds
+					the full level-N mesh at once. Toggle <strong>Streaming</strong> off in the
+					Memory panel to push everything into one batch and watch the
+					<em>WASM heap (peak)</em> jump — that gap is the memory the streaming mode
+					saves (the key to fitting deep subdivision in wasm32's 2&nbsp;GB).
 				</p>
 			</div>
 		</div>
