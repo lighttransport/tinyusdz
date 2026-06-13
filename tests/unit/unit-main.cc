@@ -971,6 +971,7 @@ TEST_LIST = {
   { "physics_mjc_actuator_usdc_roundtrip_test", physics_mjc_actuator_usdc_roundtrip_test },
   { "urdf_json_mjc_plugin_test", urdf_json_mjc_plugin_test },
   { "physics_static_world_link_test", physics_static_world_link_test },
+  { "physics_freejoint_floating_base_test", physics_freejoint_floating_base_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
