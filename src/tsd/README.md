@@ -21,6 +21,12 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
   `RefinedMesh::face_source` on the caller side.
 - Closed-form limit positions (`SnapToLimit`) and limit normals
   (`ComputeLimitNormals`) for Catmull-Clark and Loop.
+- **Streaming refinement** (`RefineStream`): refines to level N without ever
+  materializing the full output -- the final (largest) level is emitted to a
+  sink in bounded batches, so peak working memory is the level-(N-1) state plus
+  one batch (geometry + vertex/varying primvars + seamless limit normals). This
+  is what lets deep refinement fit in wasm32's 2 GB; exposed to JS via the
+  `SubdivStreamer` binding and demoed in `web/js/subdiv.js`.
 - Hardened: full input validation, 64-bit overflow-checked sizing,
   per-level vertex/face/corner caps, fuzz-tested (`tests/fuzzer/fuzz_tsd.cc`).
   Non-manifold input (including inconsistent face winding) is **rejected** —
@@ -40,7 +46,9 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 | `tsd-loop.cc` | Loop kernel |
 | `tsd-bilinear.cc` | bilinear kernel (also the "varying" linear path) |
 | `tsd-fvar.cc` | faceVarying: seam-split smooth + linear paths |
+| `tsd-kernel.hh` | per-element value kernels shared by bulk + streaming |
 | `tsd-refine.cc` | per-level driver (`Refine`) |
+| `tsd-stream.cc` | streaming driver (`RefineStream`): bounded-memory emission |
 | `tsd-limit.cc` | limit positions/normals |
 | `tsd-tinyusdz.{hh,cc}` | `GeomMesh` adapter (the only tinyusdz-typed file); refines UV/display/tangent primvars, skin weights and blendshape offsets in lockstep with geometry |
 
