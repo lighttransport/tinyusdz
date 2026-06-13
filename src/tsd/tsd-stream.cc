@@ -148,6 +148,9 @@ struct Emitter {
   bool use_centroids = false;
   std::vector<float> geom_centroids;            // num_faces * 3
   std::vector<std::vector<float>> pv_centroids;  // per channel: num_faces * stride
+  // Per smooth fvar channel: its split mesh's per-face centroids (Catmull-Clark
+  // only). Empty for linear/loop channels.
+  std::vector<std::vector<float>> split_centroids;
 
   void Init() {
     pv_buf.resize(num_pv);
@@ -178,6 +181,22 @@ struct Emitter {
                          &pv_centroids[c][size_t(f) * st]);
       }
     }
+    // Smooth fvar channels reference their split mesh's incident face centroids
+    // the same way; precompute those once too (bounded by the resident split
+    // mesh, which has the same face count as geometry).
+    split_centroids.resize(num_fvar);
+    for (uint32_t c = 0; c < num_fvar; c++) {
+      if (!fvar_smooth[c]) {
+        continue;
+      }
+      const FVarSplitState &s = (*splits)[c];
+      const uint32_t snf = s.topo.num_faces, st = s.stride;
+      split_centroids[c].resize(size_t(snf) * st);
+      for (uint32_t f = 0; f < snf; f++) {
+        ComputeFaceChild(s.topo, s.fvi.data(), s.values.data(), st, f,
+                         &split_centroids[c][size_t(f) * st]);
+      }
+    }
   }
 
   // Push the fvar tuples of one child-face corner `k` (per channel). `fc[c]`
@@ -201,9 +220,12 @@ struct Emitter {
     SharpnessCtx sh;
     sh.edge_sharpness = s.edge_sharp.empty() ? nullptr : s.edge_sharp.data();
     sh.vert_sharpness = s.vert_sharp.empty() ? nullptr : s.vert_sharp.data();
+    const float *cent = (c < split_centroids.size() && !split_centroids[c].empty())
+                            ? split_centroids[c].data()
+                            : nullptr;
     ComputeChildValue(*opts, s.topo, s.fvi.data(), s.values.data(), s.stride, sh,
                       /*is_vertex_pv=*/true, split_child_id, s.topo.num_points,
-                      s.topo.num_edges, /*centroids=*/nullptr, out);
+                      s.topo.num_edges, cent, out);
   }
 
   // Limit normal for a final-level canonical id: exact at vertex-children
