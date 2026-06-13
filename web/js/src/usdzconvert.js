@@ -1067,6 +1067,9 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
 
   log(`next low-mem flatten: root.usdc ${stats.inputBytes} -> ${stats.outputBytes} bytes ` +
       `(passthrough=${stats.arraysPassedThrough}, reencoded=${stats.arraysReencoded})` +
+      ` read=${Number(stats.readMs || 0).toFixed(3)}ms` +
+      ` compose=${Number(stats.composeMs || 0).toFixed(3)}ms` +
+      ` write=${Number(stats.writeMs || 0).toFixed(3)}ms` +
       `${canStreamWrite ? ' [stream-write]' : ''}; ` +
       `repacked ${r.textures} texture(s), re-encoded ${r.reencoded}${r.streamedToSink ? ' [streamed to sink]' : ''}`);
   return {
@@ -1081,6 +1084,9 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       pipeline: 'next',
       arraysPassedThrough: stats.arraysPassedThrough,
       arraysReencoded: stats.arraysReencoded,
+      readMs: stats.readMs,
+      composeMs: stats.composeMs,
+      writeMs: stats.writeMs,
     },
   };
 }
@@ -1556,6 +1562,8 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
   const textureFormat = normalizedTextureFormat(opts.textureFormat);
   const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
   const assetNameFor = (p) => (rootDir && p.startsWith(rootDir)) ? p.slice(rootDir.length) : p;
+  const normalizeArchiveAssetName = (p) => assetNameFor(String(p || '').replace(/\\/g, '/'))
+    .replace(/^\.\/+/, '').replace(/^\/+/, '');
 
   const stats = {
     textures: 0, resized: 0, reencoded: 0, audio: 0, otherAssets: 0,
@@ -1571,19 +1579,64 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     }
 
     // 1. USD layers only into the wasm resolver cache (composition needs them;
-    //    they are small relative to textures).
+    //    they are small relative to textures). Node/folder sources may provide a
+    //    synchronous fetch hook; in that case the next path can load dependency
+    //    layers on demand and only preloads the root here.
     const usdKeys = keys.filter((k) => isUsdName(k) && !/\.usdz$/i.test(k));
-    let usdBytesTotal = 0;
-    let rootBytes = null;
+    const usdKeyByAssetName = new Map();
     for (const key of usdKeys) {
+      usdKeyByAssetName.set(normalizeArchiveAssetName(key), key);
+    }
+    const canFetchUsdLayerSync =
+      opts.pipeline === 'next' &&
+      typeof source.fetchSync === 'function' &&
+      typeof usd.nextFlattenMultiBufferToSinkFetch === 'function';
+    const canFetchUsdLayerAsync =
+      opts.pipeline === 'next' &&
+      !canFetchUsdLayerSync &&
+      typeof usd.nextFlattenAsyncBegin === 'function' &&
+      typeof usd.nextFlattenAsyncProvideLayer === 'function' &&
+      typeof usd.nextFlattenAsyncStep === 'function' &&
+      typeof usd.nextFlattenAsyncEnd === 'function';
+    const resolveUsdKey = (name) => {
+      const norm = normalizeArchiveAssetName(name);
+      if (usdKeyByAssetName.has(norm)) return usdKeyByAssetName.get(norm);
+      for (const [assetName, key] of usdKeyByAssetName) {
+        if (assetName.endsWith('/' + norm) || norm.endsWith('/' + assetName)) {
+          return key;
+        }
+      }
+      return null;
+    };
+    let usdBytesTotal = 0;
+    let usdLayersPreloaded = 0;
+    let rootBytes = null;
+    const preloadUsdDependencies = async () => {
+      for (const key of usdKeys) {
+        if (key === rootPath) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const bytes = await source.fetch(key);
+        usdBytesTotal += bytes.length;
+        usdLayersPreloaded++;
+        usd.setAsset(assetNameFor(key), bytes);
+      }
+    };
+    for (const key of usdKeys) {
+      if ((canFetchUsdLayerSync || canFetchUsdLayerAsync) && key !== rootPath) continue;
       // eslint-disable-next-line no-await-in-loop
       const bytes = await source.fetch(key);
       usdBytesTotal += bytes.length;
+      usdLayersPreloaded++;
       if (key === rootPath) rootBytes = bytes;
       else usd.setAsset(assetNameFor(key), bytes);
     }
     if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);
-    log(`streaming: ${usdKeys.length} USD layer(s), ${(usdBytesTotal / 1e6).toFixed(1)} MB in cache; textures stream on demand`);
+    if (canFetchUsdLayerSync || canFetchUsdLayerAsync) {
+      log(`streaming: ${usdKeys.length} USD layer(s), ${usdLayersPreloaded} preloaded ` +
+          `(${(usdBytesTotal / 1e6).toFixed(1)} MB); dependency layers load on demand; textures stream on demand`);
+    } else {
+      log(`streaming: ${usdKeys.length} USD layer(s), ${(usdBytesTotal / 1e6).toFixed(1)} MB in cache; textures stream on demand`);
+    }
 
     // 1.5 Opt-in next multi-asset pipeline: compose/flatten/write happen inside
     // one wasm call (nextFlattenMultiBufferToSink) with external arcs resolved
@@ -1604,7 +1657,14 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
         const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
           ? Number(opts.maxMemMb) * 1024 * 1024 : 0;
         const uuid = nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
-        if (uuid !== null) nextRoot = { uuid, anchor: assetNameFor(rootPath) };
+        if (uuid !== null) {
+          nextRoot = {
+            uuid,
+            anchor: assetNameFor(rootPath),
+            syncLayers: canFetchUsdLayerSync,
+            asyncLayers: canFetchUsdLayerAsync,
+          };
+        }
         else log('next: zero-copy alloc declined; using the legacy streaming path.');
       } else {
         log('next pipeline unavailable for this input (non-USDC root, texture ' +
@@ -1615,6 +1675,9 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     // 2. Compose/flatten (legacy path; skipped when the next pipeline is armed —
     //    it composes inside the flatten call at step 4/5).
     if (!nextRoot) {
+      if (canFetchUsdLayerSync) {
+        await preloadUsdDependencies();
+      }
       if (!usd.loadAsLayerFromBinary(rootBytes, rootPath.split('/').pop())) {
         throw new Error('Failed to load USD: ' + usd.error());
       }
@@ -1649,6 +1712,16 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       log(`streaming: remapped ${n} texture reference(s) for format change`);
     }
 
+    let referencedAssetNames = null;
+    let referencedAssetList = [];
+    const isReferencedArchiveName = (name) => {
+      if (!referencedAssetNames) return true;
+      const norm = normalizeArchiveAssetName(name);
+      if (referencedAssetNames.has(norm)) return true;
+      return referencedAssetList.some((ref) =>
+        ref.endsWith('/' + norm) || norm.endsWith('/' + ref));
+    };
+
     // 4. Export the flattened root as a bare USDC buffer (JS-side zip). The
     //    flattened root inlines every dependency layer, so size it from the
     //    total USD bytes, not the root file alone. (The next pipeline instead
@@ -1670,20 +1743,77 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       const lazy = opts.nextEager !== true;
       const canStreamWrite = opts.streamWrite !== false && zw.canStream();
       let s = null;
+      let asyncSession = null;
+      if (nextRoot.asyncLayers) {
+        const begin = usd.nextFlattenAsyncBegin(nextRoot.uuid, nextRoot.anchor, lazy);
+        if (!begin || !begin.success) {
+          throw new Error('next async flatten begin failed: ' + (begin && begin.error));
+        }
+        asyncSession = begin.session;
+        for (;;) {
+          const r = usd.nextFlattenAsyncStep(asyncSession, () => false);
+          if (!r || !r.success) {
+            throw new Error('next async flatten preflight failed: ' + (r && r.error));
+          }
+          if (r.status === 'need-layer') {
+            const key = resolveUsdKey(r.key);
+            if (!key) throw new Error(`next async flatten requested unknown layer: ${r.key}`);
+            // eslint-disable-next-line no-await-in-loop
+            const bytes = await source.fetch(key);
+            const pr = usd.nextFlattenAsyncProvideLayer(asyncSession, r.key, bytes);
+            if (!pr || !pr.success) {
+              throw new Error('next async flatten provide failed: ' + (pr && pr.error));
+            }
+            continue;
+          }
+          if (r.status === 'ready' || r.status === 'done') break;
+          throw new Error(`next async flatten unexpected status: ${r.status}`);
+        }
+      }
       if (canStreamWrite) {
         // Once streaming starts a failure corrupts the archive, so errors
         // throw rather than fall back (same contract as the single-usdz path).
         zw.addEntryStreaming(rootName, (emit) => {
-          s = usd.nextFlattenMultiBufferToSink(
-            nextRoot.uuid, nextRoot.anchor, lazy,
-            (view) => { emit(view); return true; });
-          if (!s || !s.success) {
+          const emitCb = (view) => { emit(view); return true; };
+          if (asyncSession) {
+            s = usd.nextFlattenAsyncStep(asyncSession, emitCb);
+            usd.nextFlattenAsyncEnd(asyncSession);
+          } else if (nextRoot.syncLayers &&
+              typeof usd.nextFlattenMultiBufferToSinkFetch === 'function') {
+            const hasLayer = (name) =>
+              resolveUsdKey(name) !== null;
+            const fetchLayer = (name) => {
+              const key = resolveUsdKey(name);
+              return key ? source.fetchSync(key) : null;
+            };
+            s = usd.nextFlattenMultiBufferToSinkFetch(
+              nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer);
+          } else {
+            s = usd.nextFlattenMultiBufferToSink(
+              nextRoot.uuid, nextRoot.anchor, lazy, emitCb);
+          }
+          if (!s || !s.success || (s.status && s.status !== 'done')) {
             throw new Error('next multi flatten failed: ' + (s && s.error));
           }
         });
       } else {
-        s = usd.nextFlattenMultiBufferToSink(nextRoot.uuid, nextRoot.anchor, lazy, null);
-        if (!s || !s.success) {
+        if (asyncSession) {
+          s = usd.nextFlattenAsyncStep(asyncSession, null);
+          usd.nextFlattenAsyncEnd(asyncSession);
+        } else if (nextRoot.syncLayers &&
+            typeof usd.nextFlattenMultiBufferToSinkFetch === 'function') {
+          const hasLayer = (name) =>
+            resolveUsdKey(name) !== null;
+          const fetchLayer = (name) => {
+            const key = resolveUsdKey(name);
+            return key ? source.fetchSync(key) : null;
+          };
+          s = usd.nextFlattenMultiBufferToSinkFetch(
+            nextRoot.uuid, nextRoot.anchor, lazy, null, hasLayer, fetchLayer);
+        } else {
+          s = usd.nextFlattenMultiBufferToSink(nextRoot.uuid, nextRoot.anchor, lazy, null);
+        }
+        if (!s || !s.success || (s.status && s.status !== 'done')) {
           throw new Error('next multi flatten failed: ' + (s && s.error));
         }
         zw.addEntry(rootName, new Uint8Array(s.data));
@@ -1692,9 +1822,23 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       stats.pipeline = 'next';
       stats.arraysPassedThrough = s.arraysPassedThrough;
       stats.arraysReencoded = s.arraysReencoded;
+      stats.readMs = s.readMs;
+      stats.composeMs = s.composeMs;
+      stats.writeMs = s.writeMs;
+      if (Array.isArray(s.assetPaths) && s.assetPaths.length > 0) {
+        referencedAssetList = s.assetPaths
+          .map((p) => normalizeArchiveAssetName(p))
+          .filter((p) => p.length > 0);
+        referencedAssetNames = new Set(referencedAssetList);
+        stats.referencedAssets = referencedAssetList.length;
+      }
       log(`next multi flatten: ${rootName} ${s.inputBytes} -> ${s.outputBytes} bytes, ` +
           `${s.primCount} prims (passthrough=${s.arraysPassedThrough}, ` +
-          `reencoded=${s.arraysReencoded})${canStreamWrite ? ' [stream-write]' : ''}; ` +
+          `reencoded=${s.arraysReencoded}) ` +
+          `read=${Number(s.readMs || 0).toFixed(3)}ms ` +
+          `compose=${Number(s.composeMs || 0).toFixed(3)}ms ` +
+          `write=${Number(s.writeMs || 0).toFixed(3)}ms` +
+          `${canStreamWrite ? ' [stream-write]' : ''}; ` +
           `wasm heap ${Math.round((native.HEAPU8 ? native.HEAPU8.length : 0) / 1048576)} MiB`);
       if (s.compositionErrorCount > 0) {
         log(`next multi flatten: ${s.compositionErrorCount} composition error(s) ` +
@@ -1712,6 +1856,12 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     // Bounded prefetch pipeline: fetch/process up to `width` textures ahead,
     // append to the zip in order so at most `width` outputs are in memory.
     const width = Math.max(1, opts.textureConcurrency || 4);
+    const texturePlans = referencedAssetNames
+      ? plans.filter((plan) => isReferencedArchiveName(plan.name))
+      : plans;
+    if (referencedAssetNames && texturePlans.length !== plans.length) {
+      log(`streaming: skipped ${plans.length - texturePlans.length} unreferenced texture asset(s)`);
+    }
     const processOne = async (plan) => {
       const bytes = await source.fetch(plan.path);
       let outBytes = bytes;
@@ -1756,8 +1906,8 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     const inflight = [];
     let planIdx = 0;
     const pump = () => {
-      while (planIdx < plans.length && inflight.length < width) {
-        const plan = plans[planIdx++];
+      while (planIdx < texturePlans.length && inflight.length < width) {
+        const plan = texturePlans[planIdx++];
         inflight.push({ plan, promise: processOne(plan) });
       }
     };
@@ -1777,6 +1927,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     // 6. Non-USD, non-image assets (audio etc.) pass through, also streamed.
     for (const key of keys) {
       if (key === rootPath || isUsdName(key) || isImageName(key)) continue;
+      if (referencedAssetNames && !isReferencedArchiveName(assetNameFor(key))) continue;
       // eslint-disable-next-line no-await-in-loop
       const bytes = await source.fetch(key);
       zw.addEntry(assetNameFor(key), bytes);

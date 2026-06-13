@@ -210,6 +210,7 @@ function folderSource(dir) {
   return {
     keys,
     fetch: async (key) => new Uint8Array(await fs.promises.readFile(path.join(dir, key))),
+    fetchSync: (key) => new Uint8Array(fs.readFileSync(path.join(dir, key))),
   };
 }
 
