@@ -207,6 +207,67 @@ inline Result Refine(const MeshView &mesh, const Options &options,
   return Refine(mesh, nullptr, 0, nullptr, 0, options, out, err);
 }
 
+// --- Streaming refinement (memory-bounded) -----------------------------------
+//
+// RefineStream refines to options.level but never materializes the full output:
+// it runs levels 0..N-1 with the bulk machinery, then emits the final level in
+// bounded batches to a sink. Peak working memory is the level-(N-1) data plus
+// one batch, so the (largest) level-N output is never resident -- this is what
+// lets deep refinement fit in wasm32's 2GB. Geometry and "vertex"/"varying"
+// primvars are streamed; faceVarying is not yet supported here (use Refine).
+//
+// Shared final-level vertices are deduplicated only within a batch, so a vertex
+// on a batch boundary is emitted by each batch that touches it (the canonical
+// global child id is reported in StreamBatch::vertex_source for welding).
+
+struct StreamPrimvar {
+  uint32_t stride = 0;
+  const float *values = nullptr;  // num_vertices * stride
+};
+
+// One batch of refined output. All pointers are owned by the library and valid
+// only during the sink callback (reused for the next batch); copy what you need.
+struct StreamBatch {
+  uint32_t batch_index = 0;
+
+  uint32_t num_vertices = 0;
+  const float *positions = nullptr;  // num_vertices * 3
+  const float *normals = nullptr;    // num_vertices * 3, or null
+  // Canonical global child-vertex id per batch vertex (vertex-child v in
+  // [0,V), edge-child V+e, face-child V+E+f at the final level). Lets callers
+  // weld batch-duplicated vertices into a single shared mesh.
+  const uint32_t *vertex_source = nullptr;  // num_vertices
+  uint32_t num_vertex_primvars = 0;
+  const StreamPrimvar *vertex_primvars = nullptr;
+
+  uint32_t num_faces = 0;    // output faces in this batch
+  uint32_t num_indices = 0;  // == sum(face_vertex_counts), batch-local
+  // null when uniform (every face is a triangle if emit_triangles, else the
+  // scheme's native arity 4/3).
+  const uint32_t *face_vertex_counts = nullptr;
+  const uint32_t *indices = nullptr;       // batch-local vertex ids
+  const uint32_t *face_source = nullptr;   // per face -> base (level-0) face id
+};
+
+// Return false to abort refinement early (RefineStream then returns Success
+// with whatever was already emitted).
+typedef bool (*StreamSink)(void *user, const StreamBatch *batch);
+
+struct StreamOptions {
+  uint32_t batch_faces = 4096;     // level-(N-1) parent faces per batch
+  bool emit_triangles = true;      // quads -> 2 triangles for direct GPU upload
+  bool want_normals = false;       // emit closed-form limit normals
+  bool dedup_within_batch = true;  // share vertices inside a batch
+};
+
+// Streaming refinement. `vertex_primvars` may be null when its count is 0.
+// Returns InvalidArgument if faceVarying channels are requested (unsupported).
+Result RefineStream(const MeshView &mesh,
+                    const VertexPrimvarView *vertex_primvars,
+                    uint32_t num_vertex_primvars, const Options &options,
+                    const StreamOptions &stream_options, StreamSink sink,
+                    void *sink_user, std::string *err);
+
 // Snap refined points to closed-form limit positions, honoring the same
 // boundary/crease/corner state at the final level. (Milestone M5)
 Result SnapToLimit(const MeshView &base_mesh, const Options &options,

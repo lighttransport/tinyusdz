@@ -1654,6 +1654,168 @@ void test_holes_propagate_multilevel() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Streaming refinement: RefineStream must be bit-identical to bulk Refine at
+// matching canonical child-vertex ids (StreamBatch::vertex_source).
+// ---------------------------------------------------------------------------
+
+struct StreamCollect {
+  uint32_t npoints = 0;       // bulk point count
+  uint32_t pv_stride = 0;     // single vertex primvar stride (0 = none)
+  std::vector<float> points;  // global, indexed by canonical id
+  std::vector<float> pv;      // global
+  std::vector<uint8_t> written;
+  std::vector<uint32_t> face_indices;  // canonical, emission order
+  std::vector<uint32_t> face_counts;
+  std::vector<uint32_t> face_source;
+};
+
+bool StreamSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  StreamCollect *c = static_cast<StreamCollect *>(user);
+  for (uint32_t i = 0; i < b->num_vertices; i++) {
+    const uint32_t gid = b->vertex_source[i];
+    if (gid < c->npoints) {
+      c->written[gid] = 1;
+      for (int k = 0; k < 3; k++) {
+        c->points[size_t(gid) * 3 + size_t(k)] = b->positions[size_t(i) * 3 + size_t(k)];
+      }
+      if (c->pv_stride && b->num_vertex_primvars == 1) {
+        for (uint32_t k = 0; k < c->pv_stride; k++) {
+          c->pv[size_t(gid) * c->pv_stride + k] =
+              b->vertex_primvars[0].values[size_t(i) * c->pv_stride + k];
+        }
+      }
+    }
+  }
+  const uint32_t arity = b->num_faces ? (b->num_indices / b->num_faces) : 0;
+  for (uint32_t f = 0; f < b->num_faces; f++) {
+    c->face_counts.push_back(arity);
+    c->face_source.push_back(b->face_source[f]);
+    for (uint32_t k = 0; k < arity; k++) {
+      const uint32_t local = b->indices[size_t(f) * arity + k];
+      c->face_indices.push_back(b->vertex_source[local]);
+    }
+  }
+  return true;
+}
+
+void test_stream_matches_bulk() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::Cube());
+  meshes.push_back(corpus::SingleQuad());
+  meshes.push_back(corpus::QuadGrid(3, 3, "sg"));
+  meshes.push_back(corpus::MixedDegree());
+  meshes.push_back(corpus::CubeWithHoles());
+  meshes.push_back(corpus::CreasedCube(2.0f, "scc"));
+  meshes.push_back(corpus::PerEdgeCreasedCube());
+  meshes.push_back(corpus::CorneredGrid());
+  meshes.push_back(corpus::Icosahedron());
+  meshes.push_back(corpus::TriGrid(3, 3, "stg"));
+  meshes.push_back(corpus::CreasedTriGrid());
+
+  const BoundaryInterpolation boundaries[3] = {
+      BoundaryInterpolation::EdgeAndCorner, BoundaryInterpolation::EdgeOnly,
+      BoundaryInterpolation::None};
+  const uint32_t batch_sizes[3] = {1u, 3u, 1u << 20};
+
+  for (const corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::CatmullClark, Scheme::Bilinear};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      all_tris = all_tris && (c == 3);
+    }
+    if (all_tris) {
+      schemes.push_back(Scheme::Loop);
+    }
+    // The mesh's own points as a smooth stride-3 vertex primvar.
+    std::vector<float> pvdata = m.points;
+    VertexPrimvarView pv;
+    pv.values = pvdata.data();
+    pv.stride = 3;
+    pv.varying = false;
+
+    for (Scheme scheme : schemes) {
+      for (BoundaryInterpolation boundary : boundaries) {
+        for (int level = 1; level <= 3; level++) {
+          Options opts;
+          opts.scheme = scheme;
+          opts.boundary = boundary;
+          opts.level = level;
+          opts.remove_holes = false;  // compare full topology
+
+          RefinedMesh bulk;
+          std::string err;
+          const Result rb =
+              Refine(ToView(m), nullptr, 0, &pv, 1, opts, &bulk, &err);
+          CHECK_MSG(rb == Result::Success, m.name + ": " + err);
+          if (rb != Result::Success) {
+            continue;
+          }
+
+          for (uint32_t bs : batch_sizes) {
+            StreamOptions so;
+            so.batch_faces = bs;
+            so.emit_triangles = false;  // native arity for exact comparison
+            so.dedup_within_batch = true;
+            so.want_normals = false;
+
+            StreamCollect col;
+            col.npoints = uint32_t(bulk.points.size() / 3);
+            col.pv_stride = 3;
+            col.points.assign(bulk.points.size(), 0.0f);
+            col.pv.assign(bulk.vertex_primvars[0].size(), 0.0f);
+            col.written.assign(col.npoints, 0);
+
+            const Result rs = RefineStream(ToView(m), &pv, 1, opts, so,
+                                           StreamSinkFn, &col, &err);
+            CHECK_MSG(rs == Result::Success, m.name + ": " + err);
+            if (rs != Result::Success) {
+              continue;
+            }
+
+            const std::string tag =
+                m.name + "/L" + std::to_string(level) + "/bs" + std::to_string(bs);
+            // Topology: faces and provenance match bulk exactly, in order.
+            CHECK_MSG(col.face_counts == bulk.face_vertex_counts, tag);
+            CHECK_MSG(col.face_indices == bulk.face_vertex_indices, tag);
+            CHECK_MSG(col.face_source == bulk.face_source, tag);
+            // Every canonical vertex emitted, values bit-identical.
+            bool all_written = true;
+            for (uint8_t w : col.written) {
+              all_written = all_written && (w != 0);
+            }
+            CHECK_MSG(all_written, tag);
+            CHECK_MSG(col.points == bulk.points, tag);
+            CHECK_MSG(col.pv == bulk.vertex_primvars[0], tag);
+          }
+        }
+      }
+    }
+  }
+}
+
+void test_stream_level0_passthrough() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+  corpus::Mesh m = corpus::Cube();
+  Options opts;
+  opts.level = 0;
+  StreamOptions so;
+  so.emit_triangles = false;
+  StreamCollect col;
+  col.npoints = uint32_t(m.points.size() / 3);
+  col.points.assign(m.points.size(), 0.0f);
+  col.written.assign(col.npoints, 0);
+  std::string err;
+  CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, StreamSinkFn, &col,
+                     &err) == Result::Success);
+  CHECK(col.face_counts.size() == 6);
+  CHECK(col.points == m.points);
+}
+
 }  // namespace
 
 int main() {
@@ -1730,6 +1892,10 @@ int main() {
   TEST(test_limit_loop_and_planar_normals);
   TEST(test_high_level_stability);
   TEST(test_holes_propagate_multilevel);
+
+  // Streaming refinement
+  TEST(test_stream_matches_bulk);
+  TEST(test_stream_level0_passthrough);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
