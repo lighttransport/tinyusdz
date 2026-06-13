@@ -1201,17 +1201,22 @@ function parseMujocoMuscleActuators(root) {
     const tendon = node.attrs.tendon || '';
     const site = node.attrs.site || '';
     const joint = node.attrs.joint || '';
-    const isMjc = type === 'muscle' || type === 'general' || tendon || site;
+    const body = node.attrs.body || '';
+    const isMjc = type === 'muscle' || type === 'general' || type === 'adhesion'
+      || type === 'cylinder' || type === 'intvelocity' || type === 'damper'
+      || tendon || site || body;
     if (!isMjc) continue;
     const a = {
-      name: node.attrs.name || `${type}_${joint || tendon || site}`,
+      name: node.attrs.name || `${type}_${joint || tendon || site || body}`,
       actuatorType: type
     };
     if (joint) a.targetJoint = joint;
     if (tendon) a.targetTendon = tendon;
     if (site) a.targetSite = site;
+    if (body) a.targetBody = body;
     const gainprm = parseNumbers(node.attrs.gainprm, []);
     if (gainprm.length) a.gainPrm = gainprm;
+    else if (node.attrs.gain !== undefined) a.gainPrm = [numberAttr(node.attrs, 'gain')];
     const biasprm = parseNumbers(node.attrs.biasprm, []);
     if (biasprm.length) a.biasPrm = biasprm;
     const lengthrange = parseNumbers(node.attrs.lengthrange, []);
