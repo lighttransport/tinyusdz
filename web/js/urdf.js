@@ -2846,6 +2846,13 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
+  // <texture name file=...> -> file path, so a material's texture becomes a
+  // UsdUVTexture in the converted USD (builtin/file-less textures skipped).
+  const texFiles = new Map();
+  for (const t of root.querySelectorAll('asset texture')) {
+    const tn = t.getAttribute('name'); const tf = t.getAttribute('file');
+    if (tn && tf) texFiles.set(tn, resolveAssetEntry(tf)?.rel || tf);
+  }
   const materialsPayload = [];
   for (const m of root.querySelectorAll('asset material')) {
     if (!m.getAttribute('name')) continue;
@@ -2856,6 +2863,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const v = m.getAttribute(k);
       if (v !== null) mat[k] = Number(v);
     }
+    const texRef = m.getAttribute('texture');
+    if (texRef && texFiles.has(texRef)) mat.texture = texFiles.get(texRef);
     materialsPayload.push(mat);
   }
   const sensorsPayload = [];
