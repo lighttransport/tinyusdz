@@ -109,6 +109,7 @@
 					<div>Subdivision Level: <span id="levelDisplay">-</span></div>
 					<div>Stream batches: <span id="batchCount">-</span></div>
 					<div>WASM heap (peak): <span id="heapMB">-</span></div>
+						<div>Est. GPU VRAM: <span id="estVram">-</span></div>
 					<div>Refine time: <span id="timeMs">-</span></div>
 					<div>Status: <span id="status">…</span></div>
 				</div>
@@ -125,6 +126,14 @@
 					<em>WASM heap (peak)</em> jump — that gap is the memory the streaming mode
 					saves (the key to fitting deep subdivision in wasm32's 2&nbsp;GB).
 				</p>
+					<p>
+						The <span class="highlight">uv_grid</span>/<span class="highlight">uv_cube</span> meshes
+						carry UVs that are subdivided through the <em>faceVarying</em> path and textured
+						with a procedural UV checker (per-corner UVs =&gt; non-indexed mesh). Keep the
+						<strong>Subdivision Level</strong> modest and watch <em>Est. GPU VRAM</em> stay
+						under the 2&nbsp;GB budget (the GPU is shared). <code>uv_cube</code> shows texture
+						seams at the unwrap edges (linear UVs cannot blend across them).
+					</p>
 			</div>
 		</div>
 
