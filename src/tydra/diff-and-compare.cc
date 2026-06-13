@@ -25,7 +25,10 @@ namespace tydra {
 namespace detail {
 
 static std::string TruncateForDiff(const std::string &s) {
-  constexpr size_t kMaxDiffValueChars = 240;
+  // Retain enough of each value that the differing region survives for the
+  // diff-aware centering done at render time (CenterValuePairForDiff). Asset
+  // paths and moderate arrays fit; pathological huge arrays are still bounded.
+  constexpr size_t kMaxDiffValueChars = 4096;
   if (s.size() <= kMaxDiffValueChars) {
     return s;
   }
@@ -950,6 +953,29 @@ static std::string EscapeJSON(const std::string &str) {
 
 } // namespace detail
 
+std::pair<std::string, std::string> CenterValuePairForDiff(
+    const std::string &lhs, const std::string &rhs, size_t window) {
+  if (lhs.size() <= window && rhs.size() <= window) {
+    return {lhs, rhs};
+  }
+  // First differing byte offset.
+  size_t d = 0;
+  const size_t n = std::min(lhs.size(), rhs.size());
+  while (d < n && lhs[d] == rhs[d]) ++d;
+  // Keep ~1/3 of the window as leading context before the difference.
+  const size_t lead = window / 3;
+  const size_t start = (d > lead) ? (d - lead) : 0;
+  auto clip = [&](const std::string &s) -> std::string {
+    std::string out;
+    if (start > 0) out += "\xE2\x80\xA6";  // UTF-8 ellipsis
+    const size_t end = std::min(s.size(), start + window);
+    out += s.substr(start, end - start);
+    if (end < s.size()) out += "\xE2\x80\xA6";
+    return out;
+  };
+  return {clip(lhs), clip(rhs)};
+}
+
 void Diff(const Layer &lhs, const Layer &rhs,
   tinyusdz::HashMap<std::string, PrimSpecDiff> &psDiffs,
   tinyusdz::HashMap<std::string, PropDiff> &propDiffs,
@@ -1109,8 +1135,11 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
         ss << "~ " << path << "." << modified.name << " (Property modified";
         if (!modified.reasons.empty()) ss << ": " << joinReasons(modified.reasons);
         ss << ")" << std::endl;
-        ss << "  - " << modified.lhs << std::endl;
-        ss << "  + " << modified.rhs << std::endl;
+        // Center long values on the first difference so a shared prefix (e.g.
+        // asset paths) does not hide what actually changed.
+        auto pr = CenterValuePairForDiff(modified.lhs, modified.rhs);
+        ss << "  - " << pr.first << std::endl;
+        ss << "  + " << pr.second << std::endl;
       }
     }
   }
