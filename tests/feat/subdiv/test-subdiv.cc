@@ -2123,6 +2123,7 @@ bool FvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 
 void test_stream_fvar() {
   using tinyusdz::tsd::FVarChannelView;
+  using tinyusdz::tsd::FVarLinearInterpolation;
   using tinyusdz::tsd::RefineStream;
   using tinyusdz::tsd::StreamOptions;
 
@@ -2131,27 +2132,44 @@ void test_stream_fvar() {
   meshes.push_back(corpus::UVCube());
   meshes.push_back(corpus::UVTriGrid());
 
+  // Non-block streaming carries linear fvar per corner and smooth seam-split fvar
+  // through a per-channel split mesh; both are bit-identical to bulk Refine AND
+  // emitted in the same per-parent-face/corner order, so the concatenated
+  // per-corner fvar equals bulk's exactly. Linear modes are tested under bilinear
+  // (where every mode is linear) and the smooth modes under the smooth scheme.
+  const FVarLinearInterpolation smooth_modes[5] = {
+      FVarLinearInterpolation::CornersPlus1, FVarLinearInterpolation::None,
+      FVarLinearInterpolation::CornersOnly, FVarLinearInterpolation::CornersPlus2,
+      FVarLinearInterpolation::Boundaries};
   const uint32_t batch_sizes[2] = {3u, 1u << 20};
+
   for (const corpus::Mesh &m : meshes) {
-    std::vector<Scheme> schemes = {Scheme::Bilinear};
     bool all_tris = true;
-    for (uint32_t c : m.face_vertex_counts) {
-      all_tris = all_tris && (c == 3);
+    for (uint32_t c : m.face_vertex_counts) all_tris = all_tris && (c == 3);
+    const Scheme smooth = all_tris ? Scheme::Loop : Scheme::CatmullClark;
+
+    struct Case {
+      Scheme scheme;
+      FVarLinearInterpolation mode;
+    };
+    std::vector<Case> cases;
+    cases.push_back({Scheme::Bilinear, FVarLinearInterpolation::All});  // linear
+    cases.push_back({smooth, FVarLinearInterpolation::All});            // linear
+    for (FVarLinearInterpolation mode : smooth_modes) {
+      cases.push_back({smooth, mode});  // smooth seam-split
     }
-    // "all" mode is linear under any scheme; add a smooth scheme too.
-    schemes.push_back(all_tris ? Scheme::Loop : Scheme::CatmullClark);
 
-    FVarChannelView fv;
-    fv.values = m.fvar_uv.data();
-    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
-    fv.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
-    fv.stride = 2;
-    fv.interpolation = FVarLinearInterpolation::All;  // linear => streamable
+    for (const Case &cs : cases) {
+      FVarChannelView fv;
+      fv.values = m.fvar_uv.data();
+      fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+      fv.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
+      fv.stride = 2;
+      fv.interpolation = cs.mode;
 
-    for (Scheme scheme : schemes) {
       for (int level = 1; level <= 3; level++) {
         Options opts;
-        opts.scheme = scheme;
+        opts.scheme = cs.scheme;
         opts.level = level;
         opts.remove_holes = false;
 
@@ -2170,31 +2188,14 @@ void test_stream_fvar() {
           col.stride = 2;
           CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, FvarSinkFn,
                              &col, &err) == Result::Success);
-          const std::string tag =
-              m.name + "/L" + std::to_string(level) + "/bs" + std::to_string(bs);
-          CHECK_MSG(col.fvar == bulk.fvar[0], tag);
+          const std::string tag = m.name + "/" +
+                                  std::to_string(int(cs.mode)) + "/L" +
+                                  std::to_string(level) + "/bs" +
+                                  std::to_string(bs);
+          CHECK_MSG(col.fvar == bulk.fvar[0], tag);  // bit-exact, in order
         }
       }
     }
-  }
-
-  // Smooth seam-split faceVarying is not streamable -> InvalidArgument.
-  {
-    corpus::Mesh m = corpus::UVSeamGrid();
-    FVarChannelView fv;
-    fv.values = m.fvar_uv.data();
-    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
-    fv.indices = m.fvar_indices.data();
-    fv.stride = 2;
-    fv.interpolation = FVarLinearInterpolation::CornersPlus1;  // smooth
-    Options opts;
-    opts.scheme = Scheme::CatmullClark;
-    opts.level = 2;
-    StreamOptions so;
-    StreamCollect sink;
-    std::string err;
-    CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, StreamSinkFn,
-                       &sink, &err) == Result::InvalidArgument);
   }
 }
 
