@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,6 +15,14 @@
 #include "tsd/tinysubdiv.hh"
 
 namespace {
+
+// Structural invariant: a violation here is a tsd bug (independent of the
+// arbitrary, possibly non-finite, input values), so trap for the sanitizer.
+inline void Require(bool cond) {
+  if (!cond) {
+    abort();
+  }
+}
 
 // Sequential byte reader with rollover.
 struct Reader {
@@ -58,6 +67,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   // Keep output small so the fuzzer spends time on parsing, not refining.
   opts.max_vertices = 1u << 16;
   opts.max_faces = 1u << 16;
+  opts.max_face_vertex_indices = 1u << 18;
   opts.remove_holes = (r.U8() & 1) != 0;
 
   const uint32_t num_points = 1 + (r.U32() % 64);
@@ -180,15 +190,57 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   tsd::RefinedMesh out;
   std::string err;
-  (void)tsd::Refine(view, num_fvar ? &fvar : nullptr, num_fvar,
-                    num_pv ? &pv : nullptr, num_pv, opts, &out, &err);
+  const tsd::Result rr = tsd::Refine(view, num_fvar ? &fvar : nullptr, num_fvar,
+                                     num_pv ? &pv : nullptr, num_pv, opts, &out,
+                                     &err);
 
-  // Exercise the limit path on whatever survived validation.
-  if (opts.level >= 1 && opts.scheme != tsd::Scheme::None) {
-    tsd::RefinedMesh limit = out;
-    (void)tsd::SnapToLimit(view, opts, &limit, &err);
-    std::vector<float> normals;
-    (void)tsd::ComputeLimitNormals(view, opts, out, &normals, &err);
+  if (rr == tsd::Result::Success) {
+    // Structural invariants (cannot check finiteness/AABB: inputs may be
+    // NaN/Inf by construction).
+    Require(out.points.size() % 3 == 0);
+    const size_t npts = out.points.size() / 3;
+    Require(out.face_source.size() == out.face_vertex_counts.size());
+    size_t corner_sum = 0;
+    for (uint32_t c : out.face_vertex_counts) {
+      corner_sum += c;
+    }
+    Require(corner_sum == out.face_vertex_indices.size());
+    for (uint32_t i : out.face_vertex_indices) {
+      Require(i < npts);
+    }
+    for (uint32_t s : out.face_source) {
+      Require(s < num_faces);
+    }
+    if (opts.level >= 1) {
+      // Refinement makes every face the scheme's arity (level 0 passes the
+      // base topology through unchanged).
+      const uint32_t arity = (opts.scheme == tsd::Scheme::Loop) ? 3u : 4u;
+      for (uint32_t c : out.face_vertex_counts) {
+        Require(c == arity);
+      }
+    }
+    if (num_fvar) {
+      Require(out.fvar.size() == 1);
+      Require(out.fvar[0].size() ==
+              out.face_vertex_indices.size() * size_t(fvar.stride));
+    }
+    if (num_pv) {
+      Require(out.vertex_primvars.size() == 1);
+      Require(out.vertex_primvars[0].size() == npts * size_t(pv.stride));
+    }
+
+    // Exercise the limit path on the (valid) refined mesh.
+    if (opts.level >= 1 && opts.scheme != tsd::Scheme::None) {
+      tsd::RefinedMesh limit = out;
+      if (tsd::SnapToLimit(view, opts, &limit, &err) == tsd::Result::Success) {
+        Require(limit.points.size() == out.points.size());
+      }
+      std::vector<float> normals;
+      if (tsd::ComputeLimitNormals(view, opts, out, &normals, &err) ==
+          tsd::Result::Success) {
+        Require(normals.size() == out.points.size());
+      }
+    }
   }
 
   return 0;

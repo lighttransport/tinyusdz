@@ -343,6 +343,15 @@ bool CrateWriter::ExtractMeshProperties(
     fields.push_back({"subdivisionScheme", crate_val});
   }
 
+  // triangleSubdivisionRule - TypedAttributeWithFallback<TriangleSubdivisionRule> (no Animatable!)
+  if (mesh->triangleSubdivisionRule.authored()) {
+    const auto& tri_rule = mesh->triangleSubdivisionRule.get_value();
+    crate::CrateValue crate_val;
+    value::token tok(to_string(tri_rule));
+    crate_val.Set(tok);
+    fields.push_back({"triangleSubdivisionRule", crate_val});
+  }
+
   // faceVaryingLinearInterpolation - TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
   if (mesh->faceVaryingLinearInterpolation.authored()) {
     auto fv_interp_anim = mesh->faceVaryingLinearInterpolation.get_value();

@@ -18,6 +18,50 @@
 
 namespace {
 
+// Builds a USDA for an (n x n) open quad grid in z=0 with catmullClark
+// subdivision, plus any extra Mesh attribute lines in `extra`.
+std::string MakeGridUsda(uint32_t n, const std::string &extra) {
+  const uint32_t w = n + 1;
+  std::string pts, counts, indices;
+  bool first = true;
+  for (uint32_t y = 0; y < w; y++) {
+    for (uint32_t x = 0; x < w; x++) {
+      // A non-planar, non-uniform height breaks symmetry so creases/corners
+      // (which coincide with the smooth rule on a perfectly regular flat grid)
+      // produce observable differences.
+      const uint32_t zc = (x * 2u + y) % 3u;
+      const char *zstr = (zc == 0) ? "0" : (zc == 1) ? "0.3" : "0.6";
+      pts += (first ? "" : ", ");
+      pts += "(" + std::to_string(x) + ", " + std::to_string(y) + ", " + zstr +
+             ")";
+      first = false;
+    }
+  }
+  first = true;
+  for (uint32_t y = 0; y < n; y++) {
+    for (uint32_t x = 0; x < n; x++) {
+      const uint32_t v0 = y * w + x, v1 = y * w + x + 1;
+      const uint32_t v2 = (y + 1) * w + x + 1, v3 = (y + 1) * w + x;
+      counts += (first ? "" : ", ");
+      counts += "4";
+      indices += (first ? "" : ", ");
+      indices += std::to_string(v0) + ", " + std::to_string(v1) + ", " +
+                 std::to_string(v2) + ", " + std::to_string(v3);
+      first = false;
+    }
+  }
+  std::string usda =
+      "#usda 1.0\n(\n    defaultPrim = \"Root\"\n)\n\n"
+      "def Xform \"Root\"\n{\n    def Mesh \"Mesh\"\n    {\n";
+  usda += "        int[] faceVertexCounts = [" + counts + "]\n";
+  usda += "        int[] faceVertexIndices = [" + indices + "]\n";
+  usda += "        point3f[] points = [" + pts + "]\n";
+  usda += "        uniform token subdivisionScheme = \"catmullClark\"\n";
+  usda += extra;
+  usda += "    }\n}\n";
+  return usda;
+}
+
 tinyusdz::Stage LoadStageFromString(const std::string &usda) {
   tinyusdz::Stage stage;
   std::string warn;
@@ -1373,4 +1417,185 @@ def Xform "Root"
              std::fabs(blended[v][2] - mesh_b.points[v][2]) < 1e-5f;
   }
   TEST_CHECK(match);
+}
+
+namespace {
+
+// Refines `usda` at `level` and returns the first mesh's points (flattened),
+// or an empty vector on failure.
+std::vector<float> RefinedPoints(const std::string &usda, int32_t level) {
+  tinyusdz::tydra::RenderScene scene;
+  std::string err;
+  if (!ConvertSceneWithSubdivision(usda, level, &scene, &err) ||
+      scene.meshes.empty()) {
+    return {};
+  }
+  const auto &m = scene.meshes[0];
+  std::vector<float> out(m.points.size() * 3);
+  for (size_t i = 0; i < m.points.size(); i++) {
+    out[3 * i] = m.points[i][0];
+    out[3 * i + 1] = m.points[i][1];
+    out[3 * i + 2] = m.points[i][2];
+  }
+  return out;
+}
+
+bool PointsDiffer(const std::vector<float> &a, const std::vector<float> &b) {
+  if (a.size() != b.size() || a.empty()) {
+    return a.size() != b.size();
+  }
+  for (size_t i = 0; i < a.size(); i++) {
+    if (std::fabs(a[i] - b[i]) > 1e-5f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+size_t RefinedFaceCount(const std::string &usda, int32_t level) {
+  tinyusdz::tydra::RenderScene scene;
+  std::string err;
+  if (!ConvertSceneWithSubdivision(usda, level, &scene, &err) ||
+      scene.meshes.empty()) {
+    return 0;
+  }
+  return scene.meshes[0].faceVertexCounts().size();
+}
+
+}  // namespace
+
+void tydra_subdivision_interpolate_boundary_none_drops_faces_test(void) {
+  // boundary "none" turns boundary-incident faces into holes (dropped from the
+  // refined mesh); "edgeAndCorner" keeps them all.
+  const size_t kept =
+      RefinedFaceCount(MakeGridUsda(3, ""), 1);  // default edgeAndCorner
+  const size_t none = RefinedFaceCount(
+      MakeGridUsda(3, "        token interpolateBoundary = \"none\"\n"), 1);
+  TEST_CHECK(kept > 0);
+  TEST_CHECK(none > 0);
+  TEST_CHECK(none < kept);
+}
+
+void tydra_subdivision_interpolate_boundary_edgeonly_changes_result_test(void) {
+  // edgeOnly does not pin the boundary corners, so the result differs from the
+  // default edgeAndCorner (which does).
+  const std::vector<float> ec = RefinedPoints(MakeGridUsda(3, ""), 2);
+  const std::vector<float> eo = RefinedPoints(
+      MakeGridUsda(3, "        token interpolateBoundary = \"edgeOnly\"\n"), 2);
+  TEST_CHECK(!ec.empty());
+  TEST_CHECK(PointsDiffer(ec, eo));
+}
+
+void tydra_subdivision_crease_tag_changes_result_test(void) {
+  // An infinitely-sharp crease along an interior edge changes the refined
+  // surface relative to the un-creased mesh.
+  const std::vector<float> plain = RefinedPoints(MakeGridUsda(3, ""), 2);
+  // Interior edge of the 4x4 vertex grid: vertices 5 and 6 (row y=1).
+  const std::string crease =
+      "        int[] creaseIndices = [5, 6]\n"
+      "        int[] creaseLengths = [2]\n"
+      "        float[] creaseSharpnesses = [1000]\n";
+  const std::vector<float> creased = RefinedPoints(MakeGridUsda(3, crease), 2);
+  TEST_CHECK(!plain.empty());
+  TEST_CHECK(PointsDiffer(plain, creased));
+}
+
+void tydra_subdivision_corner_tag_pins_interior_vertex_test(void) {
+  // Pinning an interior vertex (infinite corner sharpness) keeps it at its base
+  // position and changes the surface vs. the un-pinned mesh.
+  // 4x4 vertex grid: vertex 5 is interior at base position (1, 1, 0).
+  const std::string corner =
+      "        int[] cornerIndices = [5]\n"
+      "        float[] cornerSharpnesses = [1000]\n";
+  const std::vector<float> pinned = RefinedPoints(MakeGridUsda(3, corner), 2);
+  const std::vector<float> plain = RefinedPoints(MakeGridUsda(3, ""), 2);
+  TEST_CHECK(!pinned.empty());
+  TEST_CHECK(PointsDiffer(pinned, plain));
+  bool found_base = false;
+  for (size_t i = 0; i + 3 <= pinned.size(); i += 3) {
+    found_base |= std::fabs(pinned[i] - 1.0f) < 1e-6f &&
+                  std::fabs(pinned[i + 1] - 1.0f) < 1e-6f &&
+                  std::fabs(pinned[i + 2] - 0.0f) < 1e-6f;
+  }
+  TEST_CHECK(found_base);
+}
+
+void tydra_subdivision_hole_tag_drops_face_test(void) {
+  // holeIndices removes the tagged base face's children from the refined mesh.
+  // (The render mesh is triangulated, so compare relative face counts.)
+  const size_t plain = RefinedFaceCount(MakeGridUsda(2, ""), 1);
+  const size_t holed = RefinedFaceCount(
+      MakeGridUsda(2, "        int[] holeIndices = [0]\n"), 1);
+  TEST_CHECK(plain > 0);
+  TEST_CHECK(holed > 0);
+  TEST_CHECK(holed < plain);
+  // One of the 4 base quads removed: 1/4 of the refined faces drop.
+  TEST_CHECK(holed == plain - plain / 4);
+}
+
+void tydra_subdivision_facevarying_linear_mode_changes_uv_test(void) {
+  // faceVaryingLinearInterpolation changes how a UV seam interpolates: "none"
+  // (smooth everywhere) blends across the seam that the default "cornersPlus1"
+  // keeps piecewise, so the refined UVs differ. Two quads, 8 faceVarying
+  // corner values forming two UV islands ([0,0.4] and [0.6,1]).
+  const std::string base =
+      "#usda 1.0\n(\n    defaultPrim = \"Root\"\n)\n\n"
+      "def Xform \"Root\"\n{\n    def Mesh \"Mesh\"\n    {\n"
+      "        int[] faceVertexCounts = [4, 4]\n"
+      "        int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]\n"
+      "        point3f[] points = [(0,0,0.1),(1,0,0),(2,0,0.2),(0,1,0),"
+      "(1,1,0.3),(2,1,0)]\n"
+      "        uniform token subdivisionScheme = \"catmullClark\"\n"
+      "        texCoord2f[] primvars:st = [(0,0),(0.4,0),(0.4,0.4),(0,0.4),"
+      "(0.6,0.6),(1,0.6),(1,1),(0.6,1)] (\n"
+      "            interpolation = \"faceVarying\"\n        )\n";
+  auto with_mode = [&](const char *mode) {
+    std::string u = base;
+    if (mode) {
+      u += std::string("        token faceVaryingLinearInterpolation = \"") +
+           mode + "\"\n";
+    }
+    u += "    }\n}\n";
+    tinyusdz::tydra::RenderScene scene;
+    std::string err;
+    std::vector<float> uvs;
+    if (ConvertSceneWithSubdivision(u, 2, &scene, &err) &&
+        !scene.meshes.empty()) {
+      auto tc = scene.meshes[0].texcoords.find(0);
+      if (tc != scene.meshes[0].texcoords.end()) {
+        const float *p = reinterpret_cast<const float *>(tc->second.buffer());
+        uvs.assign(p, p + tc->second.vertex_count() * 2);
+      }
+    }
+    return uvs;
+  };
+  const std::vector<float> def = with_mode(nullptr);  // cornersPlus1 default
+  const std::vector<float> none = with_mode("none");
+  TEST_CHECK(!def.empty());
+  TEST_CHECK(!none.empty());
+  TEST_CHECK(PointsDiffer(def, none));
+}
+
+void tydra_subdivision_triangle_rule_smooth_changes_result_test(void) {
+  // triangleSubdivisionRule "smooth" alters Catmull-Clark on triangle meshes;
+  // confirm it is wired end-to-end (octahedron: closed, all triangles).
+  const std::string base =
+      "#usda 1.0\n(\n    defaultPrim = \"Root\"\n)\n\n"
+      "def Xform \"Root\"\n{\n    def Mesh \"Mesh\"\n    {\n"
+      "        int[] faceVertexCounts = [3,3,3,3,3,3,3,3]\n"
+      "        int[] faceVertexIndices = [0,2,4, 2,1,4, 1,3,4, 3,0,4, "
+      "2,0,5, 1,2,5, 3,1,5, 0,3,5]\n"
+      "        point3f[] points = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),"
+      "(0,0,1),(0,0,-1)]\n"
+      "        uniform token subdivisionScheme = \"catmullClark\"\n";
+  const std::string def = base + "    }\n}\n";
+  const std::string smooth =
+      base +
+      "        uniform token triangleSubdivisionRule = \"smooth\"\n    }\n}\n";
+  const std::vector<float> a = RefinedPoints(def, 2);
+  const std::vector<float> b = RefinedPoints(smooth, 2);
+  TEST_CHECK(!a.empty());
+  TEST_CHECK(!b.empty());
+  TEST_CHECK(a.size() == b.size());
+  TEST_CHECK(PointsDiffer(a, b));
 }

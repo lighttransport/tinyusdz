@@ -4,6 +4,7 @@
 // tinysubdiv (src/tsd) feature test: analytic, golden and hardening tests.
 // Runs in normal CI; no OpenSubdiv required.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -50,11 +51,16 @@ const char *g_current_test = "";
   } while (0)
 
 using tinyusdz::tsd::BoundaryInterpolation;
+using tinyusdz::tsd::CreasingMethod;
+using tinyusdz::tsd::FVarChannelView;
+using tinyusdz::tsd::FVarLinearInterpolation;
 using tinyusdz::tsd::MeshView;
 using tinyusdz::tsd::Options;
 using tinyusdz::tsd::RefinedMesh;
 using tinyusdz::tsd::Result;
 using tinyusdz::tsd::Scheme;
+using tinyusdz::tsd::TriangleSubdivision;
+using tinyusdz::tsd::VertexPrimvarView;
 
 MeshView ToView(const corpus::Mesh &m) {
   MeshView v;
@@ -424,6 +430,11 @@ void test_caps_enforced() {
   RefinedMesh out;
   std::string err;
   CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
+
+  opts = Options();
+  opts.level = 4;
+  opts.max_face_vertex_indices = 100;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
 }
 
 void test_base_caps_enforced_before_topology() {
@@ -437,6 +448,10 @@ void test_base_caps_enforced_before_topology() {
 
   opts = Options();
   opts.max_faces = 5;
+  CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
+
+  opts = Options();
+  opts.max_face_vertex_indices = 23;
   CHECK(Refine(ToView(cube), opts, &out, &err) == Result::LimitExceeded);
 }
 
@@ -1016,6 +1031,629 @@ void test_crease_sharpness_clamped() {
         1e-6f);
 }
 
+// ---------------------------------------------------------------------------
+// Broad invariant sweep + added analytic regressions
+//
+// Review conclusion (June 2026): the kernels match OpenSubdiv across the full
+// swept matrix (tests/feat/subdiv/subdiv-verify-osd.cc). The tests below run in
+// normal CI without OpenSubdiv and lock in correctness properties and the
+// hand-derived rules the differential test cannot express as invariants.
+// ---------------------------------------------------------------------------
+
+std::vector<corpus::Mesh> AllManifoldMeshes() {
+  std::vector<corpus::Mesh> m;
+  m.push_back(corpus::Cube());
+  m.push_back(corpus::SingleQuad());
+  m.push_back(corpus::SingleTri());
+  m.push_back(corpus::QuadGrid(4, 4, "qg4x4"));
+  m.push_back(corpus::QuadGrid(8, 1, "qg_strip"));
+  m.push_back(corpus::QuadTorus(8, 6));
+  m.push_back(corpus::TriFan(3));
+  m.push_back(corpus::TriFan(5));
+  m.push_back(corpus::TriFan(8));
+  m.push_back(corpus::NGons());
+  m.push_back(corpus::MixedDegree());
+  m.push_back(corpus::CreasedCube(0.4f, "cc_0_4"));
+  m.push_back(corpus::CreasedCube(2.7f, "cc_2_7"));
+  m.push_back(corpus::PerEdgeCreasedCube());
+  m.push_back(corpus::CorneredGrid());
+  m.push_back(corpus::CubeWithHoles());
+  m.push_back(corpus::UVSeamGrid());
+  m.push_back(corpus::UVCube());
+  m.push_back(corpus::UVDartGrid());
+  m.push_back(corpus::PartialSeamQuads());
+  m.push_back(corpus::Icosahedron());
+  m.push_back(corpus::TriGrid(4, 3, "tg4x3"));
+  m.push_back(corpus::CreasedTriGrid());
+  m.push_back(corpus::UVTriGrid());
+  return m;
+}
+
+// For each corpus mesh x valid scheme x boundary mode x level: every refined
+// position is finite and inside the base AABB (all subdivision position masks
+// are convex combinations of control points), output face arity matches the
+// scheme, indices and face_source are in range, constant vertex/varying/fvar
+// fields stay constant (partition of unity), and serial == parallel output.
+void test_invariant_sweep() {
+  const std::vector<corpus::Mesh> meshes = AllManifoldMeshes();
+  const BoundaryInterpolation boundaries[3] = {
+      BoundaryInterpolation::EdgeAndCorner, BoundaryInterpolation::EdgeOnly,
+      BoundaryInterpolation::None};
+  for (const corpus::Mesh &m : meshes) {
+    float lo[3] = {1e30f, 1e30f, 1e30f};
+    float hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (size_t i = 0; i + 3 <= m.points.size(); i += 3) {
+      for (int c = 0; c < 3; c++) {
+        lo[c] = std::min(lo[c], m.points[i + size_t(c)]);
+        hi[c] = std::max(hi[c], m.points[i + size_t(c)]);
+      }
+    }
+    const uint32_t nbase = uint32_t(m.face_vertex_counts.size());
+    const uint32_t np = uint32_t(m.points.size() / 3);
+    const uint32_t ncorner = uint32_t(m.face_vertex_indices.size());
+
+    std::vector<Scheme> schemes = {Scheme::CatmullClark, Scheme::Bilinear};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      if (c != 3) {
+        all_tris = false;
+      }
+    }
+    if (all_tris) {
+      schemes.push_back(Scheme::Loop);
+    }
+
+    for (Scheme scheme : schemes) {
+      for (BoundaryInterpolation boundary : boundaries) {
+        for (int level = 1; level <= 3; level++) {
+          std::vector<float> ones(np, 1.0f);
+          VertexPrimvarView pv[2];
+          pv[0].values = ones.data();
+          pv[0].stride = 1;
+          pv[0].varying = false;
+          pv[1].values = ones.data();
+          pv[1].stride = 1;
+          pv[1].varying = true;
+          std::vector<float> cfv(ncorner, 7.0f);
+          FVarChannelView fv;
+          fv.values = cfv.data();
+          fv.num_values = ncorner;
+          fv.indices = nullptr;
+          fv.stride = 1;
+          fv.interpolation = FVarLinearInterpolation::CornersPlus1;
+
+          Options opts;
+          opts.scheme = scheme;
+          opts.boundary = boundary;
+          opts.level = level;
+          RefinedMesh out;
+          std::string err;
+          const Result r = Refine(ToView(m), &fv, 1, pv, 2, opts, &out, &err);
+          CHECK_MSG(r == Result::Success, m.name + ": " + err);
+          if (r != Result::Success) {
+            continue;
+          }
+
+          const uint32_t arity = (scheme == Scheme::Loop) ? 3u : 4u;
+          const uint32_t npts = uint32_t(out.points.size() / 3);
+          bool arity_ok = true, idx_ok = true, src_ok = true;
+          bool finite_ok = true, aabb_ok = true;
+          for (uint32_t c : out.face_vertex_counts) {
+            arity_ok = arity_ok && (c == arity);
+          }
+          for (uint32_t i : out.face_vertex_indices) {
+            idx_ok = idx_ok && (i < npts);
+          }
+          for (uint32_t s : out.face_source) {
+            src_ok = src_ok && (s < nbase);
+          }
+          for (size_t i = 0; i < out.points.size(); i++) {
+            const float x = out.points[i];
+            finite_ok = finite_ok && std::isfinite(x);
+            const int c = int(i % 3);
+            aabb_ok = aabb_ok && (x >= lo[c] - 2e-4f) && (x <= hi[c] + 2e-4f);
+          }
+          CHECK_MSG(arity_ok, m.name);
+          CHECK_MSG(idx_ok, m.name);
+          CHECK_MSG(src_ok, m.name);
+          CHECK_MSG(finite_ok, m.name);
+          CHECK_MSG(aabb_ok, m.name);
+
+          bool pou_ok = (out.vertex_primvars.size() == 2) && out.fvar.size() == 1;
+          for (const auto &ch : out.vertex_primvars) {
+            for (float v : ch) {
+              pou_ok = pou_ok && (std::fabs(v - 1.0f) < 1e-4f);
+            }
+          }
+          if (!out.fvar.empty()) {
+            for (float v : out.fvar[0]) {
+              pou_ok = pou_ok && (std::fabs(v - 7.0f) < 1e-4f);
+            }
+          }
+          CHECK_MSG(pou_ok, m.name);
+
+          Options par = opts;
+          par.parallel_for = parallel_for_4threads;
+          RefinedMesh out2;
+          CHECK(Refine(ToView(m), &fv, 1, pv, 2, par, &out2, &err) ==
+                Result::Success);
+          CHECK_MSG(out.points == out2.points, m.name);
+          CHECK_MSG(out.fvar == out2.fvar, m.name);
+          CHECK_MSG(out.vertex_primvars == out2.vertex_primvars, m.name);
+        }
+      }
+    }
+  }
+}
+
+void test_nonmanifold_rejected_all_schemes() {
+  corpus::Mesh m = corpus::NonManifoldFan();
+  const Scheme schemes[2] = {Scheme::CatmullClark, Scheme::Bilinear};
+  for (Scheme s : schemes) {
+    Options opts;
+    opts.scheme = s;
+    opts.level = 1;
+    RefinedMesh out;
+    std::string err;
+    CHECK(Refine(ToView(m), opts, &out, &err) == Result::InvalidTopology);
+  }
+}
+
+void test_closed_stays_closed() {
+  corpus::Mesh meshes[3] = {corpus::Cube(), corpus::QuadTorus(8, 6),
+                            corpus::Icosahedron()};
+  for (corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::CatmullClark, Scheme::Bilinear};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      all_tris = all_tris && (c == 3);
+    }
+    if (all_tris) {
+      schemes.push_back(Scheme::Loop);
+    }
+    for (Scheme s : schemes) {
+      Options opts;
+      opts.scheme = s;
+      opts.level = 2;
+      RefinedMesh out;
+      std::string err;
+      CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
+      tinyusdz::tsd::Topology topo;
+      CHECK(BuildTopology(out.face_vertex_counts.data(),
+                          uint32_t(out.face_vertex_counts.size()),
+                          out.face_vertex_indices.data(),
+                          uint32_t(out.face_vertex_indices.size()),
+                          uint32_t(out.points.size() / 3), &topo,
+                          nullptr) == Result::Success);
+      bool any_boundary = false;
+      for (uint32_t e = 0; e < topo.num_edges; e++) {
+        any_boundary = any_boundary || topo.IsBoundaryEdge(e);
+      }
+      CHECK_MSG(!any_boundary, m.name);
+    }
+  }
+}
+
+void test_semisharp_crease_transitional_blend() {
+  // A ring crease at sharpness 0.5: at level 1 every crease edge child is the
+  // fractional blend (1-s)*smooth + s*midpoint (the 0<s<1 path), not a pure
+  // crease midpoint.
+  corpus::Mesh m = corpus::CreasedCube(0.5f, "cc_0_5");
+  Options opts;
+  opts.level = 1;
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
+
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(m.face_vertex_counts.data(), 6,
+                      m.face_vertex_indices.data(), 24, 8, &topo,
+                      nullptr) == Result::Success);
+  const uint32_t ring[4][2] = {{2, 3}, {3, 5}, {5, 4}, {4, 2}};
+  const float s = 0.5f;
+  for (const auto &rv : ring) {
+    uint32_t e = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < topo.num_edges; i++) {
+      const uint32_t a = topo.edge_verts[2 * i];
+      const uint32_t b = topo.edge_verts[2 * i + 1];
+      if ((a == rv[0] && b == rv[1]) || (a == rv[1] && b == rv[0])) {
+        e = i;
+        break;
+      }
+    }
+    CHECK(e != 0xFFFFFFFFu);
+    const uint32_t f0 = topo.edge_faces[2 * e];
+    const uint32_t f1 = topo.edge_faces[2 * e + 1];
+    CHECK(f1 != tinyusdz::tsd::kInvalidIndex);
+    for (int c = 0; c < 3; c++) {
+      const float p0 = m.points[rv[0] * 3 + size_t(c)];
+      const float p1 = m.points[rv[1] * 3 + size_t(c)];
+      const float fc0 = out.points[(8 + 12 + f0) * 3 + size_t(c)];
+      const float fc1 = out.points[(8 + 12 + f1) * 3 + size_t(c)];
+      const float smooth = 0.25f * (p0 + p1 + fc0 + fc1);
+      const float midpoint = 0.5f * (p0 + p1);
+      const float expect = (1.0f - s) * smooth + s * midpoint;
+      CHECK(std::fabs(out.points[(8 + e) * 3 + size_t(c)] - expect) < 1e-6f);
+    }
+  }
+}
+
+void test_chaikin_formula_and_decay() {
+  // ChaikinChildEdgeSharpness matches OpenSubdiv's
+  // Sdc::Crease::SubdivideEdgeSharpnessAtVertex: the neighbor average is over
+  // SEMI-sharp incident edges only, so infinitely-sharp neighbors are excluded.
+  // (Regression: do not "fix" this to include infinite edges -- it would
+  // diverge from OSD; the differential test confirms the current behavior.)
+  using tinyusdz::tsd::ChaikinChildEdgeSharpness;
+  {
+    const float inc[3] = {4.0f, 10.0f, 10.0f};  // semi-sharp set is {4.0} only
+    CHECK(std::fabs(ChaikinChildEdgeSharpness(4.0f, 3, inc) - 3.0f) < 1e-6f);
+  }
+  {
+    const float inc[2] = {2.0f, 4.0f};
+    // edge 2: avg_others=(6-2)/1=4, blend=0.75*2+0.25*4=2.5, decrement -> 1.5.
+    CHECK(std::fabs(ChaikinChildEdgeSharpness(2.0f, 2, inc) - 1.5f) < 1e-6f);
+    // edge 4: avg_others=(6-4)/1=2, blend=0.75*4+0.25*2=3.5, decrement -> 2.5.
+    CHECK(std::fabs(ChaikinChildEdgeSharpness(4.0f, 2, inc) - 2.5f) < 1e-6f);
+  }
+  {
+    const float inc[3] = {3.0f, 0.0f, 0.0f};  // lone crease: plain decrement
+    CHECK(std::fabs(ChaikinChildEdgeSharpness(3.0f, 3, inc) - 2.0f) < 1e-6f);
+  }
+  // End-to-end: Chaikin and Uniform diverge where a crease vertex joins two
+  // semi-sharp edges of different sharpness (both verified against OSD).
+  corpus::Mesh m = corpus::PerEdgeCreasedCube();
+  Options u;
+  u.level = 2;
+  u.creasing = CreasingMethod::Uniform;
+  Options ch = u;
+  ch.creasing = CreasingMethod::Chaikin;
+  RefinedMesh a, b;
+  std::string err;
+  CHECK(Refine(ToView(m), u, &a, &err) == Result::Success);
+  CHECK(Refine(ToView(m), ch, &b, &err) == Result::Success);
+  CHECK(a.points.size() == b.points.size());
+  bool differ = false;
+  for (size_t i = 0; i < a.points.size(); i++) {
+    differ = differ || (std::fabs(a.points[i] - b.points[i]) > 1e-5f);
+  }
+  CHECK(differ);
+}
+
+void test_boundary_edgeonly_vs_edgeandcorner() {
+  // Vertex 0 of a grid is a corner: a boundary vertex with exactly two boundary
+  // edges. EdgeAndCorner pins it (stays at base); EdgeOnly applies the boundary
+  // crease rule 3/4 V + 1/8 (ea + eb).
+  corpus::Mesh m = corpus::QuadGrid(3, 3, "bgrid");
+  const uint32_t nf = uint32_t(m.face_vertex_counts.size());
+  const uint32_t nfi = uint32_t(m.face_vertex_indices.size());
+  const uint32_t nv = uint32_t(m.points.size() / 3);
+  tinyusdz::tsd::Topology topo;
+  CHECK(BuildTopology(m.face_vertex_counts.data(), nf,
+                      m.face_vertex_indices.data(), nfi, nv, &topo,
+                      nullptr) == Result::Success);
+  CHECK(topo.vert_is_boundary[0]);
+
+  Options ec;
+  ec.level = 2;
+  ec.boundary = BoundaryInterpolation::EdgeAndCorner;
+  RefinedMesh a;
+  std::string err;
+  CHECK(Refine(ToView(m), ec, &a, &err) == Result::Success);
+  for (int c = 0; c < 3; c++) {
+    CHECK(std::fabs(a.points[size_t(c)] - m.points[size_t(c)]) < 1e-6f);
+  }
+
+  Options eo = ec;
+  eo.boundary = BoundaryInterpolation::EdgeOnly;
+  RefinedMesh b;
+  CHECK(Refine(ToView(m), eo, &b, &err) == Result::Success);
+  bool moved = false;
+  for (int c = 0; c < 3; c++) {
+    moved = moved || (std::fabs(b.points[size_t(c)] - m.points[size_t(c)]) >
+                      1e-6f);
+  }
+  CHECK(moved);
+
+  Options eo1 = eo;
+  eo1.level = 1;
+  RefinedMesh b1;
+  CHECK(Refine(ToView(m), eo1, &b1, &err) == Result::Success);
+  uint32_t nb[2] = {0, 0};
+  uint32_t cnt = 0;
+  for (uint32_t i = topo.vert_edge_offsets[0]; i < topo.vert_edge_offsets[1];
+       i++) {
+    const uint32_t e = topo.vert_edges[i];
+    if (topo.IsBoundaryEdge(e)) {
+      const uint32_t other = (topo.edge_verts[2 * e] == 0)
+                                 ? topo.edge_verts[2 * e + 1]
+                                 : topo.edge_verts[2 * e];
+      if (cnt < 2) {
+        nb[cnt] = other;
+      }
+      cnt++;
+    }
+  }
+  CHECK(cnt == 2);
+  for (int c = 0; c < 3; c++) {
+    const float expect = 0.75f * m.points[size_t(c)] +
+                         0.125f * (m.points[nb[0] * 3 + size_t(c)] +
+                                   m.points[nb[1] * 3 + size_t(c)]);
+    CHECK(std::fabs(b1.points[size_t(c)] - expect) < 1e-6f);
+  }
+}
+
+void test_boundary_none_makes_holes() {
+  // Open grid: boundary "none" drops boundary-incident faces (holes). Closed
+  // mesh: no boundary, so "none" leaves the face count unchanged.
+  corpus::Mesh g = corpus::QuadGrid(4, 4, "g");
+  Options none;
+  none.level = 1;
+  none.boundary = BoundaryInterpolation::None;
+  Options ec = none;
+  ec.boundary = BoundaryInterpolation::EdgeAndCorner;
+  RefinedMesh a, b;
+  std::string err;
+  CHECK(Refine(ToView(g), none, &a, &err) == Result::Success);
+  CHECK(Refine(ToView(g), ec, &b, &err) == Result::Success);
+  CHECK(a.face_vertex_counts.size() < b.face_vertex_counts.size());
+  for (uint32_t s : a.face_source) {
+    CHECK(s < g.face_vertex_counts.size());
+  }
+
+  corpus::Mesh cube = corpus::Cube();
+  RefinedMesh c, d;
+  CHECK(Refine(ToView(cube), none, &c, &err) == Result::Success);
+  CHECK(Refine(ToView(cube), ec, &d, &err) == Result::Success);
+  CHECK(c.face_vertex_counts.size() == d.face_vertex_counts.size());
+}
+
+void test_fvar_stride_and_indexing() {
+  // Stride-3 and stride-4 fvar channels keep a constant field constant.
+  corpus::Mesh m = corpus::UVSeamGrid();
+  const uint32_t ncorner = uint32_t(m.face_vertex_indices.size());
+  for (uint32_t stride = 3; stride <= 4; stride++) {
+    std::vector<float> vals(size_t(ncorner) * stride, 2.5f);
+    FVarChannelView fv;
+    fv.values = vals.data();
+    fv.num_values = ncorner;
+    fv.indices = nullptr;
+    fv.stride = stride;
+    fv.interpolation = FVarLinearInterpolation::CornersPlus1;
+    Options opts;
+    opts.level = 2;
+    RefinedMesh out;
+    std::string err;
+    CHECK(Refine(ToView(m), &fv, 1, nullptr, 0, opts, &out, &err) ==
+          Result::Success);
+    CHECK(out.fvar.size() == 1);
+    CHECK(out.fvar[0].size() ==
+          size_t(out.face_vertex_indices.size()) * stride);
+    for (float v : out.fvar[0]) {
+      CHECK(std::fabs(v - 2.5f) < 1e-5f);
+    }
+  }
+
+  // An indexed channel refines identically to the equivalent flattened
+  // (identity) channel.
+  std::vector<float> identity(size_t(ncorner) * 2);
+  for (uint32_t i = 0; i < ncorner; i++) {
+    const uint32_t id = m.fvar_indices[i];
+    identity[size_t(i) * 2 + 0] = m.fvar_uv[size_t(id) * 2 + 0];
+    identity[size_t(i) * 2 + 1] = m.fvar_uv[size_t(id) * 2 + 1];
+  }
+  for (int mode = 0; mode < 2; mode++) {
+    const FVarLinearInterpolation interp =
+        mode ? FVarLinearInterpolation::All : FVarLinearInterpolation::None;
+    FVarChannelView indexed;
+    indexed.values = m.fvar_uv.data();
+    indexed.num_values = uint32_t(m.fvar_uv.size() / 2);
+    indexed.indices = m.fvar_indices.data();
+    indexed.stride = 2;
+    indexed.interpolation = interp;
+    FVarChannelView flat;
+    flat.values = identity.data();
+    flat.num_values = ncorner;
+    flat.indices = nullptr;
+    flat.stride = 2;
+    flat.interpolation = interp;
+    Options opts;
+    opts.level = 2;
+    RefinedMesh a, b;
+    std::string err;
+    CHECK(Refine(ToView(m), &indexed, 1, nullptr, 0, opts, &a, &err) ==
+          Result::Success);
+    CHECK(Refine(ToView(m), &flat, 1, nullptr, 0, opts, &b, &err) ==
+          Result::Success);
+    CHECK(a.fvar.size() == 1 && b.fvar.size() == 1);
+    CHECK(a.fvar[0].size() == b.fvar[0].size());
+    bool eq = a.fvar[0].size() == b.fvar[0].size();
+    for (size_t i = 0; i < a.fvar[0].size() && eq; i++) {
+      eq = std::fabs(a.fvar[0][i] - b.fvar[0][i]) < 1e-6f;
+    }
+    CHECK(eq);
+  }
+}
+
+void test_varying_vs_vertex_primvar() {
+  // "varying" primvars use the linear (bilinear) kernel regardless of scheme,
+  // so they differ from "vertex" (smooth) primvars at irregular vertices and
+  // are identical under CatmullClark and Bilinear.
+  corpus::Mesh m = corpus::Cube();
+  std::vector<float> data(8);
+  for (uint32_t i = 0; i < 8; i++) {
+    data[i] = float(i) * 0.37f + 0.1f;
+  }
+  VertexPrimvarView vtx;
+  vtx.values = data.data();
+  vtx.stride = 1;
+  vtx.varying = false;
+  VertexPrimvarView var;
+  var.values = data.data();
+  var.stride = 1;
+  var.varying = true;
+
+  Options cc;
+  cc.level = 2;
+  RefinedMesh smooth, linear_cc;
+  std::string err;
+  CHECK(Refine(ToView(m), nullptr, 0, &vtx, 1, cc, &smooth, &err) ==
+        Result::Success);
+  CHECK(Refine(ToView(m), nullptr, 0, &var, 1, cc, &linear_cc, &err) ==
+        Result::Success);
+  bool differ = false;
+  for (size_t i = 0; i < smooth.vertex_primvars[0].size(); i++) {
+    differ = differ || (std::fabs(smooth.vertex_primvars[0][i] -
+                                  linear_cc.vertex_primvars[0][i]) > 1e-5f);
+  }
+  CHECK(differ);
+
+  Options bil = cc;
+  bil.scheme = Scheme::Bilinear;
+  RefinedMesh linear_bil;
+  CHECK(Refine(ToView(m), nullptr, 0, &var, 1, bil, &linear_bil, &err) ==
+        Result::Success);
+  CHECK(linear_cc.vertex_primvars[0] == linear_bil.vertex_primvars[0]);
+}
+
+void test_vertex_primvar_equals_geometry() {
+  // Geometry is itself a smooth "vertex" primvar: feeding the control points as
+  // a stride-3 vertex primvar reproduces the refined positions exactly,
+  // including crease handling.
+  corpus::Mesh m = corpus::CreasedCube(1.5f, "cc_1_5g");
+  VertexPrimvarView pv;
+  pv.values = m.points.data();
+  pv.stride = 3;
+  pv.varying = false;
+  Options opts;
+  opts.level = 3;
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(m), nullptr, 0, &pv, 1, opts, &out, &err) ==
+        Result::Success);
+  CHECK(out.vertex_primvars[0].size() == out.points.size());
+  bool eq = out.vertex_primvars[0].size() == out.points.size();
+  for (size_t i = 0; i < out.points.size() && eq; i++) {
+    eq = std::fabs(out.vertex_primvars[0][i] - out.points[i]) < 1e-5f;
+  }
+  CHECK(eq);
+}
+
+void test_trisub_smooth_differs() {
+  // triangleSubdivisionRule "smooth" alters Catmull-Clark edge weights on
+  // triangle-incident interior edges (verified against OpenSubdiv); confirm it
+  // actually changes the result on a tri+quad mesh.
+  corpus::Mesh m = corpus::MixedDegree();
+  Options cc;
+  cc.level = 2;
+  cc.triangle_subdivision = TriangleSubdivision::CatmullClark;
+  Options sm = cc;
+  sm.triangle_subdivision = TriangleSubdivision::Smooth;
+  RefinedMesh a, b;
+  std::string err;
+  CHECK(Refine(ToView(m), cc, &a, &err) == Result::Success);
+  CHECK(Refine(ToView(m), sm, &b, &err) == Result::Success);
+  CHECK(a.points.size() == b.points.size());
+  bool differ = false;
+  for (size_t i = 0; i < a.points.size(); i++) {
+    differ = differ || (std::fabs(a.points[i] - b.points[i]) > 1e-5f);
+  }
+  CHECK(differ);
+}
+
+void test_limit_loop_and_planar_normals() {
+  // Loop limit pipeline: SnapToLimit and ComputeLimitNormals succeed, stay
+  // finite, and limit points stay inside the base AABB.
+  corpus::Mesh ico = corpus::Icosahedron();
+  float lo[3] = {1e30f, 1e30f, 1e30f};
+  float hi[3] = {-1e30f, -1e30f, -1e30f};
+  for (size_t i = 0; i + 3 <= ico.points.size(); i += 3) {
+    for (int c = 0; c < 3; c++) {
+      lo[c] = std::min(lo[c], ico.points[i + size_t(c)]);
+      hi[c] = std::max(hi[c], ico.points[i + size_t(c)]);
+    }
+  }
+  Options lopts;
+  lopts.scheme = Scheme::Loop;
+  lopts.level = 2;
+  RefinedMesh refined;
+  std::string err;
+  CHECK(Refine(ToView(ico), lopts, &refined, &err) == Result::Success);
+  RefinedMesh snapped = refined;
+  CHECK(SnapToLimit(ToView(ico), lopts, &snapped, &err) == Result::Success);
+  for (size_t i = 0; i < snapped.points.size(); i++) {
+    CHECK(std::isfinite(snapped.points[i]));
+    const int c = int(i % 3);
+    CHECK(snapped.points[i] >= lo[c] - 1e-3f &&
+          snapped.points[i] <= hi[c] + 1e-3f);
+  }
+  std::vector<float> normals;
+  CHECK(ComputeLimitNormals(ToView(ico), lopts, refined, &normals, &err) ==
+        Result::Success);
+  CHECK(normals.size() == refined.points.size());
+  for (size_t v = 0; v < normals.size() / 3; v++) {
+    const float len = std::sqrt(normals[3 * v] * normals[3 * v] +
+                                normals[3 * v + 1] * normals[3 * v + 1] +
+                                normals[3 * v + 2] * normals[3 * v + 2]);
+    CHECK(std::fabs(len - 1.0f) < 1e-3f);
+  }
+
+  // On a perfectly planar (z=0) grid, every Catmull-Clark limit normal is +/-z.
+  corpus::Mesh grid = corpus::QuadGrid(4, 4, "flatgrid");
+  for (size_t i = 0; i < grid.points.size() / 3; i++) {
+    grid.points[i * 3 + 2] = 0.0f;
+  }
+  Options copts;
+  copts.level = 2;
+  RefinedMesh cr;
+  CHECK(Refine(ToView(grid), copts, &cr, &err) == Result::Success);
+  std::vector<float> gn;
+  CHECK(ComputeLimitNormals(ToView(grid), copts, cr, &gn, &err) ==
+        Result::Success);
+  for (size_t v = 0; v < gn.size() / 3; v++) {
+    CHECK(std::fabs(gn[3 * v]) < 1e-4f);
+    CHECK(std::fabs(gn[3 * v + 1]) < 1e-4f);
+    CHECK(std::fabs(std::fabs(gn[3 * v + 2]) - 1.0f) < 1e-4f);
+  }
+}
+
+void test_high_level_stability() {
+  // Deep uniform refinement stays valid: finite, in-AABB, expected face growth.
+  corpus::Mesh m = corpus::SingleTri();
+  float lo[3] = {1e30f, 1e30f, 1e30f};
+  float hi[3] = {-1e30f, -1e30f, -1e30f};
+  for (size_t i = 0; i + 3 <= m.points.size(); i += 3) {
+    for (int c = 0; c < 3; c++) {
+      lo[c] = std::min(lo[c], m.points[i + size_t(c)]);
+      hi[c] = std::max(hi[c], m.points[i + size_t(c)]);
+    }
+  }
+  Options opts;
+  opts.level = 6;
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
+  CHECK(out.face_vertex_counts.size() == 3u * 1024u);  // one 3-gon -> 3*4^5
+  for (size_t i = 0; i < out.points.size(); i++) {
+    CHECK(std::isfinite(out.points[i]));
+    const int c = int(i % 3);
+    CHECK(out.points[i] >= lo[c] - 1e-3f && out.points[i] <= hi[c] + 1e-3f);
+  }
+}
+
+void test_holes_propagate_multilevel() {
+  corpus::Mesh m = corpus::CubeWithHoles();  // faces 1, 4 are holes
+  Options opts;
+  opts.level = 2;
+  RefinedMesh out;
+  std::string err;
+  CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
+  CHECK(out.face_vertex_counts.size() == (6u - 2u) * 16u);  // 64
+  for (uint32_t s : out.face_source) {
+    CHECK(s != 1 && s != 4);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1076,6 +1714,22 @@ int main() {
   TEST(test_crease_canonicalize_per_crease);
   TEST(test_crease_canonicalize_per_edge_and_dedup);
   TEST(test_crease_sharpness_clamped);
+
+  // Broad invariant sweep + added analytic regressions
+  TEST(test_invariant_sweep);
+  TEST(test_nonmanifold_rejected_all_schemes);
+  TEST(test_closed_stays_closed);
+  TEST(test_semisharp_crease_transitional_blend);
+  TEST(test_chaikin_formula_and_decay);
+  TEST(test_boundary_edgeonly_vs_edgeandcorner);
+  TEST(test_boundary_none_makes_holes);
+  TEST(test_fvar_stride_and_indexing);
+  TEST(test_varying_vs_vertex_primvar);
+  TEST(test_vertex_primvar_equals_geometry);
+  TEST(test_trisub_smooth_differs);
+  TEST(test_limit_loop_and_planar_normals);
+  TEST(test_high_level_stability);
+  TEST(test_holes_propagate_multilevel);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

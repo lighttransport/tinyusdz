@@ -10,7 +10,7 @@
 //   triangleSubdivisionRule.
 // - C-ish C++: POD input views, no exceptions, no RTTI.
 // - Hardened: full input validation, overflow-checked sizing, per-level
-//   vertex/face caps. Non-manifold input is rejected (divergence from
+//   vertex/face/corner caps. Non-manifold input is rejected (divergence from
 //   OpenSubdiv, which tolerates it).
 // - Numerically verified against OpenSubdiv (tests/feat/subdiv/).
 //
@@ -77,8 +77,8 @@ enum class Result : uint8_t {
   InvalidTopology,    // out-of-range index, count mismatch, non-manifold,
                       // non-triangle input for Loop
   UnsupportedScheme,  // Scheme::None
-  LimitExceeded,      // refinement would exceed max_vertices/max_faces or
-                      // 32-bit index space
+  LimitExceeded,      // refinement would exceed max_vertices/max_faces/
+                      // max_face_vertex_indices or 32-bit index space
   OutOfMemory,
 };
 
@@ -105,9 +105,13 @@ struct Options {
 
   int32_t level = 1;  // 0..kMaxLevel; 0 = validate + passthrough copy
 
-  // Per-level caps, checked with 64-bit arithmetic before allocating.
-  uint32_t max_vertices = 16u << 20;  // 16M
-  uint32_t max_faces = 16u << 20;     // 16M
+  // Per-level caps, checked with 64-bit arithmetic before allocating base or
+  // generated child buffers.
+  // `max_face_vertex_indices` caps face-corner-proportional topology/fvar
+  // buffers, and defaults to the corner count of 16M quads.
+  uint32_t max_vertices = 16u << 20;             // 16M
+  uint32_t max_faces = 16u << 20;                // 16M
+  uint32_t max_face_vertex_indices = 64u << 20;  // 64M
 
   // Filter hole-tagged faces out of the final output.
   bool remove_holes = true;

@@ -100,9 +100,11 @@ Result CheckSplitChildCaps(const Topology &topo, const Options &opts,
            : uint64_t(topo.face_offsets[topo.num_faces]);
   const uint64_t child_corners = child_faces * (loop ? 3 : 4);
   if (child_points > opts.max_vertices || child_faces > opts.max_faces ||
+      child_corners > opts.max_face_vertex_indices ||
       child_points > 0xFFFFFFFFull || child_corners > 0xFFFFFFFFull) {
     return Fail(Result::LimitExceeded, err,
-                "fvar split refinement exceeds max_vertices/max_faces caps.");
+                "fvar split refinement exceeds max_vertices/max_faces/"
+                "max_face_vertex_indices caps.");
   }
   return Result::Success;
 }
