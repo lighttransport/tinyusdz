@@ -773,6 +773,14 @@ class TinyUSDZLoader extends Loader {
 
         this._applySkinningLoadOptions(usd);
 
+        // Decode referenced texture images inside the native loader. For a USDZ
+        // this pulls the bytes from the package and decodes them, so the
+        // RenderScene image carries pixels (bufferId >= 0) instead of only a
+        // URI the JS layer would have to fetch over HTTP.
+        if (options.loadTextureInNative && typeof usd.setLoadTextureInNative === 'function') {
+            usd.setLoadTextureInNative(true);
+        }
+
         const debugMemory = options.debugMemory !== undefined ? !!options.debugMemory : this.debugMemory_;
         const debugCallback = options.onTinyUSDZDebug || null;
         let restoreDebugCallback = () => {};

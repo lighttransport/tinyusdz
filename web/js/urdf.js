@@ -398,7 +398,10 @@ async function loadUSDObjectFromBytes(bytes, filename) {
   const sceneData = await parseUSDSceneFromArrayBuffer(
     loader,
     data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-    filename
+    filename,
+    // Decode in-package textures (e.g. an embedded-texture USDZ) in the native
+    // loader so the converted-USD view shows materials instead of a flat color.
+    { loadTextureInNative: true }
   );
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -4422,10 +4425,18 @@ async function registerTextureAssets(native, payload) {
   }
 }
 
-async function createUSDBytesFromSource(format) {
+async function createUSDBytesFromSource(format, { autoEmbedTextures = false } = {}) {
   const native = await ensureNativeExporter();
   const payload = buildCurrentExportPayload();
   registerNativeMeshBuffers(native, payload);
+  // For the on-screen comparison view, upgrade a textured scene to an embedded
+  // USDZ so the loaded converted-USD carries the texture bytes (a usdc would
+  // only reference a relative path the browser can't fetch). Explicit exports
+  // keep the format the user asked for.
+  if (autoEmbedTextures && format !== 'usdz' &&
+      (payload.materials || []).some((m) => m.texture)) {
+    format = 'usdz';
+  }
   if (format === 'usdz') await registerTextureAssets(native, payload);
   setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
   const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
@@ -4455,7 +4466,7 @@ function exportSourceXML() {
 }
 
 async function convertSourceToUSD(format = 'usdc') {
-  const result = await createUSDBytesFromSource(format);
+  const result = await createUSDBytesFromSource(format, { autoEmbedTextures: true });
   clearUSD();
   const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
   state.usdObject = object;
