@@ -9777,6 +9777,20 @@ static std::string optStr(const emscripten::val& opts, const char* key,
   return v.as<std::string>();
 }
 
+static bool optBool(const emscripten::val& opts, const char* key, bool def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<bool>();
+}
+
+static double optDouble(const emscripten::val& opts, const char* key, double def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<double>();
+}
+
 static tinyusdz::image::PngEncoder parsePngEncoder(const std::string& s) {
   if (s == "fpng") return tinyusdz::image::PngEncoder::Fpng;
   if (s == "fpnge") return tinyusdz::image::PngEncoder::Fpnge;  // falls back to fpng in WASM
@@ -10448,6 +10462,23 @@ emscripten::val usddiff(const emscripten::val& opts) {
   const std::string rhsName = optStr(right, "name", "right");
   const std::string format = optStr(opts, "format", "text");
 
+  // Diff tolerance / options, flat on `opts` (matching the tusddiff CLI):
+  //   ulps (sets float+double; default 1), eps (absEps), compareMetadata,
+  //   fuzzyAssetPaths.
+  tydra::DiffOptions diffOpts;
+  {
+    const int ulps = optInt(opts, "ulps", -1);
+    if (ulps >= 0) {
+      diffOpts.floatUlps = static_cast<uint32_t>(ulps);
+      diffOpts.doubleUlps = static_cast<uint64_t>(ulps);
+    }
+    diffOpts.absEps = optDouble(opts, "eps", diffOpts.absEps);
+    diffOpts.compareMetadata =
+        optBool(opts, "compareMetadata", diffOpts.compareMetadata);
+    diffOpts.fuzzyAssetPaths =
+        optBool(opts, "fuzzyAssetPaths", diffOpts.fuzzyAssetPaths);
+  }
+
   USDLoadOptions loadOpts;
 
   Layer lhsLayer, rhsLayer;
@@ -10476,20 +10507,24 @@ emscripten::val usddiff(const emscripten::val& opts) {
 
   tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
   tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
-  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs);
+  tydra::LayerMetaDiff layerMetaDiff;
+  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs, diffOpts, &layerMetaDiff);
 
-  const bool hasDiffs = !psDiffs.empty() || !propDiffs.empty();
+  const bool hasDiffs =
+      !psDiffs.empty() || !propDiffs.empty() || layerMetaDiff.changed();
 
   result.set("success", true);
   result.set("hasDiffs", hasDiffs);
   if (!accumWarn.empty()) result.set("warn", accumWarn);
 
   if (format == "json" || format == "both") {
-    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName));
+    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName,
+                                         diffOpts));
   }
   if (format == "text" || format == "both") {
     if (hasDiffs) {
-      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName));
+      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName,
+                                           diffOpts));
     } else {
       result.set("text", std::string("No differences found.\n"));
     }

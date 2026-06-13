@@ -130,6 +130,9 @@ list(
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
