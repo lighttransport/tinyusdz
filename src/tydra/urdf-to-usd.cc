@@ -1580,15 +1580,54 @@ bool AddMaterialFromJson(Prim &materials_prim, const nlohmann::json &m_json,
         base[1] * static_cast<float>(emission),
         base[2] * static_cast<float>(emission)}));
   }
+  // A texture map (<asset><texture file=...>) connects diffuseColor to a
+  // UsdUVTexture fed by a UsdPrimvarReader_float2 reading the mesh `st` primvar:
+  //   PreviewSurface.diffuseColor <- DiffuseTexture.outputs:rgb
+  //   DiffuseTexture.st           <- stReader.outputs:result
+  const std::string mat_path = "/World/Materials/" + usd;
+  const std::string tex_file = JsonString(m_json, "texture");
+  const bool has_texture = !tex_file.empty();
+  if (has_texture) {
+    ps.diffuseColor.set_connection(Path(mat_path + "/DiffuseTexture", "outputs:rgb"));
+    ps.diffuseColor.set_value_empty();
+  }
   shader.value = std::move(ps);
-  mat.surface.set(Path("/World/Materials/" + usd + "/PreviewSurface",
-                       "outputs:surface"));
+  mat.surface.set(Path(mat_path + "/PreviewSurface", "outputs:surface"));
 
   Prim mat_prim(mat);
   std::string add_err;
   if (!mat_prim.add_child(Prim(shader), true, &add_err)) {
     SetErr(err, "Failed to add shader for material `" + usd + "`: " + add_err);
     return false;
+  }
+  if (has_texture) {
+    UsdPrimvarReader_float2 reader;
+    reader.varname.set_value(Animatable<std::string>("st"));
+    reader.result.set_authored(true);
+    Shader reader_shader;
+    reader_shader.name = "stReader";
+    reader_shader.info_id = kUsdPrimvarReader_float2;
+    reader_shader.value = std::move(reader);
+
+    UsdUVTexture tex;
+    tex.file.set_value(Animatable<value::AssetPath>(value::AssetPath(tex_file)));
+    tex.st.set_connection(Path(mat_path + "/stReader", "outputs:result"));
+    tex.st.set_value_empty();
+    tex.wrapS.set_value(Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
+    tex.wrapT.set_value(Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
+    tex.sourceColorSpace.set_value(
+        Animatable<UsdUVTexture::SourceColorSpace>(UsdUVTexture::SourceColorSpace::SRGB));
+    tex.outputsRGB.set_authored(true);
+    Shader tex_shader;
+    tex_shader.name = "DiffuseTexture";
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = std::move(tex);
+
+    if (!mat_prim.add_child(Prim(reader_shader), true, &add_err) ||
+        !mat_prim.add_child(Prim(tex_shader), true, &add_err)) {
+      SetErr(err, "Failed to add texture shaders for material `" + usd + "`: " + add_err);
+      return false;
+    }
   }
   if (!materials_prim.add_child(std::move(mat_prim), true, &add_err)) {
     SetErr(err, "Failed to add material `" + usd + "`: " + add_err);
