@@ -1944,6 +1944,11 @@ bool ConvertURDFJsonToUSDStage(
   const std::string up_axis = JsonString(root, "upAxis", "Y");
   const bool y_up = !(up_axis == "Z" || up_axis == "z");
   stage.metas().upAxis = y_up ? Axis::Y : Axis::Z;
+  // MuJoCo authors in SI units (meters, kilograms). Declare the stage scale so
+  // usdchecker's StageMetadataChecker passes and DCCs interpret distances and
+  // masses correctly (1 stage unit = 1 m / 1 kg).
+  stage.metas().metersPerUnit = 1.0;
+  stage.metas().kilogramsPerUnit = 1.0;
 
   Xform world;
   world.name = "World";
