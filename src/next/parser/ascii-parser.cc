@@ -174,6 +174,14 @@ bool AsciiParser::Impl::ParseStageMetadata() {
 
     // Parse metadata key-value pairs
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
+      // A bare (often triple-quoted) string is the layer documentation —
+      // USD shorthand for `doc = "..."`.
+      if (Check(TokenType::String)) {
+        std::string d;
+        lexer_->expect(TokenType::String, d);
+        layer_->meta().doc = d;
+        continue;
+      }
       std::string key;
       if (!lexer_->expect(TokenType::Identifier, key)) {
         AddError("Expected metadata key");
@@ -389,6 +397,16 @@ bool AsciiParser::Impl::ParsePrimContents() {
       continue;
     }
 
+    // `reorder properties = [...]` / `reorder nameChildren = [...]`: a property/
+    // child emission-order hint. Consume it (ordering is not yet honored).
+    if (tok.type == TokenType::Reorder) {
+      lexer_->next();
+      std::string what;
+      lexer_->expect(TokenType::Identifier, what);  // properties / nameChildren
+      if (Match(TokenType::Equals)) SkipValueLike();
+      continue;
+    }
+
     // Check for variantSet body
     if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
       lexer_->next();
@@ -539,14 +557,29 @@ bool AsciiParser::Impl::ParseAttribute() {
         AddError("Expected '=' after connect");
         return false;
       }
-      std::string path;
-      if (!lexer_->expect(TokenType::PathRef, path)) {
-        AddError("Expected path for connection");
-        return false;
-      }
+      // Target may be a single path, a list of paths, or None (blocked).
       flags |= PropSlot::kFlagConnection;
-      // Store connection as a string value
-      builder_->add_property(attr_name, Value(path), flags);
+      if (Check(TokenType::None)) {
+        lexer_->next();
+        builder_->add_property(attr_name, Value(), flags);
+      } else if (Check(TokenType::OpenBracket)) {
+        lexer_->next();
+        std::string first;
+        while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          std::string p;
+          if (lexer_->expect(TokenType::PathRef, p) && first.empty()) first = p;
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBracket);
+        builder_->add_property(attr_name, Value(first), flags);
+      } else {
+        std::string path;
+        if (!lexer_->expect(TokenType::PathRef, path)) {
+          AddError("Expected path for connection");
+          return false;
+        }
+        builder_->add_property(attr_name, Value(path), flags);
+      }
       ParsePropertyMetadata(attr_name);
     } else {
       AddWarning("Unknown attribute property: " + prop_tok.value);
@@ -766,6 +799,14 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   };
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    // A bare (often triple-quoted) string is the prim documentation —
+    // USD shorthand for `doc = "..."`.
+    if (Check(TokenType::String)) {
+      std::string d;
+      lexer_->expect(TokenType::String, d);
+      prim->meta().doc() = d;
+      continue;
+    }
     // Optional list-op qualifier keyword (prepend/append/delete/reorder)
     // precedes the real key, e.g. `prepend references = [...]`.
     ArcQual arc_qual = ArcQual::Explicit;
@@ -1177,7 +1218,17 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       std::string prop_name;
       if (!ParseNamespacedName(&prop_name, "attribute name")) break;
       SkipPropertyMetadata();
-      if (Match(TokenType::Equals)) {
+      if (Check(TokenType::Dot)) {
+        // `<name>.connect = (None|<path>|[..])` or `.timeSamples = {..}` inside a
+        // variant body. Consume robustly (not stored on VariantData yet).
+        lexer_->next();                  // '.'
+        if (!AtEnd()) lexer_->next();    // connect / timeSamples
+        if (Match(TokenType::Equals)) {
+          SkipValueLike();
+          while (Check(TokenType::PathRef)) lexer_->next();
+        }
+        SkipPropertyMetadata();
+      } else if (Match(TokenType::Equals)) {
         TypeId tid = ParseTypeName(type_name, is_array);
         if (tid == TypeId::Invalid) {
           if (!SkipValueLike()) break;

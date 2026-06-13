@@ -485,12 +485,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     --mode load
                     --tusdcat "$<TARGET_FILE:next_usdcat>"
                     --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
-                    # Regression ratchet, not a quality bar: 24 of 280 corpus
-                    # files fail today on the remaining next parser gaps (variant
-                    # option bodies that contain child prims; a few nested
-                    # metadata edge cases) — see corpus-parse-results/summary.md.
-                    # Lower this as gaps close; raising it requires justification.
-                    --max-fail 30
+                    # Regression ratchet: 0 of 280 corpus files fail to parse
+                    # today (some USDC files load with warnings on unsupported
+                    # binary value types — see corpus-parse-results/summary.md).
+                    # A tiny headroom guards against environment differences;
+                    # raising it requires justification.
+                    --max-fail 3
         )
     endif()
 endif()
