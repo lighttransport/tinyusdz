@@ -2418,6 +2418,20 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-localchild COMMAND feat-localchild
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition: a variant selection on the referencing prim must win over the
+    # referenced asset's own default, even when the populated variantSet lives
+    # several arcs deep (reference -> empty variant + payload -> reference ->
+    # populated variantSet). Regression for Pixar Kitchen_set Chair.usd: the
+    # referenced default selection clobbered the local one, and eager variant
+    # resolution consumed the local selection against empty variant blocks.
+    add_executable(feat-variant-payload-chain
+                   tests/feat/variant-payload-chain/test-variant-payload-chain.cc)
+    add_sanitizers(feat-variant-payload-chain)
+    target_link_libraries(feat-variant-payload-chain PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-payload-chain PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)
