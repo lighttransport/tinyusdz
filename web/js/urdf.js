@@ -2565,12 +2565,17 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
     const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
+    // <freejoint>/<joint type="free"> -> 6-DOF floating base (not joined to its
+    // parent); marked so the converter emits a free articulation root.
+    const hasFree = !!firstChildElement(bodyNode, 'freejoint')
+      || childElements(bodyNode, 'joint').some((j) => j.getAttribute('type') === 'free');
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
       visuals: [],
       collisions: []
     };
+    if (hasFree) linkPayload.floating = true;
     if (bodyAttrs.mocap !== undefined && mjcBoolAttr(bodyAttrs.mocap)) {
       linkPayload.mocap = true;
     }
@@ -2585,7 +2590,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     pivot.add(linkObject);
     group.links[linkName] = linkObject;
 
-    if (parentName) {
+    if (parentName && !hasFree) {
       const jointNodes = childElements(bodyNode, 'joint');
       const jointNode = jointNodes[0] || null;
       // MuJoCo allows several <joint> per body (a composite/universal joint).

@@ -94,3 +94,6 @@ void urdf_json_mjc_plugin_test(void);
 
 // static "world" link (worldbody-level geoms) -> static collider, no artic root
 void physics_static_world_link_test(void);
+
+// <freejoint> -> floating-base articulation root with mjc:freeJoint marker
+void physics_freejoint_floating_base_test(void);

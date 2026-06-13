@@ -3454,6 +3454,44 @@ void physics_static_world_link_test(void) {
   }
 }
 
+// MJCF <freejoint> -> a floating-base link is an articulation root carrying
+// mjc:freeJoint=true, distinguishing it from a fixed (anchored) base which is a
+// parentless link WITHOUT the flag.
+void physics_freejoint_floating_base_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "FloatBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [
+    { "name": "floater", "floating": true },
+    { "name": "anchored" }
+  ],
+  "joints": []
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto fr = stage.GetPrimAtPath(Path("/World/Links/floater", ""));
+  TEST_CHECK(bool(fr));
+  if (fr) {
+    const Prim *f = *fr;
+    TEST_CHECK(has_api(f, APISchemas::APIName::PhysicsArticulationRootAPI));
+    const auto *fx = f->as<Xform>();
+    TEST_CHECK(fx != nullptr && fx->props.count("mjc:freeJoint") > 0);
+  }
+  // A fixed (anchored) base: parentless articulation root WITHOUT mjc:freeJoint.
+  auto ar = stage.GetPrimAtPath(Path("/World/Links/anchored", ""));
+  TEST_CHECK(bool(ar));
+  if (ar) {
+    const auto *ax = (*ar)->as<Xform>();
+    TEST_CHECK(ax != nullptr && ax->props.count("mjc:freeJoint") == 0);
+  }
+}
+
 // MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
 void urdf_json_mjc_contact_pair_test(void) {
   const char *robot_json = R"JSON({

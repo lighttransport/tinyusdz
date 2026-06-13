@@ -2002,6 +2002,14 @@ bool ConvertURDFJsonToUSDStage(
     if (JsonBool(link_json, "mocap", &is_mocap) && is_mocap) {
       AddAttr(link_xform.props, "mjc:mocap", true, /*uniform=*/true);
     }
+    // MuJoCo <freejoint>: a 6-DOF floating base. Mark it so a floating-base
+    // articulation root is distinguishable from a fixed (anchored) base, which
+    // is a parentless link WITHOUT this flag.
+    bool is_floating = false;
+    JsonBool(link_json, "floating", &is_floating);
+    if (is_floating) {
+      AddAttr(link_xform.props, "mjc:freeJoint", true, /*uniform=*/true);
+    }
     if (!is_static && !child_links.count(link_name)) {
       AppendAPISchema(link_xform.metas(),
                       APISchemas::APIName::PhysicsArticulationRootAPI);
