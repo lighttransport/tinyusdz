@@ -109,11 +109,15 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
     }
     if (src.check_unresolved_variant()) {
       any = true;
-      tinyusdz::Layer composited;
-      if (!tinyusdz::CompositeVariant(src, &composited, warn, err)) {
-        return false;
+      // AOUSD Core Spec 10.3.2.5: defer variant composition until references and
+      // payloads are resolved (this loop always resolves both).
+      if (!tinyusdz::ShouldDeferVariantComposition(src)) {
+        tinyusdz::Layer composited;
+        if (!tinyusdz::CompositeVariant(src, &composited, warn, err)) {
+          return false;
+        }
+        src = std::move(composited);
       }
-      src = std::move(composited);
     }
     if (!any) break;
   }

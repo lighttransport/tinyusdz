@@ -731,11 +731,17 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
     if (src_layer.check_unresolved_variant()) {
       has_unresolved = true;
-      Layer tmp;
-      if (!tinyusdz::CompositeVariant(src_layer, &tmp, warn, err)) {
-        return false;
+      // AOUSD Core Spec 10.3.2.5: defer variant composition until references and
+      // payloads are resolved (this loop always resolves both), so a strong
+      // local variant selection is not consumed against an empty/placeholder
+      // variantSet from a weaker layer reached via reference/payload.
+      if (!tinyusdz::ShouldDeferVariantComposition(src_layer)) {
+        Layer tmp;
+        if (!tinyusdz::CompositeVariant(src_layer, &tmp, warn, err)) {
+          return false;
+        }
+        src_layer = std::move(tmp);
       }
-      src_layer = std::move(tmp);
     }
 
     if (!has_unresolved) {
