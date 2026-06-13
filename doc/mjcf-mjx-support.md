@@ -55,7 +55,7 @@ Legend:
 | `<geom>` contype/conaffinity/group/condim/priority/solref/solimp/margin/gap/friction | `PhysicsCollisionAPI` + `MjcCollisionAPI` (`mjc:*`) | Full |
 | visual vs collision classification (group 0–2 vs 3–5) | `purpose` + `physics:collisionEnabled` + `MjcImageableAPI` | Full |
 | `<geom type="hfield">` + `<asset><hfield file=.png \| nrow/ncol/elevation>` | top surface tessellated to a `GeomMesh` (normalized elevation × `size.z`, smooth normals) | Full (CLI/native + JS CLI; browser demo views via USD load). PNG decode + inline `elevation` |
-| world-fixed geoms directly under `<worldbody>` (floor/ground/hfield) | collected onto a static root link `world` (`rigidBodyEnabled=false`, no articulation root) | Full |
+| world-fixed geoms directly under `<worldbody>` (floor/ground/hfield) | collected onto a static root link `world` (`rigidBodyEnabled=false`, no articulation root); a visible collider is emitted as BOTH a render mesh and an exact triangle-mesh collider (`approximation=none`) so the ground actually collides | Full |
 | sdf (signed-distance geom) | — | Missing |
 
 ## Sites, tendons, actuators (muscle)
