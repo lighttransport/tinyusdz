@@ -969,6 +969,7 @@ TEST_LIST = {
   { "urdf_json_mjc_contact_pair_test", urdf_json_mjc_contact_pair_test },
   { "urdf_json_mjc_mocap_custom_test", urdf_json_mjc_mocap_custom_test },
   { "physics_mjc_actuator_usdc_roundtrip_test", physics_mjc_actuator_usdc_roundtrip_test },
+  { "urdf_json_mjc_plugin_test", urdf_json_mjc_plugin_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },

@@ -3319,6 +3319,85 @@ def "World"
   }
 }
 
+// MJCF <extension><plugin><instance><config> + <actuator><plugin> ->
+// /World/MjcPlugins config scope + MjcActuator with mjc:plugin/mjc:instance.
+// Also asserts the plugin/instance tokens survive a USDC round-trip.
+void urdf_json_mjc_plugin_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "PidBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" }, { "name": "link0" } ],
+  "joints": [
+    { "name": "j0", "type": "revolute", "parent": "base", "child": "link0", "axisToken": "Z" }
+  ],
+  "mjcActuators": [
+    { "name": "act0", "actuatorType": "plugin", "targetJoint": "j0",
+      "plugin": "mujoco.pid", "instance": "pid0", "ctrlRange": [-1, 1] }
+  ],
+  "plugins": [
+    { "instance": "pid0", "plugin": "mujoco.pid",
+      "config": { "kp": "2.8", "ki": "4.0", "kd": "0.03" } }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  // MjcActuator carries plugin id + instance reference.
+  auto ar = stage.GetPrimAtPath(Path("/World/MjcActuators/act0", ""));
+  TEST_CHECK(bool(ar));
+  if (ar) {
+    const auto *a = (*ar)->as<MjcActuator>();
+    TEST_CHECK(a != nullptr);
+    if (a) {
+      TEST_CHECK(a->plugin.get_value().str() == "mujoco.pid");
+      TEST_CHECK(a->instance.get_value().str() == "pid0");
+    }
+  }
+
+  // Plugin instance config preserved on /World/MjcPlugins.
+  auto pr = stage.GetPrimAtPath(Path("/World/MjcPlugins", ""));
+  TEST_CHECK(bool(pr));
+  if (pr) {
+    const auto *x = (*pr)->as<Xform>();
+    TEST_CHECK(x != nullptr);
+    if (x) {
+      TEST_CHECK(x->props.count("mjc:plugin:pid0:plugin") > 0);
+      TEST_CHECK(x->props.count("mjc:plugin:pid0:config:kp") > 0);
+      TEST_CHECK(x->props.count("mjc:plugin:pid0:config:kd") > 0);
+    }
+  }
+
+  // The plugin/instance tokens must survive a USDC round-trip.
+  std::vector<uint8_t> bytes;
+  if (usdc::SaveAsUSDCToMemory(stage, &bytes, &warn, &err)) {
+    Stage rt;
+    if (LoadUSDCFromMemory(bytes.data(), bytes.size(), "plugin.usdc", &rt,
+                           &warn, &err)) {
+      auto ar2 = rt.GetPrimAtPath(Path("/World/MjcActuators/act0", ""));
+      TEST_CHECK(bool(ar2));
+      if (ar2) {
+        const auto *a2 = (*ar2)->as<MjcActuator>();
+        TEST_CHECK(a2 != nullptr);
+        if (a2) {
+          TEST_CHECK(a2->plugin.get_value().str() == "mujoco.pid");
+          TEST_CHECK(a2->instance.get_value().str() == "pid0");
+        }
+      }
+    } else {
+      TEST_MSG("usdc reload failed: %s", err.c_str());
+      TEST_CHECK(false);
+    }
+  } else {
+    TEST_MSG("usdc save failed: %s", err.c_str());
+    TEST_CHECK(false);
+  }
+}
+
 // MJCF <contact><pair> -> /World/Contacts host prim with mjc:* props.
 void urdf_json_mjc_contact_pair_test(void) {
   const char *robot_json = R"JSON({

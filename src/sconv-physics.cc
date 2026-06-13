@@ -369,6 +369,8 @@ bool CrateWriter::ExtractMjcActuatorProperties(
   EXTRACT_TYPED(a->biasPrm, "mjc:biasPrm");
   EXTRACT_FALLBACK_IF_AUTHORED(a->actEarly, "mjc:actEarly");
   EXTRACT_FALLBACK_IF_AUTHORED(a->inheritRange, "mjc:inheritRange");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->plugin, "mjc:plugin");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->instance, "mjc:instance");
   return true;
 }
 

@@ -88,3 +88,6 @@ void urdf_json_mjc_mocap_custom_test(void);
 
 // MjcActuator full-field USDC round-trip (ctrlRange/forceRange/gainPrm/...)
 void physics_mjc_actuator_usdc_roundtrip_test(void);
+
+// <extension><plugin> + <actuator><plugin> -> MjcPlugins + MjcActuator plugin
+void urdf_json_mjc_plugin_test(void);

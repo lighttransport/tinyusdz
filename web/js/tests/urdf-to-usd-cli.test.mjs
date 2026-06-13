@@ -464,3 +464,40 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
     assert.deepEqual(payload.mjcActuators[0].lengthRange, [0.18, 0.29]);
   });
 });
+
+await testAsync('MJCF <extension><plugin> + <actuator><plugin> -> plugins + mjcActuators', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Pid">
+  <extension>
+    <plugin plugin="mujoco.pid">
+      <instance name="pid0">
+        <config key="kp" value="2.8"/>
+        <config key="ki" value="4.0"/>
+      </instance>
+    </plugin>
+  </extension>
+  <worldbody>
+    <body name="link0"><joint name="j0" type="hinge"/><geom type="sphere" size="0.1"/></body>
+  </worldbody>
+  <actuator>
+    <plugin name="act0" plugin="mujoco.pid" instance="pid0" joint="j0" ctrlrange="-1 1"/>
+  </actuator>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    // Plugin instance declaration with its config.
+    assert.equal(payload.plugins.length, 1);
+    assert.equal(payload.plugins[0].instance, 'pid0');
+    assert.equal(payload.plugins[0].plugin, 'mujoco.pid');
+    assert.equal(payload.plugins[0].config.kp, '2.8');
+    assert.equal(payload.plugins[0].config.ki, '4.0');
+    // The plugin actuator routes to the MjcActuator path with plugin/instance...
+    assert.equal(payload.mjcActuators.length, 1);
+    assert.equal(payload.mjcActuators[0].name, 'act0');
+    assert.equal(payload.mjcActuators[0].plugin, 'mujoco.pid');
+    assert.equal(payload.mjcActuators[0].instance, 'pid0');
+    assert.equal(payload.mjcActuators[0].targetJoint, 'j0');
+    // ...and is NOT double-emitted on the Newton PD path (exclusivity, matches C++).
+    assert.equal((payload.actuators || []).length, 0);
+  });
+});

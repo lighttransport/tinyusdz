@@ -269,6 +269,12 @@ struct MjcActuator {
   TypedAttributeWithFallback<bool> actEarly{false};            // mjc:actEarly
   TypedAttributeWithFallback<double> inheritRange{0.0};        // mjc:inheritRange
 
+  // Engine-plugin transmission (<actuator><plugin .../>): the plugin id and the
+  // referenced <extension><plugin><instance> name. The instance's <config>
+  // key/value pairs are preserved on the /World/MjcPlugins scope.
+  TypedAttributeWithFallback<value::token> plugin{value::token("")};    // mjc:plugin
+  TypedAttributeWithFallback<value::token> instance{value::token("")};  // mjc:instance
+
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
