@@ -698,6 +698,7 @@ TEST_LIST = {
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
+  { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },
   { "usdz_writer_root_layer_format_test", usdz_writer_root_layer_format_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
   { "usdz_validator_alignment_test", usdz_validator_alignment_test },

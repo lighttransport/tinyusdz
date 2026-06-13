@@ -113,6 +113,42 @@ void usdz_writer_basic_roundtrip_test(void) {
   TEST_CHECK(loaded_stage.root_prims().size() >= 1);
 }
 
+// Regression: IsUSDZ()/IsUSD() must classify a USDZ from only a prefix of the
+// file. IsUSDZ(filename) reads ~256 bytes, but ParseUSDZHeader used to reject
+// the prefix because the first entry's (root layer) uncompressed size exceeds
+// the available bytes — so IsUSDZ wrongly returned false for essentially every
+// real package (any whose root layer is larger than the prefix). Detection
+// mode (assets == nullptr) now accepts a valid first local header without
+// requiring every entry's data to be present.
+void usdz_writer_is_usdz_prefix_detection_test(void) {
+  tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
+  std::map<std::string, std::vector<uint8_t>> assets;
+  std::vector<uint8_t> usdz_data;
+  std::string warn, err;
+  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("SaveAsUSDZToMemory failed: %s", err.c_str());
+    return;
+  }
+
+  // The first entry (root layer) is larger than the detection prefix, so this
+  // exercises the truncated-read path that used to fail.
+  const size_t prefix = 256;
+  TEST_CHECK(usdz_data.size() > prefix);
+
+  // Full-buffer detection (always worked).
+  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), usdz_data.size()));
+
+  // Prefix-only detection (the regression).
+  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), prefix));
+
+  // IsUSD() must also classify it as usdz from the prefix alone.
+  std::string fmt;
+  TEST_CHECK(tinyusdz::IsUSD(usdz_data.data(), prefix, &fmt));
+  TEST_CHECK(fmt == "usdz");
+}
+
 void usdz_writer_root_layer_format_test(void) {
   tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
   std::map<std::string, std::vector<uint8_t>> assets;
