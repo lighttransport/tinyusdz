@@ -1,0 +1,23 @@
+#usda 1.0
+(
+    defaultPrim = "Geom"
+)
+
+# References the asset above, overrides the selected-variant child (LODa), and
+# authors a LOCAL prim-level `def "LODb"` whose name collides with the
+# UNSELECTED LODb variant. The local def must survive composition (it is a
+# direct child, independent of variant selection).
+def "Geom" (
+    prepend references = @feat-localchild-ref.usda@
+)
+{
+    over "LODa"
+    {
+        custom string note = "override on selected-variant child"
+    }
+
+    def Mesh "LODb"
+    {
+        custom string note = "local prim-level def; collides with unselected variant"
+    }
+}
