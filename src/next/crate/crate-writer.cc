@@ -10,7 +10,6 @@
 #include "lazy-array.hh"
 #include "../layer/property-index.hh"
 #include "../types/type-id.hh"
-#include "../writer/value-printer.hh"  // PrintValue (dict-as-USDA-text encoding)
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
@@ -931,9 +930,7 @@ private:
             pm->customData.is_dictionary()) {
           CrateField f;
           f.token_index.value = InternToken("customData");
-          f.value_rep = ValueRep::Make(
-              CrateTypeId::String, InternString(PrintValue(pm->customData)),
-              false, true);
+          f.value_rep = EncodeValue(pm->customData);  // pxr binary VtDictionary
           flds.push_back(f);
         }
       }
@@ -1070,7 +1067,43 @@ private:
   // For inlinable scalars, payload contains the value directly.
   // For larger values, payload contains an index into value_data_.
   // Returns the ValueRep and records the field's VALUE section offset.
+  // Encode a VtDictionary in pxr binary form (OpenUSD WriteMap + _RecursiveWrite
+  // of each Write(VtValue)):
+  //   [u64 count] then per entry [u32 keyStrIdx][i64 recOffset=8][u64 ValueRep]
+  // The recursive forward offset is a constant 8: the ValueRep immediately
+  // follows it and the rep's payload is an absolute offset to the value's data
+  // block (pxr's reader follows that payload, so no inline data is required).
+  // Embedded non-inline reps are relocated by _PatchDictBlock once block offsets
+  // are known. The block is patched in place, so it must NOT be deduped/shared
+  // (push directly, do not InternBlock).
+  ValueRep EncodeDictionary(const Dict& d) {
+    std::vector<uint8_t> blk;
+    auto put_u64 = [&](uint64_t v) {
+      for (int i = 0; i < 8; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
+    };
+    auto put_u32 = [&](uint32_t v) {
+      for (int i = 0; i < 4; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
+    };
+    put_u64(static_cast<uint64_t>(d.entries.size()));
+    for (const auto& kv : d.entries) {
+      uint32_t kidx = InternString(kv.first);
+      ValueRep vr = EncodeValue(kv.second);  // recursive (nested dicts/arrays)
+      put_u32(kidx);
+      put_u64(static_cast<uint64_t>(static_cast<int64_t>(8)));  // recOffset = 8
+      put_u64(vr.raw());
+    }
+    uint64_t idx = value_data_.size();
+    value_data_.push_back({TypeId::Dictionary, std::move(blk)});
+    return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
+  }
+
   ValueRep EncodeValue(const Value& val) {
+    if (val.is_dictionary()) {
+      const Dict* d = val.as_dictionary();
+      return d ? EncodeDictionary(*d)
+               : ValueRep::Make(CrateTypeId::Dictionary, 0, false, false);
+    }
+
     TypeId type_id = val.type_id();
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
@@ -1593,7 +1626,7 @@ private:
         fields_.push_back(f);
       }
 
-      // Dictionary-valued stage metadata (USDA-text in a String field).
+      // Dictionary-valued stage metadata (pxr binary VtDictionary).
       auto add_layer_dict = [&](const char* name, const Value& v) {
         if (!v.is_dictionary() || !v.as_dictionary() ||
             v.as_dictionary()->empty()) {
@@ -1601,8 +1634,7 @@ private:
         }
         CrateField f;
         f.token_index.value = InternToken(name);
-        f.value_rep = ValueRep::Make(CrateTypeId::String,
-                                     InternString(PrintValue(v)), false, false);
+        f.value_rep = EncodeValue(v);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       };
@@ -1870,10 +1902,8 @@ private:
         fields_.push_back(f);
       }
 
-      // Dictionary-valued metadata: encode as USDA dict text in a String field
-      // (next-private; the matching reader parses it back with ParseDict). This
-      // sidesteps the binary VtDictionary's recursive offset patching while
-      // staying fully type-preserving.
+      // Dictionary-valued metadata: pxr binary VtDictionary (round-trips through
+      // both this reader and OpenUSD).
       auto add_dict_field = [&](const char* name, const Value& v) {
         if (!v.is_dictionary() || !v.as_dictionary() ||
             v.as_dictionary()->empty()) {
@@ -1881,8 +1911,7 @@ private:
         }
         CrateField f;
         f.token_index.value = InternToken(name);
-        f.value_rep = ValueRep::Make(CrateTypeId::String,
-                                     InternString(PrintValue(v)), false, true);
+        f.value_rep = EncodeValue(v);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       };
@@ -2491,6 +2520,34 @@ private:
     }
   }
 
+  // Relocate the embedded value ValueReps inside a Dictionary block (built by
+  // EncodeDictionary) from block-index payloads to absolute file offsets. Block
+  // layout: [u64 count] then per entry [u32 keyStrIdx][i64 recOffset][u64 rep]
+  // (20 bytes/entry); the rep sits 12 bytes into each entry.
+  void _PatchDictBlock(uint64_t data_idx) {
+    if (data_idx >= value_data_.size()) return;
+    DataBlock& block = value_data_[data_idx];
+    if (block.data.size() < 8) return;
+    uint64_t count;
+    std::memcpy(&count, block.data.data(), 8);
+    for (uint64_t i = 0; i < count; ++i) {
+      const size_t voff = 8 + static_cast<size_t>(i) * 20 + 12;
+      if (voff + 8 > block.data.size()) break;
+      uint64_t vrep_raw;
+      std::memcpy(&vrep_raw, block.data.data() + voff, 8);
+      ValueRep vrep(vrep_raw);
+      if (vrep.is_inlined()) continue;
+      uint64_t payload = vrep.payload();
+      if (payload != 0 && payload < value_offsets_.size()) {
+        uint64_t abs_offset =
+            value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+        vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset, vrep.is_array(),
+                                  false, vrep.is_compressed()).raw();
+        std::memcpy(block.data.data() + voff, &vrep_raw, 8);
+      }
+    }
+  }
+
   // Compute the VALUE section layout (8-byte-aligned block offsets) and patch
   // every field/time-sample ValueRep with its absolute file offset. Returns the
   // total VALUE section size in bytes (== the offset just past the last block).
@@ -2531,6 +2588,15 @@ private:
       // Patch embedded ValueReps in TimeSamples data blocks
       if (type == CrateTypeId::TimeSamples) {
         _PatchTimeSamplesBlock(data_idx);
+      }
+    }
+
+    // Patch embedded ValueReps in Dictionary blocks. Nested dictionaries are
+    // referenced from other dict blocks (not from fields), so iterate every
+    // block rather than only field-referenced ones.
+    for (size_t i = 0; i < value_data_.size(); ++i) {
+      if (value_data_[i].type == TypeId::Dictionary) {
+        _PatchDictBlock(static_cast<uint64_t>(i));
       }
     }
 
