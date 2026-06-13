@@ -123,6 +123,80 @@ however, support only a **subset** of MuJoCo features and reads a few extra
   `iterations`, `ls_iterations`, contact flags) are all captured in
   `MjcSceneAPI` (**Full**).
 
+## Validating the export with the OpenUSD toolset
+
+The converter is cross-checked against **pixar OpenUSD** (the reference
+implementation) as an independent oracle — tinyusdz wrote the file, OpenUSD
+reads/validates it. Get the tools with `pip install usd-core` (provides
+`usdchecker`, `usdcat`, and the `pxr` Python module); a full OpenUSD build adds
+`usdview`/`usdrecord`. Without OpenUSD, tinyusdz's own `tusdcat`
+(`examples/tusdcat`) mirrors steps 2–3.
+
+First export a model in all three formats:
+
+```sh
+build/examples/urdf-to-usd/urdf-to-usd \
+  /path/to/mujoco_menagerie/agility_cassie/cassie.xml \
+  --input-format mjcf --format all -o /tmp/cassie
+# -> /tmp/cassie.usda, /tmp/cassie.usdc, /tmp/cassie.usdz
+```
+
+**1. Conformance — `usdchecker`** (must print `Success!`):
+
+```sh
+usdchecker /tmp/cassie.usdc
+usdchecker /tmp/cassie.usdz        # also runs the USDZ/ARKit package checks
+```
+
+Catches missing stage metadata (e.g. `metersPerUnit`), unresolved asset paths,
+and compressed-ZIP-in-USDZ violations.
+
+**2. Composition — `usdcat`** (opens + flattens; confirms OpenUSD reads
+tinyusdz's crate and resolves the shading network):
+
+```sh
+usdcat --flatten /tmp/cassie.usdz | less
+# inside a usdz the texture resolves to a package-internal path:
+#   asset inputs:file = @/tmp/cassie.usdz[assets/cassie-texture.png]@
+# in usda/usdc it is the source-relative reference:
+#   asset inputs:file = @assets/cassie-texture.png@
+```
+
+**3. Texture / USDZ packaging — `pxr` Python** (confirms the texture bytes are
+packaged, resolve, and are bound to the meshes — exactly what a renderer feeds
+on):
+
+```python
+from pxr import Usd, UsdShade, UsdGeom
+stage = Usd.Stage.Open("/tmp/cassie.usdz")
+assert stage.GetMetadata("metersPerUnit") == 1.0        # SI scale authored
+zf = Usd.ZipFile.Open("/tmp/cassie.usdz")
+assert "assets/cassie-texture.png" in zf.GetFileNames() # texture embedded
+tex = UsdShade.Shader(stage.GetPrimAtPath("/World/Materials/cassie/DiffuseTexture"))
+print(tex.GetInput("file").Get().resolvedPath)          # .../cassie.usdz[assets/cassie-texture.png]
+bound = sum(
+    1 for p in stage.Traverse() if p.IsA(UsdGeom.Mesh)
+    and UsdShade.MaterialBindingAPI(p).ComputeBoundMaterial()[0]
+    and UsdGeom.PrimvarsAPI(p).GetPrimvar("st").IsDefined())
+print("textured meshes:", bound)                        # 25 for cassie
+```
+
+**4. Visual render — `usdview` / `usdrecord`** (optional; needs a GL 4.5 context):
+
+```sh
+usdview   /tmp/cassie.usdz
+usdrecord --imageWidth 640 /tmp/cassie.usdz /tmp/cassie.png
+```
+
+Both drive Hydra/Storm and require a GPU or a GL-4.5-capable software stack; they
+will not initialize on a headless box without one. Use steps 1–3 for headless/CI
+validation — they exercise the same data Hydra renders, no GL context required.
+
+Known-good baseline (`agility_cassie/cassie.xml`): `usdchecker` is clean on
+usda/usdc/usdz, the texture is embedded + package-resolved in usdz and
+source-relative in usda/usdc, and all 25 visual meshes bind the material with
+`primvars:st`.
+
 ## Required for "full" MJCF/MJX coverage (prioritized backlog)
 
 1. **`<contact><pair>`** explicit contact pairs → a `MjcContactPairAPI`/prim
