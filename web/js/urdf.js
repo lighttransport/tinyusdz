@@ -2279,6 +2279,17 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
+  // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
+  // from group.homeKeyframe above, which is only used to pose the source view.
+  const keyframesPayload = [];
+  for (const key of root.querySelectorAll('keyframe key')) {
+    const k = { name: key.getAttribute('name') || `key_${keyframesPayload.length}` };
+    for (const a of ['qpos', 'qvel', 'act', 'ctrl', 'mpos', 'mquat']) {
+      const v = parseNumbers(key.getAttribute(a), []);
+      if (v.length) k[a] = v;
+    }
+    keyframesPayload.push(k);
+  }
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
@@ -2287,7 +2298,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     links,
     joints,
     actuators,
-    ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {})
+    ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
+    ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {})
   };
   group.userData.stats = {
     links: links.length,
