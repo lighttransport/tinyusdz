@@ -10056,7 +10056,7 @@ class SubdivStreamer {
 
     std::string err;
     const tsd::Result r =
-        tsd::RefineStream(mesh, nullptr, 0, opts, so, sink, &ctx, &err);
+        tsd::RefineStream(mesh, nullptr, 0, nullptr, 0, opts, so, sink, &ctx, &err);
     if (r != tsd::Result::Success) {
       return std::string("RefineStream failed (") + tsd::to_string(r) +
              "): " + err;

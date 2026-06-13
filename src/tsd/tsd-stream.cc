@@ -97,11 +97,18 @@ struct Emitter {
   bool want_normals = false;
   // Resident level-(N-1) vertex limit normals (catmark/loop), size V*3 or null.
   const float *parent_normals = nullptr;
+  // Linear faceVarying: per channel stride; emitted per-corner (parallel to
+  // indices), not deduplicated. `fvars` holds the resident level-(N-1) (or base,
+  // for level 0) per-corner values, one tuple per face-corner.
+  uint32_t num_fvar = 0;
+  const uint32_t *fvar_stride = nullptr;
+  const std::vector<std::vector<float>> *fvars = nullptr;
 
   // --- batch buffers (reused) ---
   std::vector<float> positions;
   std::vector<float> normals;
   std::vector<std::vector<float>> pv_buf;
+  std::vector<std::vector<float>> fvar_buf;  // per channel, per emitted corner
   std::vector<uint32_t> vsource;
   std::vector<uint32_t> indices;
   std::vector<uint32_t> face_source;
@@ -115,6 +122,18 @@ struct Emitter {
 
   void Init() {
     pv_buf.resize(num_pv);
+    fvar_buf.resize(num_fvar);
+  }
+
+  // Push the fvar tuples of one child-face corner `k` (per channel). `fc[c]`
+  // points at that child face's `corner_count * stride[c]` fvar values.
+  void PushFvarCorner(uint32_t k, const std::vector<const float *> &fc) {
+    for (uint32_t c = 0; c < num_fvar; c++) {
+      const uint32_t st = fvar_stride[c];
+      for (uint32_t s = 0; s < st; s++) {
+        fvar_buf[c].push_back(fc[c][size_t(k) * st + s]);
+      }
+    }
   }
 
   // Limit normal for a final-level canonical id: exact at vertex-children
@@ -232,6 +251,44 @@ struct Emitter {
     face_source.push_back(src);
   }
 
+  // fvar-aware variants: `fc[c]` holds this child face's per-corner fvar
+  // (corner order matches a/b/c/d), pushed parallel to the emitted indices.
+  void EmitQuadF(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t src,
+                 const std::vector<const float *> &fc) {
+    const uint32_t la = Local(a), lb = Local(b), lc = Local(c), ld = Local(d);
+    if (sopts->emit_triangles) {
+      Tri(la, lb, lc);
+      face_source.push_back(src);
+      PushFvarCorner(0, fc);
+      PushFvarCorner(1, fc);
+      PushFvarCorner(2, fc);
+      Tri(la, lc, ld);
+      face_source.push_back(src);
+      PushFvarCorner(0, fc);
+      PushFvarCorner(2, fc);
+      PushFvarCorner(3, fc);
+    } else {
+      indices.push_back(la);
+      indices.push_back(lb);
+      indices.push_back(lc);
+      indices.push_back(ld);
+      face_source.push_back(src);
+      PushFvarCorner(0, fc);
+      PushFvarCorner(1, fc);
+      PushFvarCorner(2, fc);
+      PushFvarCorner(3, fc);
+    }
+  }
+
+  void EmitTriF(uint32_t a, uint32_t b, uint32_t c, uint32_t src,
+                const std::vector<const float *> &fc) {
+    Tri(Local(a), Local(b), Local(c));
+    face_source.push_back(src);
+    PushFvarCorner(0, fc);
+    PushFvarCorner(1, fc);
+    PushFvarCorner(2, fc);
+  }
+
   bool MaybeFlush() {
     faces_in_batch++;
     if (faces_in_batch >= sopts->batch_faces) {
@@ -257,6 +314,13 @@ struct Emitter {
     }
     batch.num_vertex_primvars = num_pv;
     batch.vertex_primvars = num_pv ? pv_views.data() : nullptr;
+    std::vector<StreamPrimvar> fvar_views(num_fvar);
+    for (uint32_t c = 0; c < num_fvar; c++) {
+      fvar_views[c].stride = fvar_stride[c];
+      fvar_views[c].values = fvar_buf[c].data();
+    }
+    batch.num_fvar = num_fvar;
+    batch.fvar = num_fvar ? fvar_views.data() : nullptr;
     batch.num_faces = uint32_t(face_source.size());
     batch.num_indices = uint32_t(indices.size());
     batch.face_vertex_counts = nullptr;  // uniform arity
@@ -268,6 +332,9 @@ struct Emitter {
     positions.clear();
     normals.clear();
     for (auto &b : pv_buf) {
+      b.clear();
+    }
+    for (auto &b : fvar_buf) {
       b.clear();
     }
     vsource.clear();
@@ -291,6 +358,13 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
   const uint32_t E = em.E;
   const bool loop = (em.opts->scheme == Scheme::Loop);
 
+  const uint32_t nf = em.num_fvar;
+  // Per-channel scratch: this child face's per-corner fvar (max 4 corners).
+  std::vector<std::vector<float>> fc_buf(nf);
+  std::vector<const float *> fc(nf);
+  // Per-channel face average of the parent face's corner fvar (quad split).
+  std::vector<std::vector<float>> favg(nf);
+
   for (uint32_t f = 0; f < topo.num_faces; f++) {
     if (remove_holes && hole[f]) {
       continue;
@@ -299,22 +373,99 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
     const uint32_t begin = topo.face_offsets[f];
     const uint32_t n = topo.face_offsets[f + 1] - begin;
 
+    // Parent-face corner fvar accessor: tuple of corner k, channel c.
+    auto pcorner = [&](uint32_t c, uint32_t corner) -> const float * {
+      return &(*em.fvars)[c][size_t(begin + corner) * em.fvar_stride[c]];
+    };
+
     if (loop) {
       const uint32_t v0 = em.fvi[begin], v1 = em.fvi[begin + 1],
                      v2 = em.fvi[begin + 2];
-      const uint32_t m01 = V + topo.face_edges[begin];
-      const uint32_t m12 = V + topo.face_edges[begin + 1];
-      const uint32_t m20 = V + topo.face_edges[begin + 2];
-      em.EmitTri(v0, m01, m20, src);
-      em.EmitTri(v1, m12, m01, src);
-      em.EmitTri(v2, m20, m12, src);
-      em.EmitTri(m01, m12, m20, src);
+      const uint32_t e01 = V + topo.face_edges[begin];
+      const uint32_t e12 = V + topo.face_edges[begin + 1];
+      const uint32_t e20 = V + topo.face_edges[begin + 2];
+      if (nf == 0) {
+        em.EmitTri(v0, e01, e20, src);
+        em.EmitTri(v1, e12, e01, src);
+        em.EmitTri(v2, e20, e12, src);
+        em.EmitTri(e01, e12, e20, src);
+      } else {
+        // c0,c1,c2 and the 3 edge midpoints per channel.
+        for (uint32_t c = 0; c < nf; c++) {
+          const uint32_t st = em.fvar_stride[c];
+          fc_buf[c].assign(size_t(3) * st, 0.0f);  // reused per child tri
+        }
+        // Helper to fill fc[c] for a tri with 3 source tuples (corner or mid).
+        auto tri = [&](uint32_t ca, uint32_t cb, uint32_t cc, uint32_t ga,
+                       uint32_t gb, uint32_t gc) {
+          for (uint32_t c = 0; c < nf; c++) {
+            const uint32_t st = em.fvar_stride[c];
+            const float *p0 = pcorner(c, 0), *p1 = pcorner(c, 1),
+                        *p2 = pcorner(c, 2);
+            // mids: 3=m01,4=m12,5=m20 encoded; we just compute inline.
+            auto val = [&](uint32_t which, uint32_t s) -> float {
+              switch (which) {
+                case 0: return p0[s];
+                case 1: return p1[s];
+                case 2: return p2[s];
+                case 3: return 0.5f * (p0[s] + p1[s]);  // m01
+                case 4: return 0.5f * (p1[s] + p2[s]);  // m12
+                default: return 0.5f * (p2[s] + p0[s]); // m20
+              }
+            };
+            for (uint32_t s = 0; s < st; s++) {
+              fc_buf[c][0 * st + s] = val(ca, s);
+              fc_buf[c][1 * st + s] = val(cb, s);
+              fc_buf[c][2 * st + s] = val(cc, s);
+            }
+            fc[c] = fc_buf[c].data();
+          }
+          em.EmitTriF(ga, gb, gc, src, fc);
+        };
+        tri(0, 3, 5, v0, e01, e20);   // c0, m01, m20
+        tri(1, 4, 3, v1, e12, e01);   // c1, m12, m01
+        tri(2, 5, 4, v2, e20, e12);   // c2, m20, m12
+        tri(3, 4, 5, e01, e12, e20);  // m01, m12, m20
+      }
     } else {
       const uint32_t fchild = V + E + f;
+      if (nf) {
+        for (uint32_t c = 0; c < nf; c++) {
+          const uint32_t st = em.fvar_stride[c];
+          favg[c].assign(st, 0.0f);
+          const float w = 1.0f / float(n);
+          for (uint32_t k = 0; k < n; k++) {
+            const float *p = pcorner(c, k);
+            for (uint32_t s = 0; s < st; s++) {
+              favg[c][s] += w * p[s];
+            }
+          }
+          fc_buf[c].assign(size_t(4) * st, 0.0f);
+        }
+      }
       for (uint32_t k = 0; k < n; k++) {
         const uint32_t prev = (k == 0) ? (n - 1) : (k - 1);
-        em.EmitQuad(em.fvi[begin + k], V + topo.face_edges[begin + k], fchild,
-                    V + topo.face_edges[begin + prev], src);
+        const uint32_t next = (k + 1 == n) ? 0 : (k + 1);
+        const uint32_t ga = em.fvi[begin + k];
+        const uint32_t gb = V + topo.face_edges[begin + k];
+        const uint32_t gd = V + topo.face_edges[begin + prev];
+        if (nf == 0) {
+          em.EmitQuad(ga, gb, fchild, gd, src);
+        } else {
+          for (uint32_t c = 0; c < nf; c++) {
+            const uint32_t st = em.fvar_stride[c];
+            const float *ck = pcorner(c, k), *cn = pcorner(c, next),
+                        *cp = pcorner(c, prev);
+            for (uint32_t s = 0; s < st; s++) {
+              fc_buf[c][0 * st + s] = ck[s];
+              fc_buf[c][1 * st + s] = 0.5f * (ck[s] + cn[s]);
+              fc_buf[c][2 * st + s] = favg[c][s];
+              fc_buf[c][3 * st + s] = 0.5f * (cp[s] + ck[s]);
+            }
+            fc[c] = fc_buf[c].data();
+          }
+          em.EmitQuadF(ga, gb, fchild, gd, src, fc);
+        }
       }
     }
     if (!em.MaybeFlush()) {
@@ -524,6 +675,8 @@ void EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
 }  // namespace
 
 Result RefineStream(const MeshView &mesh,
+                    const FVarChannelView *fvar_channels,
+                    uint32_t num_fvar_channels,
                     const VertexPrimvarView *vertex_primvars,
                     uint32_t num_vertex_primvars, const Options &options,
                     const StreamOptions &stream_options, StreamSink sink,
@@ -535,8 +688,8 @@ Result RefineStream(const MeshView &mesh,
     return Fail(Result::InvalidArgument, err,
                 "stream_options.batch_faces must be non-zero.");
   }
-  Result r = ValidateInput(mesh, nullptr, 0, vertex_primvars,
-                           num_vertex_primvars, options, err);
+  Result r = ValidateInput(mesh, fvar_channels, num_fvar_channels,
+                           vertex_primvars, num_vertex_primvars, options, err);
   if (r != Result::Success) {
     return r;
   }
@@ -556,11 +709,35 @@ Result RefineStream(const MeshView &mesh,
     }
   }
 
+  // faceVarying: only the linear path (the "all" mode, or any mode under
+  // bilinear) streams here; smooth seam-split channels fall back to bulk.
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    const bool linear =
+        (!smooth_scheme ||
+         fvar_channels[c].interpolation == FVarLinearInterpolation::All);
+    if (!linear) {
+      return Fail(Result::InvalidArgument, err,
+                  "smooth faceVarying is not streamable; use Refine.");
+    }
+  }
+  if (num_fvar_channels && stream_options.block_faces > 0) {
+    return Fail(Result::InvalidArgument, err,
+                "faceVarying streaming is not supported in block mode.");
+  }
+  if (num_fvar_channels && options.level == 0) {
+    return Fail(Result::InvalidArgument, err,
+                "faceVarying streaming requires level >= 1; use Refine.");
+  }
+
   std::vector<uint32_t> pv_stride(num_vertex_primvars);
   std::vector<uint8_t> pv_is_vertex(num_vertex_primvars);
   for (uint32_t p = 0; p < num_vertex_primvars; p++) {
     pv_stride[p] = vertex_primvars[p].stride;
     pv_is_vertex[p] = vertex_primvars[p].varying ? 0 : 1;
+  }
+  std::vector<uint32_t> fvar_stride(num_fvar_channels);
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    fvar_stride[c] = fvar_channels[c].stride;
   }
 
   Emitter em;
@@ -570,6 +747,8 @@ Result RefineStream(const MeshView &mesh,
   em.user = sink_user;
   em.num_pv = num_vertex_primvars;
   em.pv_stride = pv_stride.data();
+  em.num_fvar = num_fvar_channels;
+  em.fvar_stride = fvar_stride.data();
   em.pv_is_vertex = std::vector<uint8_t>(pv_is_vertex.begin(),
                                          pv_is_vertex.end());
   em.Init();
@@ -700,6 +879,19 @@ Result RefineStream(const MeshView &mesh,
         vertex_primvars[p].values + size_t(mesh.num_points) * pv_stride[p]);
   }
 
+  // Linear faceVarying expanded to per-corner tuples (refined linearly each
+  // level alongside geometry).
+  std::vector<std::vector<float>> fvars(num_fvar_channels);
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    const FVarChannelView &ch = fvar_channels[c];
+    fvars[c].resize(size_t(mesh.num_face_vertex_indices) * ch.stride);
+    for (uint32_t i = 0; i < mesh.num_face_vertex_indices; i++) {
+      const uint32_t src = ch.indices ? ch.indices[i] : i;
+      memcpy(&fvars[c][size_t(i) * ch.stride],
+             &ch.values[size_t(src) * ch.stride], sizeof(float) * ch.stride);
+    }
+  }
+
   std::vector<uint8_t> hole(mesh.num_faces, 0);
   for (uint32_t i = 0; i < mesh.num_holes; i++) {
     hole[uint32_t(mesh.hole_indices[i])] = 1;
@@ -757,6 +949,7 @@ Result RefineStream(const MeshView &mesh,
       em.fvi = fvi.data();
       em.geom = geom.data();
       em.pvs = &pvs;
+      em.fvars = &fvars;
       em.sharp = sharp;
       em.V = topo.num_points;
       em.E = topo.num_edges;
@@ -822,6 +1015,20 @@ Result RefineStream(const MeshView &mesh,
                              child_pv.data());
       }
       pvs[p] = std::move(child_pv);
+    }
+
+    // Linear faceVarying: per-corner refinement (local per face).
+    for (uint32_t c = 0; c < num_fvar_channels; c++) {
+      const uint32_t stride = fvar_stride[c];
+      std::vector<float> child_fv(size_t(child_corners64) * stride);
+      if (loop) {
+        LinearFVarRefineTri(topo, fvars[c].data(), stride, options,
+                            child_fv.data());
+      } else {
+        LinearFVarRefineQuad(topo, fvars[c].data(), stride, options,
+                             child_fv.data());
+      }
+      fvars[c] = std::move(child_fv);
     }
 
     // Hole + provenance propagation.
