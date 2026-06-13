@@ -28,8 +28,8 @@ controls.dampingFactor = 0.05;
 controls.minDistance = 2;
 controls.maxDistance = 20;
 
-scene.add(new THREE.AmbientLight(0x404040, 0.5));
-const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+scene.add(new THREE.AmbientLight(0x808080, 0.7));
+const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
 directionalLight1.position.set(5, 10, 7);
 directionalLight1.castShadow = true;
 scene.add(directionalLight1);
@@ -42,6 +42,11 @@ scene.add(new THREE.AxesHelper(2));
 
 // ===========================================================================
 // Control meshes (typed arrays handed to the wasm subdivider)
+//
+// UV meshes additionally carry a stride-2 faceVarying UV channel:
+//   uvValues  (Float32Array)  - the UV value table
+//   uvIndices (Uint32Array)   - per face-corner index into uvValues
+// streamed through tinysubdiv's linear faceVarying ("all" mode).
 // ===========================================================================
 
 function makeControlMesh(vertices, faces) {
@@ -60,7 +65,7 @@ function makeControlMesh(vertices, faces) {
 		fvc[i] = faces[i].length;
 		for (const v of faces[i]) fvi[k++] = v;
 	}
-	return { points, fvc, fvi };
+	return { points, fvc, fvi, uvValues: null, uvIndices: null };
 }
 
 function cubeControlMesh() {
@@ -91,9 +96,6 @@ function tetrahedronControlMesh() {
 		[[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]);
 }
 
-// A larger "stress" base mesh: an NxN grid of quads folded onto a box-ish
-// surface, used to make the memory difference between streaming and bulk
-// visible.
 function gridControlMesh(n) {
 	const verts = [];
 	for (let y = 0; y <= n; y++) {
@@ -113,6 +115,45 @@ function gridControlMesh(n) {
 	return makeControlMesh(verts, faces);
 }
 
+// Wavy NxN grid with a single continuous [0,1]^2 UV chart (no seams) -- linear
+// faceVarying interpolation reproduces it exactly.
+function uvGridControlMesh(n) {
+	const verts = [];
+	const uv = [];
+	for (let y = 0; y <= n; y++) {
+		for (let x = 0; x <= n; x++) {
+			const u = (x / n) * 2 - 1;
+			const v = (y / n) * 2 - 1;
+			verts.push([u, v, 0.35 * Math.sin(u * 3) * Math.cos(v * 3)]);
+			uv.push(x / n, y / n);
+		}
+	}
+	const w = n + 1;
+	const faces = [];
+	for (let y = 0; y < n; y++) {
+		for (let x = 0; x < n; x++) {
+			faces.push([y * w + x, y * w + x + 1, (y + 1) * w + x + 1, (y + 1) * w + x]);
+		}
+	}
+	const m = makeControlMesh(verts, faces);
+	m.uvValues = new Float32Array(uv);  // per vertex
+	m.uvIndices = m.fvi;                // per-corner UV == vertex UV (continuous)
+	return m;
+}
+
+// Cube where every face maps to the full [0,1]^2 chart -> visible texture
+// seams at the face edges (linear/"all" UVs cannot blend across them).
+function uvCubeControlMesh() {
+	const m = cubeControlMesh();  // 6 quads, 24 corners
+	m.uvValues = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+	const idx = new Uint32Array(m.fvi.length);
+	for (let f = 0; f < m.fvc.length; f++) {
+		for (let k = 0; k < 4; k++) idx[f * 4 + k] = k;
+	}
+	m.uvIndices = idx;
+	return m;
+}
+
 // ===========================================================================
 // WASM streaming subdivision
 // ===========================================================================
@@ -130,42 +171,107 @@ function concatTyped(chunks, total, Ctor) {
 	return out;
 }
 
-// Runs the wasm streaming refinement and returns interleaved buffers built by
-// concatenating the zero-copy batches.
-function refine(controlMesh, opts) {
-	const posChunks = [], nrmChunks = [], idxChunks = [];
-	let vertOffset = 0, totalVerts = 0, totalIdx = 0, batches = 0;
+// Runs the wasm streaming refinement. Without UVs: indexed (deduped) geometry.
+// With UVs: faceVarying UVs are per-corner, so the batches are expanded into a
+// non-indexed mesh (each triangle corner is a standalone vertex with its UV).
+function refine(cm, opts) {
+	const textured = !!opts.uvValues;
 
-	const onBatch = (pos, nrm, idx, fsrc, nverts, nfaces, bidx) => {
-		posChunks.push(pos.slice());            // slice() copies out of the heap
-		if (nrm) nrmChunks.push(nrm.slice());
-		const off = new Uint32Array(idx.length);
-		for (let i = 0; i < idx.length; i++) off[i] = idx[i] + vertOffset;
-		idxChunks.push(off);
-		vertOffset += nverts;
-		totalVerts += nverts;
-		totalIdx += idx.length;
+	const posChunks = [], nrmChunks = [], idxChunks = [];
+	let vertOffset = 0, totalVerts = 0;
+	const expPos = [], expNrm = [], expUv = [];
+	let totalCorners = 0;
+	let totalIdx = 0, batches = 0;
+
+	const onBatch = (pos, nrm, idx, fsrc, uv, nverts, nfaces, bidx) => {
 		batches++;
+		if (textured && uv) {
+			const ni = idx.length;
+			const p = new Float32Array(ni * 3);
+			const nn = nrm ? new Float32Array(ni * 3) : null;
+			const u = new Float32Array(ni * 2);
+			for (let i = 0; i < ni; i++) {
+				const vi = idx[i];
+				p[i * 3] = pos[vi * 3]; p[i * 3 + 1] = pos[vi * 3 + 1]; p[i * 3 + 2] = pos[vi * 3 + 2];
+				if (nn) { nn[i * 3] = nrm[vi * 3]; nn[i * 3 + 1] = nrm[vi * 3 + 1]; nn[i * 3 + 2] = nrm[vi * 3 + 2]; }
+				u[i * 2] = uv[i * 2]; u[i * 2 + 1] = uv[i * 2 + 1];
+			}
+			expPos.push(p); if (nn) expNrm.push(nn); expUv.push(u);
+			totalCorners += ni;
+			totalIdx += ni;
+		} else {
+			posChunks.push(pos.slice());
+			if (nrm) nrmChunks.push(nrm.slice());
+			const off = new Uint32Array(idx.length);
+			for (let i = 0; i < idx.length; i++) off[i] = idx[i] + vertOffset;
+			idxChunks.push(off);
+			vertOffset += nverts; totalVerts += nverts; totalIdx += idx.length;
+		}
 	};
 
 	const t0 = performance.now();
 	const err = streamer.refineStream(
-		controlMesh.points, controlMesh.fvc, controlMesh.fvi,
+		cm.points, cm.fvc, cm.fvi,
+		textured ? opts.uvValues : null,
+		textured ? (opts.uvIndices || null) : null,
 		opts.scheme, opts.boundary, opts.level, opts.batchFaces,
 		opts.wantNormals, onBatch);
 	const t1 = performance.now();
 	if (err) { throw new Error(err); }
 
+	const common = { batches, timeMs: t1 - t0, heapBytes: streamer.heapBytes(), numTris: totalIdx / 3 };
+	if (textured) {
+		return {
+			...common, textured: true, numVerts: totalCorners,
+			positions: concatTyped(expPos, totalCorners * 3, Float32Array),
+			normals: opts.wantNormals ? concatTyped(expNrm, totalCorners * 3, Float32Array) : null,
+			uvs: concatTyped(expUv, totalCorners * 2, Float32Array),
+		};
+	}
 	return {
+		...common, textured: false, numVerts: totalVerts,
 		positions: concatTyped(posChunks, totalVerts * 3, Float32Array),
 		normals: opts.wantNormals ? concatTyped(nrmChunks, totalVerts * 3, Float32Array) : null,
 		indices: concatTyped(idxChunks, totalIdx, Uint32Array),
-		numVerts: totalVerts,
-		numTris: totalIdx / 3,
-		batches,
-		timeMs: t1 - t0,
-		heapBytes: streamer.heapBytes(),
 	};
+}
+
+// ===========================================================================
+// Procedural UV-checker texture (CanvasTexture, no asset files)
+// ===========================================================================
+
+let textureCache = { size: 0, tex: null };
+function getTexture() {
+	if (textureCache.tex && textureCache.size === state.textureSize) return textureCache.tex;
+	if (textureCache.tex) textureCache.tex.dispose();
+	const size = state.textureSize;
+	const cv = document.createElement('canvas');
+	cv.width = cv.height = size;
+	const c = cv.getContext('2d');
+	const cells = 8, cell = size / cells;
+	for (let j = 0; j < cells; j++) {
+		for (let i = 0; i < cells; i++) {
+			c.fillStyle = ((i + j) & 1) ? '#6bb6ff' : '#16243d';
+			c.fillRect(i * cell, j * cell, cell, cell);
+		}
+	}
+	c.strokeStyle = 'rgba(255,255,255,0.55)';
+	c.lineWidth = Math.max(1, size / 512);
+	for (let i = 0; i <= cells; i++) {
+		c.beginPath(); c.moveTo(i * cell, 0); c.lineTo(i * cell, size); c.stroke();
+		c.beginPath(); c.moveTo(0, i * cell); c.lineTo(size, i * cell); c.stroke();
+	}
+	// UV origin marker (red dot at (0,0)).
+	c.fillStyle = '#ff5a5a';
+	c.beginPath(); c.arc(0, 0, size / 24, 0, Math.PI * 2); c.fill();
+	const tex = new THREE.CanvasTexture(cv);
+	tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+	tex.colorSpace = THREE.SRGBColorSpace;
+	const maxA = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+	tex.anisotropy = maxA;
+	tex.needsUpdate = true;
+	textureCache = { size, tex };
+	return tex;
 }
 
 // ===========================================================================
@@ -173,19 +279,30 @@ function refine(controlMesh, opts) {
 // ===========================================================================
 
 function buildMesh(refined, wireframe) {
-	const geometry = new THREE.BufferGeometry();
-	geometry.setAttribute('position', new THREE.BufferAttribute(refined.positions, 3));
-	geometry.setIndex(new THREE.BufferAttribute(refined.indices, 1));
-	if (refined.normals) {
-		geometry.setAttribute('normal', new THREE.BufferAttribute(refined.normals, 3));
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.BufferAttribute(refined.positions, 3));
+	if (refined.textured) {
+		g.setAttribute('uv', new THREE.BufferAttribute(refined.uvs, 2));
 	} else {
-		geometry.computeVertexNormals();
+		g.setIndex(new THREE.BufferAttribute(refined.indices, 1));
 	}
-	const material = wireframe
-		? new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
-		: new THREE.MeshStandardMaterial({
-			color: 0x6bb6ff, roughness: 0.5, metalness: 0.2, flatShading: false });
-	const mesh = new THREE.Mesh(geometry, material);
+	if (refined.normals) {
+		g.setAttribute('normal', new THREE.BufferAttribute(refined.normals, 3));
+	} else {
+		g.computeVertexNormals();
+	}
+
+	let material;
+	if (wireframe) {
+		material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+	} else if (refined.textured) {
+		material = new THREE.MeshStandardMaterial({
+			map: getTexture(), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide });
+	} else {
+		material = new THREE.MeshStandardMaterial({
+			color: 0x6bb6ff, roughness: 0.5, metalness: 0.2 });
+	}
+	const mesh = new THREE.Mesh(g, material);
 	mesh.castShadow = true;
 	mesh.receiveShadow = true;
 	return mesh;
@@ -202,20 +319,31 @@ const state = {
 	subdivisionLevel: 2,
 	scheme: 'catmullclark',
 	boundary: 'edgeAndCorner',
-	baseMesh: 'cube',
+	baseMesh: 'uv_grid',
+	textured: true,
+	textureSize: 2048,
 	wantNormals: true,
-	streaming: true,       // small batches (bounded heap) vs one big batch
+	streaming: true,
 	batchFaces: 2048,
-	showWireframe: true,
+	showWireframe: false,
 };
+
+const VRAM_BUDGET = 2 * 1024 * 1024 * 1024;  // 2 GB reference (shared GPU)
 
 function getControlMesh() {
 	if (state.scheme === 'loop') {
+		// Loop needs all-triangle input; UV meshes are quads.
 		return state.baseMesh === 'tetrahedron'
 			? tetrahedronControlMesh() : icosahedronControlMesh();
 	}
-	if (state.baseMesh === 'grid') return gridControlMesh(16);
-	return cubeControlMesh();
+	switch (state.baseMesh) {
+		case 'uv_grid': return uvGridControlMesh(16);
+		case 'uv_cube': return uvCubeControlMesh();
+		case 'grid': return gridControlMesh(16);
+		case 'tetrahedron': return tetrahedronControlMesh();
+		case 'icosahedron': return icosahedronControlMesh();
+		default: return cubeControlMesh();
+	}
 }
 
 function disposeMesh(m) {
@@ -233,14 +361,15 @@ function updateMesh() {
 	wireframeMesh = null;
 
 	const cm = getControlMesh();
+	const wantTexture = state.textured && !!cm.uvValues && state.subdivisionLevel >= 1;
 	const opts = {
 		scheme: SCHEME_ID[state.scheme],
 		boundary: BOUNDARY_ID[state.boundary],
 		level: state.subdivisionLevel,
-		// Streaming bounds the wasm working set; "off" pushes everything into
-		// one giant batch (bulk-like peak) to make the difference visible.
 		batchFaces: state.streaming ? state.batchFaces : 1 << 30,
 		wantNormals: state.wantNormals,
+		uvValues: wantTexture ? cm.uvValues : null,
+		uvIndices: wantTexture ? cm.uvIndices : null,
 	};
 
 	let refined;
@@ -262,12 +391,32 @@ function updateMesh() {
 	updateStats(refined);
 }
 
-function setText(id, text) {
+function setText(id, text, warn) {
 	const el = document.getElementById(id);
-	if (el) el.textContent = text;
+	if (el) {
+		el.textContent = text;
+		el.style.color = warn ? '#ff7a7a' : '';
+	}
 }
 
 function setStatus(text) { setText('status', text); }
+
+function estVramBytes(refined) {
+	// GPU-resident vertex buffers (+ index buffer when indexed) + texture w/mips.
+	const geom = refined.textured
+		? refined.numTris * 3 * (12 + 12 + 8)              // non-indexed pos+nrm+uv
+		: refined.numVerts * (12 + 12) + refined.numTris * 3 * 4;  // indexed pos+nrm + idx
+	const tex = refined.textured
+		? state.textureSize * state.textureSize * 4 * 1.34  // RGBA + mipmaps
+		: 0;
+	return geom + tex;
+}
+
+function fmtBytes(b) {
+	return b >= 1024 * 1024 * 1024
+		? (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+		: (b / (1024 * 1024)).toFixed(1) + ' MB';
+}
 
 function updateStats(refined) {
 	setText('vertCount', refined.numVerts.toLocaleString());
@@ -275,11 +424,12 @@ function updateStats(refined) {
 	setText('triCount', refined.numTris.toLocaleString());
 	setText('levelDisplay', String(state.subdivisionLevel));
 	setText('batchCount', refined.batches.toLocaleString());
-	setText('heapMB', (refined.heapBytes / (1024 * 1024)).toFixed(1) + ' MB');
+	setText('heapMB', fmtBytes(refined.heapBytes));
 	setText('timeMs', refined.timeMs.toFixed(1) + ' ms');
-	setStatus(state.streaming
-		? `streaming (${state.batchFaces} faces/batch)`
-		: 'bulk (single batch)');
+	const vram = estVramBytes(refined);
+	setText('estVram', fmtBytes(vram) + ' / 2.00 GB', vram > VRAM_BUDGET);
+	setStatus((refined.textured ? 'textured · ' : '') +
+		(state.streaming ? `streaming (${state.batchFaces} f/batch)` : 'bulk (single batch)'));
 }
 
 // ===========================================================================
@@ -287,14 +437,19 @@ function updateStats(refined) {
 // ===========================================================================
 
 const gui = new GUI();
-gui.add(state, 'subdivisionLevel', 0, 7, 1).name('Subdivision Level').onChange(updateMesh);
+gui.add(state, 'subdivisionLevel', 0, 5, 1).name('Subdivision Level').onChange(updateMesh);
 gui.add(state, 'scheme', ['catmullclark', 'loop', 'bilinear']).name('Scheme').onChange(updateMesh);
 gui.add(state, 'boundary', ['edgeAndCorner', 'edgeOnly', 'none']).name('Boundary').onChange(updateMesh);
-gui.add(state, 'baseMesh', ['cube', 'grid', 'tetrahedron', 'icosahedron']).name('Base Mesh').onChange(updateMesh);
-gui.add(state, 'wantNormals').name('Analytic Normals').onChange(updateMesh);
+gui.add(state, 'baseMesh', ['uv_grid', 'uv_cube', 'cube', 'grid', 'tetrahedron', 'icosahedron']).name('Base Mesh').onChange(updateMesh);
 gui.add(state, 'showWireframe').name('Show Wireframe').onChange(updateMesh);
 
+const texFolder = gui.addFolder('Texture (faceVarying UVs)');
+texFolder.add(state, 'textured').name('Textured').onChange(updateMesh);
+texFolder.add(state, 'textureSize', [512, 1024, 2048, 4096]).name('Texture size').onChange(updateMesh);
+texFolder.open();
+
 const memFolder = gui.addFolder('Memory (wasm streaming)');
+memFolder.add(state, 'wantNormals').name('Analytic Normals').onChange(updateMesh);
 memFolder.add(state, 'streaming').name('Streaming').onChange(updateMesh);
 memFolder.add(state, 'batchFaces', [256, 1024, 2048, 8192, 65536]).name('Faces / batch').onChange(updateMesh);
 memFolder.open();

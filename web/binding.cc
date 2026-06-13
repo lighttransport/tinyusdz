@@ -9984,14 +9984,19 @@ class SubdivStreamer {
   // points: Float32Array (xyz interleaved). fvc/fvi: Uint32Array.
   // scheme: 0=catmullClark, 1=loop, 2=bilinear.
   // boundary: 0=edgeAndCorner, 1=edgeOnly, 2=none.
-  // onBatch(positions, normals|null, indices, faceSource, numVertices,
-  //         numFaces, batchIndex): typed-array views valid only for the call.
+  // uvValues: Float32Array (stride 2) or null/empty for no texturing.
+  // uvIndices: Uint32Array (per face-corner) or null for identity.
+  // onBatch(positions, normals|null, indices, faceSource, uv|null,
+  //         numVertices, numFaces, batchIndex): typed-array views valid only
+  //         for the call. `uv` is per-corner (parallel to indices) when present.
   // Returns "" on success, else an error message.
   std::string refineStream(const emscripten::val &points,
                            const emscripten::val &fvc,
-                           const emscripten::val &fvi, int scheme, int boundary,
-                           int level, int batchFaces, bool wantNormals,
-                           emscripten::val onBatch) {
+                           const emscripten::val &fvi,
+                           const emscripten::val &uvValues,
+                           const emscripten::val &uvIndices, int scheme,
+                           int boundary, int level, int batchFaces,
+                           bool wantNormals, emscripten::val onBatch) {
     namespace tsd = tinyusdz::tsd;
 
     std::vector<float> pts;
@@ -10007,6 +10012,13 @@ class SubdivStreamer {
       return "empty mesh";
     }
 
+    // Optional UV faceVarying channel (linear / "all" mode).
+    std::vector<float> uvs;
+    std::vector<uint32_t> uvidx;
+    detail::copyTypedArray(uvValues, uvs, "Float32Array");
+    detail::copyTypedArray(uvIndices, uvidx, "Uint32Array");
+    const bool has_uv = (uvs.size() >= 2) && ((uvs.size() % 2) == 0);
+
     tsd::MeshView mesh;
     mesh.points = pts.data();
     mesh.num_points = uint32_t(pts.size() / 3);
@@ -10014,6 +10026,15 @@ class SubdivStreamer {
     mesh.num_faces = uint32_t(counts.size());
     mesh.face_vertex_indices = indices.data();
     mesh.num_face_vertex_indices = uint32_t(indices.size());
+
+    tsd::FVarChannelView uvchan;
+    if (has_uv) {
+      uvchan.values = uvs.data();
+      uvchan.num_values = uint32_t(uvs.size() / 2);
+      uvchan.indices = uvidx.empty() ? nullptr : uvidx.data();
+      uvchan.stride = 2;
+      uvchan.interpolation = tsd::FVarLinearInterpolation::All;
+    }
 
     tsd::Options opts;
     opts.scheme = (scheme == 1)   ? tsd::Scheme::Loop
@@ -10049,14 +10070,21 @@ class SubdivStreamer {
           size_t(b->num_indices), const_cast<uint32_t *>(b->indices)));
       emscripten::val fsrc(emscripten::typed_memory_view(
           size_t(b->num_faces), const_cast<uint32_t *>(b->face_source)));
-      (*c->cb)(pos, nrm, idx, fsrc, b->num_vertices, b->num_faces,
+      emscripten::val uv =
+          (b->num_fvar == 1)
+              ? emscripten::val(emscripten::typed_memory_view(
+                    size_t(b->num_indices) * 2,
+                    const_cast<float *>(b->fvar[0].values)))
+              : emscripten::val::null();
+      (*c->cb)(pos, nrm, idx, fsrc, uv, b->num_vertices, b->num_faces,
                b->batch_index);
       return true;
     };
 
     std::string err;
-    const tsd::Result r =
-        tsd::RefineStream(mesh, nullptr, 0, nullptr, 0, opts, so, sink, &ctx, &err);
+    const tsd::Result r = tsd::RefineStream(
+        mesh, has_uv ? &uvchan : nullptr, has_uv ? 1u : 0u, nullptr, 0, opts, so,
+        sink, &ctx, &err);
     if (r != tsd::Result::Success) {
       return std::string("RefineStream failed (") + tsd::to_string(r) +
              "): " + err;
