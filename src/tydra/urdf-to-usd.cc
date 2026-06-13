@@ -791,6 +791,108 @@ void AddNewtonSceneOptions(const nlohmann::json &root, PhysicsScene &scene) {
   scene.newtonScene = newton_scene;
 }
 
+// Populate the full MjcSceneAPI from a payload `mjcScene` block carrying the
+// MuJoCo <option>/<option><flag>/<compiler> attributes (MJCF attr names). The
+// schema (src/mjcPhysics.hh) and its USDA/USDC round-trip already support all
+// of these; the parsers previously emitted only timestep.
+void ApplyMjcSceneOptions(const nlohmann::json &root, MjcSceneAPI &mjc) {
+  const nlohmann::json *ms = JsonObjectOrNull(root, "mjcScene");
+  if (!ms) return;
+
+  auto setNum = [](const nlohmann::json &o, const char *k, auto &field) {
+    double v;
+    if (JsonNumber(o, k, &v)) field.set_value(v);
+  };
+  auto setInt = [](const nlohmann::json &o, const char *k, auto &field) {
+    int v;
+    if (JsonIntFromObjectOrParent(o, "", k, &v)) field.set_value(v);
+  };
+  auto setTok = [](const nlohmann::json &o, const char *k, auto &field) {
+    const std::string v = JsonString(o, k);
+    if (!v.empty()) field.set_value(value::token(v));
+  };
+  auto setBool = [](const nlohmann::json &o, const char *k, auto &field) {
+    bool v;
+    if (JsonBool(o, k, &v)) field.set_value(v);
+  };
+  auto setVec3 = [](const nlohmann::json &o, const char *k, auto &field) {
+    const auto a = JsonDoubleArray(o, k);
+    if (a.size() >= 3) field.set_value(value::double3{a[0], a[1], a[2]});
+  };
+
+  if (const nlohmann::json *o = JsonObjectOrNull(*ms, "option")) {
+    setNum(*o, "timestep", mjc.timestep);
+    setNum(*o, "impratio", mjc.impratio);
+    setNum(*o, "density", mjc.density);
+    setNum(*o, "viscosity", mjc.viscosity);
+    setNum(*o, "o_margin", mjc.o_margin);
+    setNum(*o, "tolerance", mjc.tolerance);
+    setNum(*o, "ls_tolerance", mjc.ls_tolerance);
+    setNum(*o, "noslip_tolerance", mjc.noslip_tolerance);
+    setNum(*o, "ccd_tolerance", mjc.ccd_tolerance);
+    setInt(*o, "iterations", mjc.iterations);
+    setInt(*o, "ls_iterations", mjc.ls_iterations);
+    setInt(*o, "noslip_iterations", mjc.noslip_iterations);
+    setInt(*o, "ccd_iterations", mjc.ccd_iterations);
+    setInt(*o, "sdf_iterations", mjc.sdf_iterations);
+    setInt(*o, "sdf_initpoints", mjc.sdf_initpoints);
+    setTok(*o, "integrator", mjc.integrator);
+    setTok(*o, "cone", mjc.cone);
+    setTok(*o, "jacobian", mjc.jacobian);
+    setTok(*o, "solver", mjc.solver);
+    setVec3(*o, "wind", mjc.wind);
+    setVec3(*o, "magnetic", mjc.magnetic);
+    const auto sr = JsonDoubleArray(*o, "o_solref");
+    if (!sr.empty()) mjc.o_solref.set_value(sr);
+    const auto si = JsonDoubleArray(*o, "o_solimp");
+    if (!si.empty()) mjc.o_solimp.set_value(si);
+    const auto fr = JsonDoubleArray(*o, "o_friction");
+    if (!fr.empty()) mjc.o_friction.set_value(fr);
+  }
+
+  if (const nlohmann::json *f = JsonObjectOrNull(*ms, "flag")) {
+    setBool(*f, "constraint", mjc.flag_constraint);
+    setBool(*f, "equality", mjc.flag_equality);
+    setBool(*f, "frictionloss", mjc.flag_frictionloss);
+    setBool(*f, "limit", mjc.flag_limit);
+    setBool(*f, "contact", mjc.flag_contact);
+    setBool(*f, "gravity", mjc.flag_gravity);
+    setBool(*f, "clampctrl", mjc.flag_clampctrl);
+    setBool(*f, "warmstart", mjc.flag_warmstart);
+    setBool(*f, "filterparent", mjc.flag_filterparent);
+    setBool(*f, "actuation", mjc.flag_actuation);
+    setBool(*f, "refsafe", mjc.flag_refsafe);
+    setBool(*f, "sensor", mjc.flag_sensor);
+    setBool(*f, "midphase", mjc.flag_midphase);
+    setBool(*f, "nativeccd", mjc.flag_nativeccd);
+    setBool(*f, "eulerdamp", mjc.flag_eulerdamp);
+    setBool(*f, "autoreset", mjc.flag_autoreset);
+    setBool(*f, "island", mjc.flag_island);
+    setBool(*f, "override", mjc.flag_override);
+    setBool(*f, "energy", mjc.flag_energy);
+    setBool(*f, "fwdinv", mjc.flag_fwdinv);
+    setBool(*f, "invdiscrete", mjc.flag_invdiscrete);
+    setBool(*f, "multiccd", mjc.flag_multiccd);
+  }
+
+  if (const nlohmann::json *c = JsonObjectOrNull(*ms, "compiler")) {
+    setBool(*c, "autolimits", mjc.compiler_autoLimits);
+    setNum(*c, "boundmass", mjc.compiler_boundMass);
+    setNum(*c, "boundinertia", mjc.compiler_boundInertia);
+    setNum(*c, "settotalmass", mjc.compiler_setTotalMass);
+    setBool(*c, "usethread", mjc.compiler_useThread);
+    setBool(*c, "balanceinertia", mjc.compiler_balanceInertia);
+    setTok(*c, "angle", mjc.compiler_angle);
+    setBool(*c, "fitaabb", mjc.compiler_fitAABB);
+    setBool(*c, "fusestatic", mjc.compiler_fuseStatic);
+    setTok(*c, "inertiafromgeom", mjc.compiler_inertiaFromGeom);
+    setBool(*c, "alignfree", mjc.compiler_alignFree);
+    setInt(*c, "inertiagrouprange_min", mjc.compiler_inertiaGroupRangeMin);
+    setInt(*c, "inertiagrouprange_max", mjc.compiler_inertiaGroupRangeMax);
+    setBool(*c, "saveinertial", mjc.compiler_saveInertial);
+  }
+}
+
 std::vector<std::pair<APISchemas::APIName, std::string>>
 NewtonActuatorSchemas(const nlohmann::json &act_json) {
   std::vector<std::pair<APISchemas::APIName, std::string>> schemas;
@@ -1538,6 +1640,8 @@ bool ConvertURDFJsonToUSDStage(
     if (JsonNumber(root, "timestep", &timestep)) {
       mjc_scene.timestep.set_value(timestep);
     }
+    // Full <option>/<flag>/<compiler> set (overrides/augments timestep).
+    ApplyMjcSceneOptions(root, mjc_scene);
     scene.mjcScene = mjc_scene;
     AddNewtonSceneOptions(root, scene);
     AddAPISchemas(scene.metas(), {

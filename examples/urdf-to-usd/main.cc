@@ -1438,6 +1438,62 @@ void AddMujocoContactExcludesJson(const pugi::xml_node &root,
   }
 }
 
+// Normalize a MuJoCo boolean/flag attribute: <flag x="enable|disable"> and
+// <compiler x="true|false"> both occur; map enable/true/1 -> true.
+bool MjcBoolAttr(const std::string &v) {
+  return v == "true" || v == "enable" || v == "1";
+}
+
+// Read the full <option>/<option><flag>/<compiler> attribute set into a
+// `mjcScene` JSON block (MJCF attr names) consumed by the converter's
+// ApplyMjcSceneOptions -> MjcSceneAPI. (The MjcSceneAPI schema + USDC
+// round-trip already support all of these; only timestep was emitted before.)
+nlohmann::json BuildMjcSceneJson(const pugi::xml_node &root) {
+  nlohmann::json ms = nlohmann::json::object();
+  if (const auto option = Child(root, "option")) {
+    nlohmann::json opt = nlohmann::json::object();
+    auto num = [&](const char *k) { if (HasAttr(option, k)) opt[k] = ParseDoubleAttr(option, k, 0.0); };
+    auto inum = [&](const char *k) { if (HasAttr(option, k)) opt[k] = static_cast<int>(ParseDoubleAttr(option, k, 0.0)); };
+    auto tok = [&](const char *k) { if (HasAttr(option, k)) opt[k] = Attr(option, k); };
+    auto vec = [&](const char *k) { auto v = ParseDoubles(Attr(option, k)); if (!v.empty()) opt[k] = v; };
+    num("timestep"); num("impratio"); num("density"); num("viscosity"); num("o_margin");
+    num("tolerance"); num("ls_tolerance"); num("noslip_tolerance"); num("ccd_tolerance");
+    inum("iterations"); inum("ls_iterations"); inum("noslip_iterations");
+    inum("ccd_iterations"); inum("sdf_iterations"); inum("sdf_initpoints");
+    tok("integrator"); tok("cone"); tok("jacobian"); tok("solver");
+    vec("wind"); vec("magnetic"); vec("o_solref"); vec("o_solimp"); vec("o_friction");
+    if (!opt.empty()) ms["option"] = std::move(opt);
+    if (const auto flag = Child(option, "flag")) {
+      nlohmann::json fl = nlohmann::json::object();
+      static const char *kFlags[] = {
+          "constraint", "equality", "frictionloss", "limit", "contact",
+          "gravity", "clampctrl", "warmstart", "filterparent", "actuation",
+          "refsafe", "sensor", "midphase", "nativeccd", "eulerdamp",
+          "autoreset", "island", "override", "energy", "fwdinv",
+          "invdiscrete", "multiccd"};
+      for (const char *k : kFlags)
+        if (HasAttr(flag, k)) fl[k] = MjcBoolAttr(Attr(flag, k));
+      if (!fl.empty()) ms["flag"] = std::move(fl);
+    }
+  }
+  if (const auto compiler = Child(root, "compiler")) {
+    nlohmann::json comp = nlohmann::json::object();
+    auto num = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = ParseDoubleAttr(compiler, k, 0.0); };
+    auto tok = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = Attr(compiler, k); };
+    auto boolean = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = MjcBoolAttr(Attr(compiler, k)); };
+    boolean("autolimits"); num("boundmass"); num("boundinertia"); num("settotalmass");
+    boolean("usethread"); boolean("balanceinertia"); tok("angle"); boolean("fitaabb");
+    boolean("fusestatic"); tok("inertiafromgeom"); boolean("alignfree"); boolean("saveinertial");
+    const auto igr = ParseDoubles(Attr(compiler, "inertiagrouprange"));
+    if (igr.size() >= 2) {
+      comp["inertiagrouprange_min"] = static_cast<int>(igr[0]);
+      comp["inertiagrouprange_max"] = static_cast<int>(igr[1]);
+    }
+    if (!comp.empty()) ms["compiler"] = std::move(comp);
+  }
+  return ms;
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
@@ -1633,6 +1689,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     (*payload)["filteredPairs"] = std::move(filtered_pairs);
   if (!sites.empty()) (*payload)["sites"] = std::move(sites);
   if (!mjc_actuators.empty()) (*payload)["mjcActuators"] = std::move(mjc_actuators);
+  nlohmann::json mjc_scene = BuildMjcSceneJson(root);
+  if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

@@ -1947,6 +1947,59 @@ function makeMuscleGroup(data) {
   return muscleGroup;
 }
 
+// MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
+function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
+
+// MJCF <option>/<option><flag>/<compiler> -> exportPayload.mjcScene, consumed by
+// the C++ converter's ApplyMjcSceneOptions -> MjcSceneAPI (so the converted USD
+// carries the full simulation options, not just timestep).
+function parseMujocoSceneOptions(root) {
+  const ms = {};
+  const option = firstChildElement(root, 'option');
+  if (option) {
+    const opt = {};
+    const num = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = Number(v); };
+    const inum = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = Math.round(Number(v)); };
+    const tok = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = v; };
+    const vec = (k) => { const v = parseNumbers(option.getAttribute(k), []); if (v.length) opt[k] = v; };
+    ['timestep', 'impratio', 'density', 'viscosity', 'o_margin', 'tolerance',
+     'ls_tolerance', 'noslip_tolerance', 'ccd_tolerance'].forEach(num);
+    ['iterations', 'ls_iterations', 'noslip_iterations', 'ccd_iterations',
+     'sdf_iterations', 'sdf_initpoints'].forEach(inum);
+    ['integrator', 'cone', 'jacobian', 'solver'].forEach(tok);
+    ['wind', 'magnetic', 'o_solref', 'o_solimp', 'o_friction'].forEach(vec);
+    if (Object.keys(opt).length) ms.option = opt;
+    const flag = firstChildElement(option, 'flag');
+    if (flag) {
+      const fl = {};
+      ['constraint', 'equality', 'frictionloss', 'limit', 'contact', 'gravity',
+       'clampctrl', 'warmstart', 'filterparent', 'actuation', 'refsafe', 'sensor',
+       'midphase', 'nativeccd', 'eulerdamp', 'autoreset', 'island', 'override',
+       'energy', 'fwdinv', 'invdiscrete', 'multiccd'].forEach((k) => {
+        const v = flag.getAttribute(k); if (v !== null) fl[k] = mjcBoolAttr(v);
+      });
+      if (Object.keys(fl).length) ms.flag = fl;
+    }
+  }
+  const compiler = firstChildElement(root, 'compiler');
+  if (compiler) {
+    const comp = {};
+    const num = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = Number(v); };
+    const tok = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = v; };
+    const boolean = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = mjcBoolAttr(v); };
+    boolean('autolimits'); num('boundmass'); num('boundinertia'); num('settotalmass');
+    boolean('usethread'); boolean('balanceinertia'); tok('angle'); boolean('fitaabb');
+    boolean('fusestatic'); tok('inertiafromgeom'); boolean('alignfree'); boolean('saveinertial');
+    const igr = parseNumbers(compiler.getAttribute('inertiagrouprange'), []);
+    if (igr.length >= 2) {
+      comp.inertiagrouprange_min = Math.round(igr[0]);
+      comp.inertiagrouprange_max = Math.round(igr[1]);
+    }
+    if (Object.keys(comp).length) ms.compiler = comp;
+  }
+  return ms;
+}
+
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const expanded = await expandMujocoIncludes(xmlText, baseDir);
   const doc = parseXMLDocument(expanded);
@@ -2225,6 +2278,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     };
   }
 
+  const mjcSceneOptions = parseMujocoSceneOptions(root);
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
@@ -2232,7 +2286,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     timestep: numberAttr(firstChildElement(root, 'option'), 'timestep'),
     links,
     joints,
-    actuators
+    actuators,
+    ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {})
   };
   group.userData.stats = {
     links: links.length,

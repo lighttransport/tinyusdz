@@ -3220,6 +3220,63 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <option>/<option><flag>/<compiler> full set -> MjcSceneAPI (JSON->USD).
+// The schema + USDC round-trip already existed; this locks the parser->converter
+// path that now populates all the fields (not just timestep).
+void urdf_json_mjc_scene_options_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "OptBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "joints": [],
+  "mjcScene": {
+    "option": {
+      "timestep": 0.001, "integrator": "implicitfast", "solver": "newton",
+      "cone": "elliptic", "jacobian": "auto", "iterations": 50,
+      "ls_iterations": 8, "tolerance": 1e-9, "impratio": 5.0,
+      "density": 1.2, "viscosity": 0.001, "wind": [1, 0, 0]
+    },
+    "flag": { "contact": false, "gravity": true, "eulerdamp": false, "override": true },
+    "compiler": { "autolimits": true, "angle": "radian", "boundmass": 0.0001,
+                  "inertiafromgeom": "auto", "balanceinertia": true }
+  }
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/PhysicsScene", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *scene = (*r)->as<PhysicsScene>();
+  TEST_CHECK(scene != nullptr);
+  if (!scene || !scene->mjcScene.has_value()) { TEST_CHECK(false); return; }
+  const auto &m = scene->mjcScene.value();
+  // option
+  TEST_CHECK(approx_eq(m.timestep.get_value(), 0.001));
+  TEST_CHECK(m.integrator.get_value().str() == "implicitfast");
+  TEST_CHECK(m.solver.get_value().str() == "newton");
+  TEST_CHECK(m.cone.get_value().str() == "elliptic");
+  TEST_CHECK(m.iterations.get_value() == 50);
+  TEST_CHECK(m.ls_iterations.get_value() == 8);
+  TEST_CHECK(approx_eq(m.impratio.get_value(), 5.0));
+  TEST_CHECK(approx_eq(m.density.get_value(), 1.2));
+  // flag (disable -> false; enable -> true)
+  TEST_CHECK(m.flag_contact.get_value() == false);
+  TEST_CHECK(m.flag_gravity.get_value() == true);
+  TEST_CHECK(m.flag_eulerdamp.get_value() == false);
+  TEST_CHECK(m.flag_override.get_value() == true);
+  // compiler
+  TEST_CHECK(m.compiler_autoLimits.get_value() == true);
+  TEST_CHECK(m.compiler_angle.get_value().str() == "radian");
+  TEST_CHECK(approx_eq(m.compiler_boundMass.get_value(), 0.0001));
+  TEST_CHECK(m.compiler_balanceInertia.get_value() == true);
+}
+
 // ===========================================================================
 // Phase 3b: schema-coverage tests for previously-unasserted APIs.
 // ===========================================================================

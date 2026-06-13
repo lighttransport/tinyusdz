@@ -226,6 +226,31 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF <option>/<flag>/<compiler> -> mjcScene payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Opt">
+  <compiler angle="radian" autolimits="true" boundmass="0.0001"/>
+  <option timestep="0.001" integrator="implicitfast" solver="newton" cone="elliptic" iterations="50" ls_iterations="8">
+    <flag eulerdamp="disable" contact="enable"/>
+  </option>
+  <worldbody><body name="b"><geom type="sphere" size="0.1"/></body></worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.ok(payload.mjcScene, 'mjcScene present');
+    assert.equal(payload.mjcScene.option.integrator, 'implicitfast');
+    assert.equal(payload.mjcScene.option.solver, 'newton');
+    assert.equal(payload.mjcScene.option.cone, 'elliptic');
+    assert.equal(payload.mjcScene.option.iterations, 50);
+    assert.equal(payload.mjcScene.option.ls_iterations, 8);
+    assert.equal(payload.mjcScene.flag.eulerdamp, false);  // disable -> false
+    assert.equal(payload.mjcScene.flag.contact, true);     // enable -> true
+    assert.equal(payload.mjcScene.compiler.angle, 'radian');
+    assert.equal(payload.mjcScene.compiler.autolimits, true);
+    assert.equal(payload.mjcScene.compiler.boundmass, 0.0001);
+  });
+});
+
 await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> payload', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>
