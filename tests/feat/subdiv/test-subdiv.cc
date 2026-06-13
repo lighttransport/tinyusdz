@@ -5,10 +5,12 @@
 // Runs in normal CI; no OpenSubdiv required.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1934,6 +1936,164 @@ void test_stream_normals() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Block + halo: welded blocked output must equal whole-mesh bulk Refine.
+// (Owned-face vertices are bit-identical to bulk when the halo gives full
+// stencil support, so we match emitted positions to bulk positions exactly --
+// this is the halo-radius safety net.)
+// ---------------------------------------------------------------------------
+
+struct BlockCollect {
+  std::vector<float> positions;       // flat, all emitted vertices (with dup)
+  std::vector<uint32_t> face_arity;
+  std::vector<uint32_t> face_source;
+  std::vector<uint32_t> face_corners;  // flat, global emitted-vertex ids
+};
+
+bool BlockSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  BlockCollect *c = static_cast<BlockCollect *>(user);
+  const uint32_t vbase = uint32_t(c->positions.size() / 3);
+  for (uint32_t i = 0; i < b->num_vertices * 3; i++) {
+    c->positions.push_back(b->positions[i]);
+  }
+  const uint32_t arity = b->num_faces ? (b->num_indices / b->num_faces) : 0;
+  for (uint32_t f = 0; f < b->num_faces; f++) {
+    c->face_arity.push_back(arity);
+    c->face_source.push_back(b->face_source[f]);
+    for (uint32_t k = 0; k < arity; k++) {
+      c->face_corners.push_back(vbase + b->indices[size_t(f) * arity + k]);
+    }
+  }
+  return true;
+}
+
+std::vector<uint32_t> CanonFace(std::vector<uint32_t> ids, uint32_t src) {
+  uint32_t best = 0;
+  for (size_t k = 1; k < ids.size(); k++) {
+    if (ids[k] < ids[best]) best = k;
+  }
+  std::vector<uint32_t> out;
+  for (size_t k = 0; k < ids.size(); k++) {
+    out.push_back(ids[(best + k) % ids.size()]);
+  }
+  out.push_back(0x80000000u | src);  // tag source distinctly from vertex ids
+  return out;
+}
+
+void test_stream_blocked_matches_bulk() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::Cube());
+  meshes.push_back(corpus::QuadGrid(4, 4, "bg"));
+  meshes.push_back(corpus::MixedDegree());
+  meshes.push_back(corpus::CreasedCube(2.0f, "bcc"));
+  meshes.push_back(corpus::CubeWithHoles());
+  meshes.push_back(corpus::CorneredGrid());
+  meshes.push_back(corpus::Icosahedron());
+  meshes.push_back(corpus::TriGrid(4, 4, "btg"));
+  meshes.push_back(corpus::CreasedTriGrid());
+
+  const BoundaryInterpolation boundaries[2] = {
+      BoundaryInterpolation::EdgeAndCorner, BoundaryInterpolation::None};
+  const uint32_t block_sizes[3] = {1u, 2u, 3u};
+
+  for (const corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::CatmullClark, Scheme::Bilinear};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      all_tris = all_tris && (c == 3);
+    }
+    if (all_tris) {
+      schemes.push_back(Scheme::Loop);
+    }
+    for (Scheme scheme : schemes) {
+      for (BoundaryInterpolation boundary : boundaries) {
+        for (int level = 1; level <= 3; level++) {
+          Options opts;
+          opts.scheme = scheme;
+          opts.boundary = boundary;
+          opts.level = level;
+          opts.remove_holes = true;
+
+          RefinedMesh bulk;
+          std::string err;
+          CHECK(Refine(ToView(m), opts, &bulk, &err) == Result::Success);
+
+          // Exact position -> bulk vertex id.
+          std::map<std::array<float, 3>, uint32_t> posmap;
+          for (uint32_t v = 0; v < bulk.points.size() / 3; v++) {
+            posmap[{bulk.points[3 * v], bulk.points[3 * v + 1],
+                    bulk.points[3 * v + 2]}] = v;
+          }
+          // Bulk face multiset (canonicalized, with source).
+          std::map<std::vector<uint32_t>, int> bulk_faces;
+          size_t off = 0;
+          for (size_t f = 0; f < bulk.face_vertex_counts.size(); f++) {
+            const uint32_t n = bulk.face_vertex_counts[f];
+            std::vector<uint32_t> ids(bulk.face_vertex_indices.begin() + off,
+                                      bulk.face_vertex_indices.begin() + off + n);
+            off += n;
+            bulk_faces[CanonFace(ids, bulk.face_source[f])]++;
+          }
+
+          for (uint32_t bf : block_sizes) {
+            StreamOptions so;
+            so.block_faces = bf;
+            so.emit_triangles = false;
+            so.want_normals = false;
+            BlockCollect col;
+            CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, BlockSinkFn,
+                               &col, &err) == Result::Success);
+
+            const std::string tag = m.name + "/L" + std::to_string(level) +
+                                    "/bf" + std::to_string(bf);
+            // Every emitted vertex matches a bulk vertex exactly.
+            const uint32_t ev = uint32_t(col.positions.size() / 3);
+            std::vector<uint32_t> to_bulk(ev, 0xFFFFFFFFu);
+            bool all_found = true;
+            for (uint32_t e = 0; e < ev; e++) {
+              std::array<float, 3> key = {col.positions[3 * e],
+                                          col.positions[3 * e + 1],
+                                          col.positions[3 * e + 2]};
+              auto it = posmap.find(key);
+              if (it == posmap.end()) {
+                all_found = false;
+              } else {
+                to_bulk[e] = it->second;
+              }
+            }
+            CHECK_MSG(all_found, tag);
+
+            // Blocked face multiset (mapped into bulk ids) equals bulk's.
+            std::map<std::vector<uint32_t>, int> blk_faces;
+            size_t coff = 0;
+            bool ok = all_found;
+            for (size_t f = 0; f < col.face_arity.size(); f++) {
+              const uint32_t n = col.face_arity[f];
+              std::vector<uint32_t> ids;
+              for (uint32_t k = 0; k < n; k++) {
+                const uint32_t e = col.face_corners[coff + k];
+                if (e >= ev || to_bulk[e] == 0xFFFFFFFFu) {
+                  ok = false;
+                } else {
+                  ids.push_back(to_bulk[e]);
+                }
+              }
+              coff += n;
+              if (ids.size() == n) {
+                blk_faces[CanonFace(ids, col.face_source[f])]++;
+              }
+            }
+            CHECK_MSG(ok && (blk_faces == bulk_faces), tag);
+          }
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -2015,6 +2175,7 @@ int main() {
   TEST(test_stream_matches_bulk);
   TEST(test_stream_level0_passthrough);
   TEST(test_stream_normals);
+  TEST(test_stream_blocked_matches_bulk);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
