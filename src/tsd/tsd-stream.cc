@@ -21,6 +21,7 @@
 // have full stencil support), and only the block's owned faces are emitted.
 // Peak is then one block-plus-halo refinement, independent of total mesh size.
 
+#include <algorithm>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -585,47 +586,9 @@ Result StreamLevel0(Emitter &em, const MeshView &mesh, bool remove_holes) {
 
 // --- Block + halo (bounded working set) --------------------------------------
 
-// Grows the owned face range [fstart, fend) by `rings` vertex-adjacency rings
-// and returns the ordered set of base faces in the block + halo.
-std::vector<uint32_t> GatherHalo(const Topology &topo, const uint32_t *fvi,
-                                 uint32_t fstart, uint32_t fend,
-                                 uint32_t rings) {
-  std::vector<uint8_t> in(topo.num_faces, 0);
-  std::vector<uint32_t> frontier;
-  for (uint32_t f = fstart; f < fend; f++) {
-    in[f] = 1;
-    frontier.push_back(f);
-  }
-  for (uint32_t r = 0; r < rings && !frontier.empty(); r++) {
-    std::vector<uint32_t> next;
-    for (uint32_t f : frontier) {
-      const uint32_t b = topo.face_offsets[f];
-      const uint32_t n = topo.face_offsets[f + 1] - b;
-      for (uint32_t k = 0; k < n; k++) {
-        const uint32_t v = fvi[b + k];
-        for (uint32_t i = topo.vert_face_offsets[v];
-             i < topo.vert_face_offsets[v + 1]; i++) {
-          const uint32_t g = topo.vert_faces[i];
-          if (!in[g]) {
-            in[g] = 1;
-            next.push_back(g);
-          }
-        }
-      }
-    }
-    frontier.swap(next);
-  }
-  std::vector<uint32_t> halo;
-  for (uint32_t f = 0; f < topo.num_faces; f++) {
-    if (in[f]) {
-      halo.push_back(f);
-    }
-  }
-  return halo;
-}
-
 // A self-contained submesh (the block + halo), with base tags sliced/remapped
-// onto its local vertex/face ids, ready to feed to bulk Refine.
+// onto its local vertex/face ids, ready to feed to bulk Refine. Reused across
+// blocks (Reset keeps capacity).
 struct Submesh {
   std::vector<float> points;
   std::vector<uint32_t> fvc;
@@ -639,70 +602,210 @@ struct Submesh {
   std::vector<int32_t> corner_indices;
   std::vector<float> corner_sharpnesses;
   std::vector<int32_t> hole_indices;
+
+  void Reset(uint32_t num_pv) {
+    points.clear();
+    fvc.clear();
+    fvi.clear();
+    sub_to_global.clear();
+    owned.clear();
+    crease_indices.clear();
+    crease_lengths.clear();
+    crease_sharpnesses.clear();
+    corner_indices.clear();
+    corner_sharpnesses.clear();
+    hole_indices.clear();
+    pvs.resize(num_pv);
+    for (auto &p : pvs) {
+      p.clear();
+    }
+  }
 };
 
-void BuildSubmesh(const MeshView &mesh, const Topology &base_topo,
-                  const CreaseEdges &creases,
-                  const VertexPrimvarView *vertex_primvars, uint32_t num_pv,
-                  const std::vector<uint32_t> &halo, uint32_t fstart,
-                  uint32_t fend, Submesh *sub) {
-  std::vector<uint32_t> vloc(mesh.num_points, kInvalidIndex);
-  std::vector<uint32_t> floc(mesh.num_faces, kInvalidIndex);
-  for (size_t i = 0; i < halo.size(); i++) {
-    floc[halo[i]] = uint32_t(i);
-  }
-  sub->pvs.assign(num_pv, {});
+// Per-block scratch + base-mesh adjacency, built once and reused for every
+// block, so each block's setup costs O(block + halo) rather than O(total mesh).
+// Without this, block mode is O(N^2 / block_faces): the original gathered the
+// halo by allocating + full-scanning num_faces-sized arrays and remapped tags by
+// scanning every crease/corner/hole per block -- pathological for the very large
+// meshes block mode exists to serve. Submesh membership is tracked with per-block
+// generation stamps (no re-zeroing between blocks); creases/corners are gathered
+// through per-vertex CSR adjacency built once.
+struct BlockSetup {
+  const MeshView *mesh = nullptr;
+  const Topology *topo = nullptr;
+  const CreaseEdges *creases = nullptr;
 
-  for (uint32_t g : halo) {
-    const uint32_t b = base_topo.face_offsets[g];
-    const uint32_t n = base_topo.face_offsets[g + 1] - b;
-    sub->fvc.push_back(n);
-    for (uint32_t k = 0; k < n; k++) {
-      const uint32_t v = mesh.face_vertex_indices[b + k];
-      if (vloc[v] == kInvalidIndex) {
-        vloc[v] = uint32_t(sub->points.size() / 3);
-        sub->points.push_back(mesh.points[size_t(v) * 3]);
-        sub->points.push_back(mesh.points[size_t(v) * 3 + 1]);
-        sub->points.push_back(mesh.points[size_t(v) * 3 + 2]);
-        for (uint32_t c = 0; c < num_pv; c++) {
-          const uint32_t st = vertex_primvars[c].stride;
-          for (uint32_t s = 0; s < st; s++) {
-            sub->pvs[c].push_back(vertex_primvars[c].values[size_t(v) * st + s]);
+  uint32_t gen = 0;
+  std::vector<uint32_t> face_gen;  // face in submesh iff face_gen[f] == gen
+  std::vector<uint32_t> vert_gen;  // vertex seen iff vert_gen[v] == gen
+  std::vector<uint32_t> vloc;      // vertex -> submesh vertex id (valid iff seen)
+  std::vector<uint32_t> halo;      // block + halo faces (BFS order; submesh face i)
+  std::vector<uint32_t> frontier, next_frontier;
+  std::vector<uint32_t> sub_verts;  // global ids of this block's submesh verts
+
+  // base-vertex -> incident crease-edge ids / corner-entry ids (CSR), and a
+  // per-face hole flag: gather these per submesh element instead of scanning all
+  // creases/corners/holes per block.
+  std::vector<uint32_t> vcrease_off, vcrease;
+  std::vector<uint32_t> vcorner_off, vcorner;
+  std::vector<uint8_t> is_hole;
+
+  void Init(const MeshView &m, const Topology &t, const CreaseEdges &cr) {
+    mesh = &m;
+    topo = &t;
+    creases = &cr;
+    face_gen.assign(t.num_faces, 0);
+    vert_gen.assign(m.num_points, 0);
+    vloc.resize(m.num_points);
+    is_hole.assign(t.num_faces, 0);
+    for (uint32_t i = 0; i < m.num_holes; i++) {
+      const uint32_t h = uint32_t(m.hole_indices[i]);
+      if (h < t.num_faces) {
+        is_hole[h] = 1;
+      }
+    }
+    // Crease CSR: each canonical crease edge counts at both (v0 < v1) endpoints.
+    vcrease_off.assign(size_t(m.num_points) + 1, 0);
+    for (size_t e = 0; e < cr.sharpnesses.size(); e++) {
+      vcrease_off[cr.edge_verts[2 * e] + 1]++;
+      vcrease_off[cr.edge_verts[2 * e + 1] + 1]++;
+    }
+    for (uint32_t v = 0; v < m.num_points; v++) {
+      vcrease_off[v + 1] += vcrease_off[v];
+    }
+    vcrease.resize(vcrease_off[m.num_points]);
+    {
+      std::vector<uint32_t> cur(vcrease_off.begin(), vcrease_off.end() - 1);
+      for (size_t e = 0; e < cr.sharpnesses.size(); e++) {
+        vcrease[cur[cr.edge_verts[2 * e]]++] = uint32_t(e);
+        vcrease[cur[cr.edge_verts[2 * e + 1]]++] = uint32_t(e);
+      }
+    }
+    // Corner CSR: each corner entry attaches to one vertex (duplicates kept).
+    vcorner_off.assign(size_t(m.num_points) + 1, 0);
+    for (uint32_t i = 0; i < m.num_corners; i++) {
+      const uint32_t v = uint32_t(m.corner_indices[i]);
+      if (v < m.num_points) {
+        vcorner_off[v + 1]++;
+      }
+    }
+    for (uint32_t v = 0; v < m.num_points; v++) {
+      vcorner_off[v + 1] += vcorner_off[v];
+    }
+    vcorner.resize(vcorner_off[m.num_points]);
+    {
+      std::vector<uint32_t> cur(vcorner_off.begin(), vcorner_off.end() - 1);
+      for (uint32_t i = 0; i < m.num_corners; i++) {
+        const uint32_t v = uint32_t(m.corner_indices[i]);
+        if (v < m.num_points) {
+          vcorner[cur[v]++] = i;
+        }
+      }
+    }
+  }
+
+  // Gathers owned faces [fstart, fend) plus `rings` vertex-adjacency rings into
+  // `halo` (BFS order). O(block + halo) -- no full-mesh scan or re-zeroing.
+  void Gather(uint32_t fstart, uint32_t fend, uint32_t rings) {
+    const uint32_t *fvi = mesh->face_vertex_indices;
+    gen++;
+    halo.clear();
+    frontier.clear();
+    for (uint32_t f = fstart; f < fend; f++) {
+      face_gen[f] = gen;
+      halo.push_back(f);
+      frontier.push_back(f);
+    }
+    for (uint32_t r = 0; r < rings && !frontier.empty(); r++) {
+      next_frontier.clear();
+      for (uint32_t f : frontier) {
+        const uint32_t b = topo->face_offsets[f];
+        const uint32_t n = topo->face_offsets[f + 1] - b;
+        for (uint32_t k = 0; k < n; k++) {
+          const uint32_t v = fvi[b + k];
+          for (uint32_t i = topo->vert_face_offsets[v];
+               i < topo->vert_face_offsets[v + 1]; i++) {
+            const uint32_t g = topo->vert_faces[i];
+            if (face_gen[g] != gen) {
+              face_gen[g] = gen;
+              halo.push_back(g);
+              next_frontier.push_back(g);
+            }
           }
         }
       }
-      sub->fvi.push_back(vloc[v]);
+      frontier.swap(next_frontier);
     }
-    sub->sub_to_global.push_back(g);
-    sub->owned.push_back((g >= fstart && g < fend) ? 1 : 0);
+    // Emit the submesh faces in ascending global-face order. Bulk Refine interns
+    // edges/faces in face order, and the per-vertex masks sum over incident faces
+    // in that order; matching it keeps the owned-face refinement bit-identical to
+    // whole-mesh bulk (float summation order matters). The halo is small, so this
+    // sort does not reintroduce the O(num_faces) per-block cost.
+    std::sort(halo.begin(), halo.end());
   }
 
-  // Creases: each canonical crease edge whose both endpoints are in the
-  // submesh becomes a length-2 chain with its sharpness.
-  for (size_t e = 0; e < creases.sharpnesses.size(); e++) {
-    const uint32_t a = creases.edge_verts[2 * e];
-    const uint32_t b = creases.edge_verts[2 * e + 1];
-    if (vloc[a] != kInvalidIndex && vloc[b] != kInvalidIndex) {
-      sub->crease_indices.push_back(int32_t(vloc[a]));
-      sub->crease_indices.push_back(int32_t(vloc[b]));
-      sub->crease_lengths.push_back(2);
-      sub->crease_sharpnesses.push_back(creases.sharpnesses[e]);
+  // Slices the gathered halo into a self-contained Submesh (geometry, primvars,
+  // creases/corners/holes remapped to submesh-local ids).
+  void Build(const VertexPrimvarView *vertex_primvars, uint32_t num_pv,
+             uint32_t fstart, uint32_t fend, Submesh *sub) {
+    const MeshView &m = *mesh;
+    sub->Reset(num_pv);
+    sub_verts.clear();
+    for (uint32_t g : halo) {
+      const uint32_t b = topo->face_offsets[g];
+      const uint32_t n = topo->face_offsets[g + 1] - b;
+      sub->fvc.push_back(n);
+      for (uint32_t k = 0; k < n; k++) {
+        const uint32_t v = m.face_vertex_indices[b + k];
+        if (vert_gen[v] != gen) {
+          vert_gen[v] = gen;
+          vloc[v] = uint32_t(sub->points.size() / 3);
+          sub->points.push_back(m.points[size_t(v) * 3]);
+          sub->points.push_back(m.points[size_t(v) * 3 + 1]);
+          sub->points.push_back(m.points[size_t(v) * 3 + 2]);
+          for (uint32_t c = 0; c < num_pv; c++) {
+            const uint32_t st = vertex_primvars[c].stride;
+            for (uint32_t s = 0; s < st; s++) {
+              sub->pvs[c].push_back(
+                  vertex_primvars[c].values[size_t(v) * st + s]);
+            }
+          }
+          sub_verts.push_back(v);
+        }
+        sub->fvi.push_back(vloc[v]);
+      }
+      sub->sub_to_global.push_back(g);
+      sub->owned.push_back((g >= fstart && g < fend) ? 1 : 0);
+    }
+
+    // Creases/corners attached to this block's vertices. A crease (v0 < v1) is
+    // emitted once, from its v0 endpoint, iff both endpoints are in the submesh.
+    for (uint32_t v : sub_verts) {
+      for (uint32_t i = vcrease_off[v]; i < vcrease_off[v + 1]; i++) {
+        const uint32_t e = vcrease[i];
+        const uint32_t a = creases->edge_verts[2 * e];
+        const uint32_t bb = creases->edge_verts[2 * e + 1];
+        if (a != v || vert_gen[bb] != gen) {
+          continue;
+        }
+        sub->crease_indices.push_back(int32_t(vloc[a]));
+        sub->crease_indices.push_back(int32_t(vloc[bb]));
+        sub->crease_lengths.push_back(2);
+        sub->crease_sharpnesses.push_back(creases->sharpnesses[e]);
+      }
+      for (uint32_t i = vcorner_off[v]; i < vcorner_off[v + 1]; i++) {
+        sub->corner_indices.push_back(int32_t(vloc[v]));
+        sub->corner_sharpnesses.push_back(m.corner_sharpnesses[vcorner[i]]);
+      }
+    }
+    // Holes among the submesh faces (submesh face id == halo position).
+    for (uint32_t i = 0; i < halo.size(); i++) {
+      if (is_hole[halo[i]]) {
+        sub->hole_indices.push_back(int32_t(i));
+      }
     }
   }
-  for (uint32_t i = 0; i < mesh.num_corners; i++) {
-    const uint32_t v = uint32_t(mesh.corner_indices[i]);
-    if (v < mesh.num_points && vloc[v] != kInvalidIndex) {
-      sub->corner_indices.push_back(int32_t(vloc[v]));
-      sub->corner_sharpnesses.push_back(mesh.corner_sharpnesses[i]);
-    }
-  }
-  for (uint32_t i = 0; i < mesh.num_holes; i++) {
-    const uint32_t h = uint32_t(mesh.hole_indices[i]);
-    if (h < mesh.num_faces && floc[h] != kInvalidIndex) {
-      sub->hole_indices.push_back(int32_t(floc[h]));
-    }
-  }
-}
+};
 
 // Emits a block's owned refined faces (from the materialized submesh refine)
 // to the sink: positions/primvars/normals are copied by refined-vertex id, and
@@ -860,18 +963,18 @@ Result RefineStream(const MeshView &mesh,
     if (halo_rings < kHaloFloor) {
       halo_rings = kHaloFloor;
     }
+    BlockSetup bs;
+    bs.Init(mesh, base_topo, creases);
+    Submesh sub;
+    std::vector<VertexPrimvarView> spv(num_vertex_primvars);
     for (uint32_t fstart = 0; fstart < mesh.num_faces;
          fstart += stream_options.block_faces) {
       const uint32_t fend =
           (fstart + stream_options.block_faces < mesh.num_faces)
               ? (fstart + stream_options.block_faces)
               : mesh.num_faces;
-      const std::vector<uint32_t> halo =
-          GatherHalo(base_topo, mesh.face_vertex_indices, fstart, fend,
-                     halo_rings);
-      Submesh sub;
-      BuildSubmesh(mesh, base_topo, creases, vertex_primvars,
-                   num_vertex_primvars, halo, fstart, fend, &sub);
+      bs.Gather(fstart, fend, halo_rings);
+      bs.Build(vertex_primvars, num_vertex_primvars, fstart, fend, &sub);
 
       MeshView sv;
       sv.points = sub.points.data();
@@ -898,7 +1001,6 @@ Result RefineStream(const MeshView &mesh,
         sv.num_holes = uint32_t(sub.hole_indices.size());
       }
 
-      std::vector<VertexPrimvarView> spv(num_vertex_primvars);
       for (uint32_t c = 0; c < num_vertex_primvars; c++) {
         spv[c].values = sub.pvs[c].data();
         spv[c].stride = vertex_primvars[c].stride;
