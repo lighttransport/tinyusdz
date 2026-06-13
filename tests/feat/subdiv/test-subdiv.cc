@@ -2199,6 +2199,146 @@ void test_stream_fvar() {
 }
 
 // ---------------------------------------------------------------------------
+// Block-mode faceVarying: ALL modes (linear + smooth seam-split) stream in block
+// mode, because each block is refined with bulk Refine (which handles every fvar
+// mode). Positions are bit-exact to bulk, so match each emitted corner to the
+// bulk corners at the same position; the streamed fvar must equal one of those
+// bulk fvar tuples (fp noise only). A seam error or short halo diverges by O(1).
+// ---------------------------------------------------------------------------
+
+struct BlockFvarCollect {
+  // position -> the set of bulk fvar tuples seen at it (seams => multi-valued).
+  const std::multimap<std::array<float, 3>, std::array<float, 2>> *bulk = nullptr;
+  double maxd = 0.0;
+  long miss = 0, tot = 0;
+};
+
+bool BlockFvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  BlockFvarCollect *c = static_cast<BlockFvarCollect *>(user);
+  if (b->num_fvar != 1) return true;
+  uint32_t off = 0;
+  for (uint32_t f = 0; f < b->num_faces; f++) {
+    const uint32_t n = b->face_vertex_counts ? b->face_vertex_counts[f]
+                                             : (b->num_indices / b->num_faces);
+    for (uint32_t k = 0; k < n; k++) {
+      const uint32_t corner = off + k;
+      const uint32_t vid = b->indices[corner];
+      std::array<float, 3> p = {b->positions[3 * vid], b->positions[3 * vid + 1],
+                                b->positions[3 * vid + 2]};
+      std::array<float, 2> uv = {b->fvar[0].values[corner * 2],
+                                 b->fvar[0].values[corner * 2 + 1]};
+      c->tot++;
+      auto range = c->bulk->equal_range(p);
+      double best = 1e30;
+      for (auto it = range.first; it != range.second; ++it) {
+        const double d = std::fabs(double(it->second[0]) - uv[0]) +
+                         std::fabs(double(it->second[1]) - uv[1]);
+        if (d < best) best = d;
+      }
+      if (best > 1e29) {
+        c->miss++;
+      } else if (best > c->maxd) {
+        c->maxd = best;
+      }
+    }
+    off += n;
+  }
+  return true;
+}
+
+void test_stream_blocked_fvar() {
+  using tinyusdz::tsd::FVarChannelView;
+  using tinyusdz::tsd::FVarLinearInterpolation;
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::UVSeamGrid());
+  meshes.push_back(corpus::UVCube());
+  meshes.push_back(corpus::UVTriGrid());
+
+  const FVarLinearInterpolation modes[6] = {
+      FVarLinearInterpolation::CornersPlus1,  // smooth (default)
+      FVarLinearInterpolation::None,          // smooth everywhere
+      FVarLinearInterpolation::CornersOnly,   // smooth
+      FVarLinearInterpolation::CornersPlus2,  // smooth
+      FVarLinearInterpolation::Boundaries,    // smooth
+      FVarLinearInterpolation::All};          // linear
+  const uint32_t block_sizes[3] = {1u, 2u, 3u};
+
+  for (const corpus::Mesh &m : meshes) {
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) all_tris = all_tris && (c == 3);
+    const Scheme scheme = all_tris ? Scheme::Loop : Scheme::CatmullClark;
+
+    for (int mi = 0; mi < 6; mi++) {
+      for (int level = 1; level <= 3; level++) {
+        FVarChannelView fv;
+        fv.values = m.fvar_uv.data();
+        fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+        fv.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
+        fv.stride = 2;
+        fv.interpolation = modes[mi];
+
+        Options opts;
+        opts.scheme = scheme;
+        opts.level = level;
+        opts.remove_holes = false;
+
+        RefinedMesh bulk;
+        std::string err;
+        CHECK(Refine(ToView(m), &fv, 1, nullptr, 0, opts, &bulk, &err) ==
+              Result::Success);
+        // bulk corner i: position points[fvi[i]], fvar value fvar[0][i*2].
+        std::multimap<std::array<float, 3>, std::array<float, 2>> bm;
+        for (size_t i = 0; i < bulk.face_vertex_indices.size(); i++) {
+          const uint32_t vid = bulk.face_vertex_indices[i];
+          bm.insert({{bulk.points[3 * vid], bulk.points[3 * vid + 1],
+                      bulk.points[3 * vid + 2]},
+                     {bulk.fvar[0][i * 2], bulk.fvar[0][i * 2 + 1]}});
+        }
+
+        for (uint32_t bf : block_sizes) {
+          StreamOptions so;
+          so.block_faces = bf;
+          so.want_normals = false;
+          so.emit_triangles = false;
+          BlockFvarCollect col;
+          col.bulk = &bm;
+          CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so,
+                             BlockFvarSinkFn, &col, &err) == Result::Success);
+          const std::string tag = m.name + "/m" + std::to_string(mi) + "/L" +
+                                  std::to_string(level) + "/bf" +
+                                  std::to_string(bf);
+          CHECK_MSG(col.tot > 0, tag);
+          CHECK_MSG(col.miss == 0, tag);   // every corner's pos+uv is a bulk pair
+          CHECK_MSG(col.maxd < 1e-4, tag);  // fp noise only, no seam divergence
+        }
+      }
+    }
+  }
+
+  // faceVarying streaming at level 0 is rejected (level 0 is passthrough).
+  {
+    corpus::Mesh m = corpus::UVSeamGrid();
+    FVarChannelView fv;
+    fv.values = m.fvar_uv.data();
+    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+    fv.indices = m.fvar_indices.data();
+    fv.stride = 2;
+    fv.interpolation = FVarLinearInterpolation::All;
+    Options opts;
+    opts.scheme = Scheme::CatmullClark;
+    opts.level = 0;
+    StreamOptions so;
+    StreamCollect sink;
+    std::string err;
+    CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, StreamSinkFn,
+                       &sink, &err) == Result::InvalidArgument);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Audit regressions: non-uniform arity reporting + block-mode sink abort.
 // ---------------------------------------------------------------------------
 
@@ -2481,6 +2621,7 @@ int main() {
   TEST(test_stream_blocked_matches_bulk);
   TEST(test_stream_blocked_normals);
   TEST(test_stream_fvar);
+  TEST(test_stream_blocked_fvar);
   TEST(test_stream_level0_mixed_arity);
   TEST(test_stream_block_abort);
 
