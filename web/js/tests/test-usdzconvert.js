@@ -19,6 +19,7 @@ import {
   rootUsdFromMap,
   loadWasm,
   convertFolderToUSDZ,
+  convertSourceToUSDZStreaming,
   unpackUSDZ,
   expandUsdzInputs,
   isAudioName,
@@ -68,6 +69,55 @@ function zipEntries(bytes) {
     offset = dataEnd;
   }
   return entries;
+}
+
+function makeMemoryZipSink() {
+  let buf = new Uint8Array(1024);
+  let len = 0;
+  const ensure = (need) => {
+    if (need <= buf.length) return;
+    let next = buf.length;
+    while (next < need) next *= 2;
+    const grown = new Uint8Array(next);
+    grown.set(buf);
+    buf = grown;
+  };
+  return {
+    sink: {
+      write(chunk) {
+        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        ensure(len + bytes.length);
+        buf.set(bytes, len);
+        len += bytes.length;
+      },
+      patch(pos, chunk) {
+        const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        ensure(pos + bytes.length);
+        buf.set(bytes, pos);
+        len = Math.max(len, pos + bytes.length);
+      },
+    },
+    bytes() {
+      return buf.slice(0, len);
+    },
+  };
+}
+
+function makeFixtureSource(rootDir, entries, includeFetchSync = true) {
+  const source = {
+    keys: Object.keys(entries),
+    async fetch(key) {
+      if (!Object.prototype.hasOwnProperty.call(entries, key)) return null;
+      return new Uint8Array(await fs.promises.readFile(path.join(rootDir, entries[key])));
+    },
+  };
+  if (includeFetchSync) {
+    source.fetchSync = (key) => {
+      if (!Object.prototype.hasOwnProperty.call(entries, key)) return null;
+      return new Uint8Array(fs.readFileSync(path.join(rootDir, entries[key])));
+    };
+  }
+  return source;
 }
 
 function test(name, fn) {
@@ -367,6 +417,76 @@ def Xform "fromSub"
     assert.ok(entries.has('sub.usda'));
     const root = new TextDecoder().decode(entries.get('root.usda'));
     assert.match(root, /@sub\.usda@/);
+  });
+
+  await testAsync('stream-next fetches referenced USDC layers and skips unused layers', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const source = makeFixtureSource(repoRoot, {
+      'root.usdc': 'tests/usdc/composition/references-001.usdc',
+      'scene-001.usdc': 'tests/usdc/composition/scene-001.usdc',
+      'unused.usdc': 'models/cube.usdc',
+    });
+    const mem = makeMemoryZipSink();
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: 'root.usdc',
+      pipeline: 'next',
+      reencode: false,
+      textureFormat: 'keep',
+      zipSink: mem.sink,
+    });
+    assert.equal(stats.pipeline, 'next');
+    const entries = zipEntries(mem.bytes());
+    assert.ok(entries.has('root.usdc'), 'flattened root should be written');
+    assert.ok(!entries.has('scene-001.usdc'), 'referenced layer should be flattened into root');
+    assert.ok(!entries.has('unused.usdc'), 'unused USD layer should not be packed');
+  });
+
+  await testAsync('stream-next async source can provide referenced layers on demand', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const source = makeFixtureSource(repoRoot, {
+      'root.usdc': 'tests/usdc/composition/references-001.usdc',
+      'scene-001.usdc': 'tests/usdc/composition/scene-001.usdc',
+      'unused.usdc': 'models/cube.usdc',
+    }, false);
+    const mem = makeMemoryZipSink();
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: 'root.usdc',
+      pipeline: 'next',
+      reencode: false,
+      textureFormat: 'keep',
+      zipSink: mem.sink,
+    });
+    assert.equal(stats.pipeline, 'next');
+    const entries = zipEntries(mem.bytes());
+    assert.deepEqual([...entries.keys()], ['root.usdc']);
+  });
+
+  await testAsync('stream-next packages only referenced textures', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const source = makeFixtureSource(repoRoot, {
+      'root.usdc': 'models/texturedcube.usdc',
+      'textures/01.jpg': 'models/textures/01.jpg',
+      'textures/unused.jpg': 'models/textures/texture-cat.jpg',
+      'unused.usdc': 'models/cube.usdc',
+    });
+    const mem = makeMemoryZipSink();
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: 'root.usdc',
+      pipeline: 'next',
+      reencode: false,
+      textureFormat: 'keep',
+      zipSink: mem.sink,
+    });
+    assert.equal(stats.pipeline, 'next');
+    assert.equal(stats.textures, 1);
+    const entries = zipEntries(mem.bytes());
+    assert.ok(entries.has('root.usdc'), 'flattened root should be written');
+    assert.ok(entries.has('textures/01.jpg'), 'referenced texture should be packed');
+    assert.ok(!entries.has('textures/unused.jpg'), 'unused texture should not be packed');
+    assert.ok(!entries.has('unused.usdc'), 'unused USD layer should not be packed');
   });
 
   await testAsync('convertFolderToUSDZ errors on no USD file', async () => {
