@@ -2685,6 +2685,14 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     dst_child_index.emplace(dst.children()[i].name(), i);
   }
 
+  // Names present in `src`(=ps) before we append, so dst-only children can be
+  // detected below.
+  std::unordered_set<std::string> src_child_names;
+  src_child_names.reserve(ps.children().size());
+  for (const auto &c : ps.children()) {
+    src_child_names.insert(c.name());
+  }
+
   for (auto &child : ps.children()) {
     auto it = dst_child_index.find(child.name());
 
@@ -2692,6 +2700,19 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
       if (!OverridePrimSpecRec(1, child, dst.children()[it->second], warn, err)) {
         return false;
       }
+    }
+  }
+
+  // Carry over dst-only children: a stronger (dst) opinion that introduces a
+  // child NOT present in `src` must survive composition, exactly as the
+  // property loop above re-adds dst-only properties. Without this, a
+  // locally-authored child placed alongside a reference/inherit/specialize
+  // (e.g. a `def "LOD2"` next to a referenced asset whose LODs come from a
+  // variant) is silently dropped. Appended after the src children (which keeps
+  // the referenced/base children first, then local additions).
+  for (const auto &dchild : dst.children()) {
+    if (src_child_names.count(dchild.name()) == 0) {
+      ps.children().push_back(dchild);
     }
   }
 
