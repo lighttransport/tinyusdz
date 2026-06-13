@@ -1094,8 +1094,12 @@ function buildHFieldGeometry(hf) {
       positions[i] = -rx + c * dx;
       positions[i + 1] = -ry + r * dy;
       positions[i + 2] = H(r, c);
-      const hx = (H(r, c + 1) - H(r, c - 1)) / (2 * dx);
-      const hy = (H(r + 1, c) - H(r - 1, c)) / (2 * dy);
+      // Gradient over the ACTUAL neighbor span so the border ring is a correct
+      // one-sided difference (1 cell) instead of a halved central difference.
+      const cl = Math.max(0, c - 1), cr = Math.min(nc - 1, c + 1);
+      const rb = Math.max(0, r - 1), rt = Math.min(nr - 1, r + 1);
+      const hx = (H(r, cr) - H(r, cl)) / ((cr - cl) * dx);
+      const hy = (H(rt, c) - H(rb, c)) / ((rt - rb) * dy);
       let nx = -hx, ny = -hy, nz = 1;
       const len = Math.hypot(nx, ny, nz) || 1;
       normals[i] = nx / len; normals[i + 1] = ny / len; normals[i + 2] = nz / len;
@@ -1907,7 +1911,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
   // Bake one <geom> into a link payload's visuals/collisions. Shared by the
   // per-body traversal and the worldbody-level (static) geom collection.
-  async function appendGeomToLink(rawGeomNode, childclass, linkPayload, bodyWorld, fallbackPrefix, geomIndex) {
+  async function appendGeomToLink(rawGeomNode, childclass, linkPayload, bodyWorld, fallbackPrefix, geomIndex, dualCollider = false) {
     // Resolve <default>/childclass inheritance so class-tagged attributes
     // (type/group/contype/...) are visible to classification and tessellation.
     const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
@@ -1932,6 +1936,25 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
       payloads = await mujocoGeomPayloads(geomNode, meshAssets, hfields, geomName, opts, bodyWorld);
     }
     if (isVisual) {
+      // A world-fixed geom that is visible AND a collider (MuJoCo default
+      // contype=conaffinity=1; non-collider only when BOTH are 0) is ALSO
+      // emitted as a USD collider so floors/ground/hfield actually collide.
+      // The owning link is static, so use an exact triangle-mesh collider
+      // (`none`), not a convex hull that would flatten terrain. Build these from
+      // the pristine payloads (sharing meshRef, no buffer duplication) before
+      // the visual map mutates them. Robot bodies keep the group-based split.
+      if (dualCollider) {
+        const contype = effAttrs.contype !== undefined ? Number(effAttrs.contype) : 1;
+        const conaffinity = effAttrs.conaffinity !== undefined ? Number(effAttrs.conaffinity) : 1;
+        if (contype !== 0 || conaffinity !== 0) {
+          for (const payload of payloads) {
+            const col = { ...payload, approximation: 'none' };
+            addMujocoPhysicsAttrs(col, geomNode);
+            linkPayload.collisions.push(col);
+            collisionCount += 1;
+          }
+        }
+      }
       linkPayload.visuals.push(...payloads.map((payload) => {
         const p = addMujocoPhysicsAttrs(payload, geomNode);
         if (effAttrs.material) p.material = effAttrs.material;
@@ -2068,7 +2091,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   let worldGeomIndex = 0;
   for (const worldbody of worldbodies) {
     for (const rawGeomNode of childElements(worldbody, 'geom')) {
-      await appendGeomToLink(rawGeomNode, '', worldLink, new THREE.Matrix4(), 'world', worldGeomIndex);
+      await appendGeomToLink(rawGeomNode, '', worldLink, new THREE.Matrix4(), 'world', worldGeomIndex, /*dualCollider=*/true);
       worldGeomIndex++;
     }
   }
