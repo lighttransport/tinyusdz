@@ -64,7 +64,12 @@ const state = {
     showJointNames: false,
     jointsCollapsed: false,
     applyHomePose: false,
-    showMuscles: true
+    showMuscles: true,
+    // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
+    // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
+    // visual/auxiliary split). Geoms with no group fall back to showVisuals/
+    // showCollisions (e.g. URDF / converted-USD meshes carry no MuJoCo group).
+    geomGroups: { 0: true, 1: true, 2: true, 3: false, 4: false, 5: false }
   }
 };
 
@@ -482,13 +487,24 @@ async function loadSTLMeshFromFile(file) {
 // semi-transparent leg bones show the muscles behind them, matching the MuJoCo
 // viewer. Materials are already cloned per-geom (cloneRenderableObject), but we
 // clone again defensively before mutating.
-function applyRgbaToMesh(mesh, rgba) {
-  if (!mesh?.isMesh || !mesh.material || !rgba) return;
+function applyRgbaToMesh(mesh, info) {
+  if (!mesh?.isMesh || !mesh.material || !info?.rgba) return;
+  const rgba = info.rgba;
+  const emission = info.emission || 0;
   const apply = (src) => {
     const mat = src.clone ? src.clone() : src;
     if (mat.color && rgba.length >= 3) mat.color.setRGB(rgba[0], rgba[1], rgba[2]);
+    // MuJoCo material `emission` makes the geom self-lit (e.g. the bright
+    // "green pulleys"); map it to an emissive tint so it reads at full color.
+    const emissive = emission > 0 && mat.emissive;
+    if (emissive) {
+      mat.emissive.setRGB(rgba[0] * emission, rgba[1] * emission, rgba[2] * emission);
+    }
+    // Honor alpha<1 as transparency — EXCEPT for self-lit (emissive) geoms,
+    // which MuJoCo draws as a solid bright color; many overlapping low-alpha
+    // cylinders (e.g. the pulley grid) otherwise blend into muddy artifacts.
     const alpha = rgba.length >= 4 ? rgba[3] : 1;
-    if (alpha < 1) {
+    if (alpha < 1 && !emissive) {
       mat.transparent = true;
       mat.opacity = alpha;
       mat.depthWrite = false;
@@ -1813,6 +1829,25 @@ function classifyMujocoGeom(geomAttrs) {
   return true;
 }
 
+// A geom's MuJoCo display group (0-5), resolved from its own/class `group`.
+// Ungrouped geoms default to 0 (visible) or 3 (collision-class / non-visual).
+function mujocoGeomGroup(geomAttrs, isVisual) {
+  const g = Number((geomAttrs || {}).group);
+  if (Number.isFinite(g)) return Math.max(0, Math.min(5, Math.trunc(g)));
+  return isVisual ? 0 : 3;
+}
+
+// True when a geom actually collides (MuJoCo default contype=conaffinity=1;
+// only a pure decoration sets BOTH to 0, e.g. iit_softfoot's group-4
+// virtual_pulley cylinders). Used to keep the red collision overlay limited to
+// real colliders while non-collider auxiliary geoms keep their own rgba.
+function isMujocoCollider(geomAttrs) {
+  const attrs = geomAttrs || {};
+  const ct = attrs.contype !== undefined ? Number(attrs.contype) : 1;
+  const ca = attrs.conaffinity !== undefined ? Number(attrs.conaffinity) : 1;
+  return ct !== 0 || ca !== 0;
+}
+
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
@@ -2133,21 +2168,31 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
-  // <asset><material name rgba>: name -> rgba, to color geoms that reference a
-  // material rather than carrying a direct rgba (e.g. ms_human_700 bones).
-  const materialRgba = new Map();
+  // <asset><material name rgba emission>: name -> {rgba, emission}, to color
+  // geoms that reference a material rather than a direct rgba (e.g. ms_human_700
+  // bones, iit_softfoot's emissive "green pulleys").
+  const materialDefs = new Map();
   for (const m of root.querySelectorAll('asset material')) {
     const name = m.getAttribute('name');
+    if (!name) continue;
     const rgba = parseNumbers(m.getAttribute('rgba'), []);
-    if (name && rgba.length >= 3) materialRgba.set(name, rgba);
+    const emission = Number(m.getAttribute('emission'));
+    materialDefs.set(name, {
+      rgba: rgba.length >= 3 ? rgba : null,
+      emission: Number.isFinite(emission) ? emission : 0
+    });
   }
-  // A geom's effective display rgba: its own `rgba`, else its material's rgba,
-  // else null (keep the loader's neutral default — don't recolor uncolored
-  // geoms, so models without explicit colors render as before).
+  // A geom's effective display color {rgba, emission}: its own `rgba` (no
+  // emission), else its material, else null (keep the loader's neutral default —
+  // don't recolor uncolored geoms, so models without explicit colors render as
+  // before).
   const effectiveGeomRgba = (attrs) => {
     const direct = parseNumbers(attrs.rgba, []);
-    if (direct.length >= 3) return direct;
-    if (attrs.material && materialRgba.has(attrs.material)) return materialRgba.get(attrs.material);
+    if (direct.length >= 3) return { rgba: direct, emission: 0 };
+    if (attrs.material && materialDefs.has(attrs.material)) {
+      const d = materialDefs.get(attrs.material);
+      if (d.rgba) return d;
+    }
     return null;
   };
   const actuators = buildMujocoActuators(root);
@@ -2318,15 +2363,25 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
       linkObject.add(object);
       const geomRgba = effectiveGeomRgba(geomAttrs);
+      const geomGroup = mujocoGeomGroup(geomAttrs, isVisual);
+      const geomIsCollider = isMujocoCollider(geomAttrs);
       object.traverse((obj) => {
         if (!obj.isMesh) return;
         obj.userData.urdfOwnerLink = linkObject;
         obj.userData.urdfOwnerLinkName = linkName;
         obj.userData.urdfCollision = !isVisual;
+        // Tag the MuJoCo display group so the viewer can toggle by group id.
+        obj.userData.mujocoGroup = geomGroup;
         if (isVisual) {
           // Tint by the geom/material rgba + honor alpha (transparent legs etc).
           if (geomRgba) applyRgbaToMesh(obj, geomRgba);
           state.visualMeshes.push(obj);
+        } else if (!geomIsCollider) {
+          // A non-collider auxiliary geom (e.g. iit_softfoot's group-4
+          // virtual_pulley cylinders) is a decoration, not a collider: show it
+          // in its own rgba, NOT the red collision overlay.
+          if (geomRgba) applyRgbaToMesh(obj, geomRgba);
+          state.collisionMeshes.push(obj);
         } else {
           obj.userData.originalMaterial = obj.material;
           obj.material = collisionMaterial;
@@ -2653,9 +2708,18 @@ function classifyRobotMeshes(robot) {
   applyVisibility();
 }
 
+// A geom mesh's visibility: MuJoCo-tagged source geoms follow their group's
+// toggle; everything else (URDF / converted-USD meshes) follows the coarse
+// visual/collision toggles.
+function geomMeshVisible(mesh, isVisualList) {
+  const g = mesh.userData?.mujocoGroup;
+  if (g !== undefined && g !== null) return state.settings.geomGroups[g] !== false;
+  return isVisualList ? state.settings.showVisuals : state.settings.showCollisions;
+}
+
 function applyVisibility() {
-  for (const mesh of state.visualMeshes) mesh.visible = state.settings.showVisuals;
-  for (const mesh of state.collisionMeshes) mesh.visible = state.settings.showCollisions;
+  for (const mesh of state.visualMeshes) mesh.visible = geomMeshVisible(mesh, true);
+  for (const mesh of state.collisionMeshes) mesh.visible = geomMeshVisible(mesh, false);
   applyMuscleVisibility();
   applyRenderableVisibility(state.usdObject);
   applyRenderableVisibility(state.usdGhost);
@@ -2753,6 +2817,15 @@ function buildGUI() {
   gui.add(state.settings, 'showVisuals').name('Visual meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showMuscles').name('Muscles').onChange(applyMuscleVisibility);
+  // Per-MuJoCo-geom-group visibility (mirrors the MuJoCo viewer's group toggles).
+  // Applies to MJCF source geoms tagged with a group; e.g. enable Group 4 to see
+  // iit_softfoot's virtual-pulley tubes. Spatial tendons (the yellow streamlines)
+  // are a separate entity controlled by 'Muscles', not by group.
+  const groupFolder = gui.addFolder('Geom groups (source)');
+  for (let g = 0; g <= 5; g++) {
+    groupFolder.add(state.settings.geomGroups, String(g)).name(`Group ${g}`).onChange(applyVisibility);
+  }
+  groupFolder.close();
   gui.add(state.settings, 'ignoreJointLimits').name('Ignore limits').onChange(rebuildJointControls);
   gui.add(state.settings, 'hideFixedJoints').name('Hide fixed joints').onChange(rebuildJointControls);
   gui.add(state.settings, 'applyHomePose').name('Home pose').onChange(() => {
