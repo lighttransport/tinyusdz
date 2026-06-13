@@ -271,6 +271,54 @@ struct Emitter {
     return local;
   }
 
+  // Recursive block mode: copy one vertex straight out of a streamed inner batch
+  // `b` (indexed by its batch-local id `src`), deduplicated by the canonical
+  // submesh child id `b->vertex_source[src]`. The channels (geometry + vertex
+  // primvars + optional normals) parallel the outer Emitter's, so values are
+  // copied verbatim -- no recompute. Used to forward a sub-block's streamed
+  // output through the outer batching/flush without materializing it.
+  uint32_t LocalFromBatch(const StreamBatch *b, uint32_t src) {
+    const uint32_t canonical = b->vertex_source[src];
+    if (sopts->dedup_within_batch) {
+      auto it = dedup.find(canonical);
+      if (it != dedup.end()) {
+        return it->second;
+      }
+    }
+    const uint32_t local = uint32_t(positions.size() / 3);
+    positions.push_back(b->positions[size_t(src) * 3]);
+    positions.push_back(b->positions[size_t(src) * 3 + 1]);
+    positions.push_back(b->positions[size_t(src) * 3 + 2]);
+    if (want_normals && b->normals) {
+      normals.push_back(b->normals[size_t(src) * 3]);
+      normals.push_back(b->normals[size_t(src) * 3 + 1]);
+      normals.push_back(b->normals[size_t(src) * 3 + 2]);
+    }
+    for (uint32_t c = 0; c < num_pv; c++) {
+      const uint32_t stride = pv_stride[c];
+      const float *vals = &b->vertex_primvars[c].values[size_t(src) * stride];
+      std::vector<float> &buf = pv_buf[c];
+      for (uint32_t k = 0; k < stride; k++) {
+        buf.push_back(vals[k]);
+      }
+    }
+    vsource.push_back(canonical);
+    if (sopts->dedup_within_batch) {
+      dedup.emplace(canonical, local);
+    }
+    return local;
+  }
+
+  // Emit one owned face (already in final tri/quad form) whose `n` corners come
+  // from inner batch `b` at the given batch-local ids; base face `src` (global).
+  void EmitOwnedFromBatch(const StreamBatch *b, const uint32_t *corner_locals,
+                          uint32_t n, uint32_t src) {
+    for (uint32_t k = 0; k < n; k++) {
+      indices.push_back(LocalFromBatch(b, corner_locals[k]));
+    }
+    PushFace(src, n);
+  }
+
   void Tri(uint32_t a, uint32_t b, uint32_t c) {
     indices.push_back(a);
     indices.push_back(b);
@@ -847,6 +895,40 @@ bool EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
   return em.Flush();
 }
 
+// Forwarding context for recursive block streaming (StreamOptions::recursive_
+// blocks): filters a sub-block's streamed inner batches down to the block's owned
+// faces, remaps face provenance to the global base face, and re-emits them
+// through the outer Emitter.
+struct BlockForward {
+  Emitter *em = nullptr;
+  const std::vector<uint32_t> *sub_to_global = nullptr;
+  const std::vector<uint8_t> *owned = nullptr;
+};
+
+// Inner-stream sink: emit each owned face of the inner batch through the outer
+// Emitter (which batches/dedups/flushes to the real sink). Returns false to
+// abort the inner stream when the outer sink aborts.
+bool BlockForwardSink(void *user, const StreamBatch *b) {
+  BlockForward *fwd = static_cast<BlockForward *>(user);
+  Emitter &em = *fwd->em;
+  uint32_t off = 0;
+  for (uint32_t f = 0; f < b->num_faces; f++) {
+    const uint32_t n = b->face_vertex_counts
+                           ? b->face_vertex_counts[f]
+                           : (b->num_faces ? b->num_indices / b->num_faces : 0);
+    const uint32_t sub_base = b->face_source[f];
+    if ((*fwd->owned)[sub_base]) {
+      em.EmitOwnedFromBatch(b, &b->indices[off], n,
+                            (*fwd->sub_to_global)[sub_base]);
+      if (!em.MaybeFlush()) {  // honor outer batch_faces + sink abort
+        return false;
+      }
+    }
+    off += n;
+  }
+  return true;
+}
+
 }  // namespace
 
 Result RefineStream(const MeshView &mesh,
@@ -963,6 +1045,13 @@ Result RefineStream(const MeshView &mesh,
     if (halo_rings < kHaloFloor) {
       halo_rings = kHaloFloor;
     }
+    // Opt-in: stream each block's final level recursively (peak bounded by its
+    // level-(N-1) state) instead of materializing the full level-N submesh.
+    // Niche memory/time trade (see StreamOptions::recursive_blocks); only the
+    // geometry/primvar path recurses -- exact limit normals need the materialized
+    // refine, so want_normals on a smooth scheme keeps the bulk route.
+    const bool block_recurse = stream_options.recursive_blocks &&
+                               !(stream_options.want_normals && smooth_scheme);
     BlockSetup bs;
     bs.Init(mesh, base_topo, creases);
     Submesh sub;
@@ -1007,23 +1096,52 @@ Result RefineStream(const MeshView &mesh,
         spv[c].varying = vertex_primvars[c].varying;
       }
 
-      RefinedMesh refined;
-      r = Refine(sv, nullptr, 0,
-                 num_vertex_primvars ? spv.data() : nullptr,
-                 num_vertex_primvars, options, &refined, err);
-      if (r != Result::Success) {
-        return r;
-      }
-      std::vector<float> normals;
-      if (stream_options.want_normals && smooth_scheme) {
-        r = ComputeLimitNormals(sv, options, refined, &normals, err);
+      if (block_recurse) {
+        // Stream the submesh's final level (peak bounded by its level-(N-1)
+        // state + one batch) and forward only the owned faces -- the block never
+        // materializes its full level-N refinement. block_faces = 0 => the inner
+        // call takes the plain (non-block) streaming path; no deeper recursion.
+        em.want_normals = false;
+        em.parent_normals = nullptr;
+        BlockForward fwd;
+        fwd.em = &em;
+        fwd.sub_to_global = &sub.sub_to_global;
+        fwd.owned = &sub.owned;
+        StreamOptions inner_so;
+        inner_so.batch_faces = stream_options.batch_faces;
+        inner_so.emit_triangles = stream_options.emit_triangles;
+        inner_so.want_normals = false;
+        inner_so.dedup_within_batch = stream_options.dedup_within_batch;
+        r = RefineStream(sv, nullptr, 0,
+                         num_vertex_primvars ? spv.data() : nullptr,
+                         num_vertex_primvars, options, inner_so, BlockForwardSink,
+                         &fwd, err);
         if (r != Result::Success) {
           return r;
         }
-      }
-      if (!EmitBlockOwned(em, refined, normals, sub.sub_to_global, sub.owned,
-                          loop)) {
-        return Result::Success;  // sink aborted; partial output already emitted
+        em.Flush();  // flush the block's partial outer batch (block-local ids)
+        if (em.aborted) {
+          return Result::Success;  // sink aborted; partial output emitted
+        }
+      } else {
+        RefinedMesh refined;
+        r = Refine(sv, nullptr, 0,
+                   num_vertex_primvars ? spv.data() : nullptr,
+                   num_vertex_primvars, options, &refined, err);
+        if (r != Result::Success) {
+          return r;
+        }
+        std::vector<float> normals;
+        if (stream_options.want_normals && smooth_scheme) {
+          r = ComputeLimitNormals(sv, options, refined, &normals, err);
+          if (r != Result::Success) {
+            return r;
+          }
+        }
+        if (!EmitBlockOwned(em, refined, normals, sub.sub_to_global, sub.owned,
+                            loop)) {
+          return Result::Success;  // sink aborted; partial output already emitted
+        }
       }
     }
     return Result::Success;
