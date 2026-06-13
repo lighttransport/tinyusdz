@@ -1794,8 +1794,8 @@ void test_stream_matches_bulk() {
             col.pv.assign(bulk.vertex_primvars[0].size(), 0.0f);
             col.written.assign(col.npoints, 0);
 
-            const Result rs = RefineStream(ToView(m), &pv, 1, opts, so,
-                                           StreamSinkFn, &col, &err);
+            const Result rs = RefineStream(ToView(m), nullptr, 0, &pv, 1, opts,
+                                           so, StreamSinkFn, &col, &err);
             CHECK_MSG(rs == Result::Success, m.name + ": " + err);
             if (rs != Result::Success) {
               continue;
@@ -1835,7 +1835,7 @@ void test_stream_level0_passthrough() {
   col.points.assign(m.points.size(), 0.0f);
   col.written.assign(col.npoints, 0);
   std::string err;
-  CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, StreamSinkFn, &col,
+  CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so, StreamSinkFn, &col,
                      &err) == Result::Success);
   CHECK(col.face_counts.size() == 6);
   CHECK(col.points == m.points);
@@ -1882,7 +1882,7 @@ void test_stream_normals() {
         col.written.assign(col.npoints, 0);
         col.normals.assign(bulk.points.size(), 0.0f);
         col.n_written.assign(col.npoints, 0);
-        CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, StreamSinkFn, &col,
+        CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so, StreamSinkFn, &col,
                            &err) == Result::Success);
         const std::string tag = m.name + "/bs" + std::to_string(bs);
         CHECK_MSG(col.has_normals, tag);
@@ -1924,7 +1924,7 @@ void test_stream_normals() {
   col.written.assign(col.npoints, 0);
   col.normals.assign(bulk.points.size(), 0.0f);
   col.n_written.assign(col.npoints, 0);
-  CHECK(RefineStream(ToView(grid), nullptr, 0, opts, so, StreamSinkFn, &col,
+  CHECK(RefineStream(ToView(grid), nullptr, 0, nullptr, 0, opts, so, StreamSinkFn, &col,
                      &err) == Result::Success);
   for (uint32_t v = 0; v < col.npoints; v++) {
     if (!col.n_written[v]) {
@@ -2044,7 +2044,7 @@ void test_stream_blocked_matches_bulk() {
             so.emit_triangles = false;
             so.want_normals = false;
             BlockCollect col;
-            CHECK(RefineStream(ToView(m), nullptr, 0, opts, so, BlockSinkFn,
+            CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so, BlockSinkFn,
                                &col, &err) == Result::Success);
 
             const std::string tag = m.name + "/L" + std::to_string(level) +
@@ -2091,6 +2091,104 @@ void test_stream_blocked_matches_bulk() {
         }
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Linear faceVarying streaming: per-corner fvar must equal bulk Refine's.
+// ---------------------------------------------------------------------------
+
+struct FvarCollect {
+  uint32_t stride = 0;
+  std::vector<float> fvar;  // concatenated per-corner, emission order
+};
+
+bool FvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  FvarCollect *c = static_cast<FvarCollect *>(user);
+  if (b->num_fvar == 1) {
+    const float *v = b->fvar[0].values;
+    const size_t n = size_t(b->num_indices) * c->stride;
+    for (size_t i = 0; i < n; i++) {
+      c->fvar.push_back(v[i]);
+    }
+  }
+  return true;
+}
+
+void test_stream_fvar() {
+  using tinyusdz::tsd::FVarChannelView;
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+
+  std::vector<corpus::Mesh> meshes;
+  meshes.push_back(corpus::UVSeamGrid());
+  meshes.push_back(corpus::UVCube());
+  meshes.push_back(corpus::UVTriGrid());
+
+  const uint32_t batch_sizes[2] = {3u, 1u << 20};
+  for (const corpus::Mesh &m : meshes) {
+    std::vector<Scheme> schemes = {Scheme::Bilinear};
+    bool all_tris = true;
+    for (uint32_t c : m.face_vertex_counts) {
+      all_tris = all_tris && (c == 3);
+    }
+    // "all" mode is linear under any scheme; add a smooth scheme too.
+    schemes.push_back(all_tris ? Scheme::Loop : Scheme::CatmullClark);
+
+    FVarChannelView fv;
+    fv.values = m.fvar_uv.data();
+    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+    fv.indices = m.fvar_indices.empty() ? nullptr : m.fvar_indices.data();
+    fv.stride = 2;
+    fv.interpolation = FVarLinearInterpolation::All;  // linear => streamable
+
+    for (Scheme scheme : schemes) {
+      for (int level = 1; level <= 3; level++) {
+        Options opts;
+        opts.scheme = scheme;
+        opts.level = level;
+        opts.remove_holes = false;
+
+        RefinedMesh bulk;
+        std::string err;
+        CHECK(Refine(ToView(m), &fv, 1, nullptr, 0, opts, &bulk, &err) ==
+              Result::Success);
+        CHECK(bulk.fvar.size() == 1);
+
+        for (uint32_t bs : batch_sizes) {
+          StreamOptions so;
+          so.batch_faces = bs;
+          so.emit_triangles = false;  // native faces -> same corner order
+          so.want_normals = false;
+          FvarCollect col;
+          col.stride = 2;
+          CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, FvarSinkFn,
+                             &col, &err) == Result::Success);
+          const std::string tag =
+              m.name + "/L" + std::to_string(level) + "/bs" + std::to_string(bs);
+          CHECK_MSG(col.fvar == bulk.fvar[0], tag);
+        }
+      }
+    }
+  }
+
+  // Smooth seam-split faceVarying is not streamable -> InvalidArgument.
+  {
+    corpus::Mesh m = corpus::UVSeamGrid();
+    FVarChannelView fv;
+    fv.values = m.fvar_uv.data();
+    fv.num_values = uint32_t(m.fvar_uv.size() / 2);
+    fv.indices = m.fvar_indices.data();
+    fv.stride = 2;
+    fv.interpolation = FVarLinearInterpolation::CornersPlus1;  // smooth
+    Options opts;
+    opts.scheme = Scheme::CatmullClark;
+    opts.level = 2;
+    StreamOptions so;
+    StreamCollect sink;
+    std::string err;
+    CHECK(RefineStream(ToView(m), &fv, 1, nullptr, 0, opts, so, StreamSinkFn,
+                       &sink, &err) == Result::InvalidArgument);
   }
 }
 
@@ -2176,6 +2274,7 @@ int main() {
   TEST(test_stream_level0_passthrough);
   TEST(test_stream_normals);
   TEST(test_stream_blocked_matches_bulk);
+  TEST(test_stream_fvar);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

@@ -253,6 +253,11 @@ struct StreamBatch {
   const uint32_t *face_vertex_counts = nullptr;
   const uint32_t *indices = nullptr;       // batch-local vertex ids
   const uint32_t *face_source = nullptr;   // per face -> base (level-0) face id
+
+  // Linear faceVarying, per output corner (parallel to `indices`):
+  // fvar[c] has num_indices * stride(c) values.
+  uint32_t num_fvar = 0;
+  const StreamPrimvar *fvar = nullptr;
 };
 
 // Return false to abort refinement early (RefineStream then returns Success
@@ -276,9 +281,14 @@ struct StreamOptions {
   uint32_t halo_rings = 0;
 };
 
-// Streaming refinement. `vertex_primvars` may be null when its count is 0.
-// Returns InvalidArgument if faceVarying channels are requested (unsupported).
-Result RefineStream(const MeshView &mesh,
+// Streaming refinement. `fvar_channels`/`vertex_primvars` may be null when
+// their count is 0. faceVarying is streamed only for linear modes (the "all"
+// mode, or any mode under bilinear); a smooth seam-split faceVarying channel
+// returns InvalidArgument (use the bulk Refine). faceVarying is emitted
+// per-corner (StreamBatch::fvar, parallel to indices) and is not supported in
+// block mode (block_faces > 0).
+Result RefineStream(const MeshView &mesh, const FVarChannelView *fvar_channels,
+                    uint32_t num_fvar_channels,
                     const VertexPrimvarView *vertex_primvars,
                     uint32_t num_vertex_primvars, const Options &options,
                     const StreamOptions &stream_options, StreamSink sink,

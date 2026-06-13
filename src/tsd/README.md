@@ -24,8 +24,10 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 - **Streaming refinement** (`RefineStream`): refines to level N without ever
   materializing the full output -- the final (largest) level is emitted to a
   sink in bounded batches, so peak working memory is the level-(N-1) state plus
-  one batch (geometry + vertex/varying primvars + seamless limit normals). This
-  is what lets deep refinement fit in wasm32's 2 GB; exposed to JS via the
+  one batch (geometry + vertex/varying primvars + linear faceVarying +
+  seamless limit normals). With `StreamOptions::block_faces` it also bounds the
+  *working set* (block + halo refinement) for meshes too large to refine whole.
+  This is what lets deep refinement fit in wasm32's 2 GB; exposed to JS via the
   `SubdivStreamer` binding and demoed in `web/js/subdiv.js`.
 - Hardened: full input validation, 64-bit overflow-checked sizing,
   per-level vertex/face/corner caps, fuzz-tested (`tests/fuzzer/fuzz_tsd.cc`).
