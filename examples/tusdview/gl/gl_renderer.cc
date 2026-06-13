@@ -250,6 +250,18 @@ void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void GLRenderer::updateMeshVertices(int meshIndex,
+                                    const std::vector<DrawVertex>& verts) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  GLMesh& gm = meshes_[static_cast<size_t>(meshIndex)];
+  if (!gm.vbo || verts.size() != gm.vertexCount) return;  // count must match
+  glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  glBufferSubData(GL_ARRAY_BUFFER, 0,
+                  static_cast<GLsizeiptr>(verts.size() * sizeof(DrawVertex)),
+                  verts.data());
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;
@@ -257,6 +269,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   gm.doubleSided = sm.doubleSided;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
+  gm.vertexCount = sm.vertices.size();
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);

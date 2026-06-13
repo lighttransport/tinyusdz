@@ -23,6 +23,8 @@ class GLRenderer final : public Renderer {
   void appendMesh(const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
+  void updateMeshVertices(int meshIndex,
+                          const std::vector<DrawVertex>& verts) override;
   void resizeViewport(int width, int height) override;
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
@@ -41,6 +43,7 @@ class GLRenderer final : public Renderer {
     float world[16];
     bool doubleSided{false};
     bool skinned{false};
+    size_t vertexCount{0};  // for per-frame morph vertex re-upload guard
   };
   struct GLMaterial {
     float baseColor[3]{0.8f, 0.8f, 0.8f};
