@@ -264,6 +264,16 @@ struct StreamOptions {
   bool emit_triangles = true;      // quads -> 2 triangles for direct GPU upload
   bool want_normals = false;       // emit closed-form limit normals
   bool dedup_within_batch = true;  // share vertices inside a batch
+
+  // Block mode: bound the WORKING set (not just the output) for very large base
+  // meshes. When > 0, base faces are refined in blocks of `block_faces`, each
+  // with a halo of `halo_rings` neighbouring base-face rings (0 => level + 1)
+  // so owned faces keep full stencil support. Peak is then one block-plus-halo
+  // refinement, independent of total mesh size. Blocked output duplicates
+  // vertices at block borders (vertex_source is block-local); analytic normals
+  // keep shading seamless. (faceVarying/primvar-less geometry path.)
+  uint32_t block_faces = 0;
+  uint32_t halo_rings = 0;
 };
 
 // Streaming refinement. `vertex_primvars` may be null when its count is 0.
