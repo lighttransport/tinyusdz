@@ -578,7 +578,8 @@ bool CrateWriter::ConvertSinglePrim(
   // Known uniform properties (must have Variability::Uniform in their Attribute spec)
   static const std::set<std::string> kUniformProps = {
     "offsets", "normalOffsets", "pointIndices",  // BlendShape
-    "subdivisionScheme", "interpolateBoundary", "faceVaryingLinearInterpolation",  // Mesh
+    "subdivisionScheme", "interpolateBoundary", "faceVaryingLinearInterpolation",
+    "triangleSubdivisionRule",  // Mesh
     "elementType", "familyName",  // GeomSubset
     "projection", "stereoRole",  // Camera
     "type", "basis", "wrap",  // BasisCurves

@@ -22,7 +22,7 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 - Closed-form limit positions (`SnapToLimit`) and limit normals
   (`ComputeLimitNormals`) for Catmull-Clark and Loop.
 - Hardened: full input validation, 64-bit overflow-checked sizing,
-  per-level vertex/face caps, fuzz-tested (`tests/fuzzer/fuzz_tsd.cc`).
+  per-level vertex/face/corner caps, fuzz-tested (`tests/fuzzer/fuzz_tsd.cc`).
   Non-manifold input (including inconsistent face winding) is **rejected** —
   an intentional divergence from OpenSubdiv, which tolerates it.
 - Optional threading through an injected `parallel_for` callback with

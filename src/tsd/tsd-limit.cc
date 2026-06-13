@@ -53,10 +53,13 @@ Result CheckChildCaps(const Topology &topo, const std::vector<uint32_t> &fvi,
       loop ? (uint64_t(topo.num_faces) * 4) : uint64_t(fvi.size());
   const uint64_t child_corners = child_faces * (loop ? 3 : 4);
   if (child_points > options.max_vertices ||
-      child_faces > options.max_faces || child_points > 0xFFFFFFFFull ||
+      child_faces > options.max_faces ||
+      child_corners > options.max_face_vertex_indices ||
+      child_points > 0xFFFFFFFFull ||
       child_corners > 0xFFFFFFFFull) {
     return Fail(Result::LimitExceeded, err,
-                "limit topology rebuild exceeds max_vertices/max_faces caps.");
+                "limit topology rebuild exceeds max_vertices/max_faces/"
+                "max_face_vertex_indices caps.");
   }
   return Result::Success;
 }

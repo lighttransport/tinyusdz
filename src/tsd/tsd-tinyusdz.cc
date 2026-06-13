@@ -108,6 +108,18 @@ bool RefineGeomMesh(const GeomMesh &mesh, int32_t level,
     }
   }
 
+  // `triangleSubdivisionRule` is a uniform token (no Animatable), so
+  // get_value() yields the effective enum (authored or the CatmullClark
+  // fallback) directly, like subdivisionScheme above.
+  switch (mesh.triangleSubdivisionRule.get_value()) {
+    case GeomMesh::TriangleSubdivisionRule::CatmullClark:
+      options.triangle_subdivision = TriangleSubdivision::CatmullClark;
+      break;
+    case GeomMesh::TriangleSubdivisionRule::Smooth:
+      options.triangle_subdivision = TriangleSubdivision::Smooth;
+      break;
+  }
+
   const std::vector<int32_t> corner_indices = GetTagValues(mesh.cornerIndices);
   const std::vector<float> corner_sharpnesses =
       GetTagValues(mesh.cornerSharpnesses);
