@@ -1982,6 +1982,12 @@ bool ConvertURDFJsonToUSDStage(
     link_name_to_usd[link_name] = usd_link_name;
     link_name_to_index[link_name] = link_prims.size();
 
+    // A world-fixed link (e.g. the synthetic "world" link holding worldbody-
+    // level floor/ground/hfield geoms) is a static collider, not a dynamic
+    // body: rigidBodyEnabled=false and no articulation root.
+    bool is_static = false;
+    JsonBool(link_json, "static", &is_static);
+
     Xform link_xform;
     link_xform.name = usd_link_name;
     AddAPISchemas(link_xform.metas(), {
@@ -1989,14 +1995,14 @@ bool ConvertURDFJsonToUSDStage(
                                           ""},
                                          {APISchemas::APIName::PhysicsMassAPI, ""},
                                      });
-    AddAttr(link_xform.props, "physics:rigidBodyEnabled", true);
+    AddAttr(link_xform.props, "physics:rigidBodyEnabled", !is_static);
     AddAttr(link_xform.props, "physics:startsAsleep", false);
     // MuJoCo mocap body (externally driven, not simulated).
     bool is_mocap = false;
     if (JsonBool(link_json, "mocap", &is_mocap) && is_mocap) {
       AddAttr(link_xform.props, "mjc:mocap", true, /*uniform=*/true);
     }
-    if (!child_links.count(link_name)) {
+    if (!is_static && !child_links.count(link_name)) {
       AppendAPISchema(link_xform.metas(),
                       APISchemas::APIName::PhysicsArticulationRootAPI);
       AppendAPISchema(link_xform.metas(),

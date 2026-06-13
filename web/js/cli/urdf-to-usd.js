@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -942,6 +943,181 @@ function collectMujocoAssets(root, baseDir, opts) {
   return meshes;
 }
 
+// Minimal grayscale PNG decoder (node `zlib`), enough for <asset><hfield> maps:
+// 8-bit greyscale/RGB/RGBA, non-interlaced. Returns { width, height, gray:
+// Uint8Array } or null. Heightfields only need luminance.
+function decodePNGGray(buffer) {
+  const SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+  for (let i = 0; i < 8; i++) if (buffer[i] !== SIG[i]) return null;
+  let pos = 8, width = 0, height = 0, bitDepth = 0, colorType = 0;
+  const idat = [];
+  while (pos < buffer.length) {
+    const len = buffer.readUInt32BE(pos); pos += 4;
+    const type = buffer.toString('ascii', pos, pos + 4); pos += 4;
+    if (type === 'IHDR') {
+      width = buffer.readUInt32BE(pos);
+      height = buffer.readUInt32BE(pos + 4);
+      bitDepth = buffer[pos + 8];
+      colorType = buffer[pos + 9];
+      const interlace = buffer[pos + 12];
+      if (bitDepth !== 8 || interlace !== 0) return null;  // keep it simple
+    } else if (type === 'IDAT') {
+      idat.push(buffer.subarray(pos, pos + len));
+    } else if (type === 'IEND') {
+      break;
+    }
+    pos += len + 4;  // skip data + CRC
+  }
+  if (!width || !height) return null;
+  const channels = colorType === 0 ? 1 : colorType === 2 ? 3 : colorType === 6 ? 4 : 0;
+  if (!channels) return null;
+  let raw;
+  try {
+    raw = zlib.inflateSync(Buffer.concat(idat));
+  } catch (e) {
+    return null;
+  }
+  const stride = width * channels;
+  if (raw.length < (stride + 1) * height) return null;
+  // Un-filter scanlines in place into `out` (the 5 PNG filter types).
+  const out = Buffer.alloc(stride * height);
+  const paeth = (a, b, c) => {
+    const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  };
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const inOff = y * (stride + 1) + 1;
+    const outOff = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const rawv = raw[inOff + x];
+      const a = x >= channels ? out[outOff + x - channels] : 0;
+      const b = y > 0 ? out[outOff - stride + x] : 0;
+      const c = (x >= channels && y > 0) ? out[outOff - stride + x - channels] : 0;
+      let v;
+      switch (filter) {
+        case 0: v = rawv; break;
+        case 1: v = rawv + a; break;
+        case 2: v = rawv + b; break;
+        case 3: v = rawv + ((a + b) >> 1); break;
+        case 4: v = rawv + paeth(a, b, c); break;
+        default: return null;
+      }
+      out[outOff + x] = v & 0xff;
+    }
+  }
+  // Collapse to luminance.
+  const gray = new Uint8Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    if (channels === 1) gray[i] = out[i];
+    else gray[i] = Math.round(0.299 * out[i * channels] + 0.587 * out[i * channels + 1] + 0.114 * out[i * channels + 2]);
+  }
+  return { width, height, gray };
+}
+
+// Collect <asset><hfield> declarations. File-based fields decode a PNG (rows
+// reversed: MuJoCo stores row 0 at the -y edge); inline fields read
+// nrow/ncol/elevation. All normalized to [0,1]. Mirrors the C++ parser.
+function collectMujocoHFields(root, baseDir, opts) {
+  const compiler = firstChild(root, 'compiler');
+  const meshDir = compiler?.attrs.meshdir || compiler?.attrs.assetdir || '';
+  const meshBaseDir = path.resolve(baseDir, meshDir);
+  const meshIndex = buildMeshIndex(baseDir);
+  const hfields = new Map();
+  for (const asset of childElements(root, 'asset')) {
+    for (const hf of childElements(asset, 'hfield')) {
+      const file = hf.attrs.file || '';
+      let name = hf.attrs.name || (file ? path.basename(file, path.extname(file)) : '');
+      if (!name) continue;
+      const size = parseNumbers(hf.attrs.size, [1, 1, 1, 0.1]);
+      let nrow = 0, ncol = 0, data = null;
+      if (file) {
+        const fpath = resolveMujocoMeshFile(file, meshBaseDir, baseDir, opts, meshIndex);
+        if (fs.existsSync(fpath)) {
+          const png = decodePNGGray(fs.readFileSync(fpath));
+          if (png) {
+            ncol = png.width; nrow = png.height;
+            data = new Float32Array(nrow * ncol);
+            for (let r = 0; r < nrow; r++) {
+              for (let c = 0; c < ncol; c++) {
+                // reverse rows: data row 0 is the bottom (-y) image row
+                data[r * ncol + c] = png.gray[c + (nrow - 1 - r) * ncol];
+              }
+            }
+          }
+        }
+        if (!data && !opts.allowMissing) {
+          throw new Error(`MJCF hfield file not found/decodable: ${file}`);
+        }
+      } else {
+        nrow = Math.trunc(numberAttr(hf.attrs, 'nrow', 0));
+        ncol = Math.trunc(numberAttr(hf.attrs, 'ncol', 0));
+        const elev = parseNumbers(hf.attrs.elevation, []);
+        if (nrow > 0 && ncol > 0 && elev.length === nrow * ncol) {
+          data = Float32Array.from(elev);
+        }
+      }
+      if (nrow > 1 && ncol > 1 && data) {
+        // normalize to [0,1] as MuJoCo's compiler does
+        let emin = Infinity, emax = -Infinity;
+        for (const v of data) { if (v < emin) emin = v; if (v > emax) emax = v; }
+        const range = emax - emin;
+        for (let i = 0; i < data.length; i++) {
+          data[i] -= emin;
+          if (range > 1e-9) data[i] /= range;
+        }
+        hfields.set(name, { nrow, ncol, size, data });
+      }
+    }
+  }
+  return hfields;
+}
+
+// Tessellate a heightfield's top surface into a THREE.BufferGeometry in the
+// field's local frame (x in [-rx,rx] over ncol, y in [-ry,ry] over nrow,
+// z = normalized * elevation_z), with smooth per-vertex normals. Matches the
+// C++ TessellateHField layout exactly.
+function buildHFieldGeometry(hf) {
+  const nr = hf.nrow, nc = hf.ncol;
+  const rx = hf.size[0], ry = hf.size[1], ez = hf.size[2] ?? 1;
+  const dx = (2 * rx) / (nc - 1), dy = (2 * ry) / (nr - 1);
+  const H = (r, c) => {
+    r = Math.max(0, Math.min(nr - 1, r));
+    c = Math.max(0, Math.min(nc - 1, c));
+    return hf.data[r * nc + c] * ez;
+  };
+  const positions = new Float32Array(nr * nc * 3);
+  const normals = new Float32Array(nr * nc * 3);
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const i = (r * nc + c) * 3;
+      positions[i] = -rx + c * dx;
+      positions[i + 1] = -ry + r * dy;
+      positions[i + 2] = H(r, c);
+      const hx = (H(r, c + 1) - H(r, c - 1)) / (2 * dx);
+      const hy = (H(r + 1, c) - H(r - 1, c)) / (2 * dy);
+      let nx = -hx, ny = -hy, nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normals[i] = nx / len; normals[i + 1] = ny / len; normals[i + 2] = nz / len;
+    }
+  }
+  const indices = new Uint32Array((nr - 1) * (nc - 1) * 6);
+  let k = 0;
+  for (let r = 0; r < nr - 1; r++) {
+    for (let c = 0; c < nc - 1; c++) {
+      const v00 = r * nc + c, v01 = r * nc + (c + 1);
+      const v10 = (r + 1) * nc + c, v11 = (r + 1) * nc + (c + 1);
+      indices[k++] = v00; indices[k++] = v01; indices[k++] = v11;
+      indices[k++] = v00; indices[k++] = v11; indices[k++] = v10;
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geom.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geom;
+}
+
 function mujocoJointType(type) {
   if (type === 'hinge') return 'revolute';
   if (type === 'slide') return 'prismatic';
@@ -1513,12 +1689,25 @@ function parseMujocoContactPairs(root) {
   return out;
 }
 
-async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
+async function mujocoGeomPayloads(geomNode, meshAssets, hfields, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
   const geomType = geomNode.attrs.type || (geomNode.attrs.mesh ? 'mesh' : 'sphere');
   // Bake the body-chain world transform into the geom matrix: the USD converter
   // places every link Xform at identity, so each geom carries its full world
   // placement (body_world * geom-local pose).
   const originMatrix = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(geomNode.attrs));
+  if (geomType === 'hfield') {
+    const hf = hfields.get(geomNode.attrs.hfield);
+    if (!hf) {
+      if (opts.allowMissing) {
+        console.warn(`Skipping missing MJCF hfield asset: ${geomNode.attrs.hfield}`);
+        return [];
+      }
+      throw new Error(`MJCF hfield asset not found: ${geomNode.attrs.hfield}`);
+    }
+    const mesh = new THREE.Mesh(buildHFieldGeometry(hf));
+    mesh.name = fallbackName;
+    return collectMeshPayloads(mesh, originMatrix, fallbackName);
+  }
   if (geomType === 'mesh') {
     const meshName = geomNode.attrs.mesh;
     const meshAsset = meshAssets.get(meshName);
@@ -1603,6 +1792,18 @@ async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, body
       fallbackName
     );
   }
+  if (geomType === 'plane') {
+    // A finite display quad for the (infinite) MuJoCo ground plane, baked as a
+    // thin box like the C++ parser (size = half-x, half-y, grid-spacing).
+    const sx = size[0] > 0 ? size[0] : 1;
+    const sy = size[1] > 0 ? size[1] : 1;
+    const sz = size[2] > 0 ? size[2] : 0.001;
+    return collectMeshPayloads(
+      primitiveObjectFromGeometry(new THREE.BoxGeometry(sx * 2, sy * 2, sz * 2), fallbackName),
+      originMatrix,
+      fallbackName
+    );
+  }
 
   if (opts.allowMissing) {
     console.warn(`Skipping unsupported MJCF geom type: ${geomType}`);
@@ -1670,6 +1871,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
   const defaults = parseMujocoDefaults(root);
   const meshAssets = collectMujocoAssets(root, baseDir, opts);
+  const hfields = collectMujocoHFields(root, baseDir, opts);
   // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
   // <include>) into a single world; visit them all, not just the first.
   const worldbodies = childElements(root, 'worldbody');
@@ -1703,6 +1905,54 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   let visualCount = 0;
   let collisionCount = 0;
 
+  // Bake one <geom> into a link payload's visuals/collisions. Shared by the
+  // per-body traversal and the worldbody-level (static) geom collection.
+  async function appendGeomToLink(rawGeomNode, childclass, linkPayload, bodyWorld, fallbackPrefix, geomIndex) {
+    // Resolve <default>/childclass inheritance so class-tagged attributes
+    // (type/group/contype/...) are visible to classification and tessellation.
+    const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
+    const geomNode = { name: rawGeomNode.name, attrs: effAttrs, children: rawGeomNode.children || [] };
+    const geomName = effAttrs.name || effAttrs.mesh || `${fallbackPrefix}_geom_${geomIndex}`;
+    // MuJoCo visibility is by geom group: 0-2 visible, 3-5 hidden/collision.
+    // The resolved group (explicit on the geom, else from its class) is
+    // authoritative and wins over the class NAME — e.g. iit_softfoot tags some
+    // class="collision" meshes with group="0" to make them visible. No group =>
+    // default group 0 (visible); class name is only a fallback hint.
+    const geomClass = (effAttrs.class || '').toLowerCase();
+    const geomGroup = Number(effAttrs.group);
+    const isVisual = Number.isFinite(geomGroup) ? geomGroup < 3
+      : (geomClass.includes('collision') || geomClass.includes('collider')) ? false
+      : true;
+    const geomWorld = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(geomNode.attrs));
+    let payloads = null;
+    if (!isVisual && !opts.tessellateCollisionShapes) {
+      payloads = shapePayloadForMujocoGeom(geomNode, geomWorld, geomName, bodyWorld);
+    }
+    if (!payloads) {
+      payloads = await mujocoGeomPayloads(geomNode, meshAssets, hfields, geomName, opts, bodyWorld);
+    }
+    if (isVisual) {
+      linkPayload.visuals.push(...payloads.map((payload) => {
+        const p = addMujocoPhysicsAttrs(payload, geomNode);
+        if (effAttrs.material) p.material = effAttrs.material;
+        return p;
+      }));
+      visualCount += payloads.length;
+    } else {
+      // Default approximation `convexHull` matches the convention in
+      // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and mirrors
+      // NVIDIA / Newton's mujoco-usd-converter (see lightgeom
+      // `doc/usd.md` "Mesh + collider convention"). Override per-geom
+      // with `approximation: "none"` for triangle-soup MJCF colliders.
+      for (const payload of payloads) {
+        payload.approximation = payload.approximation || 'convexHull';
+        addMujocoPhysicsAttrs(payload, geomNode);
+      }
+      linkPayload.collisions.push(...payloads);
+      collisionCount += payloads.length;
+    }
+  }
+
   async function visitBody(bodyNode, parentName = '', inheritedChildclass = '', parentWorld = new THREE.Matrix4()) {
     const linkName = bodyNode.attrs.name || `body_${links.length}`;
     // childclass propagates to this body's own geoms/joints and descendants
@@ -1723,49 +1973,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
     let geomIndex = 0;
     for (const rawGeomNode of childElements(bodyNode, 'geom')) {
-      // Resolve <default>/childclass inheritance so class-tagged attributes
-      // (type/group/contype/...) are visible to classification and tessellation.
-      const effAttrs = resolveElementAttrs(rawGeomNode, defaults.geom, defaults.rootGeom, childclass);
-      const geomNode = { name: rawGeomNode.name, attrs: effAttrs, children: rawGeomNode.children || [] };
-      const geomName = effAttrs.name || effAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      // MuJoCo visibility is by geom group: 0-2 visible, 3-5 hidden/collision.
-      // The resolved group (explicit on the geom, else from its class) is
-      // authoritative and wins over the class NAME — e.g. iit_softfoot tags some
-      // class="collision" meshes with group="0" to make them visible. No group =>
-      // default group 0 (visible); class name is only a fallback hint.
-      const geomClass = (effAttrs.class || '').toLowerCase();
-      const geomGroup = Number(effAttrs.group);
-      const isVisual = Number.isFinite(geomGroup) ? geomGroup < 3
-        : (geomClass.includes('collision') || geomClass.includes('collider')) ? false
-        : true;
-      const geomWorld = new THREE.Matrix4().copy(bodyWorld).multiply(matrixFromPoseAttrs(geomNode.attrs));
-      let payloads = null;
-      if (!isVisual && !opts.tessellateCollisionShapes) {
-        payloads = shapePayloadForMujocoGeom(geomNode, geomWorld, geomName, bodyWorld);
-      }
-      if (!payloads) {
-        payloads = await mujocoGeomPayloads(geomNode, meshAssets, geomName, opts, bodyWorld);
-      }
-      if (isVisual) {
-        linkPayload.visuals.push(...payloads.map((payload) => {
-          const p = addMujocoPhysicsAttrs(payload, geomNode);
-          if (effAttrs.material) p.material = effAttrs.material;
-          return p;
-        }));
-        visualCount += payloads.length;
-      } else {
-        // Default approximation `convexHull` matches the convention in
-        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and mirrors
-        // NVIDIA / Newton's mujoco-usd-converter (see lightgeom
-        // `doc/usd.md` "Mesh + collider convention"). Override per-geom
-        // with `approximation: "none"` for triangle-soup MJCF colliders.
-        for (const payload of payloads) {
-          payload.approximation = payload.approximation || 'convexHull';
-          addMujocoPhysicsAttrs(payload, geomNode);
-        }
-        linkPayload.collisions.push(...payloads);
-        collisionCount += payloads.length;
-      }
+      await appendGeomToLink(rawGeomNode, childclass, linkPayload, bodyWorld, linkName, geomIndex);
       geomIndex++;
     }
 
@@ -1851,6 +2059,21 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     for (const bodyNode of childElements(worldbody, 'body')) {
       await visitBody(bodyNode);
     }
+  }
+
+  // World-fixed geoms living directly under <worldbody> (floor/ground/hfield)
+  // belong to no body; collect them onto a single static root link named
+  // "world" so they still convert. Mirrors the C++ AddWorldbodyGeomsLink.
+  const worldLink = { name: 'world', static: true, inertial: { mass: 0 }, visuals: [], collisions: [] };
+  let worldGeomIndex = 0;
+  for (const worldbody of worldbodies) {
+    for (const rawGeomNode of childElements(worldbody, 'geom')) {
+      await appendGeomToLink(rawGeomNode, '', worldLink, new THREE.Matrix4(), 'world', worldGeomIndex);
+      worldGeomIndex++;
+    }
+  }
+  if (worldLink.visuals.length || worldLink.collisions.length) {
+    links.push(worldLink);
   }
 
   const payload = {
