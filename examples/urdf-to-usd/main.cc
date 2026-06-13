@@ -2071,6 +2071,181 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   return true;
 }
 
+// --- MJCF <attach> sub-model composition -----------------------------------
+// `<asset><model name file>` declares a child model; `<attach model body
+// prefix>` grafts that child's body subtree at the attach point, prefixing
+// every name + reference. We expand it at the XML level (after include
+// expansion) so the rest of the pipeline sees one flat model. Used by
+// iit_softfoot/scene.xml (the only menagerie model using <attach>).
+
+// Attributes whose value is a name or a reference to one (prefixed on attach).
+const std::set<std::string> &AttachRefAttrs() {
+  static const std::set<std::string> s = {
+      "name", "class", "childclass", "material", "mesh", "hfield", "texture",
+      "joint", "joint1", "joint2", "site", "site1", "site2", "refsite",
+      "sidesite", "tendon", "tendon1", "tendon2", "body", "body1", "body2",
+      "geom", "geom1", "geom2", "objname"};
+  return s;
+}
+
+void PrefixAttachSubtree(pugi::xml_node node, const std::string &prefix,
+                         bool rad_to_deg) {
+  for (pugi::xml_attribute a : node.attributes()) {
+    if (AttachRefAttrs().count(a.name())) {
+      const std::string v = a.value();
+      if (!v.empty()) a.set_value((prefix + v).c_str());
+    }
+  }
+  if (rad_to_deg) {
+    // The child model authored angles in radians but the merged model is parsed
+    // in degrees; convert orientation angles so geometry stays correct. (Joint
+    // range/ref are left as-is — they affect limits, not the rest pose.)
+    const double k = 57.295779513082323;  // 180/pi
+    if (pugi::xml_attribute e = node.attribute("euler")) {
+      const auto v = ParseDoubles(e.value());
+      if (v.size() == 3) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g",
+                      v[0] * k, v[1] * k, v[2] * k);
+        e.set_value(buf);
+      }
+    }
+    if (pugi::xml_attribute aa = node.attribute("axisangle")) {
+      const auto v = ParseDoubles(aa.value());
+      if (v.size() == 4) {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g %.10g", v[0], v[1],
+                      v[2], v[3] * k);
+        aa.set_value(buf);
+      }
+    }
+  }
+  for (pugi::xml_node c : node.children()) {
+    PrefixAttachSubtree(c, prefix, rad_to_deg);
+  }
+}
+
+void CollectAttachNodes(pugi::xml_node n, std::vector<pugi::xml_node> *out) {
+  for (pugi::xml_node c : n.children()) {
+    if (std::string(c.name()) == "attach") out->push_back(c);
+    CollectAttachNodes(c, out);
+  }
+}
+
+pugi::xml_node FindBodyByName(pugi::xml_node n, const std::string &name) {
+  for (pugi::xml_node b : n.children("body")) {
+    if (std::string(b.attribute("name").as_string()) == name) return b;
+    if (pugi::xml_node r = FindBodyByName(b, name)) return r;
+  }
+  return pugi::xml_node();
+}
+
+bool ExpandAttachments(pugi::xml_node root, const fs::path &base_dir,
+                       std::string *err) {
+  std::map<std::string, fs::path> models;
+  for (pugi::xml_node asset : root.children("asset")) {
+    for (pugi::xml_node m : asset.children("model")) {
+      const std::string name = m.attribute("name").as_string();
+      const std::string file = m.attribute("file").as_string();
+      if (!name.empty() && !file.empty()) {
+        models[name] = fs::weakly_canonical(base_dir / file);
+      }
+    }
+  }
+  std::vector<pugi::xml_node> attaches;
+  CollectAttachNodes(root, &attaches);
+  if (attaches.empty()) return true;
+
+  bool parent_radian = false;
+  if (pugi::xml_node comp = root.child("compiler")) {
+    parent_radian = ToLower(comp.attribute("angle").as_string("degree")) == "radian";
+  }
+
+  for (pugi::xml_node attach : attaches) {
+    const std::string model_name = attach.attribute("model").as_string();
+    const std::string body_name = attach.attribute("body").as_string();
+    const std::string prefix = attach.attribute("prefix").as_string();
+    const auto it = models.find(model_name);
+    if (it == models.end()) {
+      std::cerr << "WARN: <attach> references unknown model `" << model_name
+                << "`\n";
+      continue;
+    }
+    std::string child_xml;
+    if (!ReadFile(it->second, &child_xml, err)) return false;
+    std::set<fs::path> seen;
+    std::string child_expanded;
+    if (!ExpandIncludes(child_xml, it->second.parent_path(), &seen,
+                        &child_expanded, err)) {
+      return false;
+    }
+    pugi::xml_document child_doc;
+    if (!child_doc.load_string(child_expanded.c_str())) {
+      if (err) *err = "Failed to parse attached model: " + it->second.string();
+      return false;
+    }
+    pugi::xml_node child_root = child_doc.child("mujoco");
+    if (!child_root) continue;
+
+    const fs::path child_dir = it->second.parent_path();
+    std::string child_meshdir;
+    bool child_radian = false;
+    if (pugi::xml_node cc = child_root.child("compiler")) {
+      child_meshdir = cc.attribute("meshdir").as_string();
+      if (child_meshdir.empty()) child_meshdir = cc.attribute("assetdir").as_string();
+      child_radian = ToLower(cc.attribute("angle").as_string("degree")) == "radian";
+    }
+    const bool rad_to_deg = child_radian && !parent_radian;
+
+    // Make the child's mesh/hfield file paths absolute so they still resolve
+    // after the assets are merged into the (differently-rooted) parent model.
+    for (pugi::xml_node asset : child_root.children("asset")) {
+      for (const char *tag : {"mesh", "hfield", "skin"}) {
+        for (pugi::xml_node a : asset.children(tag)) {
+          pugi::xml_attribute f = a.attribute("file");
+          if (f && !std::string(f.value()).empty() &&
+              fs::path(f.value()).is_relative()) {
+            const fs::path abs =
+                fs::weakly_canonical(child_dir / child_meshdir / f.value());
+            f.set_value(abs.string().c_str());
+          }
+        }
+      }
+    }
+
+    PrefixAttachSubtree(child_root, prefix, rad_to_deg);
+
+    pugi::xml_node found;
+    for (pugi::xml_node wb : child_root.children("worldbody")) {
+      found = FindBodyByName(wb, prefix + body_name);
+      if (found) break;
+    }
+    if (!found) {
+      std::cerr << "WARN: <attach> body `" << body_name
+                << "` not found in model `" << model_name << "`\n";
+      continue;
+    }
+
+    pugi::xml_node parent = attach.parent();
+    parent.insert_copy_before(found, attach);
+    parent.remove_child(attach);
+
+    // Merge the child's model-level sections (prefixed) into the parent.
+    for (const char *sec : {"default", "asset", "tendon", "actuator", "sensor",
+                            "equality", "contact", "keyframe"}) {
+      pugi::xml_node child_sec = child_root.child(sec);
+      if (!child_sec) continue;
+      pugi::xml_node main_sec = root.child(sec);
+      if (!main_sec) main_sec = root.append_child(sec);
+      for (pugi::xml_node c : child_sec.children()) {
+        if (std::string(c.name()) == "model") continue;  // don't recurse models
+        main_sec.append_copy(c);
+      }
+    }
+  }
+  return true;
+}
+
 bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
                         const Options &opts, nlohmann::json *payload,
                         Stats *stats, std::string *err) {
@@ -2089,6 +2264,12 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   const auto root = doc.child("mujoco");
   if (!root) {
     if (err) *err = "Expected <mujoco> root.";
+    return false;
+  }
+
+  // Expand <attach> sub-models (graft + prefix child body subtrees) before any
+  // semantic parsing, so assets/defaults/tendons/etc. see the merged model.
+  if (!ExpandAttachments(root, input_filename.parent_path(), err)) {
     return false;
   }
 
