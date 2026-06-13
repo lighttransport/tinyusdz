@@ -713,6 +713,13 @@ bool RegisterUSDModule(JSEngineState &engine, Stage *stage,
   return false;
 }
 
+bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
+                        std::string &err) {
+  (void)engine; (void)diff;
+  err = "JavaScript (QuickJS) not enabled.";
+  return false;
+}
+
 bool RunJSScript(JSEngineState &engine, const std::string &js_code,
                  nlohmann::json &return_value, std::string &err) {
   (void)engine; (void)js_code; (void)return_value;

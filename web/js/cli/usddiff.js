@@ -37,6 +37,9 @@ USAGE:
 OPTIONS:
   --json      Output diff in JSON format
   --quiet     Suppress diff output, exit code only
+  --ulps N    Float ULP tolerance (default 1; 0 = bitwise-exact)
+  --eps F     Absolute float epsilon (optional; OR'd with ULP)
+  --no-meta   Do not compare metadata (attr/prim/layer)
   --help      Show this help message
   -h          Show this help message
 
@@ -56,11 +59,24 @@ SUPPORTED FORMATS:
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const o = { json: false, quiet: false, file1: null, file2: null };
-  for (const a of args) {
+  const o = { json: false, quiet: false, file1: null, file2: null,
+              ulps: null, eps: null, compareMetadata: true };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
     if (a === '--help' || a === '-h') { printUsage(); process.exit(0); }
     else if (a === '--json') o.json = true;
     else if (a === '--quiet') o.quiet = true;
+    else if (a === '--no-meta') o.compareMetadata = false;
+    else if (a === '--ulps') {
+      const v = args[++i];
+      if (v === undefined || !/^\d+$/.test(v)) { console.error('Error: --ulps requires a non-negative integer'); process.exit(2); }
+      o.ulps = parseInt(v, 10);
+    }
+    else if (a === '--eps') {
+      const v = args[++i];
+      if (v === undefined || isNaN(Number(v))) { console.error('Error: --eps requires a number'); process.exit(2); }
+      o.eps = Number(v);
+    }
     else if (o.file1 === null) o.file1 = a;
     else if (o.file2 === null) o.file2 = a;
     else { console.error('Error: Too many arguments'); printUsage(); process.exit(2); }
@@ -82,11 +98,15 @@ async function main() {
 
   const native = await loadWasm(() => import(wasmGlue));
 
-  const res = native.usddiff({
+  const diffArgs = {
     left: { data: new Uint8Array(fs.readFileSync(o.file1)), name: o.file1 },
     right: { data: new Uint8Array(fs.readFileSync(o.file2)), name: o.file2 },
     format: o.json ? 'json' : 'text',
-  });
+    compareMetadata: o.compareMetadata,
+  };
+  if (o.ulps !== null) diffArgs.ulps = o.ulps;
+  if (o.eps !== null) diffArgs.eps = o.eps;
+  const res = native.usddiff(diffArgs);
 
   if (!res || !res.success) {
     console.error('Error: ' + (res && res.error ? res.error : 'usddiff failed'));
