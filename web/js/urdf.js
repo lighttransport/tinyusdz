@@ -2355,6 +2355,21 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       sensorsPayload.push(s);
     }
   }
+  const contactPairsPayload = [];
+  for (const node of root.querySelectorAll('contact pair')) {
+    if (!node.getAttribute('geom1') || !node.getAttribute('geom2')) continue;
+    const pr = { name: node.getAttribute('name') || `pair_${contactPairsPayload.length}`,
+                 geom1: node.getAttribute('geom1'), geom2: node.getAttribute('geom2') };
+    if (node.getAttribute('condim') !== null) pr.condim = Math.round(Number(node.getAttribute('condim')));
+    for (const k of ['margin', 'gap']) {
+      if (node.getAttribute(k) !== null) pr[k] = Number(node.getAttribute(k));
+    }
+    for (const k of ['friction', 'solref', 'solimp']) {
+      const a = parseNumbers(node.getAttribute(k), []);
+      if (a.length) pr[k] = a;
+    }
+    contactPairsPayload.push(pr);
+  }
   const worldbodyEl = firstChildElement(root, 'worldbody');
   const { lights: lightsPayload, cameras: camerasPayload } =
     worldbodyEl ? collectMujocoLightsCameras(worldbodyEl) : { lights: [], cameras: [] };
@@ -2382,7 +2397,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     ...(lightsPayload.length ? { lights: lightsPayload } : {}),
     ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
     ...(materialsPayload.length ? { materials: materialsPayload } : {}),
-    ...(sensorsPayload.length ? { sensors: sensorsPayload } : {})
+    ...(sensorsPayload.length ? { sensors: sensorsPayload } : {}),
+    ...(contactPairsPayload.length ? { contactPairs: contactPairsPayload } : {})
   };
   group.userData.stats = {
     links: links.length,

@@ -1377,6 +1377,40 @@ bool AddMjcSensorFromJson(Prim &sensors_prim, const nlohmann::json &s_json,
   return true;
 }
 
+// MJCF <contact><pair> -> an Xform host prim under /World/Contacts carrying the
+// pair geoms + collision params as generic mjc:* props (round-trips like the
+// equality host prims; no dedicated schema). JSON: { name, geom1, geom2,
+// condim, friction, solref, solimp, margin, gap }.
+bool AddContactPairFromJson(Prim &contacts_prim, const nlohmann::json &p_json,
+                            std::set<std::string> &used_names, size_t index,
+                            std::string *err) {
+  Xform host;
+  host.name = UniqueUSDIdentifier(
+      JsonString(p_json, "name", "pair_" + std::to_string(index)), used_names,
+      "pair");
+  AddAttr(host.props, "mjc:geom1", value::token(JsonString(p_json, "geom1")), true);
+  AddAttr(host.props, "mjc:geom2", value::token(JsonString(p_json, "geom2")), true);
+  int condim = 0;
+  if (JsonIntFromObjectOrParent(p_json, "", "condim", &condim))
+    AddAttr(host.props, "mjc:condim", condim, true);
+  double v = 0.0;
+  if (JsonNumber(p_json, "margin", &v)) AddAttr(host.props, "mjc:margin", v);
+  if (JsonNumber(p_json, "gap", &v)) AddAttr(host.props, "mjc:gap", v);
+  const auto friction = JsonDoubleArray(p_json, "friction");
+  if (!friction.empty()) AddAttr(host.props, "mjc:friction", friction);
+  const auto solref = JsonDoubleArray(p_json, "solref");
+  if (!solref.empty()) AddAttr(host.props, "mjc:solref", solref);
+  const auto solimp = JsonDoubleArray(p_json, "solimp");
+  if (!solimp.empty()) AddAttr(host.props, "mjc:solimp", solimp);
+
+  std::string add_err;
+  if (!contacts_prim.add_child(Prim(host), true, &add_err)) {
+    SetErr(err, "Failed to add contact pair `" + host.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
 // Build a row-vector local->world transform for a light whose emission axis
 // (USD light -Z) points along the world-space `dir`, positioned at the world
 // matrix's translation. `world` is the baked body*light frame (row-major,
@@ -2329,6 +2363,27 @@ bool ConvertURDFJsonToUSDStage(
     has_sensors = !sensors_prim.children().empty();
   }
 
+  // MJCF <contact><pair> -> /World/Contacts (host Xforms with mjc:* props).
+  const nlohmann::json &contact_pairs_json =
+      (root.contains("contactPairs") && root["contactPairs"].is_array())
+          ? root["contactPairs"]
+          : empty_array;
+  Prim contacts_prim;
+  bool has_contacts = false;
+  if (!contact_pairs_json.empty()) {
+    Xform scope;
+    scope.name = "Contacts";
+    contacts_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < contact_pairs_json.size(); i++) {
+      if (!AddContactPairFromJson(contacts_prim, contact_pairs_json[i], used, i,
+                                  err)) {
+        return false;
+      }
+    }
+    has_contacts = !contacts_prim.children().empty();
+  }
+
   // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
   const nlohmann::json &lights_json =
       (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
@@ -2458,6 +2513,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_sensors &&
         !world_prim.add_child(std::move(sensors_prim), true, &add_err)) {
       SetErr(err, "Failed to add Sensors scope: " + add_err);
+      return false;
+    }
+    if (has_contacts &&
+        !world_prim.add_child(std::move(contacts_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Contacts scope: " + add_err);
       return false;
     }
   }
