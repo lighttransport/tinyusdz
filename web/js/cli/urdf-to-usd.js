@@ -1230,6 +1230,60 @@ function parseMujocoMuscleActuators(root) {
   return out;
 }
 
+// MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
+function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
+
+// MJCF <option>/<option><flag>/<compiler> -> payload.mjcScene {option,flag,compiler}
+// consumed by the C++ converter's ApplyMjcSceneOptions -> MjcSceneAPI.
+function parseMujocoSceneOptions(root) {
+  const ms = {};
+  const option = firstChild(root, 'option');
+  if (option) {
+    const opt = {};
+    const has = (k) => option.attrs[k] !== undefined;
+    const num = (k) => { if (has(k)) opt[k] = numberAttr(option.attrs, k); };
+    const inum = (k) => { if (has(k)) opt[k] = Math.round(numberAttr(option.attrs, k)); };
+    const tok = (k) => { if (has(k)) opt[k] = option.attrs[k]; };
+    const vec = (k) => { const v = parseNumbers(option.attrs[k], []); if (v.length) opt[k] = v; };
+    ['timestep', 'impratio', 'density', 'viscosity', 'o_margin', 'tolerance',
+     'ls_tolerance', 'noslip_tolerance', 'ccd_tolerance'].forEach(num);
+    ['iterations', 'ls_iterations', 'noslip_iterations', 'ccd_iterations',
+     'sdf_iterations', 'sdf_initpoints'].forEach(inum);
+    ['integrator', 'cone', 'jacobian', 'solver'].forEach(tok);
+    ['wind', 'magnetic', 'o_solref', 'o_solimp', 'o_friction'].forEach(vec);
+    if (Object.keys(opt).length) ms.option = opt;
+    const flag = firstChild(option, 'flag');
+    if (flag) {
+      const fl = {};
+      ['constraint', 'equality', 'frictionloss', 'limit', 'contact', 'gravity',
+       'clampctrl', 'warmstart', 'filterparent', 'actuation', 'refsafe', 'sensor',
+       'midphase', 'nativeccd', 'eulerdamp', 'autoreset', 'island', 'override',
+       'energy', 'fwdinv', 'invdiscrete', 'multiccd'].forEach((k) => {
+        if (flag.attrs[k] !== undefined) fl[k] = mjcBoolAttr(flag.attrs[k]);
+      });
+      if (Object.keys(fl).length) ms.flag = fl;
+    }
+  }
+  const compiler = firstChild(root, 'compiler');
+  if (compiler) {
+    const comp = {};
+    const has = (k) => compiler.attrs[k] !== undefined;
+    const num = (k) => { if (has(k)) comp[k] = numberAttr(compiler.attrs, k); };
+    const tok = (k) => { if (has(k)) comp[k] = compiler.attrs[k]; };
+    const boolean = (k) => { if (has(k)) comp[k] = mjcBoolAttr(compiler.attrs[k]); };
+    boolean('autolimits'); num('boundmass'); num('boundinertia'); num('settotalmass');
+    boolean('usethread'); boolean('balanceinertia'); tok('angle'); boolean('fitaabb');
+    boolean('fusestatic'); tok('inertiafromgeom'); boolean('alignfree'); boolean('saveinertial');
+    const igr = parseNumbers(compiler.attrs.inertiagrouprange, []);
+    if (igr.length >= 2) {
+      comp.inertiagrouprange_min = Math.round(igr[0]);
+      comp.inertiagrouprange_max = Math.round(igr[1]);
+    }
+    if (Object.keys(comp).length) ms.compiler = comp;
+  }
+  return ms;
+}
+
 // MJCF <equality> connect/weld/joint -> equality payload entries.
 function parseMujocoEqualities(root) {
   const eqRoot = firstChild(root, 'equality');
@@ -1444,6 +1498,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const filteredPairs = parseMujocoContactExcludes(root);
   const sites = collectMujocoSites(worldbody);
   const mjcActuators = parseMujocoMuscleActuators(root);
+  const mjcScene = parseMujocoSceneOptions(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1603,6 +1658,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (filteredPairs.length) payload.filteredPairs = filteredPairs;
   if (sites.length) payload.sites = sites;
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
+  if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;
   return {
     payload,
     stats: {

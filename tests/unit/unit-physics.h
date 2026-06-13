@@ -61,3 +61,6 @@ void mjc_equality_api_test(void);
 
 // Spatial (muscle) tendon + sites + muscle actuator conversion
 void urdf_json_mjcf_muscle_export_test(void);
+
+// Full <option>/<flag>/<compiler> -> MjcSceneAPI
+void urdf_json_mjc_scene_options_test(void);
