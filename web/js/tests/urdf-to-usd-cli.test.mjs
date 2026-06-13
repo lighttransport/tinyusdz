@@ -226,6 +226,26 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
   });
 });
 
+await testAsync('MJCF <keyframe> -> keyframes payload', async () => {
+  await withTempDir(async (dir) => {
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Key">
+  <worldbody><body name="b"><joint name="j" type="hinge"/><geom type="sphere" size="0.1"/></body></worldbody>
+  <keyframe>
+    <key name="init" qpos="0.5" ctrl="0.1"/>
+    <key name="up" qpos="1.57"/>
+  </keyframe>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.equal(payload.keyframes.length, 2);
+    assert.equal(payload.keyframes[0].name, 'init');
+    assert.deepEqual(payload.keyframes[0].qpos, [0.5]);
+    assert.deepEqual(payload.keyframes[0].ctrl, [0.1]);
+    assert.equal(payload.keyframes[1].name, 'up');
+    assert.deepEqual(payload.keyframes[1].qpos, [1.57]);
+  });
+});
+
 await testAsync('MJCF <option>/<flag>/<compiler> -> mjcScene payload', async () => {
   await withTempDir(async (dir) => {
     const xml = `<?xml version="1.0"?>

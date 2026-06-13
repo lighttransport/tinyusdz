@@ -961,6 +961,7 @@ TEST_LIST = {
   { "mjc_equality_api_test", mjc_equality_api_test },
   { "urdf_json_mjcf_muscle_export_test", urdf_json_mjcf_muscle_export_test },
   { "urdf_json_mjc_scene_options_test", urdf_json_mjc_scene_options_test },
+  { "urdf_json_mjc_keyframe_export_test", urdf_json_mjc_keyframe_export_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },
