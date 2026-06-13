@@ -846,6 +846,10 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
+      // The on-disk payload is n uint32_t indices; require them to physically
+      // fit in the remaining file before allocating idxs(n)/data(n). Otherwise a
+      // malformed count would drive a multi-GB allocation before the read below.
+      if (!reader_->has_elements(static_cast<size_t>(n), sizeof(uint32_t))) return false;
       std::vector<uint32_t> idxs(static_cast<size_t>(n));
       size_t bytes;
       if (!safe::mul(static_cast<size_t>(n), sizeof(uint32_t), &bytes)) return false;
@@ -875,6 +879,10 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
+      // n doubles must physically be present in the remaining file before we
+      // allocate; bound the count against the file to avoid a malformed-count
+      // multi-GB allocation ahead of the read below.
+      if (!reader_->has_elements(static_cast<size_t>(n), sizeof(double))) return false;
       std::vector<double> data(static_cast<size_t>(n));
       size_t bytes;
       if (!safe::mul(static_cast<size_t>(n), sizeof(double), &bytes)) return false;
@@ -1040,6 +1048,10 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       uint32_t lut_size = 0;
       if (!reader_->read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
+      // The LUT holds lut_size elements read directly from the file; bound the
+      // count against the remaining file before allocating to avoid a
+      // malformed-count huge allocation ahead of the read below.
+      if (!reader_->has_elements(size_t(lut_size), sizeof(T))) return false;
       std::vector<T> lut(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
