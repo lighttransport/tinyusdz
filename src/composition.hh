@@ -209,6 +209,29 @@ bool HasInherits(const Layer &layer);
 bool HasVariants(const Layer &layer);
 
 ///
+/// AOUSD Core Spec 10.3.2.5: variant selection is computed from opinions across
+/// ALL composition arcs, so an iterative flatten must DEFER variant composition
+/// until references and payloads are resolved. Otherwise a strong local variant
+/// selection is baked against an empty/placeholder variantSet from a weaker
+/// layer and consumed, so a deep default selection ends up winning (e.g. Pixar
+/// Kitchen_set's Chair.usd: empty variant blocks + a payload chain to the layer
+/// that holds the real variantSet).
+///
+/// Returns true when variant composition for `layer` should be deferred because
+/// references and/or payloads are still unresolved (gated by the enabled-arc
+/// flags — pass the driver's composition-feature toggles). The reference/payload
+/// checks do not descend into unselected variant blocks, so deferring cannot
+/// deadlock on arcs that only appear once a variant is selected.
+///
+/// @param[in] layer Layer
+/// @param[in] references_enabled Whether the caller resolves `references`.
+/// @param[in] payload_enabled Whether the caller resolves `payload`.
+///
+bool ShouldDeferVariantComposition(const Layer &layer,
+                                   bool references_enabled = true,
+                                   bool payload_enabled = true);
+
+///
 /// Return true when any PrimSpec in the Layer contains `over` Prim.
 ///
 /// @param[in] layer Layer

@@ -3206,8 +3206,16 @@ class TinyUSDZLoaderNative {
         }
 
         if (comp_features.variantSets) {
+          // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+          // and payloads are resolved (see ShouldDeferVariantComposition).
           if (!src_layer.check_unresolved_variant()) {
             std::cout << "# iter " << i << ": no unresolved variant.\n";
+          } else if (tinyusdz::ShouldDeferVariantComposition(
+                         src_layer, comp_features.references,
+                         comp_features.payload)) {
+            std::cout << "# iter " << i
+                      << ": variant resolution deferred (refs/payloads pending).\n";
+            has_unresolved = true;
           } else {
             has_unresolved = true;
 
@@ -7358,9 +7366,15 @@ class TinyUSDZLoaderNative {
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_variant()) {
-        tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
-        src_layer = std::move(tmp); unresolved = true;
+        // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+        // and payloads are resolved (this loop always resolves both).
+        if (tinyusdz::ShouldDeferVariantComposition(src_layer)) {
+          unresolved = true;  // loop again to settle refs/payloads first
+        } else {
+          tinyusdz::Layer tmp;
+          if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
+          src_layer = std::move(tmp); unresolved = true;
+        }
       }
       if (!unresolved) break;
     }
