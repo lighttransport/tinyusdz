@@ -1072,9 +1072,13 @@ MeshData TessellateHField(const HFieldAsset &hf) {
       mesh.positions.push_back(static_cast<float>(-rx + c * dx));
       mesh.positions.push_back(static_cast<float>(-ry + r * dy));
       mesh.positions.push_back(static_cast<float>(H(r, c)));
-      // normal from central differences of the height field
-      const double hx = (H(r, c + 1) - H(r, c - 1)) / (2.0 * dx);
-      const double hy = (H(r + 1, c) - H(r - 1, c)) / (2.0 * dy);
+      // Normal from the height-field gradient. Use the ACTUAL neighbor span so
+      // the border ring is a correct one-sided difference (interior: 2 cells;
+      // edges: 1 cell) rather than a half-magnitude central difference.
+      const int cl = std::max(0, c - 1), cr = std::min(nc - 1, c + 1);
+      const int rb = std::max(0, r - 1), rt = std::min(nr - 1, r + 1);
+      const double hx = (H(r, cr) - H(r, cl)) / ((cr - cl) * dx);
+      const double hy = (H(rt, c) - H(rb, c)) / ((rt - rb) * dy);
       double nx = -hx, ny = -hy, nz = 1.0;
       const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
       if (len > 1e-12) { nx /= len; ny /= len; nz /= len; }
@@ -1875,7 +1879,8 @@ bool AppendGeomToLink(const pugi::xml_node &geom_node, const std::string &cc,
                       const std::map<std::string, HFieldAsset> &hfields,
                       const Options &opts, const Context &ctx,
                       const std::vector<double> &body_world,
-                      nlohmann::json *link, Stats *stats, std::string *err) {
+                      nlohmann::json *link, Stats *stats, std::string *err,
+                      bool dual_collider = false) {
   const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
   std::string cls_name = Attr(geom_node, "class");
   if (cls_name.empty()) cls_name = cc;
@@ -1892,6 +1897,25 @@ bool AppendGeomToLink(const pugi::xml_node &geom_node, const std::string &cc,
     if (!mat.empty()) visual_json["material"] = mat;
     (*link)["visuals"].push_back(std::move(visual_json));
     if (stats) stats->visuals++;
+    // A world-fixed geom that is visible AND a collider (MuJoCo default
+    // contype=conaffinity=1; non-collider only when BOTH are 0) is ALSO emitted
+    // as a USD collider so floors/ground/hfield actually collide. The owning
+    // link is static, so use an exact triangle-mesh collider (`none`) rather
+    // than a convex hull, which would flatten terrain. Robot bodies keep the
+    // group-based visual/collision split (they ship dedicated collision geoms).
+    if (dual_collider) {
+      const int contype =
+          static_cast<int>(EffDouble(geom_node, cls, "contype", 1.0));
+      const int conaffinity =
+          static_cast<int>(EffDouble(geom_node, cls, "conaffinity", 1.0));
+      if (contype != 0 || conaffinity != 0) {
+        nlohmann::json col = MeshPayloadToJson(payload);
+        AddGeomPhysicsAttrs(geom_node, cls, &col);
+        col["approximation"] = "none";
+        (*link)["collisions"].push_back(std::move(col));
+        if (stats) stats->collisions++;
+      }
+    }
   } else {
     nlohmann::json col = MeshPayloadToJson(payload);
     AddGeomPhysicsAttrs(geom_node, cls, &col);
@@ -1909,12 +1933,14 @@ bool AppendGeomToLink(const pugi::xml_node &geom_node, const std::string &cc,
 // Geoms that are direct children of <worldbody> (e.g. a ground/floor plane or
 // heightfield) are world-fixed and belong to no body. Collect them onto a
 // single static root link named "world" so they still convert. Accumulates
-// across every <worldbody> block (post-<include> merge).
-void AddWorldbodyGeomsLink(const std::vector<pugi::xml_node> &worldbodies,
+// across every <worldbody> block (post-<include> merge). World-fixed colliders
+// are emitted as both a render mesh and a (triangle) collider via dual_collider.
+bool AddWorldbodyGeomsLink(const std::vector<pugi::xml_node> &worldbodies,
                            const std::map<std::string, MeshAsset> &assets,
                            const std::map<std::string, HFieldAsset> &hfields,
                            const Options &opts, const Context &ctx,
-                           nlohmann::json *links, Stats *stats) {
+                           nlohmann::json *links, Stats *stats,
+                           std::string *err) {
   nlohmann::json link = {{"name", "world"},
                          {"static", true},
                          {"inertial", {{"mass", 0.0}}},
@@ -1924,15 +1950,23 @@ void AddWorldbodyGeomsLink(const std::vector<pugi::xml_node> &worldbodies,
     for (const auto &geom_node : Children(worldbody, "geom")) {
       std::string gerr;
       if (!AppendGeomToLink(geom_node, "", assets, hfields, opts, ctx,
-                            IdentityMatrix(), &link, stats, &gerr)) {
+                            IdentityMatrix(), &link, stats, &gerr,
+                            /*dual_collider=*/true)) {
+        // Match the per-body geom path: a build failure is fatal unless the
+        // caller opted into --allow-missing.
+        if (!opts.allow_missing) {
+          if (err) *err = gerr.empty() ? "worldbody geom failed" : gerr;
+          return false;
+        }
         std::cerr << "WARN: " << (gerr.empty() ? "worldbody geom skipped" : gerr)
                   << "\n";
       }
     }
   }
-  if (link["visuals"].empty() && link["collisions"].empty()) return;
+  if (link["visuals"].empty() && link["collisions"].empty()) return true;
   links->push_back(std::move(link));
   if (stats) stats->links++;
+  return true;
 }
 
 bool VisitMujocoBody(const pugi::xml_node &body_node,
@@ -2106,7 +2140,10 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
                                    &cameras);
   }
   // World-fixed geoms living directly under <worldbody> (floor/ground/hfield).
-  AddWorldbodyGeomsLink(worldbodies, assets, hfields, opts, ctx, &links, stats);
+  if (!AddWorldbodyGeomsLink(worldbodies, assets, hfields, opts, ctx, &links,
+                             stats, err)) {
+    return false;
+  }
   AddMujocoActuatorsJson(root, &actuators, &mjc_actuators, stats);
   AddMujocoTendonsJson(root, ctx, &tendons, stats);
   AddMujocoEqualityJson(root, &equalities, stats);

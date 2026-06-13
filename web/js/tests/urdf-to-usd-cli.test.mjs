@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 import {
   buildMujocoPayload,
@@ -524,5 +525,67 @@ await testAsync('MJCF <geom type="hfield"> in worldbody -> static "world" link m
     assert.equal(world.visuals.length, 1);
     assert.ok(world.visuals[0].meshRef, 'hfield geom became a mesh');
     assert.equal(world.visuals[0].material, 'ground');
+    // It is ALSO a collider (default contype/conaffinity) — an exact triangle
+    // mesh ('none'), sharing the visual's mesh buffer.
+    assert.equal(world.collisions.length, 1);
+    assert.equal(world.collisions[0].approximation, 'none');
+    assert.equal(world.collisions[0].meshRef, world.visuals[0].meshRef);
+  });
+});
+
+// Minimal valid 8-bit grayscale PNG encoder (filter 0 per scanline) for testing
+// the file-based <hfield> decode path.
+function makeGrayPNG(width, height, gray) {
+  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    return Buffer.concat([u32(data.length), body, u32(zlib.crc32(body))]);
+  };
+  const ihdr = Buffer.concat([u32(width), u32(height), Buffer.from([8, 0, 0, 0, 0])]);
+  const raw = Buffer.alloc((width + 1) * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * (width + 1)] = 0; // filter: none
+    for (let x = 0; x < width; x++) raw[y * (width + 1) + 1 + x] = gray[y * width + x] & 0xff;
+  }
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+await testAsync('MJCF <hfield file=".png"> decodes + tessellates (file path)', async () => {
+  await withTempDir(async (dir) => {
+    // 4x4 ramp: the decoder must inflate + un-filter + collapse to luminance.
+    const w = 4, h = 4, px = [];
+    for (let i = 0; i < w * h; i++) px.push(Math.round((i / (w * h - 1)) * 255));
+    fs.writeFileSync(path.join(dir, 'hf.png'), makeGrayPNG(w, h, px));
+    const xml = `<?xml version="1.0"?>
+<mujoco model="PngTerrain">
+  <asset><hfield name="t" file="hf.png" size="1 1 0.5 0.1"/></asset>
+  <worldbody><geom name="floor" type="hfield" hfield="t"/></worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    const world = payload.links.find((l) => l.name === 'world');
+    assert.ok(world, 'PNG hfield produced a world link');
+    assert.equal(world.visuals.length, 1);
+    assert.ok(world.visuals[0].meshRef, 'PNG hfield decoded + tessellated to a mesh');
+    assert.equal(world.collisions.length, 1, 'PNG hfield is also a collider');
+  });
+});
+
+await testAsync('MJCF multiple <worldbody> blocks merge into one world', async () => {
+  await withTempDir(async (dir) => {
+    // Two <worldbody> blocks (as a post-<include> merge would produce): bodies
+    // from BOTH must convert, not just the first.
+    const xml = `<?xml version="1.0"?>
+<mujoco model="Merged">
+  <worldbody><body name="a"><geom type="sphere" size="0.1"/></body></worldbody>
+  <worldbody><body name="b"><geom type="box" size="0.1 0.1 0.1"/></body></worldbody>
+</mujoco>`;
+    const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
+    assert.ok(payload.links.find((l) => l.name === 'a'), 'body from worldbody #1');
+    assert.ok(payload.links.find((l) => l.name === 'b'), 'body from worldbody #2');
   });
 });
