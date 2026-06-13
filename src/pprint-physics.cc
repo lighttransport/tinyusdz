@@ -375,6 +375,8 @@ std::string to_string(const MjcActuator &actuator, const uint32_t indent,
   ss << print_typed_attr(actuator.biasPrm, "mjc:biasPrm", indent + 1);
   ss << print_typed_attr(actuator.actEarly, "mjc:actEarly", indent + 1);
   ss << print_typed_attr(actuator.inheritRange, "mjc:inheritRange", indent + 1);
+  ss << print_typed_attr(actuator.plugin, "mjc:plugin", indent + 1);
+  ss << print_typed_attr(actuator.instance, "mjc:instance", indent + 1);
 
   PRINT_PRIM_FOOTER(actuator);
   return ss.str();

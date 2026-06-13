@@ -1304,6 +1304,10 @@ bool AddMjcActuatorFromJson(
     act.biasType.set_value(value::token(JsonString(a_json, "biasType", "none")));
   if (a_json.contains("dynType"))
     act.dynType.set_value(value::token(JsonString(a_json, "dynType", "none")));
+  if (a_json.contains("plugin"))
+    act.plugin.set_value(value::token(JsonString(a_json, "plugin", "")));
+  if (a_json.contains("instance"))
+    act.instance.set_value(value::token(JsonString(a_json, "instance", "")));
 
   std::string add_err;
   if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
@@ -2416,6 +2420,37 @@ bool ConvertURDFJsonToUSDStage(
     }
   }
 
+  // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins. The
+  // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
+  // MjcActuator's mjc:instance; preserve it so the engine-plugin setup survives.
+  Prim plugins_prim;
+  bool has_plugins = false;
+  if (root.contains("plugins") && root["plugins"].is_array()) {
+    Xform scope;
+    scope.name = "MjcPlugins";
+    for (const auto &p : root["plugins"]) {
+      const std::string inst = JsonString(p, "instance");
+      if (inst.empty()) continue;
+      const std::string plugin_id = JsonString(p, "plugin");
+      if (!plugin_id.empty()) {
+        AddAttr(scope.props, "mjc:plugin:" + inst + ":plugin",
+                value::token(plugin_id));
+      }
+      if (p.contains("config") && p["config"].is_object()) {
+        for (auto it = p["config"].begin(); it != p["config"].end(); ++it) {
+          if (!it.value().is_string()) continue;
+          AddAttr(scope.props,
+                  "mjc:plugin:" + inst + ":config:" + it.key(),
+                  value::token(it.value().get<std::string>()));
+        }
+      }
+    }
+    if (!scope.props.empty()) {
+      plugins_prim = Prim(scope);
+      has_plugins = true;
+    }
+  }
+
   // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
   const nlohmann::json &lights_json =
       (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
@@ -2555,6 +2590,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_custom &&
         !world_prim.add_child(std::move(custom_prim), true, &add_err)) {
       SetErr(err, "Failed to add MjcCustom scope: " + add_err);
+      return false;
+    }
+    if (has_plugins &&
+        !world_prim.add_child(std::move(plugins_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcPlugins scope: " + add_err);
       return false;
     }
   }
