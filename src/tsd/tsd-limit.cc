@@ -318,6 +318,165 @@ bool GatherRing(const Topology &topo, const uint32_t *fvi,
 
 }  // namespace
 
+void ComputeVertexLimitNormals(const Topology &topo, const uint32_t *fvi,
+                               const std::vector<float> &edge_sharp,
+                               const std::vector<float> &vert_sharp,
+                               const float *positions, const Options &options,
+                               std::vector<float> *out_normals) {
+  const bool loop = (options.scheme == Scheme::Loop);
+  const float *src = positions;
+  out_normals->assign(size_t(topo.num_points) * 3, 0.0f);
+
+  ParallelFor(options, topo.num_points, [&](uint32_t v) {
+    VertexRing ring;
+    if (!GatherRing(topo, fvi, edge_sharp, v, &ring)) {
+      return;  // leave zero normal (unreferenced/degenerate)
+    }
+    const uint32_t n = ring.valence;
+
+    uint32_t sharp_count = 0;
+    for (uint32_t i = 0; i < n; i++) {
+      sharp_count += IsSharp(ring.edge_sharpness[i]) ? 1u : 0u;
+    }
+    const VRule rule = DetermineVertexRule(vert_sharp[v], sharp_count);
+
+    const Vec3 pv = Load(&src[size_t(v) * 3]);
+    auto edge_pt = [&](uint32_t i) {
+      return Load(&src[size_t(ring.edge_other[i]) * 3]);
+    };
+    auto face_pt = [&](uint32_t i) {
+      return Load(&src[size_t(ring.face_opposite[i]) * 3]);
+    };
+
+    Vec3 t1;
+    Vec3 t2;
+
+    if (rule == VRule::Corner || (rule == VRule::Smooth && n == 2)) {
+      AddScaled(&t1, pv, -1.0f);
+      AddScaled(&t1, edge_pt(0), 1.0f);
+      AddScaled(&t2, pv, -1.0f);
+      AddScaled(&t2, edge_pt(n - 1), 1.0f);
+    } else if (rule == VRule::Crease) {
+      const uint32_t c0 = uint32_t(ring.crease_ends[0]);
+      const uint32_t c1 = uint32_t(ring.crease_ends[1]);
+      AddScaled(&t1, edge_pt(c0), 0.5f);
+      AddScaled(&t1, edge_pt(c1), -0.5f);
+      const uint32_t interior = c1 - c0 - 1;
+      if (!loop) {
+        if (interior == 1) {
+          AddScaled(&t2, pv, -4.0f / 6.0f);
+          AddScaled(&t2, edge_pt(c0), -1.0f / 6.0f);
+          AddScaled(&t2, edge_pt(c0 + 1), 4.0f / 6.0f);
+          AddScaled(&t2, edge_pt(c1), -1.0f / 6.0f);
+          AddScaled(&t2, face_pt(c0), 1.0f / 6.0f);
+          AddScaled(&t2, face_pt(c0 + 1), 1.0f / 6.0f);
+        } else if (interior > 1) {
+          const double k = double(interior + 1);
+          const double theta = kPi / k;
+          const double cos_t = std::cos(theta);
+          const double sin_t = std::sin(theta);
+          const double denom = 1.0 / (k * (3.0 + cos_t));
+          const double R = (cos_t + 1.0) / sin_t;
+          AddScaled(&t2, pv, float(4.0 * R * (cos_t - 1.0) * denom));
+          const float cw = float(-R * (1.0 + 2.0 * cos_t) * denom);
+          AddScaled(&t2, edge_pt(c0), cw);
+          AddScaled(&t2, edge_pt(c1), cw);
+          AddScaled(&t2, face_pt(c0), float(sin_t * denom));
+          double sin_i = 0.0;
+          double sin_i1 = sin_t;
+          for (uint32_t i = 1; i < uint32_t(k); i++) {
+            sin_i = sin_i1;
+            sin_i1 = std::sin(double(i + 1) * theta);
+            AddScaled(&t2, edge_pt(c0 + i), float(4.0 * sin_i * denom));
+            AddScaled(&t2, face_pt(c0 + i), float((sin_i + sin_i1) * denom));
+          }
+        } else {
+          AddScaled(&t2, pv, -6.0f);
+          AddScaled(&t2, edge_pt(c0), 3.0f);
+          AddScaled(&t2, edge_pt(c1), 3.0f);
+        }
+      } else {
+        if (interior == 2) {
+          const float root3 = 1.73205080756887729352f;
+          AddScaled(&t2, pv, -root3);
+          AddScaled(&t2, edge_pt(c0), -0.5f * root3);
+          AddScaled(&t2, edge_pt(c1), -0.5f * root3);
+          AddScaled(&t2, edge_pt(c0 + 1), root3);
+          AddScaled(&t2, edge_pt(c0 + 2), root3);
+        } else if (interior > 2) {
+          const double theta = kPi / double(interior + 1);
+          const float cw = float(-3.0 * std::sin(theta));
+          AddScaled(&t2, edge_pt(c0), cw);
+          AddScaled(&t2, edge_pt(c1), cw);
+          const double ec = -3.0 * 2.0 * (std::cos(theta) - 1.0);
+          for (uint32_t i = 1; i <= interior; i++) {
+            AddScaled(&t2, edge_pt(c0 + i),
+                      float(ec * std::sin(double(i) * theta)));
+          }
+        } else if (interior == 1) {
+          AddScaled(&t2, pv, -3.0f);
+          AddScaled(&t2, edge_pt(c0 + 1), 3.0f);
+        } else {
+          AddScaled(&t2, pv, -6.0f);
+          AddScaled(&t2, edge_pt(c0), 3.0f);
+          AddScaled(&t2, edge_pt(c1), 3.0f);
+        }
+      }
+    } else if (!loop) {
+      if (n == 4) {
+        AddScaled(&t1, edge_pt(0), 4.0f);
+        AddScaled(&t1, edge_pt(2), -4.0f);
+        AddScaled(&t1, face_pt(0), 1.0f);
+        AddScaled(&t1, face_pt(1), -1.0f);
+        AddScaled(&t1, face_pt(2), -1.0f);
+        AddScaled(&t1, face_pt(3), 1.0f);
+        AddScaled(&t2, edge_pt(1), 4.0f);
+        AddScaled(&t2, edge_pt(3), -4.0f);
+        AddScaled(&t2, face_pt(0), 1.0f);
+        AddScaled(&t2, face_pt(1), 1.0f);
+        AddScaled(&t2, face_pt(2), -1.0f);
+        AddScaled(&t2, face_pt(3), -1.0f);
+      } else {
+        const double theta = 2.0 * kPi / double(n);
+        const double cos_t = std::cos(theta);
+        const double cos_ht = std::cos(0.5 * theta);
+        const double lambda =
+            (5.0 / 16.0) +
+            (1.0 / 16.0) * (cos_t + cos_ht * std::sqrt(2.0 * (9.0 + cos_t)));
+        const double fscale = 1.0 / (4.0 * lambda - 1.0);
+        for (uint32_t i = 0; i < n; i++) {
+          const double ci = std::cos(double(i) * theta);
+          const double ci1 = std::cos(double(i + 1) * theta);
+          const float e1 = float(4.0 * ci);
+          const float f1 = float(fscale * (ci + ci1));
+          AddScaled(&t1, edge_pt(i), e1);
+          AddScaled(&t1, face_pt(i), f1);
+          const uint32_t j = (i + 1) % n;
+          AddScaled(&t2, edge_pt(j), e1);
+          AddScaled(&t2, face_pt(j), f1);
+        }
+      }
+    } else {
+      const double alpha = 2.0 * kPi / double(n);
+      for (uint32_t i = 0; i < n; i++) {
+        AddScaled(&t1, edge_pt(i), float(std::cos(alpha * double(i))));
+        AddScaled(&t2, edge_pt(i), float(std::sin(alpha * double(i))));
+      }
+    }
+
+    Vec3 nrm = Cross(t1, t2);
+    const float len = std::sqrt(nrm.x * nrm.x + nrm.y * nrm.y + nrm.z * nrm.z);
+    if (len > 0.0f) {
+      nrm.x /= len;
+      nrm.y /= len;
+      nrm.z /= len;
+    }
+    (*out_normals)[size_t(v) * 3] = nrm.x;
+    (*out_normals)[size_t(v) * 3 + 1] = nrm.y;
+    (*out_normals)[size_t(v) * 3 + 2] = nrm.z;
+  });
+}
+
 Result SnapToLimit(const MeshView &base_mesh, const Options &options,
                    RefinedMesh *inout, std::string *err) {
   if (!inout) {
@@ -473,173 +632,8 @@ Result ComputeLimitNormals(const MeshView &base_mesh, const Options &options,
                 "options.level.");
   }
 
-  const bool loop = (options.scheme == Scheme::Loop);
-  const std::vector<float> &src = refined.points;
-  out_normals->assign(size_t(topo.num_points) * 3, 0.0f);
-
-  // Tangent masks need ring-ordered neighborhoods; rings allocate, so this
-  // pass stays serial unless a parallel_for is provided (each iteration is
-  // still independent).
-  ParallelFor(options, topo.num_points, [&](uint32_t v) {
-    VertexRing ring;
-    if (!GatherRing(topo, fvi.data(), edge_sharp, v, &ring)) {
-      return;  // leave zero normal (unreferenced/degenerate)
-    }
-    const uint32_t n = ring.valence;
-
-    uint32_t sharp_count = 0;
-    for (uint32_t i = 0; i < n; i++) {
-      sharp_count += IsSharp(ring.edge_sharpness[i]) ? 1u : 0u;
-    }
-    const VRule rule = DetermineVertexRule(vert_sharp[v], sharp_count);
-
-    const Vec3 pv = Load(&src[size_t(v) * 3]);
-    auto edge_pt = [&](uint32_t i) {
-      return Load(&src[size_t(ring.edge_other[i]) * 3]);
-    };
-    auto face_pt = [&](uint32_t i) {
-      return Load(&src[size_t(ring.face_opposite[i]) * 3]);
-    };
-
-    Vec3 t1;
-    Vec3 t2;
-
-    if (rule == VRule::Corner || (rule == VRule::Smooth && n == 2)) {
-      // Corner tangents: along the first and last ring edges.
-      AddScaled(&t1, pv, -1.0f);
-      AddScaled(&t1, edge_pt(0), 1.0f);
-      AddScaled(&t2, pv, -1.0f);
-      AddScaled(&t2, edge_pt(n - 1), 1.0f);
-      // (Loop scales these by 3; irrelevant for the normal direction.)
-    } else if (rule == VRule::Crease) {
-      const uint32_t c0 = uint32_t(ring.crease_ends[0]);
-      const uint32_t c1 = uint32_t(ring.crease_ends[1]);
-      // Tangent along the crease.
-      AddScaled(&t1, edge_pt(c0), 0.5f);
-      AddScaled(&t1, edge_pt(c1), -0.5f);
-      // Tangent across the surface sector between the crease ends.
-      const uint32_t interior = c1 - c0 - 1;
-      if (!loop) {
-        if (interior == 1) {
-          AddScaled(&t2, pv, -4.0f / 6.0f);
-          AddScaled(&t2, edge_pt(c0), -1.0f / 6.0f);
-          AddScaled(&t2, edge_pt(c0 + 1), 4.0f / 6.0f);
-          AddScaled(&t2, edge_pt(c1), -1.0f / 6.0f);
-          AddScaled(&t2, face_pt(c0), 1.0f / 6.0f);
-          AddScaled(&t2, face_pt(c0 + 1), 1.0f / 6.0f);
-        } else if (interior > 1) {
-          // Biermann et al. (matching Sdc's catmark crease tangent).
-          const double k = double(interior + 1);
-          const double theta = kPi / k;
-          const double cos_t = std::cos(theta);
-          const double sin_t = std::sin(theta);
-          const double denom = 1.0 / (k * (3.0 + cos_t));
-          const double R = (cos_t + 1.0) / sin_t;
-          AddScaled(&t2, pv, float(4.0 * R * (cos_t - 1.0) * denom));
-          const float cw = float(-R * (1.0 + 2.0 * cos_t) * denom);
-          AddScaled(&t2, edge_pt(c0), cw);
-          AddScaled(&t2, edge_pt(c1), cw);
-          AddScaled(&t2, face_pt(c0), float(sin_t * denom));
-          double sin_i = 0.0;
-          double sin_i1 = sin_t;
-          for (uint32_t i = 1; i < uint32_t(k); i++) {
-            sin_i = sin_i1;
-            sin_i1 = std::sin(double(i + 1) * theta);
-            AddScaled(&t2, edge_pt(c0 + i), float(4.0 * sin_i * denom));
-            AddScaled(&t2, face_pt(c0 + i),
-                      float((sin_i + sin_i1) * denom));
-          }
-        } else {
-          // Single face between the crease edges.
-          AddScaled(&t2, pv, -6.0f);
-          AddScaled(&t2, edge_pt(c0), 3.0f);
-          AddScaled(&t2, edge_pt(c1), 3.0f);
-        }
-      } else {
-        if (interior == 2) {
-          const float root3 = 1.73205080756887729352f;
-          AddScaled(&t2, pv, -root3);
-          AddScaled(&t2, edge_pt(c0), -0.5f * root3);
-          AddScaled(&t2, edge_pt(c1), -0.5f * root3);
-          AddScaled(&t2, edge_pt(c0 + 1), root3);
-          AddScaled(&t2, edge_pt(c0 + 2), root3);
-        } else if (interior > 2) {
-          const double theta = kPi / double(interior + 1);
-          const float cw = float(-3.0 * std::sin(theta));
-          AddScaled(&t2, edge_pt(c0), cw);
-          AddScaled(&t2, edge_pt(c1), cw);
-          const double ec = -3.0 * 2.0 * (std::cos(theta) - 1.0);
-          for (uint32_t i = 1; i <= interior; i++) {
-            AddScaled(&t2, edge_pt(c0 + i),
-                      float(ec * std::sin(double(i) * theta)));
-          }
-        } else if (interior == 1) {
-          AddScaled(&t2, pv, -3.0f);
-          AddScaled(&t2, edge_pt(c0 + 1), 3.0f);
-        } else {
-          AddScaled(&t2, pv, -6.0f);
-          AddScaled(&t2, edge_pt(c0), 3.0f);
-          AddScaled(&t2, edge_pt(c1), 3.0f);
-        }
-      }
-    } else if (!loop) {
-      // Catmark smooth tangents.
-      if (n == 4) {
-        AddScaled(&t1, edge_pt(0), 4.0f);
-        AddScaled(&t1, edge_pt(2), -4.0f);
-        AddScaled(&t1, face_pt(0), 1.0f);
-        AddScaled(&t1, face_pt(1), -1.0f);
-        AddScaled(&t1, face_pt(2), -1.0f);
-        AddScaled(&t1, face_pt(3), 1.0f);
-        AddScaled(&t2, edge_pt(1), 4.0f);
-        AddScaled(&t2, edge_pt(3), -4.0f);
-        AddScaled(&t2, face_pt(0), 1.0f);
-        AddScaled(&t2, face_pt(1), 1.0f);
-        AddScaled(&t2, face_pt(2), -1.0f);
-        AddScaled(&t2, face_pt(3), -1.0f);
-      } else {
-        const double theta = 2.0 * kPi / double(n);
-        const double cos_t = std::cos(theta);
-        const double cos_ht = std::cos(0.5 * theta);
-        const double lambda =
-            (5.0 / 16.0) +
-            (1.0 / 16.0) * (cos_t + cos_ht * std::sqrt(2.0 * (9.0 + cos_t)));
-        const double fscale = 1.0 / (4.0 * lambda - 1.0);
-        for (uint32_t i = 0; i < n; i++) {
-          const double ci = std::cos(double(i) * theta);
-          const double ci1 = std::cos(double(i + 1) * theta);
-          const float e1 = float(4.0 * ci);
-          const float f1 = float(fscale * (ci + ci1));
-          AddScaled(&t1, edge_pt(i), e1);
-          AddScaled(&t1, face_pt(i), f1);
-          // tan2 = tan1 rotated one ring position.
-          const uint32_t j = (i + 1) % n;
-          AddScaled(&t2, edge_pt(j), e1);
-          AddScaled(&t2, face_pt(j), f1);
-        }
-      }
-    } else {
-      // Loop smooth tangents: cos/sin ring weights.
-      const double alpha = 2.0 * kPi / double(n);
-      for (uint32_t i = 0; i < n; i++) {
-        AddScaled(&t1, edge_pt(i), float(std::cos(alpha * double(i))));
-        AddScaled(&t2, edge_pt(i), float(std::sin(alpha * double(i))));
-      }
-    }
-
-    Vec3 nrm = Cross(t1, t2);
-    const float len =
-        std::sqrt(nrm.x * nrm.x + nrm.y * nrm.y + nrm.z * nrm.z);
-    if (len > 0.0f) {
-      nrm.x /= len;
-      nrm.y /= len;
-      nrm.z /= len;
-    }
-    (*out_normals)[size_t(v) * 3] = nrm.x;
-    (*out_normals)[size_t(v) * 3 + 1] = nrm.y;
-    (*out_normals)[size_t(v) * 3 + 2] = nrm.z;
-  });
-
+  ComputeVertexLimitNormals(topo, fvi.data(), edge_sharp, vert_sharp,
+                            refined.points.data(), options, out_normals);
   return Result::Success;
 }
 
