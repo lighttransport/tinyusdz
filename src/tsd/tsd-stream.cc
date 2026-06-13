@@ -112,6 +112,7 @@ struct Emitter {
   std::vector<uint32_t> vsource;
   std::vector<uint32_t> indices;
   std::vector<uint32_t> face_source;
+  std::vector<uint32_t> face_arity;  // per emitted face (3 or 4)
   std::unordered_map<uint32_t, uint32_t> dedup;
   uint32_t faces_in_batch = 0;
   uint32_t batch_index = 0;
@@ -228,27 +229,42 @@ struct Emitter {
     indices.push_back(c);
   }
 
+  // Records one emitted face: provenance + arity (so non-uniform batches can
+  // report `face_vertex_counts`).
+  void PushFace(uint32_t src, uint32_t arity) {
+    face_source.push_back(src);
+    face_arity.push_back(arity);
+  }
+
   // Emit one quad-split child face [a,b,c,d] (canonical ids), base face src.
   void EmitQuad(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t src) {
     const uint32_t la = Local(a), lb = Local(b), lc = Local(c), ld = Local(d);
     if (sopts->emit_triangles) {
       Tri(la, lb, lc);
       Tri(la, lc, ld);
-      face_source.push_back(src);
-      face_source.push_back(src);
+      PushFace(src, 3);
+      PushFace(src, 3);
     } else {
       indices.push_back(la);
       indices.push_back(lb);
       indices.push_back(lc);
       indices.push_back(ld);
-      face_source.push_back(src);
+      PushFace(src, 4);
     }
   }
 
   // Emit one tri-split child face [a,b,c].
   void EmitTri(uint32_t a, uint32_t b, uint32_t c, uint32_t src) {
     Tri(Local(a), Local(b), Local(c));
-    face_source.push_back(src);
+    PushFace(src, 3);
+  }
+
+  // Emit one native n-gon (canonical ids); used for level-0 passthrough.
+  void EmitPoly(const uint32_t *canon, uint32_t n, uint32_t src) {
+    for (uint32_t k = 0; k < n; k++) {
+      indices.push_back(Local(canon[k]));
+    }
+    PushFace(src, n);
   }
 
   // fvar-aware variants: `fc[c]` holds this child face's per-corner fvar
@@ -258,12 +274,12 @@ struct Emitter {
     const uint32_t la = Local(a), lb = Local(b), lc = Local(c), ld = Local(d);
     if (sopts->emit_triangles) {
       Tri(la, lb, lc);
-      face_source.push_back(src);
+      PushFace(src, 3);
       PushFvarCorner(0, fc);
       PushFvarCorner(1, fc);
       PushFvarCorner(2, fc);
       Tri(la, lc, ld);
-      face_source.push_back(src);
+      PushFace(src, 3);
       PushFvarCorner(0, fc);
       PushFvarCorner(2, fc);
       PushFvarCorner(3, fc);
@@ -272,7 +288,7 @@ struct Emitter {
       indices.push_back(lb);
       indices.push_back(lc);
       indices.push_back(ld);
-      face_source.push_back(src);
+      PushFace(src, 4);
       PushFvarCorner(0, fc);
       PushFvarCorner(1, fc);
       PushFvarCorner(2, fc);
@@ -283,7 +299,7 @@ struct Emitter {
   void EmitTriF(uint32_t a, uint32_t b, uint32_t c, uint32_t src,
                 const std::vector<const float *> &fc) {
     Tri(Local(a), Local(b), Local(c));
-    face_source.push_back(src);
+    PushFace(src, 3);
     PushFvarCorner(0, fc);
     PushFvarCorner(1, fc);
     PushFvarCorner(2, fc);
@@ -323,7 +339,17 @@ struct Emitter {
     batch.fvar = num_fvar ? fvar_views.data() : nullptr;
     batch.num_faces = uint32_t(face_source.size());
     batch.num_indices = uint32_t(indices.size());
-    batch.face_vertex_counts = nullptr;  // uniform arity
+    // Report per-face arity only when the batch is non-uniform (e.g. a level-0
+    // mixed-degree passthrough); null => every face has num_indices/num_faces
+    // corners (the common final-level case: all quads or all triangles).
+    bool uniform = true;
+    for (size_t i = 1; i < face_arity.size(); i++) {
+      if (face_arity[i] != face_arity[0]) {
+        uniform = false;
+        break;
+      }
+    }
+    batch.face_vertex_counts = uniform ? nullptr : face_arity.data();
     batch.indices = indices.data();
     batch.face_source = face_source.data();
 
@@ -340,6 +366,7 @@ struct Emitter {
     vsource.clear();
     indices.clear();
     face_source.clear();
+    face_arity.clear();
     dedup.clear();
     faces_in_batch = 0;
     if (!keep_going) {
@@ -489,24 +516,16 @@ Result StreamLevel0(Emitter &em, const MeshView &mesh, bool remove_holes) {
       corner += n;
       continue;
     }
-    // Fan-triangulate (or native) using base vertex ids as canonical ids.
+    // Base vertex ids are the canonical ids at level 0. emit_triangles fans
+    // every face to triangles; otherwise faces pass through with native arity.
     if (em.sopts->emit_triangles) {
       const uint32_t a = mesh.face_vertex_indices[corner];
       for (uint32_t k = 1; k + 1 < n; k++) {
         em.EmitTri(a, mesh.face_vertex_indices[corner + k],
                    mesh.face_vertex_indices[corner + k + 1], f);
       }
-    } else if (n == 4) {
-      em.EmitQuad(mesh.face_vertex_indices[corner],
-                  mesh.face_vertex_indices[corner + 1],
-                  mesh.face_vertex_indices[corner + 2],
-                  mesh.face_vertex_indices[corner + 3], f);
     } else {
-      const uint32_t a = mesh.face_vertex_indices[corner];
-      for (uint32_t k = 1; k + 1 < n; k++) {
-        em.EmitTri(a, mesh.face_vertex_indices[corner + k],
-                   mesh.face_vertex_indices[corner + k + 1], f);
-      }
+      em.EmitPoly(&mesh.face_vertex_indices[corner], n, f);
     }
     corner += n;
     if (!em.MaybeFlush()) {
@@ -641,7 +660,8 @@ void BuildSubmesh(const MeshView &mesh, const Topology &base_topo,
 // Emits a block's owned refined faces (from the materialized submesh refine)
 // to the sink: positions/primvars/normals are copied by refined-vertex id, and
 // face_source is remapped to the global base face.
-void EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
+// Returns false if the sink aborted (the block loop then stops).
+bool EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
                     const std::vector<float> &normals,
                     const std::vector<uint32_t> &sub_to_global,
                     const std::vector<uint8_t> &owned, bool loop) {
@@ -668,8 +688,13 @@ void EmitBlockOwned(Emitter &em, const RefinedMesh &refined,
     } else {
       em.EmitQuad(c[0], c[1], c[2], c[3], gsrc);
     }
+    if (!em.MaybeFlush()) {  // honor batch_faces + sink abort
+      return false;
+    }
   }
-  em.Flush();  // flush per block: canonical ids are submesh-local
+  // Flush per block: canonical ids are submesh-local, so they must not carry
+  // across into the next block's batch.
+  return em.Flush();
 }
 
 }  // namespace
@@ -768,9 +793,17 @@ Result RefineStream(const MeshView &mesh,
     if (r != Result::Success) {
       return r;
     }
-    const uint32_t halo_rings = stream_options.halo_rings
-                                    ? stream_options.halo_rings
-                                    : uint32_t(options.level + 1);
+    // Owned-face positions need `level` base-face rings of stencil support;
+    // seamless limit normals need `level + 1`. Clamp up to that minimum so an
+    // explicit too-small halo_rings can't silently corrupt block borders.
+    const uint32_t min_rings =
+        uint32_t(options.level) + (stream_options.want_normals ? 1u : 0u);
+    uint32_t halo_rings = stream_options.halo_rings
+                              ? stream_options.halo_rings
+                              : uint32_t(options.level + 1);
+    if (halo_rings < min_rings) {
+      halo_rings = min_rings;
+    }
     for (uint32_t fstart = 0; fstart < mesh.num_faces;
          fstart += stream_options.block_faces) {
       const uint32_t fend =
@@ -830,7 +863,10 @@ Result RefineStream(const MeshView &mesh,
           return r;
         }
       }
-      EmitBlockOwned(em, refined, normals, sub.sub_to_global, sub.owned, loop);
+      if (!EmitBlockOwned(em, refined, normals, sub.sub_to_global, sub.owned,
+                          loop)) {
+        return Result::Success;  // sink aborted; partial output already emitted
+      }
     }
     return Result::Success;
   }
