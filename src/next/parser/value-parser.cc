@@ -916,6 +916,12 @@ struct SliceParser {
   }
 };
 
+// Defense-in-depth ceiling on the number of scalars accumulated for one array
+// (parity with the mature ASCII parser's kMaxArrayElements). USDA arrays are
+// otherwise only input-length-bounded; this caps a single pathological array so
+// it can't drive a multi-GB vector even from a large/streamed input.
+constexpr size_t kMaxArrayScalars = size_t(1) << 30;  // ~1.07e9 scalars
+
 template <class T, class ParseOne>
 bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
   if (!sp->consume('[')) return false;
@@ -925,6 +931,7 @@ bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) 
     T v{};
     if (!parse_one(sp, &v)) return false;
     out->push_back(v);
+    if (out->size() > kMaxArrayScalars) return false;
     if (sp->maybe_consume(',')) continue;
     return sp->finish_array();
   }
@@ -945,6 +952,7 @@ bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
       if (i + 1 < N && !sp->consume(',')) return false;
     }
     if (!sp->consume(')')) return false;
+    if (out->size() > kMaxArrayScalars) return false;
     if (sp->maybe_consume(',')) continue;
     return sp->finish_array();
   }
@@ -970,6 +978,7 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
       if (r + 1 < N && !sp->consume(',')) return false;
     }
     if (!sp->consume(')')) return false;
+    if (out->size() > kMaxArrayScalars) return false;
     if (sp->maybe_consume(',')) continue;
     return sp->finish_array();
   }
@@ -1295,6 +1304,13 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
       if (const std::string* s = elem.value.as_string()) {
         string_data.push_back(*s);
       }
+    }
+
+    // Defense-in-depth: cap a single pathological array's accumulated scalars.
+    if (float_data.size() > kMaxArrayScalars ||
+        int_data.size() > kMaxArrayScalars ||
+        string_data.size() > kMaxArrayScalars) {
+      return ParseResult::Error("Array element count exceeds limit");
     }
 
     // Check for comma or end
