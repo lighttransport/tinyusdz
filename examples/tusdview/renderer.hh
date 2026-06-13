@@ -101,6 +101,10 @@ class Renderer {
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
   virtual void updateMeshVertices(int /*meshIndex*/,
                                   const std::vector<DrawVertex>& /*verts*/) {}
+  // Replace mesh `meshIndex`'s world transform (column-major float[16]) — used
+  // for per-frame node/xform animation alongside GPU skinning. No-op if
+  // unsupported.
+  virtual void updateMeshWorld(int /*meshIndex*/, const float /*world*/[16]) {}
 
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
