@@ -52,6 +52,33 @@ std::string EscapeString(const std::string& s) {
   return result;
 }
 
+// Prefix every line of `s` after the first with `prefix`. Used to re-indent a
+// multi-line dictionary value (from PrintValue) under its metadata key so the
+// `{` stays inline and the body/closing brace align with the surrounding depth.
+std::string IndentContinuation(const std::string& s, const std::string& prefix) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    out += c;
+    if (c == '\n') out += prefix;
+  }
+  return out;
+}
+
+// Render a dictionary-valued metadatum as `<key> = { ... }` with body indented
+// `level` units. Returns empty if the value is not a (non-empty) dictionary.
+std::string DictMetaLine(const std::string& key, const Value& v, int level,
+                         const USDAWriteOptions& opts) {
+  if (!v.is_dictionary()) return "";
+  const Dict* d = v.as_dictionary();
+  if (!d || d->empty()) return "";
+  PrintOptions print_opts;
+  print_opts.indent = opts.indent;
+  std::string base;
+  for (int i = 0; i < level; ++i) base += opts.indent;
+  return key + " = " + IndentContinuation(PrintValue(v, print_opts), base);
+}
+
 // Write layer metadata block
 void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
                     const USDAWriteOptions& opts) {
@@ -66,6 +93,10 @@ void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
 
   if (!meta.doc.empty() && opts.include_comments) {
     lines.push_back(opts.indent + "doc = " + EscapeString(meta.doc));
+  }
+
+  if (!meta.comment.empty() && opts.include_comments) {
+    lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
   }
 
   if (meta.metersPerUnit != 0.01) {
@@ -96,6 +127,35 @@ void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "upAxis = " + EscapeString(meta.upAxis));
   }
 
+  if (meta.framesPerSecond_set) {
+    std::ostringstream ss;
+    ss << std::setprecision(opts.double_precision) << meta.framesPerSecond;
+    lines.push_back(opts.indent + "framesPerSecond = " + ss.str());
+  }
+
+  if (meta.kilogramsPerUnit_set) {
+    std::ostringstream ss;
+    ss << std::setprecision(opts.double_precision) << meta.kilogramsPerUnit;
+    lines.push_back(opts.indent + "kilogramsPerUnit = " + ss.str());
+  }
+
+  if (!meta.colorConfiguration.empty()) {
+    lines.push_back(opts.indent + "colorConfiguration = @" +
+                    meta.colorConfiguration + "@");
+  }
+
+  if (!meta.colorManagementSystem.empty()) {
+    lines.push_back(opts.indent + "colorManagementSystem = " +
+                    EscapeString(meta.colorManagementSystem));
+  }
+
+  {
+    std::string s = DictMetaLine("customLayerData", meta.customLayerData, 1, opts);
+    if (!s.empty()) lines.push_back(opts.indent + s);
+    s = DictMetaLine("expressionVariables", meta.expressionVariables, 1, opts);
+    if (!s.empty()) lines.push_back(opts.indent + s);
+  }
+
   if (!meta.subLayers.empty()) {
     std::ostringstream ss;
     ss << opts.indent << "subLayers = [\n";
@@ -116,6 +176,70 @@ void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
   os << "\n)\n\n";
 }
 
+// Emit the property metadata `( ... )` block (interpolation, customData, ...)
+// when authored. Streams " (\n ... )" with NO trailing newline so the caller can
+// place it before the property's terminating newline. Returns true if emitted.
+bool WritePropMeta(std::ostream& os, const PrimSpec& spec, PropNameId name_id,
+                   int depth, const USDAWriteOptions& opts) {
+  const PropMeta* m = spec.property_meta(name_id);
+  if (!m || m->empty()) return false;
+  const int md = depth + 1;
+  os << " (\n";
+  auto kv = [&](const std::string& s) {
+    WriteIndent(os, md, opts.indent);
+    os << s << "\n";
+  };
+  if (m->authored & PropMeta::kInterpolation)
+    kv("interpolation = " + EscapeString(m->interpolation));
+  if (m->authored & PropMeta::kElementSize)
+    kv("elementSize = " + std::to_string(m->elementSize));
+  if (m->authored & PropMeta::kColorSpace)
+    kv("colorSpace = " + EscapeString(m->colorSpace));
+  if (m->authored & PropMeta::kCustomData)
+    kv(DictMetaLine("customData", m->customData, md, opts));
+  if (m->authored & PropMeta::kDisplayName)
+    kv("displayName = " + EscapeString(m->displayName));
+  if (m->authored & PropMeta::kDisplayGroup)
+    kv("displayGroup = " + EscapeString(m->displayGroup));
+  if (m->authored & PropMeta::kDoc)
+    kv("doc = " + EscapeString(m->doc));
+  if (m->authored & PropMeta::kHidden)
+    kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
+  if (m->authored & PropMeta::kRenderType)
+    kv("renderType = " + EscapeString(m->renderType));
+  if (m->authored & PropMeta::kConnectability)
+    kv("connectability = " + EscapeString(m->connectability));
+  if (m->authored & PropMeta::kOutputName)
+    kv("outputName = " + EscapeString(m->outputName));
+  if (m->authored & PropMeta::kBindMaterialAs)
+    kv("bindMaterialAs = " + EscapeString(m->bindMaterialAs));
+  if (m->authored & PropMeta::kKind)
+    kv("kind = " + EscapeString(m->kind));
+  if (m->authored & PropMeta::kWeight) {
+    std::ostringstream ss;
+    ss << std::setprecision(opts.double_precision) << m->weight;
+    kv("weight = " + ss.str());
+  }
+  if (m->authored & PropMeta::kUnauthoredIdx)
+    kv("unauthoredValuesIndex = " + std::to_string(m->unauthoredValuesIndex));
+  if (m->authored & PropMeta::kAllowedTokens) {
+    std::string s = "allowedTokens = [";
+    for (size_t i = 0; i < m->allowedTokens.size(); ++i) {
+      if (i) s += ", ";
+      s += EscapeString(m->allowedTokens[i]);
+    }
+    s += "]";
+    kv(s);
+  }
+  if (m->authored & PropMeta::kAssetInfo)
+    kv(DictMetaLine("assetInfo", m->assetInfo, md, opts));
+  if (m->authored & PropMeta::kSdrMetadata)
+    kv(DictMetaLine("sdrMetadata", m->sdrMetadata, md, opts));
+  WriteIndent(os, depth, opts.indent);
+  os << ")";
+  return true;
+}
+
 // Write time samples for a property
 void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name_id,
                       const PrimSpec& spec, int depth, const USDAWriteOptions& opts) {
@@ -124,13 +248,15 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
 
   WriteIndent(os, depth, opts.indent);
 
-  // Get type from first sample
-  const Value* first_val = spec.time_sample_value(samples->front().second);
-  if (first_val) {
-    TypeId type_id = first_val->type_id();
-    os << GetTypeName(type_id);
-    if (first_val->is_array()) {
-      os << "[]";
+  // Type name: prefer the declared name, else derive from the first sample.
+  if (const std::string* decl = spec.property_type_name(name)) {
+    os << *decl;
+  } else {
+    const Value* first_val = spec.time_sample_value(samples->front().second);
+    if (first_val) {
+      const char* tn = GetTypeName(first_val->type_id());
+      os << (tn ? tn : "token");
+      if (first_val->is_array()) os << "[]";
     }
   }
 
@@ -157,7 +283,7 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
   }
 
   WriteIndent(os, depth, opts.indent);
-  os << "}\n";
+  os << "}";  // caller appends optional metadata block + newline
 }
 
 // Write a property value
@@ -169,6 +295,8 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
     WriteTimeSamples(os, name, slot.name_id, spec, depth, opts);
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
     return;
   }
 
@@ -182,11 +310,16 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
     os << "uniform ";
   }
 
-  // Write type name
+  // Write type name. Prefer the declared name (round-trips string[] vs token[],
+  // role types, and value-less / connection-only attrs whose stored value type
+  // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
   TypeId type_id = static_cast<TypeId>(slot.value_type);
-  os << GetTypeName(type_id);
-  if (slot.is_array()) {
-    os << "[]";
+  if (const std::string* decl = spec.property_type_name(name)) {
+    os << *decl;
+  } else {
+    const char* tn = GetTypeName(type_id);
+    os << (tn ? tn : "token");
+    if (slot.is_array()) os << "[]";
   }
 
   os << " " << name;
@@ -200,6 +333,7 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
         os << ".connect = <" << *path << ">";
       }
     }
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
     return;
   }
@@ -216,33 +350,33 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
     os << " = " << PrintValue(*value, print_opts);
   }
 
+  WritePropMeta(os, spec, slot.name_id, depth, opts);
   os << "\n";
 }
 
 // Write relationship
 void WriteRelationship(std::ostream& os, const std::string& name,
-                       const std::vector<Path>& targets, int depth,
+                       const std::vector<Path>& targets, const PrimSpec& spec,
+                       PropNameId name_id, int depth,
                        const USDAWriteOptions& opts) {
   WriteIndent(os, depth, opts.indent);
   os << "rel " << name;
 
   if (targets.empty()) {
-    os << " = None\n";
-    return;
-  }
-
-  os << " = ";
-  if (targets.size() == 1) {
-    os << "<" << targets[0].str() << ">\n";
+    os << " = None";
+  } else if (targets.size() == 1) {
+    os << " = <" << targets[0].str() << ">";
   } else {
-    os << "[\n";
+    os << " = [\n";
     for (const auto& target : targets) {
       WriteIndent(os, depth + 1, opts.indent);
       os << "<" << target.str() << ">,\n";
     }
     WriteIndent(os, depth, opts.indent);
-    os << "]\n";
+    os << "]";
   }
+  WritePropMeta(os, spec, name_id, depth, opts);
+  os << "\n";
 }
 
 // Forward declaration
@@ -262,30 +396,72 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
 
   os << " " << EscapeString(spec.name());
 
-  // Check if prim has metadata that needs to go in parentheses
+  // All prim metadata goes in the parenthesized header section so it re-parses
+  // (the parser reads prim metadata from `( ... )`, never from the prim body).
   const PrimSpecMeta& meta = spec.meta();
-  bool has_paren_meta = !meta.references.empty() || !meta.payloads.empty() ||
-                        !meta.inherits.empty() || !meta.specializes.empty() ||
-                        !meta.variantSelection.empty();
+  const bool has_doc = !meta.doc().empty() && opts.include_comments;
+  const bool has_comment = !meta.comment().empty() && opts.include_comments;
+  auto has_dict = [](const Value& v) {
+    return v.is_dictionary() && v.as_dictionary() && !v.as_dictionary()->empty();
+  };
+  const bool has_customData = has_dict(meta.customData());
+  const bool has_assetInfo = has_dict(meta.assetInfo());
+  const bool has_sdr = has_dict(meta.sdrMetadata());
+  const bool has_clips = has_dict(meta.clips());
+  bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
+                  !meta.kind().empty() || !meta.displayName().empty() ||
+                  has_doc || has_comment || !meta.apiSchemas().empty() ||
+                  has_customData || has_assetInfo || has_sdr || has_clips ||
+                  !meta.references.empty() || !meta.payloads.empty() ||
+                  !meta.inherits.empty() || !meta.specializes.empty() ||
+                  !meta.variantSelections().empty() ||
+                  !meta.variantSelection.empty();
 
-  if (has_paren_meta) {
+  if (has_meta) {
+    const int md = depth + 1;
     os << " (\n";
-    // Write composition arcs in paren section, re-emitting the authored list-op
-    // qualifier (Phase 7 S5): a bare/explicit list as `references = [...]`,
-    // otherwise the prepend/append/delete sublists. With no recorded edit the
-    // inline list is an implicit explicit (bare) list.
+    auto kv = [&](const std::string& s) {
+      WriteIndent(os, md, opts.indent);
+      os << s << "\n";
+    };
+    if (!meta.active) kv("active = false");
+    if (meta.hidden) kv("hidden = true");
+    if (meta.instanceable) kv("instanceable = true");
+    if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
+    if (!meta.displayName().empty())
+      kv("displayName = " + EscapeString(meta.displayName()));
+    if (has_doc) kv("doc = " + EscapeString(meta.doc()));
+    if (has_comment) kv("comment = " + EscapeString(meta.comment()));
+    if (!meta.apiSchemas().empty()) {
+      std::string s = "apiSchemas = [";
+      for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
+        if (i > 0) s += ", ";
+        s += "\"" + meta.apiSchemas()[i] + "\"";
+      }
+      s += "]";
+      kv(s);
+    }
+    if (has_customData) kv(DictMetaLine("customData", meta.customData(), md, opts));
+    if (has_assetInfo) kv(DictMetaLine("assetInfo", meta.assetInfo(), md, opts));
+    if (has_sdr) kv(DictMetaLine("sdrMetadata", meta.sdrMetadata(), md, opts));
+    if (has_clips) kv(DictMetaLine("clips", meta.clips(), md, opts));
+
+    // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):
+    // a bare/explicit list as `references = [...]`, otherwise the
+    // prepend/append/delete sublists. With no recorded edit the inline list is
+    // an implicit explicit (bare) list.
     const ArcListOpEdits* edits = meta.arc_edits();
     auto write_arc = [&](const char* field, const std::vector<std::string>& inl,
                          const ArcEdit* e) {
       auto emit = [&](const char* qual, const std::vector<std::string>& items) {
         if (items.empty()) return;
-        WriteIndent(os, depth + 1, opts.indent);
+        WriteIndent(os, md, opts.indent);
         os << qual << field << " = [\n";
         for (const auto& a : items) {
-          WriteIndent(os, depth + 2, opts.indent);
+          WriteIndent(os, md + 1, opts.indent);
           os << "@" << a << "@,\n";
         }
-        WriteIndent(os, depth + 1, opts.indent);
+        WriteIndent(os, md, opts.indent);
         os << "]\n";
       };
       if (!e || !e->authored || e->is_explicit) {
@@ -302,6 +478,28 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
     write_arc("inherits", meta.inherits, edits ? &edits->inherits : nullptr);
     write_arc("specializes", meta.specializes,
               edits ? &edits->specializes : nullptr);
+
+    // Variant selections: `variants = { string <set> = "<sel>" }`.
+    auto write_variants = [&](const std::vector<std::pair<std::string, std::string>>& sels) {
+      WriteIndent(os, md, opts.indent);
+      os << "variants = {\n";
+      for (const auto& sel : sels) {
+        WriteIndent(os, md + 1, opts.indent);
+        os << "string " << sel.first << " = " << EscapeString(sel.second) << "\n";
+      }
+      WriteIndent(os, md, opts.indent);
+      os << "}\n";
+    };
+    if (!meta.variantSelections().empty()) {
+      write_variants(meta.variantSelections());
+    } else if (!meta.variantSelection.empty()) {
+      auto eq = meta.variantSelection.find('=');
+      if (eq != std::string::npos) {
+        write_variants({{meta.variantSelection.substr(0, eq),
+                         meta.variantSelection.substr(eq + 1)}});
+      }
+    }
+
     WriteIndent(os, depth, opts.indent);
     os << ")";
   }
@@ -311,29 +509,6 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
   os << "{\n";
 
   int content_depth = depth + 1;
-
-  // Write remaining metadata inside braces
-  if (!meta.active) {
-    WriteIndent(os, content_depth, opts.indent);
-    os << "active = false\n";
-  }
-  if (meta.hidden) {
-    WriteIndent(os, content_depth, opts.indent);
-    os << "hidden = true\n";
-  }
-  if (!meta.doc().empty() && opts.include_comments) {
-    WriteIndent(os, content_depth, opts.indent);
-    os << "doc = " << EscapeString(meta.doc()) << "\n";
-  }
-  if (!meta.apiSchemas().empty()) {
-    WriteIndent(os, content_depth, opts.indent);
-    os << "apiSchemas = [";
-    for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
-      if (i > 0) os << ", ";
-      os << "\"" << meta.apiSchemas()[i] << "\"";
-    }
-    os << "]\n";
-  }
 
   // Get property slots
   std::vector<const PropSlot*> prop_slots;
@@ -357,16 +532,14 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
     WriteProperty(os, *slot, spec, content_depth, opts);
   }
 
-  // Write relationships
+  // Write relationships. These live in the relationship map (add_relationship
+  // does not create a PropSlot), so iterate the map's names, not prop slots.
   PropNameTable& name_table = GetPropNameTable();
-  for (const auto& slot : spec.properties().slots()) {
-    if (slot.is_relationship()) {
-      const std::string& name = name_table.get(slot.name_id);
-      const std::vector<Path>* targets = spec.relationship(name);
-      if (targets) {
-        WriteRelationship(os, name, *targets, content_depth, opts);
-      }
-    }
+  for (const std::string& rel_name : spec.relationship_names()) {
+    const std::vector<Path>* targets = spec.relationship(rel_name);
+    if (!targets) continue;
+    PropNameId rid = name_table.find(rel_name);
+    WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
   // Write children
@@ -415,7 +588,18 @@ USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
   meta.timeCodesPerSecond = stage_meta.timeCodesPerSecond;
   meta.startTimeCode = stage_meta.startTimeCode;
   meta.endTimeCode = stage_meta.endTimeCode;
+  meta.framesPerSecond = stage_meta.framesPerSecond;
+  meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
+  meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
+  meta.kilogramsPerUnit_set = stage_meta.kilogramsPerUnit_set;
+  meta.colorConfiguration = stage_meta.colorConfiguration;
+  meta.colorManagementSystem = stage_meta.colorManagementSystem;
   meta.doc = stage_meta.doc;
+  meta.comment = stage_meta.comment;
+  // Dictionary-valued stage metadata is not mirrored on StageMeta; take it from
+  // the composed root layer directly.
+  meta.customLayerData = root_layer->meta().customLayerData;
+  meta.expressionVariables = root_layer->meta().expressionVariables;
 
   WriteLayerMeta(os, meta, options);
 

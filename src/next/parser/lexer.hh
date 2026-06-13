@@ -103,6 +103,11 @@ public:
   /// Skip to end of current line
   void skip_line();
 
+  /// Capture and consume a complete bracketed literal without tokenizing every
+  /// element. The returned span points into the lexer's input and includes the
+  /// outer '[' and ']'.
+  bool capture_bracketed_literal(const char** out_data, size_t* out_len);
+
   /// Get error message if in error state
   const std::string& error() const { return error_; }
 

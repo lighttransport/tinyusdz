@@ -222,6 +222,9 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
     if (const std::vector<Path>* conns = source.connection(pname)) {
       for (const auto& c : *conns) target.add_connection(pname, c);
     }
+    if (const PropMeta* pm = source.property_meta(slot.name_id)) {
+      target.ensure_property_meta(pname) = *pm;
+    }
   }
 
   // Copy relationships not already present on the target.
@@ -229,6 +232,9 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
     if (target.relationship(rel_name)) continue;
     if (const std::vector<Path>* tgts = source.relationship(rel_name)) {
       for (const auto& t : *tgts) target.add_relationship(rel_name, t);
+    }
+    if (const PropMeta* pm = source.property_meta(rel_name)) {
+      target.ensure_property_meta(rel_name) = *pm;
     }
   }
 
@@ -252,12 +258,43 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
     }
   }
 
-  // Copy metadata fields
+  // Copy metadata fields (fill-absent: a stronger/earlier opinion already on the
+  // target wins; weaker opinions only fill gaps).
   if (!source.meta().doc().empty() && target.meta().doc().empty()) {
     target.meta().doc() = source.meta().doc();
   }
   if (source.meta().active != target.meta().active) {
     target.meta().active = source.meta().active;
+  }
+  if (source.meta().hidden) target.meta().hidden = true;
+  if (source.meta().instanceable) target.meta().instanceable = true;
+  if (!source.meta().comment().empty() && target.meta().comment().empty()) {
+    target.meta().comment() = source.meta().comment();
+  }
+  if (!source.meta().kind().empty() && target.meta().kind().empty()) {
+    target.meta().kind() = source.meta().kind();
+  }
+  if (!source.meta().displayName().empty() &&
+      target.meta().displayName().empty()) {
+    target.meta().displayName() = source.meta().displayName();
+  }
+  if (target.meta().apiSchemas().empty() &&
+      !source.meta().apiSchemas().empty()) {
+    target.meta().apiSchemas() = source.meta().apiSchemas();
+  }
+  // Dictionary-valued metadata (fill-absent). `ct` binds a const view so the
+  // gap check never allocates the target's metadata ext.
+  {
+    const PrimSpecMeta& cs = source.meta();
+    const PrimSpecMeta& ct = target.meta();
+    if (cs.customData().is_dictionary() && !ct.customData().is_dictionary())
+      target.meta().customData() = cs.customData();
+    if (cs.assetInfo().is_dictionary() && !ct.assetInfo().is_dictionary())
+      target.meta().assetInfo() = cs.assetInfo();
+    if (cs.sdrMetadata().is_dictionary() && !ct.sdrMetadata().is_dictionary())
+      target.meta().sdrMetadata() = cs.sdrMetadata();
+    if (cs.clips().is_dictionary() && !ct.clips().is_dictionary())
+      target.meta().clips() = cs.clips();
   }
 
   // Variant sets + selections ride along (weaker: only when the target has
@@ -410,25 +447,68 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
   // dst_root, buffered in pending_graft_ (added after pass 2). Local overrides
   // already present in the result win (checked when appending).
   //
-  // NOTE: scans the whole source layer by path prefix. A child-index DFS from
-  // the root would be O(subtree) instead of O(layer_prims x graft_count), but
-  // the layers grafted here are composed in place and do not reliably carry
-  // child_indices, so the path-prefix scan is the correct form. (CoW Clone in
-  // Phase 3 already removed the per-graft array-copy cost.)
+  // Prefer the child-index hierarchy when it proves valid for this subtree. Some
+  // composed/intermediate layers can carry stale child indices after cloned or
+  // renamed prims, so fall back to the path-prefix scan when validation fails.
   const std::string prefix = src_root + "/";
+  auto graft_descendant = [&](const PrimSpec& d) {
+    const std::string& dp = d.path().str();
+    if (dp.size() <= prefix.size() ||
+        dp.compare(0, prefix.size(), prefix) != 0) {
+      return;  // not a descendant of src_root
+    }
+    std::string new_path = dst_root + dp.substr(src_root.size());
+    if (!graft_paths_.insert(new_path).second) return;  // already grafted
+    PrimSpec g = d.Clone();
+    g.set_path(Path(new_path));
+    pending_graft_.push_back(PendingGraft{std::move(g), src_anchor});
+  };
+
+  const PrimSpec* root = src.prim_at_path(src_root);
+  if (root && root->child_count() > 0) {
+    bool valid_child_links = true;
+    std::vector<uint32_t> stack(root->child_indices().begin(),
+                                root->child_indices().end());
+    std::vector<uint32_t> order;
+    order.reserve(stack.size());
+    std::vector<uint8_t> seen(src.prim_count(), uint8_t{0});
+    while (!stack.empty()) {
+      uint32_t idx = stack.back();
+      stack.pop_back();
+      if (idx >= src.prim_count() || seen[idx]) {
+        valid_child_links = false;
+        break;
+      }
+      seen[idx] = 1;
+      const PrimSpec* d = src.prim(idx);
+      if (!d) {
+        valid_child_links = false;
+        break;
+      }
+      const std::string& dp = d->path().str();
+      if (dp.size() <= prefix.size() ||
+          dp.compare(0, prefix.size(), prefix) != 0) {
+        valid_child_links = false;
+        break;
+      }
+      order.push_back(idx);
+      const auto& children = d->child_indices();
+      stack.insert(stack.end(), children.begin(), children.end());
+    }
+    if (valid_child_links) {
+      for (uint32_t idx : order) {
+        if (const PrimSpec* d = src.prim(idx)) {
+          graft_descendant(*d);
+        }
+      }
+      return;
+    }
+  }
+
   for (size_t i = 0; i < src.prim_count(); ++i) {
     const PrimSpec* d = src.prim(static_cast<uint32_t>(i));
     if (!d) continue;
-    const std::string& dp = d->path().str();
-    if (dp.size() <= prefix.size() ||
-        dp.compare(0, prefix.size(), prefix) != 0) {
-      continue;  // not a descendant of src_root
-    }
-    std::string new_path = dst_root + dp.substr(src_root.size());
-    if (!graft_paths_.insert(new_path).second) continue;  // already grafted
-    PrimSpec g = d->Clone();
-    g.set_path(Path(new_path));
-    pending_graft_.push_back(PendingGraft{std::move(g), src_anchor});
+    graft_descendant(*d);
   }
 }
 

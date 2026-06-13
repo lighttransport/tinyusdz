@@ -64,6 +64,10 @@ std::string EscapeString(const std::string& s) {
   return result;
 }
 
+// Forward decl: recursive dictionary printer (defined after PrintValue).
+std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+                                    int base_depth);
+
 }  // anonymous namespace
 
 std::string PrintValue(const Value& value, const PrintOptions& opts) {
@@ -77,49 +81,143 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
   if (value.is_array()) {
     std::ostringstream ss;
     ss << "[";
+    const size_t maxN = opts.max_array_elements;
 
-    if (type_id == TypeId::Float) {
-      const auto* arr = value.as_float_array();
-      if (arr) {
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, arr->size()) : arr->size();
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << FormatFloat((*arr)[i], opts.float_precision);
+    const bool is_matrix =
+        (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d ||
+         type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d ||
+         type_id == TypeId::Matrix4f || type_id == TypeId::Matrix4d);
+    const size_t mat_dim =
+        (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d) ? 2 :
+        (type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d) ? 3 : 4;
+    size_t comp_count = GetComponentCount(type_id);
+    if (comp_count < 1) comp_count = 1;
+
+    // Emit a single element (scalar, vector tuple, or nested matrix rows).
+    auto emit_elem_float = [&](const float* d) {
+      if (is_matrix) {
+        ss << "(";
+        for (size_t r = 0; r < mat_dim; ++r) {
+          if (r) ss << ", ";
+          ss << "(";
+          for (size_t c = 0; c < mat_dim; ++c) {
+            if (c) ss << ", ";
+            ss << FormatFloat(d[r * mat_dim + c], opts.float_precision);
+          }
+          ss << ")";
         }
-        if (limit < arr->size()) {
-          ss << ", ...";
+        ss << ")";
+      } else if (comp_count > 1) {
+        ss << "(";
+        for (size_t c = 0; c < comp_count; ++c) {
+          if (c) ss << ", ";
+          ss << FormatFloat(d[c], opts.float_precision);
         }
+        ss << ")";
+      } else {
+        ss << FormatFloat(d[0], opts.float_precision);
       }
-    } else if (type_id == TypeId::Int) {
-      const auto* arr = value.as_int_array();
-      if (arr) {
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, arr->size()) : arr->size();
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << (*arr)[i];
+    };
+    auto emit_elem_double = [&](const double* d) {
+      if (is_matrix) {
+        ss << "(";
+        for (size_t r = 0; r < mat_dim; ++r) {
+          if (r) ss << ", ";
+          ss << "(";
+          for (size_t c = 0; c < mat_dim; ++c) {
+            if (c) ss << ", ";
+            ss << FormatDouble(d[r * mat_dim + c], opts.double_precision);
+          }
+          ss << ")";
         }
-        if (limit < arr->size()) {
-          ss << ", ...";
+        ss << ")";
+      } else if (comp_count > 1) {
+        ss << "(";
+        for (size_t c = 0; c < comp_count; ++c) {
+          if (c) ss << ", ";
+          ss << FormatDouble(d[c], opts.double_precision);
         }
+        ss << ")";
+      } else {
+        ss << FormatDouble(d[0], opts.double_precision);
       }
-    } else if (type_id == TypeId::Float3) {
-      // Float3 array - stored as flat floats
-      const auto* arr = value.as_float_array();
-      if (arr && arr->size() >= 3) {
-        size_t count = arr->size() / 3;
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, count) : count;
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << "(" << FormatFloat((*arr)[i*3], opts.float_precision)
-             << ", " << FormatFloat((*arr)[i*3+1], opts.float_precision)
-             << ", " << FormatFloat((*arr)[i*3+2], opts.float_precision) << ")";
+    };
+
+    switch (type_id) {
+      case TypeId::Int: {
+        if (const auto* a = value.as_int_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; ss << (*a)[i]; }
+          if (limit < a->size()) ss << ", ...";
         }
-        if (limit < count) {
-          ss << ", ...";
+        break;
+      }
+      case TypeId::UInt: {
+        if (const auto* a = value.as_uint_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; ss << (*a)[i]; }
+          if (limit < a->size()) ss << ", ...";
         }
+        break;
+      }
+      case TypeId::Int64: {
+        if (const auto* a = value.as_int64_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; ss << (*a)[i]; }
+          if (limit < a->size()) ss << ", ...";
+        }
+        break;
+      }
+      case TypeId::UInt64: {
+        if (const auto* a = value.as_uint64_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; ss << (*a)[i]; }
+          if (limit < a->size()) ss << ", ...";
+        }
+        break;
+      }
+      case TypeId::Bool: {
+        if (const auto* a = value.as_bool_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; ss << ((*a)[i] ? "true" : "false"); }
+          if (limit < a->size()) ss << ", ...";
+        }
+        break;
+      }
+      case TypeId::Token:
+      case TypeId::String:
+      case TypeId::AssetPath: {
+        if (const auto* a = value.as_token_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) {
+            if (i) ss << ", ";
+            if (type_id == TypeId::AssetPath) ss << "@" << (*a)[i] << "@";
+            else ss << EscapeString((*a)[i]);
+          }
+          if (limit < a->size()) ss << ", ...";
+        }
+        break;
+      }
+      default: {
+        // float- or double-backed scalar / vector / matrix arrays
+        const bool dbl = (GetComponentType(type_id) == TypeId::Double) ||
+                         type_id == TypeId::Double;
+        if (dbl) {
+          if (const auto* a = value.as_double_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; emit_elem_double(a->data() + i * comp_count); }
+            if (limit < n) ss << ", ...";
+          }
+        } else {
+          if (const auto* a = value.as_float_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            for (size_t i = 0; i < limit; ++i) { if (i) ss << ", "; emit_elem_float(a->data() + i * comp_count); }
+            if (limit < n) ss << ", ...";
+          }
+        }
+        break;
       }
     }
 
@@ -359,10 +457,45 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
       return ss.str();
     }
 
+    case TypeId::Dictionary: {
+      const Dict* d = value.as_dictionary();
+      return d ? PrintDictionaryIndented(*d, opts, 0) : std::string("{\n}");
+    }
+
     default:
       return "<unsupported type " + std::to_string(static_cast<int>(type_id)) + ">";
   }
 }
+
+namespace {
+
+std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+                                    int base_depth) {
+  std::ostringstream ss;
+  ss << "{\n";
+  std::string inner;
+  for (int i = 0; i <= base_depth; ++i) inner += opts.indent;
+  std::string closing;
+  for (int i = 0; i < base_depth; ++i) closing += opts.indent;
+
+  for (const auto& kv : d.entries) {
+    const std::string& key = kv.first;
+    const Value& val = kv.second;
+    ss << inner;
+    if (val.is_dictionary()) {
+      ss << "dictionary " << key << " = "
+         << PrintDictionaryIndented(*val.as_dictionary(), opts, base_depth + 1)
+         << "\n";
+    } else {
+      ss << PrintTypeName(val.type_id(), val.is_array()) << " " << key << " = "
+         << PrintValue(val, opts) << "\n";
+    }
+  }
+  ss << closing << "}";
+  return ss.str();
+}
+
+}  // anonymous namespace
 
 std::string PrintTypeName(TypeId type_id, bool is_array) {
   const char* type_name = GetTypeName(type_id);

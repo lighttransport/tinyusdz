@@ -29,6 +29,51 @@ bool IsHexDigit(char c) {
   return std::isxdigit(static_cast<unsigned char>(c));
 }
 
+// Length of an `inf` / `infinity` / `nan` special-float word (case-insensitive)
+// starting at p, or 0 if none. Requires a non-identifier char (or end) after the
+// word so e.g. `info` or `index` are not mistaken for `inf`.
+size_t MatchFloatSpecial(const char* p, const char* end) {
+  auto ieq = [](const char* a, const char* lit, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+      if (std::tolower(static_cast<unsigned char>(a[i])) != lit[i]) return false;
+    }
+    return true;
+  };
+  auto word_boundary = [&](size_t n) {
+    return (p + n == end) || !IsIdentifierContinue(p[n]);
+  };
+  if (p + 8 <= end && ieq(p, "infinity", 8) && word_boundary(8)) return 8;
+  if (p + 3 <= end && ieq(p, "inf", 3) && word_boundary(3)) return 3;
+  if (p + 3 <= end && ieq(p, "nan", 3) && word_boundary(3)) return 3;
+  return 0;
+}
+
+int HexVal(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// Append a Unicode code point to `out` as UTF-8.
+void AppendUtf8(std::string& out, uint32_t cp) {
+  if (cp <= 0x7f) {
+    out += static_cast<char>(cp);
+  } else if (cp <= 0x7ff) {
+    out += static_cast<char>(0xc0 | (cp >> 6));
+    out += static_cast<char>(0x80 | (cp & 0x3f));
+  } else if (cp <= 0xffff) {
+    out += static_cast<char>(0xe0 | (cp >> 12));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3f));
+    out += static_cast<char>(0x80 | (cp & 0x3f));
+  } else if (cp <= 0x10ffff) {
+    out += static_cast<char>(0xf0 | (cp >> 18));
+    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3f));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3f));
+    out += static_cast<char>(0x80 | (cp & 0x3f));
+  }
+}
+
 struct Keyword {
   const char* name;
   TokenType type;
@@ -115,6 +160,94 @@ void Lexer::skip_line() {
   if (pos_ < length_) {
     advance();  // Skip the newline
   }
+}
+
+bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
+  if (!out_data || !out_len) return false;
+  const Token& tok = peek();
+  if (tok.type != TokenType::OpenBracket) {
+    set_error("Expected OpenBracket, got " + std::string(TokenTypeName(tok.type)));
+    return false;
+  }
+
+  // `peek()` has scanned the '[' token, so pos_ is just after it.
+  const size_t start = pos_ > 0 ? pos_ - 1 : 0;
+  has_current_ = false;
+
+  int depth = 1;
+  while (pos_ < length_ && depth > 0) {
+    const char c = current_char();
+
+    if (c == '#') {
+      skip_comment();
+      continue;
+    }
+
+    if (c == '"' || c == '\'') {
+      const char quote = c;
+      advance();
+      bool triple = false;
+      if (current_char() == quote && peek_char() == quote) {
+        triple = true;
+        advance();
+        advance();
+      }
+      while (pos_ < length_) {
+        if (current_char() == '\\') {
+          advance();
+          if (pos_ < length_) advance();
+          continue;
+        }
+        if (triple) {
+          if (current_char() == quote && peek_char() == quote && peek_char(2) == quote) {
+            advance();
+            advance();
+            advance();
+            break;
+          }
+        } else if (current_char() == quote) {
+          advance();
+          break;
+        }
+        advance();
+      }
+      continue;
+    }
+
+    if (c == '@') {
+      advance();
+      while (pos_ < length_) {
+        if (current_char() == '\\') {
+          advance();
+          if (pos_ < length_) advance();
+          continue;
+        }
+        if (current_char() == '@') {
+          advance();
+          break;
+        }
+        advance();
+      }
+      continue;
+    }
+
+    if (c == '[') {
+      depth++;
+    } else if (c == ']') {
+      depth--;
+    }
+    advance();
+  }
+
+  if (depth != 0) {
+    set_error("Unexpected end of input while parsing array literal");
+    return false;
+  }
+
+  *out_data = data_ + start;
+  *out_len = pos_ - start;
+  has_current_ = false;
+  return true;
 }
 
 const Token& Lexer::peek() {
@@ -214,7 +347,7 @@ Token Lexer::scan_token() {
   }
 
   // String
-  if (c == '"') {
+  if (c == '"' || c == '\'') {
     return scan_string();
   }
 
@@ -223,8 +356,12 @@ Token Lexer::scan_token() {
     return scan_identifier();
   }
 
-  // Number (including negative)
-  if (IsDigit(c) || (c == '-' && IsDigit(peek_char())) || (c == '+' && IsDigit(peek_char()))) {
+  // Number (including negative, and signed inf/nan specials such as `-inf`).
+  // Bare `inf`/`nan` start with a letter and are lexed as identifiers above;
+  // the value parser accepts those in numeric context (keeping an attribute
+  // literally named `inf` safe).
+  if (IsDigit(c) || (c == '-' && IsDigit(peek_char())) || (c == '+' && IsDigit(peek_char())) ||
+      ((c == '-' || c == '+') && MatchFloatSpecial(data_ + pos_ + 1, data_ + length_) > 0)) {
     return scan_number();
   }
 
@@ -257,6 +394,14 @@ Token Lexer::scan_number() {
   // Sign
   if (current_char() == '-' || current_char() == '+') {
     advance();
+  }
+
+  // Signed inf / infinity / nan special float literal (e.g. `-inf`). Emit as a
+  // Number token; strtof/strtod/fast_float parse these directly.
+  if (size_t special = MatchFloatSpecial(data_ + pos_, data_ + length_)) {
+    for (size_t i = 0; i < special; i++) advance();
+    std::string value(data_ + start, pos_ - start);
+    return make_token(TokenType::Number, value, start_line, start_col);
   }
 
   // Check for hex
@@ -300,13 +445,14 @@ Token Lexer::scan_string() {
   size_t start_line = line_;
   size_t start_col = column_;
 
+  const char quote = current_char();
   advance();  // Opening quote
 
   std::string value;
   bool is_multiline = false;
 
   // Check for triple-quoted string
-  if (current_char() == '"' && peek_char() == '"') {
+  if (current_char() == quote && peek_char() == quote) {
     is_multiline = true;
     advance();  // Second quote
     advance();  // Third quote
@@ -317,14 +463,14 @@ Token Lexer::scan_string() {
 
     if (is_multiline) {
       // Check for closing triple quotes
-      if (c == '"' && peek_char() == '"' && peek_char(2) == '"') {
+      if (c == quote && peek_char() == quote && peek_char(2) == quote) {
         advance();
         advance();
         advance();
         break;
       }
     } else {
-      if (c == '"') {
+      if (c == quote) {
         advance();
         break;
       }
@@ -336,20 +482,64 @@ Token Lexer::scan_string() {
 
     // Escape sequences
     if (c == '\\' && !at_end()) {
-      advance();
+      advance();                  // consume '\'
       char escaped = current_char();
+      advance();                  // consume the escape indicator char
       switch (escaped) {
         case 'n': value += '\n'; break;
         case 't': value += '\t'; break;
         case 'r': value += '\r'; break;
+        case 'a': value += '\a'; break;
+        case 'b': value += '\b'; break;
+        case 'f': value += '\f'; break;
+        case 'v': value += '\v'; break;
         case '\\': value += '\\'; break;
         case '"': value += '"'; break;
+        case '\'': value += '\''; break;
+        case 'x': {
+          // \xNN - up to two hex digits
+          int v = 0, n = 0;
+          while (n < 2 && HexVal(current_char()) >= 0) {
+            v = v * 16 + HexVal(current_char());
+            advance();
+            n++;
+          }
+          if (n == 0) { value += '\\'; value += 'x'; }
+          else value += static_cast<char>(v);
+          break;
+        }
+        case 'u':
+        case 'U': {
+          // \uXXXX (4 hex) or \UXXXXXXXX (8 hex) -> UTF-8
+          int want = (escaped == 'u') ? 4 : 8;
+          uint32_t cp = 0;
+          int n = 0;
+          while (n < want && HexVal(current_char()) >= 0) {
+            cp = cp * 16 + static_cast<uint32_t>(HexVal(current_char()));
+            advance();
+            n++;
+          }
+          if (n != want) { value += '\\'; value += escaped; }
+          else AppendUtf8(value, cp);
+          break;
+        }
+        case '0': case '1': case '2': case '3':
+        case '4': case '5': case '6': case '7': {
+          // Octal \NNN - first digit is `escaped`, up to two more
+          int v = escaped - '0', n = 1;
+          while (n < 3 && current_char() >= '0' && current_char() <= '7') {
+            v = v * 8 + (current_char() - '0');
+            advance();
+            n++;
+          }
+          value += static_cast<char>(v & 0xff);
+          break;
+        }
         default:
           value += '\\';
           value += escaped;
           break;
       }
-      advance();
     } else {
       value += c;
       advance();
