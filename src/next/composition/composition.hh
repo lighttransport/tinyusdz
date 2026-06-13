@@ -148,8 +148,11 @@ public:
   /// Get an external layer with its OWN composition arcs (references / payloads
   /// / inherits / specializes) already expanded, variant selection deferred to
   /// the referencing prim. Cached; falls back to the raw layer when it has no
-  /// such arcs or a composition cycle is detected.
-  const Layer* GetComposedExternalLayer(const std::string& path);
+  /// such arcs or a composition cycle is detected. When `subtree_root` is given,
+  /// only that (self-contained) subtree is composed/materialized rather than the
+  /// whole layer.
+  const Layer* GetComposedExternalLayer(const std::string& path,
+                                        const std::string& subtree_root = "");
 
   /// Clear the layer cache
   void ClearCache();
