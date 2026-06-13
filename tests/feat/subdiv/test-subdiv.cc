@@ -2192,6 +2192,81 @@ void test_stream_fvar() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Audit regressions: non-uniform arity reporting + block-mode sink abort.
+// ---------------------------------------------------------------------------
+
+struct MixedArityCollect {
+  bool saw_counts = false;
+  std::vector<uint32_t> arities;    // per emitted face
+  std::vector<uint32_t> face_idx;   // flat canonical face vertex ids
+};
+
+bool MixedAritySinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+  MixedArityCollect *c = static_cast<MixedArityCollect *>(user);
+  if (b->face_vertex_counts) c->saw_counts = true;
+  size_t off = 0;
+  for (uint32_t f = 0; f < b->num_faces; f++) {
+    const uint32_t n = b->face_vertex_counts
+                           ? b->face_vertex_counts[f]
+                           : (b->num_indices / b->num_faces);
+    c->arities.push_back(n);
+    for (uint32_t k = 0; k < n; k++) {
+      c->face_idx.push_back(b->vertex_source[b->indices[off + k]]);
+    }
+    off += n;
+  }
+  return true;
+}
+
+// Level-0 passthrough of a mixed-degree mesh with native (non-triangulated)
+// faces must report per-face arity, not claim uniform arity.
+void test_stream_level0_mixed_arity() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+  corpus::Mesh m = corpus::MixedDegree();  // face_vertex_counts {4,3,3,5}
+  Options opts;
+  opts.level = 0;
+  opts.remove_holes = false;
+  StreamOptions so;
+  so.emit_triangles = false;
+  MixedArityCollect col;
+  std::string err;
+  CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so,
+                     MixedAritySinkFn, &col, &err) == Result::Success);
+  CHECK(col.saw_counts);  // non-uniform batch reports face_vertex_counts
+  CHECK(col.arities ==
+        std::vector<uint32_t>(m.face_vertex_counts.begin(),
+                              m.face_vertex_counts.end()));
+  CHECK(col.face_idx ==
+        std::vector<uint32_t>(m.face_vertex_indices.begin(),
+                              m.face_vertex_indices.end()));
+}
+
+struct AbortCtx {
+  int calls = 0;
+};
+bool AbortSinkFn(void *user, const tinyusdz::tsd::StreamBatch *) {
+  static_cast<AbortCtx *>(user)->calls++;
+  return false;  // abort immediately
+}
+
+// Block mode must stop refining further blocks once the sink aborts.
+void test_stream_block_abort() {
+  using tinyusdz::tsd::RefineStream;
+  using tinyusdz::tsd::StreamOptions;
+  corpus::Mesh m = corpus::QuadGrid(6, 6, "abort");  // 36 base faces
+  Options opts;
+  opts.level = 2;
+  StreamOptions so;
+  so.block_faces = 4;  // 9 blocks
+  AbortCtx ctx;
+  std::string err;
+  CHECK(RefineStream(ToView(m), nullptr, 0, nullptr, 0, opts, so, AbortSinkFn,
+                     &ctx, &err) == Result::Success);
+  CHECK(ctx.calls == 1);  // stopped after the first batch, not all 9 blocks
+}
+
 }  // namespace
 
 int main() {
@@ -2275,6 +2350,8 @@ int main() {
   TEST(test_stream_normals);
   TEST(test_stream_blocked_matches_bulk);
   TEST(test_stream_fvar);
+  TEST(test_stream_level0_mixed_arity);
+  TEST(test_stream_block_abort);
 
   printf("feat-subdiv: %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
