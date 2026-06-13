@@ -2408,6 +2408,16 @@ if(TINYUSDZ_BUILD_TESTS)
                WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
 
+    # Composition: a local-only child PrimSpec must survive a reference/inherit/
+    # specialize/variant flatten (regression for InheritPrimSpecImpl dropping
+    # dst-only children).
+    add_executable(feat-localchild tests/feat/composition-localchild/test-localchild.cc)
+    add_sanitizers(feat-localchild)
+    target_link_libraries(feat-localchild PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-localchild PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-localchild COMMAND feat-localchild
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)
