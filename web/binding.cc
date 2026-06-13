@@ -9986,6 +9986,7 @@ class SubdivStreamer {
   // boundary: 0=edgeAndCorner, 1=edgeOnly, 2=none.
   // uvValues: Float32Array (stride 2) or null/empty for no texturing.
   // uvIndices: Uint32Array (per face-corner) or null for identity.
+  // uvInterp: 0 = linear ("all"); 1 = smooth seam-split ("cornersPlus1").
   // batchFaces: parent faces per output batch (0 => default).
   // blockFaces: >0 bounds the WORKING set -- refine in blocks of this many base
   //             faces plus a halo, so peak heap is independent of mesh size and
@@ -10001,8 +10002,8 @@ class SubdivStreamer {
                            const emscripten::val &fvc,
                            const emscripten::val &fvi,
                            const emscripten::val &uvValues,
-                           const emscripten::val &uvIndices, int scheme,
-                           int boundary, int level, int batchFaces,
+                           const emscripten::val &uvIndices, int uvInterp,
+                           int scheme, int boundary, int level, int batchFaces,
                            int blockFaces, int haloRings, bool wantNormals,
                            emscripten::val onBatch) {
     namespace tsd = tinyusdz::tsd;
@@ -10020,7 +10021,10 @@ class SubdivStreamer {
       return "empty mesh";
     }
 
-    // Optional UV faceVarying channel (linear / "all" mode).
+    // Optional UV faceVarying channel. uvInterp selects how it interpolates:
+    // 0 = linear ("all" mode, bilinear per corner); 1 = smooth seam-split
+    // ("cornersPlus1", the USD default -- UVs follow the limit surface, less
+    // distortion on curved regions, seams preserved at island boundaries).
     std::vector<float> uvs;
     std::vector<uint32_t> uvidx;
     detail::copyTypedArray(uvValues, uvs, "Float32Array");
@@ -10041,7 +10045,9 @@ class SubdivStreamer {
       uvchan.num_values = uint32_t(uvs.size() / 2);
       uvchan.indices = uvidx.empty() ? nullptr : uvidx.data();
       uvchan.stride = 2;
-      uvchan.interpolation = tsd::FVarLinearInterpolation::All;
+      uvchan.interpolation = (uvInterp == 1)
+                                 ? tsd::FVarLinearInterpolation::CornersPlus1
+                                 : tsd::FVarLinearInterpolation::All;
     }
 
     tsd::Options opts;
