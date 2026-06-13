@@ -171,9 +171,13 @@ int main(int argc, char **argv) {
       src = std::move(tmp); unresolved = true;
     }
     if (src.check_unresolved_variant()) {
-      Layer tmp;
-      if (!CompositeVariant(src, &tmp, &warn, &err)) return 1;
-      src = std::move(tmp); unresolved = true;
+      unresolved = true;
+      // AOUSD Core Spec 10.3.2.5: defer variants until refs/payloads resolve.
+      if (!ShouldDeferVariantComposition(src)) {
+        Layer tmp;
+        if (!CompositeVariant(src, &tmp, &warn, &err)) return 1;
+        src = std::move(tmp);
+      }
     }
     if (!unresolved) break;
   }
