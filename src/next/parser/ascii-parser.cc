@@ -56,7 +56,7 @@ private:
                                std::vector<VariantSetData>& target, int depth);
   bool ParseVariantOption(VariantData* out, int depth);
   bool ParseNamespacedName(std::string* out, const char* what);
-  bool SkipBalancedBlock(TokenType open, TokenType close);
+  bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
   void SkipPropertyMetadata();
   void ParsePropertyMetadata(const std::string& prop_name);
@@ -1297,8 +1297,19 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
   return true;
 }
 
-bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close) {
+bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close,
+                                         size_t depth_level) {
   if (!Check(open)) return false;
+
+  // Same-type nesting is handled iteratively via `depth` below; only a change of
+  // bracket type recurses. Cap that recursion to bound stack usage on hostile
+  // input (e.g. an alternating "([{([{..." run). The limit is far deeper than any
+  // legitimate metadata alternation (cf. the dict/variantSet depth caps of 64).
+  constexpr size_t kMaxSkipDepth = 1024;
+  if (depth_level > kMaxSkipDepth) {
+    AddError("Skipped block nesting too deep");
+    return false;
+  }
 
   size_t depth = 0;
   while (!AtEnd()) {
@@ -1317,15 +1328,18 @@ bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close) {
     }
 
     if (tok.type == TokenType::OpenParen) {
-      if (!SkipBalancedBlock(TokenType::OpenParen, TokenType::CloseParen)) return false;
+      if (!SkipBalancedBlock(TokenType::OpenParen, TokenType::CloseParen,
+                             depth_level + 1)) return false;
       continue;
     }
     if (tok.type == TokenType::OpenBracket) {
-      if (!SkipBalancedBlock(TokenType::OpenBracket, TokenType::CloseBracket)) return false;
+      if (!SkipBalancedBlock(TokenType::OpenBracket, TokenType::CloseBracket,
+                             depth_level + 1)) return false;
       continue;
     }
     if (tok.type == TokenType::OpenBrace) {
-      if (!SkipBalancedBlock(TokenType::OpenBrace, TokenType::CloseBrace)) return false;
+      if (!SkipBalancedBlock(TokenType::OpenBrace, TokenType::CloseBrace,
+                             depth_level + 1)) return false;
       continue;
     }
 
