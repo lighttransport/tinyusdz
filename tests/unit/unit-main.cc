@@ -959,6 +959,7 @@ TEST_LIST = {
   { "urdf_json_fullinertia_diagonalize_test", urdf_json_fullinertia_diagonalize_test },
   { "physics_articulation_root_api_test", physics_articulation_root_api_test },
   { "mjc_equality_api_test", mjc_equality_api_test },
+  { "urdf_json_mjcf_muscle_export_test", urdf_json_mjcf_muscle_export_test },
   // IK solver
   { "ik_forward_kinematics_test", ik_forward_kinematics_test },
   { "ik_ccd_solve_test", ik_ccd_solve_test },

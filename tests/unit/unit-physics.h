@@ -58,3 +58,6 @@ void urdf_json_fullinertia_diagonalize_test(void);
 // Phase 3b: schema-coverage tests
 void physics_articulation_root_api_test(void);
 void mjc_equality_api_test(void);
+
+// Spatial (muscle) tendon + sites + muscle actuator conversion
+void urdf_json_mjcf_muscle_export_test(void);

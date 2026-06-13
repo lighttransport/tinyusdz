@@ -3136,6 +3136,90 @@ void urdf_json_fullinertia_diagonalize_test(void) {
     }
 }
 
+// MJCF spatial (muscle) tendon + sites + muscle actuator (ms_human_700 style)
+// -> MjcSite markers, spatial MjcTendon routed through the sites, and an
+// MjcActuator targeting the tendon. JSON->USD half.
+void urdf_json_mjcf_muscle_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "MuscleBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "pelvis" }, { "name": "femur" } ],
+  "joints": [
+    { "name": "hip", "type": "revolute", "parent": "pelvis", "child": "femur", "axisToken": "Y" }
+  ],
+  "sites": [
+    { "name": "muscle_p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0.1,1], "group": 3, "size": 0.004 },
+    { "name": "muscle_p2", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.05,0,-0.2,1], "group": 3 }
+  ],
+  "tendons": [
+    { "name": "glute_tendon", "type": "spatial", "width": 0.005,
+      "rgba": [0.95, 0.3, 0.3, 1], "stiffness": 10,
+      "path": [ {"site": "muscle_p1"}, {"site": "muscle_p2"} ] }
+  ],
+  "mjcActuators": [
+    { "name": "glute", "actuatorType": "general", "targetTendon": "glute_tendon",
+      "lengthRange": [0.18, 0.29], "gainPrm": [0.75, 1.05, 916.8],
+      "biasPrm": [0.75, 1.05, 916.8], "ctrlRange": [0, 1] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  // Sites -> GeomSphere markers with MjcSiteAPI.
+  auto s1 = stage.GetPrimAtPath(Path("/World/Sites/muscle_p1", ""));
+  TEST_CHECK(bool(s1));
+  if (s1) {
+    TEST_CHECK((*s1)->is<GeomSphere>());
+    TEST_CHECK(has_api(*s1, APISchemas::APIName::MjcSiteAPI));
+  }
+
+  // Spatial tendon routed through the two sites.
+  auto tr = stage.GetPrimAtPath(Path("/World/Tendons/glute_tendon", ""));
+  TEST_CHECK(bool(tr));
+  if (tr) {
+    const auto *t = (*tr)->as<MjcTendon>();
+    TEST_CHECK(t != nullptr);
+    if (t) {
+      TEST_CHECK(t->type.get_value().str() == "spatial");
+      TEST_CHECK(t->path.authored());
+      auto targets = t->path.get_targetPaths();
+      TEST_CHECK(targets.size() == 2);
+      if (targets.size() == 2) {
+        TEST_CHECK(targets[0].prim_part() == "/World/Sites/muscle_p1");
+        TEST_CHECK(targets[1].prim_part() == "/World/Sites/muscle_p2");
+      }
+    }
+  }
+
+  // Muscle actuator targeting the tendon, with gain/bias/lengthrange preserved.
+  auto ar = stage.GetPrimAtPath(Path("/World/MjcActuators/glute", ""));
+  TEST_CHECK(bool(ar));
+  if (ar) {
+    const auto *a = (*ar)->as<MjcActuator>();
+    TEST_CHECK(a != nullptr);
+    if (a) {
+      TEST_CHECK(a->target.authored());
+      auto tg = a->target.get_targetPaths();
+      TEST_CHECK(tg.size() == 1);
+      if (tg.size() == 1) {
+        TEST_CHECK(tg[0].prim_part() == "/World/Tendons/glute_tendon");
+      }
+      TEST_CHECK(approx_eq(a->lengthRange_min.get_value(), 0.18));
+      TEST_CHECK(approx_eq(a->lengthRange_max.get_value(), 0.29));
+      auto gp = a->gainPrm.get_value();
+      TEST_CHECK(gp.has_value());
+      if (gp.has_value() && gp.value().size() >= 3) {
+        TEST_CHECK(approx_eq(gp.value()[2], 916.8));
+      }
+    }
+  }
+}
+
 // ===========================================================================
 // Phase 3b: schema-coverage tests for previously-unasserted APIs.
 // ===========================================================================

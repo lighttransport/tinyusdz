@@ -40,6 +40,7 @@ const state = {
   jointControls: new Map(),
   collisionMeshes: [],
   visualMeshes: [],
+  muscleObjects: [],
   settings: {
     upAxis: 'Z',
     showVisuals: true,
@@ -59,7 +60,8 @@ const state = {
     showLinkNames: false,
     showJointNames: false,
     jointsCollapsed: false,
-    applyHomePose: false
+    applyHomePose: false,
+    showMuscles: true
   }
 };
 
@@ -1869,6 +1871,67 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
+// Build a Three.js visualization of MuJoCo spatial tendons (muscles, e.g.
+// ms_human_700): each <tendon><spatial> routes through an ordered sequence of
+// <site>s (and optional wrap <geom sidesite=...>), so we draw a polyline
+// through the resolved site world positions, colored by the tendon's rgba
+// (resolved from <default><tendon rgba=...>). All segments merge into one
+// LineSegments (single draw call) so thousands of muscles stay cheap.
+// `sitesByName` maps site name -> { pos: THREE.Vector3 (model-space) }.
+// Returns a THREE.Group (added under the model root, so it inherits the same
+// up-axis orientation as the body meshes) or null when there are no tendons.
+function buildMuscleVisualization(root, sitesByName) {
+  // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
+  // only tracks geom/joint, so read the tendon default directly here).
+  let defRgba = [0.95, 0.3, 0.3, 1];
+  const rootDefault = firstChildElement(root, 'default');
+  const defTendon = rootDefault ? firstChildElement(rootDefault, 'tendon') : null;
+  if (defTendon?.getAttribute('rgba')) {
+    defRgba = parseNumbers(defTendon.getAttribute('rgba'), defRgba);
+  }
+
+  const positions = [];
+  const colors = [];
+  let tendonCount = 0;
+  for (const tendonRoot of childElements(root, 'tendon')) {
+    for (const spatial of childElements(tendonRoot, 'spatial')) {
+      const rgba = spatial.getAttribute('rgba')
+        ? parseNumbers(spatial.getAttribute('rgba'), defRgba) : defRgba;
+      // Resolve the ordered waypoints: <site> by name, and <geom sidesite=...>
+      // wraps approximated by their sidesite (the via point on the wrap surface).
+      const pts = [];
+      for (const child of childElements(spatial)) {
+        let ref = null;
+        if (child.localName === 'site') ref = child.getAttribute('site');
+        else if (child.localName === 'geom') ref = child.getAttribute('sidesite');
+        if (!ref) continue;
+        const site = sitesByName.get(ref);
+        if (site) pts.push(site.pos);
+      }
+      if (pts.length < 2) continue;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        positions.push(pts[i].x, pts[i].y, pts[i].z,
+                       pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+        colors.push(rgba[0], rgba[1], rgba[2], rgba[0], rgba[1], rgba[2]);
+      }
+      tendonCount++;
+    }
+  }
+  if (!positions.length) return null;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  const material = new THREE.LineBasicMaterial({ vertexColors: true });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.name = 'mjcf_muscles';
+  const muscleGroup = new THREE.Group();
+  muscleGroup.name = 'muscles';
+  muscleGroup.add(lines);
+  muscleGroup.userData.tendonCount = tendonCount;
+  return muscleGroup;
+}
+
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const expanded = await expandMujocoIncludes(xmlText, baseDir);
   const doc = parseXMLDocument(expanded);
@@ -1923,6 +1986,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const joints = [];
   let visualCount = 0;
   let collisionCount = 0;
+  // site name -> { pos: THREE.Vector3 in model space } for muscle/tendon routing.
+  const sitesByName = new Map();
+  state.muscleObjects = [];
 
   async function visitBody(
     bodyNode,
@@ -2083,6 +2149,20 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     links.push(linkPayload);
 
+    // Collect <site> world positions for muscle/spatial-tendon routing. Sites
+    // are body-local frames; bake to model space via the accumulated
+    // bodyWorldMatrix (matching how the merged muscle lines are positioned).
+    for (const siteNode of childElements(bodyNode, 'site')) {
+      const siteAttrs = attrsFromElement(siteNode);
+      const siteName = siteAttrs.name;
+      if (!siteName) continue;
+      const siteLocal = matrixFromPoseAttrs(siteAttrs);
+      const siteWorld = new THREE.Matrix4().copy(bodyWorldMatrix).multiply(siteLocal);
+      sitesByName.set(siteName, {
+        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld)
+      });
+    }
+
     for (const childBody of childElements(bodyNode, 'body')) {
       await visitBody(childBody, linkObject, linkName, bodyWorldMatrix, childClass);
     }
@@ -2092,6 +2172,18 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     for (const bodyNode of childElements(worldbody, 'body')) {
       await visitBody(bodyNode, group);
     }
+  }
+
+  // Muscle / spatial-tendon visualization (e.g. ms_human_700). Drawn as polylines
+  // through the routing sites, in model space, added to the model root so it
+  // rides the same up-axis orientation as the body meshes.
+  let muscleTendonCount = 0;
+  const muscleGroup = buildMuscleVisualization(root, sitesByName);
+  if (muscleGroup) {
+    muscleGroup.visible = state.settings.showMuscles;
+    group.add(muscleGroup);
+    state.muscleObjects.push(muscleGroup);
+    muscleTendonCount = muscleGroup.userData.tendonCount || 0;
   }
 
   // Parse the model's "home" keyframe (qpos) so the robot can be posed in its
@@ -2128,7 +2220,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     joints: joints.length,
     visuals: visualCount,
     collisions: collisionCount,
-    actuators: actuators.length
+    actuators: actuators.length,
+    sites: sitesByName.size,
+    muscles: muscleTendonCount
   };
   return group;
 }
@@ -2233,9 +2327,14 @@ function classifyRobotMeshes(robot) {
 function applyVisibility() {
   for (const mesh of state.visualMeshes) mesh.visible = state.settings.showVisuals;
   for (const mesh of state.collisionMeshes) mesh.visible = state.settings.showCollisions;
+  applyMuscleVisibility();
   applyRenderableVisibility(state.usdObject);
   applyRenderableVisibility(state.usdGhost);
   applyRenderableVisibility(state.sourceGhost);
+}
+
+function applyMuscleVisibility() {
+  for (const obj of state.muscleObjects) obj.visible = state.settings.showMuscles;
 }
 
 function currentFitObjects() {
@@ -2323,6 +2422,7 @@ function buildGUI() {
   });
   gui.add(state.settings, 'showVisuals').name('Visual meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
+  gui.add(state.settings, 'showMuscles').name('Muscles').onChange(applyMuscleVisibility);
   gui.add(state.settings, 'ignoreJointLimits').name('Ignore limits').onChange(rebuildJointControls);
   gui.add(state.settings, 'hideFixedJoints').name('Hide fixed joints').onChange(rebuildJointControls);
   gui.add(state.settings, 'applyHomePose').name('Home pose').onChange(() => {

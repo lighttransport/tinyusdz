@@ -76,6 +76,7 @@ struct Stats {
   size_t tendons{0};
   size_t equalities{0};
   size_t contact_excludes{0};
+  size_t sites{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1200,17 +1201,58 @@ void AddJointFromNode(const pugi::xml_node &joint_node, const AttrMap &jcls,
 }
 
 void AddMujocoActuatorsJson(const pugi::xml_node &root,
-                            nlohmann::json *actuators, Stats *stats) {
+                            nlohmann::json *actuators,
+                            nlohmann::json *mjc_actuators, Stats *stats) {
   if (!actuators) return;
   const auto actuator_root = Child(root, "actuator");
   if (!actuator_root) return;
 
   for (const auto &act_node : actuator_root.children()) {
+    const std::string type = act_node.name();
     const std::string joint = Attr(act_node, "joint");
+    const std::string tendon = Attr(act_node, "tendon");
+    const std::string site = Attr(act_node, "site");
+
+    // Muscle / general / tendon- or site-targeted actuators -> MjcActuator,
+    // preserving the MuJoCo gain/bias/lengthrange parameters (e.g. ms_human_700
+    // muscles are `<general class="muscle" tendon=.. gainprm=.. biasprm=..>`).
+    // Joint-targeted position/velocity/motor actuators keep the Newton PD path.
+    const bool is_mjc = (type == "muscle" || type == "general" ||
+                         !tendon.empty() || !site.empty());
+    if (is_mjc && mjc_actuators) {
+      const std::string fallback_target =
+          !joint.empty() ? joint : (!tendon.empty() ? tendon : site);
+      nlohmann::json a = nlohmann::json::object();
+      a["name"] = Attr(act_node, "name", type + "_" + fallback_target);
+      a["actuatorType"] = type;
+      if (!joint.empty()) a["targetJoint"] = joint;
+      if (!tendon.empty()) a["targetTendon"] = tendon;
+      if (!site.empty()) a["targetSite"] = site;
+      const auto gainprm = ParseDoubles(Attr(act_node, "gainprm"));
+      if (!gainprm.empty()) a["gainPrm"] = gainprm;
+      const auto biasprm = ParseDoubles(Attr(act_node, "biasprm"));
+      if (!biasprm.empty()) a["biasPrm"] = biasprm;
+      const auto lengthrange = ParseDoubles(Attr(act_node, "lengthrange"));
+      if (lengthrange.size() >= 2)
+        a["lengthRange"] = {lengthrange[0], lengthrange[1]};
+      const auto ctrlrange = ParseDoubles(Attr(act_node, "ctrlrange"));
+      if (ctrlrange.size() >= 2) a["ctrlRange"] = {ctrlrange[0], ctrlrange[1]};
+      const auto forcerange = ParseDoubles(Attr(act_node, "forcerange"));
+      if (forcerange.size() >= 2)
+        a["forceRange"] = {forcerange[0], forcerange[1]};
+      const auto gear = ParseDoubles(Attr(act_node, "gear"));
+      if (!gear.empty()) a["gear"] = gear;
+      if (HasAttr(act_node, "dyntype")) a["dynType"] = Attr(act_node, "dyntype");
+      if (HasAttr(act_node, "gaintype")) a["gainType"] = Attr(act_node, "gaintype");
+      if (HasAttr(act_node, "biastype")) a["biasType"] = Attr(act_node, "biastype");
+      mjc_actuators->push_back(std::move(a));
+      if (stats) stats->actuators++;
+      continue;
+    }
+
     if (joint.empty()) {
       continue;
     }
-    const std::string type = act_node.name();
     nlohmann::json act = nlohmann::json::object();
     act["name"] = Attr(act_node, "name", type + "_" + joint);
     act["joint"] = joint;
@@ -1261,29 +1303,46 @@ void AddMujocoTendonsJson(const pugi::xml_node &root, const Context &ctx,
   const auto tendon_root = Child(root, "tendon");
   if (!tendon_root) return;
   for (const auto &t_node : tendon_root.children()) {
-    const std::string kind = t_node.name();
-    if (kind != "fixed") {
-      // spatial / other: not converted (needs sites). Don't drop silently.
-      std::fprintf(stderr,
-                   "[urdf-to-usd] warning: MJCF <tendon><%s> is not converted "
-                   "(only <fixed> tendons are supported); skipping.\n",
-                   kind.c_str());
-      continue;
-    }
+    const std::string kind = t_node.name();  // "fixed" or "spatial"
+    if (kind != "fixed" && kind != "spatial") continue;
     nlohmann::json tendon = nlohmann::json::object();
     tendon["name"] = Attr(t_node, "name", "tendon_" + std::to_string(stats ? stats->tendons : 0));
-    tendon["type"] = "fixed";
-    nlohmann::json jlist = nlohmann::json::array();
-    for (const auto &j_node : Children(t_node, "joint")) {
-      const std::string jn = Attr(j_node, "joint");
-      if (jn.empty()) continue;
-      nlohmann::json je = nlohmann::json::object();
-      je["joint"] = jn;
-      je["coef"] = ParseDoubleAttr(j_node, "coef", 1.0);
-      jlist.push_back(std::move(je));
+    tendon["type"] = kind;
+    if (kind == "fixed") {
+      // Fixed tendon: linear combination of joint coordinates.
+      nlohmann::json jlist = nlohmann::json::array();
+      for (const auto &j_node : Children(t_node, "joint")) {
+        const std::string jn = Attr(j_node, "joint");
+        if (jn.empty()) continue;
+        nlohmann::json je = nlohmann::json::object();
+        je["joint"] = jn;
+        je["coef"] = ParseDoubleAttr(j_node, "coef", 1.0);
+        jlist.push_back(std::move(je));
+      }
+      if (jlist.empty()) continue;
+      tendon["joints"] = std::move(jlist);
+    } else {
+      // Spatial tendon (muscle path): ordered <site>/<geom sidesite=...> waypoints.
+      nlohmann::json waypoints = nlohmann::json::array();
+      for (const auto &w : t_node.children()) {
+        const std::string wn = w.name();
+        if (wn == "site" && HasAttr(w, "site")) {
+          waypoints.push_back({{"site", Attr(w, "site")}});
+        } else if (wn == "geom") {
+          nlohmann::json wp = {{"geom", Attr(w, "geom")}};
+          if (HasAttr(w, "sidesite")) wp["sidesite"] = Attr(w, "sidesite");
+          waypoints.push_back(std::move(wp));
+        } else if (wn == "pulley" && HasAttr(w, "divisor")) {
+          waypoints.push_back({{"pulley", ParseDoubleAttr(w, "divisor", 1.0)}});
+        }
+      }
+      if (waypoints.size() < 2) continue;
+      tendon["path"] = std::move(waypoints);
+      if (HasAttr(t_node, "width"))
+        tendon["width"] = ParseDoubleAttr(t_node, "width", 0.003);
+      const auto rgba = ParseDoubles(Attr(t_node, "rgba"));
+      if (rgba.size() >= 4) tendon["rgba"] = {rgba[0], rgba[1], rgba[2], rgba[3]};
     }
-    if (jlist.empty()) continue;
-    tendon["joints"] = std::move(jlist);
     if (HasAttr(t_node, "stiffness"))
       tendon["stiffness"] = ParseDoubleAttr(t_node, "stiffness", 0.0);
     if (HasAttr(t_node, "damping"))
@@ -1300,6 +1359,32 @@ void AddMujocoTendonsJson(const pugi::xml_node &root, const Context &ctx,
     if (stats) stats->tendons++;
   }
   (void)ctx;
+}
+
+// MJCF <site> (in bodies) -> JSON site entries with a baked world transform,
+// consumed by the converter to emit MjcSite marker prims. Sites are the routing
+// points for spatial (muscle) tendons. Recurses the body tree.
+void CollectMujocoSitesJson(const pugi::xml_node &body_node,
+                            const std::vector<double> &parent_world,
+                            const Context &ctx, nlohmann::json *sites,
+                            Stats *stats) {
+  const std::vector<double> body_world =
+      MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
+  for (const auto &s_node : Children(body_node, "site")) {
+    const std::string name = Attr(s_node, "name");
+    if (name.empty()) continue;
+    const std::vector<double> site_world =
+        MultiplyMatrix(body_world, PoseMatrix(s_node, ctx));
+    nlohmann::json site = {{"name", name}, {"matrix", site_world}};
+    if (HasAttr(s_node, "group")) site["group"] = std::atoi(Attr(s_node, "group").c_str());
+    const auto size = ParseDoubles(Attr(s_node, "size"));
+    if (!size.empty()) site["size"] = size[0];
+    sites->push_back(std::move(site));
+    if (stats) stats->sites++;
+  }
+  for (const auto &child : Children(body_node, "body")) {
+    CollectMujocoSitesJson(child, body_world, ctx, sites, stats);
+  }
 }
 
 // MJCF <equality> -> JSON entries consumed by AddMjcEqualityFromJson.
@@ -1519,13 +1604,16 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json tendons = nlohmann::json::array();
   nlohmann::json equalities = nlohmann::json::array();
   nlohmann::json filtered_pairs = nlohmann::json::array();
+  nlohmann::json sites = nlohmann::json::array();
+  nlohmann::json mjc_actuators = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
       return false;
     }
+    CollectMujocoSitesJson(body, IdentityMatrix(), ctx, &sites, stats);
   }
-  AddMujocoActuatorsJson(root, &actuators, stats);
+  AddMujocoActuatorsJson(root, &actuators, &mjc_actuators, stats);
   AddMujocoTendonsJson(root, ctx, &tendons, stats);
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
@@ -1543,6 +1631,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!equalities.empty()) (*payload)["equalities"] = std::move(equalities);
   if (!filtered_pairs.empty())
     (*payload)["filteredPairs"] = std::move(filtered_pairs);
+  if (!sites.empty()) (*payload)["sites"] = std::move(sites);
+  if (!mjc_actuators.empty()) (*payload)["mjcActuators"] = std::move(mjc_actuators);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

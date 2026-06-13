@@ -908,37 +908,79 @@ bool AddNewtonActuatorFromJson(
 bool AddMjcTendonFromJson(
     Prim &tendons_prim, const nlohmann::json &t_json,
     const std::map<std::string, std::string> &joint_name_to_usd,
+    const std::map<std::string, std::string> &site_name_to_usd,
+    std::map<std::string, std::string> &tendon_name_to_usd,
     size_t index, std::string *warn, std::string *err) {
   MjcTendon tendon;
-  tendon.name = SanitizeUSDIdentifier(
-      JsonString(t_json, "name", "tendon_" + std::to_string(index)), "tendon");
-  tendon.type.set_value(value::token(JsonString(t_json, "type", "fixed")));
+  const std::string source_name =
+      JsonString(t_json, "name", "tendon_" + std::to_string(index));
+  tendon.name = SanitizeUSDIdentifier(source_name, "tendon");
+  tendon_name_to_usd[source_name] = tendon.name;
+  const std::string type = JsonString(t_json, "type", "fixed");
+  tendon.type.set_value(value::token(type));
 
-  std::vector<Path> joint_targets;
-  std::vector<double> coefs;
-  if (t_json.contains("joints") && t_json["joints"].is_array()) {
-    for (const auto &je : t_json["joints"]) {
-      if (!je.is_object()) continue;
-      const std::string jname = JsonString(je, "joint");
-      auto it = joint_name_to_usd.find(jname);
-      if (it == joint_name_to_usd.end()) {
-        AppendWarn(warn, "Tendon `" + tendon.name + "` references joint `" +
-                             jname + "` that was not exported; skipping it.\n");
-        continue;
+  std::vector<Path> targets;
+  if (type == "spatial") {
+    // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints ->
+    // mjc:path rel to the routing site prims (wrap geoms approximated by their
+    // sidesite via point). mjc:path:coef carries the per-waypoint coefficient
+    // (1 for sites; pulley divisors are not modeled here).
+    std::vector<double> coefs;
+    if (t_json.contains("path") && t_json["path"].is_array()) {
+      for (const auto &wp : t_json["path"]) {
+        if (!wp.is_object()) continue;
+        std::string site_ref;
+        if (wp.contains("site")) site_ref = JsonString(wp, "site");
+        else if (wp.contains("sidesite")) site_ref = JsonString(wp, "sidesite");
+        if (site_ref.empty()) continue;  // pulley / unresolvable geom wrap
+        auto it = site_name_to_usd.find(site_ref);
+        if (it == site_name_to_usd.end()) continue;
+        targets.emplace_back("/World/Sites/" + it->second, "");
+        coefs.push_back(1.0);
       }
-      joint_targets.emplace_back("/World/Joints/" + it->second, "");
-      double coef = 1.0;
-      JsonNumber(je, "coef", &coef);
-      coefs.push_back(coef);
     }
+    if (targets.size() < 2) {
+      AppendWarn(warn, "Skipping spatial tendon `" + tendon.name +
+                           "`: fewer than 2 routing sites were exported.\n");
+      return true;
+    }
+    tendon.path.set(std::move(targets));
+    tendon.path_coef.set_value(coefs);
+    const auto rgba = JsonDoubleArray(t_json, "rgba");
+    if (rgba.size() >= 4) {
+      tendon.rgba.set_value(value::color4f{
+          static_cast<float>(rgba[0]), static_cast<float>(rgba[1]),
+          static_cast<float>(rgba[2]), static_cast<float>(rgba[3])});
+    }
+    double w = 0.0;
+    if (JsonNumber(t_json, "width", &w)) tendon.width.set_value(w);
+  } else {
+    // Fixed tendon: linear combination of joint coordinates.
+    std::vector<double> coefs;
+    if (t_json.contains("joints") && t_json["joints"].is_array()) {
+      for (const auto &je : t_json["joints"]) {
+        if (!je.is_object()) continue;
+        const std::string jname = JsonString(je, "joint");
+        auto it = joint_name_to_usd.find(jname);
+        if (it == joint_name_to_usd.end()) {
+          AppendWarn(warn, "Tendon `" + tendon.name + "` references joint `" +
+                               jname + "` that was not exported; skipping it.\n");
+          continue;
+        }
+        targets.emplace_back("/World/Joints/" + it->second, "");
+        double coef = 1.0;
+        JsonNumber(je, "coef", &coef);
+        coefs.push_back(coef);
+      }
+    }
+    if (targets.empty()) {
+      AppendWarn(warn, "Skipping tendon `" + tendon.name +
+                           "`: no referenced joint was exported.\n");
+      return true;
+    }
+    tendon.path.set(std::move(targets));
+    tendon.path_coef.set_value(coefs);
   }
-  if (joint_targets.empty()) {
-    AppendWarn(warn, "Skipping tendon `" + tendon.name +
-                         "`: no referenced joint was exported.\n");
-    return true;
-  }
-  tendon.path.set(std::move(joint_targets));
-  tendon.path_coef.set_value(coefs);
 
   double v = 0.0;
   if (JsonNumber(t_json, "stiffness", &v)) tendon.stiffness.set_value(v);
@@ -961,6 +1003,46 @@ bool AddMjcTendonFromJson(
   std::string add_err;
   if (!tendons_prim.add_child(Prim(tendon), true, &add_err)) {
     SetErr(err, "Failed to add tendon `" + tendon.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <site> -> a small GeomSphere marker under /World/Sites carrying
+// MjcSiteAPI and a baked world transform (sites are the routing points for
+// spatial/muscle tendons). Records source-name -> USD-name in site_name_to_usd
+// so tendons can resolve their path. JSON: { name, matrix:[16], group, size }.
+bool AddMjcSiteFromJson(Prim &sites_prim, const nlohmann::json &s_json,
+                        std::set<std::string> &used_names,
+                        std::map<std::string, std::string> &site_name_to_usd,
+                        size_t index, std::string *err) {
+  const std::string source_name =
+      JsonString(s_json, "name", "site_" + std::to_string(index));
+  const std::string usd_name =
+      UniqueUSDIdentifier(source_name, used_names, "site");
+  site_name_to_usd[source_name] = usd_name;
+
+  GeomSphere site;
+  site.name = usd_name;
+  double radius = 0.005;
+  JsonNumber(s_json, "size", &radius);
+  if (radius <= 0.0) radius = 0.005;
+  site.radius.set_value(radius);
+  const std::vector<double> matrix = JsonDoubleArray(s_json, "matrix");
+  if (matrix.size() == 16) {
+    AddTransformOp(site, MatrixFromUSDArray(matrix));
+  }
+  AppendAPISchema(site.metas(), APISchemas::APIName::MjcSiteAPI);
+  int group = 0;
+  if (JsonIntFromObjectOrParent(s_json, "", "group", &group)) {
+    AddAttr(site.props, "mjc:group", group, /*uniform=*/true);
+  }
+  // Sites are markers, not colliders / visuals by default (MuJoCo group>=3).
+  site.purpose.set_value(Purpose::Guide);
+
+  std::string add_err;
+  if (!sites_prim.add_child(Prim(site), true, &add_err)) {
+    SetErr(err, "Failed to add site `" + usd_name + "`: " + add_err);
     return false;
   }
   return true;
@@ -1042,6 +1124,80 @@ bool AddMjcEqualityFromJson(
   std::string add_err;
   if (!equalities_prim.add_child(Prim(host), true, &add_err)) {
     SetErr(err, "Failed to add equality `" + host.name + "`: " + add_err);
+    return false;
+  }
+  (void)warn;
+  return true;
+}
+
+// MJCF <general>/<muscle> (and tendon/site-targeted) actuators -> MjcActuator
+// prim, preserving the MuJoCo gain/bias/lengthrange parameters. The mjc:target
+// rel resolves to the tendon (muscles), joint, or site the actuator drives.
+// JSON: { name, actuatorType, targetTendon|targetJoint|targetSite,
+//         gainPrm, biasPrm, lengthRange, ctrlRange, forceRange, gear }.
+bool AddMjcActuatorFromJson(
+    Prim &actuators_prim, const nlohmann::json &a_json,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    const std::map<std::string, std::string> &tendon_name_to_usd,
+    const std::map<std::string, std::string> &site_name_to_usd,
+    std::set<std::string> &used_names, size_t index, std::string *warn,
+    std::string *err) {
+  MjcActuator act;
+  act.name = UniqueUSDIdentifier(
+      JsonString(a_json, "name", "actuator_" + std::to_string(index)),
+      used_names, "actuator");
+
+  // Resolve the driven entity into mjc:target.
+  std::vector<Path> targets;
+  const std::string t_tendon = JsonString(a_json, "targetTendon");
+  const std::string t_joint = JsonString(a_json, "targetJoint");
+  const std::string t_site = JsonString(a_json, "targetSite");
+  if (!t_tendon.empty()) {
+    auto it = tendon_name_to_usd.find(t_tendon);
+    if (it != tendon_name_to_usd.end())
+      targets.emplace_back("/World/Tendons/" + it->second, "");
+  } else if (!t_joint.empty()) {
+    auto it = joint_name_to_usd.find(t_joint);
+    if (it != joint_name_to_usd.end())
+      targets.emplace_back("/World/Joints/" + it->second, "");
+  } else if (!t_site.empty()) {
+    auto it = site_name_to_usd.find(t_site);
+    if (it != site_name_to_usd.end())
+      targets.emplace_back("/World/Sites/" + it->second, "");
+  }
+  if (!targets.empty()) act.target.set(std::move(targets));
+
+  std::vector<double> gainPrm = JsonDoubleArray(a_json, "gainPrm");
+  if (!gainPrm.empty()) act.gainPrm.set_value(gainPrm);
+  std::vector<double> biasPrm = JsonDoubleArray(a_json, "biasPrm");
+  if (!biasPrm.empty()) act.biasPrm.set_value(biasPrm);
+  std::vector<double> gear = JsonDoubleArray(a_json, "gear");
+  if (!gear.empty()) act.gear.set_value(gear);
+  if (a_json.contains("lengthRange") && a_json["lengthRange"].is_array() &&
+      a_json["lengthRange"].size() >= 2) {
+    act.lengthRange_min.set_value(a_json["lengthRange"][0].get<double>());
+    act.lengthRange_max.set_value(a_json["lengthRange"][1].get<double>());
+  }
+  if (a_json.contains("ctrlRange") && a_json["ctrlRange"].is_array() &&
+      a_json["ctrlRange"].size() >= 2) {
+    act.ctrlRange_min.set_value(a_json["ctrlRange"][0].get<double>());
+    act.ctrlRange_max.set_value(a_json["ctrlRange"][1].get<double>());
+  }
+  if (a_json.contains("forceRange") && a_json["forceRange"].is_array() &&
+      a_json["forceRange"].size() >= 2) {
+    act.forceRange_min.set_value(a_json["forceRange"][0].get<double>());
+    act.forceRange_max.set_value(a_json["forceRange"][1].get<double>());
+  }
+  if (a_json.contains("gainType"))
+    act.gainType.set_value(value::token(JsonString(a_json, "gainType", "fixed")));
+  if (a_json.contains("biasType"))
+    act.biasType.set_value(value::token(JsonString(a_json, "biasType", "none")));
+  if (a_json.contains("dynType"))
+    act.dynType.set_value(value::token(JsonString(a_json, "dynType", "none")));
+
+  std::string add_err;
+  if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
+    SetErr(err, "Failed to add MjcActuator `" + act.name + "`: " + add_err);
     return false;
   }
   (void)warn;
@@ -1328,6 +1484,9 @@ bool ConvertURDFJsonToUSDStage(
       (root.contains("equalities") && root["equalities"].is_array())
           ? root["equalities"]
           : empty_array;
+  const nlohmann::json &sites_json =
+      (root.contains("sites") && root["sites"].is_array()) ? root["sites"]
+                                                           : empty_array;
   const std::string source_format = JsonString(root, "sourceFormat");
   const bool mjcf_source = (source_format == "mjcf" ||
                             source_format == "MJCF" ||
@@ -1702,20 +1861,63 @@ bool ConvertURDFJsonToUSDStage(
     has_actuators = !actuators_prim.children().empty();
   }
 
+  // MJCF <site> -> /World/Sites/<name> (GeomSphere markers + MjcSiteAPI). Built
+  // before tendons so spatial (muscle) tendons can resolve their routing sites.
+  Prim sites_prim;
+  bool has_sites = false;
+  std::map<std::string, std::string> site_name_to_usd;
+  if (!sites_json.empty()) {
+    Xform sites_scope;
+    sites_scope.name = "Sites";
+    sites_prim = Prim(sites_scope);
+    std::set<std::string> used_site_names;
+    for (size_t i = 0; i < sites_json.size(); i++) {
+      if (!AddMjcSiteFromJson(sites_prim, sites_json[i], used_site_names,
+                              site_name_to_usd, i, err)) {
+        return false;
+      }
+    }
+    has_sites = !sites_prim.children().empty();
+  }
+
   // MJCF <tendon> -> /World/Tendons/<name> (MjcTendon prims).
   Prim tendons_prim;
   bool has_tendons = false;
+  std::map<std::string, std::string> tendon_name_to_usd;
   if (!tendons_json.empty()) {
     Xform tendons_scope;
     tendons_scope.name = "Tendons";
     tendons_prim = Prim(tendons_scope);
     for (size_t i = 0; i < tendons_json.size(); i++) {
       if (!AddMjcTendonFromJson(tendons_prim, tendons_json[i], joint_name_to_usd,
-                                i, warn, err)) {
+                                site_name_to_usd, tendon_name_to_usd, i, warn,
+                                err)) {
         return false;
       }
     }
     has_tendons = !tendons_prim.children().empty();
+  }
+
+  // MJCF <general>/<muscle> actuators -> /World/MjcActuators (MjcActuator prims).
+  const nlohmann::json &mjc_actuators_json =
+      (root.contains("mjcActuators") && root["mjcActuators"].is_array())
+          ? root["mjcActuators"]
+          : empty_array;
+  Prim mjc_actuators_prim;
+  bool has_mjc_actuators = false;
+  if (!mjc_actuators_json.empty()) {
+    Xform scope;
+    scope.name = "MjcActuators";
+    mjc_actuators_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < mjc_actuators_json.size(); i++) {
+      if (!AddMjcActuatorFromJson(mjc_actuators_prim, mjc_actuators_json[i],
+                                  joint_name_to_usd, tendon_name_to_usd,
+                                  site_name_to_usd, used, i, warn, err)) {
+        return false;
+      }
+    }
+    has_mjc_actuators = !mjc_actuators_prim.children().empty();
   }
 
   // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
@@ -1755,6 +1957,16 @@ bool ConvertURDFJsonToUSDStage(
     if (has_equalities &&
         !world_prim.add_child(std::move(equalities_prim), true, &add_err)) {
       SetErr(err, "Failed to add equality scope: " + add_err);
+      return false;
+    }
+    if (has_sites &&
+        !world_prim.add_child(std::move(sites_prim), true, &add_err)) {
+      SetErr(err, "Failed to add site scope: " + add_err);
+      return false;
+    }
+    if (has_mjc_actuators &&
+        !world_prim.add_child(std::move(mjc_actuators_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcActuator scope: " + add_err);
       return false;
     }
   }
