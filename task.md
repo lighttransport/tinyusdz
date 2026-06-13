@@ -1,174 +1,117 @@
-# Task: Relax shader output terminal type check (`outputs:result` type mismatch)
+# Task: Skinning under ray tracing for tusdview
 
-## Problem
+> Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU
+> skinning (skeletal + blendshape + node-animated/mixed scenes) is **done and
+> committed**; the Vulkan ray-query (RT) path still falls back to the slow CPU
+> reconvert. Make skinning efficient under RT.
 
-Loading an Unreal-exported USD asset fails in tinyusdz on a primvar-reader shader:
+## Resume prompt (paste to continue)
 
-```usda
-def Shader "PrimvarReader"
-{
-    uniform token info:id = "UsdPrimvarReader_float2"
-    string inputs:varname.connect = </Root/SM_vhtmaifaw_tier_19/UnrealMaterial.inputs:stPrimvarName>
-    token outputs:result          # <-- declared as `token`, canonical type is `float2`
-}
-```
+Make skeletal/blendshape **skinning work efficiently under the Vulkan ray-query
+(RT) technique** in the tusdview viewer (`examples/tusdview`). Today, when RT is
+active the viewer skins via the per-frame **CPU reconvert** fallback (re-runs
+Tydra conversion every frame, re-uploads geometry, rebuilds the BLAS) — correct
+but slow. Skin without the Tydra reconvert and update the acceleration structure
+per frame instead. Build in `build/` with `ninja -j16`; verify with
+`--headless --backend vk --rt --frames N --time T --screenshot out.ppm` and the
+parity script (see Verification). Requires a real RT-capable GPU + RT-capable
+glslang (already set up here; RTX 3070).
 
-tinyusdz raises a **hard error** and aborts the load:
+## Where things stand (git: branch `tusdview`)
 
-> Parsing shader output property `outputs:result` failed. Error: Attribute type mismatch.
-> outputs:result expects type `float2` but defined as type `token`(and its underlying types).
+Recent commits (newest first):
+- `d590c08e` GPU skinning for mixed (skeletal + node-animated) scenes
+- `0fb8c702` GPU blendshape skinning (remove CPU fallback)
+- `629017c5` Add GPU skinning to tusdview (raster bone-texture path, both backends)
+- `8d36d658` CPU skeletal + blendshape skinning
 
-Unreal Engine's USD exporter routinely authors `token outputs:result` on primvar-reader nodes, so
-this rejection blocks a common, real-world asset class.
+Skinning lives in `examples/tusdview/skinning.{hh,cc}` + `app.cc`. Raster GPU
+path: rest mesh uploaded once with per-vertex joint idx/weights; per frame
+`BuildGpuSkinningFrame` computes `skinMat[j] = inverse(bind)·posedWorld` →
+RGBA32F bone texture (`uploadSkinningFrame`); the vertex shader does LBS.
+Blendshapes morph rest verts on the CPU and re-upload via
+`Renderer::updateMeshVertices`. Mixed scenes update per-mesh worlds via
+`Renderer::updateMeshWorld` (`UpdateAnimatedMeshWorlds` → `BuildXformNodeFromStage`).
 
-## Verdict (judged against the spec AND OpenUSD)
+**The RT veto** (the thing to remove/replace) is in `App::updateSkinningEffective`
+(app.cc): `if (renderer_->rayTracingActive()) { skinningReason_ = "ray tracing
+uses CPU-skinned BLAS geometry"; return; }` → falls to the CPU reconvert path
+(`requestReconvert` → `startReconvertAsync` → `RenderSceneAtTime` →
+`finishReconvertIfReady` → `uploadScene`, which `appendMesh`-rebuilds the BLAS).
 
-Two things are both true; they answer different questions.
+## Why RT is different
 
-### 1. UsdPreviewSurface spec — the asset is non-conformant
-The UsdPreviewSurface spec (https://openusd.org/release/spec_usdpreviewsurface.html#primvar-reader)
-explicitly declares the port:
+The ray-query shader (`vk/shaders/raytrace.comp`) traces against a **BLAS** built
+from each mesh's vbo/ebo — it does NOT run the raster vertex shader, so the
+bone-texture GPU skinning never touches RT geometry. To animate RT, the actual
+**vertex positions in the vbo must change** and the **BLAS must be updated**.
 
-> `UsdPrimvarReader_float2` → output `result` — **float2**: "Result of the geometry fetch."
+## Plan
 
-All variants follow the same template (`result – TYPE`): `_float`→float, `_float2`→float2,
-`_float3`→float3, `_float4`→float4, `_int`→int, `_string`→string, `_normal`→normal3f,
-`_point`→point3f, `_vector`→vector3f, `_matrix`→matrix4d.
+### MVP: skin into the vbo without Tydra reconvert, rebuild BLAS
+1. **Eligibility**: in `updateSkinningEffective`, when `rayTracingActive()` and the
+   scene is skinnable, pick a new effective mode (e.g. keep `GPU` but flag
+   `skinningRtPath_`) instead of vetoing to the CPU reconvert.
+2. **Per-frame skin → vbo**: reuse the CPU skinning math already in `skinning.cc`
+   (the `BuildGpuSkinningFrame` bounds loop already CPU-skins every vertex with
+   `composed[j] = geomBind·skinMat[j]`; factor that into a function returning the
+   skinned `DrawVertex` buffer per mesh, including morph offsets + regenerated
+   normals — same as the blendshape morph path). Upload via the existing
+   `Renderer::updateMeshVertices`. This skips the Tydra reconvert (the expensive
+   part); it is CPU skinning but only the cheap deform, not a full convert.
+3. **BLAS update**: `updateMeshVertices` currently just memcpys the vbo (raster is
+   gated non-RT). For RT, after rewriting the vbo, mark the mesh's BLAS stale and
+   rebuild it. Today `buildBlas` uses `MODE_BUILD` + `PREFER_FAST_TRACE`
+   (vk_renderer.cc:1564); `rebuildTlas` (1636) builds all BLAS when `tlasDirty_`.
+   Simplest: add a `Renderer::refreshSkinnedAccel()` (or set `tlasDirty_` +
+   per-mesh `blasDirty`) so the next trace rebuilds BLAS+TLAS from the updated
+   vbo. Wire it from `App::updateGpuSkinningFrameIfNeeded` on the RT path.
 
-So the correct type **is** `float2`; `token outputs:result` is *wrong*.
-**But** the spec defines the node's *port interface* (its semantic type) — it does **not** mandate
-that a reader validate the scene-description attribute's Sdf type or reject a mismatch.
+### Optimization (after MVP works): BLAS refit + GPU-compute skinning
+- Build BLAS with `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR` and use
+  `MODE_UPDATE` (refit) instead of full rebuild when only vertices moved
+  (topology unchanged) — much cheaper per frame.
+- Optionally move skinning to a **GPU compute pass** that writes skinned vertices
+  into the vbo (reusing the bone-matrix texture + joint attrs), so the CPU never
+  touches per-vertex data. Then refit the BLAS from the GPU-written vbo.
 
-### 2. OpenUSD's logic — the asset is valid; no error, not even a warning
-OpenUSD never validates a shader **output** attribute's declared type against the registry. Verified
-in the OpenUSD source (checkout at `/mnt/nvme02/work/OpenUSD`):
-
-- **Canonical type lives in the Sdr registry**, not enforced on the layer:
-  `pxr/usd/plugin/usdShaders/shaders/shaderDefs.usda:292-306` declares `float2 outputs:result`.
-- **Output type is read straight from the layer attribute, never compared:**
-  `pxr/usd/usdShade/output.cpp:44-48` — `UsdShadeOutput::GetTypeName()` just returns
-  `_attr.GetTypeName()` (→ `token`). The constructor even carries a standing TODO at
-  `output.cpp:61`: `// XXX what do we do if the type name doesn't match and it exists already?`
-- **The official validator checks INPUTS ONLY:** `_ShaderPropertyTypeConformance`
-  (`pxr/usdValidation/usdShadeValidators/validators.cpp:350-527`, the `shaderSdrCompliance`
-  check). It loops over `shader.GetInputs(false)` (line 505) and emits `mismatchPropertyType`
-  for inputs only — there is **no output loop and no output error path**.
-- **At render time the declared type is ignored:** Hydra builds connections from the output *name*
-  only (`pxr/usdImaging/usdImaging/dataSourceMaterial.cpp:373-398`), and resolves the real type
-  from the registry (`pxr/imaging/hdSt/materialNetwork.cpp:223-232` →
-  `sdrNode->GetShaderOutput()->GetTypeAsSdfType()`). The `token` declared in the file is inert.
-
-### Does OpenUSD's logic alone suffice? Yes.
-Because the real type is resolved from the registry (which encodes exactly the spec's `float2`), the
-declared `token` never feeds connection resolution or rendering. A spec-faithful, OpenUSD-compatible
-reader needs **only** OpenUSD's model: take the port's semantic type from the schema/registry and
-tolerate whatever Sdf type the layer declares on the output. It does **not** additionally need to
-enforce the declared attribute type.
-
-### Conclusion
-The asset is **spec-non-conformant but OpenUSD-valid**. tinyusdz's hard error is **over-strict** —
-stricter than both the spec's intent and the reference implementation. tinyusdz should not fatally
-reject it.
-
-## Workaround / fix (allow, but print a warning)
-
-Keep tinyusdz's known semantic type (`float2` from `TypedTerminalAttribute<T>`), accept the
-author's declared type, record it, and downgrade the mismatch from error to **warning**.
-
-### Where
-- **Primary:** `src/prim-reconstruct-common.inc` — function
-  `ParseShaderOutputTerminalAttribute<T>` (lines ~558-658) and the driving macro
-  `PARSE_SHADER_TERMINAL_ATTRIBUTE` (lines 768-778). This `.inc` is `#include`d by the shader
-  reconstruction TUs (`prim-reconstruct-shader.cc`, `prim-reconstruct-shader2/3/4.cc`), so it is the
-  path the failing `UsdPrimvarReader_float2` takes.
-- **Keep in sync:** `src/prim-reconstruct-impl.inc` has a near-identical duplicate
-  (`ParseShaderOutputTerminalAttribute` ~lines 449-571, macro ~line 695). It is only `#include`d by
-  `prim-reconstruct-skel.cc`, but the two files must stay consistent. Apply the same change there.
-
-### Existing facilities to reuse (no new infra needed)
-- `ParseResult` already has a `std::string warn` field (`prim-reconstruct-common.inc:34`).
-- A `PUSH_WARN` / `PUSH_WARN_F` macro already exists in the reconstruction TUs
-  (e.g. `prim-reconstruct-geom.cc`, and `PUSH_WARN(ret.warn)` is already used at
-  `prim-reconstruct-impl.inc:720,734`).
-- `TypedTerminalAttribute<T>::set_actual_type_name(...)` already exists and is used in the
-  compatible-type branches (`prim-reconstruct-common.inc:615,635`) to record an alternate authored
-  type while keeping the schema type `T`.
-
-### Approach (preferred): accept-with-warning inside the parse function
-In `ParseShaderOutputTerminalAttribute<T>`, replace the terminal `TypeMismatch` returns for output
-terminal attributes with an accept path that records the actual type and sets `ret.warn`:
-
-```cpp
-// Instead of: ret.code = ParseResult::ResultCode::TypeMismatch; ret.err = "...";
-// For shader OUTPUT terminal attributes, follow OpenUSD: tolerate the declared type.
-target.set_authored(true);
-target.set_actual_type_name(attr_type_name);          // remember what the author wrote
-target.metas() = prop.get_attribute().metas();
-table.insert(name);
-ret.warn = fmt::format(
-    "Shader output `{}` is declared as `{}` but `{}` is expected per the shader schema "
-    "(e.g. UsdPreviewSurface). Accepting the declared type; the schema type is used for "
-    "connection/render semantics (matches OpenUSD behavior).",
-    name, attr_type_name, value::TypeTraits<T>::type_name());
-ret.code = ParseResult::ResultCode::Success;
-return ret;
-```
-
-Apply this to the two terminal-mismatch branches that currently fire for `float2` vs `token`
-(`prim-reconstruct-common.inc:621-623`, `:640-643`, and the catch-all `:647-651`). The schema type
-`T` is unchanged, so downstream Tydra/render code keeps treating the port as `float2`.
-
-Then surface the warning in the macro (`PARSE_SHADER_TERMINAL_ATTRIBUTE`, line 768-778):
-
-```cpp
-if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) {
-  if (!ret.warn.empty()) { PUSH_WARN(ret.warn); }   // <-- emit accumulated warning
-  DCOUT("Added shader terminal attribute: " << __name);
-  continue;
-}
-```
-
-### Alternative (narrower): demote only in the macro
-If a behavior flag is preferred, leave the function returning `TypeMismatch` and, in
-`PARSE_SHADER_TERMINAL_ATTRIBUTE`, treat `TypeMismatch` as a warning instead of
-`PUSH_ERROR_AND_RETURN`:
-
-```cpp
-} else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
-  PUSH_WARN(fmt::format("Shader output property `{}`: {} Accepting and continuing.", __name, ret.err));
-  // NOTE: the attribute is NOT recorded as authored on this path — prefer the function-level
-  // approach above if you want the actual type retained.
-  continue;
-} else {
-  PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err));
-}
-```
-The function-level approach is preferred because it retains the authored attribute and its metadata.
-
-### Scope guard (do NOT over-relax)
-- This relaxation is for shader **output terminal** attributes only. **Inputs** must keep their
-  strict type check — OpenUSD *does* validate inputs (`validators.cpp:505`), so leave
-  `ParseShaderInputConnectionProperty` and input parsing untouched.
-- Consider gating behind a permissive/strict flag if tinyusdz exposes one, defaulting to permissive
-  (warn) to match OpenUSD.
+## Key references
+- RT BLAS/TLAS: `vk/vk_renderer.cc` `buildBlas` (1564, `MODE_BUILD`,
+  `PREFER_FAST_TRACE`), `rebuildTlas` (1636, `tlasDirty_` gate, trace-time at
+  2159), `appendMesh` BLAS-input usage (~1500). RT toggle / `rayTracingActive()`
+  in renderer.hh + vk_renderer; `--rt` in main.cc.
+- Skinning math: `skinning.cc` `BuildSkinningMatrices` (skinMat = inverse(bind)·
+  posedWorld), `BuildGpuSkinningFrame` (the per-vertex CPU skin in its bounds
+  loop is exactly the deform to reuse), morph path (`MorphTargetCPU`,
+  `RegenNormalsOriented`). `Renderer::updateMeshVertices` (GL/VK, already exists).
+- `App::updateSkinningEffective` / `updateGpuSkinningFrameIfNeeded` (app.cc) —
+  eligibility + per-frame driver. `lastRtActiveForSkinning_` already tracks RT
+  state so toggling `--rt` / View ▸ Ray tracing re-evaluates the path.
+- The current CPU-under-RT fallback works (just slow): `RenderSceneAtTime` +
+  `finishReconvertIfReady` + `uploadScene` rebuilds geometry+BLAS each frame.
+  Keep it as the correctness oracle for parity.
 
 ## Verification
-1. **Repro fixture:** add a minimal `.usda` with the snippet above to `tests/` (or a sandbox file),
-   confirm it currently fails, and that after the change it loads with a warning, not an error.
-2. **OpenUSD cross-check:** the same file loads cleanly under OpenUSD — `usdchecker sample.usda`
-   reports no `outputs:result` type error (confirms the lenient behavior we're matching).
-3. **Semantics preserved:** assert the primvar reader still connects to its consumer and that
-   downstream Tydra/render treats `result` as `float2` (the schema type `T`), not `token`.
-4. **Regression — inputs still strict:** a shader **input** authored with a genuinely wrong type
-   must still error (mirrors OpenUSD's input validation). Add/keep a test for that.
-5. Build the shader reconstruction TUs and run the existing shader/material tests to ensure the
-   `common.inc` change (shared across many TUs) introduces no regressions.
+- Build: `cd build && ninja -j16`; `ctest` stays 23/23.
+- RT animates: `build/tusdview --headless --backend vk --rt --frames 4 --time 12
+  --screenshot rt12.ppm models/skintest-animated.usda` differs from `--time 1`
+  (skinning visible under RT). Compare RT-GPU vs RT-CPU-fallback screenshots —
+  should match closely (same geometry, RT shading). The parity harness
+  `tests/tusdview/compare-skinning-screenshots.py` runs windowed via xvfb; add an
+  RT variant or compare `--skinning gpu`(new RT path) vs `--skinning cpu` with
+  `--rt`.
+- Performance: the RT skinned path should not run the Tydra reconvert each frame
+  (check it is not calling `RenderSceneAtTime` on the RT skinning path).
+- Test assets: `models/skintest-animated.usda` (skeletal),
+  `models/blendshape-and-animation-test-001.usda` (skel+blendshape). For a mixed
+  RT case, a skinned asset with an animated SkelRoot translate (the phase used
+  `skintest-animated` with `xformOp:translate.timeSamples` 1→(0,0,0),
+  48→(4,0,0)).
 
-## References
-- UsdPreviewSurface spec — Primvar Reader:
-  https://openusd.org/release/spec_usdpreviewsurface.html#primvar-reader
-- OpenUSD evidence (checkout `/mnt/nvme02/work/OpenUSD`): `shaderDefs.usda:292-306`,
-  `usdShade/output.cpp:44-48,61`, `usdShadeValidators/validators.cpp:350-527`,
-  `usdImaging/dataSourceMaterial.cpp:373-398`, `hdSt/materialNetwork.cpp:223-232`.
-- Full investigation write-up:
-  `/home/syoyo/.claude/plans/investigate-def-shader-primvarreader-wobbly-russell.md`
+## Notes / gotchas (learned in the raster phase)
+- `points` is `std::vector<vec3>` (TYDRA_USE_CHUNKED_ARRAY OFF). Sampler `times`
+  are **time codes**, not seconds. Matrix `a*b` applies `a` first (row-vector).
+- VK per-frame buffer/AS updates here use `vkDeviceWaitIdle` (see
+  `uploadSkinningFrame`, `updateMeshVertices`) — simple and safe for a viewer.
+- Camera framing must use the **posed** bounds: `applyLoaded` poses the GPU frame
+  after upload, then fits the camera (don't reintroduce a rest-bounds fit).
