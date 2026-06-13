@@ -213,8 +213,9 @@ inline Result Refine(const MeshView &mesh, const Options &options,
 // it runs levels 0..N-1 with the bulk machinery, then emits the final level in
 // bounded batches to a sink. Peak working memory is the level-(N-1) data plus
 // one batch, so the (largest) level-N output is never resident -- this is what
-// lets deep refinement fit in wasm32's 2GB. Geometry and "vertex"/"varying"
-// primvars are streamed; faceVarying is not yet supported here (use Refine).
+// lets deep refinement fit in wasm32's 2GB. Geometry, "vertex"/"varying"
+// primvars and faceVarying (linear per-corner AND smooth seam-split, via a
+// per-channel split mesh) all stream.
 //
 // With StreamOptions::want_normals, closed-form limit normals are emitted
 // (catmullClark/loop): exact at vertex-children, a normalized blend of the two
@@ -300,11 +301,10 @@ struct StreamOptions {
 
 // Streaming refinement. `fvar_channels`/`vertex_primvars` may be null when
 // their count is 0. faceVarying is emitted per-corner (StreamBatch::fvar,
-// parallel to indices). At level 0 (a passthrough) every fvar mode streams
-// verbatim. At level >= 1 in the non-block path only linear modes stream (the
-// "all" mode, or any mode under bilinear); a smooth seam-split channel returns
-// InvalidArgument there (use the bulk Refine). Block mode (block_faces > 0)
-// streams ALL faceVarying modes -- it refines each block with the bulk Refine.
+// parallel to indices). ALL fvar modes stream: linear channels (the "all" mode,
+// or any mode under bilinear) refine per corner; smooth seam-split channels
+// carry a per-channel split mesh through the levels. (Block mode, block_faces >
+// 0, instead refines each block with the bulk Refine.)
 Result RefineStream(const MeshView &mesh, const FVarChannelView *fvar_channels,
                     uint32_t num_fvar_channels,
                     const VertexPrimvarView *vertex_primvars,

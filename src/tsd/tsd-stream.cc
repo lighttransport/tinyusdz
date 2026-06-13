@@ -12,8 +12,9 @@
 // matching canonical child-vertex ids.
 //
 // Geometry, "vertex"/"varying" primvars and closed-form limit normals stream.
-// faceVarying streams in the per-batch path (linear modes); the smooth
-// seam-split modes fall back to bulk.
+// faceVarying streams too: linear channels refine per corner; smooth seam-split
+// channels carry a per-channel split mesh (refined with the scheme kernels) and
+// compute each child corner's value on demand, exactly like geometry.
 //
 // Block mode (StreamOptions::block_faces > 0) additionally bounds the WORKING
 // set, not just the output: base faces are partitioned into blocks, each block
@@ -117,6 +118,13 @@ struct Emitter {
   uint32_t num_fvar = 0;
   const uint32_t *fvar_stride = nullptr;
   const std::vector<std::vector<float>> *fvars = nullptr;
+  // Smooth seam-split fvar: per channel, whether it is smooth (1) or linear (0),
+  // plus the resident level-(N-1) split meshes. A smooth channel's value at a
+  // child corner is computed on demand from its split mesh -- refined with the
+  // scheme kernels, so it is "just another mesh" like geometry -- while linear
+  // channels read `fvars` (per-corner). `splits[c]` is meaningful iff smooth.
+  std::vector<uint8_t> fvar_smooth;
+  const std::vector<FVarSplitState> *splits = nullptr;
 
   // --- batch buffers (reused) ---
   std::vector<float> positions;
@@ -181,6 +189,21 @@ struct Emitter {
         fvar_buf[c].push_back(fc[c][size_t(k) * st + s]);
       }
     }
+  }
+
+  // One smooth-fvar child value for channel `c`: `split_child_id` is a canonical
+  // child id in channel c's split mesh (vertex-child < V_split, edge-child
+  // V_split+e, face-child V_split+E_split+f). The split mesh is refined with the
+  // same scheme kernels as geometry, so this is the geometry computation applied
+  // to the split mesh + its seam-encoding sharpness.
+  void SmoothFvarChild(uint32_t c, uint32_t split_child_id, float *out) const {
+    const FVarSplitState &s = (*splits)[c];
+    SharpnessCtx sh;
+    sh.edge_sharpness = s.edge_sharp.empty() ? nullptr : s.edge_sharp.data();
+    sh.vert_sharpness = s.vert_sharp.empty() ? nullptr : s.vert_sharp.data();
+    ComputeChildValue(*opts, s.topo, s.fvi.data(), s.values.data(), s.stride, sh,
+                      /*is_vertex_pv=*/true, split_child_id, s.topo.num_points,
+                      s.topo.num_edges, /*centroids=*/nullptr, out);
   }
 
   // Limit normal for a final-level canonical id: exact at vertex-children
@@ -534,25 +557,40 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
         // Helper to fill fc[c] for a tri with 3 source tuples (corner or mid).
         auto tri = [&](uint32_t ca, uint32_t cb, uint32_t cc, uint32_t ga,
                        uint32_t gb, uint32_t gc) {
+          // Descriptor: 0,1,2 = corner; 3=m01 (edge 0), 4=m12 (edge 1),
+          // 5=m20 (edge 2).
           for (uint32_t c = 0; c < nf; c++) {
             const uint32_t st = em.fvar_stride[c];
-            const float *p0 = pcorner(c, 0), *p1 = pcorner(c, 1),
-                        *p2 = pcorner(c, 2);
-            // mids: 3=m01,4=m12,5=m20 encoded; we just compute inline.
-            auto val = [&](uint32_t which, uint32_t s) -> float {
-              switch (which) {
-                case 0: return p0[s];
-                case 1: return p1[s];
-                case 2: return p2[s];
-                case 3: return 0.5f * (p0[s] + p1[s]);  // m01
-                case 4: return 0.5f * (p1[s] + p2[s]);  // m12
-                default: return 0.5f * (p2[s] + p0[s]); // m20
+            if (em.fvar_smooth[c]) {
+              const FVarSplitState &s = (*em.splits)[c];
+              const uint32_t Vs = s.topo.num_points;
+              const uint32_t sb = s.topo.face_offsets[f];
+              auto schild = [&](uint32_t which) -> uint32_t {
+                return (which < 3)
+                           ? s.fvi[sb + which]
+                           : Vs + s.topo.face_edges[sb + (which - 3)];
+              };
+              em.SmoothFvarChild(c, schild(ca), &fc_buf[c][0 * st]);
+              em.SmoothFvarChild(c, schild(cb), &fc_buf[c][1 * st]);
+              em.SmoothFvarChild(c, schild(cc), &fc_buf[c][2 * st]);
+            } else {
+              const float *p0 = pcorner(c, 0), *p1 = pcorner(c, 1),
+                          *p2 = pcorner(c, 2);
+              auto val = [&](uint32_t which, uint32_t s) -> float {
+                switch (which) {
+                  case 0: return p0[s];
+                  case 1: return p1[s];
+                  case 2: return p2[s];
+                  case 3: return 0.5f * (p0[s] + p1[s]);  // m01
+                  case 4: return 0.5f * (p1[s] + p2[s]);  // m12
+                  default: return 0.5f * (p2[s] + p0[s]); // m20
+                }
+              };
+              for (uint32_t s = 0; s < st; s++) {
+                fc_buf[c][0 * st + s] = val(ca, s);
+                fc_buf[c][1 * st + s] = val(cb, s);
+                fc_buf[c][2 * st + s] = val(cc, s);
               }
-            };
-            for (uint32_t s = 0; s < st; s++) {
-              fc_buf[c][0 * st + s] = val(ca, s);
-              fc_buf[c][1 * st + s] = val(cb, s);
-              fc_buf[c][2 * st + s] = val(cc, s);
             }
             fc[c] = fc_buf[c].data();
           }
@@ -568,6 +606,10 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
       if (nf) {
         for (uint32_t c = 0; c < nf; c++) {
           const uint32_t st = em.fvar_stride[c];
+          fc_buf[c].assign(size_t(4) * st, 0.0f);
+          if (em.fvar_smooth[c]) {
+            continue;  // smooth channels compute via the split mesh, not favg
+          }
           favg[c].assign(st, 0.0f);
           const float w = 1.0f / float(n);
           for (uint32_t k = 0; k < n; k++) {
@@ -576,7 +618,6 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
               favg[c][s] += w * p[s];
             }
           }
-          fc_buf[c].assign(size_t(4) * st, 0.0f);
         }
       }
       for (uint32_t k = 0; k < n; k++) {
@@ -590,13 +631,27 @@ Result StreamFinalLevel(Emitter &em, const std::vector<uint8_t> &hole,
         } else {
           for (uint32_t c = 0; c < nf; c++) {
             const uint32_t st = em.fvar_stride[c];
-            const float *ck = pcorner(c, k), *cn = pcorner(c, next),
-                        *cp = pcorner(c, prev);
-            for (uint32_t s = 0; s < st; s++) {
-              fc_buf[c][0 * st + s] = ck[s];
-              fc_buf[c][1 * st + s] = 0.5f * (ck[s] + cn[s]);
-              fc_buf[c][2 * st + s] = favg[c][s];
-              fc_buf[c][3 * st + s] = 0.5f * (cp[s] + ck[s]);
+            if (em.fvar_smooth[c]) {
+              // Split-mesh children at the same canonical positions as the
+              // geometry child quad {vchild(k), echild(k), fchild, echild(k-1)}.
+              const FVarSplitState &s = (*em.splits)[c];
+              const uint32_t Vs = s.topo.num_points, Es = s.topo.num_edges;
+              const uint32_t sb = s.topo.face_offsets[f];
+              em.SmoothFvarChild(c, s.fvi[sb + k], &fc_buf[c][0 * st]);
+              em.SmoothFvarChild(c, Vs + s.topo.face_edges[sb + k],
+                                 &fc_buf[c][1 * st]);
+              em.SmoothFvarChild(c, Vs + Es + f, &fc_buf[c][2 * st]);
+              em.SmoothFvarChild(c, Vs + s.topo.face_edges[sb + prev],
+                                 &fc_buf[c][3 * st]);
+            } else {
+              const float *ck = pcorner(c, k), *cn = pcorner(c, next),
+                          *cp = pcorner(c, prev);
+              for (uint32_t s = 0; s < st; s++) {
+                fc_buf[c][0 * st + s] = ck[s];
+                fc_buf[c][1 * st + s] = 0.5f * (ck[s] + cn[s]);
+                fc_buf[c][2 * st + s] = favg[c][s];
+                fc_buf[c][3 * st + s] = 0.5f * (cp[s] + ck[s]);
+              }
             }
             fc[c] = fc_buf[c].data();
           }
@@ -1080,21 +1135,17 @@ Result RefineStream(const MeshView &mesh,
                            stream_options.block_faces < mesh.num_faces &&
                            options.level >= 1);
 
-  // faceVarying constraints. In the non-block per-level path (level >= 1) only
-  // the linear path streams (the "all" mode, or any mode under bilinear); smooth
-  // seam-split channels must use the bulk Refine. Level 0 is a passthrough (no
-  // refinement) -- the output fvar is the base values verbatim -- so every mode
-  // streams there. Block mode handles all modes at any level.
-  if (!block_mode && options.level >= 1) {
-    for (uint32_t c = 0; c < num_fvar_channels; c++) {
-      const bool linear =
-          (!smooth_scheme ||
-           fvar_channels[c].interpolation == FVarLinearInterpolation::All);
-      if (!linear) {
-        return Fail(Result::InvalidArgument, err,
-                    "smooth faceVarying is not streamable; use Refine.");
-      }
-    }
+  // faceVarying classification. A channel is "linear" (refined per corner with
+  // bilinear masks) under bilinear, or in the "all" mode; otherwise it is a
+  // smooth seam-split channel, refined through its own split mesh (carried
+  // alongside geometry in the non-block path). Both stream at any level; level 0
+  // is a passthrough so the mode is moot there.
+  std::vector<uint8_t> fvar_smooth(num_fvar_channels);
+  for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    const bool linear =
+        (!smooth_scheme ||
+         fvar_channels[c].interpolation == FVarLinearInterpolation::All);
+    fvar_smooth[c] = linear ? 0 : 1;
   }
 
   std::vector<uint32_t> pv_stride(num_vertex_primvars);
@@ -1117,6 +1168,7 @@ Result RefineStream(const MeshView &mesh,
   em.pv_stride = pv_stride.data();
   em.num_fvar = num_fvar_channels;
   em.fvar_stride = fvar_stride.data();
+  em.fvar_smooth = fvar_smooth;
   em.pv_is_vertex = std::vector<uint8_t>(pv_is_vertex.begin(),
                                          pv_is_vertex.end());
   em.Init();
@@ -1326,10 +1378,16 @@ Result RefineStream(const MeshView &mesh,
         vertex_primvars[p].values + size_t(mesh.num_points) * pv_stride[p]);
   }
 
-  // Linear faceVarying expanded to per-corner tuples (refined linearly each
-  // level alongside geometry).
+  // faceVarying resident state. Linear channels are expanded to per-corner
+  // tuples (refined linearly each level). Smooth channels instead carry a split
+  // mesh (`splits[c]`), built at level 0 below and advanced with the scheme
+  // kernels each level -- `fvars[c]` stays empty for them.
   std::vector<std::vector<float>> fvars(num_fvar_channels);
+  std::vector<FVarSplitState> splits(num_fvar_channels);
   for (uint32_t c = 0; c < num_fvar_channels; c++) {
+    if (fvar_smooth[c]) {
+      continue;
+    }
     const FVarChannelView &ch = fvar_channels[c];
     fvars[c].resize(size_t(mesh.num_face_vertex_indices) * ch.stride);
     for (uint32_t i = 0; i < mesh.num_face_vertex_indices; i++) {
@@ -1363,6 +1421,20 @@ Result RefineStream(const MeshView &mesh,
     if (lvl == 0) {
       BakeLevel0Sharpness(mesh, options, topo, creases, &edge_sharp,
                           &vert_sharp, &hole, nullptr);
+      // Build the level-0 split mesh for each smooth fvar channel from the
+      // geometry's baked level-0 sharpness (seams + boundaries become split-mesh
+      // boundary edges). It then advances with the scheme kernels each level.
+      for (uint32_t c = 0; c < num_fvar_channels; c++) {
+        if (!fvar_smooth[c]) {
+          continue;
+        }
+        r = BuildFVarSplitLevel0(topo, fvc.data(), fvi.data(), fvar_channels[c],
+                                 edge_sharp, vert_sharp, options, &splits[c],
+                                 err);
+        if (r != Result::Success) {
+          return r;
+        }
+      }
     } else if (smooth_scheme) {
       std::vector<float> new_edge_sharp, new_vert_sharp;
       DeriveChildSharpness(prev_topo, prev_edge_sharp, prev_vert_sharp, topo,
@@ -1397,6 +1469,7 @@ Result RefineStream(const MeshView &mesh,
       em.geom = geom.data();
       em.pvs = &pvs;
       em.fvars = &fvars;
+      em.splits = &splits;
       em.sharp = sharp;
       em.V = topo.num_points;
       em.E = topo.num_edges;
@@ -1470,8 +1543,17 @@ Result RefineStream(const MeshView &mesh,
       pvs[p] = std::move(child_pv);
     }
 
-    // Linear faceVarying: per-corner refinement (local per face).
+    // faceVarying advance: linear channels refine per corner (local per face);
+    // smooth channels advance their split mesh one level (topology kept resident
+    // for the next iteration / the final-level streaming).
     for (uint32_t c = 0; c < num_fvar_channels; c++) {
+      if (fvar_smooth[c]) {
+        r = RefineFVarSplitOnce(&splits[c], options, /*more_levels=*/true, err);
+        if (r != Result::Success) {
+          return r;
+        }
+        continue;
+      }
       const uint32_t stride = fvar_stride[c];
       std::vector<float> child_fv(size_t(child_corners64) * stride);
       if (loop) {
