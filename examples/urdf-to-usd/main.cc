@@ -29,6 +29,14 @@
 #include <string>
 #include <vector>
 
+// Local (file-scope) PNG/image decoder for <asset><hfield file="...png">.
+// STB_IMAGE_STATIC keeps the implementation private to this TU so it cannot
+// collide with any copy linked into libtinyusdz_static.
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -58,6 +66,15 @@ struct MeshData {
   std::vector<float> positions;
   std::vector<float> normals;
   std::vector<int32_t> indices;
+};
+
+// <asset><hfield>: a row-major nrow x ncol grid of elevations normalized to
+// [0,1], plus size = (radius_x, radius_y, elevation_z, base_z).
+struct HFieldAsset {
+  int nrow{0};
+  int ncol{0};
+  std::array<double, 4> size{{1.0, 1.0, 1.0, 0.1}};
+  std::vector<float> data;  // nrow*ncol, normalized [0,1], row 0 = -y edge
 };
 
 struct MeshPayload {
@@ -958,9 +975,137 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
   return assets;
 }
 
+// Normalize raw elevation samples to [0,1] the way MuJoCo's compiler does:
+// subtract the min, divide by the range (constant fields collapse to 0).
+void NormalizeHField(std::vector<float> *data) {
+  if (data->empty()) return;
+  float emin = (*data)[0], emax = (*data)[0];
+  for (float v : *data) { emin = std::min(emin, v); emax = std::max(emax, v); }
+  const float range = emax - emin;
+  for (float &v : *data) {
+    v -= emin;
+    if (range > 1e-9f) v /= range;
+  }
+}
+
+// Collect <asset><hfield> declarations. File-based fields decode a (grayscale)
+// PNG with rows reversed (MuJoCo stores row 0 at the -y edge); inline fields
+// read nrow/ncol/elevation. All are normalized to [0,1].
+std::map<std::string, HFieldAsset> CollectMujocoHFields(
+    const pugi::xml_node &root, const fs::path &base_dir) {
+  std::map<std::string, HFieldAsset> hfields;
+  const auto compiler = Child(root, "compiler");
+  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
+  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
+  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
+  const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
+
+  for (const auto &asset_node : Children(root, "asset")) {
+    for (const auto &hf_node : Children(asset_node, "hfield")) {
+      std::string name = Attr(hf_node, "name");
+      const std::string file = Attr(hf_node, "file");
+      if (name.empty()) {
+        name = file.empty() ? std::string() : fs::path(file).stem().string();
+      }
+      if (name.empty()) continue;
+      HFieldAsset hf;
+      const std::vector<double> sz = ParseDoubles(Attr(hf_node, "size"));
+      for (size_t i = 0; i < 4 && i < sz.size(); ++i) hf.size[i] = sz[i];
+
+      if (!file.empty()) {
+        const fs::path path =
+            ResolveMeshPath(base_dir, mesh_dir, file, index);
+        int w = 0, h = 0, comp = 0;
+        unsigned char *img =
+            stbi_load(path.string().c_str(), &w, &h, &comp, 1);  // force grey
+        if (img && w > 0 && h > 0) {
+          hf.ncol = w;
+          hf.nrow = h;
+          hf.data.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+          for (int r = 0; r < h; ++r) {
+            for (int c = 0; c < w; ++c) {
+              // reverse rows: data row 0 is the bottom (-y) image row
+              hf.data[static_cast<size_t>(r) * w + c] =
+                  static_cast<float>(img[c + (h - 1 - r) * w]);
+            }
+          }
+        }
+        if (img) stbi_image_free(img);
+      } else {
+        hf.nrow = static_cast<int>(ParseDoubleAttr(hf_node, "nrow", 0.0));
+        hf.ncol = static_cast<int>(ParseDoubleAttr(hf_node, "ncol", 0.0));
+        const std::vector<double> elev = ParseDoubles(Attr(hf_node, "elevation"));
+        if (hf.nrow > 0 && hf.ncol > 0 &&
+            elev.size() == static_cast<size_t>(hf.nrow) * hf.ncol) {
+          hf.data.assign(elev.begin(), elev.end());
+        }
+      }
+      if (hf.nrow > 0 && hf.ncol > 0 && !hf.data.empty()) {
+        NormalizeHField(&hf.data);
+        hfields[name] = std::move(hf);
+      }
+    }
+  }
+  return hfields;
+}
+
+// Tessellate a heightfield's top surface into a triangle mesh in the field's
+// local frame: x spans [-rx,rx] across ncol columns, y spans [-ry,ry] across
+// nrow rows, z = normalized_elevation * elevation_z. Per-vertex normals come
+// from the local height gradient (smooth shading).
+MeshData TessellateHField(const HFieldAsset &hf) {
+  MeshData mesh;
+  const int nr = hf.nrow, nc = hf.ncol;
+  if (nr < 2 || nc < 2) return mesh;
+  const double rx = hf.size[0], ry = hf.size[1], ez = hf.size[2];
+  const double dx = (2.0 * rx) / (nc - 1);
+  const double dy = (2.0 * ry) / (nr - 1);
+  auto H = [&](int r, int c) -> double {
+    r = std::max(0, std::min(nr - 1, r));
+    c = std::max(0, std::min(nc - 1, c));
+    return static_cast<double>(hf.data[static_cast<size_t>(r) * nc + c]) * ez;
+  };
+  mesh.positions.reserve(static_cast<size_t>(nr) * nc * 3);
+  mesh.normals.reserve(static_cast<size_t>(nr) * nc * 3);
+  for (int r = 0; r < nr; ++r) {
+    for (int c = 0; c < nc; ++c) {
+      mesh.positions.push_back(static_cast<float>(-rx + c * dx));
+      mesh.positions.push_back(static_cast<float>(-ry + r * dy));
+      mesh.positions.push_back(static_cast<float>(H(r, c)));
+      // normal from central differences of the height field
+      const double hx = (H(r, c + 1) - H(r, c - 1)) / (2.0 * dx);
+      const double hy = (H(r + 1, c) - H(r - 1, c)) / (2.0 * dy);
+      double nx = -hx, ny = -hy, nz = 1.0;
+      const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 1e-12) { nx /= len; ny /= len; nz /= len; }
+      mesh.normals.push_back(static_cast<float>(nx));
+      mesh.normals.push_back(static_cast<float>(ny));
+      mesh.normals.push_back(static_cast<float>(nz));
+    }
+  }
+  mesh.indices.reserve(static_cast<size_t>(nr - 1) * (nc - 1) * 6);
+  for (int r = 0; r < nr - 1; ++r) {
+    for (int c = 0; c < nc - 1; ++c) {
+      const int32_t v00 = r * nc + c;
+      const int32_t v01 = r * nc + (c + 1);
+      const int32_t v10 = (r + 1) * nc + c;
+      const int32_t v11 = (r + 1) * nc + (c + 1);
+      // two CCW triangles (viewed from +z)
+      mesh.indices.push_back(v00);
+      mesh.indices.push_back(v01);
+      mesh.indices.push_back(v11);
+      mesh.indices.push_back(v00);
+      mesh.indices.push_back(v11);
+      mesh.indices.push_back(v10);
+    }
+  }
+  return mesh;
+}
+
 bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
                       const std::string &cls_name,
                       const std::map<std::string, MeshAsset> &assets,
+                      const std::map<std::string, HFieldAsset> &hfields,
                       const Options &opts, const Context &ctx,
                       const std::vector<double> &body_world,
                       MeshPayload *payload, bool *is_visual, std::string *err) {
@@ -1017,6 +1162,19 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
     // G * refframe(refpos/refquat) * scale, matching the JS mesh handling.
     payload->matrix = MultiplyMatrix(payload->matrix, MeshRefMatrix(it->second));
     payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(scale));
+  } else if (type == "hfield") {
+    // <geom type="hfield" hfield="name"> -> tessellated GeomMesh (top surface).
+    const std::string hf_name = Eff(geom_node, cls, "hfield");
+    const auto it = hfields.find(hf_name);
+    if (it == hfields.end()) {
+      if (err) *err = "Missing MJCF hfield asset: " + hf_name;
+      return false;
+    }
+    payload->mesh = TessellateHField(it->second);
+    if (payload->mesh.positions.empty()) {
+      if (err) *err = "Empty/invalid hfield asset: " + hf_name;
+      return false;
+    }
   } else if (type == "box") {
     const auto half = ParseDouble3(Eff(geom_node, cls, "size"),
                                    {{0.05, 0.05, 0.05}});
@@ -1710,11 +1868,79 @@ void AddMujocoKeyframesJson(const pugi::xml_node &root, nlohmann::json *keyframe
   }
 }
 
+// Bake one <geom> into a link's "visuals"/"collisions" arrays. Shared by the
+// per-body traversal and the worldbody-level (static) geom collection.
+bool AppendGeomToLink(const pugi::xml_node &geom_node, const std::string &cc,
+                      const std::map<std::string, MeshAsset> &assets,
+                      const std::map<std::string, HFieldAsset> &hfields,
+                      const Options &opts, const Context &ctx,
+                      const std::vector<double> &body_world,
+                      nlohmann::json *link, Stats *stats, std::string *err) {
+  const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
+  std::string cls_name = Attr(geom_node, "class");
+  if (cls_name.empty()) cls_name = cc;
+  MeshPayload payload;
+  bool visual = true;
+  if (!BuildGeomPayload(geom_node, cls, cls_name, assets, hfields, opts, ctx,
+                        body_world, &payload, &visual, err)) {
+    return false;
+  }
+  if (visual) {
+    nlohmann::json visual_json = MeshPayloadToJson(payload);
+    AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
+    const std::string mat = Eff(geom_node, cls, "material");
+    if (!mat.empty()) visual_json["material"] = mat;
+    (*link)["visuals"].push_back(std::move(visual_json));
+    if (stats) stats->visuals++;
+  } else {
+    nlohmann::json col = MeshPayloadToJson(payload);
+    AddGeomPhysicsAttrs(geom_node, cls, &col);
+    // Default approximation `convexHull` matches
+    // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
+    // mujoco-usd-converter convention (one Mesh per geom +
+    // `UsdPhysicsMeshCollisionAPI` with hull approximation).
+    col["approximation"] = "convexHull";
+    (*link)["collisions"].push_back(std::move(col));
+    if (stats) stats->collisions++;
+  }
+  return true;
+}
+
+// Geoms that are direct children of <worldbody> (e.g. a ground/floor plane or
+// heightfield) are world-fixed and belong to no body. Collect them onto a
+// single static root link named "world" so they still convert. Accumulates
+// across every <worldbody> block (post-<include> merge).
+void AddWorldbodyGeomsLink(const std::vector<pugi::xml_node> &worldbodies,
+                           const std::map<std::string, MeshAsset> &assets,
+                           const std::map<std::string, HFieldAsset> &hfields,
+                           const Options &opts, const Context &ctx,
+                           nlohmann::json *links, Stats *stats) {
+  nlohmann::json link = {{"name", "world"},
+                         {"static", true},
+                         {"inertial", {{"mass", 0.0}}},
+                         {"visuals", nlohmann::json::array()},
+                         {"collisions", nlohmann::json::array()}};
+  for (const auto &worldbody : worldbodies) {
+    for (const auto &geom_node : Children(worldbody, "geom")) {
+      std::string gerr;
+      if (!AppendGeomToLink(geom_node, "", assets, hfields, opts, ctx,
+                            IdentityMatrix(), &link, stats, &gerr)) {
+        std::cerr << "WARN: " << (gerr.empty() ? "worldbody geom skipped" : gerr)
+                  << "\n";
+      }
+    }
+  }
+  if (link["visuals"].empty() && link["collisions"].empty()) return;
+  links->push_back(std::move(link));
+  if (stats) stats->links++;
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
                      const std::vector<double> &parent_world,
                      const std::map<std::string, MeshAsset> &assets,
+                     const std::map<std::string, HFieldAsset> &hfields,
                      const Options &opts, const Context &ctx,
                      nlohmann::json *links, nlohmann::json *joints,
                      Stats *stats, std::string *err) {
@@ -1739,38 +1965,14 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   if (MjcBoolAttr(Attr(body_node, "mocap", "false"))) link["mocap"] = true;
 
   for (const auto &geom_node : Children(body_node, "geom")) {
-    const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
-    std::string cls_name = Attr(geom_node, "class");
-    if (cls_name.empty()) cls_name = cc;
-    MeshPayload payload;
-    bool visual = true;
-    if (!BuildGeomPayload(geom_node, cls, cls_name, assets, opts, ctx,
-                          body_world, &payload, &visual, err)) {
+    if (!AppendGeomToLink(geom_node, cc, assets, hfields, opts, ctx, body_world,
+                          &link, stats, err)) {
       if (opts.allow_missing) {
         std::cerr << "WARN: " << (err ? *err : "mesh skipped") << "\n";
         if (err) err->clear();
         continue;
       }
       return false;
-    }
-    if (visual) {
-      nlohmann::json visual_json = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
-      const std::string mat = Eff(geom_node, cls, "material");
-      if (!mat.empty()) visual_json["material"] = mat;
-      link["visuals"].push_back(std::move(visual_json));
-      stats->visuals++;
-    } else {
-      nlohmann::json col = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, cls, &col);
-      // Default approximation `convexHull` matches
-      // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
-      // mujoco-usd-converter convention (one Mesh per geom +
-      // `UsdPhysicsMeshCollisionAPI` with hull approximation). Authors
-      // who need triangle-soup contact can override per-geom in JSON.
-      col["approximation"] = "convexHull";
-      link["collisions"].push_back(std::move(col));
-      stats->collisions++;
     }
   }
 
@@ -1827,8 +2029,8 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, opts,
-                         ctx, links, joints, stats, err)) {
+    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, hfields,
+                         opts, ctx, links, joints, stats, err)) {
       return false;
     }
   }
@@ -1857,6 +2059,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   }
 
   const auto assets = CollectMujocoAssets(root, input_filename.parent_path());
+  const auto hfields = CollectMujocoHFields(root, input_filename.parent_path());
   // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
   // <include>) into a single world; visit them all, not just the first.
   const auto worldbodies = Children(root, "worldbody");
@@ -1893,8 +2096,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json contact_pairs = nlohmann::json::array();
   for (const auto &worldbody : worldbodies) {
     for (const auto &body : Children(worldbody, "body")) {
-      if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
-                           &links, &joints, stats, err)) {
+      if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, hfields, opts,
+                           ctx, &links, &joints, stats, err)) {
         return false;
       }
       CollectMujocoSitesJson(body, IdentityMatrix(), ctx, &sites, stats);
@@ -1902,6 +2105,8 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
                                    &cameras);
   }
+  // World-fixed geoms living directly under <worldbody> (floor/ground/hfield).
+  AddWorldbodyGeomsLink(worldbodies, assets, hfields, opts, ctx, &links, stats);
   AddMujocoActuatorsJson(root, &actuators, &mjc_actuators, stats);
   AddMujocoTendonsJson(root, ctx, &tendons, stats);
   AddMujocoEqualityJson(root, &equalities, stats);
