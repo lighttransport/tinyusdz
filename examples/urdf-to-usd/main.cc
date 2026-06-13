@@ -73,6 +73,9 @@ struct Stats {
   size_t visuals{0};
   size_t collisions{0};
   size_t actuators{0};
+  size_t tendons{0};
+  size_t equalities{0};
+  size_t contact_excludes{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1101,11 +1104,18 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   const auto com =
       ParseDouble3(Attr(inertial_node, "pos"), {{0.0, 0.0, 0.0}});
   inertial["centerOfMass"] = {com[0], com[1], com[2]};
-  // MJCF inertia: <inertial fullinertia="Ixx Iyy Izz Ixy Ixz Iyz"> (first 3 are
-  // the diagonal) or the more common <inertial diaginertia="Ixx Iyy Izz">.
+  // MJCF inertia: <inertial fullinertia="Ixx Iyy Izz Ixy Ixz Iyz"> (full
+  // symmetric tensor) or the more common <inertial diaginertia="Ixx Iyy Izz">.
   const std::vector<double> full =
       ParseDoubles(Attr(inertial_node, "fullinertia"));
-  if (full.size() >= 3) {
+  if (full.size() >= 6) {
+    // Carry all 6 components so the converter can diagonalize them into
+    // diagonalInertia (eigenvalues) + principalAxes (eigenvector quaternion).
+    // Keep a diagonal fallback for consumers that ignore fullInertia.
+    inertial["fullInertia"] = {full[0], full[1], full[2],
+                               full[3], full[4], full[5]};
+    inertial["diagonalInertia"] = {full[0], full[1], full[2]};
+  } else if (full.size() >= 3) {
     inertial["diagonalInertia"] = {full[0], full[1], full[2]};
   } else {
     const std::vector<double> diag =
@@ -1117,26 +1127,37 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   return inertial;
 }
 
-void AddJointJson(const pugi::xml_node &body_node, const AttrMap &jcls,
-                  const Context &ctx, const std::string &parent_name,
-                  const std::string &child_name, nlohmann::json *joints) {
-  const auto joint_node = Child(body_node, "joint");
+// Build one joint JSON entry from an explicit <joint> node (or a null node for
+// a fixed connection), wiring parent_name -> child_name with the given origin
+// frame. `origin_matrix` (16 elems) and `origin_pos` are the joint frame; in a
+// multi-DOF chain only the first joint carries the body offset (the rest are at
+// identity). A null joint_node yields a PhysicsFixedJoint.
+void AddJointFromNode(const pugi::xml_node &joint_node, const AttrMap &jcls,
+                      const Context &ctx, const std::string &parent_name,
+                      const std::string &child_name,
+                      const std::vector<double> &origin_matrix,
+                      const std::array<double, 3> &origin_pos,
+                      nlohmann::json *joints) {
   nlohmann::json joint = nlohmann::json::object();
   joint["name"] = joint_node ? Attr(joint_node, "name", parent_name + "_to_" + child_name)
                              : parent_name + "_to_" + child_name + "_fixed";
   const std::string mj_type =
       joint_node ? Eff(joint_node, jcls, "type", "hinge") : "fixed";
+  // MuJoCo ball (3-DOF rotation) -> USD PhysicsSphericalJoint. Matches the JS
+  // parsers (web/js/cli/urdf-to-usd.js, web/js/urdf.js); the USD converter
+  // already handles "spherical". (free/floating base is still emitted as
+  // "fixed" here — handled separately as the articulation root.)
   joint["type"] = (mj_type == "hinge") ? "revolute" :
-                  (mj_type == "slide") ? "prismatic" : "fixed";
+                  (mj_type == "slide") ? "prismatic" :
+                  (mj_type == "ball")  ? "spherical" : "fixed";
   joint["parent"] = parent_name;
   joint["child"] = child_name;
   const auto axis = ParseDouble3(joint_node ? Eff(joint_node, jcls, "axis") : "",
                                  {{0.0, 0.0, 1.0}});
   joint["axis"] = {axis[0], axis[1], axis[2]};
   joint["axisToken"] = AxisToken(axis);
-  const auto origin = ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
-  joint["origin"] = {origin[0], origin[1], origin[2]};
-  joint["originMatrix"] = PoseMatrix(body_node, ctx);
+  joint["origin"] = {origin_pos[0], origin_pos[1], origin_pos[2]};
+  joint["originMatrix"] = origin_matrix;
 
   if (joint_node) {
     const std::vector<double> range = ParseDoubles(Eff(joint_node, jcls, "range"));
@@ -1230,6 +1251,108 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
   }
 }
 
+// MJCF <tendon><fixed> -> JSON tendon entries consumed by AddMjcTendonFromJson.
+// A fixed tendon constrains a linear combination of joint coordinates; we carry
+// the {joint, coef} list plus the spring/damper/range scalars. Spatial tendons
+// (sites/pulleys) aren't representable without sites yet -> warn and skip.
+void AddMujocoTendonsJson(const pugi::xml_node &root, const Context &ctx,
+                          nlohmann::json *tendons, Stats *stats) {
+  if (!tendons) return;
+  const auto tendon_root = Child(root, "tendon");
+  if (!tendon_root) return;
+  for (const auto &t_node : tendon_root.children()) {
+    const std::string kind = t_node.name();
+    if (kind != "fixed") {
+      // spatial / other: not converted (needs sites). Don't drop silently.
+      std::fprintf(stderr,
+                   "[urdf-to-usd] warning: MJCF <tendon><%s> is not converted "
+                   "(only <fixed> tendons are supported); skipping.\n",
+                   kind.c_str());
+      continue;
+    }
+    nlohmann::json tendon = nlohmann::json::object();
+    tendon["name"] = Attr(t_node, "name", "tendon_" + std::to_string(stats ? stats->tendons : 0));
+    tendon["type"] = "fixed";
+    nlohmann::json jlist = nlohmann::json::array();
+    for (const auto &j_node : Children(t_node, "joint")) {
+      const std::string jn = Attr(j_node, "joint");
+      if (jn.empty()) continue;
+      nlohmann::json je = nlohmann::json::object();
+      je["joint"] = jn;
+      je["coef"] = ParseDoubleAttr(j_node, "coef", 1.0);
+      jlist.push_back(std::move(je));
+    }
+    if (jlist.empty()) continue;
+    tendon["joints"] = std::move(jlist);
+    if (HasAttr(t_node, "stiffness"))
+      tendon["stiffness"] = ParseDoubleAttr(t_node, "stiffness", 0.0);
+    if (HasAttr(t_node, "damping"))
+      tendon["damping"] = ParseDoubleAttr(t_node, "damping", 0.0);
+    if (HasAttr(t_node, "frictionloss"))
+      tendon["frictionloss"] = ParseDoubleAttr(t_node, "frictionloss", 0.0);
+    if (HasAttr(t_node, "margin"))
+      tendon["margin"] = ParseDoubleAttr(t_node, "margin", 0.0);
+    const auto range = ParseDoubles(Attr(t_node, "range"));
+    if (range.size() >= 2) tendon["range"] = {range[0], range[1]};
+    const auto springlen = ParseDoubles(Attr(t_node, "springlength"));
+    if (!springlen.empty()) tendon["springlength"] = springlen;
+    tendons->push_back(std::move(tendon));
+    if (stats) stats->tendons++;
+  }
+  (void)ctx;
+}
+
+// MJCF <equality> -> JSON entries consumed by AddMjcEqualityFromJson.
+void AddMujocoEqualityJson(const pugi::xml_node &root, nlohmann::json *equalities,
+                           Stats *stats) {
+  if (!equalities) return;
+  const auto eq_root = Child(root, "equality");
+  if (!eq_root) return;
+  for (const auto &e_node : eq_root.children()) {
+    const std::string kind = e_node.name();  // connect | weld | joint
+    if (kind != "connect" && kind != "weld" && kind != "joint") continue;
+    nlohmann::json eq = nlohmann::json::object();
+    eq["name"] = Attr(e_node, "name", kind + "_" +
+                      std::to_string(stats ? stats->equalities : 0));
+    eq["type"] = kind;
+    if (kind == "joint") {
+      eq["joint1"] = Attr(e_node, "joint1");
+      if (HasAttr(e_node, "joint2")) eq["joint2"] = Attr(e_node, "joint2");
+      const auto poly = ParseDoubles(Attr(e_node, "polycoef"));
+      if (!poly.empty()) eq["polycoef"] = poly;
+    } else {
+      eq["body1"] = Attr(e_node, "body1");
+      if (HasAttr(e_node, "body2")) eq["body2"] = Attr(e_node, "body2");
+      const auto anchor = ParseDoubles(Attr(e_node, "anchor"));
+      if (!anchor.empty()) eq["anchor"] = anchor;
+      if (kind == "weld" && HasAttr(e_node, "torquescale"))
+        eq["torquescale"] = ParseDoubleAttr(e_node, "torquescale", 1.0);
+    }
+    const auto solref = ParseDoubles(Attr(e_node, "solref"));
+    if (!solref.empty()) eq["solref"] = solref;
+    const auto solimp = ParseDoubles(Attr(e_node, "solimp"));
+    if (!solimp.empty()) eq["solimp"] = solimp;
+    equalities->push_back(std::move(eq));
+    if (stats) stats->equalities++;
+  }
+}
+
+// MJCF <contact><exclude body1 body2> -> filteredPairs entries (maps to
+// PhysicsFilteredPairsAPI in the converter, which already handles this array).
+void AddMujocoContactExcludesJson(const pugi::xml_node &root,
+                                  nlohmann::json *filtered_pairs, Stats *stats) {
+  if (!filtered_pairs) return;
+  const auto contact_root = Child(root, "contact");
+  if (!contact_root) return;
+  for (const auto &c_node : Children(contact_root, "exclude")) {
+    const std::string b1 = Attr(c_node, "body1");
+    const std::string b2 = Attr(c_node, "body2");
+    if (b1.empty() || b2.empty()) continue;
+    filtered_pairs->push_back({{"body1", b1}, {"body2", b2}});
+    if (stats) stats->contact_excludes++;
+  }
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
@@ -1292,10 +1415,53 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
   links->push_back(std::move(link));
   stats->links++;
   if (!parent_name.empty()) {
-    const auto joint_node = Child(body_node, "joint");
-    const AttrMap &jcls = ResolveJointClass(joint_node, ctx.defaults, cc);
-    AddJointJson(body_node, jcls, ctx, parent_name, body_name, joints);
-    stats->joints++;
+    const std::vector<double> body_matrix = PoseMatrix(body_node, ctx);
+    const std::array<double, 3> body_pos =
+        ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
+    const std::vector<double> identity = IdentityMatrix();
+    const std::array<double, 3> zero_pos = {{0.0, 0.0, 0.0}};
+    const std::vector<pugi::xml_node> joint_nodes =
+        Children(body_node, "joint");
+
+    if (joint_nodes.size() <= 1) {
+      // 0 joints -> fixed connection; 1 joint -> single DOF (the common case).
+      const pugi::xml_node jn =
+          joint_nodes.empty() ? pugi::xml_node() : joint_nodes[0];
+      const AttrMap &jcls = ResolveJointClass(jn, ctx.defaults, cc);
+      AddJointFromNode(jn, jcls, ctx, parent_name, body_name, body_matrix,
+                       body_pos, joints);
+      stats->joints++;
+    } else {
+      // MuJoCo allows multiple <joint> per body (e.g. ball+slide, or a stack of
+      // hinges) — they compose in sequence. Represent the N DOFs as a chain of
+      // (N-1) massless intermediate link Xforms joined by single-DOF joints:
+      //   parent --j0--> dof_1 --j1--> ... --j(N-1)--> body
+      // Only the first joint carries the body offset; intermediates sit at the
+      // body frame (identity). Geometry is world-baked on `body`, so the empty
+      // intermediate links add no visible geometry.
+      std::string prev = parent_name;
+      for (size_t k = 0; k < joint_nodes.size(); k++) {
+        const bool last = (k + 1 == joint_nodes.size());
+        const std::string child =
+            last ? body_name : (body_name + "__mjcdof_" + std::to_string(k + 1));
+        if (!last) {
+          // Emit a massless intermediate link (no geometry, no mass).
+          nlohmann::json dof_link = {{"name", child},
+                                     {"inertial", {{"mass", 0.0}}},
+                                     {"visuals", nlohmann::json::array()},
+                                     {"collisions", nlohmann::json::array()}};
+          links->push_back(std::move(dof_link));
+          stats->links++;
+        }
+        const AttrMap &jcls =
+            ResolveJointClass(joint_nodes[k], ctx.defaults, cc);
+        AddJointFromNode(joint_nodes[k], jcls, ctx, prev, child,
+                         (k == 0) ? body_matrix : identity,
+                         (k == 0) ? body_pos : zero_pos, joints);
+        stats->joints++;
+        prev = child;
+      }
+    }
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
@@ -1350,6 +1516,9 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
   nlohmann::json actuators = nlohmann::json::array();
+  nlohmann::json tendons = nlohmann::json::array();
+  nlohmann::json equalities = nlohmann::json::array();
+  nlohmann::json filtered_pairs = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1357,15 +1526,23 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     }
   }
   AddMujocoActuatorsJson(root, &actuators, stats);
+  AddMujocoTendonsJson(root, ctx, &tendons, stats);
+  AddMujocoEqualityJson(root, &equalities, stats);
+  AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
       {"upAxis", opts.up_axis},
+      {"sourceFormat", "mjcf"},
       {"gravity", opts.up_axis == "Z" ? nlohmann::json::array({0, 0, -1})
                                        : nlohmann::json::array({0, -1, 0})},
       {"links", std::move(links)},
       {"joints", std::move(joints)},
       {"actuators", std::move(actuators)}};
+  if (!tendons.empty()) (*payload)["tendons"] = std::move(tendons);
+  if (!equalities.empty()) (*payload)["equalities"] = std::move(equalities);
+  if (!filtered_pairs.empty())
+    (*payload)["filteredPairs"] = std::move(filtered_pairs);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

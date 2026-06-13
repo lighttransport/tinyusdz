@@ -489,12 +489,14 @@ status line) instead of being dropped silently:
 
 | Feature | Behavior |
 |---|---|
-| MJCF body with multiple `<joint>` | only the first joint is converted; the remaining DOFs are dropped (USD joints are pairwise) |
+| MJCF body with multiple `<joint>` | converted to a chain of single-DOF joints through `(N-1)` massless intermediate link Xforms (`<body>__mjcdof_k`), preserving every DOF; only the first joint carries the body offset |
 | MJCF `ball` joint | mapped to `PhysicsSphericalJoint`; the single-slider preview leaves it at rest (3 DOF can't be driven by one scalar) |
-| MJCF non-diagonal `fullinertia` | only the diagonal is exported (`physics:diagonalInertia`); off-diagonal terms (`physics:principalAxes`) are not authored |
+| MJCF non-diagonal `fullinertia` | diagonalized into `physics:diagonalInertia` (principal moments) + `physics:principalAxes` (eigenvector quaternion), the lossless USD representation |
 | URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
 | MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
-| MJCF `<tendon>`, `<equality>`, `<contact>` | not converted to USD physics |
+| MJCF `<tendon><fixed>` | converted to an `MjcTendon` prim under `/World/Tendons` (`mjc:path` rel to the coupled joints, `mjc:path:coef`, stiffness/damping/range). Spatial tendons (sites) still warn and skip |
+| MJCF `<equality>` (connect/weld/joint) | converted to an Xform host prim under `/World/Equalities` carrying the matching `MjcEquality{Connect,Weld,Joint}API` + `mjc:*` attributes |
+| MJCF `<contact><exclude>` | converted to `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) on the first body |
 
 ---
 

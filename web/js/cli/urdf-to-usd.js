@@ -959,12 +959,14 @@ function parseMujocoInertial(bodyNode) {
     mass: numberAttr(inertialNode.attrs, 'mass', 0),
     centerOfMass: parseNumbers(inertialNode.attrs.pos, [0, 0, 0])
   };
-  if (full.length >= 3) {
+  if (full.length >= 6) {
+    // Carry all 6 components [Ixx Iyy Izz Ixy Ixz Iyz] so the shared C++
+    // converter diagonalizes them into diagonalInertia + principalAxes. Keep a
+    // diagonal fallback for consumers that ignore fullInertia.
+    inertial.fullInertia = full.slice(0, 6);
     inertial.diagonalInertia = [full[0], full[1], full[2]];
-    if (full.length >= 6 && full.slice(3, 6).some((v) => Math.abs(v) > 1e-9)) {
-      console.warn(`MJCF body "${bodyNode.attrs?.name || '?'}" has a non-diagonal `
-        + 'fullinertia; off-diagonal terms are dropped (only the diagonal is exported).');
-    }
+  } else if (full.length >= 3) {
+    inertial.diagonalInertia = [full[0], full[1], full[2]];
   } else {
     // `diaginertia` is "Ixx Iyy Izz" — parse all three (numberAttr only reads a
     // single Number(), which yields NaN for the multi-value string and silently
@@ -1124,27 +1126,75 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-function countDescendantsByName(node, name) {
-  let count = 0;
-  for (const child of childElements(node)) {
-    if (child.name === name) count += 1;
-    count += countDescendantsByName(child, name);
+// MJCF <tendon><fixed> -> tendon payload entries (consumed by the C++
+// converter's AddMjcTendonFromJson). Spatial tendons need sites -> warn, skip.
+function parseMujocoTendons(root) {
+  const tendonRoot = firstChild(root, 'tendon');
+  if (!tendonRoot) return [];
+  const out = [];
+  for (const node of childElements(tendonRoot)) {
+    if (node.name !== 'fixed') {
+      console.warn(`MJCF <tendon><${node.name}> is not converted (only <fixed> tendons are supported).`);
+      continue;
+    }
+    const jlist = [];
+    for (const j of childElements(node, 'joint')) {
+      if (!j.attrs.joint) continue;
+      jlist.push({ joint: j.attrs.joint, coef: numberAttr(j.attrs, 'coef', 1) });
+    }
+    if (!jlist.length) continue;
+    const range = parseNumbers(node.attrs.range, []);
+    const tendon = { name: node.attrs.name || `tendon_${out.length}`, type: 'fixed', joints: jlist };
+    if (Number.isFinite(numberAttr(node.attrs, 'stiffness'))) tendon.stiffness = numberAttr(node.attrs, 'stiffness');
+    if (Number.isFinite(numberAttr(node.attrs, 'damping'))) tendon.damping = numberAttr(node.attrs, 'damping');
+    if (range.length >= 2) tendon.range = [range[0], range[1]];
+    out.push(tendon);
   }
-  return count;
+  return out;
 }
 
-function warnUnsupportedMujocoElements(root) {
-  const unsupported = [
-    ['tendon', 'tendons (cable/spatial constraints)'],
-    ['equality', 'equality constraints'],
-    ['contact', 'explicit contact pairs/exclusions']
-  ];
-  for (const [tag, label] of unsupported) {
-    const count = countDescendantsByName(root, tag);
-    if (count) {
-      console.warn(`MJCF ${label} are not converted to USD (${count} <${tag}> element${count === 1 ? '' : 's'}).`);
+// MJCF <equality> connect/weld/joint -> equality payload entries.
+function parseMujocoEqualities(root) {
+  const eqRoot = firstChild(root, 'equality');
+  if (!eqRoot) return [];
+  const out = [];
+  for (const node of childElements(eqRoot)) {
+    const kind = node.name;
+    if (!['connect', 'weld', 'joint'].includes(kind)) continue;
+    const eq = { name: node.attrs.name || `${kind}_${out.length}`, type: kind };
+    if (kind === 'joint') {
+      eq.joint1 = node.attrs.joint1 || '';
+      if (node.attrs.joint2) eq.joint2 = node.attrs.joint2;
+      const poly = parseNumbers(node.attrs.polycoef, []);
+      if (poly.length) eq.polycoef = poly;
+    } else {
+      eq.body1 = node.attrs.body1 || '';
+      if (node.attrs.body2) eq.body2 = node.attrs.body2;
+      const anchor = parseNumbers(node.attrs.anchor, []);
+      if (anchor.length) eq.anchor = anchor;
+      if (kind === 'weld' && Number.isFinite(numberAttr(node.attrs, 'torquescale'))) {
+        eq.torquescale = numberAttr(node.attrs, 'torquescale');
+      }
     }
+    const solref = parseNumbers(node.attrs.solref, []);
+    if (solref.length) eq.solref = solref;
+    const solimp = parseNumbers(node.attrs.solimp, []);
+    if (solimp.length) eq.solimp = solimp;
+    out.push(eq);
   }
+  return out;
+}
+
+// MJCF <contact><exclude body1 body2> -> filteredPairs entries.
+function parseMujocoContactExcludes(root) {
+  const contactRoot = firstChild(root, 'contact');
+  if (!contactRoot) return [];
+  const out = [];
+  for (const node of childElements(contactRoot, 'exclude')) {
+    if (!node.attrs.body1 || !node.attrs.body2) continue;
+    out.push({ body1: node.attrs.body1, body2: node.attrs.body2 });
+  }
+  return out;
 }
 
 async function mujocoGeomPayloads(geomNode, meshAssets, fallbackName, opts, bodyWorld = new THREE.Matrix4()) {
@@ -1293,7 +1343,6 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (root.name !== 'mujoco') {
     throw new Error('Expected <mujoco> root for MJCF input.');
   }
-  warnUnsupportedMujocoElements(root);
 
   // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
   const compilerEl = firstChild(root, 'compiler');
@@ -1313,6 +1362,9 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const links = [];
   const joints = [];
   const actuators = buildMujocoActuators(root);
+  const tendons = parseMujocoTendons(root);
+  const equalities = parseMujocoEqualities(root);
+  const filteredPairs = parseMujocoContactExcludes(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1379,49 +1431,72 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
 
     if (parentName) {
       const jointNodes = childElements(bodyNode, 'joint');
-      const jointNode = jointNodes[0] || null;
-      // MuJoCo permits multiple <joint> per body; USD joints are pairwise, so we
-      // represent the first and warn that the rest are dropped (matches urdf.js).
-      if (jointNodes.length > 1) {
-        console.warn(`MJCF body "${linkName}" has ${jointNodes.length} joints; only the `
-          + `first is converted — ${jointNodes.length - 1} DOF(s) dropped.`);
-      }
-      if (jointNode) {
+      const bodyOrigin = parseNumbers(bodyNode.attrs.pos, [0, 0, 0]);
+      const bodyMatrix = matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs));
+      const identityMatrix = matrixToUSDArray(new THREE.Matrix4());
+
+      // Build one joint entry from a <joint> node connecting prev -> child with
+      // the given origin frame.
+      const makeJoint = (jointNode, prev, child, origin, originMatrix) => {
         const jAttrs = resolveElementAttrs(jointNode, defaults.joint, defaults.rootJoint, childclass);
         const axis = parseNumbers(jAttrs.axis, [0, 0, 1]);
         const range = parseNumbers(jAttrs.range, []);
-        // The USD converter expects revolute limits in radians (it re-converts
-        // to degrees). MJCF hinge ranges are in the compiler angle unit
-        // (degrees by default); slide ranges are meters and pass through.
+        // Revolute limits are radians (the converter re-converts to degrees);
+        // MJCF hinge ranges are in the compiler angle unit (degrees by default),
+        // slide ranges are meters and pass through.
         const limScale = (jAttrs.type || 'hinge') === 'hinge' ? mjcfPoseCtx.toRad : 1;
-        joints.push({
-          name: jAttrs.name || `${parentName}_to_${linkName}`,
+        return {
+          name: jAttrs.name || `${prev}_to_${child}`,
           type: mujocoJointType(jAttrs.type || 'hinge'),
-          parent: parentName,
-          child: linkName,
+          parent: prev,
+          child,
           axis,
           axisToken: axisToToken(axis),
-          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
-          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
+          origin,
+          originMatrix,
           limit: range.length >= 2 ? { lower: range[0] * limScale, upper: range[1] * limScale } : {},
           dynamics: {
             damping: numberAttr(jAttrs, 'damping'),
             friction: numberAttr(jAttrs, 'frictionloss')
           }
-        });
+        };
+      };
+
+      if (jointNodes.length <= 1) {
+        if (jointNodes[0]) {
+          joints.push(makeJoint(jointNodes[0], parentName, linkName, bodyOrigin, bodyMatrix));
+        } else {
+          joints.push({
+            name: `${parentName}_to_${linkName}_fixed`,
+            type: 'fixed',
+            parent: parentName,
+            child: linkName,
+            axis: [1, 0, 0],
+            axisToken: 'X',
+            origin: bodyOrigin,
+            originMatrix: bodyMatrix,
+            limit: {},
+            dynamics: {}
+          });
+        }
       } else {
-        joints.push({
-          name: `${parentName}_to_${linkName}_fixed`,
-          type: 'fixed',
-          parent: parentName,
-          child: linkName,
-          axis: [1, 0, 0],
-          axisToken: 'X',
-          origin: parseNumbers(bodyNode.attrs.pos, [0, 0, 0]),
-          originMatrix: matrixToUSDArray(matrixFromPoseAttrs(bodyNode.attrs)),
-          limit: {},
-          dynamics: {}
-        });
+        // MuJoCo allows multiple <joint> per body (composing DOFs). Represent
+        // them as a chain of single-DOF joints through (N-1) massless
+        // intermediate link Xforms, matching the C++ MJCF parser. Only the
+        // first joint carries the body offset; geometry is world-baked on the
+        // real body, so the empty intermediates add no visible geometry.
+        let prev = parentName;
+        for (let k = 0; k < jointNodes.length; k++) {
+          const last = k === jointNodes.length - 1;
+          const child = last ? linkName : `${linkName}__mjcdof_${k + 1}`;
+          if (!last) {
+            links.push({ name: child, inertial: { mass: 0 }, visuals: [], collisions: [] });
+          }
+          joints.push(makeJoint(jointNodes[k], prev, child,
+            k === 0 ? bodyOrigin : [0, 0, 0],
+            k === 0 ? bodyMatrix : identityMatrix));
+          prev = child;
+        }
       }
     }
 
@@ -1434,22 +1509,29 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     await visitBody(bodyNode);
   }
 
+  const payload = {
+    name: root.attrs.model || path.basename(opts.inputFile || 'mujoco_scene', path.extname(opts.inputFile || 'mujoco_scene')),
+    upAxis: opts.upAxis,
+    sourceFormat: 'mjcf',
+    gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
+    timestep: numberAttr(firstChild(root, 'option')?.attrs, 'timestep'),
+    links,
+    joints,
+    actuators
+  };
+  if (tendons.length) payload.tendons = tendons;
+  if (equalities.length) payload.equalities = equalities;
+  if (filteredPairs.length) payload.filteredPairs = filteredPairs;
   return {
-    payload: {
-      name: root.attrs.model || path.basename(opts.inputFile || 'mujoco_scene', path.extname(opts.inputFile || 'mujoco_scene')),
-      upAxis: opts.upAxis,
-      gravity: opts.upAxis === 'Z' ? [0, 0, -1] : [0, -1, 0],
-      timestep: numberAttr(firstChild(root, 'option')?.attrs, 'timestep'),
-      links,
-      joints,
-      actuators
-    },
+    payload,
     stats: {
       links: links.length,
       joints: joints.length,
       visuals: visualCount,
       collisions: collisionCount,
-      actuators: actuators.length
+      actuators: actuators.length,
+      tendons: tendons.length,
+      equalities: equalities.length
     }
   };
 }
