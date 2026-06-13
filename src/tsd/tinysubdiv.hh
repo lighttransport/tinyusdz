@@ -300,11 +300,11 @@ struct StreamOptions {
 
 // Streaming refinement. `fvar_channels`/`vertex_primvars` may be null when
 // their count is 0. faceVarying is emitted per-corner (StreamBatch::fvar,
-// parallel to indices). In the non-block path only linear modes stream (the
+// parallel to indices). At level 0 (a passthrough) every fvar mode streams
+// verbatim. At level >= 1 in the non-block path only linear modes stream (the
 // "all" mode, or any mode under bilinear); a smooth seam-split channel returns
 // InvalidArgument there (use the bulk Refine). Block mode (block_faces > 0)
 // streams ALL faceVarying modes -- it refines each block with the bulk Refine.
-// faceVarying streaming requires level >= 1 (level 0 is a passthrough).
 Result RefineStream(const MeshView &mesh, const FVarChannelView *fvar_channels,
                     uint32_t num_fvar_channels,
                     const VertexPrimvarView *vertex_primvars,

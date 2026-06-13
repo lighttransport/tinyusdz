@@ -363,6 +363,19 @@ struct Emitter {
     PushFace(src, n);
   }
 
+  // fvar-aware n-gon passthrough (level 0): `fc[c]` holds the face's n per-corner
+  // fvar tuples (corner order matches `canon`), pushed parallel to the indices.
+  void EmitPolyF(const uint32_t *canon, uint32_t n, uint32_t src,
+                 const std::vector<const float *> &fc) {
+    for (uint32_t k = 0; k < n; k++) {
+      indices.push_back(Local(canon[k]));
+    }
+    PushFace(src, n);
+    for (uint32_t k = 0; k < n; k++) {
+      PushFvarCorner(k, fc);
+    }
+  }
+
   // fvar-aware variants: `fc[c]` holds this child face's per-corner fvar
   // (corner order matches a/b/c/d), pushed parallel to the emitted indices.
   void EmitQuadF(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t src,
@@ -605,6 +618,24 @@ Result StreamLevel0(Emitter &em, const MeshView &mesh, bool remove_holes) {
   for (uint32_t i = 0; i < mesh.num_holes; i++) {
     hole[uint32_t(mesh.hole_indices[i])] = 1;
   }
+  const uint32_t nf = em.num_fvar;
+  // Per channel: this face's emitted-corner fvar scratch (base values resolved
+  // per corner live in (*em.fvars)[c], identity-indexed by global corner).
+  std::vector<std::vector<float>> fc_buf(nf);
+  std::vector<const float *> fc(nf);
+  // Copies `count` corner tuples from base corners `srcs[]` into fc_buf/fc.
+  auto fill = [&](const uint32_t *srcs, uint32_t count) {
+    for (uint32_t c = 0; c < nf; c++) {
+      const uint32_t st = em.fvar_stride[c];
+      const float *base = (*em.fvars)[c].data();
+      fc_buf[c].resize(size_t(count) * st);
+      for (uint32_t k = 0; k < count; k++) {
+        memcpy(&fc_buf[c][size_t(k) * st], &base[size_t(srcs[k]) * st],
+               sizeof(float) * st);
+      }
+      fc[c] = fc_buf[c].data();
+    }
+  };
   uint32_t corner = 0;
   for (uint32_t f = 0; f < mesh.num_faces; f++) {
     const uint32_t n = mesh.face_vertex_counts[f];
@@ -617,11 +648,26 @@ Result StreamLevel0(Emitter &em, const MeshView &mesh, bool remove_holes) {
     if (em.sopts->emit_triangles) {
       const uint32_t a = mesh.face_vertex_indices[corner];
       for (uint32_t k = 1; k + 1 < n; k++) {
-        em.EmitTri(a, mesh.face_vertex_indices[corner + k],
-                   mesh.face_vertex_indices[corner + k + 1], f);
+        const uint32_t b = mesh.face_vertex_indices[corner + k];
+        const uint32_t c = mesh.face_vertex_indices[corner + k + 1];
+        if (nf == 0) {
+          em.EmitTri(a, b, c, f);
+        } else {
+          const uint32_t srcs[3] = {corner, corner + k, corner + k + 1};
+          fill(srcs, 3);
+          em.EmitTriF(a, b, c, f, fc);
+        }
       }
-    } else {
+    } else if (nf == 0) {
       em.EmitPoly(&mesh.face_vertex_indices[corner], n, f);
+    } else {
+      // n-gon corners are the global corners [corner, corner+n).
+      std::vector<uint32_t> srcs(n);
+      for (uint32_t k = 0; k < n; k++) {
+        srcs[k] = corner + k;
+      }
+      fill(srcs.data(), n);
+      em.EmitPolyF(&mesh.face_vertex_indices[corner], n, f, fc);
     }
     corner += n;
     if (!em.MaybeFlush()) {
@@ -1034,11 +1080,12 @@ Result RefineStream(const MeshView &mesh,
                            stream_options.block_faces < mesh.num_faces &&
                            options.level >= 1);
 
-  // faceVarying constraints. Outside block mode, only the linear path streams
-  // here (the "all" mode, or any mode under bilinear); smooth seam-split channels
-  // must use the bulk Refine. Level 0 is a passthrough (no refinement), so fvar
-  // there should use Refine regardless.
-  if (!block_mode) {
+  // faceVarying constraints. In the non-block per-level path (level >= 1) only
+  // the linear path streams (the "all" mode, or any mode under bilinear); smooth
+  // seam-split channels must use the bulk Refine. Level 0 is a passthrough (no
+  // refinement) -- the output fvar is the base values verbatim -- so every mode
+  // streams there. Block mode handles all modes at any level.
+  if (!block_mode && options.level >= 1) {
     for (uint32_t c = 0; c < num_fvar_channels; c++) {
       const bool linear =
           (!smooth_scheme ||
@@ -1048,10 +1095,6 @@ Result RefineStream(const MeshView &mesh,
                     "smooth faceVarying is not streamable; use Refine.");
       }
     }
-  }
-  if (num_fvar_channels && options.level == 0) {
-    return Fail(Result::InvalidArgument, err,
-                "faceVarying streaming requires level >= 1; use Refine.");
   }
 
   std::vector<uint32_t> pv_stride(num_vertex_primvars);
@@ -1237,12 +1280,25 @@ Result RefineStream(const MeshView &mesh,
           vertex_primvars[p].values,
           vertex_primvars[p].values + size_t(mesh.num_points) * pv_stride[p]);
     }
+    // faceVarying at level 0 is the base channel resolved per corner (verbatim;
+    // no refinement), for every interpolation mode.
+    std::vector<std::vector<float>> fvars0(num_fvar_channels);
+    for (uint32_t c = 0; c < num_fvar_channels; c++) {
+      const FVarChannelView &ch = fvar_channels[c];
+      fvars0[c].resize(size_t(mesh.num_face_vertex_indices) * ch.stride);
+      for (uint32_t i = 0; i < mesh.num_face_vertex_indices; i++) {
+        const uint32_t src = ch.indices ? ch.indices[i] : i;
+        memcpy(&fvars0[c][size_t(i) * ch.stride],
+               &ch.values[size_t(src) * ch.stride], sizeof(float) * ch.stride);
+      }
+    }
     Topology topo0;  // unused for level 0 (identity values)
     em.passthrough = true;
     em.topo = &topo0;
     em.fvi = mesh.face_vertex_indices;
     em.geom = geom0.data();
     em.pvs = &pvs0;
+    em.fvars = &fvars0;
     em.V = mesh.num_points;
     em.E = 0;
     return StreamLevel0(em, mesh, options.remove_holes);
