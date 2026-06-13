@@ -392,6 +392,37 @@ function matrixFromPoseAttrs(attrs = {}) {
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
 }
 
+// Dissolve MuJoCo 3 <frame> grouping transforms: compose each frame's transform
+// into its children's poses and lift them to the frame's parent (mirrors the
+// C++ FlattenFramesIn / urdf.js flattenMujocoFrames). Needs mjcfPoseCtx set.
+function flattenMujocoFramesTree(parent) {
+  for (const c of parent.children) flattenMujocoFramesTree(c);
+  const out = [];
+  for (const child of parent.children) {
+    if (child.name !== 'frame') { out.push(child); continue; }
+    const fm = matrixFromPoseAttrs(child.attrs);
+    const fcc = child.attrs.childclass;
+    for (const gc of child.children) {
+      const cm = new THREE.Matrix4().multiplyMatrices(fm, matrixFromPoseAttrs(gc.attrs));
+      const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+      cm.decompose(pos, quat, scl);
+      gc.attrs.pos = `${pos.x} ${pos.y} ${pos.z}`;
+      gc.attrs.quat = `${quat.w} ${quat.x} ${quat.y} ${quat.z}`;  // MuJoCo wxyz
+      delete gc.attrs.euler; delete gc.attrs.axisangle; delete gc.attrs.xyaxes; delete gc.attrs.zaxis;
+      const ft = parseNumbers(gc.attrs.fromto, []);
+      if (ft.length === 6) {
+        const p0 = new THREE.Vector3(ft[0], ft[1], ft[2]).applyMatrix4(fm);
+        const p1 = new THREE.Vector3(ft[3], ft[4], ft[5]).applyMatrix4(fm);
+        gc.attrs.fromto = `${p0.x} ${p0.y} ${p0.z} ${p1.x} ${p1.y} ${p1.z}`;
+      }
+      if (fcc && !gc.attrs.childclass && !gc.attrs.class) gc.attrs.childclass = fcc;
+      gc.parent = parent;
+      out.push(gc);
+    }
+  }
+  parent.children = out;
+}
+
 function originToMatrix(originAttrs = {}) {
   const xyz = parseNumbers(originAttrs.xyz, [0, 0, 0]);
   const rpy = parseNumbers(originAttrs.rpy, [0, 0, 0]);
@@ -1972,6 +2003,9 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
     toRad: angleAttr === 'radian' ? 1 : Math.PI / 180,
     eulerseq: compilerEl?.attrs?.eulerseq || 'xyz'
   };
+
+  // Dissolve <frame> grouping transforms (needs the angle ctx above).
+  for (const worldbody of childElements(root, 'worldbody')) flattenMujocoFramesTree(worldbody);
 
   const defaults = parseMujocoDefaults(root);
   const meshAssets = collectMujocoAssets(root, baseDir, opts);

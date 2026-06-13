@@ -2246,6 +2246,101 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path &base_dir,
   return true;
 }
 
+// --- MJCF <frame> flattening -----------------------------------------------
+// A <frame> is a pure coordinate transform applied to all its direct children
+// (it is NOT a body). MuJoCo 3 uses it to group/offset geoms/bodies. We dissolve
+// each frame by composing its transform into every child's pose and moving the
+// children up to the frame's parent, so the rest of the pipeline never sees a
+// <frame>. Used by apptronik_apollo (frames wrap finger-mesh geoms).
+
+void SetNodeAttr(pugi::xml_node n, const char *name, const char *val) {
+  pugi::xml_attribute a = n.attribute(name);
+  if (a) a.set_value(val); else n.append_attribute(name).set_value(val);
+}
+
+// Column-major 4x4 -> translation + quaternion {w,x,y,z}.
+void DecomposePosQuat(const std::vector<double> &m, std::array<double, 3> *pos,
+                      Quat *q) {
+  *pos = {{m[12], m[13], m[14]}};
+  const double trace = m[0] + m[5] + m[10];
+  double w, x, y, z;
+  if (trace > 0.0) {
+    const double S = 2.0 * std::sqrt(trace + 1.0);
+    w = 0.25 * S; x = (m[6] - m[9]) / S; y = (m[8] - m[2]) / S; z = (m[1] - m[4]) / S;
+  } else if (m[0] > m[5] && m[0] > m[10]) {
+    const double S = 2.0 * std::sqrt(1.0 + m[0] - m[5] - m[10]);
+    w = (m[6] - m[9]) / S; x = 0.25 * S; y = (m[4] + m[1]) / S; z = (m[8] + m[2]) / S;
+  } else if (m[5] > m[10]) {
+    const double S = 2.0 * std::sqrt(1.0 + m[5] - m[0] - m[10]);
+    w = (m[8] - m[2]) / S; x = (m[4] + m[1]) / S; y = 0.25 * S; z = (m[9] + m[6]) / S;
+  } else {
+    const double S = 2.0 * std::sqrt(1.0 + m[10] - m[0] - m[5]);
+    w = (m[1] - m[4]) / S; x = (m[8] + m[2]) / S; y = (m[9] + m[6]) / S; z = 0.25 * S;
+  }
+  *q = QuatNormalize({{w, x, y, z}});
+}
+
+void FlattenFramesIn(pugi::xml_node parent, const Context &ctx) {
+  // Bottom-up: flatten frames nested inside children before dissolving the
+  // frames directly under `parent`.
+  for (pugi::xml_node c : parent.children()) FlattenFramesIn(c, ctx);
+
+  pugi::xml_node child = parent.first_child();
+  while (child) {
+    pugi::xml_node next = child.next_sibling();
+    if (std::string(child.name()) == "frame") {
+      const std::array<double, 3> fpos = ParseDouble3(Attr(child, "pos"), {{0, 0, 0}});
+      const Quat fq = OrientationQuat(Attr(child, "quat"), Attr(child, "axisangle"),
+                                      Attr(child, "euler"), Attr(child, "xyaxes"),
+                                      Attr(child, "zaxis"), ctx);
+      const std::vector<double> fm = MatrixFromPosQuat(fpos, fq);
+      const std::string fcc = Attr(child, "childclass");
+      for (pugi::xml_node gc : child.children()) {
+        const std::array<double, 3> cpos = ParseDouble3(Attr(gc, "pos"), {{0, 0, 0}});
+        const Quat cq = OrientationQuat(Attr(gc, "quat"), Attr(gc, "axisangle"),
+                                        Attr(gc, "euler"), Attr(gc, "xyaxes"),
+                                        Attr(gc, "zaxis"), ctx);
+        const std::vector<double> cm = MultiplyMatrix(fm, MatrixFromPosQuat(cpos, cq));
+        std::array<double, 3> npos;
+        Quat nq;
+        DecomposePosQuat(cm, &npos, &nq);
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", npos[0], npos[1], npos[2]);
+        SetNodeAttr(gc, "pos", buf);
+        std::snprintf(buf, sizeof(buf), "%.12g %.12g %.12g %.12g", nq[0], nq[1], nq[2], nq[3]);
+        SetNodeAttr(gc, "quat", buf);
+        gc.remove_attribute("euler");
+        gc.remove_attribute("axisangle");
+        gc.remove_attribute("xyaxes");
+        gc.remove_attribute("zaxis");
+        // A capsule/cylinder fromto is in the frame's coordinates too.
+        if (pugi::xml_attribute ft = gc.attribute("fromto")) {
+          const auto v = ParseDoubles(ft.value());
+          if (v.size() == 6) {
+            auto tp = [&](double a, double b, double c) {
+              return std::array<double, 3>{{fm[0] * a + fm[4] * b + fm[8] * c + fm[12],
+                                            fm[1] * a + fm[5] * b + fm[9] * c + fm[13],
+                                            fm[2] * a + fm[6] * b + fm[10] * c + fm[14]}};
+            };
+            const auto p0 = tp(v[0], v[1], v[2]);
+            const auto p1 = tp(v[3], v[4], v[5]);
+            std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g %.10g %.10g %.10g",
+                          p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]);
+            SetNodeAttr(gc, "fromto", buf);
+          }
+        }
+        // Propagate the frame's childclass to children that don't set one.
+        if (!fcc.empty() && !gc.attribute("childclass") && !gc.attribute("class")) {
+          SetNodeAttr(gc, "childclass", fcc.c_str());
+        }
+        parent.insert_copy_before(gc, child);
+      }
+      parent.remove_child(child);
+    }
+    child = next;
+  }
+}
+
 bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
                         const Options &opts, nlohmann::json *payload,
                         Stats *stats, std::string *err) {
@@ -2294,6 +2389,12 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     if (!eseq.empty()) ctx.eulerseq = eseq;
   }
   ctx.defaults = ParseDefaults(root);
+
+  // Dissolve <frame> grouping transforms now that the angle/eulerseq context is
+  // known, so body/geom/site traversal never has to look inside a <frame>.
+  for (const auto &worldbody : Children(root, "worldbody")) {
+    FlattenFramesIn(worldbody, ctx);
+  }
 
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
