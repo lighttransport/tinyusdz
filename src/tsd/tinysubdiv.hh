@@ -282,6 +282,19 @@ struct StreamOptions {
   // path.)
   uint32_t block_faces = 0;
   uint32_t halo_rings = 0;
+
+  // Block mode only: stream each block's final level recursively instead of
+  // materializing its full level-N refinement, so a block's peak is bounded by
+  // its level-(N-1) state plus one batch. This is an OPT-IN niche trade: it saves
+  // only ~10% peak heap (a block's resident state is dominated by its level-(N-1)
+  // topology, which both paths hold; recursion just avoids the level-N output
+  // arrays, small because the submesh is halo-dominated) and costs ~1.5-2x time
+  // (the per-element streamed final level is slower than bulk's vectorized
+  // refine). Worth it only when you are right at a hard memory ceiling and will
+  // trade time for that last sliver. Output is bit-identical to the non-recursive
+  // block path. Ignored when `want_normals` is set on a smooth scheme (exact
+  // limit normals need the materialized level-N mesh, so that path stays bulk).
+  bool recursive_blocks = false;
 };
 
 // Streaming refinement. `fvar_channels`/`vertex_primvars` may be null when
