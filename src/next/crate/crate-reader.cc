@@ -975,6 +975,26 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 
   const bool compressed = rep.is_compressed();
 
+  // Guard the element allocation BEFORE allocating any std::vector(count). The
+  // per-type cases below allocate count*elem bytes first and only then call
+  // read_raw() (whose has_elements() check would catch an over-long uncompressed
+  // run) — so a malformed count (e.g. 1e9 matrix4d = 128 GB) would OOM before
+  // that check. Bound it here against the file-size-relative cap. For an
+  // uncompressed array the element bytes must physically be present in the file;
+  // for a compressed array the file-relative cap still limits the decoded size.
+  {
+    const uint64_t stride = CrateArrayElemStride(type_id);
+    const uint64_t elem_bytes = stride ? stride : 1;
+    if (!compressed && stride > 0 && !reader_->has_elements(
+            static_cast<size_t>(count), static_cast<size_t>(stride))) {
+      AddWarning("Array element count exceeds available file bytes");
+      return false;
+    }
+    if (!CheckByteAllocation(count * elem_bytes, "Array payload")) {
+      return false;
+    }
+  }
+
   // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place,
   // mirroring ReadFields. dst must hold `count` uint32_t.
   auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
@@ -1907,6 +1927,9 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
+  if (!CheckElementAllocation(num_paths, sizeof(std::string), "Path table")) {
+    return false;
+  }
   paths_.resize(static_cast<size_t>(num_paths));
   if (paths_.size() > 0) {
     paths_[0] = "/";
@@ -2975,6 +2998,26 @@ bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
   if (bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
     AddError(std::string(what) + " size exceeds addressable memory");
     return false;
+  }
+  // Always-on guard: a decoded in-memory buffer cannot plausibly exceed the
+  // input file size by more than the maximum stream compression ratio. This
+  // bounds allocations driven by a malformed/hostile count even when no
+  // explicit max_memory budget is configured (a tiny file can otherwise claim a
+  // multi-GB array/section and exhaust memory). The +slack admits small files
+  // with legitimately larger decoded buffers.
+  if (reader_) {
+    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    constexpr uint64_t kMaxRatio = 256;  // LZ4-ish worst-case headroom
+    constexpr uint64_t kSlack = 64ull * 1024 * 1024;  // 64 MiB
+    constexpr uint64_t kU64Max = (std::numeric_limits<uint64_t>::max)();
+    const uint64_t cap = (file_size > (kU64Max - kSlack) / kMaxRatio)
+                             ? kU64Max
+                             : file_size * kMaxRatio + kSlack;
+    if (bytes > cap) {
+      AddError(std::string(what) +
+               " exceeds file-size-relative allocation cap");
+      return false;
+    }
   }
   if (options_.max_memory && bytes > static_cast<uint64_t>(options_.max_memory)) {
     AddError(std::string(what) + " exceeds max_memory budget");
