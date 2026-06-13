@@ -21,6 +21,7 @@
 #endif
 
 #include <functional>
+#include <iostream>
 #include <map>
 #include <mutex>
 #include <string>
@@ -129,11 +130,18 @@ class MCPServer::Impl {
     }
   }
 
+  // Register all JSON-RPC method handlers (shared by HTTP + stdio).
+  void register_methods();
+
   // Initialize the server with the specified port and host
   bool init(int port, const std::string &host = "localhost");
 
   // Run the server
   bool run();
+
+  // Run a stdio (newline-delimited JSON-RPC) transport loop on stdin/stdout.
+  // Single implicit session; protocol on stdout, logs on stderr.
+  bool run_stdio();
 
   bool stop() {
     // Nothing to do here.
@@ -368,9 +376,7 @@ void MCPServer::Impl::register_method(const std::string& method, MethodHandler h
   method_handlers_[method] = handler;
 }
 
-bool MCPServer::Impl::init(int port, const std::string &host) {
-  (void)host;
-
+void MCPServer::Impl::register_methods() {
   register_method("ping", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {
     (void)sess_id;
     (void)err;
@@ -509,6 +515,11 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     // Return server capabilities
     return nlohmann::json::object();
   });
+}
+
+bool MCPServer::Impl::init(int port, const std::string &host) {
+  (void)host;
+  register_methods();
 
   // CivetWeb options
   std::string port_str = host.empty()
@@ -538,9 +549,34 @@ bool MCPServer::Impl::run() {
   if (!ctx_) {
     return false;
   }
-  
+
   // Server is already running after mg_start
   // This method can be used for additional setup or monitoring
+  return true;
+}
+
+bool MCPServer::Impl::run_stdio() {
+  register_methods();
+
+  // stdio is a single trusted local client driven over stdin/stdout; there is
+  // no header-based session handshake, so do not gate methods on a session id.
+  options_.require_session = false;
+
+  // Protocol: newline-delimited JSON-RPC on stdout. All logging goes to stderr
+  // (DCOUT) so it never corrupts the protocol stream.
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    JsonRpcRequest req = parse_request(line);
+    JsonRpcResponse resp = process_request(req, std::string());
+    if (req.is_notification()) {
+      continue;  // notifications get no response
+    }
+    std::cout << resp.to_json().dump() << "\n";
+    std::cout.flush();
+  }
   return true;
 }
 
@@ -565,6 +601,13 @@ bool MCPServer::run() {
     return false;
   }
   return impl_->run();
+}
+
+bool MCPServer::run_stdio() {
+  if (!impl_) {
+    impl_ = new tydra::mcp::MCPServer::Impl(MCPServerOptions{});
+  }
+  return impl_->run_stdio();
 }
 
 bool MCPServer::stop() {
@@ -602,6 +645,10 @@ bool MCPServer::init(int port, const std::string &host) {
 }
 
 bool MCPServer::run() {
+  return false;
+}
+
+bool MCPServer::run_stdio() {
   return false;
 }
 

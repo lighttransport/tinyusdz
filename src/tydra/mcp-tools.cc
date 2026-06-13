@@ -10,6 +10,7 @@
 #include "mcp-tools-composition.hh"
 #include "mcp-tools-validate.hh"
 #include "mcp-tools-usdz.hh"
+#include "mcp-tools-diff.hh"
 #include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
@@ -1336,8 +1337,89 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     schema["required"] = nlohmann::json::array({"script"});
     add_tool("run_script",
              "Execute JavaScript code against the session stage. "
-             "Use tinyusdz.stage, tinyusdz.prim, tinyusdz.query etc.",
+             "Use tinyusdz.stage, tinyusdz.prim, tinyusdz.query etc. "
+             "When a diff is loaded, tinyusdz.diff.{summary,paths,prim} are also "
+             "available for efficient ad-hoc diff queries.",
              schema);
+  }
+
+  // =========================================================================
+  // Diff tools (value-level, ULP-tolerant USD layer diff)
+  // =========================================================================
+  {
+    nlohmann::json side;
+    side["type"] = "object";
+    side["properties"]["path"] = str_prop("Filesystem path to a USD file");
+    side["properties"]["data"] =
+        str_prop("base64-encoded USD bytes (alternative to path)");
+    side["properties"]["uuid"] =
+        str_prop("UUID of an already-loaded layer (alternative to path)");
+    side["properties"]["name"] = str_prop("Display name (optional)");
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["left"] = side;
+    schema["properties"]["right"] = side;
+    schema["properties"]["ulps"] =
+        int_prop("Float ULP tolerance (default 1; 0 = bitwise-exact)");
+    schema["properties"]["eps"] =
+        num_prop("Absolute float epsilon (optional; OR'd with ULP)");
+    schema["properties"]["compareMetadata"] =
+        bool_prop("Compare attribute/prim/layer metadata (default true)");
+    schema["properties"]["flatten"] = bool_prop(
+        "Flatten (compose sublayers/refs/payload/inherits/variants) before "
+        "diff (default false)");
+    schema["required"] = nlohmann::json::array({"left", "right"});
+    add_tool("diff_open",
+             "Diff two USD layers (each given by path/data/uuid), optionally "
+             "flattened, with ULP-tolerant float compare. Caches the result in "
+             "the session and returns a summary (counts + reason tally). Drill "
+             "down with diff_paths / diff_prim, or query via run_script "
+             "(tinyusdz.diff.*).",
+             schema);
+  }
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    add_tool("diff_summary",
+             "Summary (counts + reason tally) of the cached diff.", schema);
+  }
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["reason"] = str_prop(
+        "Keep only paths whose reasons contain this substring "
+        "(e.g. 'value', 'type', 'meta:kind')");
+    schema["properties"]["path_substr"] =
+        str_prop("Keep only paths containing this substring");
+    schema["properties"]["kind"] = str_prop(
+        "Filter by change-kind substring: added|deleted|modified|prim|prop");
+    schema["properties"]["offset"] = int_prop("Pagination offset (default 0)");
+    schema["properties"]["limit"] =
+        int_prop("Max paths to return (default 200)");
+    add_tool("diff_paths",
+             "Filtered, paginated list of changed paths from the cached diff.",
+             schema);
+  }
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"]["path"] = str_prop("Prim path, e.g. /Root/Foo");
+    schema["required"] = nlohmann::json::array({"path"});
+    add_tool("diff_prim",
+             "Full per-prim diff detail (reasons + old/new values) from the "
+             "cached diff.",
+             schema);
+  }
+  {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    add_tool("diff_text",
+             "Full rendered text diff (token-heavy escape hatch).", schema);
+    add_tool("diff_json",
+             "Full structured JSON diff (token-heavy escape hatch).", schema);
   }
 
   // =========================================================================
@@ -1665,6 +1747,14 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   if (tool_name == "usdz_pack") return USDZPack(ctx, args, result, err);
   if (tool_name == "texture_resize") return TextureResize(ctx, args, result, err);
   if (tool_name == "texture_repack") return TextureRepack(ctx, args, result, err);
+
+  // ---- Diff ----
+  if (tool_name == "diff_open") return DiffOpen(ctx, args, result, err);
+  if (tool_name == "diff_summary") return DiffSummary(ctx, args, result, err);
+  if (tool_name == "diff_paths") return DiffPaths(ctx, args, result, err);
+  if (tool_name == "diff_prim") return DiffPrim(ctx, args, result, err);
+  if (tool_name == "diff_text") return DiffText(ctx, args, result, err);
+  if (tool_name == "diff_json") return DiffJson(ctx, args, result, err);
 
   // ---- Scripting ----
   if (tool_name == "run_script") return RunScript(ctx, args, result, err);

@@ -27,6 +27,9 @@ class MCPServer
   bool init(int port, const std::string &host, const MCPServerOptions &options);
   bool init(int port, const std::string &host = "localhost");
   bool run();
+  // Run a stdio (newline-delimited JSON-RPC) transport loop, blocking until
+  // stdin closes. Does not need init(); registers methods internally.
+  bool run_stdio();
   bool stop();
 
  private:
