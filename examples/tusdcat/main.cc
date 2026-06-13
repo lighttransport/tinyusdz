@@ -1155,8 +1155,27 @@ int main(int argc, char **argv) {
       }
 
       if (comp_features.variantSets) {
+        // AOUSD Core Spec 10.3.2.5: variant selection must be DEFERRED until all
+        // references and payloads are composed. The populated `variantSet`
+        // content frequently lives in a referenced/payloaded sublayer (e.g.
+        // Kitchen_set's Chair.usd has EMPTY variant blocks + a payload chain to
+        // Chair.geom.usd where the real ChairA/ChairB content lives). Resolving
+        // eagerly would consume the strong local selection against the weaker
+        // layer's empty/placeholder variantSet and discard it, so the deep
+        // default selection ends up winning. Mirrors CompositeAllArcs(), which
+        // defers V until after R and P for the same reason. The arc checks do
+        // not descend into unselected variant blocks, so this cannot deadlock on
+        // arcs that only appear once a variant is selected.
+        const bool arcs_settled =
+            (!comp_features.references ||
+             !src_layer.check_unresolved_references()) &&
+            (!comp_features.payload || !src_layer.check_unresolved_payload());
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
+        } else if (!arcs_settled) {
+          std::cout << "# iter " << i
+                    << ": variant resolution deferred (refs/payloads pending).\n";
+          has_unresolved = true;
         } else {
           has_unresolved = true;
 
