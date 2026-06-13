@@ -64,3 +64,6 @@ void urdf_json_mjcf_muscle_export_test(void);
 
 // Full <option>/<flag>/<compiler> -> MjcSceneAPI
 void urdf_json_mjc_scene_options_test(void);
+
+// <keyframe> -> MjcKeyframe
+void urdf_json_mjc_keyframe_export_test(void);

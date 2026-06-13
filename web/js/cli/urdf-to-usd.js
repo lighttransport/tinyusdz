@@ -1230,6 +1230,22 @@ function parseMujocoMuscleActuators(root) {
   return out;
 }
 
+// MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> keyframe payload entries.
+function parseMujocoKeyframes(root) {
+  const kfRoot = firstChild(root, 'keyframe');
+  if (!kfRoot) return [];
+  const out = [];
+  for (const key of childElements(kfRoot, 'key')) {
+    const k = { name: key.attrs.name || `key_${out.length}` };
+    for (const a of ['qpos', 'qvel', 'act', 'ctrl', 'mpos', 'mquat']) {
+      const v = parseNumbers(key.attrs[a], []);
+      if (v.length) k[a] = v;
+    }
+    out.push(k);
+  }
+  return out;
+}
+
 // MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
 function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
 
@@ -1499,6 +1515,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   const sites = collectMujocoSites(worldbody);
   const mjcActuators = parseMujocoMuscleActuators(root);
   const mjcScene = parseMujocoSceneOptions(root);
+  const keyframes = parseMujocoKeyframes(root);
   let visualCount = 0;
   let collisionCount = 0;
 
@@ -1659,6 +1676,7 @@ async function buildMujocoPayload(xmlText, opts, baseDir) {
   if (sites.length) payload.sites = sites;
   if (mjcActuators.length) payload.mjcActuators = mjcActuators;
   if (Object.keys(mjcScene).length) payload.mjcScene = mjcScene;
+  if (keyframes.length) payload.keyframes = keyframes;
   return {
     payload,
     stats: {

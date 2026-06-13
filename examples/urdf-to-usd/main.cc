@@ -77,6 +77,7 @@ struct Stats {
   size_t equalities{0};
   size_t contact_excludes{0};
   size_t sites{0};
+  size_t keyframes{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -1494,6 +1495,27 @@ nlohmann::json BuildMjcSceneJson(const pugi::xml_node &root) {
   return ms;
 }
 
+// MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> JSON keyframe entries
+// consumed by the converter's AddMjcKeyframeFromJson -> MjcKeyframe prim.
+void AddMujocoKeyframesJson(const pugi::xml_node &root, nlohmann::json *keyframes,
+                            Stats *stats) {
+  if (!keyframes) return;
+  const auto kf_root = Child(root, "keyframe");
+  if (!kf_root) return;
+  for (const auto &key : Children(kf_root, "key")) {
+    nlohmann::json k = nlohmann::json::object();
+    k["name"] = Attr(key, "name", "key_" + std::to_string(keyframes->size()));
+    auto arr = [&](const char *attr) {
+      auto v = ParseDoubles(Attr(key, attr));
+      if (!v.empty()) k[attr] = v;
+    };
+    arr("qpos"); arr("qvel"); arr("act"); arr("ctrl"); arr("mpos"); arr("mquat");
+    if (HasAttr(key, "time")) k["time"] = ParseDoubleAttr(key, "time", 0.0);
+    keyframes->push_back(std::move(k));
+    if (stats) stats->keyframes++;
+  }
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
@@ -1662,6 +1684,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   nlohmann::json filtered_pairs = nlohmann::json::array();
   nlohmann::json sites = nlohmann::json::array();
   nlohmann::json mjc_actuators = nlohmann::json::array();
+  nlohmann::json keyframes = nlohmann::json::array();
   for (const auto &body : Children(worldbody, "body")) {
     if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
                          &links, &joints, stats, err)) {
@@ -1673,6 +1696,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   AddMujocoTendonsJson(root, ctx, &tendons, stats);
   AddMujocoEqualityJson(root, &equalities, stats);
   AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
+  AddMujocoKeyframesJson(root, &keyframes, stats);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
@@ -1691,6 +1715,7 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   if (!mjc_actuators.empty()) (*payload)["mjcActuators"] = std::move(mjc_actuators);
   nlohmann::json mjc_scene = BuildMjcSceneJson(root);
   if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
+  if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);

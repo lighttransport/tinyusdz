@@ -1306,6 +1306,33 @@ bool AddMjcActuatorFromJson(
   return true;
 }
 
+// MJCF <keyframe><key> -> MjcKeyframe prim (qpos/qvel/act/ctrl/mpos/mquat).
+bool AddMjcKeyframeFromJson(Prim &keyframes_prim, const nlohmann::json &k_json,
+                           std::set<std::string> &used_names, size_t index,
+                           std::string *err) {
+  MjcKeyframe kf;
+  kf.name = UniqueUSDIdentifier(
+      JsonString(k_json, "name", "key_" + std::to_string(index)), used_names,
+      "key");
+  auto setArr = [&](const char *key, auto &field) {
+    auto v = JsonDoubleArray(k_json, key);
+    if (!v.empty()) field.set_value(v);
+  };
+  setArr("qpos", kf.qpos);
+  setArr("qvel", kf.qvel);
+  setArr("act", kf.act);
+  setArr("ctrl", kf.ctrl);
+  setArr("mpos", kf.mpos);
+  setArr("mquat", kf.mquat);
+
+  std::string add_err;
+  if (!keyframes_prim.add_child(Prim(kf), true, &add_err)) {
+    SetErr(err, "Failed to add MjcKeyframe `" + kf.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
 bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                      const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
                      const std::string &fallback_name, bool collision,
@@ -2024,6 +2051,27 @@ bool ConvertURDFJsonToUSDStage(
     has_mjc_actuators = !mjc_actuators_prim.children().empty();
   }
 
+  // MJCF <keyframe> -> /World/Keyframes/<name> (MjcKeyframe prims).
+  const nlohmann::json &keyframes_json =
+      (root.contains("keyframes") && root["keyframes"].is_array())
+          ? root["keyframes"]
+          : empty_array;
+  Prim keyframes_prim;
+  bool has_keyframes = false;
+  if (!keyframes_json.empty()) {
+    Xform scope;
+    scope.name = "Keyframes";
+    keyframes_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < keyframes_json.size(); i++) {
+      if (!AddMjcKeyframeFromJson(keyframes_prim, keyframes_json[i], used, i,
+                                  err)) {
+        return false;
+      }
+    }
+    has_keyframes = !keyframes_prim.children().empty();
+  }
+
   // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
   Prim equalities_prim;
   bool has_equalities = false;
@@ -2071,6 +2119,11 @@ bool ConvertURDFJsonToUSDStage(
     if (has_mjc_actuators &&
         !world_prim.add_child(std::move(mjc_actuators_prim), true, &add_err)) {
       SetErr(err, "Failed to add MjcActuator scope: " + add_err);
+      return false;
+    }
+    if (has_keyframes &&
+        !world_prim.add_child(std::move(keyframes_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Keyframes scope: " + add_err);
       return false;
     }
   }

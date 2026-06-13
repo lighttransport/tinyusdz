@@ -3220,6 +3220,49 @@ void urdf_json_mjcf_muscle_export_test(void) {
   }
 }
 
+// MJCF <keyframe><key> -> MjcKeyframe prim under /World/Keyframes.
+void urdf_json_mjc_keyframe_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "KeyBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "joints": [],
+  "keyframes": [
+    { "name": "init", "qpos": [0, 0, 0.5, 1, 0, 0, 0], "qvel": [0, 0, 0, 0, 0, 0],
+      "ctrl": [0.1, 0.2] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Keyframes/init", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *kf = (*r)->as<MjcKeyframe>();
+  TEST_CHECK(kf != nullptr);
+  if (!kf) return;
+  auto qpos = kf->qpos.get_value();
+  TEST_CHECK(qpos.has_value());
+  if (qpos.has_value()) {
+    TEST_CHECK(qpos.value().size() == 7);
+    if (qpos.value().size() == 7) {
+      TEST_CHECK(approx_eq(qpos.value()[2], 0.5));
+      TEST_CHECK(approx_eq(qpos.value()[3], 1.0));
+    }
+  }
+  auto ctrl = kf->ctrl.get_value();
+  TEST_CHECK(ctrl.has_value());
+  if (ctrl.has_value() && ctrl.value().size() == 2) {
+    TEST_CHECK(approx_eq(ctrl.value()[0], 0.1));
+    TEST_CHECK(approx_eq(ctrl.value()[1], 0.2));
+  }
+}
+
 // MJCF <option>/<option><flag>/<compiler> full set -> MjcSceneAPI (JSON->USD).
 // The schema + USDC round-trip already existed; this locks the parser->converter
 // path that now populates all the fields (not just timestep).
