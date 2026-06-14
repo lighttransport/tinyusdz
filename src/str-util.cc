@@ -1399,6 +1399,10 @@ std::string base64_decode(std::string const &encoded_string) {
 
 namespace {
 
+// Opt-in OpenUSD-compatible float notation (see SetUSDFloatFormat). Read by the
+// dragonbox formatter below. Plain global so parallel-print workers observe it.
+bool g_usd_float_format = false;
+
 // Helper functions for dragonbox formatting
 template <typename T>
 inline int count_digits(T n) {
@@ -1432,10 +1436,28 @@ char* write_exponent(int exp, char* out) {
   if (exp < 0) {
     *out++ = '-';
     exp = -exp;
-  } else {
+  } else if (!g_usd_float_format) {
+    // OpenUSD omits the '+' on positive exponents; the default emits it.
     *out++ = '+';
   }
   auto uexp = static_cast<uint32_t>(exp);
+
+  if (g_usd_float_format) {
+    // OpenUSD: minimal digits, no zero padding (e.g. `e-7`, `e15`).
+    char tmp[8];
+    int n = 0;
+    if (uexp == 0) {
+      tmp[n++] = '0';
+    }
+    while (uexp) {
+      tmp[n++] = static_cast<char>('0' + (uexp % 10u));
+      uexp /= 10u;
+    }
+    for (int i = n - 1; i >= 0; --i) *out++ = tmp[i];
+    return out;
+  }
+
+  // Default: zero-pad the exponent to (at least) two digits.
   if (uexp >= 100u) {
     const char* top = digits2(uexp / 100);
     if (uexp >= 1000u) *out++ = top[0];
@@ -1548,7 +1570,13 @@ char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_up
   auto ret = jkj::dragonbox::to_decimal(f);
 
   // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
-  const int exp_lower = -4;
+  // OpenUSD-compat (pxr ToShortest/ToShortestSingle): fixed for decimal
+  // exponents in [-6, 15) regardless of float vs double, scientific outside.
+  int exp_lower = -4;
+  if (g_usd_float_format) {
+    exp_lower = -6;
+    exp_upper = 15;
+  }
   char exp_char = 'e';
   char zero_char = '0';
 
@@ -1707,6 +1735,9 @@ char* dtoa_dragonbox_impl(const float f, char* buf) {
 }
 
 } // anonymous namespace
+
+void SetUSDFloatFormat(bool enable) { g_usd_float_format = enable; }
+bool GetUSDFloatFormat() { return g_usd_float_format; }
 
 // Public API for dtos - std::string version
 std::string dtos(float v) {

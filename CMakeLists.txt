@@ -2484,6 +2484,17 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-preserve-order COMMAND feat-preserve-order
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Opt-in OpenUSD-compatible float notation (SetUSDFloatFormat): fixed for
+    # decimal exponents in [-6,15), unpadded/sign-less exponent outside -- matches
+    # usdcat. Default stays tinyusdz's shortest-&-robust notation.
+    add_executable(feat-usd-float-format
+                   tests/feat/usd-float-format/test-usd-float-format.cc)
+    add_sanitizers(feat-usd-float-format)
+    target_link_libraries(feat-usd-float-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usd-float-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usd-float-format COMMAND feat-usd-float-format
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just
