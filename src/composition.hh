@@ -251,6 +251,18 @@ bool ShouldDeferVariantComposition(const Layer &layer,
 void FlattenAppliedSchemas(Layer &layer);
 
 ///
+/// Opt-in: when making an authored RELATIVE asset path absolute on flatten,
+/// lexically NORMALIZE the result (collapse `.`/`..`), matching OpenUSD usdcat
+/// (`.../Meshes/Foo/../../../Materials/x.png` -> `.../Materials/x.png`). Default
+/// false keeps tinyusdz's existing behavior (the joined path retains `..`).
+///
+/// MUST be set BEFORE composition/flatten (it is consumed while resolving asset
+/// attributes, not at print time).
+///
+void SetNormalizeAssetPathOnFlatten(bool enable);
+bool GetNormalizeAssetPathOnFlatten();
+
+///
 /// Return true when any PrimSpec in the Layer contains `over` Prim.
 ///
 /// @param[in] layer Layer

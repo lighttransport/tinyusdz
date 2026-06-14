@@ -878,6 +878,52 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
   }
 }
 
+std::string NormalizePath(const std::string &path) {
+  if (path.empty()) {
+    return path;
+  }
+
+  const bool absolute = (path[0] == '/');
+
+  std::vector<std::string> out;
+  size_t i = 0;
+  const size_t n = path.size();
+  while (i < n) {
+    size_t j = path.find('/', i);
+    if (j == std::string::npos) {
+      j = n;
+    }
+    const std::string seg = path.substr(i, j - i);
+    i = j + 1;
+
+    if (seg.empty() || seg == ".") {
+      // collapse empty (from `//`) and `.`
+    } else if (seg == "..") {
+      if (!out.empty() && out.back() != "..") {
+        out.pop_back();
+      } else if (!absolute) {
+        // keep leading `..` for relative paths that climb above the anchor
+        out.push_back("..");
+      }
+      // `..` at the root of an absolute path is dropped (matches realpath/pxr).
+    } else {
+      out.push_back(seg);
+    }
+  }
+
+  std::string result = absolute ? "/" : std::string();
+  for (size_t k = 0; k < out.size(); k++) {
+    if (k) {
+      result += "/";
+    }
+    result += out[k];
+  }
+  if (result.empty()) {
+    result = absolute ? "/" : ".";
+  }
+  return result;
+}
+
 bool USDFileExists(const std::string &fpath) {
   size_t read_len = 9;  // USD file must be at least 9 bytes or more.
 

@@ -2505,6 +2505,17 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-usd-text-format COMMAND feat-usd-text-format
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Opt-in asset-path normalization on flatten (io::NormalizePath +
+    # SetNormalizeAssetPathOnFlatten): collapse `.`/`..` when anchoring a
+    # referenced asset's relative path, matching usdcat.
+    add_executable(feat-asset-path-normalize
+                   tests/feat/asset-path-normalize/test-asset-path-normalize.cc)
+    add_sanitizers(feat-asset-path-normalize)
+    target_link_libraries(feat-asset-path-normalize PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-asset-path-normalize PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-asset-path-normalize COMMAND feat-asset-path-normalize
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just

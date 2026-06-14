@@ -258,6 +258,12 @@ bool IsURIAssetPath(const std::string &asset_path) {
   return asset_path.find("://") != std::string::npos;
 }
 
+// Opt-in (SetNormalizeAssetPathOnFlatten): lexically collapse `.`/`..` in asset
+// paths made absolute on flatten, matching usdcat. Plain global, read during
+// composition; set before flatten. The public setter/getter live in the
+// tinyusdz namespace (see below); this global is file-local.
+static bool g_normalize_asset_path_on_flatten = false;
+
 std::string ResolveAuthoredAssetPathForFlatten(
     const std::string &asset_path,
     const std::string &current_working_path) {
@@ -266,7 +272,11 @@ std::string ResolveAuthoredAssetPathForFlatten(
     return asset_path;
   }
 
-  return io::JoinPath(current_working_path, asset_path);
+  std::string joined = io::JoinPath(current_working_path, asset_path);
+  if (g_normalize_asset_path_on_flatten) {
+    joined = io::NormalizePath(joined);
+  }
+  return joined;
 }
 
 void ResolveAssetAttributesInPrimSpecTree(
@@ -2915,6 +2925,13 @@ void FlattenAppliedSchemas(Layer &layer) {
   for (auto &kv : layer.primspecs()) {
     FlattenAppliedSchemasRec(kv.second);
   }
+}
+
+void SetNormalizeAssetPathOnFlatten(bool enable) {
+  g_normalize_asset_path_on_flatten = enable;
+}
+bool GetNormalizeAssetPathOnFlatten() {
+  return g_normalize_asset_path_on_flatten;
 }
 
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
