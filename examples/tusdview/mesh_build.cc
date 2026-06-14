@@ -10,6 +10,8 @@
 #include <unordered_map>
 
 #include "light3d/math.h"
+#include "stage.hh"
+#include "usdGeom.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/render-data-shader.hh"
 
@@ -19,6 +21,53 @@ namespace tydra = tinyusdz::tydra;
 using tinyusdz::value::matrix4d;
 
 namespace {
+
+const char* PurposeName(tinyusdz::Purpose purpose) {
+  switch (purpose) {
+    case tinyusdz::Purpose::Render: return "render";
+    case tinyusdz::Purpose::Proxy: return "proxy";
+    case tinyusdz::Purpose::Guide: return "guide";
+    case tinyusdz::Purpose::Default:
+    default: return "default";
+  }
+}
+
+bool AuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
+  if (const auto* mesh = prim.as<tinyusdz::GeomMesh>()) {
+    if (mesh->purpose.authored()) {
+      *out = PurposeName(mesh->purpose.get_value());
+      return true;
+    }
+  }
+  if (const auto* xform = prim.as<tinyusdz::Xform>()) {
+    if (xform->purpose.authored()) {
+      *out = PurposeName(xform->purpose.get_value());
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
+                                    const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim) {
+      std::string purpose;
+      if (AuthoredPurpose(*prim, &purpose)) return purpose;
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) {
+      path = "/";
+    } else {
+      path.resize(slash);
+    }
+  }
+  return "default";
+}
 
 // USD value::matrix4d is row-major (row-vector, pre-multiply: p' = p*M).
 // light3d::Mat4 is column-major (column-vector: p' = M*p). For the same
@@ -602,6 +651,14 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 }
 
 }  // namespace
+
+void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
+  if (!draw) return;
+  for (DrawMeshCPU& mesh : draw->meshes) {
+    mesh.purpose = mesh.absPath.empty() ? "default"
+                                        : ResolveInheritedPurpose(stage, mesh.absPath);
+  }
+}
 
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out, LoadControl* ctrl) {
   *out = DrawScene{};

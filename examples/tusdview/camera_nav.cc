@@ -34,22 +34,45 @@ light3d::Mat4 OrbitCamera::view() const {
 
 light3d::Mat4 OrbitCamera::proj(bool zeroToOneDepth) const {
   const float fovY = fovYDeg_ * kDeg2Rad;
-  // Near/far adapt to the live orbit distance and the scene radius: far grows
-  // with distance (+ scene margin) so zooming out never clips the scene/grid,
-  // and near scales with distance so close geometry stays visible while keeping
-  // a usable depth ratio.
-  const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
-  const float znear = std::max(distance_ * 0.01f, 1e-4f);
-  const float zfar = std::max(distance_ + r * 3.0f, distance_ * 2.0f);
+  const float znear = nearPlane();
+  const float zfar = farPlane();
+  const float projAspect = aspect();
   if (zeroToOneDepth) {
-    return light3d::perspectiveZeroOne(fovY, aspect_, znear, zfar);
+    return light3d::perspectiveZeroOne(fovY, projAspect, znear, zfar);
   }
-  return light3d::perspective(fovY, aspect_, znear, zfar);
+  return light3d::perspective(fovY, projAspect, znear, zfar);
+}
+
+float OrbitCamera::nearPlane() const {
+  if (!autoClip_) return nearClip_;
+  return std::max(distance_ * 0.01f, 1e-4f);
+}
+
+float OrbitCamera::farPlane() const {
+  if (!autoClip_) return farClip_;
+  const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
+  return std::max(distance_ + r * 3.0f, distance_ * 2.0f);
+}
+
+void OrbitCamera::setFovYDeg(float deg) {
+  if (!std::isfinite(deg)) return;
+  fovYDeg_ = std::max(5.0f, std::min(175.0f, deg));
+}
+
+void OrbitCamera::setAspectOverride(float aspectValue) {
+  if (!std::isfinite(aspectValue)) return;
+  aspectOverride_ = std::max(0.05f, std::min(100.0f, aspectValue));
+}
+
+void OrbitCamera::setClipPlanes(float nearPlaneValue, float farPlaneValue) {
+  if (!std::isfinite(nearPlaneValue) || !std::isfinite(farPlaneValue)) return;
+  nearClip_ = std::max(1e-5f, nearPlaneValue);
+  farClip_ = std::max(nearClip_ + 1e-4f, farPlaneValue);
 }
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
   const float k = 0.008f * orbitSensitivity_;
-  yaw_ -= dxPix * k;
+  yaw_ += dxPix * k;
   pitch_ += dyPix * k;
   pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitch_));
 }
@@ -112,7 +135,7 @@ void OrbitCamera::fitToScene(const float aabbMin[3], const float aabbMax[3]) {
 
   target_ = center;
   const float halfV = 0.5f * fovYDeg_ * kDeg2Rad;
-  const float halfH = std::atan(std::tan(halfV) * aspect_);
+  const float halfH = std::atan(std::tan(halfV) * aspect());
   const float halfMin = std::max(1e-3f, std::min(halfV, halfH));
   distance_ = (radius / std::sin(halfMin)) * 1.1f;
   // Near/far are derived dynamically in proj() from distance_ + sceneRadius_.
