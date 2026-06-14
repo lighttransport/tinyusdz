@@ -403,8 +403,15 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     }
 
     // ENTER phase
+    const bool usd_text = pprint::GetUSDTextFormat();
     if (item.need_separator) {
-      ss << pprint::Indent(item.indent) << "\n";
+      // usdcat separates siblings with a PLAIN blank line; tinyusdz's default
+      // indents it.
+      if (usd_text) {
+        ss << "\n";
+      } else {
+        ss << pprint::Indent(item.indent) << "\n";
+      }
     }
 
     ss << pprint::Indent(item.indent) << to_string(item.primspec->specifier()) << " ";
@@ -414,12 +421,20 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
       ss << item.primspec->typeName() << " ";
     }
 
-    ss << "\"" << item.primspec->name() << "\"\n";
+    ss << "\"" << item.primspec->name() << "\"";
 
     if (item.primspec->metas().authored()) {
-      ss << pprint::Indent(item.indent) << "(\n";
+      // usdcat puts the metadata opening paren on the `def` line (`def M "n" (`);
+      // tinyusdz's default puts it on its own line.
+      if (usd_text) {
+        ss << " (\n";
+      } else {
+        ss << "\n" << pprint::Indent(item.indent) << "(\n";
+      }
       ss << print_prim_metas(item.primspec->metas(), item.indent + 1);
       ss << pprint::Indent(item.indent) << ")\n";
+    } else {
+      ss << "\n";
     }
     ss << pprint::Indent(item.indent) << "{\n";
 
@@ -430,6 +445,11 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     // so the default already matches usdcat. Only prim CHILDREN preserve authored
     // order in USD, handled below.
     ss << print_props(item.primspec->props(), item.indent + 1);
+
+    // usdcat blank-lines BETWEEN body sections: a blank line precedes each child
+    // prim, but NOT the property block. So the FIRST child gets a separator only
+    // when the prim authored properties (otherwise it sits directly under `{`).
+    const bool has_props = !item.primspec->props().empty();
 
     // Push EXIT (processed after all children)
     stack.push_back({item.primspec, item.indent, EXIT, false});
@@ -453,12 +473,15 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
         if (!emitted.count(kv.first)) ordered.push_back(kv.second);
       }
       for (size_t i = ordered.size(); i > 0; --i) {
-        bool need_sep = (i < ordered.size());
+        // usdcat: blank line before every child except the first; the first child
+        // also gets one when properties precede it. ordered[0] is i==1.
+        bool need_sep = usd_text ? (i != 1 || has_props) : (i < ordered.size());
         stack.push_back({ordered[i - 1], item.indent + 1, ENTER, need_sep});
       }
     } else {
       for (size_t i = children.size(); i > 0; --i) {
-        bool need_sep = (i < children.size());  // not the first child
+        bool need_sep =
+            usd_text ? (i != 1 || has_props) : (i < children.size());
         stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
       }
     }
