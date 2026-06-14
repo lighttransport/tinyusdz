@@ -423,16 +423,44 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     }
     ss << pprint::Indent(item.indent) << "{\n";
 
+    const bool preserve_order = pprint::GetPreserveAuthoredOrder();
+
+    // Properties stay alphabetical (std::map order): pxr/usdcat ALSO sorts
+    // properties alphabetically (its crate writer sorts the `properties` field),
+    // so the default already matches usdcat. Only prim CHILDREN preserve authored
+    // order in USD, handled below.
     ss << print_props(item.primspec->props(), item.indent + 1);
 
     // Push EXIT (processed after all children)
     stack.push_back({item.primspec, item.indent, EXIT, false});
 
-    // Push children in reverse order
+    // Children: under the opt-in, emit those named in `primChildren` first (in
+    // that order), then any remainder lexicographically; otherwise keep authored
+    // vector order. Pushed in reverse so the first child is processed first.
     const auto& children = item.primspec->children();
-    for (size_t i = children.size(); i > 0; --i) {
-      bool need_sep = (i < children.size());  // not the first child
-      stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
+    if (preserve_order && !item.primspec->metas().primChildren.empty()) {
+      std::map<std::string, const PrimSpec *> byName;  // sorted => lexicographical
+      for (const auto &c : children) byName.emplace(c.name(), &c);
+      std::vector<const PrimSpec *> ordered;
+      std::set<std::string> emitted;
+      for (const auto &tok : item.primspec->metas().primChildren) {
+        const auto it = byName.find(tok.str());
+        if (it != byName.end() && emitted.insert(it->first).second) {
+          ordered.push_back(it->second);
+        }
+      }
+      for (const auto &kv : byName) {
+        if (!emitted.count(kv.first)) ordered.push_back(kv.second);
+      }
+      for (size_t i = ordered.size(); i > 0; --i) {
+        bool need_sep = (i < ordered.size());
+        stack.push_back({ordered[i - 1], item.indent + 1, ENTER, need_sep});
+      }
+    } else {
+      for (size_t i = children.size(); i > 0; --i) {
+        bool need_sep = (i < children.size());  // not the first child
+        stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
+      }
     }
   }
 
