@@ -436,6 +436,23 @@ void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t fl
   props_.add(slot);
 }
 
+bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot) return false;
+  if (slot->value_offset != UINT32_MAX) return false;  // already has a value
+  if (!values_) values_ = std::make_unique<ValueStorage>();
+  uint32_t offset = values_->store(std::move(value));
+  const Value* stored = values_->get(offset);
+  slot->value_offset = offset;
+  // Bind the concrete stored type (and array flag); keep the declared slot type
+  // if the incoming value is Invalid.
+  if (stored && stored->type_id() != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(stored->type_id());
+    if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
+  }
+  return true;
+}
+
 void PrimSpec::reserve_properties(size_t count) {
   props_.reserve(count);
 }

@@ -31,11 +31,11 @@ void expect(const std::string &got, const std::string &want,
 }  // namespace
 
 int main() {
-  // The UeScene case: anchor + `../../../`.
+  // Real UE-exported case: a deep anchor + `../../../` back to a sibling tree.
   expect(io::NormalizePath(
-             "/a/b/Asset/Meshes/Meshes_props/Basement_props/"
-             "../../../Materials/Multiuse/x.png"),
-         "/a/b/Asset/Materials/Multiuse/x.png",
+             "/a/b/Asset/Meshes/MeshGroup/Sub/"
+             "../../../Materials/Group/x.png"),
+         "/a/b/Asset/Materials/Group/x.png",
          "collapse ../../../ against anchor (absolute)");
 
   expect(io::NormalizePath("/a/b/c/../d"), "/a/b/d", "single .. absolute");

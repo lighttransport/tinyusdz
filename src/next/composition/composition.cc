@@ -283,8 +283,13 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   return true;
 }
 
-void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
-                                   double time_offset, double time_scale) {
+void Compositor::CopyLocalOpinions(
+    PrimSpec& target, const PrimSpec& source, double time_offset,
+    double time_scale,
+    const std::function<std::string(const std::string&)>& remap_path) {
+  auto map_target = [&](const Path& p) -> Path {
+    return remap_path ? Path(remap_path(p.str())) : p;
+  };
   // Copy type name if target doesn't have one
   if (target.type_name().empty() && !source.type_name().empty()) {
     target.set_type_name(source.type_name());
@@ -304,9 +309,27 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
   // their declared type names, and connection targets for USDC fidelity.
   PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
-    const PropSlot* tgt_slot = target.property(slot.name_id);
-    if (tgt_slot) continue;  // target opinion wins (incl. time-sampled merge)
     const std::string& pname = name_table.get(slot.name_id);
+    const PropSlot* tgt_slot = target.property(slot.name_id);
+    if (tgt_slot) {
+      // Field-level fill-absent: pxr composes a property's default VALUE and its
+      // CONNECTIONS as INDEPENDENT fields. A stronger source may author only one
+      // of them; fill the other from this weaker source rather than dropping it.
+      // (e.g. a value-only override `metallic = 0` over a base
+      // `metallic = 0 (+ .connect)` must keep the connection; and the mirror.)
+      if (tgt_slot->value_offset == UINT32_MAX) {
+        if (const Value* sv = source.property_value(slot.name_id)) {
+          target.fill_property_value_if_absent(slot.name_id, *sv);
+        }
+      }
+      const std::vector<Path>* tconns = target.connection(pname);
+      if (!tconns || tconns->empty()) {
+        if (const std::vector<Path>* sconns = source.connection(pname)) {
+          for (const auto& c : *sconns) target.add_connection(pname, map_target(c));
+        }
+      }
+      continue;  // target opinion otherwise wins (incl. time-sampled merge)
+    }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
       target.add_property(slot.name_id, *src_val, slot.flags);
@@ -320,7 +343,7 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
       target.set_property_type_name(pname, *tn);
     }
     if (const std::vector<Path>* conns = source.connection(pname)) {
-      for (const auto& c : *conns) target.add_connection(pname, c);
+      for (const auto& c : *conns) target.add_connection(pname, map_target(c));
     }
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
       target.ensure_property_meta(pname) = *pm;
@@ -331,7 +354,7 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
   for (const auto& rel_name : source.relationship_names()) {
     if (target.relationship(rel_name)) continue;
     if (const std::vector<Path>* tgts = source.relationship(rel_name)) {
-      for (const auto& t : *tgts) target.add_relationship(rel_name, t);
+      for (const auto& t : *tgts) target.add_relationship(rel_name, map_target(t));
     }
     if (const PropMeta* pm = source.property_meta(rel_name)) {
       target.ensure_property_meta(rel_name) = *pm;
@@ -446,7 +469,7 @@ void Compositor::CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
         for (const auto& sp : svar.properties) {
           bool have = false;
           for (const auto& tp : tvar->properties) {
-            if (tp.first == sp.first) { have = true; break; }
+            if (tp.name == sp.name) { have = true; break; }
           }
           if (!have) tvar->properties.push_back(sp);
         }
@@ -715,9 +738,9 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     for (const auto& variant : vs.variants) {
       if (variant.name != chosen) continue;
 
-      for (const auto& [prop_name, prop_val] : variant.properties) {
-        if (!prim.property_value(prop_name)) {
-          prim.add_property(prop_name, prop_val);
+      for (const auto& vp : variant.properties) {
+        if (!prim.property_value(vp.name)) {
+          prim.add_property(vp.name, vp.value, vp.flags);
         }
       }
       for (const auto& [rel_name, targets] : variant.relationships) {

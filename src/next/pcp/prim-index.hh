@@ -67,6 +67,19 @@ struct CompositionOptions {
   bool error_when_asset_not_found = false;
   bool detect_instances = true;    // group instanceable prims into prototypes.
 
+  // Flatten instances into a self-contained layer: after BuildStage, each
+  // prototype group's prototype member becomes the shared content HOLDER (kept
+  // in place, made non-instanceable), and every OTHER instance is emptied +
+  // `references = </prototype-member-path>`. So an instance's content is
+  // reachable via an internal reference rather than via native instancing.
+  // (usdcat instead extracts a separate `/Flattened_Prototype_N` over per group;
+  // this is the equivalent de-duplicated flatten using the prototype member as
+  // the holder — its pxr-internal prototype numbering is not reproducible.)
+  // OFF by default (BuildStage keeps native instancing: prototype member holds
+  // the subtree, instances carry instance_prototype meta + emit empty). Enable
+  // for a complete flattened layer (next_usdcat -f).
+  bool flatten_instances = false;
+
   // Phase 7 (S5): apply cross-layer list-op merging when gathering a site's
   // composition arcs. Default ON (AOUSD-conformant): each arc field is composed
   // once across the site's specs weakest->strongest per SdfListOp rules

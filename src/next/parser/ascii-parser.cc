@@ -1212,19 +1212,32 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       }
     } else if (tok.type == TokenType::Custom || tok.type == TokenType::Uniform ||
                tok.type == TokenType::Varying || tok.type == TokenType::Identifier) {
-      lexer_->next();
-      std::string type_name;
-      if (tok.type == TokenType::Identifier) {
-        type_name = tok.value;
-      } else {
-        if (!lexer_->expect(TokenType::Identifier, type_name)) break;
+      // Leading qualifiers (custom / uniform / varying) precede the type. Capture
+      // them so the variant graft preserves the property's flags.
+      uint16_t vflags = 0;
+      while (true) {
+        TokenType tt = lexer_->peek().type;
+        if (tt == TokenType::Custom) {
+          vflags |= PropSlot::kFlagCustom;
+          lexer_->next();
+        } else if (tt == TokenType::Uniform) {
+          vflags |= PropSlot::kFlagUniform;
+          lexer_->next();
+        } else if (tt == TokenType::Varying) {
+          lexer_->next();  // default variability; no flag
+        } else {
+          break;
+        }
       }
+      std::string type_name;
+      if (!lexer_->expect(TokenType::Identifier, type_name)) break;
       bool is_array = false;
       if (Check(TokenType::OpenBracket)) {
         lexer_->next();
         Match(TokenType::CloseBracket);
         is_array = true;
       }
+      if (is_array) vflags |= PropSlot::kFlagArray;
       std::string prop_name;
       if (!ParseNamespacedName(&prop_name, "attribute name")) break;
       SkipPropertyMetadata();
@@ -1242,7 +1255,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         TypeId tid = ParseTypeName(type_name, is_array);
         if (tid == TypeId::Invalid) {
           if (!SkipValueLike()) break;
-          out->properties.emplace_back(prop_name, Value());
+          out->properties.push_back({prop_name, Value(), vflags});
         } else {
           ParseResult result;
           if (is_array) {
@@ -1251,7 +1264,8 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             result = ParseValue(*lexer_, tid);
           }
           if (result.success) {
-            out->properties.emplace_back(prop_name, std::move(result.value));
+            out->properties.push_back(
+                {prop_name, std::move(result.value), vflags});
           }
         }
         SkipPropertyMetadata();

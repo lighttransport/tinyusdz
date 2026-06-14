@@ -2460,9 +2460,9 @@ if(TINYUSDZ_BUILD_TESTS)
     # Variant composition must respect LIVRPS: a host's local `over` for a prim
     # that the selected variant DEFINES must (1) be promoted over->def with the
     # variant's typeName, and (2) keep its directly-authored local attribute
-    # opinion winning over the variant's (Local > Variant). Regresses the
-    # UeScene Mesh_A case (variant geometry vanishing as
-    # `over`, and a deep sourceAsset override flipping Worn->Clean).
+    # opinion winning over the variant's (Local > Variant). Regresses a
+    # UE-exported variant-LOD case (variant geometry vanishing as `over`, and a
+    # deep sourceAsset override flipping one material variant to another).
     add_executable(feat-variant-local-override
                    tests/feat/variant-local-override/test-variant-local-override.cc)
     add_sanitizers(feat-variant-local-override)

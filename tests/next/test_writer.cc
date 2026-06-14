@@ -324,6 +324,33 @@ void test_roundtrip() {
   std::cout << "  roundtrip test passed!\n\n";
 }
 
+// The deprecated `custom` qualifier is OMITTED by default and re-emitted only
+// when USDAWriteOptions::emit_custom is set (e.g. under --openusd-compat).
+void test_custom_qualifier_opt_in() {
+  std::cout << "Testing custom-qualifier opt-in...\n";
+  StageBuilder stage_builder;
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("isAsset", Value(true), PropSlot::kFlagCustom);
+  layer.add_property("plain", Value(1.0));  // non-custom control
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  // Default: no `custom`, but the property itself is still emitted.
+  std::string def = WriteUSDAToString(stage);
+  assert(!contains(def, "custom ") && "custom emitted by default");
+  assert(contains(def, "bool isAsset") && "custom property dropped entirely");
+
+  // Opt-in: the `custom` qualifier is restored (legacy / openusd-compat).
+  USDAWriteOptions opts;
+  opts.emit_custom = true;
+  std::string oc = WriteUSDAToString(stage, opts);
+  assert(contains(oc, "custom bool isAsset") &&
+         "custom qualifier missing under emit_custom");
+  std::cout << "  custom opt-in test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Writer Tests ===\n\n";
 
@@ -333,6 +360,7 @@ int main() {
     test_stage_writer();
     test_time_samples();
     test_roundtrip();
+    test_custom_qualifier_opt_in();
 
     std::cout << "=== All writer tests passed! ===\n";
     return 0;

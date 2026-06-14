@@ -760,12 +760,74 @@ void test_roundtrip_arc_listops() {
   std::cout << "  arc list-op crate roundtrip passed!\n\n";
 }
 
+void test_roundtrip_custom_qualifier() {
+  std::cout << "Testing custom-qualifier crate roundtrip...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Xform");
+  b.add_property("isAsset", Value(true), PropSlot::kFlagCustom);
+  b.add_property("plain", Value(1.0));  // non-custom control
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of custom-qualified attr failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+  assert(p);
+
+  const PropSlot* a = p->property("isAsset");
+  assert(a && a->is_custom() && "custom flag lost across the crate roundtrip");
+  const PropSlot* pl = p->property("plain");
+  assert(pl && !pl->is_custom() && "non-custom attr gained a custom flag");
+  std::cout << "  custom-qualifier crate roundtrip passed!\n\n";
+}
+
+void test_roundtrip_api_schemas() {
+  std::cout << "Testing apiSchemas crate roundtrip...\n";
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Mesh");
+  b.current()->meta().apiSchemas().push_back("MaterialBindingAPI");
+  b.current()->meta().apiSchemas().push_back("PhysicsCollisionAPI");
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of apiSchemas failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+  assert(p);
+
+  // apiSchemas must land in PrimSpecMeta (pxr writes it in the metadata block),
+  // NOT leak back as a phantom `token[] apiSchemas` body property.
+  assert(p->meta().apiSchemas().size() == 2 &&
+         "apiSchemas did not round-trip into PrimSpecMeta");
+  assert(p->meta().apiSchemas()[0] == "MaterialBindingAPI");
+  assert(p->meta().apiSchemas()[1] == "PhysicsCollisionAPI");
+  assert(p->property("apiSchemas") == nullptr &&
+         "apiSchemas leaked as a phantom body property");
+  std::cout << "  apiSchemas crate roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
   try {
     test_half_conversion();
     test_roundtrip_arc_listops();
+    test_roundtrip_custom_qualifier();
+    test_roundtrip_api_schemas();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();

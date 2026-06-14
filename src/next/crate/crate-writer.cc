@@ -878,6 +878,15 @@ private:
         flds.push_back(vf);
       }
 
+      // The legacy `custom` qualifier (pxr stores a bool field); round-trips
+      // through the reader's `custom` branch. Inlined Bool=true.
+      if (slot.flags & PropSlot::kFlagCustom) {
+        CrateField cf;
+        cf.token_index.value = InternToken("custom");
+        cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        flds.push_back(cf);
+      }
+
       if (val) {
         CrateField df;
         df.token_index.value = InternToken("default");
@@ -1794,22 +1803,26 @@ private:
         fields_.push_back(f);
       }
 
-      // apiSchemas
+      // apiSchemas — a flattened (explicit) TokenListOp. The on-disk layout the
+      // reader (DecodeTokenListOp) and pxrUSD expect is
+      //   [u8 ListOpHeader=0x02 explicit][u64 count][u32 token_idx]*count
+      // (the earlier code omitted the header byte, so the count's low byte was
+      // misread as the header -> apiSchemas did not round-trip).
       if (!prim.meta().apiSchemas().empty()) {
-        // Write as array of tokens
-        // Build data: uint64_t count + (uint32_t token_idx) * count
         size_t count = prim.meta().apiSchemas().size();
-        std::vector<uint8_t> api_data(8 + count * 4);
-        std::memcpy(api_data.data(), &count, 8);
+        std::vector<uint8_t> api_data(1 + 8 + count * 4);
+        api_data[0] = 0x02;  // kHasExplicit
+        uint64_t cnt = count;
+        std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
           uint32_t tok_idx = InternToken(prim.meta().apiSchemas()[i]);
-          std::memcpy(api_data.data() + 8 + i * 4, &tok_idx, 4);
+          std::memcpy(api_data.data() + 1 + 8 + i * 4, &tok_idx, 4);
         }
         uint64_t data_idx = InternBlock({TypeId::Token, std::move(api_data)});
 
         CrateField f;
         f.token_index.value = InternToken("apiSchemas");
-        f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, true, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
