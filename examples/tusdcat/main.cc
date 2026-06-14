@@ -528,12 +528,14 @@ int main(int argc, char **argv) {
       has_relative = true;
     } else if ((arg.compare("--preserve-order") == 0) ||
                (arg.compare("--usd-order") == 0)) {
-      // Opt-in: emit prim children/properties in authored (USD/usdcat) order
-      // recovered from the crate's primChildren/properties fields, instead of
-      // the default lexicographical order. Must be set BEFORE loading so the
-      // USDC reader records the order metadata.
+      // Opt-in usdcat-compatible output: (1) emit prim children in authored
+      // (USD) order recovered from the crate's primChildren field instead of the
+      // default lexicographical order, and (2) format floats like OpenUSD
+      // (fixed notation for exponents in [-6,15), unpadded exponent, no '+').
+      // Must be set BEFORE loading so the USDC reader records the order metadata.
       preserve_order = true;
       tinyusdz::pprint::SetPreserveAuthoredOrder(true);
+      tinyusdz::SetUSDFloatFormat(true);
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
