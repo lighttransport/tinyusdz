@@ -586,6 +586,10 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         primspec->typeName() = pf.primTypeName;
         primspec->name() = pf.prim_name;
+        // Carry the authored specifier (def/over/class). Without this the
+        // PrimSpec defaults to `def`, silently promoting an authored `over`
+        // (e.g. a variant's pure-override child) to `def` on flatten.
+        primspec->specifier() = pf.specifier.value();
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
