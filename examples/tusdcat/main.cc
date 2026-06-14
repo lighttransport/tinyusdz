@@ -1234,6 +1234,21 @@ int main(int argc, char **argv) {
     // later arc still contributes).
     tinyusdz::FlattenAppliedSchemas(src_layer);
 
+    // --preserve-order (USDA only): emit the composed LAYER directly so prim
+    // children AND properties keep their authored order (the generic PrimSpec
+    // property map + primChildren/properties metadata honor the order under
+    // pprint::SetPreserveAuthoredOrder). The Stage path serializes typed prims
+    // in schema-fixed attribute order, so it cannot reproduce usdcat's property
+    // order. Captured BEFORE the Layer is moved into LayerToStage below.
+    std::string preserved_layer_usda;
+    const bool emit_preserved_layer =
+        preserve_order && !json_output &&
+        output_format != OutputFormat::USDC &&
+        output_format != OutputFormat::USDZ;  // USDA or Infer(stdout)
+    if (emit_preserved_layer) {
+      preserved_layer_usda = tinyusdz::to_string(src_layer);
+    }
+
     tinyusdz::Stage comp_stage;
     try {
       ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
@@ -1294,6 +1309,10 @@ int main(int argc, char **argv) {
                     << ") and the compact USDC fallback failed: " << c_err << "\n";
           return EXIT_FAILURE;
         }
+      } else if (emit_preserved_layer) {
+        // --preserve-order: emit the composed Layer (authored child/property
+        // order) instead of the Stage.
+        std::cout << preserved_layer_usda << "\n";
       } else {
         // Guard the (potentially huge) USDA serialization against allocation
         // failure: turn an out-of-memory condition into a clean error instead of
@@ -1311,7 +1330,16 @@ int main(int argc, char **argv) {
     }
 
     if (has_output_file) {
-      if (!WriteStageToFile(comp_stage, output_filepath, output_format)) {
+      if (emit_preserved_layer) {
+        // --preserve-order: write the composed Layer (authored order) as USDA.
+        if (!tinyusdz::io::WriteWholeFile(output_filepath,
+                reinterpret_cast<const uint8_t *>(preserved_layer_usda.data()),
+                preserved_layer_usda.size(), &err)) {
+          std::cerr << "Failed to write " << output_filepath << ": " << err << "\n";
+          return EXIT_FAILURE;
+        }
+        std::cout << "Wrote USDA to [" << output_filepath << "]\n";
+      } else if (!WriteStageToFile(comp_stage, output_filepath, output_format)) {
         return EXIT_FAILURE;
       }
     }
