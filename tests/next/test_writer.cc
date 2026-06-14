@@ -351,11 +351,50 @@ void test_custom_qualifier_opt_in() {
   std::cout << "  custom opt-in test passed!\n\n";
 }
 
+// A time-sampled attribute that ALSO has metadata must emit the metadata on a
+// bare declaration line BEFORE the `.timeSamples` block; appending it after the
+// block is invalid USDA ("TimeSampled Attribute cannot have attribute metadata").
+void test_timesamples_metadata_placement() {
+  std::cout << "Testing timeSamples + metadata placement...\n";
+  StageBuilder sb;
+  LayerBuilder& layer = sb.GetLayerBuilder();
+  layer.begin_prim("P", "Xform");
+  PropNameId id = GetPropNameTable().intern("primvars:displayColor");
+  layer.current()->add_property_slot(
+      id, TypeId::Float3, PropSlot::kFlagTimeSampled | PropSlot::kFlagArray);
+  layer.current()->set_property_type_name("primvars:displayColor", "color3f[]");
+  layer.add_time_sample("primvars:displayColor", 0.0,
+                        Value::MakeFloat3Array({1, 0, 0}));
+  layer.add_time_sample("primvars:displayColor", 10.0,
+                        Value::MakeFloat3Array({0, 1, 0}));
+  PropMeta& pm = layer.current()->ensure_property_meta("primvars:displayColor");
+  pm.interpolation = "constant";
+  pm.authored |= PropMeta::kInterpolation;
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = sb.Build();
+  std::string usda = WriteUSDAToString(stage);
+
+  size_t decl = usda.find("color3f[] primvars:displayColor (");
+  size_t interp = usda.find("interpolation = \"constant\"");
+  size_t ts = usda.find("primvars:displayColor.timeSamples = {");
+  assert(decl != std::string::npos && ts != std::string::npos &&
+         "both the declaration and the .timeSamples block must be emitted");
+  assert(decl < ts && interp != std::string::npos && interp < ts &&
+         "metadata must precede the .timeSamples block");
+  // The invalid form appends metadata right after the closing brace.
+  assert(usda.find("}\n                ) ") == std::string::npos);
+  assert(usda.find("} (") == std::string::npos &&
+         "metadata must NOT follow the .timeSamples closing brace");
+  std::cout << "  timeSamples metadata placement test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Writer Tests ===\n\n";
 
   try {
     test_value_printer();
+    test_timesamples_metadata_placement();
     test_layer_printer();
     test_stage_writer();
     test_time_samples();

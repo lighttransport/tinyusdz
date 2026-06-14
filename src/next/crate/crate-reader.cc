@@ -363,18 +363,36 @@ bool CrateReader::Impl::DecodeTimeSamples(
   out->clear();
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
 
-  // Header at rep.payload():
-  //   [i64 fwd1][ValueRep times][i64 fwd2][u64 N][ValueRep vals[N]]
-  // `times` points to a [u64 count][double[count]] block (pxr indirection).
-  if (!reader_->seek(static_cast<size_t>(rep.payload()))) return false;
-  int64_t fwd1 = 0;
+  // pxr crate TimeSamples are DOUBLY recursive (crateFile.cpp RecursiveRead):
+  //   at payload P:        [i64 off_t]                 -> times block at P+off_t
+  //   at P+off_t:          [ValueRep times][i64 off_v] -> values block follows
+  //   at (P+off_t+8)+off_v:[u64 N][ValueRep vals[N]]
+  // Each `[i64 off]` is a relative jump: after reading the 8-byte offset at
+  // position Q, the target is Q+off (i.e. seek_from_current(off-8)).
+  const int64_t P = static_cast<int64_t>(rep.payload());
+  if (P < 0 || !reader_->seek(static_cast<size_t>(P))) return false;
+
+  int64_t off_t = 0;
+  if (!reader_->read(&off_t, 8)) return false;
+  const int64_t times_pos = P + off_t;  // Q=P, target=Q+off_t
+  if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
   uint64_t times_rep_raw = 0;
-  int64_t fwd2 = 0;
+  if (!reader_->read_u64(times_rep_raw)) return false;
+  const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
+
+  Value times_val;
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
+  const std::vector<double>* times = times_val.as_double_array();
+  if (!times) return false;
+
+  // Values block: follow the second recursive offset.
+  if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
+  int64_t off_v = 0;
+  if (!reader_->read(&off_v, 8)) return false;
+  const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
+  if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read(&fwd1, 8) || !reader_->read_u64(times_rep_raw) ||
-      !reader_->read(&fwd2, 8) || !reader_->read_u64(n)) {
-    return false;
-  }
+  if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
 
   // Read all sample ValueReps before decoding (decoding seeks elsewhere).
@@ -385,13 +403,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
     sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
   }
 
-  // Decode the time codes (a double array).
-  Value times_val;
-  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
-  const std::vector<double>* times = times_val.as_double_array();
-  if (!times) return false;
   const size_t count = std::min<size_t>(times->size(), sample_reps.size());
-
   out->reserve(count);
   for (size_t i = 0; i < count; ++i) {
     Value v;  // a ValueBlock sample (no authored value at this time) stays empty
@@ -2632,6 +2644,9 @@ bool CrateReader::Impl::BuildStage() {
         if (ai.uniform) flags |= PropSlot::kFlagUniform;
         if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
+        // The writer gates timeSamples emission on the slot flag, so mark a
+        // time-sampled attribute (the value lives in add_time_sample below).
+        if (!ai.time_samples.empty()) flags |= PropSlot::kFlagTimeSampled;
         const bool is_array =
             ai.type_name.size() >= 2 &&
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
