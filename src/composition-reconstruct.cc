@@ -651,6 +651,12 @@ bool VariantSelectPrimSpec(
           ps.props()[prop.first] = prop.second;
         }
 
+        // New (not-yet-present) children contributed by the selected variant,
+        // in variant-block order. OpenUSD inserts variant-selected children
+        // BEFORE the prim's local children (locals keep authored order), so we
+        // collect them and prepend after the merge loop rather than appending.
+        std::vector<PrimSpec> new_variant_children;
+
         for (const auto &child : vs.children()) {
           // Variant child opinions are authored as primspec opinions, so an
           // `over` child in the selected variant must merge into the existing
@@ -675,11 +681,34 @@ bool VariantSelectPrimSpec(
             }
             *it = std::move(merged);
           } else {
-            ps.children().push_back(child);
+            new_variant_children.push_back(child);
           }
         }
 
-        // - [ ] update `primChildren` and `properties` metadataum if required.
+        // Prepend the new variant children before the local children (OpenUSD
+        // order) and keep the `primChildren` order metadatum in sync so the
+        // writers reproduce the composed order. The variant's own children come
+        // first; existing primChildren (local order) follow.
+        if (!new_variant_children.empty()) {
+          // Capture names BEFORE moving the children into ps.
+          if (!ps.metas().primChildren.empty()) {
+            std::vector<value::token> new_pc;
+            new_pc.reserve(new_variant_children.size() +
+                           ps.metas().primChildren.size());
+            for (const auto &c : new_variant_children) {
+              new_pc.push_back(value::token(c.name()));
+            }
+            for (const auto &t : ps.metas().primChildren) {
+              new_pc.push_back(t);
+            }
+            ps.metas().primChildren = std::move(new_pc);
+          }
+
+          ps.children().insert(
+              ps.children().begin(),
+              std::make_move_iterator(new_variant_children.begin()),
+              std::make_move_iterator(new_variant_children.end()));
+        }
       }
     }
   }
@@ -690,6 +719,33 @@ bool VariantSelectPrimSpec(
   ps.specifier() = Specifier::Over;
   if (!OverridePrimSpec(dst, ps, warn, err)) {
     PUSH_ERROR_AND_RETURN("Failed to override PrimSpec.");
+  }
+
+  // OverridePrimSpec APPENDS children that are new in `ps` (the variant-selected
+  // children) to `dst`, which loses the OpenUSD order (variant children first).
+  // `ps` already holds the composed order, so reorder `dst`'s children to match
+  // it and adopt its maintained `primChildren`. A no-op when nothing reordered.
+  {
+    std::vector<PrimSpec> &dc = dst.children();
+    std::vector<bool> used(dc.size(), false);
+    std::map<std::string, size_t> idx;
+    for (size_t i = 0; i < dc.size(); i++) {
+      idx.emplace(dc[i].name(), i);  // first occurrence wins
+    }
+    std::vector<PrimSpec> reordered;
+    reordered.reserve(dc.size());
+    for (const auto &pc : ps.children()) {
+      auto it = idx.find(pc.name());
+      if (it != idx.end() && !used[it->second]) {
+        used[it->second] = true;
+        reordered.push_back(std::move(dc[it->second]));
+      }
+    }
+    for (size_t i = 0; i < dc.size(); i++) {
+      if (!used[i]) reordered.push_back(std::move(dc[i]));
+    }
+    dc = std::move(reordered);
+    dst.metas().primChildren = ps.metas().primChildren;
   }
 
   dst.metas().variants.reset();
