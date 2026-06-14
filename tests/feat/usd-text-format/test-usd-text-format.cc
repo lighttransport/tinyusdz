@@ -35,6 +35,11 @@ int g_failures = 0;
 int main() {
   const std::string usda =
       "#usda 1.0\n"
+      "(\n"
+      "    metersPerUnit = 0.01\n"
+      "    doc = \"hi\"\n"
+      "    defaultPrim = \"Root\"\n"
+      ")\n"
       "def Xform \"Root\"\n"
       "{\n"
       "    def Mesh \"A\" (\n"
@@ -58,11 +63,14 @@ int main() {
                                 usda.size(), "mem.usda", &layer, &warn, &err),
         "parse USDA");
 
-  // (1) Default layout: paren on its own line.
+  // (1) Default layout: paren on its own line; stage metadata in historical
+  // (non-alphabetical) order (metersPerUnit before defaultPrim).
   pprint::SetUSDTextFormat(false);
   const std::string def_out = to_string(layer);
   CHECK(def_out.find("def Mesh \"A\" (") == std::string::npos,
         "default: paren NOT on the def line");
+  CHECK(def_out.find("metersPerUnit") < def_out.find("defaultPrim"),
+        "default: stage metadata keeps historical order");
 
   // (2) Opt-in usdcat layout.
   pprint::SetUSDTextFormat(true);
@@ -77,6 +85,14 @@ int main() {
   size_t ainfo = usd_out.find("assetInfo");
   CHECK(api != std::string::npos && ainfo != std::string::npos && api < ainfo,
         "opt-in: apiSchemas emitted before assetInfo (usdcat field order)");
+
+  // Stage metadata sorted alphabetically by field token (doc -> "documentation"):
+  // defaultPrim < documentation < metersPerUnit.
+  size_t s_default = usd_out.find("defaultPrim");
+  size_t s_doc = usd_out.find("doc = ");
+  size_t s_mpu = usd_out.find("metersPerUnit");
+  CHECK(s_default < s_doc && s_doc < s_mpu,
+        "opt-in: stage metadata alphabetical (defaultPrim, doc, metersPerUnit)");
 
   // A blank line (\n\n) separates sibling prims A and B. Find B's def and check
   // the two chars before its indentation are a blank line.
