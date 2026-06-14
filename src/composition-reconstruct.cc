@@ -661,9 +661,19 @@ bool VariantSelectPrimSpec(
                                  });
 
           if (it != ps.children().end()) {
-            if (!OverridePrimSpec(*it, child, warn, err)) {
+            // LIVRPS strength: a prim's directly-authored Local opinion (L) is
+            // STRONGER than an opinion from a Variant (V). The existing child
+            // `*it` is the prim's local opinion (e.g. House/Mesh_A's deep
+            // `over .../UnrealShader` that sets sourceAsset=Worn); the variant's
+            // `child` is the weaker base (sourceAsset=Clean). OverridePrimSpec(d,
+            // s) applies `s` as the STRONGER override onto `d`, so merge the
+            // variant `child` as the base and let the local `*it` win -- not the
+            // reverse, which would let the variant override the local opinion.
+            PrimSpec merged = child;  // variant content = weaker base
+            if (!OverridePrimSpec(merged, *it, warn, err)) {
               PUSH_ERROR_AND_RETURN("Failed to override variant child PrimSpec.");
             }
+            *it = std::move(merged);
           } else {
             ps.children().push_back(child);
           }

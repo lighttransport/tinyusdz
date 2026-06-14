@@ -2551,6 +2551,42 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   dst.metas().update_from(src.metas());
   DCOUT("update_from done");
 
+  // AOUSD Core Spec 12.2.1 (specifier): the composed prim is DEFINED if ANY
+  // opinion defines it. OverridePrimSpec merges a weaker `src` under a stronger
+  // `dst`; when `dst` is a pure `over` and `src` is defining (def/class),
+  // promote `dst` to the defining specifier. Without this a variant's
+  // `def Mesh "LOD0"` merged under a locally-authored `over "LOD0"` (a deep
+  // reference override, e.g. House/Mesh_A) stays `over` with no typeName --
+  // the prim's definition silently vanishes on flatten. CombinePrimSpecRec
+  // applies the same rule on the reference/sublayer path; this is its
+  // counterpart for the variant-merge / append-reference path. The promotion
+  // only ever turns `over` into `def`/`class` (never demotes), so it is correct
+  // regardless of which side is the stronger opinion.
+  if (dst.specifier() == Specifier::Over &&
+      (src.specifier() == Specifier::Def ||
+       src.specifier() == Specifier::Class)) {
+    dst.specifier() = src.specifier();
+
+    // The definition -- and therefore the anchor for its relative
+    // reference/payload asset paths -- comes from this defining `src`. A pure
+    // `over` carries the overriding layer's working path; keeping it would
+    // mis-anchor arcs authored in the defining layer (e.g. a variant's
+    // `../../../Materials/...` reference). Adopt the defining layer's
+    // asset-resolution anchor so those arcs resolve correctly.
+    if (!src.get_current_working_path().empty()) {
+      dst.set_asset_resolution_state(src.get_current_working_path(),
+                                     src.get_asset_search_paths());
+    }
+  }
+
+  // AOUSD Core Spec 12.2.2 (typeName): take the typeName from the defining spec
+  // when the stronger `over` has none.
+  if (dst.typeName().empty() && !src.typeName().empty() &&
+      (src.specifier() == Specifier::Def ||
+       src.specifier() == Specifier::Class)) {
+    dst.typeName() = src.typeName();
+  }
+
   // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
   // The `custom` flag is true if ANY opinion in the stack says true.
   for (const auto &prop : src.props()) {
