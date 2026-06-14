@@ -453,7 +453,49 @@ in-process on wasm64 in ~64 s (and validates by re-loading).
 
 ---
 
-## 6. Verification
+## 6. Full-flatten memory (next/pcp engine)
+
+§2's `LargeSceneLoader` bounds memory by **deferring payloads**. The separate
+`next/pcp` engine (`src/next`, exercised by `next_usdcat -f`) does the opposite:
+it produces a **fully composed, self-contained flattened layer** — like
+`usdcat --flatten` — holding every composed PrimSpec, value array, and time
+sample in RAM with no deferral. So peak RSS scales with the *flattened-content*
+size, not the on-disk scene size.
+
+| Scene (full flatten) | next RSS | next time | usdcat RSS | usdcat time | flatten lines |
+|---|---|---|---|---|---|
+| Kitchen_set (Pixar) | 0.13 GB | <1 s | — | — | ~66 k |
+| ALab (Animal Logic) | **0.06 GB** | 0.8 s | 0.13 GB | 1.4 s | ~36 k |
+| Caldera (Activision) | **11.8 GB** | 57 s | 3.1 GB | 76 s | ~3.45 M |
+
+The spread is the point: **ALab flattens lighter than usdcat** (its geometry
+stays behind payloads, so the flatten is structure-only — ~36 k lines), while
+**Caldera is ~3.8× heavier than usdcat**. Caldera's proxy geometry and the dense
+per-frame animation on the breadcrumb/endpoint `Points` (16 k time-sampled
+attributes, hundreds of samples each) compose *into* the flattened layer, and the
+engine currently deep-copies those arrays/time-samples through composition
+(`ComposeInto` → `CopyLocalOpinions`) and again into the output `Layer`.
+
+What drives next/pcp full-flatten peak RSS:
+
+- **No payload deferral in the flatten path** — `CompositionOptions::load_payloads`
+  defaults on; everything reachable is composed. (The bounded loader of §2 is the
+  path to use when geometry must stay on disk.)
+- **Time samples are fully resident** — each sample's value is decoded and stored
+  (Caldera: ~3.4 M of the ~3.45 M flatten lines are time-sample data).
+- **Deep copies, not sharing** — composed values are copied per source and per
+  prim; there is no copy-on-write/array aliasing between the parsed layers, the
+  composed prims, and the emitted `Layer` yet.
+
+Levers (not yet applied to this path): CoW/aliased value arrays (the `refator-next`
+roadmap landed CoW arrays for the lazy-ValueRef path — see `doc/refator-next.md` —
+but the flatten composer still deep-copies), time-sample value deduplication
+(many breadcrumb attributes share identical sample arrays), and streaming the
+writer so the full flattened `Layer` need not coexist with its serialized text.
+For scenes with this much resident animation, prefer the §2 bounded loader (or
+usdcat) over `next_usdcat -f` until those land.
+
+## 7. Verification
 
 ```
 cd build && cmake --build . -j16
