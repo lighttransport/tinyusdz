@@ -300,58 +300,77 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
     return;
   }
 
-  WriteIndent(os, depth, opts.indent);
-
-  // Write qualifiers
-  if (slot.is_custom()) {
-    os << "custom ";
-  }
-  if (slot.is_uniform()) {
-    os << "uniform ";
-  }
-
-  // Write type name. Prefer the declared name (round-trips string[] vs token[],
+  // Type name. Prefer the declared name (round-trips string[] vs token[],
   // role types, and value-less / connection-only attrs whose stored value type
   // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
   TypeId type_id = static_cast<TypeId>(slot.value_type);
+  std::string type_name;
   if (const std::string* decl = spec.property_type_name(name)) {
-    os << *decl;
+    type_name = *decl;
   } else {
     const char* tn = GetTypeName(type_id);
-    os << (tn ? tn : "token");
-    if (slot.is_array()) os << "[]";
+    type_name = tn ? tn : "token";
+    if (slot.is_array()) type_name += "[]";
   }
 
-  os << " " << name;
+  // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
+  // line and the `.connect` line (USDA repeats the type on each statement).
+  auto emit_decl = [&]() {
+    WriteIndent(os, depth, opts.indent);
+    // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    os << type_name << " " << name;
+  };
 
-  // Check for connection
-  if (slot.is_connection()) {
-    const Value* value = spec.property_value(slot.name_id);
-    if (value) {
-      const std::string* path = value->as_string();
-      if (path) {
-        os << ".connect = <" << *path << ">";
-      }
-    }
-    WritePropMeta(os, spec, slot.name_id, depth, opts);
-    os << "\n";
-    return;
-  }
-
-  // Write value
   const Value* value = spec.property_value(slot.name_id);
-  if (value && !value->is_empty()) {
+  const bool has_value = value && !value->is_empty();
+  // Connection targets live in the prim's connection map, NOT in the property
+  // value (a connection-only attr has no authored default). A property may also
+  // carry BOTH a value and a connection -> emit them as separate statements.
+  const std::vector<Path>* conns = spec.connection(name);
+  const bool has_conn = conns && !conns->empty();
+
+  // Value statement (authored default).
+  if (has_value) {
+    emit_decl();
     PrintOptions print_opts;
     print_opts.float_precision = opts.float_precision;
     print_opts.double_precision = opts.double_precision;
     print_opts.max_array_elements = opts.max_elements_per_line;
     print_opts.compact = opts.compact;
-
     os << " = " << PrintValue(*value, print_opts);
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
   }
 
-  WritePropMeta(os, spec, slot.name_id, depth, opts);
-  os << "\n";
+  // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
+  if (has_conn) {
+    emit_decl();
+    os << ".connect = ";
+    if (conns->size() == 1) {
+      os << "<" << (*conns)[0].str() << ">";
+    } else {
+      os << "[";
+      for (size_t i = 0; i < conns->size(); ++i) {
+        if (i) os << ", ";
+        os << "<" << (*conns)[i].str() << ">";
+      }
+      os << "]";
+    }
+    // Property metadata attaches once; emit on the value line if present, else
+    // here on the connection line.
+    if (!has_value) WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
+  }
+
+  // Declared-only attribute (no value, no connection): emit the bare
+  // declaration so typed-only / namespace-declared props round-trip.
+  if (!has_value && !has_conn) {
+    emit_decl();
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
+  }
 }
 
 // Write relationship
@@ -459,7 +478,14 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);
-          os << "@" << a << "@,\n";
+          // `a` is a composed arc string: "@asset@</prim>" (external),
+          // "</prim>" (internal reference, no asset), or a bare asset path.
+          // Emit external/internal forms as-is; only a bare asset path is
+          // wrapped in @...@.
+          if (!a.empty() && (a[0] == '@' || a[0] == '<'))
+            os << a << ",\n";
+          else
+            os << "@" << a << "@,\n";
         }
         WriteIndent(os, md, opts.indent);
         os << "]\n";

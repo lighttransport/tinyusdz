@@ -37,12 +37,15 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
 
 int main(int argc, char **argv) {
   bool flatten = false;
+  bool openusd_compat = false;
   const char *filename = nullptr;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
+    } else if (std::strcmp(argv[i], "--openusd-compat") == 0) {
+      openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
     } else {
       filename = argv[i];
     }
@@ -67,6 +70,7 @@ int main(int argc, char **argv) {
       }
     }
     pcp::CompositionOptions opts;
+    opts.flatten_instances = true;  // self-contained flatten (like usdcat)
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);
@@ -82,7 +86,9 @@ int main(int argc, char **argv) {
   if (!err.empty()) emit_lines(err, "WARN : ");
 
   if (flatten) {
-    std::string usda = WriteUSDAToString(stage);
+    USDAWriteOptions wopts;
+    wopts.emit_custom = openusd_compat;
+    std::string usda = WriteUSDAToString(stage, wopts);
     std::fwrite(usda.data(), 1, usda.size(), stdout);
   } else {
     std::printf("loaded: %zu prims\n", stage.GetStats().prim_count);

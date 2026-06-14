@@ -220,10 +220,6 @@ struct Cache::Impl {
   static constexpr uint32_t kInvalidStack =
       (std::numeric_limits<uint32_t>::max)();
 
-  static std::string DirOf(const std::string &path) {
-    return AssetResolver::GetDirectory(path);
-  }
-
   uint32_t InternLayerStack(std::shared_ptr<Layer> layer,
                             const std::string &identifier, std::string *warn,
                             std::string *err) {
@@ -258,7 +254,10 @@ struct Cache::Impl {
     }
     st.layers.push_back(layer);
     st.layer_identifiers.push_back(identifier);
-    const std::string anchor = DirOf(identifier);
+    // Anchor = the referencing layer's FILE path; AssetResolver::Resolve takes
+    // its directory internally. (Passing a pre-stripped dir double-strips and
+    // breaks deep relative paths like `../../Materials/x.usd`.)
+    const std::string &anchor = identifier;
     for (const std::string &sub : layer->meta().subLayers) {
       const std::string sub_id = resolver->ResolvePath(sub, anchor);
       if (sub_id.empty()) {
@@ -449,9 +448,19 @@ struct Cache::Impl {
     return false;
   }
 
-  // Structural key: composed type + each arc's (kind, layer-id, site, variant).
-  // The root node (i==0) is excluded because its site is the instance's own
-  // path, which differs between instances of the same asset.
+  // Structural key: composed type + each MASTER-DEFINING arc's (kind, layer-id,
+  // site, variant). Must be instance-INDEPENDENT so two instances of the same
+  // asset share a prototype (pxr PcpInstanceKey).
+  //
+  // The root node (i==0) is excluded -- its site is the instance's own path.
+  // ANCESTRAL / positional sources are also excluded: a deeply-referenced
+  // instance accumulates sources whose `site` is the instance's path WITHIN an
+  // ancestor asset (e.g. `/root/set/.../leaf_0069` vs `_0070`), carrying the
+  // instance-LOCAL opinions (transform/placement) that live outside the
+  // instancing boundary. Those have `site != map.source_prefix` (the arc has a
+  // positional offset beyond where it was introduced). A master-defining arc
+  // targets the prim directly, so `site == map.source_prefix` (asset-relative,
+  // identical across instances). Keep only the latter.
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const {
     std::string key;
     for (const Src &s : srcs) {
@@ -467,6 +476,7 @@ struct Cache::Impl {
     }
     for (size_t i = 1; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
+      if (s.site != s.map.source_prefix) continue;  // ancestral/positional
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;
@@ -575,19 +585,48 @@ struct Cache::Impl {
   // `kind` is the arc type; `out` collects ordinary opinions and `spec_out`
   // collects specialize-derived opinions (globally weakest). A specialize arc
   // (and its entire subtree) routes into `spec_out`.
+  // Unwrap a synthetic variant-content layer identifier
+  // ("variant:<hostfile>:<site>:<vset>:<vname>", see the vid built in ExpandArcs)
+  // back to the host layer's real FILE path, so a relative reference/payload
+  // authored inside a variant anchors to the file that contains the variant.
+  // Recurses for nested variants; a real file path passes through unchanged.
+  static std::string RealAnchorOf(std::string id) {
+    while (id.compare(0, 8, "variant:") == 0) {
+      std::string s = id.substr(8);
+      bool ok = true;
+      for (int k = 0; k < 3; ++k) {  // strip trailing :site:vset:vname
+        auto p = s.rfind(':');
+        if (p == std::string::npos) { ok = false; break; }
+        s.resize(p);
+      }
+      if (!ok) break;
+      id.swap(s);
+    }
+    return id;
+  }
+
   void ProcessArc(const Src &src, const CompositionArc &arc, ArcType kind,
                   const ExpansionFrame *frame, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const std::vector<uint32_t> &chain, std::string *warn,
-                  std::string *err) {
+                  std::string *err, const std::string &authoring_layer_id = "") {
     uint32_t arc_stack_idx;
     std::string arc_site;
     if (arc.is_internal || arc.asset_path.empty()) {
       arc_stack_idx = src.stack_idx;
       arc_site = arc.prim_path.empty() ? src.site : arc.prim_path;
     } else {
-      const std::string anchor = DirOf(layer_stacks[src.stack_idx].identifier);
+      // Anchor = the FILE path of the LAYER that authored the arc (Resolve
+      // derives its dir). A reference/payload authored in a SUBLAYER resolves
+      // relative to that sublayer, not the layer-stack's root — fall back to the
+      // stack identifier only when the authoring layer is unknown.
+      // COPY, not a reference: GetOrLoad/InternLayerStack below can grow
+      // layer_stacks and invalidate a reference into it.
+      const std::string anchor = RealAnchorOf(
+          !authoring_layer_id.empty()
+              ? authoring_layer_id
+              : layer_stacks[src.stack_idx].identifier);
       std::shared_ptr<Layer> arc_layer =
           reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
       if (!arc_layer) {
@@ -716,34 +755,46 @@ struct Cache::Impl {
   // list in strong-first order (prepended-of-strongest ... appended-of-strongest).
   // A spec that does not author the field is a no-op; a bare/explicit list
   // replaces the weaker accumulation; prepend/append/delete edit it.
-  std::vector<std::string> MergeArcField(const std::vector<SpecRef> &specs,
-                                         ArcSel f) const {
-    std::vector<std::string> result;
+  // Returns (arc-string, authoring-layer-id) pairs so a relative reference/
+  // payload asset path can be anchored to the layer that authored it (not the
+  // layer-stack root). The layer-id rides along through the list-op merge.
+  std::vector<std::pair<std::string, std::string>> MergeArcField(
+      const std::vector<SpecRef> &specs, ArcSel f) const {
+    std::vector<std::pair<std::string, std::string>> result;
     for (auto it = specs.rbegin(); it != specs.rend(); ++it) {  // weakest first
       const PrimSpecMeta &m = it->spec->meta();
+      const std::string &lid = it->layer_id;
       const ArcEdit *e = SelectArcEdit(m, f);
       const std::vector<std::string> &inl = SelectInlineArc(m, f);
       if ((!e || !e->authored) && inl.empty()) {
         continue;  // field not authored on this spec
       }
+      auto tag = [&](const std::vector<std::string> &v) {
+        std::vector<std::pair<std::string, std::string>> out;
+        out.reserve(v.size());
+        for (const std::string &s : v) out.emplace_back(s, lid);
+        return out;
+      };
       if (!e || !e->authored || e->is_explicit) {
-        result = inl;  // bare/explicit replaces weaker layers
+        result = tag(inl);  // bare/explicit replaces weaker layers
         continue;
       }
       auto removeAll = [&](const std::vector<std::string> &rm) {
         for (const std::string &x : rm) {
-          result.erase(std::remove(result.begin(), result.end(), x),
+          result.erase(std::remove_if(result.begin(), result.end(),
+                                      [&](const auto &p) { return p.first == x; }),
                        result.end());
         }
       };
       removeAll(e->deleted);
       removeAll(e->prepended);  // dedup before re-adding
       removeAll(e->appended);
-      std::vector<std::string> merged;
+      std::vector<std::pair<std::string, std::string>> merged;
       merged.reserve(e->prepended.size() + result.size() + e->appended.size());
-      merged.insert(merged.end(), e->prepended.begin(), e->prepended.end());
+      auto pre = tag(e->prepended), app = tag(e->appended);
+      merged.insert(merged.end(), pre.begin(), pre.end());
       merged.insert(merged.end(), result.begin(), result.end());
-      merged.insert(merged.end(), e->appended.begin(), e->appended.end());
+      merged.insert(merged.end(), app.begin(), app.end());
       result.swap(merged);
     }
     return result;
@@ -773,9 +824,9 @@ struct Cache::Impl {
     const bool merge = options.apply_list_ops;
 
     if (merge) {
-      for (const std::string &s : MergeArcField(specs, ArcSel::Inherits)) {
-        ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit, frame,
-                   out, spec_out, sels, chain, warn, err);
+      for (const auto &s : MergeArcField(specs, ArcSel::Inherits)) {
+        ProcessArc(src, Compositor::ParseReference(s.first), ArcType::Inherit,
+                   frame, out, spec_out, sels, chain, warn, err, s.second);
       }
     }
 
@@ -857,10 +908,10 @@ struct Cache::Impl {
 
       if (merge) continue;  // merged refs/payloads/specializes handled below
 
-      // References.
+      // References. Anchor relative asset paths to THIS spec's authoring layer.
       for (const std::string &ref_str : spec->meta().references) {
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                   frame, out, spec_out, sels, chain, warn, err);
+                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
       }
 
       // Payloads (deferrable, weaker than references).
@@ -874,41 +925,41 @@ struct Cache::Impl {
           }
           deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                     chain, warn, err);
+                     chain, warn, err, sr.layer_id);
         }
       }
 
       // Specializes (globally weakest; routed into spec_out by ProcessArc).
       for (const std::string &s : spec->meta().specializes) {
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                   frame, out, spec_out, sels, chain, warn, err);
+                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
       }
     }
 
     if (merge) {
       // Cross-layer-merged references / payloads / specializes, processed once
       // in LIVRPS order (all inherits already emitted above, before variants).
-      for (const std::string &s : MergeArcField(specs, ArcSel::References)) {
-        ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference, frame,
-                   out, spec_out, sels, chain, warn, err);
+      for (const auto &s : MergeArcField(specs, ArcSel::References)) {
+        ProcessArc(src, Compositor::ParseReference(s.first), ArcType::Reference,
+                   frame, out, spec_out, sels, chain, warn, err, s.second);
       }
-      std::vector<std::string> mpay = MergeArcField(specs, ArcSel::Payloads);
+      auto mpay = MergeArcField(specs, ArcSel::Payloads);
       if (!mpay.empty()) {
         const std::string root_prim_path = src.map.Apply(src.site);
-        for (const std::string &pl_str : mpay) {
-          CompositionArc arc = Compositor::ParsePayload(pl_str);
+        for (const auto &pl : mpay) {
+          CompositionArc arc = Compositor::ParsePayload(pl.first);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
             deferred_payload_prims.insert(root_prim_path);
             continue;
           }
           deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                     chain, warn, err);
+                     chain, warn, err, pl.second);
         }
       }
-      for (const std::string &s : MergeArcField(specs, ArcSel::Specializes)) {
-        ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                   frame, out, spec_out, sels, chain, warn, err);
+      for (const auto &s : MergeArcField(specs, ArcSel::Specializes)) {
+        ProcessArc(src, Compositor::ParseReference(s.first), ArcType::Specialize,
+                   frame, out, spec_out, sels, chain, warn, err, s.second);
       }
     }
   }
@@ -1018,7 +1069,15 @@ struct Cache::Impl {
       // prims are not yet modeled (VariantData has no child storage).
       if (s.variant) {
         for (const auto &pr : s.variant->properties) {
-          if (!out->property(pr.first)) out->add_property(pr.first, pr.second);
+          const PropSlot *ts = out->property(pr.name);
+          if (!ts) {
+            out->add_property(pr.name, pr.value, pr.flags);
+          } else if (ts->value_offset == UINT32_MAX) {
+            // Field-level fill-absent (see CopyLocalOpinions): a variant default
+            // fills a stronger connection-only / declared-only slot.
+            out->fill_property_value_if_absent(
+                GetPropNameTable().intern(pr.name), pr.value);
+          }
         }
         for (const auto &rp : s.variant->relationships) {
           if (out->relationship(rp.first)) continue;
@@ -1040,18 +1099,27 @@ struct Cache::Impl {
           specifier_set = true;
         }
 
-        Compositor::CopyLocalOpinions(*out, *spec, s.offset.offset,
-                                      s.offset.scale);
-
-        for (const std::string &rn : spec->relationship_names()) {
-          if (out->relationship(rn)) continue;
-          const std::vector<Path> *tgts = spec->relationship(rn);
-          if (!tgts) continue;
-          for (const Path &t : *tgts) {
-            out->add_relationship(rn, Path(s.map.Apply(t.str())));
-          }
-        }
+        // Remap relationship/connection TARGET paths from this arc's
+        // (site-local) namespace into the composed namespace, so a referenced
+        // asset's internal targets (e.g. material:binding, .connect) resolve to
+        // their flattened paths. Identity for local opinions.
+        Compositor::CopyLocalOpinions(
+            *out, *spec, s.offset.offset, s.offset.scale,
+            [&s](const std::string &p) { return s.map.Apply(p); });
       }
+    }
+
+    // Flatten drops variant SELECTION metadata: the selected variant's content
+    // has already been grafted inline (ExpandArcs / variant Src), so pxr's
+    // flattened output carries no `variants = {...}` or variantSets (usdcat emits
+    // zero). Strip the vestigial selection that rode along via CopyLocalOpinions.
+    // Use a const view for the emptiness checks so we never allocate the meta ext
+    // just to clear an absent field.
+    {
+      const PrimSpecMeta &cm = out->meta();
+      if (!cm.variantSelection.empty()) out->meta().variantSelection.clear();
+      if (!cm.variantSets().empty()) out->meta().variantSets().clear();
+      if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
 
     // Pass 2 (weak->strong): compose child-name ORDER. Iterate sources and their
@@ -1305,10 +1373,59 @@ struct Cache::Impl {
                  warn, err);
     }
 
+    if (options.flatten_instances) FlattenInstances(out.get());
+
     out->finalize();
     out->meta() = root->meta();
     stage->SetRootLayer(std::move(*out));
     return true;
+  }
+
+  // Convert native instancing to a self-contained flatten: each prototype group
+  // keeps its prototype member as the shared content holder (made
+  // non-instanceable), and every other member is emptied + internally references
+  // that holder. See CompositionOptions::flatten_instances.
+  void FlattenInstances(Layer *out) {
+    if (instances_by_prototype.empty()) return;
+
+    std::unordered_map<std::string, uint32_t> idx_by_path;
+    for (uint32_t i = 0; i < out->prim_count(); ++i)
+      if (const PrimSpec *p = out->prim(i)) idx_by_path[p->path().str()] = i;
+
+    for (const auto &grp : instances_by_prototype) {
+      const std::string &proto_path = grp.first;
+      const std::vector<std::string> &members = grp.second;
+      // A lone instanceable prim with no peers still composed its own subtree as
+      // the prototype; leaving it untouched is already a valid flatten.
+      bool has_instance = false;
+      for (const std::string &m : members)
+        if (m != proto_path) { has_instance = true; break; }
+      if (!has_instance) continue;
+
+      auto pit = idx_by_path.find(proto_path);
+      if (pit == idx_by_path.end()) continue;
+      // Holder: keep the composed subtree, drop the instanceable flag so it is a
+      // plain reference target (an instanceable holder would hide its content).
+      if (PrimSpec *proto = out->prim(pit->second)) {
+        proto->meta().instanceable = false;
+        proto->meta().instance_prototype().clear();
+      }
+
+      const std::string ref = "<" + proto_path + ">";
+      for (const std::string &m : members) {
+        if (m == proto_path) continue;
+        auto mit = idx_by_path.find(m);
+        if (mit == idx_by_path.end()) continue;
+        PrimSpec *mp = out->prim(mit->second);
+        if (!mp) continue;
+        mp->meta().instanceable = true;
+        mp->meta().instance_prototype().clear();
+        // Avoid duplicate refs if FlattenInstances somehow runs twice.
+        auto &refs = mp->meta().references;
+        if (std::find(refs.begin(), refs.end(), ref) == refs.end())
+          refs.push_back(ref);
+      }
+    }
   }
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -1399,10 +1516,15 @@ struct Cache::Impl {
     if (nt > 1) {
       // (a) Prefetch root-level reference/payload assets to warm the shared
       // registry (reduces redundant double-parses across workers).
-      const std::string anchor = DirOf(layer_stacks[0].identifier);
       std::vector<std::pair<std::string, std::string>> assets;  // (asset, anchor)
       std::set<std::string> seen;
-      for (const auto &lp : layer_stacks[0].layers) {
+      // Anchor each layer's arcs to THAT layer's identifier (a sublayer's
+      // relative reference resolves against the sublayer, not the stack root).
+      const auto &ids = layer_stacks[0].layer_identifiers;
+      for (size_t li = 0; li < layer_stacks[0].layers.size(); ++li) {
+        const auto &lp = layer_stacks[0].layers[li];
+        const std::string &anchor =
+            li < ids.size() ? ids[li] : layer_stacks[0].identifier;
         for (const PrimSpec &ps : lp->prims()) {
           for (const std::string &r : ps.meta().references) {
             CompositionArc a = Compositor::ParseReference(r);

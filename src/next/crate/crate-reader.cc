@@ -2246,6 +2246,7 @@ bool CrateReader::Impl::BuildStage() {
     bool is_connection = false;
     std::vector<std::string> connection_targets;
     bool uniform = false;
+    bool custom = false;
     std::vector<std::pair<double, Value>> time_samples;
     // Per-property metadata (round-tripped via attribute spec fields).
     std::string interpolation;
@@ -2339,6 +2340,13 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        }
+      } else if (f.first == "custom") {
+        // The legacy `custom` qualifier (pxr stores a bool field). Preserved on
+        // read; the USDA writer only re-emits it under emit_custom/--openusd-compat.
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const bool* b = v.as_bool()) ai.custom = *b;
         }
       } else if (f.first == "interpolation") {
         Value v;
@@ -2472,6 +2480,15 @@ bool CrateReader::Impl::BuildStage() {
       // regular properties. (Guarded by ps; if current() were null we simply
       // skip them rather than crash.)
       if (ps) {
+        if (field.first == "apiSchemas") {
+          // Applied API schemas. pxrUSD stores this as a TokenListOp; by the
+          // time it reaches this field loop UnpackValue has flattened it to its
+          // effective token list. Route it to PrimSpecMeta (the composed/flatten
+          // form pxr writes as `apiSchemas = [...]` in the metadata block);
+          // otherwise it leaks as a phantom `token[] apiSchemas` body property.
+          append_token_list(field.second, ps->meta().apiSchemas(), "apiSchemas");
+          continue;
+        }
         if (field.first == "references") {
           append_token_list(field.second, ps->meta().references, "references");
           continue;
@@ -2579,6 +2596,28 @@ bool CrateReader::Impl::BuildStage() {
       // stray property. (Uniformity is not yet round-tripped — see review note.)
       if (field.first == "variability") continue;
 
+      // Reserved Sdf children-key ordering fields. pxrUSD stores prim/property
+      // order in these (SdfChildrenKeys); USDA flatten output does NOT emit them
+      // as body attributes -- order is implicit in the authored child/property
+      // sequence. Composition derives child order from child_indices() directly
+      // (see cache.cc ComposeInto), so consume these so they do not leak as
+      // phantom `token[] primChildren`/`properties` attributes.
+      if (field.first == "primChildren" || field.first == "properties" ||
+          field.first == "propertyChildren" ||
+          field.first == "variantChildren" ||
+          field.first == "variantSetChildren") {
+        continue;
+      }
+
+      // `variantSetNames` (the declared list of variant-set names) likewise must
+      // not leak as a phantom `string[] variantSetNames` body property. The
+      // compositor drives variants from the bracketed-holder specs + the
+      // variantSelection (not from this list), and flatten output drops variant
+      // metadata entirely (see cache.cc ComposeInto), so consume it.
+      if (field.first == "variantSetNames") {
+        continue;
+      }
+
       uint16_t flags = 0;
       builder.add_property(field.first, std::move(field.second), flags);
     }
@@ -2591,6 +2630,7 @@ bool CrateReader::Impl::BuildStage() {
         if (ps->property(ai.name)) continue;  // inline opinion wins
         uint16_t flags = 0;
         if (ai.uniform) flags |= PropSlot::kFlagUniform;
+        if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
         const bool is_array =
             ai.type_name.size() >= 2 &&

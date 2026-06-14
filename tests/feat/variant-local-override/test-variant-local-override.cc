@@ -3,9 +3,9 @@
 //
 // Regression: composing a variant whose selected block DEFINES a prim that the
 // host also carries a directly-authored local `over` for. Two related bugs, both
-// observed on the UE-exported UeScene scene (Mesh_A etc.,
-// where a referenced mesh's geometry lives inside a `variantSet "LOD"` and the
-// root layer deep-overrides the composed material path):
+// observed on a UE-exported scene (a referenced mesh's geometry lives inside a
+// `variantSet "LOD"` and the root layer deep-overrides the composed material
+// path):
 //
 //  1) Specifier promotion. The variant's `def Mesh "LOD0"` must merge UNDER the
 //     host's local `over "LOD0"` and promote it to `def Mesh` (AOUSD 12.2.1/2:

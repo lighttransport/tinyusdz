@@ -128,15 +128,20 @@ public:
   static VariantSelection ParseVariantSelection(const std::string& str);
 
   /// Merge local opinions from `source` into `target` (strongest-wins,
-  /// fill-absent): type name, properties, time samples, and metadata. Public so
-  /// the pcp value-resolution path can reuse it. Does NOT copy relationships or
-  /// children (callers handle those, incl. namespace remapping).
+  /// fill-absent): type name, properties (incl. connection targets),
+  /// relationships, time samples, and metadata. Public so the pcp
+  /// value-resolution path can reuse it.
   /// Time-sample times are remapped by the layer offset
   /// `t -> time_offset + time_scale*t` (identity by default), baking a
   /// composition arc's layer offset into the flattened result.
-  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
-                                double time_offset = 0.0,
-                                double time_scale = 1.0);
+  /// `remap_path`, if set, rewrites relationship/connection TARGET paths from
+  /// the source (arc-local) namespace into the composed namespace — pass the
+  /// arc's NamespaceMapping::Apply so a referenced asset's internal targets
+  /// resolve to their flattened paths. Default (empty) leaves targets verbatim.
+  static void CopyLocalOpinions(
+      PrimSpec& target, const PrimSpec& source, double time_offset = 0.0,
+      double time_scale = 1.0,
+      const std::function<std::string(const std::string&)>& remap_path = {});
 
   // ============================================================
   // Layer cache
