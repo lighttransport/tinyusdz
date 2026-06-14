@@ -195,6 +195,13 @@ std::string GetFileExtension(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
 bool IsAbsPath(const std::string &filepath);
 
+// Collapse `.` and `..` segments in a '/'-separated path (lexical
+// normalization; no filesystem access). Preserves a leading '/' (absolute) and,
+// for relative paths, any leading `..` that cannot be collapsed. `..` at the
+// root of an absolute path is dropped. Intended for forward-slash USD asset
+// paths; callers should skip URI/scheme paths.
+std::string NormalizePath(const std::string &path);
+
 bool IsUDIMPath(const std::string &filepath);
 
 

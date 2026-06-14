@@ -543,6 +543,7 @@ int main(int argc, char **argv) {
       tinyusdz::pprint::SetPreserveAuthoredOrder(true);
       tinyusdz::SetUSDFloatFormat(true);
       tinyusdz::pprint::SetUSDTextFormat(true);
+      tinyusdz::SetNormalizeAssetPathOnFlatten(true);
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
