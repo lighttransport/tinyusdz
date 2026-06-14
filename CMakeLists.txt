@@ -2443,6 +2443,20 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-usdc-specifier COMMAND feat-usdc-specifier
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # On --flatten a composed prim's `apiSchemas` list-op must bake to EXPLICIT
+    # form (pxrUSD usdcat drops the `prepend`/`append` qualifier). Without it the
+    # whole-scene diff vs usdcat on UE-exported assets showed ~2800 spurious
+    # `meta:apiSchemas` modifications (every referenced mesh prepends
+    # MaterialBindingAPI). Verifies FlattenAppliedSchemas() bakes + recurses, and
+    # that a plain load (no flatten) preserves the authored `prepend`.
+    add_executable(feat-flatten-apischemas
+                   tests/feat/flatten-apischemas/test-flatten-apischemas.cc)
+    add_sanitizers(feat-flatten-apischemas)
+    target_link_libraries(feat-flatten-apischemas PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-flatten-apischemas PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-flatten-apischemas COMMAND feat-flatten-apischemas
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just

@@ -1218,6 +1218,13 @@ int main(int argc, char **argv) {
 
     }
 
+    // Flatten finalize: the layer is now fully composed, so bake every
+    // apiSchemas list-op to explicit form -- matches `usdcat --flatten`, which
+    // never emits a `prepend`/`append` qualifier on a composed prim. Must run
+    // after the iteration loop (a mid-flatten reset would shadow apiSchemas a
+    // later arc still contributes).
+    tinyusdz::FlattenAppliedSchemas(src_layer);
+
     tinyusdz::Stage comp_stage;
     try {
       ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
