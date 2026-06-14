@@ -22,8 +22,15 @@ class OrbitCamera {
   light3d::Vec3 eye() const;
   light3d::Mat4 view() const;
   light3d::Mat4 proj(bool zeroToOneDepth) const;
+  float nearPlane() const;
+  float farPlane() const;
 
-  void setAspect(float aspect) { aspect_ = aspect > 1e-4f ? aspect : 1.0f; }
+  void setAspect(float aspect) { viewportAspect_ = aspect > 1e-4f ? aspect : 1.0f; }
+  void setFovYDeg(float deg);
+  void setAspectOverrideEnabled(bool on) { aspectOverrideEnabled_ = on; }
+  void setAspectOverride(float aspect);
+  void setAutoClip(bool on) { autoClip_ = on; }
+  void setClipPlanes(float nearPlane, float farPlane);
 
   // World up axis: 1 = +Y (default), 2 = +Z. Used so Z-up USD scenes display
   // upright and navigation/grid orient correctly.
@@ -60,6 +67,13 @@ class OrbitCamera {
   float yaw() const { return yaw_; }
   float pitch() const { return pitch_; }
   float distance() const { return distance_; }
+  float fovYDeg() const { return fovYDeg_; }
+  float aspect() const { return aspectOverrideEnabled_ ? aspectOverride_ : viewportAspect_; }
+  bool aspectOverrideEnabled() const { return aspectOverrideEnabled_; }
+  float aspectOverride() const { return aspectOverride_; }
+  bool autoClip() const { return autoClip_; }
+  float manualNearPlane() const { return nearClip_; }
+  float manualFarPlane() const { return farClip_; }
   float orbitSensitivity() const { return orbitSensitivity_; }
   float panSensitivity() const { return panSensitivity_; }
   float dollySensitivity() const { return dollySensitivity_; }
@@ -76,9 +90,14 @@ class OrbitCamera {
   float pitch_{0.35f};    // radians, elevation, clamped to (-89deg, 89deg)
   float distance_{5.0f};
   int upAxis_{1};         // 1 = +Y, 2 = +Z
-  float fovYDeg_{45.0f};
-  float aspect_{1.3333f};
+  float fovYDeg_{60.0f};
+  float viewportAspect_{1.3333f};
+  bool aspectOverrideEnabled_{false};
+  float aspectOverride_{1.0f};
   float sceneRadius_{1.0f};  // full-scene radius; drives dynamic near/far
+  bool autoClip_{true};
+  float nearClip_{0.01f};
+  float farClip_{10000.0f};
   float orbitSensitivity_{1.0f};
   float panSensitivity_{1.0f};
   float dollySensitivity_{1.0f};

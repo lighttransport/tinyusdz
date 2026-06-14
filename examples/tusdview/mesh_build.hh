@@ -7,7 +7,16 @@
 #include "tydra/render-data.hh"
 #include "tydra/render-data-converter.hh"
 
+namespace tinyusdz {
+class Stage;
+}
+
 namespace tusdview {
+
+// Fill DrawMeshCPU::purpose from the source Stage prims. This is intentionally
+// separate from RenderScene conversion because RenderMesh does not carry USD
+// purpose today.
+void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw);
 
 // Convert `rs` (already triangulated + single-indexed by the converter) into a
 // renderable DrawScene: interleaved vertices, per-material submeshes, world

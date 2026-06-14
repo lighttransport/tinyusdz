@@ -384,6 +384,21 @@ bool VulkanRenderer::createSwapchain(std::string* err) {
   }
   swapFormat_ = fmt.format;
 
+  uint32_t pmCount = 0;
+  vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pmCount, nullptr);
+  std::vector<VkPresentModeKHR> presentModes(pmCount);
+  if (pmCount > 0) {
+    vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pmCount,
+                                              presentModes.data());
+  }
+  VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+  for (VkPresentModeKHR mode : presentModes) {
+    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+      presentMode = mode;
+      break;
+    }
+  }
+
   VkExtent2D extent = caps.currentExtent;
   if (extent.width == 0xFFFFFFFFu) {
     int w = 0, h = 0;
@@ -412,7 +427,7 @@ bool VulkanRenderer::createSwapchain(std::string* err) {
   ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
   ci.preTransform = caps.currentTransform;
   ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-  ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+  ci.presentMode = presentMode;
   ci.clipped = VK_TRUE;
   VK_CHECK(vkCreateSwapchainKHR(device_, &ci, nullptr, &swapchain_),
            "vkCreateSwapchainKHR");
@@ -448,7 +463,7 @@ bool VulkanRenderer::createHeadlessSwapchain(std::string* err) {
   swapFormat_ = VK_FORMAT_R8G8B8A8_UNORM;
   swapExtent_ = {static_cast<uint32_t>(headlessW_ > 0 ? headlessW_ : 1),
                  static_cast<uint32_t>(headlessH_ > 0 ? headlessH_ : 1)};
-  const size_t count = kFramesInFlight;
+  const size_t count = 2;  // ImGui_ImplVulkan requires MinImageCount >= 2.
   swapImages_.resize(count);
   swapMem_.resize(count, VK_NULL_HANDLE);
   swapViews_.resize(count);

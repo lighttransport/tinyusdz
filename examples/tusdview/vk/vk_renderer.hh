@@ -55,7 +55,10 @@ class VulkanRenderer final : public Renderer {
   void shutdown() override;
 
  private:
-  static constexpr int kFramesInFlight = 2;
+  // Keep the CPU from queueing a second frame ahead of input. The swapchain can
+  // still own multiple images, but tusdview records/submits at most one frame at
+  // a time for lower interactive latency.
+  static constexpr int kFramesInFlight = 1;
 
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
