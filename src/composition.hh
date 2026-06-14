@@ -232,6 +232,25 @@ bool ShouldDeferVariantComposition(const Layer &layer,
                                    bool payload_enabled = true);
 
 ///
+/// Bake every PrimSpec's `apiSchemas` applied-schema list-op into EXPLICIT form
+/// (recursively, in place). Call this ONCE after a Layer has been fully
+/// flattened (all arcs composed): pxrUSD's `usdcat --flatten` emits a composed
+/// prim's apiSchemas as `apiSchemas = [...]` (explicit), never the authored
+/// `prepend`/`append` qualifier -- the qualifier is meaningful only against
+/// weaker opinions, which no longer exist in a flattened layer (keeping it would
+/// wrongly re-prepend if the flattened layer were itself re-referenced). Resolve
+/// the authored ops (prepend/append/add/delete/explicit) into one explicit op
+/// carrying the composed name set. No-op for prims with no authored apiSchemas
+/// or authored as `apiSchemas = None`.
+///
+/// MUST run only at the END of flatten, not between composition iterations: a
+/// mid-flatten reset-to-explicit would shadow apiSchemas a later arc still adds.
+///
+/// @param[in,out] layer Fully-flattened Layer to finalize.
+///
+void FlattenAppliedSchemas(Layer &layer);
+
+///
 /// Return true when any PrimSpec in the Layer contains `over` Prim.
 ///
 /// @param[in] layer Layer
