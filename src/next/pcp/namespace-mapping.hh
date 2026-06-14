@@ -43,10 +43,14 @@ struct NamespaceMapping {
   std::string Apply(const std::string &path) const {
     if (is_identity()) return path;
     if (path == source_prefix) return target_prefix;
-    // Match "source_prefix/..." boundary so "/RefFoo" is not matched by "/Ref".
+    // Match a namespace boundary after source_prefix so "/RefFoo" is not matched
+    // by "/Ref". The next char is '/' for a descendant prim/property
+    // ("/Ref/Child.attr") or '.' for a property on the source root prim itself
+    // ("/Ref.attr" -> a connection/relationship targeting the referenced prim's
+    // own property).
     if (path.size() > source_prefix.size() &&
         path.compare(0, source_prefix.size(), source_prefix) == 0 &&
-        path[source_prefix.size()] == '/') {
+        (path[source_prefix.size()] == '/' || path[source_prefix.size()] == '.')) {
       return target_prefix + path.substr(source_prefix.size());
     }
     return path;  // Outside this arc's namespace; unchanged.

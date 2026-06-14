@@ -44,6 +44,7 @@ set(TINYUSDZ_NEXT_SOURCES
     reader/usdz-reader.cc
 
     # Writers
+    writer/dtoa.cc
     writer/value-printer.cc
     writer/prim-printer.cc
     writer/usda-writer.cc
@@ -184,8 +185,9 @@ add_library(tinyusdz_next STATIC
     ${LZ4_SOURCES}
 )
 
-# Set C++14 standard
-target_compile_features(tinyusdz_next PUBLIC cxx_std_14)
+# C++17 (matches the parent project). The USDA writer formats floats via the
+# vendored dragonbox dtoa (writer/dtoa.cc).
+target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
 
 # Optional threading: enables the parallel layer-prefetch path in next::pcp.
 option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)

@@ -116,6 +116,9 @@ public:
   /// Find property by name ID (O(1) for sorted index, O(log n) otherwise)
   const PropSlot* find(PropNameId name_id) const;
 
+  /// Mutable variant of find() -- used to fill a value into an existing slot.
+  PropSlot* find_mutable(PropNameId name_id);
+
   /// Find property by name string (O(log n) after table lookup)
   const PropSlot* find(const std::string& name) const;
 

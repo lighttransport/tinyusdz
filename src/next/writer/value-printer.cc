@@ -5,6 +5,7 @@
 
 #include "value-printer.hh"
 #include "../types/type-id.hh"
+#include "dtoa.hh"
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -14,36 +15,13 @@ namespace next {
 
 namespace {
 
-// Format a float value
-std::string FormatFloat(float v, int precision) {
-  if (std::isnan(v)) return "nan";
-  if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
-
-  std::ostringstream ss;
-  ss << std::setprecision(precision) << v;
-  std::string s = ss.str();
-
-  // Ensure there's a decimal point for clarity
-  if (s.find('.') == std::string::npos && s.find('e') == std::string::npos) {
-    s += ".0";
-  }
-  return s;
-}
-
-// Format a double value
-std::string FormatDouble(double v, int precision) {
-  if (std::isnan(v)) return "nan";
-  if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
-
-  std::ostringstream ss;
-  ss << std::setprecision(precision) << v;
-  std::string s = ss.str();
-
-  if (s.find('.') == std::string::npos && s.find('e') == std::string::npos) {
-    s += ".0";
-  }
-  return s;
-}
+// Format a float/double as the SHORTEST decimal string that round-trips back to
+// the exact value, via tinyusdz's dragonbox `dtos` (the same formatter used in
+// src/str-util.cc), emitting OpenUSD/usdcat notation. The `precision` argument
+// is unused -- USD round-trip fidelity requires shortest digits, not a fixed
+// count that silently drops precision.
+std::string FormatFloat(float v, int /*precision*/) { return dtos(v); }
+std::string FormatDouble(double v, int /*precision*/) { return dtos(v); }
 
 // Escape a string for USDA output
 std::string EscapeString(const std::string& s) {

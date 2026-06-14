@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <functional>
 
 namespace tinyusdz {
 namespace next {
@@ -74,13 +75,26 @@ struct VariantData;
 struct VariantSetData;
 class Layer;  // for VariantData::content (variant subtree)
 
+/// One attribute authored inside a variant option. Carries the property flags
+/// (custom / uniform / connection / array) so the variant graft preserves them
+/// — a bare name->Value pair would silently drop `custom`/`uniform`.
+struct VariantProperty {
+  std::string name;
+  Value value;
+  uint16_t flags = 0;
+
+  VariantProperty() = default;
+  VariantProperty(std::string n, Value v, uint16_t f = 0)
+      : name(std::move(n)), value(std::move(v)), flags(f) {}
+};
+
 /// Variant data - properties and prims inside a single variant option
 struct VariantData {
   std::string name;
   bool active = true;
   bool hidden = false;
   std::string doc;
-  std::vector<std::pair<std::string, Value>> properties;
+  std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<VariantSetData> variantSets;
@@ -558,6 +572,14 @@ public:
   /// Add a property slot without value (for time-sampled properties)
   void add_property_slot(PropNameId name_id, TypeId type_id, uint16_t flags);
 
+  /// Field-level fill-absent: if a slot for `name_id` exists but carries no
+  /// authored default value (a connection-only / declared-only attribute), set
+  /// its default to `value`. No-op if the slot is absent or already has a value.
+  /// pxr composes an attribute's default value and its connections as
+  /// independent fields, so a weaker source's default fills a stronger
+  /// connection-only opinion. Returns true if a value was filled.
+  bool fill_property_value_if_absent(PropNameId name_id, Value value);
+
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
 
@@ -659,6 +681,7 @@ public:
 
   /// Add child index
   void add_child_index(uint32_t index);
+
 
   /// Get child count
   size_t child_count() const { return child_indices_.size(); }

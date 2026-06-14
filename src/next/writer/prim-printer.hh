@@ -32,6 +32,9 @@ struct PrimPrintOptions {
 
   /// Maximum properties per prim (0 = unlimited)
   size_t max_properties = 0;
+
+  /// Emit the deprecated `custom` qualifier (OFF by default; see USDAWriteOptions).
+  bool emit_custom = false;
 };
 
 /// Print a single UsdPrim to string

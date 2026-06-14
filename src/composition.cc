@@ -2566,7 +2566,7 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   // `dst`; when `dst` is a pure `over` and `src` is defining (def/class),
   // promote `dst` to the defining specifier. Without this a variant's
   // `def Mesh "LOD0"` merged under a locally-authored `over "LOD0"` (a deep
-  // reference override, e.g. House/Mesh_A) stays `over` with no typeName --
+  // reference override, seen on UE-exported assets) stays `over` with no typeName --
   // the prim's definition silently vanishes on flatten. CombinePrimSpecRec
   // applies the same rule on the reference/sublayer path; this is its
   // counterpart for the variant-merge / append-reference path. The promotion
