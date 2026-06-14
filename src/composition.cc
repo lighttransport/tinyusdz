@@ -2513,6 +2513,14 @@ static Property ComposeStrongerPropertyOverWeaker(const Property &stronger,
   Attribute &composed_attr = composed.attribute();
   const Attribute &weaker_attr = weaker.get_attribute();
 
+  // Attribute metadata composes per field: the stronger opinion wins where it
+  // authored a field, the weaker fills the rest. e.g. a variant (or override)
+  // that supplies a new VALUE but not metadata must keep the weaker layer's
+  // `customData` (Pixar Kitchen_set: a PlateB variant overrides displayColor's
+  // value but inherits the asset's `customData = { Maya = { generated = 1 } }`).
+  composed_attr.metas().merge_from(weaker_attr.metas(),
+                                   /*override_existing=*/false);
+
   if (!composed_attr.has_connections() && weaker_attr.has_connections()) {
     composed_attr.set_connections(weaker_attr.connections());
   }
