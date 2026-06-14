@@ -481,6 +481,7 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  bool preserve_order{false};
   std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
@@ -525,6 +526,14 @@ int main(int argc, char **argv) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
+    } else if ((arg.compare("--preserve-order") == 0) ||
+               (arg.compare("--usd-order") == 0)) {
+      // Opt-in: emit prim children/properties in authored (USD/usdcat) order
+      // recovered from the crate's primChildren/properties fields, instead of
+      // the default lexicographical order. Must be set BEFORE loading so the
+      // USDC reader records the order metadata.
+      preserve_order = true;
+      tinyusdz::pprint::SetPreserveAuthoredOrder(true);
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {

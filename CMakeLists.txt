@@ -2471,6 +2471,19 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-local-override COMMAND feat-variant-local-override
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Opt-in authored-order emission: a flattened crate must be able to reproduce
+    # the authored prim-child order (from the crate `primChildren` field), like
+    # usdcat, instead of the default lexicographical order. Verifies default
+    # output stays lexicographical and pprint::SetPreserveAuthoredOrder(true)
+    # yields authored order through a USDA->USDC->flatten round-trip.
+    add_executable(feat-preserve-order
+                   tests/feat/preserve-order/test-preserve-order.cc)
+    add_sanitizers(feat-preserve-order)
+    target_link_libraries(feat-preserve-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-preserve-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-preserve-order COMMAND feat-preserve-order
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just

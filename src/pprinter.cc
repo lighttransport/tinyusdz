@@ -312,7 +312,30 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
         ss << "\n";
       }
 
-      if (item.prim->metas().primChildren.size() == item.prim->children().size()) {
+      if (pprint::GetPreserveAuthoredOrder() &&
+          !item.prim->metas().primChildren.empty()) {
+        // Opt-in authored order (matches usdcat): emit children named in the
+        // `primChildren` field first, in that order, then any remaining children
+        // lexicographically. Unlike the exact-size path below this tolerates a
+        // `primChildren` that no longer matches the child set (e.g. composition
+        // added children not recorded in the field) -- exactly OpenUSD's rule of
+        // "listed order, else lexicographical".
+        std::map<std::string, const Prim *> byName;  // sorted => lexicographical
+        for (size_t i = 0; i < item.prim->children().size(); i++) {
+          byName.emplace(item.prim->children()[i].element_name(),
+                         &item.prim->children()[i]);
+        }
+        std::set<std::string> emitted;
+        for (const auto &nameTok : item.prim->metas().primChildren) {
+          const auto it = byName.find(nameTok.str());
+          if (it != byName.end() && emitted.insert(it->first).second) {
+            ordered_children.push_back(it->second);
+          }
+        }
+        for (const auto &kv : byName) {
+          if (!emitted.count(kv.first)) ordered_children.push_back(kv.second);
+        }
+      } else if (item.prim->metas().primChildren.size() == item.prim->children().size()) {
         std::map<std::string, const Prim *> primNameTable;
         for (size_t i = 0; i < item.prim->children().size(); i++) {
           primNameTable.emplace(item.prim->children()[i].element_name(),
