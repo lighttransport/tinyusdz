@@ -63,13 +63,10 @@ matrix4d MakeLocal(const float t[3], const quatf& r, const float s[3]) {
   return m;
 }
 
-}  // namespace
-
-// Per-skeleton skinning matrices skinMat[j] = inverse(bind[j]) * posedWorld[j]
-// (row-vector: a point in bind space maps to posed world). Joints without an
-// animation channel keep their rest-pose local transform.
-bool BuildSkinningMatrices(const tydra::RenderScene& render, int skelId,
-                           double t, std::vector<matrix4d>* skinOut) {
+bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
+                                  double t,
+                                  std::vector<matrix4d>* worldOut) {
+  if (!worldOut) return false;
   if (skelId < 0 || skelId >= static_cast<int>(render.skeletons.size())) {
     return false;
   }
@@ -146,10 +143,37 @@ bool BuildSkinningMatrices(const tydra::RenderScene& render, int skelId,
     if (animated[j]) local[j] = MakeLocal(&T[j * 3], R[j], &S[j * 3]);
   }
 
-  std::vector<matrix4d> world;
-  if (!tydra::ConcatJointTransforms(skel.parent_joint_indices, local, &world)) {
+  if (!tydra::ConcatJointTransforms(skel.parent_joint_indices, local, worldOut)) {
     return false;
   }
+  return worldOut->size() == nj;
+}
+
+}  // namespace
+
+bool BuildSkeletonJointWorlds(const tydra::RenderScene& render, int skelId,
+                              double timecode,
+                              std::vector<matrix4d>* worldOut) {
+  return BuildSkeletonJointWorldsImpl(render, skelId, timecode, worldOut);
+}
+
+// Per-skeleton skinning matrices skinMat[j] = inverse(bind[j]) * posedWorld[j]
+// (row-vector: a point in bind space maps to posed world). Joints without an
+// animation channel keep their rest-pose local transform.
+bool BuildSkinningMatrices(const tydra::RenderScene& render, int skelId,
+                           double t, std::vector<matrix4d>* skinOut) {
+  if (!skinOut) return false;
+  if (skelId < 0 || skelId >= static_cast<int>(render.skeletons.size())) {
+    return false;
+  }
+  const tydra::SkelHierarchy& skel = render.skeletons[static_cast<size_t>(skelId)];
+  const size_t nj = skel.num_joints();
+  if (nj == 0 || skel.bind_transforms.size() != nj) {
+    return false;
+  }
+
+  std::vector<matrix4d> world;
+  if (!BuildSkeletonJointWorldsImpl(render, skelId, t, &world)) return false;
 
   skinOut->resize(nj);
   for (size_t j = 0; j < nj; ++j) {

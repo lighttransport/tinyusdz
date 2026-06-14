@@ -9,6 +9,7 @@
 #include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
+#include "skinning.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -1277,6 +1278,10 @@ void Gui::handleNavigation() {
   const bool alt = io.KeyAlt;
 
   if (ImGui::IsKeyPressed(ImGuiKey_F1)) showNavHelp_ = !showNavHelp_;
+  if (!io.WantTextInput && timeline_.hasAnimation &&
+      ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    wantTogglePlay_ = true;
+  }
 
   if (navMode_ == 0 && vpHovered_ && alt) {
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = 1;
@@ -1852,10 +1857,8 @@ void Gui::buildHelpers() {
   }
 
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
-  // bind_transforms hold each joint's bind pose in the skeleton's own (model)
-  // space (translation at m[3][0..2], row-major). The skinned mesh's world
-  // matrix carries the scene placement + up-axis conversion, so we transform the
-  // joint positions by it to align the bones with the rendered mesh.
+  // Draw the same animated joint hierarchy used for skinning, then apply the
+  // skinned mesh world matrix to match the rendered character placement.
   if (showSkeleton_ && loaded_ && loaded_->ok) {
     // World matrix of the mesh skinned by skeleton `si` (identity if none).
     auto skelWorld = [&](size_t si) -> light3d::Mat4 {
@@ -1882,16 +1885,22 @@ void Gui::buildHelpers() {
         continue;  // empty or malformed topology; skip
       }
       const light3d::Mat4 W = skelWorld(si);
+      std::vector<tinyusdz::value::matrix4d> jointWorlds;
+      if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
+                                    timeline_.current, &jointWorlds) ||
+          jointWorlds.size() != nj) {
+        jointWorlds = skel.bind_transforms;
+      }
 
       // World-space joint positions + this skeleton's own AABB.
       std::vector<light3d::Vec3> jp(nj);
       light3d::Vec3 mn{1e30f, 1e30f, 1e30f};
       light3d::Vec3 mx{-1e30f, -1e30f, -1e30f};
       for (size_t i = 0; i < nj; ++i) {
-        const auto& m = skel.bind_transforms[i].m;  // double m[4][4], row-major
         jp[i] = light3d::transformPoint(
-            W, {static_cast<float>(m[3][0]), static_cast<float>(m[3][1]),
-                static_cast<float>(m[3][2])});
+            W, {static_cast<float>(jointWorlds[i].m[3][0]),
+                static_cast<float>(jointWorlds[i].m[3][1]),
+                static_cast<float>(jointWorlds[i].m[3][2])});
         mn.x = std::min(mn.x, jp[i].x); mn.y = std::min(mn.y, jp[i].y);
         mn.z = std::min(mn.z, jp[i].z);
         mx.x = std::max(mx.x, jp[i].x); mx.y = std::max(mx.y, jp[i].y);
