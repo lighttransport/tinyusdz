@@ -32,6 +32,13 @@ bool BuildSkinningMatrices(const tinyusdz::tydra::RenderScene& render,
                            int skelId, double timecode,
                            std::vector<tinyusdz::value::matrix4d>* skinOut);
 
+// Per-skeleton animated joint world matrices in skeleton/model space. This is
+// the same posed hierarchy used to build skinning matrices, but without the
+// inverse-bind step, for drawing joint overlays/debug bones.
+bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
+                              int skelId, double timecode,
+                              std::vector<tinyusdz::value::matrix4d>* worldOut);
+
 // Pack the per-frame GPU bone texture from `render` into `frame`, using the
 // per-mesh skin layout stored in `draw`. Also updates skinned mesh and scene
 // AABBs in `draw` so GUI/MCP bounds match the displayed GPU-skinned pose.
