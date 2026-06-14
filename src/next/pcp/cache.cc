@@ -390,6 +390,14 @@ struct Cache::Impl {
   // so a selection authored on a stronger source overrides a weaker one).
   void RecordSelections(const PrimSpec &spec,
                         std::map<std::string, std::string> *sels) const {
+    // Per-set `selected` field FIRST: it is the authoritative per-set form (what
+    // the crate reader sets for EVERY selected set, and what the Compositor's
+    // ApplyVariants reads first). The legacy variantSelection string carries only
+    // ONE set, so without this a MULTI-set selection loaded from USDC loses every
+    // set after the first. (emplace keeps the first/strongest opinion per set.)
+    for (const VariantSetData &vss : spec.meta().variantSets()) {
+      if (!vss.selected.empty()) sels->emplace(vss.name, vss.selected);
+    }
     if (!spec.meta().variantSelection.empty()) {
       VariantSelection s =
           Compositor::ParseVariantSelection(spec.meta().variantSelection);

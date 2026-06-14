@@ -2142,6 +2142,94 @@ static void test_prototype_order_independent() {
   std::cout << "  OK" << std::endl;
 }
 
+// Regression: pcp::Cache must honor the per-set VariantSetData.selected field as
+// a selection opinion. The crate (USDC) reader sets `selected` for EVERY chosen
+// variant set but the legacy variantSelection STRING for only the FIRST set (and
+// no variantSelections map). Reading only the string dropped every set after the
+// first on a multi-set USDC selection; a vs.selected-only selection was ignored
+// entirely.
+static void test_variant_selected_field() {
+  std::cout << "test_variant_selected_field..." << std::endl;
+
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("World", "Xform");
+
+    // P selects TWO sets in the crate-reader form: `selected` on both sets, the
+    // legacy string on only the FIRST, no variantSelections map.
+    rb.begin_prim("P", "");
+    {
+      VariantSetData lod;
+      lod.name = "lod";
+      lod.selected = "high";
+      {
+        VariantData v; v.name = "high";
+        v.properties.push_back({"L", Value::MakeFloat3(9, 9, 9)});
+        lod.variants.push_back(std::move(v));
+      }
+      {
+        VariantData v; v.name = "low";
+        v.properties.push_back({"L", Value::MakeFloat3(1, 1, 1)});
+        lod.variants.push_back(std::move(v));
+      }
+      VariantSetData shade;
+      shade.name = "shade";
+      shade.selected = "red";
+      {
+        VariantData v; v.name = "red";
+        v.properties.push_back({"S", Value::MakeFloat3(1, 0, 0)});
+        shade.variants.push_back(std::move(v));
+      }
+      rb.current()->meta().variantSets().push_back(std::move(lod));
+      rb.current()->meta().variantSets().push_back(std::move(shade));
+      rb.current()->meta().variantSelection = "lod=high";  // FIRST set only
+    }
+    rb.end_prim();
+
+    // Q selects a single set via `selected` ONLY (no string, no map).
+    rb.begin_prim("Q", "");
+    {
+      VariantSetData s;
+      s.name = "geo";
+      s.selected = "hi";
+      VariantData v; v.name = "hi";
+      v.properties.push_back({"G", Value::MakeFloat3(2, 2, 2)});
+      s.variants.push_back(std::move(v));
+      rb.current()->meta().variantSets().push_back(std::move(s));
+    }
+    rb.end_prim();
+
+    rb.end_prim();  // World
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid());
+  assert(p.GetPropertyValue("L") != nullptr &&
+         "multi-set: first set 'lod' applied");
+  assert(p.GetPropertyValue("S") != nullptr &&
+         "multi-set: SECOND set 'shade' applied (dropped if vs.selected ignored)");
+
+  UsdPrim q = stage.GetPrimAtPath("/World/Q");
+  assert(q.IsValid());
+  assert(q.GetPropertyValue("G") != nullptr &&
+         "vs.selected-only selection applied");
+
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -2170,6 +2258,7 @@ int main() {
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();
+  test_variant_selected_field();
   test_implied_intermediate();
   test_cross_layer_listops();
   test_listop_edit_does_not_clear_other_arc_fields();
