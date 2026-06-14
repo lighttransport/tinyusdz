@@ -292,6 +292,65 @@ static void test_child_order_weak_to_strong() {
   std::cout << "  OK" << std::endl;
 }
 
+// Crate-authored variants: pxr crates store variant content as bracketed HOLDER
+// prims ("/Asset/{LOD=high}/LOD0") with a VariantSetData carrying only
+// {name, selected} (no inline content). The compositor must graft the selected
+// holder's descendants onto the host. Combined with a reference + local overrides
+// this reproduces the House Mesh_B case: asset locally [Materials] +
+// variant [LOD0]; host references it and authors over LOD0 + def LOD1 -> the
+// composed order is [LOD0, Materials, LOD1] (variant child first, weak->strong),
+// and the "{LOD=high}" marker must NOT appear as a child.
+static void test_crate_style_variant_holder() {
+  std::cout << "test_crate_style_variant_holder..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  // Referenced asset with a crate-style selected variant set.
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Asset", "");
+  {
+    VariantSetData vss;
+    vss.name = "LOD";
+    vss.selected = "high";  // crate form: selection only, no inline content
+    lb.current()->meta().variantSets().push_back(std::move(vss));
+  }
+  lb.begin_prim("Materials", "Scope");  // asset-local child
+  lb.end_prim();
+  lb.begin_prim("{LOD=high}", "");  // bracketed variant holder
+  lb.begin_prim("LOD0", "Scope");   // variant content child
+  lb.end_prim();
+  lb.end_prim();  // {LOD=high}
+  lb.end_prim();  // Asset
+  lb.end_prim();  // Lib
+  // Host references the asset and locally authors over LOD0 + def LOD1.
+  lb.begin_prim("Inst", "");
+  lb.current()->meta().references.push_back("</Lib/Asset>");
+  lb.begin_prim("LOD0", "");  // local override of the variant child
+  lb.end_prim();
+  lb.begin_prim("LOD1", "Scope");  // local-only child
+  lb.end_prim();
+  lb.end_prim();  // Inst
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  std::vector<std::string> kids =
+      cache.ComposedChildNames(Path("/Inst"), &warn, &err);
+  // No bracketed marker child; variant content grafted; weak->strong order.
+  for (const std::string &k : kids)
+    assert(k.front() != '{' && "variant holder marker leaked as a child");
+  assert(kids.size() == 3 && "Inst should have LOD0, Materials, LOD1");
+  assert(kids[0] == "LOD0" && "variant child LOD0 first");
+  assert(kids[1] == "Materials" && "asset-local Materials second");
+  assert(kids[2] == "LOD1" && "host-local LOD1 last");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_compose_prim_dependency_invalidate() {
   std::cout << "test_compose_prim_dependency_invalidate..." << std::endl;
   AssetResolver resolver;
@@ -2283,6 +2342,7 @@ int main() {
   test_prototype_order_independent();
   test_compose_prim_lazy();
   test_child_order_weak_to_strong();
+  test_crate_style_variant_holder();
   test_compose_prim_dependency_invalidate();
   test_compose_prim_invalidate_layer_without_index();
   test_eval_attribute_lazy();
