@@ -294,8 +294,27 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
+    // USDA forbids metadata after a `.timeSamples` block. If the attribute has
+    // authored metadata, emit it on a bare declaration line FIRST (usdcat form):
+    //   <type> <name> ( ...meta... )
+    //   <type> <name>.timeSamples = { ... }
+    const PropMeta* pm = spec.property_meta(slot.name_id);
+    if (pm && !pm->empty()) {
+      WriteIndent(os, depth, opts.indent);
+      if (opts.emit_custom && slot.is_custom()) os << "custom ";
+      if (slot.is_uniform()) os << "uniform ";
+      if (const std::string* decl = spec.property_type_name(name)) {
+        os << *decl;
+      } else {
+        const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
+        os << (tn ? tn : "token");
+        if (slot.is_array()) os << "[]";
+      }
+      os << " " << name;
+      WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    }
     WriteTimeSamples(os, name, slot.name_id, spec, depth, opts);
-    WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
     return;
   }
