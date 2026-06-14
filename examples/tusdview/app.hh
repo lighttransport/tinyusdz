@@ -186,6 +186,10 @@ class App
   SkinningFrameCPU skinFrame_;
   double skinFrameTime_{std::numeric_limits<double>::quiet_NaN()};
   bool lastRtActiveForSkinning_{false};
+  // Draw-mesh indices currently morphed on the GPU (vbo holds posed verts), so
+  // a mesh dropping to zero weight is reverted to rest exactly once.
+  std::set<int> gpuMorphedMeshes_;
+  bool warnedMeshIndexMismatch_{false};
 
   // Async loading
   std::thread loadThread_;

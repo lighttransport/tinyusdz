@@ -439,7 +439,6 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     for (const auto& kv : mesh.targets) {
       const tydra::ShapeTarget& tgt = kv.second;
       const size_t no = tgt.pointOffsets.size();
-      const size_t nno = tgt.normalOffsets.size();
       MorphTargetCPU mt;
       mt.name = kv.first;
       for (size_t e = 0; e < tgt.pointIndices.size() && e < no; ++e) {
@@ -450,15 +449,6 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
           mt.dpos.push_back(tgt.pointOffsets[e][0]);
           mt.dpos.push_back(tgt.pointOffsets[e][1]);
           mt.dpos.push_back(tgt.pointOffsets[e][2]);
-          if (e < nno) {
-            mt.dnrm.push_back(tgt.normalOffsets[e][0]);
-            mt.dnrm.push_back(tgt.normalOffsets[e][1]);
-            mt.dnrm.push_back(tgt.normalOffsets[e][2]);
-          } else {
-            mt.dnrm.push_back(0.0f);
-            mt.dnrm.push_back(0.0f);
-            mt.dnrm.push_back(0.0f);
-          }
         }
       }
       if (!mt.vtx.empty()) dm.morphs.push_back(std::move(mt));

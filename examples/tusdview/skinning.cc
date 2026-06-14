@@ -343,11 +343,14 @@ bool BuildGpuSkinningFrame(
           mv[v].pz += w * mt.dpos[e * 3 + 2];
         }
       }
-      // Regenerate smooth normals from the morphed positions (matching the CPU
-      // path, which clears normals so the packer rebuilds them from posed
-      // geometry), orienting each to the rest normal to keep winding.
-      if (anyMorph) RegenNormalsOriented(dm, &mv);
-      morphed.emplace(static_cast<int>(mi), std::move(mv));
+      // Only meshes with an active (non-zero) weight need a posed buffer; an
+      // unweighted mesh stays at its rest vertices (the caller reverts any mesh
+      // that was morphed last frame). Regenerate smooth normals from the morphed
+      // positions (matching the CPU path), oriented to the rest normal.
+      if (anyMorph) {
+        RegenNormalsOriented(dm, &mv);
+        morphed.emplace(static_cast<int>(mi), std::move(mv));
+      }
     }
   }
   // Mesh `mi`'s base (morphed-or-rest) vertices for bounds/skin reads.
