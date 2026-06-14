@@ -32,6 +32,21 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     fields.emplace_back(sort_key, text);
   };
 
+  // Double-scalar layer metadata (metersPerUnit etc.). The default uses
+  // std::ostream's 6-significant-digit formatting, which is LOSSY (e.g. the
+  // float-widened 0.009999999776482582 prints as "0.01"). usdcat uses the
+  // shortest round-trip representation, so under the OpenUSD float-format opt-in
+  // emit these via dtos() to match (and avoid the precision loss).
+  const bool usd_num = GetUSDFloatFormat();
+  auto dnum = [usd_num](double v) -> std::string {
+    if (usd_num) {
+      return dtos(v);
+    }
+    std::ostringstream os;
+    os << v;
+    return os.str();
+  };
+
   if (!metas.doc.value.empty()) {
     add("documentation", pprint::Indent(indent) + "doc = " +
                              to_string(metas.doc) + "\n");
@@ -40,14 +55,14 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   if (metas.metersPerUnit.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
+       << "metersPerUnit = " << dnum(metas.metersPerUnit.get_value()) << "\n";
     add("metersPerUnit", ss.str());
   }
 
   if (metas.kilogramsPerUnit.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "kilogramsPerUnit = " << metas.kilogramsPerUnit.get_value() << "\n";
+       << "kilogramsPerUnit = " << dnum(metas.kilogramsPerUnit.get_value()) << "\n";
     add("kilogramsPerUnit", ss.str());
   }
 
@@ -59,28 +74,28 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   if (metas.timeCodesPerSecond.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "timeCodesPerSecond = " << metas.timeCodesPerSecond.get_value() << "\n";
+       << "timeCodesPerSecond = " << dnum(metas.timeCodesPerSecond.get_value()) << "\n";
     add("timeCodesPerSecond", ss.str());
   }
 
   if (metas.startTimeCode.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "startTimeCode = " << metas.startTimeCode.get_value() << "\n";
+       << "startTimeCode = " << dnum(metas.startTimeCode.get_value()) << "\n";
     add("startTimeCode", ss.str());
   }
 
   if (metas.endTimeCode.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "endTimeCode = " << metas.endTimeCode.get_value() << "\n";
+       << "endTimeCode = " << dnum(metas.endTimeCode.get_value()) << "\n";
     add("endTimeCode", ss.str());
   }
 
   if (metas.framesPerSecond.authored()) {
     std::stringstream ss;
     ss << pprint::Indent(indent)
-       << "framesPerSecond = " << metas.framesPerSecond.get_value() << "\n";
+       << "framesPerSecond = " << dnum(metas.framesPerSecond.get_value()) << "\n";
     add("framesPerSecond", ss.str());
   }
 
