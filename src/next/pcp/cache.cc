@@ -827,6 +827,32 @@ struct Cache::Impl {
             out->push_back(std::move(vsrc));
           }
         }
+
+        // Crate representation: pxr-authored crates store variant content as
+        // bracketed HOLDER prims ("/Prim/{set=sel}/..." in the SAME layer stack)
+        // and a VariantSetData that carries only {name, selected} -- no inline
+        // VariantData.content, so SelectVariants() above finds nothing. For each
+        // selected set, graft the selected holder as a Variant source mapped onto
+        // the host, so its descendants compose as the host's children (matching
+        // the USDA content path). USDA-authored variants have no holder prim at
+        // this site, so Specs() is empty and this is a no-op for them.
+        for (const VariantSetData &vss : spec->meta().variantSets()) {
+          auto sit = sels->find(vss.name);
+          if (sit == sels->end() || sit->second.empty()) continue;
+          const std::string holder =
+              src.site + "/{" + vss.name + "=" + sit->second + "}";
+          if (Specs(src.stack_idx, holder).empty()) continue;  // not crate-style
+          Src vsrc;
+          vsrc.stack_idx = src.stack_idx;
+          vsrc.site = holder;
+          vsrc.map = NamespaceMapping::Compose(
+              src.map, NamespaceMapping{holder, src.site});
+          vsrc.offset = src.offset;
+          vsrc.arc_kind = ArcType::Variant;
+          const ExpansionFrame vframe{src.stack_idx, &vsrc.site, frame,
+                                      frame ? frame->depth + 1 : 0};
+          ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
+        }
       }
 
       if (merge) continue;  // merged refs/payloads/specializes handled below
@@ -1043,6 +1069,11 @@ struct Cache::Impl {
         for (uint32_t ci : spec->child_indices()) {
           const PrimSpec *cs = layer->prim(ci);
           if (!cs) continue;
+          // Bracketed variant HOLDER prims ("{set=sel}") are namespace markers,
+          // not real children -- the selected holder's descendants are grafted
+          // onto the host as a Variant source (see ExpandArcs). Skip the markers
+          // so they never leak into the composed child list.
+          if (!cs->name().empty() && cs->name().front() == '{') continue;
           if (seen_child.insert(cs->name()).second) {
             child_names.push_back(cs->name());
           }
