@@ -17,6 +17,8 @@
 #include <string>
 
 #include "str-util.hh"
+#include "tinyusdz.hh"
+#include "pprinter.hh"
 
 using namespace tinyusdz;
 
@@ -68,6 +70,42 @@ int main() {
 
   // (3) Default restored.
   expect(dtos(1e-6), "1e-06", "default restored after opt-in");
+
+  // (4) Layer-metadata doubles (metersPerUnit etc.): the default printer uses
+  // std::ostream 6-significant-digit formatting (LOSSY); under the opt-in they
+  // use the shortest round-trip. A crate stores metersPerUnit=0.01 by inlining
+  // the float 0.01f and widening to double on read (= 0.009999999776482582);
+  // usdcat prints all 17 digits, tinyusdz's default truncated to "0.01".
+  {
+    const double widened = static_cast<double>(0.01f);  // 0.009999999776482582
+    std::string warn, err;
+    Layer layer;
+    const std::string usda = "#usda 1.0\ndef \"R\" {}\n";
+    if (LoadUSDALayerFromMemory(reinterpret_cast<const uint8_t *>(usda.data()),
+                                usda.size(), "m.usda", &layer, &warn, &err)) {
+      layer.metas().metersPerUnit = widened;
+
+      SetUSDFloatFormat(false);
+      const std::string def_layer = to_string(layer);
+      if (def_layer.find("metersPerUnit = 0.01\n") == std::string::npos) {
+        std::cerr << "FAIL: default metersPerUnit should be lossy '0.01'\n";
+        ++g_failures;
+      }
+
+      SetUSDFloatFormat(true);
+      const std::string usd_layer = to_string(layer);
+      SetUSDFloatFormat(false);
+      if (usd_layer.find("metersPerUnit = 0.009999999776482582") ==
+          std::string::npos) {
+        std::cerr << "FAIL: opt-in metersPerUnit should be shortest "
+                     "round-trip (0.009999999776482582)\n";
+        ++g_failures;
+      }
+    } else {
+      std::cerr << "FAIL: parse layer for metersPerUnit check: " << err << "\n";
+      ++g_failures;
+    }
+  }
 
   if (g_failures == 0) {
     std::cout << "test-usd-float-format: ALL PASS\n";
