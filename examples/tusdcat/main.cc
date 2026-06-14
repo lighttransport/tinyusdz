@@ -482,6 +482,7 @@ int main(int argc, char **argv) {
   bool has_extract_variants{false};
   bool load_only{false};
   bool preserve_order{false};
+  bool openusd_compat{false};
   std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
@@ -540,6 +541,7 @@ int main(int argc, char **argv) {
       // OpenUSD float notation, and OpenUSD USDA text layout (metadata paren on
       // the `def` line, plain blank separators).
       preserve_order = true;
+      openusd_compat = true;
       tinyusdz::pprint::SetPreserveAuthoredOrder(true);
       tinyusdz::SetUSDFloatFormat(true);
       tinyusdz::pprint::SetUSDTextFormat(true);
@@ -1256,6 +1258,21 @@ int main(int argc, char **argv) {
         output_format != OutputFormat::USDC &&
         output_format != OutputFormat::USDZ;  // USDA or Infer(stdout)
     if (emit_preserved_layer) {
+      // --openusd-compat: stamp the flattened layer's `documentation` with the
+      // same provenance line `usdcat --flatten` injects (UsdStage::Flatten with
+      // addSourceFileComment=true): "Generated from Composed Stage of root layer
+      // <root layer path>\n", appended after any existing doc (separated by a
+      // blank line), and emitted triple-quoted. Only under --openusd-compat: the
+      // line embeds an absolute, machine-specific path, so it is intentionally
+      // omitted by default (and from --preserve-order) for reproducible output.
+      if (openusd_compat) {
+        std::string &docval = src_layer.metas().doc.value;
+        if (!docval.empty()) {
+          docval += "\n\n";
+        }
+        docval += "Generated from Composed Stage of root layer " + filepath + "\n";
+        src_layer.metas().doc.is_triple_quoted = true;
+      }
       preserved_layer_usda = tinyusdz::to_string(src_layer);
     }
 
