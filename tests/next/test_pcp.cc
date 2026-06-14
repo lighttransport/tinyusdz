@@ -245,6 +245,53 @@ static void test_compose_prim_lazy() {
   std::cout << "  OK" << std::endl;
 }
 
+// pxr composes namespace child ORDER weak->strong (PcpComposeSiteChildNames):
+// each arc/layer appends its unseen child names weakest-first, so a reference's
+// children precede local-only children. Here /Inst references /Lib/Asset (kids
+// [X, Materials]) and locally authors [X (over), LocalOnly]; the composed order
+// must be [X, Materials, LocalOnly] -- NOT the strong-first [X, LocalOnly,
+// Materials]. Verified against `usdcat --flatten`.
+static void test_child_order_weak_to_strong() {
+  std::cout << "test_child_order_weak_to_strong..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  // Referenced asset with children [X, Materials].
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Asset", "");
+  lb.begin_prim("X", "Scope");
+  lb.end_prim();  // X
+  lb.begin_prim("Materials", "Scope");
+  lb.end_prim();  // Materials
+  lb.end_prim();  // Asset
+  lb.end_prim();  // Lib
+  // Inst references the asset; local children [X (over), LocalOnly].
+  lb.begin_prim("Inst", "");
+  lb.current()->meta().references.push_back("</Lib/Asset>");
+  lb.begin_prim("X", "");  // local override of the referenced X
+  lb.end_prim();
+  lb.begin_prim("LocalOnly", "Scope");
+  lb.end_prim();
+  lb.end_prim();  // Inst
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  std::vector<std::string> kids =
+      cache.ComposedChildNames(Path("/Inst"), &warn, &err);
+  assert(kids.size() == 3 && "Inst should have 3 children");
+  assert(kids[0] == "X" && "common child X first (reference position)");
+  assert(kids[1] == "Materials" &&
+         "reference-only Materials before local-only (weak->strong)");
+  assert(kids[2] == "LocalOnly" && "local-only child last");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_compose_prim_dependency_invalidate() {
   std::cout << "test_compose_prim_dependency_invalidate..." << std::endl;
   AssetResolver resolver;
@@ -2235,6 +2282,7 @@ int main() {
   test_typed_composition_issues();
   test_prototype_order_independent();
   test_compose_prim_lazy();
+  test_child_order_weak_to_strong();
   test_compose_prim_dependency_invalidate();
   test_compose_prim_invalidate_layer_without_index();
   test_eval_attribute_lazy();
