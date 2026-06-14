@@ -972,13 +972,20 @@ struct Cache::Impl {
 
   // --- value resolution ---------------------------------------------------
 
-  // Merge all sources (strong->weak) into a fresh PrimSpec; return child names.
+  // Merge all sources into a fresh PrimSpec; return the composed child names.
+  //
+  // OPINIONS compose STRONG->WEAK (fill-absent: the strongest source that
+  // authored a field/property wins). CHILD-NAME ORDER, however, composes
+  // WEAK->STRONG -- pxr's PcpComposeSiteChildNames appends each node's (and each
+  // layer's) primChildren weakest-first, so the weakest source that introduces a
+  // name fixes its position and stronger duplicates are skipped (e.g. a
+  // reference's `[LOD0, Materials]` precedes a local-only `LOD1` ->
+  // `[LOD0, Materials, LOD1]`). So we collect names in a separate reverse pass.
   std::vector<std::string> ComposeInto(const std::vector<Src> &srcs,
                                         PrimSpec *out) {
-    std::vector<std::string> child_names;
-    std::set<std::string> seen_child;
     bool specifier_set = false;
 
+    // Pass 1 (strong->weak): compose opinions.
     for (const Src &s : srcs) {
       // Variant source: graft the selected variant's inline opinions
       // (properties + relationships) with fill-absent semantics. Variant child
@@ -1001,7 +1008,6 @@ struct Cache::Impl {
 
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
-        const Layer *layer = sr.layer;
 
         if (!specifier_set) {
           out->set_specifier(spec->specifier());
@@ -1019,7 +1025,21 @@ struct Cache::Impl {
             out->add_relationship(rn, Path(s.map.Apply(t.str())));
           }
         }
+      }
+    }
 
+    // Pass 2 (weak->strong): compose child-name ORDER. Iterate sources and their
+    // layer-stack specs in reverse (weakest first); within a single layer the
+    // primChildren are in authored (forward) order. Append unseen names.
+    std::vector<std::string> child_names;
+    std::set<std::string> seen_child;
+    for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
+      const Src &s = *sit;
+      if (s.variant) continue;  // variant child prims not modeled yet
+      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
+        const PrimSpec *spec = rit->spec;
+        const Layer *layer = rit->layer;
         for (uint32_t ci : spec->child_indices()) {
           const PrimSpec *cs = layer->prim(ci);
           if (!cs) continue;
@@ -1234,9 +1254,15 @@ struct Cache::Impl {
     instances_by_prototype.clear();
 
     const Layer *root = layer_stacks[0].layers[0].get();
+    // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
+    // children (pxr PcpComposeSiteChildNames): iterate the root layer stack
+    // weakest-first so a sublayer-only root prim keeps its position. Prototype
+    // assignment is order-independent (see test_prototype_order_independent).
     std::set<std::string> seen_root;
     std::vector<std::string> root_names;
-    for (const auto &lp : layer_stacks[0].layers) {
+    for (auto lit = layer_stacks[0].layers.rbegin();
+         lit != layer_stacks[0].layers.rend(); ++lit) {
+      const auto &lp = *lit;
       for (uint32_t ri : lp->root_indices()) {
         const PrimSpec *ps = lp->prim(ri);
         if (!ps) continue;
