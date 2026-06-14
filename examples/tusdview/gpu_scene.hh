@@ -35,13 +35,13 @@ struct DrawSubmesh {
 };
 
 // One blendshape target in DrawVertex order (sparse), for per-frame GPU morph.
-// `vtx[i]` is the affected DrawVertex; `dpos`/`dnrm` hold its position/normal
-// offset (3 floats each, parallel to `vtx`). `dnrm` may be all-zero.
+// `vtx[i]` is the affected DrawVertex; `dpos` holds its position offset (3
+// floats, parallel to `vtx`). Normals are regenerated from the morphed
+// positions (RegenNormalsOriented), so authored normal offsets are not stored.
 struct MorphTargetCPU {
   std::string name;  // BlendShape prim name == SkelAnimation weight key
   std::vector<uint32_t> vtx;
   std::vector<float> dpos;
-  std::vector<float> dnrm;
 };
 
 struct DrawMeshCPU {

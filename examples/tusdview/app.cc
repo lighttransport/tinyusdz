@@ -144,6 +144,7 @@ void App::applyLoaded(bool ok, bool progressive) {
   progressiveActive_ = false;
   nextMesh_ = 0;
   nextTex_ = 0;
+  gpuMorphedMeshes_.clear();  // renderer re-uploads rest meshes for this scene
 
   if (ok) {
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
@@ -427,9 +428,22 @@ void App::updateGpuSkinningFrameIfNeeded() {
   if (progressiveActive_ && (hasMorph || mixed)) return;
   if (skinFrameTime_ == animTime_) return;  // already posed for this time
 
+  // Per-mesh vertex/world updates index the renderer by DrawScene mesh order;
+  // that only holds when the renderer uploaded exactly these meshes. Guard it so
+  // a future divergence degrades gracefully (rest pose) instead of posing the
+  // wrong mesh.
+  const bool idxOk =
+      renderer_->meshCount() == static_cast<int>(draw_.meshes.size());
+  if (!idxOk && !warnedMeshIndexMismatch_) {
+    LOGW("GPU skinning: renderer mesh count (%d) != draw mesh count (%zu); "
+         "skipping per-mesh morph/world updates.",
+         renderer_->meshCount(), draw_.meshes.size());
+    warnedMeshIndexMismatch_ = true;
+  }
+
   // Node/xform animation alongside skinning: re-evaluate the animated mesh world
   // transforms (no geometry re-pack) and push them to the renderer.
-  if (mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
+  if (idxOk && mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
     for (size_t i = 0; i < draw_.meshes.size(); ++i) {
       renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
     }
@@ -437,12 +451,23 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
   if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
-                            &skinFrame_, hasMorph ? &morphed : nullptr)) {
+                            &skinFrame_, (hasMorph && idxOk) ? &morphed : nullptr)) {
     skinFrameTime_ = animTime_;
     renderer_->uploadSkinningFrame(skinFrame_);
+    // Upload posed buffers for actively-morphed meshes; revert any mesh that was
+    // morphed last frame but no longer is back to its rest vertices (once).
+    std::set<int> active;
     for (auto& mv : morphed) {
       renderer_->updateMeshVertices(mv.first, mv.second);
+      active.insert(mv.first);
     }
+    for (int i : gpuMorphedMeshes_) {
+      if (!active.count(i) && i >= 0 &&
+          i < static_cast<int>(draw_.meshes.size())) {
+        renderer_->updateMeshVertices(i, draw_.meshes[i].vertices);
+      }
+    }
+    gpuMorphedMeshes_ = std::move(active);
   }
 }
 

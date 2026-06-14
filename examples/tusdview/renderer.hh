@@ -105,6 +105,10 @@ class Renderer {
   // for per-frame node/xform animation alongside GPU skinning. No-op if
   // unsupported.
   virtual void updateMeshWorld(int /*meshIndex*/, const float /*world*/[16]) {}
+  // Number of uploaded meshes. `updateMeshVertices`/`updateMeshWorld` index by
+  // DrawScene mesh order, which only matches when this equals the DrawScene
+  // mesh count; callers verify before per-index updates.
+  virtual int meshCount() const { return 0; }
 
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
