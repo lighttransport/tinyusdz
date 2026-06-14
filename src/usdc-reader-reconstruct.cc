@@ -596,6 +596,26 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
         primspec->props() = std::move(props);
+        // Carry the crate's authored child/property ORDER fields onto the
+        // PrimSpec metadata. The crate stores children/properties
+        // lexicographically (path table order), while the authored order lives
+        // in the `primChildren`/`properties` token-vector fields. The Stage
+        // reconstruction path records these (see ParseCommonPrimFields +
+        // primMeta.primChildren above); the Layer/PrimSpec path dropped them, so
+        // a flattened crate came out lexicographically sorted instead of in
+        // authored order. Gated behind the opt-in so the DEFAULT flatten output
+        // stays byte-identical (without the metadata the writers fall back to
+        // their existing lexicographical order); when enabled, the writers
+        // reproduce the authored order. (The Stage path always records it, so
+        // non-flatten USDC reads are unaffected by this gate.)
+        if (pprint::GetPreserveAuthoredOrder()) {
+          if (pf.primMeta.primChildren.empty() && !pf.primChildren.empty()) {
+            pf.primMeta.primChildren = pf.primChildren;
+          }
+          if (pf.primMeta.properties.empty() && !pf.properties.empty()) {
+            pf.primMeta.properties = pf.properties;
+          }
+        }
         primspec->metas() = std::move(pf.primMeta);
 
         if (primOut) {

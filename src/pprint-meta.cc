@@ -160,6 +160,14 @@ static std::string sIndentString = "    ";
 static thread_local uint32_t sColumnLimit = 0;
 static thread_local uint32_t sPrefixColumns = 0;
 
+// Opt-in: emit prim children and properties in their AUTHORED order, recovered
+// from the crate's `primChildren`/`properties` token-vector fields (what
+// OpenUSD's usdcat does), instead of the default lexicographical order. Plain
+// (not thread_local) so parallel-print worker threads observe the setting.
+// Read by the USDC Layer reader (whether to record the order metadata) and by
+// the USDA writers (whether to order by it). See SetPreserveAuthoredOrder().
+static bool sPreserveAuthoredOrder = false;
+
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
@@ -174,6 +182,9 @@ void SetIndentString(const std::string &s) { sIndentString = s; }
 
 void SetColumnLimit(uint32_t limit) { sColumnLimit = limit; }
 uint32_t GetColumnLimit() { return sColumnLimit; }
+
+void SetPreserveAuthoredOrder(bool enable) { sPreserveAuthoredOrder = enable; }
+bool GetPreserveAuthoredOrder() { return sPreserveAuthoredOrder; }
 uint32_t GetPrefixColumns() { return sPrefixColumns; }
 
 ScopedPrefixColumns::ScopedPrefixColumns(uint32_t cols) : prev_(sPrefixColumns) {
