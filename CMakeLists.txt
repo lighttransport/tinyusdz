@@ -2432,6 +2432,17 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # USDC reader must carry the authored specifier (def/over/class) into the
+    # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
+    # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
+    add_executable(feat-usdc-specifier
+                   tests/feat/usdc-specifier/test-usdc-specifier.cc)
+    add_sanitizers(feat-usdc-specifier)
+    target_link_libraries(feat-usdc-specifier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usdc-specifier PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usdc-specifier COMMAND feat-usdc-specifier
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just
