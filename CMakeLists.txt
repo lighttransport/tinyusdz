@@ -2495,6 +2495,16 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-usd-float-format COMMAND feat-usd-float-format
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Opt-in OpenUSD-compatible USDA text layout (SetUSDTextFormat): metadata
+    # paren on the `def` line, apiSchemas first, blank line between siblings.
+    add_executable(feat-usd-text-format
+                   tests/feat/usd-text-format/test-usd-text-format.cc)
+    add_sanitizers(feat-usd-text-format)
+    target_link_libraries(feat-usd-text-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usd-text-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usd-text-format COMMAND feat-usd-text-format
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
     # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just

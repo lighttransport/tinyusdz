@@ -528,14 +528,21 @@ int main(int argc, char **argv) {
       has_relative = true;
     } else if ((arg.compare("--preserve-order") == 0) ||
                (arg.compare("--usd-order") == 0)) {
-      // Opt-in usdcat-compatible output: (1) emit prim children in authored
-      // (USD) order recovered from the crate's primChildren field instead of the
-      // default lexicographical order, and (2) format floats like OpenUSD
-      // (fixed notation for exponents in [-6,15), unpadded exponent, no '+').
-      // Must be set BEFORE loading so the USDC reader records the order metadata.
+      // Opt-in: emit prim children in authored (USD) order recovered from the
+      // crate's primChildren field instead of the default lexicographical order
+      // (properties stay alphabetical, matching usdcat). Must be set BEFORE
+      // loading so the USDC reader records the order metadata.
+      preserve_order = true;
+      tinyusdz::pprint::SetPreserveAuthoredOrder(true);
+    } else if (arg.compare("--openusd-compat") == 0) {
+      // Aggregate opt-in: emit output as close to OpenUSD `usdcat` as tinyusdz
+      // can -- authored child order + alphabetical properties (Layer output),
+      // OpenUSD float notation, and OpenUSD USDA text layout (metadata paren on
+      // the `def` line, plain blank separators).
       preserve_order = true;
       tinyusdz::pprint::SetPreserveAuthoredOrder(true);
       tinyusdz::SetUSDFloatFormat(true);
+      tinyusdz::pprint::SetUSDTextFormat(true);
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {

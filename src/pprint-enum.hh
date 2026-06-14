@@ -44,6 +44,14 @@ uint32_t GetPrefixColumns();
 void SetPreserveAuthoredOrder(bool enable);
 bool GetPreserveAuthoredOrder();
 
+// Opt-in: emit USDA text laid out like OpenUSD's usdcat -- the prim-metadata
+// opening paren on the same line as the `def`/`over`/`class` (e.g.
+// `def Mesh "M" (`), and plain (non-indented) blank lines between sibling prims.
+// Default false = existing tinyusdz layout (paren on its own line; indented
+// blank separators). Affects the PrimSpec (Layer) writer.
+void SetUSDTextFormat(bool enable);
+bool GetUSDTextFormat();
+
 // RAII helper: sets prefix_columns in thread-local context, restores on
 // destruction. Use before emitting an array value so that operator<< can
 // compute continuation indentation.
