@@ -2787,6 +2787,100 @@ bool ShouldDeferVariantComposition(const Layer &layer, bool references_enabled,
   return false;
 }
 
+namespace {
+
+// Resolve one apiSchemas applied-schema list-op into its baked EXPLICIT form,
+// then rewrite `authoredOps` to a single ResetToExplicit op (the USDA/USDC
+// writers emit that without a `prepend`/`append` qualifier). Operates on the
+// authored raw-string ops so unknown schemas resolve uniformly.
+//
+// Resolution follows SdfListOp semantics, which are keyed by qualifier CATEGORY,
+// not the order ops happen to be stored in: a `delete` removes its targets from
+// the final set regardless of where it sits relative to the `prepend`/`append`
+// that introduced them. (The crate reader emits ops in a fixed order --
+// add/append/delete/prepend -- so applying them sequentially would make a
+// delete-before-prepend a spurious no-op.) An `explicit` (ResetToExplicit) op is
+// absolute: pxr stores a list-op in EITHER explicit mode OR the
+// prepend/append/add/delete/order set, never both.
+void BakeAppliedSchemaListOp(APISchemas &schemas) {
+  if (schemas.explicitlyEmpty) {
+    // Authored as `apiSchemas = None`; pxrUSD keeps it verbatim on flatten.
+    return;
+  }
+  if (schemas.authoredOps.empty()) {
+    // Resolved (names/listOpQual) view with no authored ops: just force the
+    // qualifier explicit so the writer drops any `prepend`/`append`.
+    schemas.listOpQual = ListEditQual::ResetToExplicit;
+    return;
+  }
+
+  using Item = std::pair<std::string, std::string>;  // (schemaName, instance)
+
+  bool has_explicit = false;
+  std::vector<Item> explicit_items, prepended, appended;
+  std::set<Item> deleted;
+  for (const auto &op : schemas.authoredOps) {
+    switch (op.first) {
+      case ListEditQual::ResetToExplicit:
+        has_explicit = true;
+        explicit_items = op.second;
+        break;
+      case ListEditQual::Prepend:
+        prepended.insert(prepended.end(), op.second.begin(), op.second.end());
+        break;
+      case ListEditQual::Append:
+      case ListEditQual::Add:
+        appended.insert(appended.end(), op.second.begin(), op.second.end());
+        break;
+      case ListEditQual::Delete:
+        deleted.insert(op.second.begin(), op.second.end());
+        break;
+      default:
+        // Order/Invalid: not part of the resolved applied-schema set.
+        break;
+    }
+  }
+
+  // Compose against an EMPTY base: a fully flattened layer has no weaker opinion
+  // left for this prim's authored op to edit (the reference/sublayer that
+  // contributed it was already consumed into `authoredOps`).
+  std::vector<Item> resolved;
+  std::set<Item> seen;
+  auto add_unique = [&](const Item &it) {
+    if (deleted.count(it)) return;
+    if (seen.insert(it).second) resolved.push_back(it);
+  };
+  if (has_explicit) {
+    for (const auto &it : explicit_items) add_unique(it);
+  } else {
+    for (const auto &it : prepended) add_unique(it);
+    for (const auto &it : appended) add_unique(it);
+  }
+
+  schemas.authoredOps.clear();
+  schemas.authoredOps.push_back({ListEditQual::ResetToExplicit, resolved});
+  schemas.listOpQual = ListEditQual::ResetToExplicit;
+}
+
+void FlattenAppliedSchemasRec(PrimSpec &ps) {
+  if (ps.metas().has_apiSchemas()) {
+    APISchemas schemas = ps.metas().get_apiSchemas();
+    BakeAppliedSchemaListOp(schemas);
+    ps.metas().set_apiSchemas(schemas);
+  }
+  for (auto &child : ps.children()) {
+    FlattenAppliedSchemasRec(child);
+  }
+}
+
+}  // namespace
+
+void FlattenAppliedSchemas(Layer &layer) {
+  for (auto &kv : layer.primspecs()) {
+    FlattenAppliedSchemasRec(kv.second);
+  }
+}
+
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
 
 bool HasSpecializes(const Layer &layer) {
