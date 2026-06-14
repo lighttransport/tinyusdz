@@ -22,141 +22,168 @@
 namespace tinyusdz {
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
-  std::stringstream meta_ss;
+  // Each authored field is collected as (sortKey, rendered-text). usdcat writes
+  // layer metadata fields in ALPHABETICAL order by their Sdf field TOKEN (note
+  // `doc` sorts as "documentation"); the default keeps tinyusdz's historical
+  // emission order. So under the USD-text-format opt-in we sort by sortKey,
+  // otherwise we emit in insertion (historical) order -- byte-identical default.
+  std::vector<std::pair<std::string, std::string>> fields;
+  auto add = [&](const std::string &sort_key, const std::string &text) {
+    fields.emplace_back(sort_key, text);
+  };
 
-  if (metas.doc.value.empty()) {
-    // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
-    // tinyusdz::version_major
-    //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
-    //    << tinyusdz::version_rev << "\"\n";
-  } else {
-    meta_ss << pprint::Indent(indent) << "doc = " << to_string(metas.doc)
-            << "\n";
+  if (!metas.doc.value.empty()) {
+    add("documentation", pprint::Indent(indent) + "doc = " +
+                             to_string(metas.doc) + "\n");
   }
 
   if (metas.metersPerUnit.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
+    add("metersPerUnit", ss.str());
   }
 
   if (metas.kilogramsPerUnit.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "kilogramsPerUnit = " << metas.kilogramsPerUnit.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "kilogramsPerUnit = " << metas.kilogramsPerUnit.get_value() << "\n";
+    add("kilogramsPerUnit", ss.str());
   }
 
   if (metas.upAxis.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "upAxis = " << quote(to_string(metas.upAxis.get_value()))
-            << "\n";
+    add("upAxis", pprint::Indent(indent) + "upAxis = " +
+                      quote(to_string(metas.upAxis.get_value())) + "\n");
   }
 
   if (metas.timeCodesPerSecond.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "timeCodesPerSecond = " << metas.timeCodesPerSecond.get_value()
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "timeCodesPerSecond = " << metas.timeCodesPerSecond.get_value() << "\n";
+    add("timeCodesPerSecond", ss.str());
   }
 
   if (metas.startTimeCode.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "startTimeCode = " << metas.startTimeCode.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "startTimeCode = " << metas.startTimeCode.get_value() << "\n";
+    add("startTimeCode", ss.str());
   }
 
   if (metas.endTimeCode.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "endTimeCode = " << metas.endTimeCode.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "endTimeCode = " << metas.endTimeCode.get_value() << "\n";
+    add("endTimeCode", ss.str());
   }
 
   if (metas.framesPerSecond.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "framesPerSecond = " << metas.framesPerSecond.get_value()
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "framesPerSecond = " << metas.framesPerSecond.get_value() << "\n";
+    add("framesPerSecond", ss.str());
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (metas.subLayers.size()) {
-    meta_ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers << "\n";
+    add("subLayers", ss.str());
   }
 
   if (metas.defaultPrim.str().size()) {
-    meta_ss << pprint::Indent(1)
-            << "defaultPrim = " << tinyusdz::quote(metas.defaultPrim.str())
-            << "\n";
+    add("defaultPrim", pprint::Indent(1) + "defaultPrim = " +
+                           tinyusdz::quote(metas.defaultPrim.str()) + "\n");
   }
 
   if (metas.autoPlay.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "autoPlay = " << to_string(metas.autoPlay.get_value()) << "\n";
+    add("autoPlay", pprint::Indent(1) + "autoPlay = " +
+                        to_string(metas.autoPlay.get_value()) + "\n");
   }
 
   if (metas.playbackMode.authored()) {
     auto v = metas.playbackMode.get_value();
-    if (v == LayerMetas::PlaybackMode::PlaybackModeLoop) {
-      meta_ss << pprint::Indent(indent) << "playbackMode = \"loop\"\n";
-    } else {  // None
-      meta_ss << pprint::Indent(indent) << "playbackMode = \"none\"\n";
-    }
+    const char *pv = (v == LayerMetas::PlaybackMode::PlaybackModeLoop)
+                         ? "playbackMode = \"loop\"\n"
+                         : "playbackMode = \"none\"\n";
+    add("playbackMode", pprint::Indent(indent) + pv);
   }
 
   if (!metas.comment.value.empty()) {
     // Stage meta omits 'comment'
-    meta_ss << pprint::Indent(indent) << to_string(metas.comment) << "\n";
+    add("comment", pprint::Indent(indent) + to_string(metas.comment) + "\n");
   }
 
   if (metas.customLayerData.size()) {
-    meta_ss << print_customData(metas.customLayerData, "customLayerData",
-                                /* indent */ 1);
+    add("customLayerData",
+        print_customData(metas.customLayerData, "customLayerData",
+                         /* indent */ 1));
   } else if (metas.customLayerDataAuthored) {
     // Print empty customLayerData if explicitly authored (match pxrUSD behavior)
-    meta_ss << pprint::Indent(1) << "customLayerData = {\n";
-    meta_ss << pprint::Indent(1) << "}\n";
+    add("customLayerData", pprint::Indent(1) + "customLayerData = {\n" +
+                               pprint::Indent(1) + "}\n");
   }
 
   // AOUSD Core Spec layer metadata
   if (metas.colorConfiguration) {
-    meta_ss << pprint::Indent(indent)
-            << "colorConfiguration = "
-            << metas.colorConfiguration.value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "colorConfiguration = " << metas.colorConfiguration.value() << "\n";
+    add("colorConfiguration", ss.str());
   }
 
   if (metas.colorManagementSystem) {
-    meta_ss << pprint::Indent(indent)
-            << "colorManagementSystem = "
-            << quote(metas.colorManagementSystem.value().str()) << "\n";
+    add("colorManagementSystem",
+        pprint::Indent(indent) + "colorManagementSystem = " +
+            quote(metas.colorManagementSystem.value().str()) + "\n");
   }
 
   if (metas.owner) {
-    meta_ss << pprint::Indent(indent)
-            << "owner = " << quote(metas.owner.value()) << "\n";
+    add("owner", pprint::Indent(indent) + "owner = " +
+                     quote(metas.owner.value()) + "\n");
   }
 
   if (metas.hasOwnedSubLayers) {
-    meta_ss << pprint::Indent(indent)
-            << "hasOwnedSubLayers = "
-            << (metas.hasOwnedSubLayers.value() ? "true" : "false") << "\n";
+    add("hasOwnedSubLayers",
+        pprint::Indent(indent) + "hasOwnedSubLayers = " +
+            (metas.hasOwnedSubLayers.value() ? "true" : "false") + "\n");
   }
 
   if (metas.expressionVariables) {
-    meta_ss << print_customData(metas.expressionVariables.value(),
-                                "expressionVariables", indent);
+    add("expressionVariables",
+        print_customData(metas.expressionVariables.value(),
+                         "expressionVariables", indent));
   }
 
   // AOUSD Core Spec 10.3.2.6: relocates
   if (!metas.layerRelocates.empty()) {
-    meta_ss << pprint::Indent(indent) << "relocates = {\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent) << "relocates = {\n";
     for (size_t i = 0; i < metas.layerRelocates.size(); i++) {
       const auto &entry = metas.layerRelocates[i];
-      meta_ss << pprint::Indent(indent + 1)
-              << "<" << entry.first.full_path_name() << "> : "
-              << "<" << entry.second.full_path_name() << ">";
+      ss << pprint::Indent(indent + 1) << "<" << entry.first.full_path_name()
+         << "> : " << "<" << entry.second.full_path_name() << ">";
       if (i + 1 < metas.layerRelocates.size()) {
-        meta_ss << ",";
+        ss << ",";
       }
-      meta_ss << "\n";
+      ss << "\n";
     }
-    meta_ss << pprint::Indent(indent) << "}\n";
+    ss << pprint::Indent(indent) << "}\n";
+    add("layerRelocates", ss.str());
   }
 
+  if (pprint::GetUSDTextFormat()) {
+    std::stable_sort(fields.begin(), fields.end(),
+                     [](const std::pair<std::string, std::string> &a,
+                        const std::pair<std::string, std::string> &b) {
+                       return a.first < b.first;
+                     });
+  }
+
+  std::stringstream meta_ss;
+  for (const auto &f : fields) {
+    meta_ss << f.second;
+  }
   return meta_ss.str();
 }
 

@@ -1342,6 +1342,12 @@ int main(int argc, char **argv) {
     if (has_output_file) {
       if (emit_preserved_layer) {
         // --preserve-order: write the composed Layer (authored order) as USDA.
+        // usdcat ends the file with a trailing blank line; match it (the stdout
+        // path above already appends a newline).
+        if (preserve_order && !preserved_layer_usda.empty() &&
+            preserved_layer_usda.back() == '\n') {
+          preserved_layer_usda.push_back('\n');
+        }
         if (!tinyusdz::io::WriteWholeFile(output_filepath,
                 reinterpret_cast<const uint8_t *>(preserved_layer_usda.data()),
                 preserved_layer_usda.size(), &err)) {
