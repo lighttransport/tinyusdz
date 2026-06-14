@@ -2471,6 +2471,16 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-local-override COMMAND feat-variant-local-override
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # OpenUSD inserts variant-selected children BEFORE local children; tinyusdz
+    # used to append them. Regresses CompositeVariant prepend + primChildren sync.
+    add_executable(feat-variant-child-order
+                   tests/feat/variant-child-order/test-variant-child-order.cc)
+    add_sanitizers(feat-variant-child-order)
+    target_link_libraries(feat-variant-child-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-child-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-child-order COMMAND feat-variant-child-order
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # Opt-in authored-order emission: a flattened crate must be able to reproduce
     # the authored prim-child order (from the crate `primChildren` field), like
     # usdcat, instead of the default lexicographical order. Verifies default
