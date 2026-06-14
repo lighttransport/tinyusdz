@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "camera_nav.hh"
@@ -63,6 +64,10 @@ class Gui {
 
   // Build all panels for one frame.
   void frame(Renderer* renderer, OrbitCamera* camera);
+  // Render the 3D viewport texture after the app has consumed same-frame UI
+  // actions. ImGui::Image keeps only the texture handle, so updating the texture
+  // before present removes a frame of latency for timeline/skinning changes.
+  void renderViewportScene();
 
   // Menu/toolbar actions requested this frame (app consumes, then clearActions).
   bool wantOpen() const { return wantOpen_; }
@@ -116,6 +121,7 @@ class Gui {
   bool drawPrimTree(const tinyusdz::Prim& prim);  // returns true if shown (filter)
   bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
+  void drawSelectionList();
   void drawCameraPanel();
   void drawStats();
   void drawPayloads();
@@ -128,6 +134,19 @@ class Gui {
   bool framePath(const std::string& absPath);
   void handleNavigation();
   void buildHelpers();  // grid / axes / bbox / skeleton lines for the current frame
+  bool meshPurposeVisible(const std::string& purpose) const;
+  bool meshVisibleForView(size_t meshIndex) const;
+  void buildViewVisibilityMask();
+  void rebuildInspectorCache();
+  void setSelectionListSingle(const std::string& absPath, int meshIndex);
+  void setSelectionListFromMeshes(std::vector<int> meshIndices);
+  void focusSelectionListItem(size_t index);
+  void beginRegionSelection(const ImVec2& mouse);
+  void updateRegionSelection(const ImVec2& mouse);
+  void finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH);
+  std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
+  bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
+                                const ImVec2& rectMax, int vpW, int vpH) const;
   // Pick the nearest mesh hit by a ray through viewport-local pixel (px,py).
   // Returns the DrawScene mesh index, or -1 on a miss. Per-click cost only.
   int pickMesh(float px, float py, int vpW, int vpH) const;
@@ -157,6 +176,7 @@ class Gui {
   const tinyusdz::Prim* selPrim_{nullptr};
   std::string selPath_;
   int selMeshIndex_{-1};
+  std::vector<std::pair<std::string, int>> selectionList_;  // path, draw mesh index
   std::array<CameraBookmark, 3> cameraBookmarks_{};
   std::vector<std::string> selectionHistory_;
   int selectionHistoryIndex_{-1};
@@ -176,6 +196,10 @@ class Gui {
   bool showSceneBbox_{false};
   bool showPrimBbox_{true};
   bool showSkeleton_{true};  // UsdSkel joint hierarchy as world-space lines
+  bool showPurposeDefault_{true};
+  bool showPurposeRender_{true};
+  bool showPurposeProxy_{true};
+  bool showPurposeGuide_{true};
   bool showNavHelp_{true};   // in-viewport navigation cheatsheet/status overlay
   std::vector<HelperVertex> helperLines_;   // depth-tested (grid/axes/bbox)
   std::vector<HelperVertex> overlayLines_;  // X-ray on top (skeleton bones)
@@ -183,11 +207,31 @@ class Gui {
   // Per-mesh visibility (Maya hide/show/isolate). Index i <-> draw_->meshes[i];
   // reset to all-visible on setScene. Empty == all visible.
   std::vector<uint8_t> meshVisible_;
+  std::vector<uint8_t> viewVisible_;  // per-frame purpose+mesh visibility mask
   bool revealSelectionInHierarchy_{false};
+
+  struct InspectorPropRow {
+    std::string name;
+    std::string value;
+    std::string attrMeta;
+    bool gotProperty{false};
+  };
+  const tinyusdz::Prim* inspectorCachePrim_{nullptr};
+  std::string inspectorCachePath_;
+  std::string inspectorCacheType_;
+  std::string inspectorCacheMeta_;
+  std::string inspectorCacheError_;
+  std::vector<InspectorPropRow> inspectorCacheRows_;
 
   // Viewport interaction
   bool vpHovered_{false};
   int navMode_{0};  // 0 none, 1 orbit, 2 pan, 3 dolly
+  int viewportW_{0};
+  int viewportH_{0};
+  bool regionSelecting_{false};
+  bool regionSelectionMoved_{false};
+  ImVec2 regionStart_{0.0f, 0.0f};
+  ImVec2 regionEnd_{0.0f, 0.0f};
 
   bool wantOpen_{false};
   bool wantReload_{false};

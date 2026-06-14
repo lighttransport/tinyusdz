@@ -47,6 +47,7 @@ struct MorphTargetCPU {
 struct DrawMeshCPU {
   std::string name;
   std::string absPath;
+  std::string purpose{"default"};  // USD purpose token: default/render/proxy/guide
 
   std::vector<DrawVertex> vertices;  // rest pose (GPU morph re-derives from this)
   // Blendshape targets remapped to DrawVertex order; empty = no blendshapes.
