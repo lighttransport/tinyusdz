@@ -57,6 +57,15 @@ int main(int argc, char **argv) {
   bool ok = false;
   if (flatten) {
     AssetResolver resolver;
+    // Anchor relative asset paths (references/payloads/sublayers) to the input
+    // file's directory, like usdcat/tusdcat.
+    {
+      std::string fn(filename);
+      auto slash = fn.find_last_of("/\\");
+      if (slash != std::string::npos) {
+        resolver.SetWorkingDirectory(fn.substr(0, slash));
+      }
+    }
     pcp::CompositionOptions opts;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
