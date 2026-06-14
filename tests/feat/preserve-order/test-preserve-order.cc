@@ -72,11 +72,14 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 
-  // Children authored in deliberately NON-alphabetical order.
+  // Children AND properties authored in deliberately NON-alphabetical order.
   const std::string usda =
       "#usda 1.0\n"
       "def \"Root\"\n"
       "{\n"
+      "    custom int zeta = 1\n"
+      "    custom int alpha = 2\n"
+      "    custom int mike = 3\n"
       "    def \"Zebra\" {}\n"
       "    def \"Apple\" {}\n"
       "    def \"Mango\" {}\n"
@@ -124,6 +127,38 @@ int main(int argc, char **argv) {
     CHECK(z < a && a < m,
           "opt-in flatten emits children in authored order (Zebra,Apple,Mango)");
   }
+
+  // (3) Layer-render path (what `tusdcat --preserve-order` emits): authored
+  // CHILD order, but ALPHABETICAL property order -- pxr/usdcat sorts properties
+  // even though it preserves child order, so the property order must NOT follow
+  // the authored sequence.
+  {
+    std::string warn2, err2;
+    Layer rlayer;
+    pprint::SetPreserveAuthoredOrder(true);
+    CHECK(LoadLayerFromMemory(usdc.data(), usdc.size(), "mem.usdc", &rlayer,
+                              &warn2, &err2),
+          "reload usdc for layer render");
+    const std::string ltext = to_string(rlayer);
+    pprint::SetPreserveAuthoredOrder(false);
+
+    size_t z = ltext.find("\"Zebra\"");
+    size_t a = ltext.find("\"Apple\"");
+    size_t m = ltext.find("\"Mango\"");
+    CHECK(z != std::string::npos && z < a && a < m,
+          "layer render: children in authored order (Zebra,Apple,Mango)");
+
+    size_t pa = ltext.find("int alpha");
+    size_t pm = ltext.find("int mike");
+    size_t pz = ltext.find("int zeta");
+    CHECK(pa != std::string::npos && pm != std::string::npos &&
+              pz != std::string::npos,
+          "layer render: all properties present");
+    CHECK(pa < pm && pm < pz,
+          "layer render: properties ALPHABETICAL (alpha,mike,zeta), matching "
+          "usdcat -- not authored order");
+  }
+
   pprint::SetPreserveAuthoredOrder(false);  // restore global
 
   if (g_failures == 0) {
