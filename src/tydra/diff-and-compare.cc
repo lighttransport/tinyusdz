@@ -668,7 +668,14 @@ static bool CompareRelationshipValues(const Relationship &lhs,
   if (lhs.is_varying_authored() != rhs.is_varying_authored()) {
     note("varyingAuthored");
   }
-  if (!(lhs.targetPath == rhs.targetPath)) note("target");
+  // NOTE: Path::operator== returns false for an INVALID path (even vs another
+  // invalid), so two empty single-target paths (the normal case for a
+  // multi-target `pathVector` relationship) must be treated as equal explicitly
+  // -- otherwise every multi-target relationship reports a spurious "target".
+  if (lhs.targetPath.is_valid() != rhs.targetPath.is_valid() ||
+      (lhs.targetPath.is_valid() && !(lhs.targetPath == rhs.targetPath))) {
+    note("target");
+  }
   if (lhs.targetPathVector != rhs.targetPathVector) note("targets");
 
   if (opts.compareMetadata) {
