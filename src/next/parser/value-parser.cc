@@ -208,7 +208,16 @@ ParseResult ParseFloat(Lexer& lexer) {
     return ParseResult::Error("Expected float value");
   }
   lexer.next();
-  float value = std::strtof(tok.value.c_str(), nullptr);
+  // fast_float matches strtof's correctly-rounded result for ordinary decimals
+  // (same fast path the array parser uses). Fall back to strtof for tokens it
+  // won't fully consume: inf/nan/infinity words and a leading '+'.
+  const char* b = tok.value.c_str();
+  const char* e = b + tok.value.size();
+  float value;
+  auto r = fast_float::from_chars(b, e, value);
+  if (r.ec != std::errc{} || r.ptr != e) {
+    value = std::strtof(b, nullptr);
+  }
   return ParseResult::Ok(Value(value));
 }
 
@@ -218,7 +227,13 @@ ParseResult ParseDouble(Lexer& lexer) {
     return ParseResult::Error("Expected double value");
   }
   lexer.next();
-  double value = std::strtod(tok.value.c_str(), nullptr);
+  const char* b = tok.value.c_str();
+  const char* e = b + tok.value.size();
+  double value;
+  auto r = fast_float::from_chars(b, e, value);
+  if (r.ec != std::errc{} || r.ptr != e) {
+    value = std::strtod(b, nullptr);
+  }
   return ParseResult::Ok(Value(value));
 }
 
