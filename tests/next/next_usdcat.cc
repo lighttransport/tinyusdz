@@ -133,6 +133,13 @@ int main(int argc, char **argv) {
   if (flatten) {
     USDAWriteOptions wopts;
     wopts.emit_custom = openusd_compat;
+    // Parallel subtree serialization (only effective in a TINYUSDZ_ENABLE_THREAD
+    // build). Default auto (= hardware_concurrency); TINYUSDZ_NEXT_NUM_THREADS
+    // overrides (1 = serial). Output is byte-identical regardless of count.
+    wopts.num_threads = 0;  // auto
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      wopts.num_threads = std::atoi(nt);
+    }
     // Stream directly to stdout instead of building the whole (multi-GB on large
     // scenes) USDA text in one std::string first. On Caldera-class scenes this
     // alone removes several GB of peak RSS.
