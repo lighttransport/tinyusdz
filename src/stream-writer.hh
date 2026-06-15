@@ -39,6 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 
 #include "buffer-util.hh"
+#include "tiny-format.hh"
 
 namespace tinyusdz {
 
@@ -170,15 +171,11 @@ class StreamWriter {
 
   // Write floating point
   void write(float value) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
-    write(buf);
+    write(fmt::g(static_cast<double>(value)));
   }
 
   void write(double value) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%g", value);
-    write(buf);
+    write(fmt::g(value));
   }
 
   // Write boolean
@@ -286,15 +283,11 @@ class ChunkedStreamWriter {
 
   // Write floating point
   void write(float value) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
-    write(buf);
+    write(fmt::g(static_cast<double>(value)));
   }
 
   void write(double value) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%g", value);
-    write(buf);
+    write(fmt::g(value));
   }
 
   // Write boolean
