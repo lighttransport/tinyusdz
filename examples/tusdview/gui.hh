@@ -45,6 +45,7 @@ class Gui {
     double end{0.0};
     double fps{24.0};
     double current{0.0};
+    double applied{0.0};  // time code of the geometry currently displayed
     bool playing{false};
     bool converting{false};  // a re-evaluation worker is running
   };
@@ -88,6 +89,7 @@ class Gui {
   double seekTime() const { return seekTime_; }
   bool loopPlayback() const { return loop_; }
   float playSpeed() const { return speed_; }
+  bool showSkeletonOverlay() const { return showSkeleton_; }
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -127,6 +129,7 @@ class Gui {
   void drawPayloads();
   void drawTimeline();
   void drawViewport();
+  void drawAboutModal();
   void drawLoadingModal();
   void drawStageMeta();
   void drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
@@ -201,6 +204,7 @@ class Gui {
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{true};
   bool showNavHelp_{true};   // in-viewport navigation cheatsheet/status overlay
+  bool showAbout_{false};
   std::vector<HelperVertex> helperLines_;   // depth-tested (grid/axes/bbox)
   std::vector<HelperVertex> overlayLines_;  // X-ray on top (skeleton bones)
 

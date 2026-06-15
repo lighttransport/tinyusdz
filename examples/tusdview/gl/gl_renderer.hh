@@ -41,10 +41,13 @@ class GLRenderer final : public Renderer {
  private:
   struct GLMesh {
     GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
+    GLuint influenceVbo{0}, influenceTex{0};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     bool doubleSided{false};
     bool skinned{false};
+    bool extendedSkinned{false};
+    int influenceTexWidth{0};
     size_t vertexCount{0};  // for per-frame morph vertex re-upload guard
   };
   struct GLMaterial {
@@ -72,9 +75,13 @@ class GLRenderer final : public Renderer {
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uSkinningEnabled_{-1};
+  GLint uExtendedSkinningEnabled_{-1};
+  GLint uBoneTexWidth_{-1}, uBoneMatrixCount_{-1}, uInfluenceTexWidth_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
-  int boneTexHeight_{0};
+  int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
+  int maxTextureSize_{4096};
+  std::vector<float> boneUploadScratch_;
   bool skinningFrameEnabled_{false};
 
   // Unlit line program for debug helpers (grid/axes/bbox).

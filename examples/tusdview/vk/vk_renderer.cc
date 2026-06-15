@@ -4,6 +4,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -210,6 +211,11 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
         if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
           phys_ = d;
           queueFamily_ = i;
+          caps_.gpu_name = props.deviceName;
+          caps_.api_info = "Vulkan " +
+                           std::to_string(VK_VERSION_MAJOR(props.apiVersion)) + "." +
+                           std::to_string(VK_VERSION_MINOR(props.apiVersion)) + "." +
+                           std::to_string(VK_VERSION_PATCH(props.apiVersion));
           return true;
         }
         if (fallback == VK_NULL_HANDLE) {
@@ -222,6 +228,13 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
   if (fallback != VK_NULL_HANDLE) {
     phys_ = fallback;
     queueFamily_ = fallbackFam;
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(phys_, &props);
+    caps_.gpu_name = props.deviceName;
+    caps_.api_info = "Vulkan " +
+                     std::to_string(VK_VERSION_MAJOR(props.apiVersion)) + "." +
+                     std::to_string(VK_VERSION_MINOR(props.apiVersion)) + "." +
+                     std::to_string(VK_VERSION_PATCH(props.apiVersion));
     return true;
   }
   if (err) *err = "no graphics+present queue family";
@@ -640,8 +653,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  VkDescriptorSetLayout setLayouts[2] = {texSetLayout_, skinSetLayout_};
-  plci.setLayoutCount = 2;
+  VkDescriptorSetLayout setLayouts[3] = {texSetLayout_, skinSetLayout_,
+                                         influenceSetLayout_};
+  plci.setLayoutCount = 3;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -665,7 +679,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   stages[1].module = fs;
   stages[1].pName = "main";
 
-  VkVertexInputBindingDescription bind[3]{};
+  VkVertexInputBindingDescription bind[4]{};
   bind[0].binding = 0;
   bind[0].stride = sizeof(DrawVertex);
   bind[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -675,18 +689,22 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   bind[2].binding = 2;
   bind[2].stride = 4 * sizeof(float);
   bind[2].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[5]{};
+  bind[3].binding = 3;
+  bind[3].stride = 2 * sizeof(uint32_t);
+  bind[3].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[6]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
   attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_UINT, 0};
   attrs[4] = {4, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
+  attrs[5] = {5, 3, VK_FORMAT_R32G32_UINT, 0};
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 3;
+  vin.vertexBindingDescriptionCount = 4;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 5;
+  vin.vertexAttributeDescriptionCount = 6;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -934,7 +952,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
 
   VkDescriptorSetLayoutBinding sb{};
   sb.binding = 0;
-  sb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   sb.descriptorCount = 1;
   sb.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
   VkDescriptorSetLayoutCreateInfo slci{};
@@ -943,6 +961,19 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   slci.pBindings = &sb;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &slci, nullptr, &skinSetLayout_),
            "skin descriptor set layout");
+
+  VkDescriptorSetLayoutBinding ib{};
+  ib.binding = 0;
+  ib.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  ib.descriptorCount = 1;
+  ib.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  VkDescriptorSetLayoutCreateInfo ilci{};
+  ilci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  ilci.bindingCount = 1;
+  ilci.pBindings = &ib;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &ilci, nullptr,
+                                       &influenceSetLayout_),
+           "influence descriptor set layout");
 
   // One combined-image-sampler set per texture (cap = pool size); reset+realloc
   // on each uploadScene.
@@ -959,7 +990,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
            "tex descriptor pool");
 
   VkDescriptorPoolSize sps{};
-  sps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   sps.descriptorCount = 4;
   VkDescriptorPoolCreateInfo spci{};
   spci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -968,6 +999,17 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   spci.pPoolSizes = &sps;
   VK_CHECK(vkCreateDescriptorPool(device_, &spci, nullptr, &skinPool_),
            "skin descriptor pool");
+
+  VkDescriptorPoolSize ips{};
+  ips.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  ips.descriptorCount = kMaxTexSets;
+  VkDescriptorPoolCreateInfo ipci{};
+  ipci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  ipci.maxSets = kMaxTexSets;
+  ipci.poolSizeCount = 1;
+  ipci.pPoolSizes = &ips;
+  VK_CHECK(vkCreateDescriptorPool(device_, &ipci, nullptr, &influencePool_),
+           "influence descriptor pool");
   return true;
 }
 
@@ -1020,8 +1062,10 @@ VkDescriptorSet VulkanRenderer::allocTexDescriptor(VkImageView view) {
   return ds;
 }
 
-VkDescriptorSet VulkanRenderer::allocSkinDescriptor(VkImageView view) {
+VkDescriptorSet VulkanRenderer::allocSkinDescriptor(VkBuffer buffer,
+                                                   VkDeviceSize size) {
   if (!skinPool_ || !skinSetLayout_) return VK_NULL_HANDLE;
+  if (!buffer || size == 0) return VK_NULL_HANDLE;
   vkResetDescriptorPool(device_, skinPool_, 0);
   VkDescriptorSetAllocateInfo ai{};
   ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1030,17 +1074,43 @@ VkDescriptorSet VulkanRenderer::allocSkinDescriptor(VkImageView view) {
   ai.pSetLayouts = &skinSetLayout_;
   VkDescriptorSet ds = VK_NULL_HANDLE;
   if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
-  VkDescriptorImageInfo info{};
-  info.sampler = sampler_;
-  info.imageView = view;
-  info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkDescriptorBufferInfo info{};
+  info.buffer = buffer;
+  info.offset = 0;
+  info.range = size;
   VkWriteDescriptorSet w{};
   w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w.dstSet = ds;
   w.dstBinding = 0;
   w.descriptorCount = 1;
-  w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  w.pImageInfo = &info;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w.pBufferInfo = &info;
+  vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  return ds;
+}
+
+VkDescriptorSet VulkanRenderer::allocInfluenceDescriptor(VkBuffer buffer,
+                                                        VkDeviceSize size) {
+  if (!influencePool_ || !influenceSetLayout_) return VK_NULL_HANDLE;
+  if (!buffer || size == 0) return VK_NULL_HANDLE;
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = influencePool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &influenceSetLayout_;
+  VkDescriptorSet ds = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
+  VkDescriptorBufferInfo info{};
+  info.buffer = buffer;
+  info.offset = 0;
+  info.range = size;
+  VkWriteDescriptorSet w{};
+  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w.dstSet = ds;
+  w.dstBinding = 0;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w.pBufferInfo = &info;
   vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
   return ds;
 }
@@ -1127,11 +1197,15 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
 }
 
-bool VulkanRenderer::createBoneTextureImage(int height, const float* data,
-                                            VkImage* outImg, VkDeviceMemory* outMem,
-                                            VkImageView* outView) {
-  if (height <= 0 || !data) return false;
-  const VkDeviceSize size = static_cast<VkDeviceSize>(height) * 16 * sizeof(float);
+bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
+                                               const float* data,
+                                               VkImage* outImg,
+                                               VkDeviceMemory* outMem,
+                                               VkImageView* outView) {
+  if (width <= 0 || height <= 0 || !data) return false;
+  const VkDeviceSize size = static_cast<VkDeviceSize>(width) *
+                            static_cast<VkDeviceSize>(height) * 4 *
+                            sizeof(float);
 
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
@@ -1144,7 +1218,7 @@ bool VulkanRenderer::createBoneTextureImage(int height, const float* data,
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_2D;
   ici.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-  ici.extent = {4u, static_cast<uint32_t>(height), 1u};
+  ici.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
   ici.mipLevels = 1;
   ici.arrayLayers = 1;
   ici.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1183,7 +1257,7 @@ bool VulkanRenderer::createBoneTextureImage(int height, const float* data,
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
-  region.imageExtent = {4u, static_cast<uint32_t>(height), 1u};
+  region.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
   vkCmdCopyBufferToImage(cb, staging, *outImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                          &region);
   VkImageMemoryBarrier toRead = toDst;
@@ -1210,6 +1284,54 @@ bool VulkanRenderer::createBoneTextureImage(int height, const float* data,
   return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
 }
 
+bool VulkanRenderer::uploadRgba32fTextureImage(VkImage image, int width,
+                                               int height, const float* data) {
+  if (!image || width <= 0 || height <= 0 || !data) return false;
+  const VkDeviceSize size = static_cast<VkDeviceSize>(width) *
+                            static_cast<VkDeviceSize>(height) * 4 *
+                            sizeof(float);
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &staging,
+                        &stagingMem)) {
+    return false;
+  }
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = image;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
+  vkCmdCopyBufferToImage(cb, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+  return true;
+}
+
 bool VulkanRenderer::createWhiteTexture(std::string* err) {
   light3d::Image w;
   w.width = 1;
@@ -1230,6 +1352,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.usesZeroToOneDepth = true;
   caps_.flipViewportV = false;  // we Y-flip via a negative-height viewport
   caps_.supportsGpuSkinning = true;
+  caps_.supportsExtendedGpuSkinning = true;
 
   // Resolve the Vulkan loader at runtime (dlopen libvulkan / vulkan-1.dll). No
   // link-time dependency on the Vulkan SDK. Fails cleanly when no ICD/loader is
@@ -1387,6 +1510,10 @@ void VulkanRenderer::destroyScene() {
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
     if (m.weightVboMem) vkFreeMemory(device_, m.weightVboMem, nullptr);
+    if (m.influenceVbo) vkDestroyBuffer(device_, m.influenceVbo, nullptr);
+    if (m.influenceVboMem) vkFreeMemory(device_, m.influenceVboMem, nullptr);
+    if (m.influenceDataBuf) vkDestroyBuffer(device_, m.influenceDataBuf, nullptr);
+    if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
     if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
@@ -1418,6 +1545,7 @@ void VulkanRenderer::destroyScene() {
   texDescs_.clear();
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
+  if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
   whiteDesc_ = VK_NULL_HANDLE;
 }
 
@@ -1458,24 +1586,42 @@ void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
   if (!device_) return;
   const bool valid = skin.enabled && skin.matrixCount > 0 &&
                      skin.rgba32f.size() >= static_cast<size_t>(skin.matrixCount) * 16;
-  const int h = valid ? skin.matrixCount : 1;
   const float ident[16] = {
       1, 0, 0, 0,
       0, 1, 0, 0,
       0, 0, 1, 0,
       0, 0, 0, 1};
-  const float* data = valid ? skin.rgba32f.data() : ident;
-
-  vkDeviceWaitIdle(device_);
-  if (boneView_) { vkDestroyImageView(device_, boneView_, nullptr); boneView_ = VK_NULL_HANDLE; }
-  if (boneImg_) { vkDestroyImage(device_, boneImg_, nullptr); boneImg_ = VK_NULL_HANDLE; }
-  if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
-  boneDesc_ = VK_NULL_HANDLE;
-  boneTexHeight_ = 0;
-
-  if (createBoneTextureImage(h, data, &boneImg_, &boneMem_, &boneView_)) {
-    boneDesc_ = allocSkinDescriptor(boneView_);
-    boneTexHeight_ = h;
+  const size_t floats = static_cast<size_t>(valid ? skin.matrixCount : 1) * 16;
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(floats * sizeof(float));
+  const float* src = valid ? skin.rgba32f.data() : ident;
+  if (boneBuf_ == VK_NULL_HANDLE || boneBufSize_ != bytes) {
+    vkDeviceWaitIdle(device_);
+    if (boneMapped_) {
+      vkUnmapMemory(device_, boneMem_);
+      boneMapped_ = nullptr;
+    }
+    if (boneBuf_) {
+      vkDestroyBuffer(device_, boneBuf_, nullptr);
+      boneBuf_ = VK_NULL_HANDLE;
+    }
+    if (boneMem_) {
+      vkFreeMemory(device_, boneMem_, nullptr);
+      boneMem_ = VK_NULL_HANDLE;
+    }
+    boneDesc_ = VK_NULL_HANDLE;
+    boneBufSize_ = 0;
+    if (!createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, src,
+                          &boneBuf_, &boneMem_)) {
+      return;
+    }
+    if (vkMapMemory(device_, boneMem_, 0, bytes, 0, &boneMapped_) != VK_SUCCESS) {
+      boneMapped_ = nullptr;
+      return;
+    }
+    boneBufSize_ = bytes;
+    boneDesc_ = allocSkinDescriptor(boneBuf_, boneBufSize_);
+  } else if (boneMapped_) {
+    std::memcpy(boneMapped_, src, static_cast<size_t>(bytes));
   }
 }
 
@@ -1511,6 +1657,10 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
+  gm.extendedSkinned =
+      gm.skinned && sm.influenceOffsetCount.size() == sm.vertices.size() * 2 &&
+      !sm.influenceTexels.empty() && sm.influenceTexWidth > 0 &&
+      sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
 
   // When RT is supported the vertex/index buffers double as BLAS build input and
   // SSBOs read by the ray-query shader (device addresses).
@@ -1553,8 +1703,55 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
+  std::vector<uint32_t> zeroInfluence;
+  const uint32_t* influence = sm.influenceOffsetCount.data();
+  if (!gm.extendedSkinned) {
+    zeroInfluence.assign(sm.vertices.size() * 2, 0u);
+    influence = zeroInfluence.data();
+  }
+  if (!createHostBuffer(sm.vertices.size() * 2 * sizeof(uint32_t),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, influence,
+                        &gm.influenceVbo, &gm.influenceVboMem)) {
+    vkDestroyBuffer(device_, gm.weightVbo, nullptr);
+    vkFreeMemory(device_, gm.weightVboMem, nullptr);
+    vkDestroyBuffer(device_, gm.jointVbo, nullptr);
+    vkFreeMemory(device_, gm.jointVboMem, nullptr);
+    vkDestroyBuffer(device_, gm.vbo, nullptr);
+    vkFreeMemory(device_, gm.vboMem, nullptr);
+    return;
+  }
+  if (gm.extendedSkinned) {
+    const VkDeviceSize bytes = sm.influenceTexels.size() * sizeof(float);
+    if (createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         sm.influenceTexels.data(), &gm.influenceDataBuf,
+                         &gm.influenceDataMem)) {
+      gm.influenceDesc = allocInfluenceDescriptor(gm.influenceDataBuf, bytes);
+    }
+    if (gm.influenceDesc == VK_NULL_HANDLE) {
+      std::vector<uint32_t> zeros(sm.vertices.size() * 2, 0u);
+      void* mapped = nullptr;
+      const VkDeviceSize bytes = zeros.size() * sizeof(uint32_t);
+      if (vkMapMemory(device_, gm.influenceVboMem, 0, bytes, 0, &mapped) == VK_SUCCESS) {
+        std::memcpy(mapped, zeros.data(), static_cast<size_t>(bytes));
+        vkUnmapMemory(device_, gm.influenceVboMem);
+      }
+      gm.extendedSkinned = false;
+    }
+  }
+  if (gm.influenceDesc == VK_NULL_HANDLE) {
+    const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    if (createHostBuffer(sizeof(zero), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, zero,
+                         &gm.influenceDataBuf, &gm.influenceDataMem)) {
+      gm.influenceDesc = allocInfluenceDescriptor(gm.influenceDataBuf,
+                                                  sizeof(zero));
+    }
+  }
   if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t), eboUsage,
                         sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_)) {
+    if (gm.influenceDataBuf) vkDestroyBuffer(device_, gm.influenceDataBuf, nullptr);
+    if (gm.influenceDataMem) vkFreeMemory(device_, gm.influenceDataMem, nullptr);
+    if (gm.influenceVbo) vkDestroyBuffer(device_, gm.influenceVbo, nullptr);
+    if (gm.influenceVboMem) vkFreeMemory(device_, gm.influenceVboMem, nullptr);
     vkDestroyBuffer(device_, gm.weightVbo, nullptr);
     vkFreeMemory(device_, gm.weightVboMem, nullptr);
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
@@ -2238,9 +2435,15 @@ void VulkanRenderer::present() {
       light3d::Mat4 MVP = P * V * W;
       float nmat9[9];
       NormalMatrix3(mesh.world, nmat9);
-      VkDeviceSize offs[3] = {0, 0, 0};
-      VkBuffer bufs[3] = {mesh.vbo, mesh.jointVbo, mesh.weightVbo};
-      vkCmdBindVertexBuffers(cb, 0, 3, bufs, offs);
+      if (mesh.influenceDesc != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 2, 1, &mesh.influenceDesc, 0,
+                                nullptr);
+      }
+      VkDeviceSize offs[4] = {0, 0, 0, 0};
+      VkBuffer bufs[4] = {mesh.vbo, mesh.jointVbo, mesh.weightVbo,
+                          mesh.influenceVbo};
+      vkCmdBindVertexBuffers(cb, 0, 4, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
         // Bind the submesh's base-color texture (white if untextured).
@@ -2569,13 +2772,16 @@ void VulkanRenderer::shutdown() {
   if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }
   if (whiteImg_) { vkDestroyImage(device_, whiteImg_, nullptr); whiteImg_ = VK_NULL_HANDLE; }
   if (whiteMem_) { vkFreeMemory(device_, whiteMem_, nullptr); whiteMem_ = VK_NULL_HANDLE; }
-  if (boneView_) { vkDestroyImageView(device_, boneView_, nullptr); boneView_ = VK_NULL_HANDLE; }
-  if (boneImg_) { vkDestroyImage(device_, boneImg_, nullptr); boneImg_ = VK_NULL_HANDLE; }
+  if (boneMapped_) { vkUnmapMemory(device_, boneMem_); boneMapped_ = nullptr; }
+  if (boneBuf_) { vkDestroyBuffer(device_, boneBuf_, nullptr); boneBuf_ = VK_NULL_HANDLE; }
   if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
+  boneBufSize_ = 0;
   if (texPool_) { vkDestroyDescriptorPool(device_, texPool_, nullptr); texPool_ = VK_NULL_HANDLE; }
   if (skinPool_) { vkDestroyDescriptorPool(device_, skinPool_, nullptr); skinPool_ = VK_NULL_HANDLE; }
+  if (influencePool_) { vkDestroyDescriptorPool(device_, influencePool_, nullptr); influencePool_ = VK_NULL_HANDLE; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
+  if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }

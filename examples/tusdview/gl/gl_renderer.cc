@@ -3,6 +3,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -69,6 +70,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.usesZeroToOneDepth = false;
   caps_.flipViewportV = true;
   caps_.supportsGpuSkinning = true;
+  caps_.supportsExtendedGpuSkinning = true;
+  const GLubyte* renderer = glGetString(GL_RENDERER);
+  const GLubyte* vendor = glGetString(GL_VENDOR);
+  const GLubyte* version = glGetString(GL_VERSION);
+  caps_.gpu_name = renderer ? reinterpret_cast<const char*>(renderer) : "unknown";
+  if (vendor && caps_.gpu_name.find(reinterpret_cast<const char*>(vendor)) ==
+                    std::string::npos) {
+    caps_.gpu_name = std::string(reinterpret_cast<const char*>(vendor)) + " " +
+                     caps_.gpu_name;
+  }
+  caps_.api_info = version ? reinterpret_cast<const char*>(version) : "OpenGL";
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
 
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);
@@ -91,12 +104,17 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
   uSkinningEnabled_ = glGetUniformLocation(program_, "uSkinningEnabled");
+  uExtendedSkinningEnabled_ = glGetUniformLocation(program_, "uExtendedSkinningEnabled");
+  uBoneTexWidth_ = glGetUniformLocation(program_, "uBoneTexWidth");
+  uBoneMatrixCount_ = glGetUniformLocation(program_, "uBoneMatrixCount");
+  uInfluenceTexWidth_ = glGetUniformLocation(program_, "uInfluenceTexWidth");
   // Fixed sampler -> texture-unit bindings.
   glUniform1i(glGetUniformLocation(program_, "uBaseColorTex"), 0);
   glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -121,7 +139,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
+  boneTexWidth_ = 4;
   boneTexHeight_ = 1;
+  boneMatrixCount_ = 1;
 
   // Unlit, vertex-colored line program for debug helpers (grid/axes/bbox).
   {
@@ -169,6 +189,8 @@ bool GLRenderer::initImGui(std::string* err) {
 void GLRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.ebo) glDeleteBuffers(1, &m.ebo);
+    if (m.influenceTex) glDeleteTextures(1, &m.influenceTex);
+    if (m.influenceVbo) glDeleteBuffers(1, &m.influenceVbo);
     if (m.weightVbo) glDeleteBuffers(1, &m.weightVbo);
     if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
@@ -233,20 +255,42 @@ void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
   const bool valid = skin.enabled && skin.matrixCount > 0 &&
                      skin.rgba32f.size() >= static_cast<size_t>(skin.matrixCount) * 16;
   skinningFrameEnabled_ = valid;
-  const int h = valid ? skin.matrixCount : 1;
   const float ident[16] = {
       1, 0, 0, 0,
       0, 1, 0, 0,
       0, 0, 1, 0,
       0, 0, 0, 1};
-  const float* data = valid ? skin.rgba32f.data() : ident;
+  const int matrixCount = valid ? skin.matrixCount : 1;
+  const size_t texels = static_cast<size_t>(matrixCount) * 4;
+  int w = static_cast<int>(std::min<size_t>(texels, 1024));
+  w = std::max(4, std::min(w, maxTextureSize_));
+  int h = static_cast<int>((texels + static_cast<size_t>(w) - 1) /
+                           static_cast<size_t>(w));
+  if (h > maxTextureSize_) {
+    w = maxTextureSize_;
+    h = static_cast<int>((texels + static_cast<size_t>(w) - 1) /
+                         static_cast<size_t>(w));
+  }
+  const size_t packedFloats = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
+  if (boneUploadScratch_.size() != packedFloats) {
+    boneUploadScratch_.assign(packedFloats, 0.0f);
+  } else if (packedFloats > texels * 4) {
+    std::fill(boneUploadScratch_.data() + texels * 4,
+              boneUploadScratch_.data() + packedFloats, 0.0f);
+  }
+  const float* src = valid ? skin.rgba32f.data() : ident;
+  std::copy(src, src + texels * 4, boneUploadScratch_.begin());
   glBindTexture(GL_TEXTURE_2D, boneTex_);
-  if (h != boneTexHeight_) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, h, 0, GL_RGBA, GL_FLOAT, data);
+  if (w != boneTexWidth_ || h != boneTexHeight_) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT,
+                 boneUploadScratch_.data());
+    boneTexWidth_ = w;
     boneTexHeight_ = h;
   } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, h, GL_RGBA, GL_FLOAT, data);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT,
+                    boneUploadScratch_.data());
   }
+  boneMatrixCount_ = matrixCount;
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -277,6 +321,11 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   gm.doubleSided = sm.doubleSided;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
+  gm.extendedSkinned =
+      gm.skinned && sm.influenceOffsetCount.size() == sm.vertices.size() * 2 &&
+      !sm.influenceTexels.empty() && sm.influenceTexWidth > 0 &&
+      sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
+  gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
 
   glGenVertexArrays(1, &gm.vao);
@@ -313,11 +362,36 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
                  sm.jointWt.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(4);
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    if (gm.extendedSkinned) {
+      glGenBuffers(1, &gm.influenceVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.influenceOffsetCount.size() *
+                                           sizeof(uint32_t)),
+                   sm.influenceOffsetCount.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(5);
+      glVertexAttribIPointer(5, 2, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (void*)0);
+
+      glGenTextures(1, &gm.influenceTex);
+      glBindTexture(GL_TEXTURE_2D, gm.influenceTex);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, sm.influenceTexWidth,
+                   sm.influenceTexHeight, 0, GL_RGBA, GL_FLOAT,
+                   sm.influenceTexels.data());
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+      glDisableVertexAttribArray(5);
+      glVertexAttribI2ui(5, 0, 0);
+    }
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
+    glDisableVertexAttribArray(5);
     glVertexAttribI4ui(3, 0, 0, 0, 0);
     glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
+    glVertexAttribI2ui(5, 0, 0);
   }
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -376,9 +450,18 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniformMatrix3fv(uNormalMat_, 1, GL_FALSE, nmat);
-    glUniform1i(uSkinningEnabled_, (mesh.skinned && skinningFrameEnabled_) ? 1 : 0);
+    const bool skinOn = mesh.skinned && skinningFrameEnabled_;
+    glUniform1i(uSkinningEnabled_, skinOn ? 1 : 0);
+    glUniform1i(uExtendedSkinningEnabled_,
+                (mesh.extendedSkinned && skinningFrameEnabled_) ? 1 : 0);
+    glUniform1i(uBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+    glUniform1i(uBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+    glUniform1i(uInfluenceTexWidth_,
+                (mesh.extendedSkinned && skinningFrameEnabled_) ? mesh.influenceTexWidth : 0);
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
 
     if (mesh.doubleSided || wireframe) {
       glDisable(GL_CULL_FACE);
@@ -467,8 +550,16 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniform1i(uSkinningEnabled_, (mesh.skinned && skinningFrameEnabled_) ? 1 : 0);
+    glUniform1i(uExtendedSkinningEnabled_,
+                (mesh.extendedSkinned && skinningFrameEnabled_) ? 1 : 0);
+    glUniform1i(uBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+    glUniform1i(uBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+    glUniform1i(uInfluenceTexWidth_,
+                (mesh.extendedSkinned && skinningFrameEnabled_) ? mesh.influenceTexWidth : 0);
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
     glUniform3f(uBaseColor_, 0, 0, 0);
     glUniform3fv(uEmissive_, 1, orange);
     glUniform1f(uAlpha_, 1.f);

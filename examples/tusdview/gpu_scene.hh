@@ -58,6 +58,14 @@ struct DrawMeshCPU {
   // `jointWt` stores the corresponding normalized weights. Empty = unskinned.
   std::vector<uint32_t> jointIdx;
   std::vector<float> jointWt;
+  // Optional GL3-compatible full influence stream. `influenceOffsetCount` stores
+  // two uints per vertex: texel offset and influence count. `influenceTexels`
+  // stores one influence per RGBA32F texel: (absoluteJointRow, weight, 0, 0).
+  std::vector<uint32_t> influenceOffsetCount;
+  std::vector<float> influenceTexels;
+  int influenceTexWidth{0};
+  int influenceTexHeight{0};
+  int maxInfluencesPerVertex{0};
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
   std::vector<DrawSubmesh> submeshes;
 
@@ -66,6 +74,9 @@ struct DrawMeshCPU {
   float skinGeomBind[16];
   int skelId{-1};
   int skinMatrixBase{-1};  // first matrix row in DrawScene's bone texture layout
+  // Optional local-space skinned point samples for dense point-joint helper
+  // display. Stored as xyz triples and updated by GPU skinning frame builds.
+  std::vector<float> skinnedHelperPoints;
   float aabbMin[3]{0, 0, 0};
   float aabbMax[3]{0, 0, 0};
   bool doubleSided{false};

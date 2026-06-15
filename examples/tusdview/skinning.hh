@@ -25,6 +25,7 @@ bool SceneHasDeformation(const tinyusdz::tydra::RenderScene& render);
 bool SceneHasSkeletalSkinning(const tinyusdz::tydra::RenderScene& render);
 bool SceneHasBlendShapes(const tinyusdz::tydra::RenderScene& render);
 bool SceneHasNonSkeletalAnimation(const tinyusdz::tydra::RenderScene& render);
+int MaxSkinInfluenceCount(const tinyusdz::tydra::RenderScene& render);
 
 // Per-skeleton skinning matrices:
 // skinMat[j] = inverse(bind[j]) * posedWorld[j] (USD row-vector convention).
@@ -40,8 +41,9 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
                               std::vector<tinyusdz::value::matrix4d>* worldOut);
 
 // Pack the per-frame GPU bone texture from `render` into `frame`, using the
-// per-mesh skin layout stored in `draw`. Also updates skinned mesh and scene
-// AABBs in `draw` so GUI/MCP bounds match the displayed GPU-skinned pose.
+// per-mesh skin layout stored in `draw`. Also updates skinned mesh AABBs in
+// `draw`; scene bounds stay stable during playback to avoid grid/helper scale
+// wobble.
 //
 // Blendshapes: for each mesh carrying `morphs`, the rest vertices are morphed
 // to their pose at `timecode` (weights read from the Stage's SkelAnimation
@@ -52,6 +54,7 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
 bool BuildGpuSkinningFrame(
     const tinyusdz::tydra::RenderScene& render, const tinyusdz::Stage& stage,
     DrawScene* draw, double timecode, SkinningFrameCPU* frame,
+    bool updateSkinnedHelpers,
     std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut);
 
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
