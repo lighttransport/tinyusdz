@@ -275,7 +275,15 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val) {
-      os << PrintValue(*val, print_opts);
+      // Transient decode of lazy (crate-backed) sample arrays — see WriteProperty.
+      // On animation-heavy scenes the time samples dominate, so keeping them lazy
+      // (TimeSampleStorage::add_dedup) + decoding one at a time here is the main
+      // memory win.
+      if (val->is_lazy()) {
+        os << PrintValue(val->materialized_copy(), print_opts);
+      } else {
+        os << PrintValue(*val, print_opts);
+      }
     } else {
       os << "None";
     }
@@ -358,7 +366,15 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
     print_opts.double_precision = opts.double_precision;
     print_opts.max_array_elements = opts.max_elements_per_line;
     print_opts.compact = opts.compact;
-    os << " = " << PrintValue(*value, print_opts);
+    // Lazy (crate-backed) arrays: decode into a throwaway temp and print that,
+    // leaving the Stage's Value lazy. Printing `*value` directly would call the
+    // const array accessors, which materialize in place and keep every array
+    // resident for the whole write. Transient decode bounds peak to ~one array.
+    if (value->is_lazy()) {
+      os << " = " << PrintValue(value->materialized_copy(), print_opts);
+    } else {
+      os << " = " << PrintValue(*value, print_opts);
+    }
     WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
   }
