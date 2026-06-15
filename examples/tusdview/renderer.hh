@@ -32,10 +32,13 @@ struct HelperVertex {
 
 struct RendererCaps {
   const char* backend_name{""};
+  std::string gpu_name;
+  std::string api_info;
   bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
   bool flipViewportV{false};       // GL FBO textures are bottom-up
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
   bool supportsGpuSkinning{false};
+  bool supportsExtendedGpuSkinning{false};  // texture-backed >4 influences
 };
 
 struct RenderFrameParams {

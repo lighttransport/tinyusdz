@@ -3,7 +3,7 @@
 //
 // Usage:
 //   tusdview [options] [file.usd|usda|usdc|usdz]
-//   --backend gl|vk   Select rendering backend (default: gl)
+//   --backend gl|vk   Select rendering backend (default: vk when available)
 //
 // Loads a USD file via tinyusdz, converts it with the Tydra RenderScene API and
 // renders it with OpenGL (and Vulkan if built with HAVE_VULKAN). The GUI uses an
@@ -22,7 +22,12 @@
 #include "renderer.hh"
 
 int main(int argc, char** argv) {
+#if defined(HAVE_VULKAN)
+  tusdview::Backend backend = tusdview::Backend::Vulkan;
+#else
   tusdview::Backend backend = tusdview::Backend::GL;
+#endif
+  bool backendExplicit = false;
   std::optional<std::string> configPath;
   std::string file;
   std::string screenshot;
@@ -55,9 +60,14 @@ int main(int argc, char** argv) {
       ++i;
       if (std::strcmp(argv[i], "vk") == 0 || std::strcmp(argv[i], "vulkan") == 0) {
         backend = tusdview::Backend::Vulkan;
-      } else {
+      } else if (std::strcmp(argv[i], "gl") == 0 ||
+                 std::strcmp(argv[i], "opengl") == 0) {
         backend = tusdview::Backend::GL;
+      } else {
+        LOGE("--backend must be gl, opengl, vk, or vulkan");
+        return 1;
       }
+      backendExplicit = true;
     } else if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
     } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
@@ -118,6 +128,8 @@ int main(int argc, char** argv) {
           "[file.usd|usda|usdc|usdz]\n"
           "  --config PATH Load JSON startup config (otherwise uses the platform "
           "default config path).\n"
+          "  --backend gl|vk Select renderer backend (default: Vulkan when built "
+          "and available, otherwise OpenGL).\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
           "  --headless    Windowless offscreen rendering, no display needed "
@@ -144,9 +156,15 @@ int main(int argc, char** argv) {
   }
 
   // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
-  if (wantRt) backend = tusdview::Backend::Vulkan;
+  if (wantRt) {
+    backend = tusdview::Backend::Vulkan;
+    backendExplicit = true;
+  }
   // Windowless rendering is a Vulkan-only path (GL needs a window/context).
-  if (headless) backend = tusdview::Backend::Vulkan;
+  if (headless) {
+    backend = tusdview::Backend::Vulkan;
+    backendExplicit = true;
+  }
 
 #if !defined(HAVE_VULKAN)
   if (backend == tusdview::Backend::Vulkan) {
@@ -226,6 +244,7 @@ int main(int argc, char** argv) {
   }
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
+  app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);

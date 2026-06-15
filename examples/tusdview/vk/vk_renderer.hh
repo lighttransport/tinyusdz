@@ -3,8 +3,8 @@
 // is shown by the GUI via ImGui::Image (ImGui_ImplVulkan_AddTexture). ImGui
 // itself renders into the swapchain.
 //
-// v1 scope: geometry + per-submesh base color via push constants (no descriptor
-// sets for the 3D pass, no textures). Textures remain a GL-only feature for now.
+// Raster path: vertex/index buffers, material textures, and GPU skinning data
+// descriptors. Optional ray-query path is built when Vulkan RT support exists.
 #pragma once
 
 // Vulkan entry points are resolved at runtime via volk (cuew-style): we never
@@ -67,6 +67,11 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory jointVboMem{VK_NULL_HANDLE};
     VkBuffer weightVbo{VK_NULL_HANDLE};
     VkDeviceMemory weightVboMem{VK_NULL_HANDLE};
+    VkBuffer influenceVbo{VK_NULL_HANDLE};
+    VkDeviceMemory influenceVboMem{VK_NULL_HANDLE};
+    VkBuffer influenceDataBuf{VK_NULL_HANDLE};
+    VkDeviceMemory influenceDataMem{VK_NULL_HANDLE};
+    VkDescriptorSet influenceDesc{VK_NULL_HANDLE};
     VkBuffer ebo{VK_NULL_HANDLE};
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     std::vector<DrawSubmesh> submeshes;
@@ -84,6 +89,7 @@ class VulkanRenderer final : public Renderer {
     int matId{-1};       // material id of the mesh's first submesh (RT shading)
     float normalMat[9];  // inverse-transpose of world 3x3 (object->world normals)
     bool skinned{false};
+    bool extendedSkinned{false};
   };
 
   // setup helpers
@@ -130,10 +136,14 @@ class VulkanRenderer final : public Renderer {
                         VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false);
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
-  bool createBoneTextureImage(int height, const float* data, VkImage* outImg,
-                              VkDeviceMemory* outMem, VkImageView* outView);
+  bool createRgba32fTextureImage(int width, int height, const float* data,
+                                 VkImage* outImg, VkDeviceMemory* outMem,
+                                 VkImageView* outView);
+  bool uploadRgba32fTextureImage(VkImage image, int width, int height,
+                                 const float* data);
   VkDescriptorSet allocTexDescriptor(VkImageView view);
-  VkDescriptorSet allocSkinDescriptor(VkImageView view);
+  VkDescriptorSet allocSkinDescriptor(VkBuffer buffer, VkDeviceSize size);
+  VkDescriptorSet allocInfluenceDescriptor(VkBuffer buffer, VkDeviceSize size);
   VkCommandBuffer beginOneShot();
   void endOneShot(VkCommandBuffer cb);
   VkShaderModule createShader(const uint32_t* code, size_t bytes);
@@ -201,8 +211,10 @@ class VulkanRenderer final : public Renderer {
   // plus a default 1x1 white texture for untextured submeshes.
   VkDescriptorSetLayout texSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout skinSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout influenceSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
   VkDescriptorPool skinPool_{VK_NULL_HANDLE};
+  VkDescriptorPool influencePool_{VK_NULL_HANDLE};
   VkImage whiteImg_{VK_NULL_HANDLE};
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};
@@ -213,11 +225,11 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
 
-  VkImage boneImg_{VK_NULL_HANDLE};
+  VkBuffer boneBuf_{VK_NULL_HANDLE};
   VkDeviceMemory boneMem_{VK_NULL_HANDLE};
-  VkImageView boneView_{VK_NULL_HANDLE};
+  void* boneMapped_{nullptr};
   VkDescriptorSet boneDesc_{VK_NULL_HANDLE};
-  int boneTexHeight_{0};
+  VkDeviceSize boneBufSize_{0};
 
   // Commands & sync
   VkCommandPool commandPool_{VK_NULL_HANDLE};

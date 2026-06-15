@@ -5,10 +5,14 @@
 //
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <string>
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "gui_style.hh"
+#include "image-writer.hh"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
@@ -28,6 +32,7 @@ void GlfwErrorCallback(int code, const char* desc) {
 
 constexpr int kBaseWindowWidth = 1280;
 constexpr int kBaseWindowHeight = 800;
+constexpr int kMaxGpuTextureInfluences = 256;
 
 // Write top-down RGBA8 rows as a binary PPM (RGB).
 void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h) {
@@ -43,6 +48,49 @@ void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, 
     }
   }
   std::fclose(fp);
+}
+
+std::string LowerExtension(const std::string& path) {
+  const size_t dot = path.find_last_of('.');
+  if (dot == std::string::npos) return std::string();
+  std::string ext = path.substr(dot + 1);
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return ext;
+}
+
+bool WriteScreenshotImage(const std::string& path,
+                          const std::vector<uint8_t>& rgba, int w, int h,
+                          std::string* err) {
+  if (w <= 0 || h <= 0 || rgba.size() < static_cast<size_t>(w) *
+                                      static_cast<size_t>(h) * 4) {
+    if (err) *err = "invalid screenshot buffer";
+    return false;
+  }
+
+  if (LowerExtension(path) == "png") {
+    tinyusdz::Image img;
+    img.uri = path;
+    img.width = w;
+    img.height = h;
+    img.channels = 4;
+    img.bpp = 8;
+    img.format = tinyusdz::Image::PixelFormat::UInt;
+    img.data = rgba;
+
+    tinyusdz::image::WriteOption opt;
+    opt.format = tinyusdz::image::WriteImageFormat::PNG;
+    auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
+    if (!ret) {
+      if (err) *err = ret.error();
+      return false;
+    }
+    return true;
+  }
+
+  WritePPM(path, rgba, w, h);
+  return true;
 }
 }  // namespace
 
@@ -244,10 +292,14 @@ void App::loadFileBlocking(const std::string& path) {
   if (ok && gpuRestLoad) {
     const bool skeletal = SceneHasSkeletalSkinning(tmp.render);
     const bool morph = SceneHasBlendShapes(tmp.render);
+    const int maxInfluences = MaxSkinInfluenceCount(tmp.render);
     const bool gpuEligible =
         renderer_ && renderer_->caps().supportsGpuSkinning &&
         !renderer_->rayTracingActive() && (skeletal || morph) &&
-        (!skeletal || drawTmp.boneMatrixCount > 0);
+        (!skeletal || (drawTmp.boneMatrixCount > 0 &&
+                       (maxInfluences <= 4 ||
+                        (renderer_->caps().supportsExtendedGpuSkinning &&
+                         maxInfluences <= kMaxGpuTextureInfluences))));
     if (!gpuEligible) {
       DrawScene cpuDraw;
       std::string w, e;
@@ -409,6 +461,22 @@ void App::updateSkinningEffective() {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
+  const int maxInfluences = MaxSkinInfluenceCount(loaded_.render);
+  if (maxInfluences > 4 &&
+      (!renderer_->caps().supportsExtendedGpuSkinning ||
+       maxInfluences > kMaxGpuTextureInfluences)) {
+    skinningReason_ =
+        (maxInfluences > kMaxGpuTextureInfluences
+             ? "CPU skinning fallback: GPU texture path supports up to " +
+                   std::to_string(kMaxGpuTextureInfluences) +
+                   " influences, scene has " + std::to_string(maxInfluences)
+             : (skinningRequested_ == SkinningMode::GPU
+                    ? "CPU skinning fallback: GPU path currently supports 4 influences, scene has " +
+                          std::to_string(maxInfluences)
+                    : "CPU skinning selected for high influence count (" +
+                          std::to_string(maxInfluences) + " > 4)"));
+    return;
+  }
   if (skeletal && draw_.boneMatrixCount <= 0) {
     skinningReason_ = "draw scene has no GPU bone matrix layout";
     return;
@@ -451,7 +519,8 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
   if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
-                            &skinFrame_, (hasMorph && idxOk) ? &morphed : nullptr)) {
+                            &skinFrame_, gui_.showSkeletonOverlay(),
+                            (hasMorph && idxOk) ? &morphed : nullptr)) {
     skinFrameTime_ = animTime_;
     renderer_->uploadSkinningFrame(skinFrame_);
     // Upload posed buffers for actively-morphed meshes; revert any mesh that was
@@ -540,13 +609,6 @@ void App::finishReconvertIfReady() {
     draw_.meshes = std::move(reconvDraw_->meshes);
     draw_.triangleCount = reconvDraw_->triangleCount;
     draw_.truncated = reconvDraw_->truncated;
-    if (reconvDraw_->hasBounds) {
-      draw_.hasBounds = true;
-      for (int i = 0; i < 3; ++i) {
-        draw_.aabbMin[i] = reconvDraw_->aabbMin[i];
-        draw_.aabbMax[i] = reconvDraw_->aabbMax[i];
-      }
-    }
     reconvApplied_ = reconvInFlight_;
     std::string uerr;
     renderer_->uploadScene(draw_, &uerr);  // camera untouched (no refit)
@@ -622,8 +684,21 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
   if (headless_) renderer_->setHeadlessSize(winW, winH);
   if (!renderer_->init(headless_ ? nullptr : window_, &err)) {
-    LOGE("renderer init failed: %s", err.c_str());
-    return 1;
+    if (backend_ == Backend::Vulkan && allowBackendFallback_ && !headless_) {
+      LOGW("Vulkan renderer init failed: %s; falling back to OpenGL.", err.c_str());
+      renderer_->shutdown();
+      renderer_.reset();
+      backend_ = Backend::GL;
+      err.clear();
+      renderer_ = CreateGLRenderer();
+      if (!renderer_ || !renderer_->init(window_, &err)) {
+        LOGE("renderer init failed: %s", err.c_str());
+        return 1;
+      }
+    } else {
+      LOGE("renderer init failed: %s", err.c_str());
+      return 1;
+    }
   }
 
   // Activate Vulkan ray tracing if requested and supported; else stay on raster.
@@ -716,6 +791,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     tl.end = animEnd_;
     tl.fps = animFps_;
     tl.current = animTime_;
+    tl.applied = (skinningEffective_ == SkinningMode::GPU &&
+                  std::isfinite(skinFrameTime_))
+                     ? skinFrameTime_
+                     : reconvApplied_;
     tl.playing = animPlaying_;
     tl.converting = reconvActive_;
     gui_.setTimeline(tl);
@@ -841,8 +920,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool ok = window ? renderer_->captureWindow(&rgba, &w, &h)
                            : renderer_->captureViewport(&rgba, &w, &h);
     if (ok && w > 0 && h > 0) {
-      WritePPM(path, rgba, w, h);
-      LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
+      std::string err;
+      if (WriteScreenshotImage(path, rgba, w, h, &err)) {
+        LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
+      } else {
+        LOGW("failed to write %s: %s", path.c_str(), err.c_str());
+      }
     } else {
       LOGW("capture not supported by this backend");
     }

@@ -188,24 +188,30 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec3 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
+layout(location = 5) in uvec2 aInfluence;
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
 uniform mat3 uNormalMatrix;
 uniform sampler2D uBoneTex;
+uniform sampler2D uInfluenceTex;
 uniform bool uSkinningEnabled;
+uniform bool uExtendedSkinningEnabled;
+uniform int uBoneTexWidth;
+uniform int uBoneMatrixCount;
+uniform int uInfluenceTexWidth;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
 
 mat4 fetchBone(uint idx) {
-    int y = int(idx);
+    int base = int(idx) * 4;
     return mat4(
-        texelFetch(uBoneTex, ivec2(0, y), 0),
-        texelFetch(uBoneTex, ivec2(1, y), 0),
-        texelFetch(uBoneTex, ivec2(2, y), 0),
-        texelFetch(uBoneTex, ivec2(3, y), 0));
+        texelFetch(uBoneTex, ivec2((base + 0) % uBoneTexWidth, (base + 0) / uBoneTexWidth), 0),
+        texelFetch(uBoneTex, ivec2((base + 1) % uBoneTexWidth, (base + 1) / uBoneTexWidth), 0),
+        texelFetch(uBoneTex, ivec2((base + 2) % uBoneTexWidth, (base + 2) / uBoneTexWidth), 0),
+        texelFetch(uBoneTex, ivec2((base + 3) % uBoneTexWidth, (base + 3) / uBoneTexWidth), 0));
 }
 
 void main() {
@@ -213,7 +219,32 @@ void main() {
     vec3 nrm = aNormal;
     float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
     uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
-    if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < textureSize(uBoneTex, 0).y) {
+    if (uSkinningEnabled && uExtendedSkinningEnabled && aInfluence.y > 0u && uInfluenceTexWidth > 0) {
+        mat4 skin = mat4(0.0);
+        float fullWeightSum = 0.0;
+        int boneRows = uBoneMatrixCount;
+        int base = int(aInfluence.x);
+        int count = min(int(aInfluence.y), 256);
+        for (int i = 0; i < 256; ++i) {
+            if (i >= count) break;
+            int linear = base + i;
+            vec4 iw = texelFetch(uInfluenceTex,
+                                 ivec2(linear % uInfluenceTexWidth,
+                                       linear / uInfluenceTexWidth),
+                                 0);
+            uint joint = uint(iw.x + 0.5);
+            float weight = iw.y;
+            if (weight > 0.0 && int(joint) < boneRows) {
+                skin += fetchBone(joint) * weight;
+                fullWeightSum += weight;
+            }
+        }
+        if (fullWeightSum > 0.0) {
+            skin *= 1.0 / fullWeightSum;
+            pos = (skin * vec4(aPosition, 1.0)).xyz;
+            nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+        }
+    } else if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {
         mat4 skin =
             fetchBone(aJoint.x) * aWeight.x +
             fetchBone(aJoint.y) * aWeight.y +

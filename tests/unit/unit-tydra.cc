@@ -2156,27 +2156,30 @@ void tydra_skel_animation_validation_test(void) {
   {
     Stage stage;
 
-    Skeleton invalid_skeleton;
-    invalid_skeleton.name = "BrokenSkeleton";
-    invalid_skeleton.joints = std::vector<value::token>{value::token("Root")};
-    invalid_skeleton.jointNames =
+    Skeleton fallback_skeleton;
+    fallback_skeleton.name = "FallbackSkeleton";
+    fallback_skeleton.joints = std::vector<value::token>{value::token("Root")};
+    fallback_skeleton.jointNames =
         std::vector<value::token>{value::token("Root")};
-    invalid_skeleton.bindTransforms =
-        std::vector<value::matrix4d>{};  // Authored but invalid size.
-    invalid_skeleton.restTransforms = std::vector<value::matrix4d>{
+    fallback_skeleton.bindTransforms =
+        std::vector<value::matrix4d>{};  // Authored empty; treat as missing.
+    fallback_skeleton.restTransforms = std::vector<value::matrix4d>{
         value::matrix4d::identity()};
 
-    TEST_CHECK(stage.add_root_prim(Prim("BrokenSkeleton", invalid_skeleton)));
+    TEST_CHECK(stage.add_root_prim(Prim("FallbackSkeleton", fallback_skeleton)));
 
     tydra::RenderSceneConverterEnv env(stage);
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find("Failed to convert standalone skeleton") !=
-               std::string::npos);
-    TEST_CHECK(converter.GetError().find("bindTransforms.size") !=
-               std::string::npos);
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.skeletons.size() == 1);
+    if (scene.skeletons.size() == 1) {
+      TEST_CHECK(scene.skeletons[0].bind_transforms.size() == 1);
+      TEST_CHECK(scene.skeletons[0].rest_transforms.size() == 1);
+      TEST_CHECK(scene.skeletons[0].bind_transforms[0] ==
+                 value::matrix4d::identity());
+    }
   }
 }
 

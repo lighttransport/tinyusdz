@@ -2755,19 +2755,41 @@ static bool PopulateSkelFlatArrays(const Skeleton &skel, SkelHierarchy &dst, std
 
   // Bind transforms
   if (skel.bindTransforms.authored()) {
-    if (!skel.bindTransforms.get_value(&dst.bind_transforms)) {
+    if (!skel.bindTransforms.get_value(&dst.bind_transforms) ||
+        dst.bind_transforms.empty()) {
       dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
     }
   } else {
     dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
   }
+  if (dst.bind_transforms.size() != joints.size()) {
+    dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
+  }
 
   // Rest transforms
+  bool restAuthored = skel.restTransforms.authored();
   if (skel.restTransforms.authored()) {
-    if (!skel.restTransforms.get_value(&dst.rest_transforms)) {
-      dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
+    if (!skel.restTransforms.get_value(&dst.rest_transforms) ||
+        dst.rest_transforms.empty()) {
+      restAuthored = false;
     }
-  } else {
+  }
+  if (!restAuthored && dst.bind_transforms.size() == joints.size()) {
+    dst.rest_transforms.resize(joints.size());
+    for (size_t i = 0; i < joints.size(); i++) {
+      int parentIdx = dst.parent_joint_indices[i];
+      if (parentIdx < 0) {
+        dst.rest_transforms[i] = dst.bind_transforms[i];
+      } else {
+        value::matrix4d parentInverse;
+        if (inverse(dst.bind_transforms[size_t(parentIdx)], parentInverse)) {
+          dst.rest_transforms[i] = dst.bind_transforms[i] * parentInverse;
+        } else {
+          dst.rest_transforms[i] = value::matrix4d::identity();
+        }
+      }
+    }
+  } else if (dst.rest_transforms.size() != joints.size()) {
     dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
   }
 
