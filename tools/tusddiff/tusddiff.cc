@@ -35,6 +35,7 @@
 
 #include "tinyusdz.hh"
 #include "layer.hh"
+#include "tiny-format.hh"
 #include "tydra/diff-and-compare.hh"
 
 namespace {
@@ -538,10 +539,7 @@ build_proto_map(const char *p, size_t n, const std::vector<FBlock> &roots) {
   std::unordered_map<std::string, std::string> m;
   for (const auto &r : roots) {
     if (!targets.count(r.name)) continue;
-    char buf[24];
-    std::snprintf(buf, sizeof(buf), "__P%016llx",
-                  static_cast<unsigned long long>(block_body_hash(p, r)));
-    m[r.name] = buf;
+    m[r.name] = "__P" + tinyusdz::fmt::hex(block_body_hash(p, r), 16);
   }
   return m;
 }
