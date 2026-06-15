@@ -44,6 +44,11 @@ void print_usage() {
   std::cout << "              (Default ON: /Flattened_Prototype_N prims are matched\n";
   std::cout << "              by content, so non-deterministic numbering does not\n";
   std::cout << "              produce spurious added/deleted/modified diffs.)\n";
+  std::cout << "  --low-mem   Strip large arrays to content fingerprints before\n";
+  std::cout << "              diffing: each file is processed before the next is\n";
+  std::cout << "              loaded, so peak memory ~halves and big-array compares\n";
+  std::cout << "              are faster. Large arrays compare EXACTLY (no ULP);\n";
+  std::cout << "              scalars / small vectors keep ULP tolerance.\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -74,6 +79,9 @@ int main(int argc, char **argv) {
   // Match flatten prototypes by CONTENT (default on) so non-deterministic
   // /Flattened_Prototype_N numbering does not produce spurious diffs.
   bool canonicalize_instances = true;
+  // Strip large arrays to content fingerprints (lower peak RSS + faster). Big
+  // arrays then compare EXACTLY (no ULP), so it is opt-in.
+  bool low_mem = false;
   std::string file1, file2;
   tinyusdz::tydra::DiffOptions diff_opts;
 
@@ -92,6 +100,8 @@ int main(int argc, char **argv) {
       canonicalize_instances = true;
     } else if (args[i] == "--no-canonicalize-instances") {
       canonicalize_instances = false;
+    } else if (args[i] == "--low-mem") {
+      low_mem = true;
     } else if (args[i] == "--ulps") {
       if (i + 1 >= args.size()) {
         std::cerr << "Error: --ulps requires a value\n";
@@ -133,9 +143,19 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  // Load both USD files as Layers (preserves full PrimSpec tree)
+  // Load both USD files as Layers (preserves full PrimSpec tree). Each file is
+  // canonicalized (and, in --low-mem, its big arrays stripped to fingerprints)
+  // right after load, BEFORE the next file is loaded — so the two full layers
+  // never coexist and peak RSS roughly halves.
   tinyusdz::Layer layer1, layer2;
   std::string warn, err;
+
+  auto prepare = [&](tinyusdz::Layer &layer) {
+    // Canonicalize instance-flatten prototypes by content so non-deterministic
+    // /Flattened_Prototype_N numbering does not show up as spurious diffs.
+    if (canonicalize_instances) tinyusdz::tydra::CanonicalizeInstances(layer);
+    if (low_mem) tinyusdz::tydra::StripLargeArrays(layer);
+  };
 
   if (!tinyusdz::LoadLayerFromFile(file1, &layer1, &warn, &err)) {
     std::cerr << "Error loading " << file1 << ": " << err << std::endl;
@@ -144,6 +164,7 @@ int main(int argc, char **argv) {
   if (!warn.empty()) {
     std::cerr << "Warning loading " << file1 << ": " << warn << std::endl;
   }
+  prepare(layer1);
 
   warn.clear();
   err.clear();
@@ -155,13 +176,7 @@ int main(int argc, char **argv) {
   if (!warn.empty()) {
     std::cerr << "Warning loading " << file2 << ": " << warn << std::endl;
   }
-
-  // Canonicalize instance-flatten prototypes by content so non-deterministic
-  // /Flattened_Prototype_N numbering does not show up as spurious diffs.
-  if (canonicalize_instances) {
-    tinyusdz::tydra::CanonicalizeInstances(layer1);
-    tinyusdz::tydra::CanonicalizeInstances(layer2);
-  }
+  prepare(layer2);
 
   // Perform diff
   tinyusdz::HashMap<std::string, tinyusdz::tydra::PrimSpecDiff> psDiffs;

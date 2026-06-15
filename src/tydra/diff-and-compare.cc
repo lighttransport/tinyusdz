@@ -1131,6 +1131,35 @@ size_t CanonicalizeInstances(Layer &layer) {
   return protoNames.size();
 }
 
+namespace detail {
+static void StripLargeArraysRec(PrimSpec &ps, size_t threshold, size_t &count) {
+  for (auto &pr : ps.props()) {
+    if (!pr.second.is_attribute()) continue;
+    Attribute &attr = pr.second.attribute();
+    if (attr.is_blocked() || !attr.has_value()) continue;
+    primvar::PrimVar &var = attr.get_var();
+    const value::Value &val = var.value_raw();
+    if (!val.is_array() || val.array_size() < threshold) continue;
+    // Pin the declared type so it survives the value replacement, then fold the
+    // FULL value into a 64-bit fingerprint and free the array payload. The diff
+    // compares fingerprints (exact) instead of materialized elements.
+    attr.set_type_name(attr.type_name());
+    std::string s = value::pprint_value(val);
+    uint64_t fp = SpookyHash::Hash64(s.data(), s.size(), 0xD1B54A32D192ED03ull);
+    var.set_value(fp);
+    ++count;
+  }
+  for (auto &c : ps.children()) StripLargeArraysRec(c, threshold, count);
+}
+} // namespace detail
+
+size_t StripLargeArrays(Layer &layer, size_t threshold) {
+  size_t count = 0;
+  for (auto &kv : layer.primspecs())
+    detail::StripLargeArraysRec(kv.second, threshold, count);
+  return count;
+}
+
 std::pair<std::string, std::string> CenterValuePairForDiff(
     const std::string &lhs, const std::string &rhs, size_t window) {
   if (lhs.size() <= window && rhs.size() <= window) {
