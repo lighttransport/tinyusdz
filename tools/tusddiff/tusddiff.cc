@@ -39,6 +39,11 @@ void print_usage() {
   std::cout << "              Use 0 for bitwise-exact comparison.\n";
   std::cout << "  --eps F     Absolute floating-point tolerance (overrides/ORs ULP).\n";
   std::cout << "  --no-meta   Do not compare metadata (attr/prim/layer).\n";
+  std::cout << "  --no-canonicalize-instances\n";
+  std::cout << "              Disable content-matching of flatten prototypes.\n";
+  std::cout << "              (Default ON: /Flattened_Prototype_N prims are matched\n";
+  std::cout << "              by content, so non-deterministic numbering does not\n";
+  std::cout << "              produce spurious added/deleted/modified diffs.)\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -66,6 +71,9 @@ int main(int argc, char **argv) {
 
   bool json_output = false;
   bool quiet = false;
+  // Match flatten prototypes by CONTENT (default on) so non-deterministic
+  // /Flattened_Prototype_N numbering does not produce spurious diffs.
+  bool canonicalize_instances = true;
   std::string file1, file2;
   tinyusdz::tydra::DiffOptions diff_opts;
 
@@ -80,6 +88,10 @@ int main(int argc, char **argv) {
       quiet = true;
     } else if (args[i] == "--no-meta") {
       diff_opts.compareMetadata = false;
+    } else if (args[i] == "--canonicalize-instances") {
+      canonicalize_instances = true;
+    } else if (args[i] == "--no-canonicalize-instances") {
+      canonicalize_instances = false;
     } else if (args[i] == "--ulps") {
       if (i + 1 >= args.size()) {
         std::cerr << "Error: --ulps requires a value\n";
@@ -142,6 +154,13 @@ int main(int argc, char **argv) {
   }
   if (!warn.empty()) {
     std::cerr << "Warning loading " << file2 << ": " << warn << std::endl;
+  }
+
+  // Canonicalize instance-flatten prototypes by content so non-deterministic
+  // /Flattened_Prototype_N numbering does not show up as spurious diffs.
+  if (canonicalize_instances) {
+    tinyusdz::tydra::CanonicalizeInstances(layer1);
+    tinyusdz::tydra::CanonicalizeInstances(layer2);
   }
 
   // Perform diff
