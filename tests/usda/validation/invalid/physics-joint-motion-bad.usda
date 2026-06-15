@@ -1,0 +1,30 @@
+#usda 1.0
+# EXPECT: physics.joint.transform
+# EXPECT: physics.limit.dof
+# EXPECT: physics.motion
+(
+    doc = "Isolated physics checks not covered by physics-bad.usda: non-finite joint localPos (physics.joint.transform), a PhysicsLimitAPI applied to an unsupported DOF (physics.limit.dof), and non-finite rigid-body velocity (physics.motion)."
+)
+
+def PhysicsRevoluteJoint "hinge" (
+    prepend apiSchemas = ["PhysicsLimitAPI:bogus"]
+)
+{
+    rel physics:body0 = </BodyA>
+    rel physics:body1 = </BodyB>
+    token physics:axis = "X"
+    point3f physics:localPos0 = (inf, 0, 0)
+    float physics:limit:bogus:low = -1
+    float physics:limit:bogus:high = 1
+}
+
+def Cube "BodyA" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+)
+{
+    vector3f physics:velocity = (nan, 0, 0)
+}
+
+def Cube "BodyB"
+{
+}

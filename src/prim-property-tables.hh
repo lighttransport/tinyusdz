@@ -586,7 +586,9 @@
   X("mjc:gainPrm", gainPrm) \
   X("mjc:biasPrm", biasPrm) \
   X("mjc:actEarly", actEarly) \
-  X("mjc:inheritRange", inheritRange)
+  X("mjc:inheritRange", inheritRange) \
+  X("mjc:plugin", plugin) \
+  X("mjc:instance", instance)
 
 #define MJC_ACTUATOR_RELS(X) \
   X("mjc:target", target) \
@@ -633,6 +635,18 @@
   X("mjc:ctrl", ctrl) \
   X("mjc:mpos", mpos) \
   X("mjc:mquat", mquat)
+
+// MjcSensor attributes
+#define MJC_SENSOR_TYPED_ATTRS(X) \
+  X("mjc:type", type) \
+  X("mjc:objtype", objType) \
+  X("mjc:objname", objName) \
+  X("mjc:reftype", refType) \
+  X("mjc:refname", refName) \
+  X("mjc:group", group) \
+  X("mjc:cutoff", cutoff) \
+  X("mjc:noise", noise) \
+  X("mjc:user", user)
 
 // ============================================================================
 // Newton Physics Property Tables
