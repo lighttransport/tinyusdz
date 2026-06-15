@@ -426,6 +426,82 @@ std::string normalize_assets(const std::string &s) {
   return o;
 }
 
+// Role-type alias -> canonical base (point3f/normal3f/vector3f/color3f are all
+// float3, etc.). Matches the default diff's GetUnderlyingTypeId equivalence.
+std::string canon_type(std::string t) {
+  bool arr = t.size() >= 2 && t.compare(t.size() - 2, 2, "[]") == 0;
+  if (arr) t.resize(t.size() - 2);
+  static const std::unordered_map<std::string, std::string> alias = {
+      {"point3f", "float3"},  {"normal3f", "float3"},  {"vector3f", "float3"},
+      {"color3f", "float3"},  {"point3d", "double3"},  {"normal3d", "double3"},
+      {"vector3d", "double3"}, {"color3d", "double3"}, {"point3h", "half3"},
+      {"normal3h", "half3"},  {"vector3h", "half3"},   {"color3h", "half3"},
+      {"texcoord2f", "float2"}, {"texcoord2d", "double2"}, {"texcoord2h", "half2"},
+      {"texcoord3f", "float3"}, {"texcoord3d", "double3"}, {"texcoord3h", "half3"},
+      {"color4f", "float4"},  {"color4d", "double4"},  {"color4h", "half4"},
+      {"frame4d", "matrix4d"},
+  };
+  auto it = alias.find(t);
+  if (it != alias.end()) t = it->second;
+  if (arr) t += "[]";
+  return t;
+}
+
+// Normalize a property/metadata DECLARATION: drop the deprecated `custom`
+// qualifier and canonicalize the type token (role -> base). The `= value` part
+// is left intact (compared by the ULP/whitespace line comparator).
+std::string canon_decl(const std::string &line) {
+  size_t eq = line.find('=');
+  std::string decl = (eq == std::string::npos) ? line : line.substr(0, eq);
+  std::string rest = (eq == std::string::npos) ? std::string() : line.substr(eq);
+  std::vector<std::string> toks;
+  for (size_t i = 0; i < decl.size();) {
+    while (i < decl.size() && is_ws(decl[i])) ++i;
+    size_t st = i;
+    while (i < decl.size() && !is_ws(decl[i])) ++i;
+    if (i > st) toks.push_back(decl.substr(st, i - st));
+  }
+  toks.erase(std::remove(toks.begin(), toks.end(), std::string("custom")),
+             toks.end());
+  if (toks.size() >= 2) toks[toks.size() - 2] = canon_type(toks[toks.size() - 2]);
+  std::string out;
+  for (size_t k = 0; k < toks.size(); ++k) { if (k) out += ' '; out += toks[k]; }
+  if (!rest.empty()) { if (!out.empty()) out += ' '; out += rest; }
+  return out;
+}
+
+// Path / token / asset items (`<...>`, `"..."`, `@...@`) in a value, for
+// order-insensitive list-op comparison.
+std::vector<std::string> extract_items(const std::string &s) {
+  std::vector<std::string> out;
+  for (size_t i = 0; i < s.size();) {
+    char open = s[i], close = (open == '<') ? '>' : open;
+    if (open == '<' || open == '"' || open == '@') {
+      size_t k = i + 1;
+      while (k < s.size() && s[k] != close) ++k;
+      size_t end = (k < s.size()) ? k + 1 : k;
+      out.push_back(s.substr(i, end - i));
+      i = end;
+    } else {
+      ++i;
+    }
+  }
+  return out;
+}
+
+bool setlike_equal(const std::string &a, const std::string &b) {
+  auto ia = extract_items(a), ib = extract_items(b);
+  std::sort(ia.begin(), ia.end());
+  std::sort(ib.begin(), ib.end());
+  return ia == ib;
+}
+
+bool listop_key(const std::string &k) {
+  return k == "references" || k == "payload" || k == "payloads" ||
+         k == "inherits" || k == "specializes" || k == "apiSchemas" ||
+         k == "variantSets" || k == "prototypes" || k == "proxyPrim";
+}
+
 // Canonical (whitespace-normalized, name-independent) content hash of a block
 // BODY (excludes the header line that carries the prototype's varying name).
 uint64_t block_body_hash(const char *p, const FBlock &b) {
@@ -502,9 +578,25 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       const auto *m = aSide ? ctx.protoA : ctx.protoB;
       return m ? subst_protos(r, *m) : r;
     };
-    auto semeq = [&](const std::string &x, const std::string &y) {
+    // Semantic equality for one own-unit keyed `key`: list-ops / relationships
+    // compare item SETS (order-insensitive); other declarations drop `custom` +
+    // canonicalize role types, then compare whitespace/ULP-aware.
+    auto semeq_key = [&](const std::string &key, const std::string &x,
+                         const std::string &y) {
       std::string nx = norm(x, true), ny = norm(y, false);
+      bool setlike = listop_key(key);
+      if (!setlike) {
+        size_t a = 0;
+        while (a < x.size() && is_ws(x[a])) ++a;
+        setlike = (x.compare(a, 4, "rel ") == 0);
+      }
+      if (setlike) return setlike_equal(nx, ny);
+      nx = canon_decl(nx);
+      ny = canon_decl(ny);
       return nx == ny || line_sem_equal(nx, ny, ctx.opts);
+    };
+    auto semeq = [&](const std::string &x, const std::string &y) {
+      return semeq_key(std::string(), x, y);
     };
     auto firstline = [](const std::string &s) {
       size_t nl = s.find('\n');
@@ -523,7 +615,8 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       auto it = mb.find(u.key);
       if (it == mb.end()) { dels.push_back(u.text); continue; }
       bused[it->second] = true;
-      if (!semeq(u.text, ub[it->second].text)) mods.push_back({u.text, ub[it->second].text});
+      if (!semeq_key(u.key, u.text, ub[it->second].text))
+        mods.push_back({u.text, ub[it->second].text});
     }
     for (size_t k = 0; k < ub.size(); ++k)
       if (!bused[k]) adds.push_back(ub[k].text);
