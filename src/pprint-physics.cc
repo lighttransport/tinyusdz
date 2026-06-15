@@ -375,6 +375,8 @@ std::string to_string(const MjcActuator &actuator, const uint32_t indent,
   ss << print_typed_attr(actuator.biasPrm, "mjc:biasPrm", indent + 1);
   ss << print_typed_attr(actuator.actEarly, "mjc:actEarly", indent + 1);
   ss << print_typed_attr(actuator.inheritRange, "mjc:inheritRange", indent + 1);
+  ss << print_typed_attr(actuator.plugin, "mjc:plugin", indent + 1);
+  ss << print_typed_attr(actuator.instance, "mjc:instance", indent + 1);
 
   PRINT_PRIM_FOOTER(actuator);
   return ss.str();
@@ -461,6 +463,26 @@ std::string to_string(const MjcKeyframe &keyframe, const uint32_t indent,
   ss << print_typed_attr(keyframe.mquat, "mjc:mquat", indent + 1);
 
   PRINT_PRIM_FOOTER(keyframe);
+  return ss.str();
+}
+
+std::string to_string(const MjcSensor &sensor, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  PRINT_PRIM_HEADER(sensor, "MjcSensor");
+
+  ss << print_typed_attr(sensor.type, "mjc:type", indent + 1);
+  ss << print_typed_attr(sensor.objType, "mjc:objtype", indent + 1);
+  ss << print_typed_attr(sensor.objName, "mjc:objname", indent + 1);
+  ss << print_typed_attr(sensor.refType, "mjc:reftype", indent + 1);
+  ss << print_typed_attr(sensor.refName, "mjc:refname", indent + 1);
+  ss << print_typed_attr(sensor.group, "mjc:group", indent + 1);
+  ss << print_typed_attr(sensor.cutoff, "mjc:cutoff", indent + 1);
+  ss << print_typed_attr(sensor.noise, "mjc:noise", indent + 1);
+  ss << print_typed_attr(sensor.user, "mjc:user", indent + 1);
+
+  PRINT_PRIM_FOOTER(sensor);
   return ss.str();
 }
 
