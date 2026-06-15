@@ -1404,7 +1404,16 @@ struct Cache::Impl {
                  warn, err);
     }
 
-    if (options.flatten_instances) FlattenInstances(out.get());
+    switch (options.instance_flatten_mode) {
+      case InstanceFlattenMode::Holder:
+        FlattenInstances(out.get());
+        break;
+      case InstanceFlattenMode::ExtractedPrototypes:
+        FlattenInstancesExtracted(out.get(), options.prototype_numbering);
+        break;
+      case InstanceFlattenMode::Native:
+        break;
+    }
 
     out->finalize();
     out->meta() = root->meta();
@@ -1452,6 +1461,157 @@ struct Cache::Impl {
         mp->meta().instanceable = true;
         mp->meta().instance_prototype().clear();
         // Avoid duplicate refs if FlattenInstances somehow runs twice.
+        auto &refs = mp->meta().references;
+        if (std::find(refs.begin(), refs.end(), ref) == refs.end())
+          refs.push_back(ref);
+      }
+    }
+  }
+
+  // usdcat-style flatten: move each prototype group's shared subtree to a root
+  // `over "/Flattened_Prototype_N"` and rewrite every member (holder included)
+  // to `instanceable = true` + `references = </Flattened_Prototype_N>`. Numbering
+  // per `numbering` (Deterministic = sort by prototype path; UsdcatCompatible =
+  // pxr's two-stage scheme). See CompositionOptions::instance_flatten_mode.
+  void FlattenInstancesExtracted(Layer *out, PrototypeNumbering numbering) {
+    if (instances_by_prototype.empty()) return;
+
+    // path -> prim index (for member rewrites in Pass 2). Member indices stay
+    // valid: Pass 1 only ADDS prims (FP roots + clones), never reindexes.
+    std::unordered_map<std::string, uint32_t> idx_by_path;
+    for (uint32_t i = 0; i < out->prim_count(); ++i)
+      if (const PrimSpec *p = out->prim(i)) idx_by_path[p->path().str()] = i;
+
+    // --- order groups, assign /Flattened_Prototype_N ------------------------
+    // members[0] == prototype path == namespace-pre-order-first instance.
+    std::vector<std::string> ordered;
+    {
+      std::vector<std::string> protos;
+      protos.reserve(instances_by_prototype.size());
+      for (const auto &g : instances_by_prototype) protos.push_back(g.first);
+      std::sort(protos.begin(), protos.end());  // by prototype path (== pxr front)
+      if (numbering == PrototypeNumbering::Deterministic) {
+        ordered = std::move(protos);
+      } else {
+        // UsdcatCompatible: label groups `__Prototype_{rank+1}` in front-order,
+        // then re-sort by label STRING (pxr GetPrototypes() lexicographic sort;
+        // differs from numeric at >9 groups: _1,_10,_2,...).
+        std::vector<std::pair<std::string, std::string>> labelled;
+        labelled.reserve(protos.size());
+        for (size_t i = 0; i < protos.size(); ++i)
+          labelled.emplace_back("__Prototype_" + std::to_string(i + 1), protos[i]);
+        std::sort(labelled.begin(), labelled.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        ordered.reserve(labelled.size());
+        for (auto &lp : labelled) ordered.push_back(std::move(lp.second));
+      }
+    }
+
+    out->build_path_index();
+    std::unordered_map<std::string, std::string> fpath;  // proto -> "/Flattened_Prototype_j"
+    {
+      size_t n = 1;
+      for (const std::string &proto : ordered) {
+        std::string p;
+        do { p = "/Flattened_Prototype_" + std::to_string(n++); }
+        while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
+        fpath[proto] = p;
+      }
+    }
+
+    // FP a descendant `d` should reference when cloned into a prototype subtree:
+    // `d` itself if it is a (nested) prototype group key, else d's prototype.
+    auto fp_ref_for = [&](const std::string &d_path,
+                          const std::string &d_inst_proto) -> const std::string * {
+      auto it = fpath.find(d_path);
+      if (it != fpath.end()) return &it->second;            // nested prototype
+      if (!d_inst_proto.empty()) {
+        auto j = fpath.find(d_inst_proto);
+        if (j != fpath.end()) return &j->second;            // nested instance
+      }
+      return nullptr;
+    };
+
+    // --- Pass 1: emit FP roots + clone each prototype's shared subtree -------
+    // Reads ORIGINAL prims; all of Pass 1 runs before any Pass 2 orphaning.
+    struct CloneWork {
+      uint32_t src_idx;
+      uint32_t dst_parent_idx;
+      std::string dst_parent_path;
+    };
+    for (const std::string &proto : ordered) {
+      auto pit = idx_by_path.find(proto);
+      if (pit == idx_by_path.end()) continue;
+      const std::string &fp = fpath[proto];
+
+      PrimSpec root(fp.substr(1));  // "Flattened_Prototype_j"
+      root.set_path(Path(fp));
+      root.set_specifier(PrimSpecifier::Over);  // typeless `over`, like usdcat
+      uint32_t fp_idx = out->add_prim(std::move(root));
+      out->add_root(fp_idx);
+
+      // Push children reversed so the work STACK pops them first-child-first,
+      // preserving source namespace order in the cloned subtree.
+      std::vector<CloneWork> work;
+      {
+        const auto &cc = out->prim(pit->second)->child_indices();
+        for (auto it = cc.rbegin(); it != cc.rend(); ++it)
+          work.push_back({*it, fp_idx, fp});
+      }
+
+      while (!work.empty()) {
+        CloneWork cw = work.back();
+        work.pop_back();
+        // Capture everything from the source BEFORE add_prim (it may realloc).
+        std::string name, new_path, src_path, inst_proto;
+        std::vector<uint32_t> src_children;
+        PrimSpec clone;
+        {
+          const PrimSpec *src = out->prim(cw.src_idx);
+          if (!src) continue;
+          name = src->name();
+          src_path = src->path().str();
+          inst_proto = src->meta().instance_prototype();
+          src_children = src->child_indices();
+          new_path = cw.dst_parent_path + "/" + name;
+          clone = src->Clone();
+        }
+        const std::string *ref = fp_ref_for(src_path, inst_proto);
+        const bool leaf = (ref != nullptr);
+
+        clone.set_name(name);
+        clone.set_path(Path(new_path));
+        clone.clear_child_indices();  // Clone copied stale source child links
+        // Retarget internal material:binding / connections that pointed inside
+        // the prototype (under `proto`) to the moved /Flattened_Prototype_N root.
+        clone.remap_target_prefix(proto, fp);
+        if (leaf) {
+          clone.meta().instanceable = true;
+          clone.meta().instance_prototype().clear();
+          clone.meta().references.clear();
+          clone.meta().references.push_back("<" + *ref + ">");
+        }
+        uint32_t new_idx = out->add_prim(std::move(clone));  // invalidates ptrs
+        out->set_parent(new_idx, cw.dst_parent_idx);
+        if (!leaf)
+          for (auto it = src_children.rbegin(); it != src_children.rend(); ++it)
+            work.push_back({*it, new_idx, new_path});
+      }
+    }
+
+    // --- Pass 2: rewrite every member at its original namespace position -----
+    for (const std::string &proto : ordered) {
+      const std::string ref = "<" + fpath[proto] + ">";
+      auto mit = instances_by_prototype.find(proto);
+      if (mit == instances_by_prototype.end()) continue;
+      for (const std::string &m : mit->second) {
+        auto it = idx_by_path.find(m);
+        if (it == idx_by_path.end()) continue;
+        PrimSpec *mp = out->prim(it->second);
+        if (!mp) continue;
+        mp->meta().instanceable = true;
+        mp->meta().instance_prototype().clear();
+        mp->clear_child_indices();  // orphan inline subtree (now under the FP root)
         auto &refs = mp->meta().references;
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
@@ -1831,6 +1991,12 @@ nonstd::expected<Cache, std::string> Cache::Open(
   Cache cache;
   cache.impl_->resolver = &resolver;
   cache.impl_->options = options;
+  // Back-compat: a lone `flatten_instances = true` (mode left Native) means the
+  // self-contained Holder flatten.
+  if (cache.impl_->options.flatten_instances &&
+      cache.impl_->options.instance_flatten_mode == InstanceFlattenMode::Native) {
+    cache.impl_->options.instance_flatten_mode = InstanceFlattenMode::Holder;
+  }
   cache.impl_->root_layer = root_layer;
   cache.impl_->root_identifier = root_identifier;
 

@@ -660,6 +660,14 @@ public:
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
 
+  /// Rewrite relationship + connection target paths that lie WITHIN `old_prefix`
+  /// (== it, or a descendant `old_prefix/...`) to the corresponding path under
+  /// `new_prefix`. Used by the extracted-prototype flatten to retarget internal
+  /// material:binding / connections when a prototype subtree moves to a
+  /// `/Flattened_Prototype_N` root. Targets outside `old_prefix` are untouched.
+  void remap_target_prefix(const std::string& old_prefix,
+                           const std::string& new_prefix);
+
   /// Record the declared USD type name of a property (e.g. "color3f",
   /// "token", "float[]"). Needed to faithfully re-emit attributes that have
   /// no authored default value (connection-only / declared-only) and to
@@ -692,6 +700,11 @@ public:
   /// Add child index
   void add_child_index(uint32_t index);
 
+  /// Drop all child links (orphan the subtree). The child prims remain in the
+  /// Layer but become unreachable from this prim — used by the extracted-
+  /// prototype flatten to move an instance's inline subtree onto a
+  /// `/Flattened_Prototype_N` root.
+  void clear_child_indices() { child_indices_.clear(); }
 
   /// Get child count
   size_t child_count() const { return child_indices_.size(); }
