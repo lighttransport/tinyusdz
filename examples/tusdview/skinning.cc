@@ -543,20 +543,31 @@ bool BuildGpuSkinningFrame(
     const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
     const matrix4d invGeomBind = tinyusdz::inverse(geomBind);
     std::vector<matrix4d> composed;
-    if (updateSkinnedHelpers) composed.reserve(cit->second.size());
+    composed.reserve(cit->second.size());
     for (size_t j = 0; j < cit->second.size(); ++j) {
       matrix4d m = geomBind * cit->second[j] * invGeomBind;
-      if (updateSkinnedHelpers) composed.push_back(m);
+      composed.push_back(m);
       const int row = dm.skinMatrixBase + static_cast<int>(j);
       if (row < matrices) PackMatrix(m, row, frame);
     }
-    if (updateSkinnedHelpers) {
-      composedByBase[dm.skinMatrixBase] = std::move(composed);
-    }
+    composedByBase[dm.skinMatrixBase] = std::move(composed);
   }
 
   constexpr size_t kMaxSkinnedHelperSamplesPerMesh = 8192;
   bool sceneFirst = true;
+  float sceneMn[3] = {std::numeric_limits<float>::max(),
+                      std::numeric_limits<float>::max(),
+                      std::numeric_limits<float>::max()};
+  float sceneMx[3] = {-std::numeric_limits<float>::max(),
+                      -std::numeric_limits<float>::max(),
+                      -std::numeric_limits<float>::max()};
+  auto updateScene = [&](const float mn[3], const float mx[3]) {
+    for (int c = 0; c < 3; ++c) {
+      sceneMn[c] = std::min(sceneMn[c], mn[c]);
+      sceneMx[c] = std::max(sceneMx[c], mx[c]);
+    }
+    sceneFirst = false;
+  };
   for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
     DrawMeshCPU& dm = draw->meshes[mi];
     const std::vector<DrawVertex>& verts = baseVerts(static_cast<int>(mi), dm);
@@ -587,22 +598,28 @@ bool BuildGpuSkinningFrame(
         skinned && dm.influenceOffsetCount.size() == verts.size() * 2 &&
         !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
     dm.skinnedHelperPoints.clear();
-    if (!updateSkinnedHelpers && morphed.find(static_cast<int>(mi)) == morphed.end()) {
-      sceneFirst = false;
+    if (!skinned && !extendedSkinned &&
+        morphed.find(static_cast<int>(mi)) == morphed.end()) {
+      if (dm.aabbMin[0] <= dm.aabbMax[0] && dm.aabbMin[1] <= dm.aabbMax[1] &&
+          dm.aabbMin[2] <= dm.aabbMax[2]) {
+        updateScene(dm.aabbMin, dm.aabbMax);
+      }
       continue;
-    } else if (!updateSkinnedHelpers) {
+    } else if ((!skinned && !extendedSkinned) || bit == composedByBase.end()) {
       for (const DrawVertex& v : verts) {
         update(point3f{v.px, v.py, v.pz});
       }
-    } else if (skinned && bit != composedByBase.end()) {
+    } else {
       const size_t sampleStep =
-          verts.size() > kMaxSkinnedHelperSamplesPerMesh
+          updateSkinnedHelpers && verts.size() > kMaxSkinnedHelperSamplesPerMesh
               ? (verts.size() + kMaxSkinnedHelperSamplesPerMesh - 1) /
                     kMaxSkinnedHelperSamplesPerMesh
               : 1;
-      dm.skinnedHelperPoints.reserve(((verts.size() + sampleStep - 1) / sampleStep) * 3);
+      if (updateSkinnedHelpers) {
+        dm.skinnedHelperPoints.reserve(((verts.size() + sampleStep - 1) / sampleStep) * 3);
+      }
       const std::vector<matrix4d>& mats = bit->second;
-      for (size_t vi = 0; vi < verts.size(); vi += sampleStep) {
+      for (size_t vi = 0; vi < verts.size(); ++vi) {
         const DrawVertex& v = verts[vi];
         const point3f p{v.px, v.py, v.pz};
         point3f acc{0.0f, 0.0f, 0.0f};
@@ -644,14 +661,12 @@ bool BuildGpuSkinningFrame(
           }
         }
         const point3f skinnedPoint = sum > 0.0f ? acc : p;
-        dm.skinnedHelperPoints.push_back(skinnedPoint.x);
-        dm.skinnedHelperPoints.push_back(skinnedPoint.y);
-        dm.skinnedHelperPoints.push_back(skinnedPoint.z);
+        if (updateSkinnedHelpers && (vi % sampleStep) == 0) {
+          dm.skinnedHelperPoints.push_back(skinnedPoint.x);
+          dm.skinnedHelperPoints.push_back(skinnedPoint.y);
+          dm.skinnedHelperPoints.push_back(skinnedPoint.z);
+        }
         update(skinnedPoint);
-      }
-    } else {
-      for (const DrawVertex& v : verts) {
-        update(point3f{v.px, v.py, v.pz});
       }
     }
     if (!meshFirst) {
@@ -659,10 +674,16 @@ bool BuildGpuSkinningFrame(
         dm.aabbMin[c] = mn[c];
         dm.aabbMax[c] = mx[c];
       }
-      sceneFirst = false;
+      updateScene(dm.aabbMin, dm.aabbMax);
     }
   }
-  if (!draw->hasBounds) draw->hasBounds = !sceneFirst;
+  draw->hasBounds = !sceneFirst;
+  if (draw->hasBounds) {
+    for (int c = 0; c < 3; ++c) {
+      draw->aabbMin[c] = sceneMn[c];
+      draw->aabbMax[c] = sceneMx[c];
+    }
+  }
 
   if (morphedOut) {
     morphedOut->clear();
