@@ -163,8 +163,13 @@ public:
   /// Get the type ID
   TypeId type_id() const { return type_id_; }
 
-  /// Check if empty (no value stored)
-  bool is_empty() const { return type_id_ == TypeId::Invalid; }
+  /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
+  /// it is an authored opinion that blocks weaker values and must round-trip.
+  bool is_empty() const { return type_id_ == TypeId::Invalid && !is_block_; }
+
+  /// True if this is an authored value block (`= None`) — a typed opinion that
+  /// carries no data but suppresses weaker opinions and emits `= None`.
+  bool is_block() const { return is_block_; }
 
   /// Check if this is an array value
   bool is_array() const { return is_array_; }
@@ -181,6 +186,11 @@ public:
   // ============================================================
   // Lazy array references (crate-backed, undecoded)
   // ============================================================
+
+  /// Construct an authored value block (`= None`): no data, no type, but a real
+  /// opinion (is_empty()==false) that blocks weaker values and re-emits `= None`.
+  /// The attribute's declared type comes from the slot / property_type_name.
+  static Value MakeBlock();
 
   /// Construct a lazy array value that references an undecoded block inside a
   /// retained CrateDataSource. The payload is decoded on first access.
@@ -309,6 +319,7 @@ private:
   bool is_array_ = false;
   bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
   bool dirty_ = false;    // materialized and possibly mutated (no byte pass-through)
+  bool is_block_ = false; // authored `= None` block: no data, but not is_empty()
   uint32_t array_size_ = 0;
 
   // Storage - either inline or heap-allocated

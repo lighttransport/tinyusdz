@@ -445,6 +445,36 @@ static void test_variant_option_payload_arc() {
   std::cout << "  OK" << std::endl;
 }
 
+// An authored value block (`= None`) is a real opinion that blocks weaker values
+// and must round-trip as `= None`, NOT collapse to a declared-only attribute
+// (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
+static void test_value_block_roundtrip() {
+  std::cout << "test_value_block_roundtrip..." << std::endl;
+  const std::string base = "/tmp/next_block_base.usda";
+  const std::string root = "/tmp/next_block_root.usda";
+  // A weaker sublayer authors a real index array; the stronger root blocks it.
+  { std::ofstream o(base);
+    o << "#usda 1.0\ndef Mesh \"M\"\n{\n"
+         "    int[] primvars:displayColor:indices = [0, 1, 2]\n}\n"; }
+  { std::ofstream o(root);
+    o << "#usda 1.0\n(\n    subLayers = [ @./next_block_base.usda@ ]\n)\n"
+         "over Mesh \"M\"\n{\n"
+         "    int[] primvars:displayColor:indices = None\n}\n"; }
+  AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
+  Stage stage; std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  // The block must win over the weaker array and re-emit as `= None`.
+  assert(usda.find("int[] primvars:displayColor:indices = None") !=
+             std::string::npos &&
+         "value block did not re-emit as `= None`");
+  assert(usda.find("indices = [0, 1, 2]") == std::string::npos &&
+         "value block failed to suppress the weaker array opinion");
+  std::remove(base.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // A referenced asset's attribute connection targets must be remapped from the
 // asset-local namespace into the composed (referencing) namespace -- including
 // connections to a property on the referenced ROOT prim itself ("/Mat.attr",
@@ -2765,6 +2795,7 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_value_block_roundtrip();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();
