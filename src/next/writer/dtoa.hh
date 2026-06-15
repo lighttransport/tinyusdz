@@ -22,5 +22,11 @@ namespace next {
 std::string dtos(float v);
 std::string dtos(double v);
 
+/// Same as dtos(), but appends directly into `out` with no intermediate
+/// std::string allocation (hot path for large numeric arrays). Byte-identical
+/// to dtos().
+void dtos_append(std::string& out, float v);
+void dtos_append(std::string& out, double v);
+
 }  // namespace next
 }  // namespace tinyusdz

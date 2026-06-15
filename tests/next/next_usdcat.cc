@@ -11,7 +11,9 @@
 //     -f  flatten (compose sublayers/references/payloads/... via pcp, print USDA)
 // Contract: exit 0 = loaded; diagnostics on stderr prefixed "WARN : " / "ERR : ".
 
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -86,6 +88,16 @@ int main(int argc, char **argv) {
     return 2;
   }
 
+  // Opt-in wall-clock attribution (load+compose vs write). Printed to stderr with
+  // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
+  // TINYUSDZ_NEXT_TIMING is set. Used to prioritize/measure perf work.
+  const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  using Clock = std::chrono::steady_clock;
+  auto ms = [](Clock::duration d) {
+    return std::chrono::duration<double, std::milli>(d).count();
+  };
+  const auto t_start = Clock::now();
+
   std::string warn, err;
   Stage stage;
   bool ok = false;
@@ -107,6 +119,7 @@ int main(int argc, char **argv) {
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);
   }
+  const auto t_loaded = Clock::now();
 
   emit_lines(warn, "WARN : ");
   if (!ok) {
@@ -126,8 +139,18 @@ int main(int argc, char **argv) {
     std::ios::sync_with_stdio(false);
     WriteUSDA(std::cout, stage, wopts);
     std::cout.flush();
+    const auto t_written = Clock::now();
+    if (timing) {
+      std::fprintf(stderr,
+                   "[next_usdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
+                   ms(t_loaded - t_start), ms(t_written - t_loaded),
+                   ms(t_written - t_start));
+    }
   } else {
     std::printf("loaded: %zu prims\n", stage.GetStats().prim_count);
+    if (timing) {
+      std::fprintf(stderr, "[next_usdcat] load=%.1fms\n", ms(t_loaded - t_start));
+    }
   }
   return 0;
 }
