@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <deque>
 #include <limits>
+#include <chrono>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -2145,6 +2147,12 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            const CompositionOptions &options, std::string *warn,
                            std::string *err) {
   if (!root_layer || !out_stage) return false;
+  const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  using Clock = std::chrono::steady_clock;
+  auto ms = [](Clock::duration d) {
+    return std::chrono::duration<double, std::milli>(d).count();
+  };
+  const auto t0 = Clock::now();
   auto opened = Cache::Open(resolver, std::move(root_layer), root_identifier,
                             options);
   if (!opened) {
@@ -2152,7 +2160,14 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
     return false;
   }
   Cache cache = std::move(*opened);
-  return cache.BuildStage(out_stage, warn, err);
+  const auto t1 = Clock::now();
+  bool ok = cache.BuildStage(out_stage, warn, err);
+  const auto t2 = Clock::now();
+  if (timing) {
+    std::fprintf(stderr, "[next_compose] open=%.1fms build_stage=%.1fms\n",
+                 ms(t1 - t0), ms(t2 - t1));
+  }
+  return ok;
 }
 
 bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
