@@ -223,7 +223,9 @@ std::vector<std::string> own_lines(const char *p, const FBlock &b) {
 
 // ---- --faster semantic helpers (whitespace-insensitive + ULP + canon) ------
 
-inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+inline bool is_ws(char c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
+}
 inline bool is_num_start(char c) {
   return (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.';
 }
@@ -324,10 +326,105 @@ std::string subst_protos(const std::string &s,
 
 struct DiffCtx {
   bool semantic = false;
+  bool fuzzyAssets = false;  // --fuzzy-assets: compare @path@ by leaf/suffix
   tinyusdz::tydra::DiffOptions opts;
   const std::unordered_map<std::string, std::string> *protoA = nullptr;
   const std::unordered_map<std::string, std::string> *protoB = nullptr;
 };
+
+// ---- --faster order-insensitive own-line units --------------------------
+
+// Property/metadata key of a line: the identifier token immediately before '='
+// (keeping a `.connect` / `.timeSamples` aspect suffix), else the last
+// identifier. Used to match properties/metadata by NAME, not position.
+std::string line_key(const std::string &s) {
+  size_t a = 0;
+  while (a < s.size() && is_ws(s[a])) ++a;
+  size_t eq = s.find('=', a);
+  size_t e = (eq == std::string::npos) ? s.size() : eq;
+  while (e > a && is_ws(s[e - 1])) --e;
+  size_t st = e;
+  auto idch = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':' ||
+           c == '.';
+  };
+  while (st > a && idch(s[st - 1])) --st;
+  return s.substr(st, e - st);
+}
+
+// Net open brackets ([ { minus ] }) on a line (approx; ignores string contents).
+int net_brackets(const std::string &L) {
+  int d = 0;
+  for (char c : L) {
+    if (c == '{' || c == '[') ++d;
+    else if (c == '}' || c == ']') --d;
+  }
+  return d;
+}
+
+struct OwnUnit {
+  std::string key;
+  std::string text;
+};
+
+// Split a prim's own_lines into (header, keyed units), skipping blank / comment
+// (#3) and pure structural delimiter lines, and grouping multi-line property
+// values ( `= {`/`[` ... `}`/`]` ) into one unit so they key/compare as a whole.
+void to_units(const std::vector<std::string> &lines, std::string &header,
+              std::vector<OwnUnit> &units) {
+  for (size_t i = 0; i < lines.size(); ++i) {
+    const std::string &L = lines[i];
+    size_t a = 0;
+    while (a < L.size() && is_ws(L[a])) ++a;
+    if (a >= L.size() || L[a] == '#') continue;  // blank / comment (#3)
+    std::string t = L.substr(a);
+    size_t te = t.size();
+    while (te > 0 && is_ws(t[te - 1])) --te;
+    t.resize(te);
+    if (t == "{" || t == "}" || t == "(" || t == ")") continue;  // pure delimiter
+    if (header.empty() &&
+        (t.rfind("def ", 0) == 0 || t.rfind("over ", 0) == 0 ||
+         t.rfind("class ", 0) == 0 || t == "def" || t == "over" || t == "class")) {
+      header = L;
+      continue;
+    }
+    std::string key = line_key(L);
+    std::string txt = L;
+    int d = net_brackets(L);
+    while (d > 0 && i + 1 < lines.size()) {
+      txt += "\n";
+      txt += lines[++i];
+      d += net_brackets(lines[i]);
+    }
+    if (key.empty()) key = std::string("\1") + std::to_string(units.size());
+    units.push_back({std::move(key), std::move(txt)});
+  }
+}
+
+// --fuzzy-assets: replace each @asset@ with @<leaf>@ (suffix after the last '/',
+// './' prefixes stripped) so cross-tool path prefixes do not show as diffs.
+std::string normalize_assets(const std::string &s) {
+  std::string o;
+  o.reserve(s.size());
+  for (size_t i = 0; i < s.size();) {
+    if (s[i] == '@') {
+      size_t k = i + 1;
+      while (k < s.size() && s[k] != '@') ++k;
+      if (k < s.size()) {
+        std::string p = s.substr(i + 1, k - i - 1);
+        size_t sl = p.find_last_of('/');
+        std::string leaf = (sl == std::string::npos) ? p : p.substr(sl + 1);
+        o += '@';
+        o += leaf;
+        o += '@';
+        i = k + 1;
+        continue;
+      }
+    }
+    o += s[i++];
+  }
+  return o;
+}
 
 // Canonical (whitespace-normalized, name-independent) content hash of a block
 // BODY (excludes the header line that carries the prototype's varying name).
@@ -396,23 +493,62 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
   // The prim's OWN content (excluding children).
   auto la = own_lines(pa, a);
   auto lb = own_lines(pb, b);
-  // Positional, semantic-aware equality of own line i.
-  auto line_eq = [&](size_t i) {
-    if (!ctx.semantic) return la[i] == lb[i];
-    const std::string xa = ctx.protoA ? subst_protos(la[i], *ctx.protoA) : la[i];
-    const std::string xb = ctx.protoB ? subst_protos(lb[i], *ctx.protoB) : lb[i];
-    return xa == xb || line_sem_equal(xa, xb, ctx.opts);
-  };
-  bool ownDiff = (la.size() != lb.size());
-  if (!ownDiff)
-    for (size_t i = 0; i < la.size(); ++i)
-      if (!line_eq(i)) { ownDiff = true; break; }
-  if (ownDiff) {
+
+  if (ctx.semantic) {
+    // --faster: match metadata/properties by NAME (order-insensitive, #1),
+    // skipping blank/comment lines (#3); compare whitespace/ULP/proto/asset-aware.
+    auto norm = [&](const std::string &x, bool aSide) {
+      std::string r = ctx.fuzzyAssets ? normalize_assets(x) : x;
+      const auto *m = aSide ? ctx.protoA : ctx.protoB;
+      return m ? subst_protos(r, *m) : r;
+    };
+    auto semeq = [&](const std::string &x, const std::string &y) {
+      std::string nx = norm(x, true), ny = norm(y, false);
+      return nx == ny || line_sem_equal(nx, ny, ctx.opts);
+    };
+    auto firstline = [](const std::string &s) {
+      size_t nl = s.find('\n');
+      return nl == std::string::npos ? s : s.substr(0, nl) + " ...";
+    };
+    std::string hdrA, hdrB;
+    std::vector<OwnUnit> ua, ub;
+    to_units(la, hdrA, ua);
+    to_units(lb, hdrB, ub);
+    std::unordered_map<std::string, size_t> mb;
+    for (size_t k = 0; k < ub.size(); ++k) mb.emplace(ub[k].key, k);
+    std::vector<bool> bused(ub.size(), false);
+    std::vector<std::pair<std::string, std::string>> mods;  // (a, b)
+    std::vector<std::string> dels, adds;
+    for (const auto &u : ua) {
+      auto it = mb.find(u.key);
+      if (it == mb.end()) { dels.push_back(u.text); continue; }
+      bused[it->second] = true;
+      if (!semeq(u.text, ub[it->second].text)) mods.push_back({u.text, ub[it->second].text});
+    }
+    for (size_t k = 0; k < ub.size(); ++k)
+      if (!bused[k]) adds.push_back(ub[k].text);
+    const bool hdrDiff = !semeq(hdrA, hdrB);
+    if (hdrDiff || !mods.empty() || !dels.empty() || !adds.empty()) {
+      any = true;
+      os << "~ " << path << " (modified)\n";
+      if (hdrDiff) {
+        auto pr = tinyusdz::tydra::CenterValuePairForDiff(hdrA, hdrB);
+        os << "  - " << pr.first << "\n  + " << pr.second << "\n";
+      }
+      for (auto &m : mods) {
+        auto pr = tinyusdz::tydra::CenterValuePairForDiff(m.first, m.second);
+        os << "  - " << pr.first << "\n  + " << pr.second << "\n";
+      }
+      for (auto &d : dels) os << "  - " << firstline(d) << "\n";
+      for (auto &x : adds) os << "  + " << firstline(x) << "\n";
+    }
+  } else if (la != lb) {
+    // --fast: positional text comparison.
     any = true;
     os << "~ " << path << " (modified)\n";
     if (la.size() == lb.size()) {
       for (size_t i = 0; i < la.size(); ++i) {
-        if (line_eq(i)) continue;
+        if (la[i] == lb[i]) continue;
         auto pr = tinyusdz::tydra::CenterValuePairForDiff(la[i], lb[i]);
         os << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
@@ -436,7 +572,8 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
 // ULP / instance canonicalization on differing blocks). Returns: 0 no diffs,
 // 1 diffs, -1 fall back to the full semantic path.
 int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
-                bool semantic, const tinyusdz::tydra::DiffOptions &opts) {
+                bool semantic, bool fuzzyAssets,
+                const tinyusdz::tydra::DiffOptions &opts) {
   MMapFile m1, m2;
   if (!mmap_open(f1, m1) || !mmap_open(f2, m2)) {
     mmap_close(m1);
@@ -455,6 +592,7 @@ int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
     } else {
       DiffCtx ctx;
       ctx.semantic = semantic;
+      ctx.fuzzyAssets = fuzzyAssets;
       ctx.opts = opts;
       std::unordered_map<std::string, std::string> pa, pb;
       if (semantic) {
@@ -530,7 +668,10 @@ void print_usage() {
   std::cout << "              whitespace/indent-insensitive, ULP-tolerant numbers\n";
   std::cout << "              (--ulps/--eps), and instance-prototype canonicalization.\n";
   std::cout << "              Faster than default (identical subtrees never parsed),\n";
-  std::cout << "              slower than --fast.\n";
+  std::cout << "              slower than --fast. Metadata/properties are matched by\n";
+  std::cout << "              NAME (order-insensitive); blank/comment lines ignored.\n";
+  std::cout << "  --fuzzy-assets  (--faster) Compare @asset@ paths by leaf/suffix,\n";
+  std::cout << "              so differing path prefixes do not show as diffs.\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -570,6 +711,8 @@ int main(int argc, char **argv) {
   // Middle tier: structural skip + semantic compare of differing blocks
   // (whitespace/indent-insensitive + ULP-tolerant + instance canonicalization).
   bool faster = false;
+  // --fuzzy-assets (--faster): compare @asset@ paths by leaf/suffix.
+  bool fuzzy_assets = false;
   std::string file1, file2;
   tinyusdz::tydra::DiffOptions diff_opts;
 
@@ -594,6 +737,8 @@ int main(int argc, char **argv) {
       fast = true;
     } else if (args[i] == "--faster") {
       faster = true;
+    } else if (args[i] == "--fuzzy-assets") {
+      fuzzy_assets = true;
     } else if (args[i] == "--ulps") {
       if (i + 1 >= args.size()) {
         std::cerr << "Error: --ulps requires a value\n";
@@ -641,7 +786,8 @@ int main(int argc, char **argv) {
   // file.
   if (fast || faster) {
     std::ostringstream ss;
-    int rc = struct_diff(file1, file2, ss, /*semantic=*/faster, diff_opts);
+    int rc = struct_diff(file1, file2, ss, /*semantic=*/faster, fuzzy_assets,
+                         diff_opts);
     if (rc >= 0) {
       if (!quiet) {
         if (rc == 1) std::cout << ss.str();
