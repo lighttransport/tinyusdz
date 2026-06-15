@@ -82,6 +82,7 @@ class App
   // Request the Vulkan ray-tracing technique at startup (honored only when the
   // device supports it; otherwise the viewer stays on rasterization).
   void setRequestRayTracing(bool on) { rtRequested_ = on; }
+  void setAllowBackendFallback(bool on) { allowBackendFallback_ = on; }
   void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
 
   // Write a PPM of the full composited window after the last frame (QA).
@@ -157,6 +158,7 @@ class App
   void cancelAndJoinReconvert();   // stop a running reconvert worker
 
   Backend backend_;
+  bool allowBackendFallback_{false};
   GLFWwindow* window_{nullptr};
   std::unique_ptr<Renderer> renderer_;
 

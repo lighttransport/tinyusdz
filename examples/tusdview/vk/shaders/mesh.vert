@@ -5,8 +5,14 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
+layout(location = 5) in uvec2 aInfluence;
 
-layout(set = 1, binding = 0) uniform sampler2D uBoneTex;
+layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
+  vec4 boneRows[];
+};
+layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
+  vec4 influenceRows[];
+};
 
 // 128-byte push constant block (Vulkan-guaranteed minimum):
 //   mat4 mvp        : 64 bytes
@@ -22,12 +28,12 @@ layout(location = 0) out vec3 vNormalW;
 layout(location = 1) out vec2 vUV;
 
 mat4 fetchBone(uint idx) {
-  int y = int(idx);
+  int base = int(idx) * 4;
   return mat4(
-      texelFetch(uBoneTex, ivec2(0, y), 0),
-      texelFetch(uBoneTex, ivec2(1, y), 0),
-      texelFetch(uBoneTex, ivec2(2, y), 0),
-      texelFetch(uBoneTex, ivec2(3, y), 0));
+      boneRows[base + 0],
+      boneRows[base + 1],
+      boneRows[base + 2],
+      boneRows[base + 3]);
 }
 
 void main() {
@@ -35,7 +41,29 @@ void main() {
   vec3 nrm = aNormal;
   float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
   uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
-  if (wsum > 0.0 && int(maxJoint) < textureSize(uBoneTex, 0).y) {
+  int boneCapacity = boneRows.length() / 4;
+  if (aInfluence.y > 0u) {
+    mat4 skin = mat4(0.0);
+    float fullWeightSum = 0.0;
+    int base = int(aInfluence.x);
+    int count = min(int(aInfluence.y), 256);
+    for (int i = 0; i < 256; ++i) {
+      if (i >= count) break;
+      int linear = base + i;
+      vec4 iw = influenceRows[linear];
+      uint joint = uint(iw.x + 0.5);
+      float weight = iw.y;
+      if (weight > 0.0 && int(joint) < boneCapacity) {
+        skin += fetchBone(joint) * weight;
+        fullWeightSum += weight;
+      }
+    }
+    if (fullWeightSum > 0.0) {
+      skin *= 1.0 / fullWeightSum;
+      pos = (skin * vec4(aPos, 1.0)).xyz;
+      nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+    }
+  } else if (wsum > 0.0 && int(maxJoint) < boneCapacity) {
     mat4 skin =
         fetchBone(aJoint.x) * aWeight.x +
         fetchBone(aJoint.y) * aWeight.y +

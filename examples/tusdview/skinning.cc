@@ -63,21 +63,86 @@ matrix4d MakeLocal(const float t[3], const quatf& r, const float s[3]) {
   return m;
 }
 
-bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
-                                  double t,
-                                  std::vector<matrix4d>* worldOut) {
-  if (!worldOut) return false;
-  if (skelId < 0 || skelId >= static_cast<int>(render.skeletons.size())) {
-    return false;
+bool MatrixNearlyIdentity(const matrix4d& m) {
+  const matrix4d ident = matrix4d::identity();
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      if (std::abs(m.m[r][c] - ident.m[r][c]) > 1e-8) return false;
+    }
   }
-  const tydra::SkelHierarchy& skel = render.skeletons[static_cast<size_t>(skelId)];
-  const size_t nj = skel.num_joints();
-  if (nj == 0 || skel.bind_transforms.size() != nj ||
-      skel.rest_transforms.size() != nj) {
-    return false;
-  }
+  return true;
+}
 
-  std::vector<matrix4d> local = skel.rest_transforms;  // default = rest pose
+bool AllIdentity(const std::vector<matrix4d>& m) {
+  if (m.empty()) return false;
+  for (const matrix4d& v : m) {
+    if (!MatrixNearlyIdentity(v)) return false;
+  }
+  return true;
+}
+
+bool IsPointJointSkeleton(const tydra::SkelHierarchy& skel) {
+  const size_t nj = skel.num_joints();
+  if (nj < 512 || skel.parent_joint_indices.empty()) return false;
+  // Some exporters encode dense vertex/point deformation as a huge star-shaped
+  // UsdSkel rig. Its rotation/scale channels are not meaningful for LBS, and
+  // applying them collapses the mesh; translations carry the deformation.
+  if (nj >= 1024) return true;
+  if (skel.root_node.children.size() + 1 == nj) return true;
+  size_t roots = 0;
+  size_t rootChildren = 0;
+  for (int parent : skel.parent_joint_indices) {
+    if (parent < 0) {
+      ++roots;
+    } else if (parent == 0) {
+      ++rootChildren;
+    }
+  }
+  return roots == 1 && rootChildren + 1 == nj;
+}
+
+const tydra::AnimationClip* FindSkeletonClip(const tydra::RenderScene& render,
+                                             const tydra::SkelHierarchy& skel,
+                                             int skelId) {
+  auto hasChannels = [&](const tydra::AnimationClip& clip) {
+    for (const tydra::AnimationChannel& ch : clip.channels) {
+      if (ch.target_type == tydra::ChannelTargetType::SkeletonJoint &&
+          ch.skeleton_id == skelId) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (skel.anim_id >= 0 && skel.anim_id < static_cast<int>(render.animations.size())) {
+    const auto& clip = render.animations[static_cast<size_t>(skel.anim_id)];
+    if (hasChannels(clip)) return &clip;
+  }
+  for (const tydra::AnimationClip& clip : render.animations) {
+    if (hasChannels(clip)) return &clip;
+  }
+  return nullptr;
+}
+
+double FirstSkeletonSampleTime(const tydra::AnimationClip& clip, int skelId) {
+  double first = std::numeric_limits<double>::infinity();
+  for (const tydra::AnimationChannel& ch : clip.channels) {
+    if (ch.target_type != tydra::ChannelTargetType::SkeletonJoint) continue;
+    if (ch.skeleton_id != skelId) continue;
+    if (ch.sampler < 0 || ch.sampler >= static_cast<int>(clip.samplers.size())) {
+      continue;
+    }
+    const auto& times = clip.samplers[static_cast<size_t>(ch.sampler)].times;
+    if (!times.empty()) first = std::min(first, static_cast<double>(times.front()));
+  }
+  return std::isfinite(first) ? first : 0.0;
+}
+
+void BuildJointLocals(const tydra::AnimationClip* clip, int skelId, double t,
+                      const std::vector<matrix4d>& baseLocal,
+                      bool translationOnly,
+                      std::vector<matrix4d>* localOut) {
+  const size_t nj = baseLocal.size();
+  std::vector<matrix4d> local = baseLocal;
   std::vector<bool> animated(nj, false);
   std::vector<float> T(nj * 3, 0.0f);
   std::vector<quatf> R(nj);
@@ -90,7 +155,7 @@ bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
     R[j].real = 1.0f;
     tinyusdz::value::double3 dt, ds;
     tinyusdz::value::quatd dr;
-    if (tinyusdz::decompose(skel.rest_transforms[j], &dt, &dr, &ds)) {
+    if (tinyusdz::decompose(baseLocal[j], &dt, &dr, &ds)) {
       T[j * 3 + 0] = static_cast<float>(dt[0]);
       T[j * 3 + 1] = static_cast<float>(dt[1]);
       T[j * 3 + 2] = static_cast<float>(dt[2]);
@@ -106,27 +171,24 @@ bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
 
   // Override with animated TRS from any SkeletonJoint channel targeting this
   // skeleton (a present channel replaces that component; absent ones keep rest).
-  if (skel.anim_id >= 0 &&
-      skel.anim_id < static_cast<int>(render.animations.size())) {
-    const tydra::AnimationClip& clip =
-        render.animations[static_cast<size_t>(skel.anim_id)];
-    for (const tydra::AnimationChannel& ch : clip.channels) {
+  if (clip) {
+    for (const tydra::AnimationChannel& ch : clip->channels) {
       if (ch.target_type != tydra::ChannelTargetType::SkeletonJoint) continue;
       if (ch.skeleton_id != skelId) continue;
       if (ch.joint_id < 0 || ch.joint_id >= static_cast<int>(nj)) continue;
       if (ch.sampler < 0 ||
-          ch.sampler >= static_cast<int>(clip.samplers.size())) {
+          ch.sampler >= static_cast<int>(clip->samplers.size())) {
         continue;
       }
       const tydra::KeyframeSampler& smp =
-          clip.samplers[static_cast<size_t>(ch.sampler)];
+          clip->samplers[static_cast<size_t>(ch.sampler)];
       const size_t j = static_cast<size_t>(ch.joint_id);
       animated[j] = true;
       if (ch.path == tydra::AnimationPath::Translation) {
         EvalSampler(smp, t, 3, &T[j * 3]);
-      } else if (ch.path == tydra::AnimationPath::Scale) {
+      } else if (!translationOnly && ch.path == tydra::AnimationPath::Scale) {
         EvalSampler(smp, t, 3, &S[j * 3]);
-      } else if (ch.path == tydra::AnimationPath::Rotation) {
+      } else if (!translationOnly && ch.path == tydra::AnimationPath::Rotation) {
         float q[4];
         EvalSampler(smp, t, 4, q);  // x, y, z, w
         float len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
@@ -142,10 +204,56 @@ bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
   for (size_t j = 0; j < nj; ++j) {
     if (animated[j]) local[j] = MakeLocal(&T[j * 3], R[j], &S[j * 3]);
   }
+  *localOut = std::move(local);
+}
+
+bool BuildSkeletonPose(const tydra::RenderScene& render, int skelId, double t,
+                       std::vector<matrix4d>* worldOut,
+                       std::vector<matrix4d>* bindWorldOut) {
+  if (!worldOut) return false;
+  if (skelId < 0 || skelId >= static_cast<int>(render.skeletons.size())) {
+    return false;
+  }
+  const tydra::SkelHierarchy& skel = render.skeletons[static_cast<size_t>(skelId)];
+  const size_t nj = skel.num_joints();
+  if (nj == 0 || skel.bind_transforms.size() != nj ||
+      skel.rest_transforms.size() != nj) {
+    return false;
+  }
+
+  const tydra::AnimationClip* clip = FindSkeletonClip(render, skel, skelId);
+  const bool synthesizeBindFromAnimation =
+      clip && nj > 1 && AllIdentity(skel.bind_transforms) &&
+      AllIdentity(skel.rest_transforms);
+
+  std::vector<matrix4d> bindWorld = skel.bind_transforms;
+  std::vector<matrix4d> baseLocal = skel.rest_transforms;
+  const bool pointJointSkeleton = IsPointJointSkeleton(skel);
+  bool translationOnly = pointJointSkeleton;
+  if (synthesizeBindFromAnimation) {
+    const double bindTime = FirstSkeletonSampleTime(*clip, skelId);
+    BuildJointLocals(clip, skelId, bindTime, skel.rest_transforms,
+                     /*translationOnly=*/false, &baseLocal);
+    if (!tydra::ConcatJointTransforms(skel.parent_joint_indices, baseLocal, &bindWorld)) {
+      return false;
+    }
+  } else {
+    std::vector<matrix4d> restWorld;
+    if (tydra::ConcatJointTransforms(skel.parent_joint_indices,
+                                     skel.rest_transforms, &restWorld)) {
+      if (pointJointSkeleton) {
+        bindWorld = std::move(restWorld);
+      }
+    }
+  }
+
+  std::vector<matrix4d> local;
+  BuildJointLocals(clip, skelId, t, baseLocal, translationOnly, &local);
 
   if (!tydra::ConcatJointTransforms(skel.parent_joint_indices, local, worldOut)) {
     return false;
   }
+  if (bindWorldOut) *bindWorldOut = std::move(bindWorld);
   return worldOut->size() == nj;
 }
 
@@ -154,7 +262,7 @@ bool BuildSkeletonJointWorldsImpl(const tydra::RenderScene& render, int skelId,
 bool BuildSkeletonJointWorlds(const tydra::RenderScene& render, int skelId,
                               double timecode,
                               std::vector<matrix4d>* worldOut) {
-  return BuildSkeletonJointWorldsImpl(render, skelId, timecode, worldOut);
+  return BuildSkeletonPose(render, skelId, timecode, worldOut, nullptr);
 }
 
 // Per-skeleton skinning matrices skinMat[j] = inverse(bind[j]) * posedWorld[j]
@@ -173,11 +281,12 @@ bool BuildSkinningMatrices(const tydra::RenderScene& render, int skelId,
   }
 
   std::vector<matrix4d> world;
-  if (!BuildSkeletonJointWorldsImpl(render, skelId, t, &world)) return false;
+  std::vector<matrix4d> bindWorld;
+  if (!BuildSkeletonPose(render, skelId, t, &world, &bindWorld)) return false;
 
   skinOut->resize(nj);
   for (size_t j = 0; j < nj; ++j) {
-    (*skinOut)[j] = tinyusdz::inverse(skel.bind_transforms[j]) * world[j];
+    (*skinOut)[j] = tinyusdz::inverse(bindWorld[j]) * world[j];
   }
   return true;
 }
@@ -206,6 +315,28 @@ std::unordered_map<std::string, float> GatherBlendWeights(
 
 bool MeshIsSkinned(const tydra::RenderMesh& m) {
   return m.skel_id >= 0 && !m.joint_and_weights.jointIndices.empty();
+}
+
+void NormalizeSkinWeights(std::vector<float>* weights, size_t pointCount,
+                          int influencesPerPoint) {
+  if (!weights || influencesPerPoint < 1) return;
+  const size_t infl = static_cast<size_t>(influencesPerPoint);
+  if (weights->size() != pointCount * infl) return;
+  for (size_t pi = 0; pi < pointCount; ++pi) {
+    const size_t base = pi * infl;
+    double sum = 0.0;
+    for (size_t k = 0; k < infl; ++k) {
+      float& w = (*weights)[base + k];
+      if (!(w > 0.0f) || !std::isfinite(w)) {
+        w = 0.0f;
+        continue;
+      }
+      sum += static_cast<double>(w);
+    }
+    if (sum <= 0.0) continue;
+    const float inv = static_cast<float>(1.0 / sum);
+    for (size_t k = 0; k < infl; ++k) (*weights)[base + k] *= inv;
+  }
 }
 
 matrix4d MatrixFromDraw(const float m[16]) {
@@ -324,15 +455,29 @@ bool SceneHasNonSkeletalAnimation(const tydra::RenderScene& render) {
   return false;
 }
 
+int MaxSkinInfluenceCount(const tydra::RenderScene& render) {
+  int maxInfluences = 0;
+  for (const tydra::RenderMesh& m : render.meshes) {
+    if (MeshIsSkinned(m)) maxInfluences = std::max(maxInfluences, m.joint_and_weights.elementSize);
+  }
+  return maxInfluences;
+}
+
 bool BuildGpuSkinningFrame(
     const tydra::RenderScene& render, const tinyusdz::Stage& stage,
     DrawScene* draw, double timecode, SkinningFrameCPU* frame,
+    bool updateSkinnedHelpers,
     std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
   if (matrices > 0) {
     frame->matrixCount = matrices;
-    frame->rgba32f.assign(static_cast<size_t>(matrices) * 16, 0.0f);
+    const size_t floats = static_cast<size_t>(matrices) * 16;
+    if (frame->rgba32f.size() != floats) {
+      frame->rgba32f.assign(floats, 0.0f);
+    } else {
+      std::fill(frame->rgba32f.begin(), frame->rgba32f.end(), 0.0f);
+    }
     frame->enabled = true;
   } else {
     *frame = SkinningFrameCPU{};  // morph-only scene: no bone texture
@@ -396,17 +541,21 @@ bool BuildGpuSkinningFrame(
       cit = skinCache.emplace(dm.skelId, std::move(sm)).first;
     }
     const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
+    const matrix4d invGeomBind = tinyusdz::inverse(geomBind);
     std::vector<matrix4d> composed;
-    composed.reserve(cit->second.size());
+    if (updateSkinnedHelpers) composed.reserve(cit->second.size());
     for (size_t j = 0; j < cit->second.size(); ++j) {
-      matrix4d m = geomBind * cit->second[j];
-      composed.push_back(m);
+      matrix4d m = geomBind * cit->second[j] * invGeomBind;
+      if (updateSkinnedHelpers) composed.push_back(m);
       const int row = dm.skinMatrixBase + static_cast<int>(j);
       if (row < matrices) PackMatrix(m, row, frame);
     }
-    composedByBase[dm.skinMatrixBase] = std::move(composed);
+    if (updateSkinnedHelpers) {
+      composedByBase[dm.skinMatrixBase] = std::move(composed);
+    }
   }
 
+  constexpr size_t kMaxSkinnedHelperSamplesPerMesh = 8192;
   bool sceneFirst = true;
   for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
     DrawMeshCPU& dm = draw->meshes[mi];
@@ -434,27 +583,71 @@ bool BuildGpuSkinningFrame(
                          dm.jointWt.size() == verts.size() * 4;
     const auto bit = skinned ? composedByBase.find(dm.skinMatrixBase)
                              : composedByBase.end();
-    if (skinned && bit != composedByBase.end()) {
+    const bool extendedSkinned =
+        skinned && dm.influenceOffsetCount.size() == verts.size() * 2 &&
+        !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
+    dm.skinnedHelperPoints.clear();
+    if (!updateSkinnedHelpers && morphed.find(static_cast<int>(mi)) == morphed.end()) {
+      sceneFirst = false;
+      continue;
+    } else if (!updateSkinnedHelpers) {
+      for (const DrawVertex& v : verts) {
+        update(point3f{v.px, v.py, v.pz});
+      }
+    } else if (skinned && bit != composedByBase.end()) {
+      const size_t sampleStep =
+          verts.size() > kMaxSkinnedHelperSamplesPerMesh
+              ? (verts.size() + kMaxSkinnedHelperSamplesPerMesh - 1) /
+                    kMaxSkinnedHelperSamplesPerMesh
+              : 1;
+      dm.skinnedHelperPoints.reserve(((verts.size() + sampleStep - 1) / sampleStep) * 3);
       const std::vector<matrix4d>& mats = bit->second;
-      for (size_t vi = 0; vi < verts.size(); ++vi) {
+      for (size_t vi = 0; vi < verts.size(); vi += sampleStep) {
         const DrawVertex& v = verts[vi];
         const point3f p{v.px, v.py, v.pz};
         point3f acc{0.0f, 0.0f, 0.0f};
         float sum = 0.0f;
-        for (size_t k = 0; k < 4; ++k) {
-          const float w = dm.jointWt[vi * 4 + k];
-          if (w <= 0.0f) continue;
-          const uint32_t absIdx = dm.jointIdx[vi * 4 + k];
-          if (absIdx < static_cast<uint32_t>(dm.skinMatrixBase)) continue;
-          const size_t localIdx = static_cast<size_t>(absIdx - dm.skinMatrixBase);
-          if (localIdx >= mats.size()) continue;
-          const point3f q = TransformPointRow(p, mats[localIdx]);
-          acc.x += q.x * w;
-          acc.y += q.y * w;
-          acc.z += q.z * w;
-          sum += w;
+        if (extendedSkinned) {
+          const uint32_t offset = dm.influenceOffsetCount[vi * 2 + 0];
+          const uint32_t count = dm.influenceOffsetCount[vi * 2 + 1];
+          const size_t texelCount = dm.influenceTexels.size() / 4;
+          for (uint32_t k = 0; k < count; ++k) {
+            const size_t texel = static_cast<size_t>(offset) + k;
+            if (texel >= texelCount) break;
+            const size_t base = texel * 4;
+            const float w = dm.influenceTexels[base + 1];
+            if (w <= 0.0f) continue;
+            const uint32_t absIdx =
+                static_cast<uint32_t>(std::max(0.0f, dm.influenceTexels[base] + 0.5f));
+            if (absIdx < static_cast<uint32_t>(dm.skinMatrixBase)) continue;
+            const size_t localIdx = static_cast<size_t>(absIdx - dm.skinMatrixBase);
+            if (localIdx >= mats.size()) continue;
+            const point3f q = TransformPointRow(p, mats[localIdx]);
+            acc.x += q.x * w;
+            acc.y += q.y * w;
+            acc.z += q.z * w;
+            sum += w;
+          }
+        } else {
+          for (size_t k = 0; k < 4; ++k) {
+            const float w = dm.jointWt[vi * 4 + k];
+            if (w <= 0.0f) continue;
+            const uint32_t absIdx = dm.jointIdx[vi * 4 + k];
+            if (absIdx < static_cast<uint32_t>(dm.skinMatrixBase)) continue;
+            const size_t localIdx = static_cast<size_t>(absIdx - dm.skinMatrixBase);
+            if (localIdx >= mats.size()) continue;
+            const point3f q = TransformPointRow(p, mats[localIdx]);
+            acc.x += q.x * w;
+            acc.y += q.y * w;
+            acc.z += q.z * w;
+            sum += w;
+          }
         }
-        update(sum > 0.0f ? acc : p);
+        const point3f skinnedPoint = sum > 0.0f ? acc : p;
+        dm.skinnedHelperPoints.push_back(skinnedPoint.x);
+        dm.skinnedHelperPoints.push_back(skinnedPoint.y);
+        dm.skinnedHelperPoints.push_back(skinnedPoint.z);
+        update(skinnedPoint);
       }
     } else {
       for (const DrawVertex& v : verts) {
@@ -465,18 +658,11 @@ bool BuildGpuSkinningFrame(
       for (int c = 0; c < 3; ++c) {
         dm.aabbMin[c] = mn[c];
         dm.aabbMax[c] = mx[c];
-        if (sceneFirst) {
-          draw->aabbMin[c] = mn[c];
-          draw->aabbMax[c] = mx[c];
-        } else {
-          draw->aabbMin[c] = std::min(draw->aabbMin[c], mn[c]);
-          draw->aabbMax[c] = std::max(draw->aabbMax[c], mx[c]);
-        }
       }
       sceneFirst = false;
     }
   }
-  draw->hasBounds = !sceneFirst;
+  if (!draw->hasBounds) draw->hasBounds = !sceneFirst;
 
   if (morphedOut) {
     morphedOut->clear();
@@ -575,9 +761,10 @@ void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
       const auto& jw = mesh.joint_and_weights;
       const int infl = jw.elementSize < 1 ? 1 : jw.elementSize;
       const size_t expect = np * static_cast<size_t>(infl);
-      std::vector<float> weights(jw.jointWeights.size());
-      for (size_t i = 0; i < weights.size(); ++i) weights[i] = jw.jointWeights[i];
-      if (jw.jointIndices.size() == expect && weights.size() == expect) {
+      if (jw.jointIndices.size() == expect && jw.jointWeights.size() == expect) {
+        std::vector<float> weights(jw.jointWeights.size());
+        for (size_t i = 0; i < weights.size(); ++i) weights[i] = jw.jointWeights[i];
+        NormalizeSkinWeights(&weights, np, infl);
         auto cit = skinCache.find(mesh.skel_id);
         if (cit == skinCache.end()) {
           std::vector<matrix4d> sm;

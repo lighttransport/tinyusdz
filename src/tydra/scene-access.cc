@@ -3512,6 +3512,10 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("bindTransforms.size() = " << bindTransforms.size());
     if (bindTransforms.size() > 0) {
       DCOUT("bindTransforms[0] = " << bindTransforms[0]);
+    } else {
+      DCOUT("bindTransforms is authored but empty - using identity");
+      bindTransformsAuthored = false;
+      bindTransforms.assign(joints.size(), value::matrix4d::identity());
     }
   } else {
     DCOUT("bindTransforms is NOT authored - using identity");
@@ -3536,6 +3540,9 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("restTransforms.size() = " << restTransforms.size());
     if (restTransforms.size() > 0) {
       DCOUT("restTransforms[0] = " << restTransforms[0]);
+    } else {
+      DCOUT("restTransforms is authored but empty - using fallback");
+      restTransformsAuthored = false;
     }
   } else if (bindTransformsAuthored) {
     // Fallback: compute restTransforms (local) from bindTransforms (world)
@@ -3563,18 +3570,20 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
         // Root joint: use bindTransform directly (world space becomes local space)
         restTransforms[i] = bindTransforms[i];
       } else {
-        // Child joint: compute local transform from world transforms
-        // localTransform = inverse(parentWorldTransform) * childWorldTransform
+        // Child joint: compute local transform from world transforms.
+        // Row-vector convention: childWorld = childLocal * parentWorld.
         value::matrix4d parentInverse;
         if (!inverse(bindTransforms[size_t(parentIdx)], parentInverse)) {
           DCOUT("Failed to compute inverse of parent bindTransform, using identity for restTransform");
           restTransforms[i] = value::matrix4d::identity();
         } else {
-          restTransforms[i] = parentInverse * bindTransforms[i];
+          restTransforms[i] = bindTransforms[i] * parentInverse;
         }
       }
     }
     DCOUT("Computed restTransforms from bindTransforms");
+  } else if (!restTransformsAuthored) {
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
   }
 
   if (joints.size() != restTransforms.size()) {
@@ -3892,6 +3901,11 @@ bool SkinPointsLBS(
   int numJoints = int(jointXforms.size());
 
   skinnedPoints->resize(numPoints);
+  value::matrix4d inverseGeomBindTransform = value::matrix4d::identity();
+  if (!inverse(geomBindTransform, inverseGeomBindTransform)) {
+    if (err) { *err = "Failed to invert geomBindTransform."; }
+    return false;
+  }
 
   for (size_t pi = 0; pi < numPoints; pi++) {
     // Transform rest point into skeleton space via geomBindTransform
@@ -3935,9 +3949,31 @@ bool SkinPointsLBS(
       outz += double(w) * tz;
     }
 
-    (*skinnedPoints)[pi].x = float(outx);
-    (*skinnedPoints)[pi].y = float(outy);
-    (*skinnedPoints)[pi].z = float(outz);
+    double gx = outx * inverseGeomBindTransform.m[0][0] +
+                outy * inverseGeomBindTransform.m[1][0] +
+                outz * inverseGeomBindTransform.m[2][0] +
+                inverseGeomBindTransform.m[3][0];
+    double gy = outx * inverseGeomBindTransform.m[0][1] +
+                outy * inverseGeomBindTransform.m[1][1] +
+                outz * inverseGeomBindTransform.m[2][1] +
+                inverseGeomBindTransform.m[3][1];
+    double gz = outx * inverseGeomBindTransform.m[0][2] +
+                outy * inverseGeomBindTransform.m[1][2] +
+                outz * inverseGeomBindTransform.m[2][2] +
+                inverseGeomBindTransform.m[3][2];
+    double gw = outx * inverseGeomBindTransform.m[0][3] +
+                outy * inverseGeomBindTransform.m[1][3] +
+                outz * inverseGeomBindTransform.m[2][3] +
+                inverseGeomBindTransform.m[3][3];
+    if (std::abs(gw) > 1e-10) {
+      gx /= gw;
+      gy /= gw;
+      gz /= gw;
+    }
+
+    (*skinnedPoints)[pi].x = float(gx);
+    (*skinnedPoints)[pi].y = float(gy);
+    (*skinnedPoints)[pi].z = float(gz);
   }
 
   return true;
@@ -4110,6 +4146,11 @@ bool SkinNormalsLBS(
   int numJoints = int(jointXforms.size());
 
   skinnedNormals->resize(numPoints);
+  value::matrix4d inverseGeomBindTransform = value::matrix4d::identity();
+  if (!inverse(geomBindTransform, inverseGeomBindTransform)) {
+    if (err) { *err = "Failed to invert geomBindTransform."; }
+    return false;
+  }
 
   // For normals, we use inverse-transpose of the skinning matrix.
   // Since we accumulate the weighted skinning matrix per vertex first,
@@ -4152,7 +4193,20 @@ bool SkinNormalsLBS(
       outz += double(w) * tz;
     }
 
+    double gx = outx * inverseGeomBindTransform.m[0][0] +
+                outy * inverseGeomBindTransform.m[1][0] +
+                outz * inverseGeomBindTransform.m[2][0];
+    double gy = outx * inverseGeomBindTransform.m[0][1] +
+                outy * inverseGeomBindTransform.m[1][1] +
+                outz * inverseGeomBindTransform.m[2][1];
+    double gz = outx * inverseGeomBindTransform.m[0][2] +
+                outy * inverseGeomBindTransform.m[1][2] +
+                outz * inverseGeomBindTransform.m[2][2];
+
     // Renormalize
+    outx = gx;
+    outy = gy;
+    outz = gz;
     double len = std::sqrt(outx * outx + outy * outy + outz * outz);
     if (len > 1e-10) {
       outx /= len;

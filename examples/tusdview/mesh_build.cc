@@ -22,6 +22,8 @@ using tinyusdz::value::matrix4d;
 
 namespace {
 
+constexpr int kInfluenceTexWidth = 1024;
+
 const char* PurposeName(tinyusdz::Purpose purpose) {
   switch (purpose) {
     case tinyusdz::Purpose::Render: return "render";
@@ -176,6 +178,60 @@ void WriteSkinVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
     dm->jointIdx[dst + k] = top[k].second;
     dm->jointWt[dst + k] = (sum > 0.0f) ? (top[k].first / sum) : 0.0f;
   }
+}
+
+void WriteSkinInfluenceVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
+                              size_t dstVertex, DrawMeshCPU* dm) {
+  if (!dm || dm->influenceOffsetCount.empty()) return;
+  const auto& jw = mesh.joint_and_weights;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  if (srcPoint >= mesh.points.size()) return;
+  const size_t src = srcPoint * infl;
+  if (src + infl > jw.jointIndices.size() || src + infl > jw.jointWeights.size()) {
+    return;
+  }
+
+  const uint32_t offset = static_cast<uint32_t>(dm->influenceTexels.size() / 4);
+  double sum = 0.0;
+  for (size_t k = 0; k < infl; ++k) {
+    const float w = jw.jointWeights[src + k];
+    const int ji = jw.jointIndices[src + k];
+    if (w <= 0.0f || ji < 0 || !std::isfinite(w)) continue;
+    dm->influenceTexels.push_back(static_cast<float>(ji));
+    dm->influenceTexels.push_back(w);
+    dm->influenceTexels.push_back(0.0f);
+    dm->influenceTexels.push_back(0.0f);
+    sum += static_cast<double>(w);
+  }
+
+  uint32_t count = static_cast<uint32_t>(dm->influenceTexels.size() / 4) - offset;
+  if (sum > 0.0) {
+    const float inv = static_cast<float>(1.0 / sum);
+    for (uint32_t i = 0; i < count; ++i) {
+      dm->influenceTexels[(static_cast<size_t>(offset + i) * 4) + 1] *= inv;
+    }
+  } else {
+    count = 0;
+  }
+
+  const size_t dst = dstVertex * 2;
+  dm->influenceOffsetCount[dst + 0] = offset;
+  dm->influenceOffsetCount[dst + 1] = count;
+  dm->maxInfluencesPerVertex = std::max(dm->maxInfluencesPerVertex,
+                                        static_cast<int>(count));
+}
+
+void FinalizeInfluenceTexture(DrawMeshCPU* dm) {
+  if (!dm || dm->influenceTexels.empty()) return;
+  const size_t texels = dm->influenceTexels.size() / 4;
+  dm->influenceTexWidth = kInfluenceTexWidth;
+  dm->influenceTexHeight =
+      static_cast<int>((texels + static_cast<size_t>(kInfluenceTexWidth) - 1) /
+                       static_cast<size_t>(kInfluenceTexWidth));
+  const size_t padded =
+      static_cast<size_t>(dm->influenceTexWidth) *
+      static_cast<size_t>(dm->influenceTexHeight) * 4;
+  dm->influenceTexels.resize(padded, 0.0f);
 }
 
 // Decode a TextureImage's buffer into an RGBA8 light3d::Image. Returns false if
@@ -369,6 +425,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   if (MeshHasSkinData(mesh, nPoints)) {
     dm.jointIdx.assign(nPoints * 4, 0u);
     dm.jointWt.assign(nPoints * 4, 0.0f);
+    dm.influenceOffsetCount.assign(nPoints * 2, 0u);
     MatToColMajor(mesh.joint_and_weights.geomBindTransform, dm.skinGeomBind);
   }
 
@@ -404,6 +461,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
       WriteSkinVertex(mesh, i, i, &dm);
+      WriteSkinInfluenceVertex(mesh, i, i, &dm);
     }
     dm.indices.assign(srcIndices.begin(), srcIndices.end());
     gotNormals = normalsPerVertex;
@@ -413,6 +471,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     if (MeshHasSkinData(mesh, nPoints)) {
       dm.jointIdx.assign(srcIndices.size() * 4, 0u);
       dm.jointWt.assign(srcIndices.size() * 4, 0.0f);
+      dm.influenceOffsetCount.assign(srcIndices.size() * 2, 0u);
     }
     dm.indices.resize(srcIndices.size());
     const bool normalsFV = !mesh.normals.empty() && mesh.normals.is_facevarying();
@@ -439,9 +498,11 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
       if (pidx < nPoints) WriteSkinVertex(mesh, pidx, k, &dm);
+      if (pidx < nPoints) WriteSkinInfluenceVertex(mesh, pidx, k, &dm);
       dm.indices[k] = static_cast<uint32_t>(k);
     }
   }
+  FinalizeInfluenceTexture(&dm);
 
   // Generate smooth normals if none were provided/usable.
   if (!gotNormals) {
@@ -612,6 +673,8 @@ void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
         static_cast<size_t>(dm.skelId) >= rs.skeletons.size()) {
       dm.jointIdx.clear();
       dm.jointWt.clear();
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
       dm.skelId = -1;
       dm.skinMatrixBase = -1;
       continue;
@@ -620,6 +683,8 @@ void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
     if (nj == 0 || nj > static_cast<size_t>(std::numeric_limits<int>::max() - nextMatrix)) {
       dm.jointIdx.clear();
       dm.jointWt.clear();
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
       dm.skelId = -1;
       dm.skinMatrixBase = -1;
       continue;
@@ -631,6 +696,27 @@ void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
       } else {
         j = static_cast<uint32_t>(dm.skinMatrixBase);
       }
+    }
+    const bool hasFullInfluences =
+        dm.influenceOffsetCount.size() == dm.vertices.size() * 2 &&
+        !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
+    if (hasFullInfluences) {
+      const size_t texels = dm.influenceTexels.size() / 4;
+      for (size_t t = 0; t < texels; ++t) {
+        const size_t base = t * 4;
+        if (!(dm.influenceTexels[base + 1] > 0.0f)) continue;
+        const uint32_t localJoint =
+            static_cast<uint32_t>(std::max(0.0f, dm.influenceTexels[base] + 0.5f));
+        dm.influenceTexels[base] =
+            static_cast<float>(dm.skinMatrixBase +
+                               (localJoint < nj ? localJoint : uint32_t{0}));
+      }
+    } else {
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
+      dm.influenceTexWidth = 0;
+      dm.influenceTexHeight = 0;
+      dm.maxInfluencesPerVertex = 0;
     }
     nextMatrix += static_cast<int>(nj);
   }
@@ -645,6 +731,8 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
       dm.vertices.size() * sizeof(DrawVertex) +
       dm.jointIdx.size() * sizeof(uint32_t) +
       dm.jointWt.size() * sizeof(float) +
+      dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+      dm.influenceTexels.size() * sizeof(float) +
       dm.indices.size() * sizeof(uint32_t);
   return out.triangleCount + thisTris > ctrl.maxTriangles ||
          cumulativeVertexBytes + estBytes > ctrl.maxVertexBytes;
@@ -710,6 +798,8 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out, LoadControl* c
         dm.vertices.size() * sizeof(DrawVertex) +
         dm.jointIdx.size() * sizeof(uint32_t) +
         dm.jointWt.size() * sizeof(float) +
+        dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+        dm.influenceTexels.size() * sizeof(float) +
         dm.indices.size() * sizeof(uint32_t);
     out->triangleCount += dm.indices.size() / 3;
     out->meshes.push_back(std::move(dm));
@@ -755,6 +845,8 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
         dm.vertices.size() * sizeof(DrawVertex) +
         dm.jointIdx.size() * sizeof(uint32_t) +
         dm.jointWt.size() * sizeof(float) +
+        dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+        dm.influenceTexels.size() * sizeof(float) +
         dm.indices.size() * sizeof(uint32_t);
     out->triangleCount += dm.indices.size() / 3;
     rsMeshToDraw[index] = static_cast<int>(out->meshes.size());

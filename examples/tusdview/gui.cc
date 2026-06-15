@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <thread>
 #include <utility>
 
 #include "core/prim.hh"
@@ -10,6 +12,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
 #include "skinning.hh"
+#include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -43,6 +46,70 @@ void HintWrapped(const char* s) {
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   ImGui::TextWrapped("%s", s);
   ImGui::PopStyleColor();
+}
+
+std::string TinyUsdVersionString() {
+  std::string v = std::to_string(tinyusdz::version_major) + "." +
+                  std::to_string(tinyusdz::version_minor) + "." +
+                  std::to_string(tinyusdz::version_micro);
+  if (tinyusdz::version_rev && tinyusdz::version_rev[0] != '\0') {
+    v += "-";
+    v += tinyusdz::version_rev;
+  }
+  return v;
+}
+
+const char* OperatingSystemString() {
+#if defined(_WIN32)
+  return "Windows";
+#elif defined(__APPLE__)
+  return "macOS";
+#elif defined(__linux__)
+  return "Linux";
+#elif defined(__FreeBSD__)
+  return "FreeBSD";
+#else
+  return "unknown OS";
+#endif
+}
+
+const char* CpuArchString() {
+#if defined(__x86_64__) || defined(_M_X64)
+  return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  return "aarch64";
+#elif defined(__arm__) || defined(_M_ARM)
+  return "arm";
+#elif defined(__i386__) || defined(_M_IX86)
+  return "x86";
+#elif defined(__riscv)
+  return "riscv";
+#else
+  return "unknown arch";
+#endif
+}
+
+std::string CpuInfoString() {
+  const unsigned threads = std::thread::hardware_concurrency();
+  std::string s = CpuArchString();
+  if (threads > 0) {
+    s += ", ";
+    s += std::to_string(threads);
+    s += " logical threads";
+  }
+  return s;
+}
+
+const char* CompilerString() {
+#if defined(__clang__)
+  return "Clang " __clang_version__;
+#elif defined(__GNUC__)
+  return "GCC " __VERSION__;
+#elif defined(_MSC_VER)
+  return "MSVC";
+#else
+  return "unknown compiler";
+#endif
 }
 
 const tinyusdz::Prim* FindPrimByPath(const tinyusdz::Prim& prim,
@@ -167,7 +234,60 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawPayloads();
   drawViewport();
   drawTimeline();
+  drawAboutModal();
   drawLoadingModal();
+}
+
+void Gui::drawAboutModal() {
+  const char* kId = "About tusdview##about";
+  if (showAbout_) {
+    ImGui::OpenPopup(kId);
+    showAbout_ = false;
+  }
+
+  const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal(kId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    return;
+  }
+
+  constexpr const char* kRepoUrl = "https://github.com/lighttransport/tinyusdz";
+  const RendererCaps* caps = renderer_ ? &renderer_->caps() : nullptr;
+  const std::string tinyVersion = TinyUsdVersionString();
+  const std::string cpuInfo = CpuInfoString();
+
+  ImGui::TextUnformatted("tusdview");
+  ImGui::Separator();
+  ImGui::Text("tusdview version: %s", "development build");
+  ImGui::Text("tinyusdz version: %s", tinyVersion.c_str());
+  ImGui::Text("Backend: %s", caps ? caps->backend_name : "?");
+  ImGui::Text("GPU: %s", (caps && !caps->gpu_name.empty()) ? caps->gpu_name.c_str() : "?");
+  ImGui::Text("Graphics API: %s",
+              (caps && !caps->api_info.empty()) ? caps->api_info.c_str() : "?");
+  ImGui::Text("GPU skinning: %s%s",
+              (caps && caps->supportsGpuSkinning) ? "yes" : "no",
+              (caps && caps->supportsExtendedGpuSkinning) ? " (extended influences)" : "");
+  ImGui::Text("Ray tracing: %s%s",
+              (caps && caps->supportsRayTracing) ? "available" : "unavailable",
+              (renderer_ && renderer_->rayTracingActive()) ? ", active" : "");
+  ImGui::Separator();
+  ImGui::Text("CPU: %s", cpuInfo.c_str());
+  ImGui::Text("OS: %s", OperatingSystemString());
+  ImGui::Text("Compiler: %s", CompilerString());
+  ImGui::Separator();
+  ImGui::TextUnformatted("Repository:");
+  ImGui::SameLine();
+  ImGui::TextUnformatted(kRepoUrl);
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Copy URL")) {
+    ImGui::SetClipboardText(kRepoUrl);
+  }
+  ImGui::Separator();
+  if (ImGui::Button("Close")) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
 }
 
 void Gui::drawLoadingModal() {
@@ -409,6 +529,8 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::TextUnformatted("7/Shift+7 Top/Bottom");
       ImGui::TextUnformatted("Ctrl+1..3 Recall bookmark");
       ImGui::TextUnformatted("Ctrl+Shift+1..3 Save bookmark");
+      ImGui::Separator();
+      if (ImGui::MenuItem("About tusdview")) showAbout_ = true;
       ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
@@ -1861,7 +1983,10 @@ void Gui::buildHelpers() {
   // skinned mesh world matrix to match the rendered character placement.
   if (showSkeleton_ && loaded_ && loaded_->ok) {
     // World matrix of the mesh skinned by skeleton `si` (identity if none).
-    auto skelWorld = [&](size_t si) -> light3d::Mat4 {
+    // Joint positions are in skeleton space. Skinning maps skinned positions
+    // back through inverse geomBind before the mesh world matrix, so the helper
+    // overlay uses the same space conversion.
+    auto skelWorld = [&](size_t si, bool densePointSamples) -> light3d::Mat4 {
       for (const auto& rm : loaded_->render.meshes) {
         if (rm.skel_id != static_cast<int>(si)) continue;
         if (!draw_) break;
@@ -1869,7 +1994,9 @@ void Gui::buildHelpers() {
           if (dm.absPath == rm.abs_path) {
             light3d::Mat4 W;
             for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
-            return W;
+            light3d::Mat4 G;
+            for (int k = 0; k < 16; ++k) G.m[k] = dm.skinGeomBind[k];
+            return densePointSamples ? (W * G) : (W * G.inverse());
           }
         }
       }
@@ -1884,10 +2011,45 @@ void Gui::buildHelpers() {
           skel.parent_joint_indices.size() != nj) {
         continue;  // empty or malformed topology; skip
       }
-      const light3d::Mat4 W = skelWorld(si);
+      const bool densePointSamples = nj >= 1024;
+      if (densePointSamples && draw_) {
+        float sceneDiag = 1.0f;
+        if (draw_->hasBounds) {
+          const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+          const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+          sceneDiag = std::max(light3d::length(smx - smn), 1.0e-5f);
+        }
+        const float cs = std::max(sceneDiag * 0.0006f, 1e-5f);
+        bool drewDenseSamples = false;
+        for (const auto& dm : draw_->meshes) {
+          if (dm.skelId != static_cast<int>(si)) continue;
+          light3d::Mat4 W;
+          for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
+          const bool hasSkinnedSamples =
+              !dm.skinnedHelperPoints.empty() && dm.skinnedHelperPoints.size() % 3 == 0;
+          const size_t count = hasSkinnedSamples ? (dm.skinnedHelperPoints.size() / 3)
+                                                 : dm.vertices.size();
+          for (size_t i = 0; i < count; ++i) {
+            light3d::Vec3 local;
+            if (hasSkinnedSamples) {
+              local = {dm.skinnedHelperPoints[i * 3 + 0],
+                       dm.skinnedHelperPoints[i * 3 + 1],
+                       dm.skinnedHelperPoints[i * 3 + 2]};
+            } else {
+              const DrawVertex& v = dm.vertices[i];
+              local = {v.px, v.py, v.pz};
+            }
+            const light3d::Vec3 p = light3d::transformPoint(W, local);
+            addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
+            drewDenseSamples = true;
+          }
+        }
+        if (drewDenseSamples) continue;
+      }
+      const light3d::Mat4 W = skelWorld(si, densePointSamples);
       std::vector<tinyusdz::value::matrix4d> jointWorlds;
       if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
-                                    timeline_.current, &jointWorlds) ||
+                                    timeline_.applied, &jointWorlds) ||
           jointWorlds.size() != nj) {
         jointWorlds = skel.bind_transforms;
       }
@@ -1906,9 +2068,15 @@ void Gui::buildHelpers() {
         mx.x = std::max(mx.x, jp[i].x); mx.y = std::max(mx.y, jp[i].y);
         mx.z = std::max(mx.z, jp[i].z);
       }
-      // Joint-cross size scaled to THIS skeleton's extent (not the whole scene)
-      // so crosses stay proportional across characters of different scales.
-      const float cs = std::max(light3d::length(mx - mn) * 0.02f, 1e-5f);
+      // Stable marker size: dense point-joint rigs can have animated extents,
+      // so derive cross size from the scene bounds to avoid helper wobble.
+      float sceneDiag = light3d::length(mx - mn);
+      if (draw_ && draw_->hasBounds) {
+        const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+        const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+        sceneDiag = light3d::length(smx - smn);
+      }
+      const float cs = std::max(sceneDiag * (nj >= 1024 ? 0.002f : 0.02f), 1e-5f);
 
       for (size_t i = 0; i < nj; ++i) {
         const light3d::Vec3& p = jp[i];
@@ -1917,7 +2085,7 @@ void Gui::buildHelpers() {
         addOverlay(p.x, p.y - cs, p.z, p.x, p.y + cs, p.z, 0.20f, 0.95f, 0.95f);
         addOverlay(p.x, p.y, p.z - cs, p.x, p.y, p.z + cs, 0.20f, 0.95f, 0.95f);
         const int par = skel.parent_joint_indices[i];
-        if (par >= 0 && static_cast<size_t>(par) < nj) {
+        if (!densePointSamples && par >= 0 && static_cast<size_t>(par) < nj) {
           const light3d::Vec3& pp = jp[static_cast<size_t>(par)];
           addOverlay(pp.x, pp.y, pp.z, p.x, p.y, p.z, 0.10f, 0.80f, 0.90f);
         }
