@@ -45,6 +45,12 @@ struct USDAWriteOptions {
 
   /// Export time samples as separate lines
   bool expand_time_samples = true;
+
+  /// Number of threads for subtree serialization (only effective when the next
+  /// module is built with TINYUSDZ_ENABLE_THREAD). 1 = serial (default, so all
+  /// existing callers are unchanged); <= 0 = auto (hardware_concurrency); > 1 =
+  /// that many. Output is byte-for-byte identical regardless of thread count.
+  int num_threads = 1;
 };
 
 /// Result of write operation
