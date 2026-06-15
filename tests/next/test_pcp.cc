@@ -399,6 +399,52 @@ static void test_usda_connection_and_custom_rel() {
   std::cout << "  OK" << std::endl;
 }
 
+// A composition arc (payload) authored on a selected variant OPTION's metadata
+// block must be followed -- XGen-style assets author the geometry-defining
+// `def Mesh` in a payload on the variant, not in the variant body. Before the
+// fix the parser dropped variant-option arcs, so the prim stayed empty (the
+// 13411-specifier Moana Island residual). Relative `@./geo@` must anchor to the
+// file that authored the variant.
+static void test_variant_option_payload_arc() {
+  std::cout << "test_variant_option_payload_arc..." << std::endl;
+  const std::string geo = "/tmp/next_varopt_geo.usd";
+  const std::string root = "/tmp/next_varopt_root.usda";
+  {
+    std::ofstream o(geo);
+    o << "#usda 1.0\n"
+         "def \"geo\"\n{\n"
+         "    def Mesh \"shape\"\n    {\n"
+         "        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n"
+         "    }\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def \"Asset\" (\n"
+         "    variants = { string model = \"render\" }\n"
+         "    prepend variantSets = \"model\"\n"
+         ")\n{\n"
+         "    variantSet \"model\" = {\n"
+         "        \"render\" ( prepend payload = "
+         "@./next_varopt_geo.usd@</geo> ) {\n        }\n"
+         "        \"proxy\" {\n        }\n"
+         "    }\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("def Mesh \"shape\"") != std::string::npos &&
+         "variant-option payload geometry was not composed");
+  assert(usda.find("points = [(0, 0, 0)") != std::string::npos &&
+         "variant-option payload mesh points missing");
+  std::remove(geo.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // A referenced asset's attribute connection targets must be remapped from the
 // asset-local namespace into the composed (referencing) namespace -- including
 // connections to a property on the referenced ROOT prim itself ("/Mat.attr",
@@ -2718,6 +2764,7 @@ int main() {
   test_child_order_weak_to_strong();
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
+  test_variant_option_payload_arc();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();
