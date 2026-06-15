@@ -20,7 +20,12 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 #include <fcntl.h>
@@ -216,10 +221,162 @@ std::vector<std::string> own_lines(const char *p, const FBlock &b) {
   return out;
 }
 
+// ---- --faster semantic helpers (whitespace-insensitive + ULP + canon) ------
+
+inline bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+inline bool is_num_start(char c) {
+  return (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.';
+}
+
+// Parse a number token at [i,e); advance i; false if not a number.
+bool parse_dbl(const char *p, size_t &i, size_t e, double &v) {
+  size_t st = i;
+  if (i < e && (p[i] == '-' || p[i] == '+')) ++i;
+  bool dig = false;
+  while (i < e && p[i] >= '0' && p[i] <= '9') { ++i; dig = true; }
+  if (i < e && p[i] == '.') {
+    ++i;
+    while (i < e && p[i] >= '0' && p[i] <= '9') { ++i; dig = true; }
+  }
+  if (dig && i < e && (p[i] == 'e' || p[i] == 'E')) {
+    size_t k = i + 1;
+    if (k < e && (p[k] == '-' || p[k] == '+')) ++k;
+    if (k < e && p[k] >= '0' && p[k] <= '9') {
+      i = k;
+      while (i < e && p[i] >= '0' && p[i] <= '9') ++i;
+    }
+  }
+  if (!dig) { i = st; return false; }
+  char buf[64];
+  size_t n = i - st;
+  if (n >= sizeof(buf)) { i = st; return false; }
+  std::memcpy(buf, p + st, n);
+  buf[n] = '\0';
+  v = std::strtod(buf, nullptr);
+  return true;
+}
+
+bool num_eq(double a, double b, const tinyusdz::tydra::DiffOptions &o) {
+  if (a == b) return true;
+  double d = std::fabs(a - b);
+  if (o.absEps >= 0.0 && d <= o.absEps) return true;
+  // Text loses the true float bits, so ULP is applied as ~floatUlps float-ULPs
+  // of RELATIVE tolerance (1 float ULP ~= 1.19e-7).
+  double rel = (o.floatUlps ? static_cast<double>(o.floatUlps) : 0.0) * 1.1920929e-7;
+  if (rel <= 0.0) return false;
+  return d <= rel * std::max(std::fabs(a), std::fabs(b));
+}
+
+// Whitespace/indent-insensitive + ULP-tolerant line equality.
+bool line_sem_equal(const std::string &a, const std::string &b,
+                    const tinyusdz::tydra::DiffOptions &o) {
+  size_t i = 0, j = 0, na = a.size(), nb = b.size();
+  for (;;) {
+    while (i < na && is_ws(a[i])) ++i;
+    while (j < nb && is_ws(b[j])) ++j;
+    if (i >= na || j >= nb) break;
+    if (is_num_start(a[i]) && is_num_start(b[j])) {
+      size_t i2 = i, j2 = j;
+      double va, vb;
+      if (parse_dbl(a.data(), i2, na, va) && parse_dbl(b.data(), j2, nb, vb)) {
+        if (!num_eq(va, vb, o)) return false;
+        i = i2;
+        j = j2;
+        continue;
+      }
+    }
+    if (a[i] != b[j]) return false;
+    ++i;
+    ++j;
+  }
+  while (i < na && is_ws(a[i])) ++i;
+  while (j < nb && is_ws(b[j])) ++j;
+  return i == na && j == nb;
+}
+
+// Replace `/Name` (reference targets) and `"Name"` (a prototype prim's own
+// header name) tokens via map m (instance-prototype canonicalization).
+std::string subst_protos(const std::string &s,
+                         const std::unordered_map<std::string, std::string> &m) {
+  if (m.empty()) return s;
+  std::string o;
+  o.reserve(s.size());
+  for (size_t i = 0; i < s.size();) {
+    if (s[i] == '/') {
+      size_t k = i + 1;
+      while (k < s.size() &&
+             (std::isalnum(static_cast<unsigned char>(s[k])) || s[k] == '_'))
+        ++k;
+      auto it = m.find(s.substr(i + 1, k - i - 1));
+      if (it != m.end()) { o += '/'; o += it->second; i = k; continue; }
+    } else if (s[i] == '"') {
+      size_t k = i + 1;
+      while (k < s.size() && s[k] != '"') ++k;
+      if (k < s.size()) {
+        auto it = m.find(s.substr(i + 1, k - i - 1));
+        if (it != m.end()) { o += '"'; o += it->second; o += '"'; i = k + 1; continue; }
+      }
+    }
+    o += s[i++];
+  }
+  return o;
+}
+
+struct DiffCtx {
+  bool semantic = false;
+  tinyusdz::tydra::DiffOptions opts;
+  const std::unordered_map<std::string, std::string> *protoA = nullptr;
+  const std::unordered_map<std::string, std::string> *protoB = nullptr;
+};
+
+// Canonical (whitespace-normalized, name-independent) content hash of a block
+// BODY (excludes the header line that carries the prototype's varying name).
+uint64_t block_body_hash(const char *p, const FBlock &b) {
+  uint64_t h = 1469598103934665603ULL;
+  bool insp = false;
+  for (size_t i = b.open1; i < b.close0; ++i) {
+    char c = p[i];
+    if (is_ws(c) || c == '\n') { insp = true; continue; }
+    if (insp) { h ^= ' '; h *= 1099511628211ULL; insp = false; }
+    h ^= static_cast<unsigned char>(c);
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+// Map each top-level prototype prim (a `/Name` reference target) to a
+// content-derived canonical name, so differently-numbered but identical
+// prototypes match across files. (Textual + non-recursive: covers leaf
+// prototypes; nested ones fall back to name matching — use the default diff for
+// full cross-tool robustness.)
+std::unordered_map<std::string, std::string>
+build_proto_map(const char *p, size_t n, const std::vector<FBlock> &roots) {
+  // Reference targets `</Name>` with no inner slash.
+  std::unordered_map<std::string, bool> targets;
+  for (size_t i = 0; i + 1 < n; ++i) {
+    if (p[i] == '<' && p[i + 1] == '/') {
+      size_t k = i + 2;
+      while (k < n &&
+             (std::isalnum(static_cast<unsigned char>(p[k])) || p[k] == '_'))
+        ++k;
+      if (k < n && p[k] == '>') targets[std::string(p + i + 2, k - i - 2)] = true;
+    }
+  }
+  std::unordered_map<std::string, std::string> m;
+  for (const auto &r : roots) {
+    if (!targets.count(r.name)) continue;
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "__P%016llx",
+                  static_cast<unsigned long long>(block_body_hash(p, r)));
+    m[r.name] = buf;
+  }
+  return m;
+}
+
 // Recursively diff two matched prim blocks (same path). Returns true if any
 // difference was reported under `path`.
 bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b,
-                const std::string &path, std::ostream &os) {
+                const std::string &path, std::ostream &os, const DiffCtx &ctx) {
   if (bytes_equal(pa, a.blk0, a.blk1, pb, b.blk0, b.blk1)) return false;
 
   // Children by name.
@@ -239,14 +396,23 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
   // The prim's OWN content (excluding children).
   auto la = own_lines(pa, a);
   auto lb = own_lines(pb, b);
-  if (la != lb) {
+  // Positional, semantic-aware equality of own line i.
+  auto line_eq = [&](size_t i) {
+    if (!ctx.semantic) return la[i] == lb[i];
+    const std::string xa = ctx.protoA ? subst_protos(la[i], *ctx.protoA) : la[i];
+    const std::string xb = ctx.protoB ? subst_protos(lb[i], *ctx.protoB) : lb[i];
+    return xa == xb || line_sem_equal(xa, xb, ctx.opts);
+  };
+  bool ownDiff = (la.size() != lb.size());
+  if (!ownDiff)
+    for (size_t i = 0; i < la.size(); ++i)
+      if (!line_eq(i)) { ownDiff = true; break; }
+  if (ownDiff) {
     any = true;
     os << "~ " << path << " (modified)\n";
     if (la.size() == lb.size()) {
-      // Same line count (the common case: one value changed) -> positional,
-      // centered on the differing region so huge arrays do not flood output.
       for (size_t i = 0; i < la.size(); ++i) {
-        if (la[i] == lb[i]) continue;
+        if (line_eq(i)) continue;
         auto pr = tinyusdz::tydra::CenterValuePairForDiff(la[i], lb[i]);
         os << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
@@ -262,12 +428,15 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
   for (const auto *d : amiss) { os << "- " << path << "/" << d->name << " (deleted)\n"; any = true; }
   for (const auto *d : bmiss) { os << "+ " << path << "/" << d->name << " (added)\n"; any = true; }
   for (const auto &pr : both)
-    any |= diff_block(pa, *pr.first, pb, *pr.second, path + "/" + pr.first->name, os);
+    any |= diff_block(pa, *pr.first, pb, *pr.second, path + "/" + pr.first->name, os, ctx);
   return any;
 }
 
-// Returns: 0 no diffs, 1 diffs, -1 fall back to the semantic path.
-int fast_diff(const std::string &f1, const std::string &f2, std::ostream &os) {
+// Structural byte-level diff. `semantic` toggles --faster behavior (whitespace /
+// ULP / instance canonicalization on differing blocks). Returns: 0 no diffs,
+// 1 diffs, -1 fall back to the full semantic path.
+int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
+                bool semantic, const tinyusdz::tydra::DiffOptions &opts) {
   MMapFile m1, m2;
   if (!mmap_open(f1, m1) || !mmap_open(f2, m2)) {
     mmap_close(m1);
@@ -282,16 +451,36 @@ int fast_diff(const std::string &f1, const std::string &f2, std::ostream &os) {
     auto t1 = scan_prims(m1.p, 0, m1.n, 0, &ok);
     auto t2 = ok ? scan_prims(m2.p, 0, m2.n, 0, &ok) : std::vector<FBlock>();
     if (!ok) {
-      rc = -1;  // structural surprise -> semantic fallback
+      rc = -1;  // structural surprise -> full semantic fallback
     } else {
+      DiffCtx ctx;
+      ctx.semantic = semantic;
+      ctx.opts = opts;
+      std::unordered_map<std::string, std::string> pa, pb;
+      if (semantic) {
+        pa = build_proto_map(m1.p, m1.n, t1);
+        pb = build_proto_map(m2.p, m2.n, t2);
+        ctx.protoA = &pa;
+        ctx.protoB = &pb;
+      }
+      // Canonical key of a top-level prim (prototype -> content hash).
+      auto keyA = [&](const std::string &nm) {
+        auto it = pa.find(nm);
+        return it != pa.end() ? it->second : nm;
+      };
+      auto keyB = [&](const std::string &nm) {
+        auto it = pb.find(nm);
+        return it != pb.end() ? it->second : nm;
+      };
       os << "--- " << f1 << "\n+++ " << f2 << "\n";
       bool any = false;
       std::vector<bool> used(t2.size(), false);
       for (const auto &a : t1) {
+        const std::string ka = keyA(a.name);
         const FBlock *m = nullptr;
         for (size_t j = 0; j < t2.size(); ++j)
-          if (!used[j] && t2[j].name == a.name) { m = &t2[j]; used[j] = true; break; }
-        if (m) any |= diff_block(m1.p, a, m2.p, *m, "/" + a.name, os);
+          if (!used[j] && keyB(t2[j].name) == ka) { m = &t2[j]; used[j] = true; break; }
+        if (m) any |= diff_block(m1.p, a, m2.p, *m, "/" + a.name, os, ctx);
         else { os << "- /" << a.name << " (deleted)\n"; any = true; }
       }
       for (size_t j = 0; j < t2.size(); ++j)
@@ -336,6 +525,12 @@ void print_usage() {
   std::cout << "              canonicalization). Best for same-tool/same-format\n";
   std::cout << "              comparisons; falls back to the full diff if the USDA\n";
   std::cout << "              structure is unexpected.\n";
+  std::cout << "  --faster    Middle tier: same structural byte-skip, but the prim\n";
+  std::cout << "              blocks that DIFFER are compared SEMANTICALLY --\n";
+  std::cout << "              whitespace/indent-insensitive, ULP-tolerant numbers\n";
+  std::cout << "              (--ulps/--eps), and instance-prototype canonicalization.\n";
+  std::cout << "              Faster than default (identical subtrees never parsed),\n";
+  std::cout << "              slower than --fast.\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -372,6 +567,9 @@ int main(int argc, char **argv) {
   // Structural byte-level diff (mmap, no value parsing): fast + low memory.
   // Text-level (no ULP, no instance canonicalization).
   bool fast = false;
+  // Middle tier: structural skip + semantic compare of differing blocks
+  // (whitespace/indent-insensitive + ULP-tolerant + instance canonicalization).
+  bool faster = false;
   std::string file1, file2;
   tinyusdz::tydra::DiffOptions diff_opts;
 
@@ -394,6 +592,8 @@ int main(int argc, char **argv) {
       low_mem = true;
     } else if (args[i] == "--fast") {
       fast = true;
+    } else if (args[i] == "--faster") {
+      faster = true;
     } else if (args[i] == "--ulps") {
       if (i + 1 >= args.size()) {
         std::cerr << "Error: --ulps requires a value\n";
@@ -435,23 +635,22 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  // --fast: structural byte-level diff (no value parsing). Falls back to the
-  // full semantic diff on a structural surprise / unreadable file.
-  if (fast) {
-    std::string out;
-    {
-      std::ostringstream ss;
-      int rc = fast_diff(file1, file2, ss);
-      if (rc >= 0) {
-        if (!quiet) {
-          if (rc == 1) std::cout << ss.str();
-          else std::cout << "No differences found." << std::endl;
-        }
-        return rc;
+  // --fast / --faster: structural byte-level diff. --faster adds whitespace /
+  // ULP / instance-canonicalization semantics on the differing blocks. Both
+  // fall back to the full semantic diff on a structural surprise / unreadable
+  // file.
+  if (fast || faster) {
+    std::ostringstream ss;
+    int rc = struct_diff(file1, file2, ss, /*semantic=*/faster, diff_opts);
+    if (rc >= 0) {
+      if (!quiet) {
+        if (rc == 1) std::cout << ss.str();
+        else std::cout << "No differences found." << std::endl;
       }
+      return rc;
     }
-    std::cerr << "[tusddiff] --fast inconclusive (structural surprise); "
-                 "using full diff.\n";
+    std::cerr << "[tusddiff] " << (faster ? "--faster" : "--fast")
+              << " inconclusive (structural surprise); using full diff.\n";
   }
 
   // Load both USD files as Layers (preserves full PrimSpec tree). Each file is
