@@ -475,6 +475,67 @@ static void test_value_block_roundtrip() {
   std::cout << "  OK" << std::endl;
 }
 
+// InstanceFlattenMode::ExtractedPrototypes emits usdcat-style flatten: each
+// prototype group's shared subtree moves to a root `over "/Flattened_Prototype_N"`
+// and every member references it. Numbering is deterministic (sorted by prototype
+// path) and reproducible run-to-run. Also covers nesting (a prototype that itself
+// contains an instance references another /Flattened_Prototype_M).
+static void test_extracted_prototypes() {
+  std::cout << "test_extracted_prototypes..." << std::endl;
+  const std::string f = "/tmp/next_extract.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def \"Lib\" ( active = false )\n{\n"
+         "    def Xform \"Leaf\" { def Mesh \"M\" { int[] faceVertexCounts = [3] } }\n"
+         "    def Xform \"Cluster\"\n    {\n"
+         "        def Xform \"A\" ( instanceable = true "
+         "references = </Lib/Leaf> ) {}\n"
+         "        def Xform \"B\" ( instanceable = true "
+         "references = </Lib/Leaf> ) {}\n    }\n}\n"
+         "def Xform \"World\"\n{\n"
+         "    def Xform \"L1\" ( instanceable = true references = </Lib/Leaf> ) {}\n"
+         "    def Xform \"L2\" ( instanceable = true references = </Lib/Leaf> ) {}\n"
+         "    def Xform \"C1\" ( instanceable = true "
+         "references = </Lib/Cluster> ) {}\n"
+         "    def Xform \"C2\" ( instanceable = true "
+         "references = </Lib/Cluster> ) {}\n}\n";
+  }
+  auto flatten = [&](pcp::PrototypeNumbering num) {
+    AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
+    Stage stage; std::string warn, err;
+    pcp::CompositionOptions opts;
+    opts.instance_flatten_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
+    opts.prototype_numbering = num;
+    assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+    return WriteUSDAToString(stage);
+  };
+  const std::string usda = flatten(pcp::PrototypeNumbering::Deterministic);
+  const auto npos = std::string::npos;
+  // Two prototype groups extracted to root /Flattened_Prototype_N `over`s.
+  assert(usda.find("over \"Flattened_Prototype_1\"") != npos &&
+         "no extracted prototype root");
+  assert(usda.find("over \"Flattened_Prototype_2\"") != npos &&
+         "second prototype group not extracted");
+  // The leaf geometry moved onto a prototype root (not inline under an instance).
+  assert(usda.find("def Mesh \"M\"") != npos && "prototype geometry lost");
+  // Instances reference a /Flattened_Prototype_N (not the in-place holder path).
+  assert(usda.find("</Flattened_Prototype_1>") != npos &&
+         "instances do not reference the extracted prototype");
+  // Nested: the Cluster prototype's members reference the Leaf prototype root.
+  assert(usda.find("</Flattened_Prototype_2>") != npos &&
+         "nested prototype reference missing");
+  // Determinism: a second compose is byte-identical.
+  assert(flatten(pcp::PrototypeNumbering::Deterministic) == usda &&
+         "deterministic numbering is not reproducible");
+  // The usdcat-compatible scheme is also deterministic run-to-run.
+  const std::string uc = flatten(pcp::PrototypeNumbering::UsdcatCompatible);
+  assert(flatten(pcp::PrototypeNumbering::UsdcatCompatible) == uc &&
+         "usdcat-compatible numbering is not reproducible");
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // A referenced asset's attribute connection targets must be remapped from the
 // asset-local namespace into the composed (referencing) namespace -- including
 // connections to a property on the referenced ROOT prim itself ("/Mat.attr",
@@ -2796,6 +2857,7 @@ int main() {
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
   test_value_block_roundtrip();
+  test_extracted_prototypes();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();

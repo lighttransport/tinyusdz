@@ -39,6 +39,10 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
 int main(int argc, char **argv) {
   bool flatten = false;
   bool openusd_compat = false;
+  // Default instance flatten = holder (the historical -f behavior). `native`
+  // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
+  pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
+  pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
   const char *filename = nullptr;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
@@ -47,12 +51,38 @@ int main(int argc, char **argv) {
       flatten = false;
     } else if (std::strcmp(argv[i], "--openusd-compat") == 0) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
+    } else if (std::strcmp(argv[i], "--instance-mode") == 0 && i + 1 < argc) {
+      const char *m = argv[++i];
+      if (std::strcmp(m, "native") == 0)
+        inst_mode = pcp::InstanceFlattenMode::Native;
+      else if (std::strcmp(m, "holder") == 0)
+        inst_mode = pcp::InstanceFlattenMode::Holder;
+      else if (std::strcmp(m, "prototypes") == 0)
+        inst_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
+      else {
+        std::fprintf(stderr, "Unknown --instance-mode '%s' "
+                             "(native|holder|prototypes)\n", m);
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--prototype-numbering") == 0 && i + 1 < argc) {
+      const char *m = argv[++i];
+      if (std::strcmp(m, "deterministic") == 0)
+        proto_num = pcp::PrototypeNumbering::Deterministic;
+      else if (std::strcmp(m, "usdcat") == 0)
+        proto_num = pcp::PrototypeNumbering::UsdcatCompatible;
+      else {
+        std::fprintf(stderr, "Unknown --prototype-numbering '%s' "
+                             "(deterministic|usdcat)\n", m);
+        return 2;
+      }
     } else {
       filename = argv[i];
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] file.usd[acz]\n");
+    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] [--instance-mode "
+                         "native|holder|prototypes] [--prototype-numbering "
+                         "deterministic|usdcat] file.usd[acz]\n");
     return 2;
   }
 
@@ -71,7 +101,8 @@ int main(int argc, char **argv) {
       }
     }
     pcp::CompositionOptions opts;
-    opts.flatten_instances = true;  // self-contained flatten (like usdcat)
+    opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
+    opts.prototype_numbering = proto_num;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);

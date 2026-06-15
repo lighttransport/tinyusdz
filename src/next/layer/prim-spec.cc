@@ -554,6 +554,24 @@ const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) cons
   return &it->second;
 }
 
+void PrimSpec::remap_target_prefix(const std::string& old_prefix,
+                                   const std::string& new_prefix) {
+  auto remap = [&](std::vector<Path>& targets) {
+    for (Path& t : targets) {
+      const std::string s = t.str();
+      if (s == old_prefix) {
+        t = Path(new_prefix);
+      } else if (s.size() > old_prefix.size() &&
+                 s.compare(0, old_prefix.size(), old_prefix) == 0 &&
+                 s[old_prefix.size()] == '/') {
+        t = Path(new_prefix + s.substr(old_prefix.size()));
+      }
+    }
+  };
+  for (auto& kv : relationships_) remap(kv.second);
+  for (auto& kv : connections_) remap(kv.second);
+}
+
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
   // Intern both name and typeName; typeNames are few and highly shared.
