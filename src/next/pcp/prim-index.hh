@@ -57,6 +57,26 @@ struct CompNode {
   bool is_culled() const { return HasFlag(flags, NodeFlags::Culled); }
 };
 
+/// How `flatten_instances` rewrites native instancing into a self-contained
+/// layer.
+///   Native  -- keep native instancing (instances carry instance_prototype meta
+///              + emit empty; the prototype member holds the subtree).
+///   Holder  -- the prototype member stays in place as a non-instanceable
+///              content HOLDER; other members `references = </holder-path>`.
+///   ExtractedPrototypes -- usdcat-style: each group's content moves to a root
+///              `over "/Flattened_Prototype_N"` and EVERY member (holder
+///              included) `references = </Flattened_Prototype_N>`.
+enum class InstanceFlattenMode { Native, Holder, ExtractedPrototypes };
+
+/// `/Flattened_Prototype_N` numbering scheme for ExtractedPrototypes mode.
+///   Deterministic   -- next's own stable rule (groups sorted by prototype
+///                      path). Reproducible run-to-run; the default.
+///   UsdcatCompatible -- reproduce pxr's two-stage scheme (group order by first
+///                      instance path -> `__Prototype_k` labels -> lexicographic
+///                      re-sort -> `/Flattened_Prototype_j`) so output aligns
+///                      with a deterministically-numbered usdcat. No env var.
+enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
+
 /// Composition options.
 struct CompositionOptions {
   bool load_payloads = true;       // default policy when payload_policy is null.
@@ -78,7 +98,15 @@ struct CompositionOptions {
   // OFF by default (BuildStage keeps native instancing: prototype member holds
   // the subtree, instances carry instance_prototype meta + emit empty). Enable
   // for a complete flattened layer (next_usdcat -f).
+  // Back-compat: a lone `flatten_instances = true` (with instance_flatten_mode
+  // left Native) is normalized to InstanceFlattenMode::Holder in Cache::Open.
   bool flatten_instances = false;
+
+  // Instance-flatten representation + (for ExtractedPrototypes) the prototype
+  // numbering scheme. Default Native = no rewrite (BuildStage keeps native
+  // instancing). See the enums above.
+  InstanceFlattenMode instance_flatten_mode = InstanceFlattenMode::Native;
+  PrototypeNumbering prototype_numbering = PrototypeNumbering::Deterministic;
 
   // Phase 7 (S5): apply cross-layer list-op merging when gathering a site's
   // composition arcs. Default ON (AOUSD-conformant): each arc field is composed
