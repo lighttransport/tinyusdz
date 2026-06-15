@@ -472,6 +472,13 @@ bool AsciiParser::Impl::ParseAttribute() {
     }
   }
 
+  // `custom rel <name> = <target>` (or `uniform rel ...`): a qualified
+  // RELATIONSHIP, not an attribute. The qualifiers are already consumed; hand
+  // off to the relationship parser (which skips the `rel` keyword itself).
+  if (lexer_->peek().type == TokenType::Rel) {
+    return ParseRelationship();
+  }
+
   // Parse type name
   std::string type_name;
   if (!lexer_->expect(TokenType::Identifier, type_name)) {
@@ -567,28 +574,36 @@ bool AsciiParser::Impl::ParseAttribute() {
         AddError("Expected '=' after connect");
         return false;
       }
-      // Target may be a single path, a list of paths, or None (blocked).
+      // `<name>.connect = </path>` is a CONNECTION, not a value: record the
+      // target(s) in the prim's connection map (a string Value would emit
+      // `float x = "/path"`, which is invalid USDA). Register a typed
+      // connection slot if a `= value` line did not already create one (a
+      // property may carry both a default value and a connection).
       flags |= PropSlot::kFlagConnection;
+      if (is_array) flags |= PropSlot::kFlagArray;
+      PrimSpec* cur = builder_->current();
+      const PropNameId nid = GetPropNameTable().intern(attr_name);
+      if (cur && !cur->property(nid)) {
+        cur->add_property_slot(nid, type_id, flags);
+      }
       if (Check(TokenType::None)) {
-        lexer_->next();
-        builder_->add_property(attr_name, Value(), flags);
+        lexer_->next();  // blocked connection: slot only, no target
       } else if (Check(TokenType::OpenBracket)) {
         lexer_->next();
-        std::string first;
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
-          if (lexer_->expect(TokenType::PathRef, p) && first.empty()) first = p;
+          if (lexer_->expect(TokenType::PathRef, p) && cur)
+            cur->add_connection(attr_name, Path(p));
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBracket);
-        builder_->add_property(attr_name, Value(first), flags);
       } else {
         std::string path;
         if (!lexer_->expect(TokenType::PathRef, path)) {
           AddError("Expected path for connection");
           return false;
         }
-        builder_->add_property(attr_name, Value(path), flags);
+        if (cur) cur->add_connection(attr_name, Path(path));
       }
       ParsePropertyMetadata(attr_name);
     } else {
