@@ -686,7 +686,10 @@ void Value::destroy() {
     return;
   }
 
-  if (type_id_ == TypeId::Invalid) return;
+  if (type_id_ == TypeId::Invalid) {
+    is_block_ = false;  // a value block holds no heap; just clear the marker.
+    return;
+  }
 
   if (is_array_) {
     // Drop the shared_ptr reference (frees the buffer iff this was the last
@@ -709,6 +712,7 @@ void Value::copy_from(const Value& other) {
   is_array_ = other.is_array_;
   is_lazy_ = other.is_lazy_;
   dirty_ = other.dirty_;
+  is_block_ = other.is_block_;
   array_size_ = other.array_size_;
 
   if (other.is_lazy_) {
@@ -737,6 +741,7 @@ void Value::move_from(Value&& other) noexcept {
   is_array_ = other.is_array_;
   is_lazy_ = other.is_lazy_;
   dirty_ = other.dirty_;
+  is_block_ = other.is_block_;
   array_size_ = other.array_size_;
 
   if (other.is_array_ && !other.is_lazy_) {
@@ -760,12 +765,19 @@ void Value::move_from(Value&& other) noexcept {
   other.is_array_ = false;
   other.is_lazy_ = false;
   other.dirty_ = false;
+  other.is_block_ = false;
   other.array_size_ = 0;
 }
 
 // ============================================================
 // Lazy array references
 // ============================================================
+
+Value Value::MakeBlock() {
+  Value v;
+  v.is_block_ = true;  // type_id_ stays Invalid, is_array_/is_lazy_ stay false:
+  return v;            // no heap, destroy()/copy share the trivial-scalar path.
+}
 
 Value Value::MakeLazyArray(const LazyArrayRef& ref) {
   Value v;
@@ -1109,6 +1121,7 @@ bool Value::operator==(const Value& other) const {
   other.ensure_materialized();
   if (type_id_ != other.type_id_) return false;
   if (is_array_ != other.is_array_) return false;
+  if (is_block_ != other.is_block_) return false;  // block != declared-only/empty
   if (is_array_ && array_size_ != other.array_size_) return false;
   if (type_id_ == TypeId::Invalid) return true;
 

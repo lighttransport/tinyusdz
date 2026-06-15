@@ -841,9 +841,12 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     }
 
     case CrateTypeId::Invalid:     // an empty VtValue (e.g. an empty dict entry)
-    case CrateTypeId::ValueBlock:  // a blocked (None) value
       out = Value();
       return true;
+
+    case CrateTypeId::ValueBlock:  // a blocked (`= None`) value: a real opinion
+      out = Value::MakeBlock();    // that suppresses weaker values and re-emits
+      return true;                 // `= None` (not a declared-only attribute).
 
     // TokenVector / StringVector / DoubleVector: std::vector<T> stored as a
     // non-array value ([u64 count][elements]); an empty vector inlines as
