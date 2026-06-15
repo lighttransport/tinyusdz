@@ -96,6 +96,16 @@ struct VariantData {
   std::string doc;
   std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  // Composition arcs authored in the variant OPTION's metadata block, e.g.
+  // `"opt" ( prepend payload = @./geo.usd@</geo> ) {}`. Stored in the same
+  // canonical "@asset@</prim>" / "</prim>" encoding as PrimSpecMeta's arc
+  // vectors (Compositor::ParseReference/ParsePayload decodes them). Composed
+  // when this variant is selected — the geometry-defining payload of XGen-style
+  // assets lives here, not in the variant body. Empty on the common case.
+  std::vector<std::string> references;
+  std::vector<std::string> payloads;
+  std::vector<std::string> inherits;
+  std::vector<std::string> specializes;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<VariantSetData> variantSets;
   // Optional subtree for variants that add prim-level opinions and/or child

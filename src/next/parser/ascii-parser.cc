@@ -55,6 +55,10 @@ private:
   bool ParseVariantSetBodyInto(const std::string& variant_set_name,
                                std::vector<VariantSetData>& target, int depth);
   bool ParseVariantOption(VariantData* out, int depth);
+  // Read one composition-arc reference into canonical "@asset@</prim>" /
+  // "</prim>" form (with an optional `?layerOffset=off:scale` suffix). Shared by
+  // prim-metadata arcs and variant-option arcs. Returns false if no arc token.
+  bool ReadArcRef(std::string* out);
   bool ParseNamespacedName(std::string* out, const char* what);
   bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
@@ -662,6 +666,61 @@ bool AsciiParser::Impl::ParseRelationship() {
   return true;
 }
 
+// Read one composition-arc reference into canonical "@asset@</prim>" /
+// "</prim>" form (the lexer yields @asset@ as a String without '@' and
+// </prim> as a PathRef without '<>'). Peeks before consuming so a missing
+// optional token does not eat the next one. Returns false if no arc token.
+bool AsciiParser::Impl::ReadArcRef(std::string* out) {
+  std::string ref;
+  if (Check(TokenType::String)) {
+    std::string asset;
+    lexer_->expect(TokenType::String, asset);
+    ref = "@" + asset + "@";
+    if (Check(TokenType::PathRef)) {
+      std::string pr;
+      lexer_->expect(TokenType::PathRef, pr);
+      ref += "<" + pr + ">";
+    }
+  } else if (Check(TokenType::PathRef)) {
+    std::string pr;
+    lexer_->expect(TokenType::PathRef, pr);
+    ref = "<" + pr + ">";
+  } else {
+    return false;
+  }
+  // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
+  // canonical ref as `?layerOffset=offset:scale` (Compositor::ParseReference
+  // decodes it); composition composes it through the arc chain and bakes it
+  // into time-sample times.
+  if (Check(TokenType::OpenParen)) {
+    Match(TokenType::OpenParen);
+    double off = 0.0, scl = 1.0;
+    while (!Check(TokenType::CloseParen) && !AtEnd()) {
+      if (Check(TokenType::Identifier)) {
+        std::string k;
+        lexer_->expect(TokenType::Identifier, k);
+        Match(TokenType::Equals);
+        if (Check(TokenType::Number)) {
+          std::string num;
+          lexer_->expect(TokenType::Number, num);
+          double v = std::strtod(num.c_str(), nullptr);
+          if (k == "offset") off = v;
+          else if (k == "scale") scl = v;
+        }
+      } else {
+        lexer_->next();  // skip unexpected token (avoid spinning)
+      }
+      Match(TokenType::Semicolon);
+    }
+    Match(TokenType::CloseParen);
+    if (off != 0.0 || scl != 1.0) {
+      ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
+    }
+  }
+  *out = ref;
+  return true;
+}
+
 bool AsciiParser::Impl::ParseMetadataBlock() {
   if (!Match(TokenType::OpenParen)) {
     return false;
@@ -673,60 +732,6 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     return false;
   }
 
-  // Read one composition-arc reference into canonical "@asset@</prim>" /
-  // "</prim>" form (the lexer yields @asset@ as a String without '@' and
-  // </prim> as a PathRef without '<>'). Peeks before consuming so a missing
-  // optional token does not eat the next one. Returns false if no arc token.
-  auto ReadArcRef = [this](std::string* out) -> bool {
-    std::string ref;
-    if (Check(TokenType::String)) {
-      std::string asset;
-      lexer_->expect(TokenType::String, asset);
-      ref = "@" + asset + "@";
-      if (Check(TokenType::PathRef)) {
-        std::string pr;
-        lexer_->expect(TokenType::PathRef, pr);
-        ref += "<" + pr + ">";
-      }
-    } else if (Check(TokenType::PathRef)) {
-      std::string pr;
-      lexer_->expect(TokenType::PathRef, pr);
-      ref = "<" + pr + ">";
-    } else {
-      return false;
-    }
-    // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
-    // canonical ref as `?layerOffset=offset:scale` (Compositor::ParseReference
-    // decodes it); composition composes it through the arc chain and bakes it
-    // into time-sample times.
-    if (Check(TokenType::OpenParen)) {
-      Match(TokenType::OpenParen);
-      double off = 0.0, scl = 1.0;
-      while (!Check(TokenType::CloseParen) && !AtEnd()) {
-        if (Check(TokenType::Identifier)) {
-          std::string k;
-          lexer_->expect(TokenType::Identifier, k);
-          Match(TokenType::Equals);
-          if (Check(TokenType::Number)) {
-            std::string num;
-            lexer_->expect(TokenType::Number, num);
-            double v = std::strtod(num.c_str(), nullptr);
-            if (k == "offset") off = v;
-            else if (k == "scale") scl = v;
-          }
-        } else {
-          lexer_->next();  // skip unexpected token (avoid spinning)
-        }
-        Match(TokenType::Semicolon);
-      }
-      Match(TokenType::CloseParen);
-      if (off != 0.0 || scl != 1.0) {
-        ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
-      }
-    }
-    *out = ref;
-    return true;
-  };
   // Read an arc value that may be a bracketed list or a single value.
   // List-op qualifier applied to an arc list (prepend/append/delete/explicit).
   enum class ArcQual { Explicit, Prepend, Append, Delete, Reorder };
@@ -757,7 +762,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   // which cross-layer composition (apply_list_ops) and the writer consume. Even
   // a bare empty list (`references = []`) is authored and must replace weaker
   // opinions.
-  auto ReadArcList = [this, &ReadArcRef, &SelectArc, &SelectEdit](
+  auto ReadArcList = [this, &SelectArc, &SelectEdit](
                          PrimSpecMeta& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Match(TokenType::OpenBracket)) {
@@ -1146,6 +1151,30 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       } else if (key == "doc" || key == "documentation") {
         std::string v;
         if (lexer_->expect(TokenType::String, v)) out->doc = v;
+      } else if (key == "references" || key == "payload" || key == "inherits" ||
+                 key == "specializes") {
+        // Composition arcs authored on the variant OPTION (the geometry-defining
+        // payload of XGen-style assets lives here). Read into the VariantData's
+        // arc vectors in canonical "@asset@</prim>" form; composition follows
+        // them when the variant is selected. List-op qualifier is irrelevant for
+        // a single authoring — just collect every item.
+        std::vector<std::string>* target =
+            key == "references"   ? &out->references
+            : key == "payload"    ? &out->payloads
+            : key == "inherits"   ? &out->inherits
+                                  : &out->specializes;
+        if (Match(TokenType::OpenBracket)) {
+          while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+            std::string ref;
+            if (!ReadArcRef(&ref)) break;
+            target->push_back(std::move(ref));
+            Match(TokenType::Comma);
+          }
+          Match(TokenType::CloseBracket);
+        } else {
+          std::string ref;
+          if (ReadArcRef(&ref)) target->push_back(std::move(ref));
+        }
       } else {
         // Consume the value: a bracketed list / dict / paren block or a single
         // token, plus a trailing PathRef and layer-offset paren for arcs.
