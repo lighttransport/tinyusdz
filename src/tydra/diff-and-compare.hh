@@ -103,6 +103,24 @@ struct LayerMetaDiff
 ///
 size_t CanonicalizeInstances(Layer &layer);
 
+///
+/// Low-memory / fast diff pre-pass (in place).
+///
+/// Replaces every attribute default value that is an ARRAY of more than
+/// `threshold` elements with a 64-bit content fingerprint (the array's full
+/// `pprint_value` hashed), freeing the array payload while preserving the
+/// attribute's declared type. The subsequent Diff() then compares fingerprints
+/// (one u64) instead of materialized element-wise arrays — cutting peak RSS
+/// (~half, when each input is stripped before the other is loaded) and time.
+///
+/// Trade-off: large arrays are compared EXACTLY by fingerprint, so the ULP /
+/// eps tolerance no longer applies to them (it still applies to scalar and
+/// small-vector numeric attributes — matrices, quats, colors — which are NOT
+/// stripped). Run on a layer that is only consumed by Diff() and then freed.
+/// Returns the number of arrays stripped.
+///
+size_t StripLargeArrays(Layer &layer, size_t threshold = 16);
+
 void Diff(const Layer &lhs, const Layer &rhs,
 
   /* key = primspec path */
