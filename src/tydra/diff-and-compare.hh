@@ -88,6 +88,21 @@ struct LayerMetaDiff
   bool changed() const { return !changedFields.empty(); }
 };
 
+///
+/// Instance-flatten canonicalization (in place).
+///
+/// Flattened scenes emit root-level prototype prims (usdcat
+/// `/Flattened_Prototype_N`) whose numbering is non-deterministic / differs
+/// tool-to-tool, so a path-based diff reports the SAME content under different
+/// names as spurious added/deleted/modified. This rewrites each root-level
+/// prototype (a top-level prim that is the target of an intra-layer reference)
+/// to a CONTENT-derived canonical name `/__Proto_<hash>` and retargets every
+/// reference accordingly. Run on BOTH layers before Diff() so prototypes match
+/// by content regardless of numbering. Returns the number of prototypes
+/// canonicalized.
+///
+size_t CanonicalizeInstances(Layer &layer);
+
 void Diff(const Layer &lhs, const Layer &rhs,
 
   /* key = primspec path */

@@ -8,6 +8,7 @@
 #include "../core/prim-metas.hh"
 #include "../core/attr-metas.hh"
 #include "../core/composition-types.hh"
+#include "../hash-util.hh"
 #include "../common-macros.inc"
 #include <array>
 #include <sstream>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -951,7 +953,176 @@ static std::string EscapeJSON(const std::string &str) {
   return result;
 }
 
+// ---- Instance-flatten canonicalization ---------------------------------
+// Match flatten prototype prims by CONTENT so non-deterministic
+// `/Flattened_Prototype_N` numbering does not produce spurious diffs.
+
+template <class F>
+static void ForEachIntraRef(const PrimSpec &ps, F &&f) {
+  if (!ps.metas().references.has_value()) return;
+  for (const auto &qr : ps.metas().references.value()) {
+    for (const auto &ref : qr.second) {
+      if (ref.asset_path.GetAssetPath().empty() && ref.prim_path.is_valid()) {
+        f(ref.prim_path.full_path_name());
+      }
+    }
+  }
+}
+
+static void CollectRefTargetsRec(const PrimSpec &ps, std::set<std::string> &out) {
+  ForEachIntraRef(ps, [&](const std::string &t) { out.insert(t); });
+  for (const auto &c : ps.children()) CollectRefTargetsRec(c, out);
+}
+
+// A top-level reference target "/Name" whose Name is a root prim.
+static bool TopLevelProtoName(const std::string &target,
+                              const std::set<std::string> &rootNames,
+                              std::string *name) {
+  if (target.size() < 2 || target[0] != '/') return false;
+  if (target.find('/', 1) != std::string::npos) return false;
+  std::string nm = target.substr(1);
+  if (!rootNames.count(nm)) return false;
+  *name = std::move(nm);
+  return true;
+}
+
+static uint64_t ProtoHashByName(
+    const std::string &name,
+    const std::unordered_map<std::string, const PrimSpec *> &roots,
+    const std::set<std::string> &rootNames,
+    const std::set<std::string> &protoNames,
+    std::unordered_map<std::string, uint64_t> &cache, int depth);
+
+// Deterministic content serialization of a prim subtree. The root prototype's
+// own NAME is excluded (it is the varying /Flattened_Prototype_N number); child
+// names ARE included. Intra-layer references to a root-prototype are folded as
+// the target's content hash so nested prototypes match by content too.
+static void SerializePrim(
+    const PrimSpec &ps, bool includeName, std::string &out,
+    const std::unordered_map<std::string, const PrimSpec *> &roots,
+    const std::set<std::string> &rootNames,
+    const std::set<std::string> &protoNames,
+    std::unordered_map<std::string, uint64_t> &cache, int depth) {
+  if (depth > 512) return;
+  out += "{";
+  if (includeName) { out += "n:"; out += ps.name(); out += ";"; }
+  out += "s:"; out += std::to_string(static_cast<int>(ps.specifier()));
+  out += ";t:"; out += ps.typeName(); out += ";";
+  ForEachIntraRef(ps, [&](const std::string &t) {
+    std::string nm;
+    out += "r:";
+    if (TopLevelProtoName(t, rootNames, &nm) && protoNames.count(nm)) {
+      char b[24];
+      std::snprintf(b, sizeof(b), "P%016llx",
+                    static_cast<unsigned long long>(ProtoHashByName(
+                        nm, roots, rootNames, protoNames, cache, depth + 1)));
+      out += b;
+    } else {
+      out += t;
+    }
+    out += ";";
+  });
+  for (const auto &pr : ps.props()) {  // std::map -> name-sorted
+    out += "p:"; out += pr.first; out += "=";
+    out += FormatPropertyForDiff(pr.second); out += ";";
+  }
+  std::vector<const PrimSpec *> kids;
+  kids.reserve(ps.children().size());
+  for (const auto &c : ps.children()) kids.push_back(&c);
+  std::sort(kids.begin(), kids.end(),
+            [](const PrimSpec *a, const PrimSpec *b) { return a->name() < b->name(); });
+  for (const auto *c : kids)
+    SerializePrim(*c, true, out, roots, rootNames, protoNames, cache, depth + 1);
+  out += "}";
+}
+
+static uint64_t ProtoHashByName(
+    const std::string &name,
+    const std::unordered_map<std::string, const PrimSpec *> &roots,
+    const std::set<std::string> &rootNames,
+    const std::set<std::string> &protoNames,
+    std::unordered_map<std::string, uint64_t> &cache, int depth) {
+  auto cit = cache.find(name);
+  if (cit != cache.end()) return cit->second;
+  cache[name] = 0;  // provisional (cycle guard; prototypes should not cycle)
+  auto rit = roots.find(name);
+  if (rit == roots.end()) return 0;
+  std::string s;
+  SerializePrim(*rit->second, /*includeName=*/false, s, roots, rootNames,
+                protoNames, cache, depth);
+  uint64_t h = SpookyHash::Hash64(s.data(), s.size(), 0x9E3779B97F4A7C15ull);
+  if (h == 0) h = 1;  // reserve 0 as "in progress"
+  cache[name] = h;
+  return h;
+}
+
+static void RewriteRefsRec(
+    PrimSpec &ps, const std::set<std::string> &rootNames,
+    const std::unordered_map<std::string, std::string> &canon) {
+  if (ps.metas().references.has_value()) {
+    for (auto &qr : ps.metas().references.value()) {
+      for (auto &ref : qr.second) {
+        if (ref.asset_path.GetAssetPath().empty() && ref.prim_path.is_valid()) {
+          std::string nm;
+          if (TopLevelProtoName(ref.prim_path.full_path_name(), rootNames, &nm)) {
+            auto c = canon.find(nm);
+            if (c != canon.end()) ref.prim_path = Path("/" + c->second, "");
+          }
+        }
+      }
+    }
+  }
+  for (auto &c : ps.children()) RewriteRefsRec(c, rootNames, canon);
+}
+
 } // namespace detail
+
+size_t CanonicalizeInstances(Layer &layer) {
+  auto &roots = layer.primspecs();  // unordered_map<name, PrimSpec>
+  std::set<std::string> rootNames;
+  for (auto &kv : roots) rootNames.insert(kv.first);
+
+  // Prototype roots = top-level prims that are intra-layer reference targets.
+  std::set<std::string> targets;
+  for (auto &kv : roots) detail::CollectRefTargetsRec(kv.second, targets);
+  std::set<std::string> protoNames;
+  for (const auto &t : targets) {
+    std::string nm;
+    if (detail::TopLevelProtoName(t, rootNames, &nm)) protoNames.insert(nm);
+  }
+  if (protoNames.empty()) return 0;
+
+  std::unordered_map<std::string, const PrimSpec *> rootPtr;
+  for (auto &kv : roots) rootPtr[kv.first] = &kv.second;
+
+  // Content-hash each prototype -> canonical name (computed before any mutation).
+  std::unordered_map<std::string, uint64_t> cache;
+  std::unordered_map<std::string, std::string> canon;
+  for (const auto &nm : protoNames) {
+    uint64_t h = detail::ProtoHashByName(nm, rootPtr, rootNames, protoNames,
+                                         cache, 0);
+    char b[32];
+    std::snprintf(b, sizeof(b), "__Proto_%016llx",
+                  static_cast<unsigned long long>(h));
+    canon[nm] = b;
+  }
+
+  // Retarget every reference, then rename the prototype roots (identical-content
+  // prototypes collapse to one canonical key -- correct dedup).
+  for (auto &kv : roots) detail::RewriteRefsRec(kv.second, rootNames, canon);
+  std::vector<std::pair<std::string, PrimSpec>> moved;
+  moved.reserve(protoNames.size());
+  for (const auto &nm : protoNames) {
+    auto it = roots.find(nm);
+    if (it == roots.end()) continue;
+    PrimSpec ps = std::move(it->second);
+    ps.name() = canon[nm];
+    roots.erase(it);
+    moved.emplace_back(canon[nm], std::move(ps));
+  }
+  for (auto &m : moved) roots[m.first] = std::move(m.second);
+  return protoNames.size();
+}
 
 std::pair<std::string, std::string> CenterValuePairForDiff(
     const std::string &lhs, const std::string &rhs, size_t window) {
