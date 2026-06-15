@@ -202,6 +202,14 @@ public:
   /// Decode a lazy array into concrete storage (idempotent; no-op if not lazy).
   void materialize();
 
+  /// Decode a lazy array into a fresh temporary Value WITHOUT mutating *this
+  /// (the source Value stays lazy). For non-lazy values, returns an ordinary
+  /// copy-on-write copy (preserves dirty_). On decode failure, returns an empty
+  /// Value (prints as "None", matching in-place materialize() failure). Used by
+  /// the writer to format a lazy array once and free it immediately, so peak
+  /// resident decoded-array memory is bounded to ~one array.
+  Value materialized_copy() const;
+
   // ============================================================
   // Type-safe accessors (return nullptr if wrong type)
   // ============================================================

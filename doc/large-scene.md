@@ -462,38 +462,45 @@ it produces a **fully composed, self-contained flattened layer** — like
 sample in RAM with no deferral. So peak RSS scales with the *flattened-content*
 size, not the on-disk scene size.
 
+Measured under a hard 32 GB cgroup cap
+(`systemd-run --user --scope -p MemoryMax=32G -p MemorySwapMax=0 /usr/bin/time -v ...`):
+
 | Scene (full flatten) | next RSS | next time | usdcat RSS | usdcat time | flatten lines |
 |---|---|---|---|---|---|
 | Kitchen_set (Pixar) | 0.13 GB | <1 s | — | — | ~66 k |
 | ALab (Animal Logic) | **0.06 GB** | 0.8 s | 0.13 GB | 1.4 s | ~36 k |
-| Caldera (Activision) | **11.8 GB** | 57 s | 3.1 GB | 76 s | ~3.45 M |
+| Caldera (Activision) | **2.3 GB** | 45 s | 3.1 GB | 76 s | ~3.45 M |
+| Moana Island (Disney) | **8.3 GB** | 1 m 48 s | 8.5 GB | ~5 m | ~6.1 M |
 
-The spread is the point: **ALab flattens lighter than usdcat** (its geometry
-stays behind payloads, so the flatten is structure-only — ~36 k lines), while
-**Caldera is ~3.8× heavier than usdcat**. Caldera's proxy geometry and the dense
-per-frame animation on the breadcrumb/endpoint `Points` (16 k time-sampled
-attributes, hundreds of samples each) compose *into* the flattened layer, and the
-engine currently deep-copies those arrays/time-samples through composition
-(`ComposeInto` → `CopyLocalOpinions`) and again into the output `Layer`.
+next now flattens **at or below usdcat's RSS on every scene, and faster** — a
+5.2× cut on Caldera (was 11.8 GB) and 3.2× on Island (was 26.6 GB), with
+**byte-identical output** (verified by `cmp` against the pre-optimization flatten).
 
-What drives next/pcp full-flatten peak RSS:
+The peak used to be dominated by three avoidable residencies on the write path,
+now all closed (the lazy-ValueRef read path keeps crate arrays as byte-range
+references into the memory-mapped source until they are actually needed):
 
-- **No payload deferral in the flatten path** — `CompositionOptions::load_payloads`
-  defaults on; everything reachable is composed. (The bounded loader of §2 is the
-  path to use when geometry must stay on disk.)
-- **Time samples are fully resident** — each sample's value is decoded and stored
-  (Caldera: ~3.4 M of the ~3.45 M flatten lines are time-sample data).
-- **Deep copies, not sharing** — composed values are copied per source and per
-  prim; there is no copy-on-write/array aliasing between the parsed layers, the
-  composed prims, and the emitted `Layer` yet.
+- **Whole output text held in RAM.** `next_usdcat -f` built the entire multi-GB
+  USDA string before a single write. It now **streams** per-prim to stdout via
+  `WriteUSDA(std::ostream&, ...)` — the serialized text never coexists with the
+  composed stage.
+- **Every lazy geometry array materialized in place during write.** Printing a
+  value went through the const array accessors, which decode the crate-backed
+  array into a resident `std::vector` *in place* (and delete the lazy ref), so by
+  end-of-write every array was simultaneously resident. The writer now decodes a
+  lazy array into a **throwaway temporary** (`Value::materialized_copy()`),
+  bounding resident decoded-array memory to ~one array.
+- **Time samples eagerly decoded at parse time.** `TimeSampleStorage::add_dedup`
+  hashed each sample value, and `Value::hash()` forces a materialize — so every
+  array-valued time sample was decoded into the heap at parse and stayed resident
+  for the stage lifetime (Caldera: ~3.4 M of ~3.45 M flatten lines are
+  time-sample data — the dominant cost). Lazy samples now **skip content dedup**
+  and stay byte-range references until the writer decodes them one at a time.
 
-Levers (not yet applied to this path): CoW/aliased value arrays (the `refator-next`
-roadmap landed CoW arrays for the lazy-ValueRef path — see `doc/refator-next.md` —
-but the flatten composer still deep-copies), time-sample value deduplication
-(many breadcrumb attributes share identical sample arrays), and streaming the
-writer so the full flattened `Layer` need not coexist with its serialized text.
-For scenes with this much resident animation, prefer the §2 bounded loader (or
-usdcat) over `next_usdcat -f` until those land.
+All three preserve (and slightly improve) speed: less allocation, no redundant
+decode at parse/clone, no giant-string copy. The §2 bounded loader is still the
+path to use when geometry must stay on disk entirely; the difference here is that
+a *full* flatten no longer carries gratuitous peak overhead.
 
 ## 7. Verification
 

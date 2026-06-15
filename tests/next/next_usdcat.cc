@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <string>
 
 #include "next/pcp/cache.hh"
@@ -88,8 +89,12 @@ int main(int argc, char **argv) {
   if (flatten) {
     USDAWriteOptions wopts;
     wopts.emit_custom = openusd_compat;
-    std::string usda = WriteUSDAToString(stage, wopts);
-    std::fwrite(usda.data(), 1, usda.size(), stdout);
+    // Stream directly to stdout instead of building the whole (multi-GB on large
+    // scenes) USDA text in one std::string first. On Caldera-class scenes this
+    // alone removes several GB of peak RSS.
+    std::ios::sync_with_stdio(false);
+    WriteUSDA(std::cout, stage, wopts);
+    std::cout.flush();
   } else {
     std::printf("loaded: %zu prims\n", stage.GetStats().prim_count);
   }

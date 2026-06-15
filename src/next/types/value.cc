@@ -815,6 +815,19 @@ void Value::ensure_materialized() const {
   }
 }
 
+Value Value::materialized_copy() const {
+  if (is_lazy_) {
+    const LazyArrayRef* ref = lazy_ref();
+    Value decoded;
+    if (ref && ref->source && ref->source->MaterializeArray(*ref, &decoded)) {
+      return decoded;  // NRVO / move: steals the decoded array handle.
+    }
+    return Value();  // decode failed -> empty (prints "None")
+  }
+  // Non-lazy: ordinary CoW copy (array refcount bump; preserves dirty_).
+  return *this;
+}
+
 void* Value::data_ptr() {
   ensure_materialized();
   if (is_array_) {

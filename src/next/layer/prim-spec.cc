@@ -205,6 +205,16 @@ uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
 }
 
 uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value value) {
+  // Lazy (crate-backed) arrays: skip content dedup. find_or_store() hashes the
+  // value, and Value::hash() forces an in-place materialize — decoding every
+  // array-valued time sample into the heap at parse time, which is the dominant
+  // peak-RSS cost on animation-heavy scenes (e.g. Caldera). Store the lazy ref
+  // as-is via the no-dedup path so it stays a cheap byte-range reference until
+  // the writer decodes it transiently. (Scalar samples are never lazy, so they
+  // keep deduping through the path below.)
+  if (value.is_lazy()) {
+    return add(name_id, time, std::move(value));
+  }
   // Store with deduplication (good for repeated array values)
   uint32_t offset = find_or_store(std::move(value));
   samples_[name_id.id].emplace_back(time, offset);
