@@ -653,10 +653,11 @@ ParseFn GetParseFunction(TypeId type_id) {
 // ============================================================
 
 ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
-  // Handle None
+  // Handle None: an authored value block, not "no value". Preserve it as a block
+  // so the writer re-emits `= None` (round-trips USDC ValueBlock + USDA `= None`).
   if (lexer.peek().type == TokenType::None) {
     lexer.next();
-    return ParseResult::Ok(Value());
+    return ParseResult::Ok(Value::MakeBlock());
   }
 
   // Dictionaries have a dedicated recursive parser (no flat ParseFn entry).
@@ -1173,12 +1174,12 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
 }
 
 ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
-  // USD allows array-valued attributes to author `None` as a blocked/default
-  // value. Treat it the same way scalar parsing does: consume it and return an
-  // empty Value placeholder so the parser can keep progressing.
+  // USD allows array-valued attributes to author `None` as a blocked value.
+  // Preserve it as a block (not an empty placeholder) so the writer re-emits
+  // `= None` rather than collapsing it to a declared-only attribute.
   if (lexer.peek().type == TokenType::None) {
     lexer.next();
-    return ParseResult::Ok(Value());
+    return ParseResult::Ok(Value::MakeBlock());
   }
 
   switch (element_type) {

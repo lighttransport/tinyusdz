@@ -274,7 +274,9 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
     os << std::setprecision(opts.double_precision) << sample.first << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
-    if (val) {
+    if (val && val->is_block()) {
+      os << "None";  // a blocked sample (`123: None`)
+    } else if (val) {
       // Transient decode of lazy (crate-backed) sample arrays — see WriteProperty.
       // On animation-heavy scenes the time samples dominate, so keeping them lazy
       // (TimeSampleStorage::add_dedup) + decoding one at a time here is the main
@@ -359,7 +361,14 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
   const bool has_conn = conns && !conns->empty();
 
   // Value statement (authored default).
-  if (has_value) {
+  if (has_value && value->is_block()) {
+    // Authored value block (`= None`): a typed opinion with no data that blocks
+    // weaker values. Emit it verbatim (the declared type carries the type name).
+    emit_decl();
+    os << " = None";
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
+  } else if (has_value) {
     emit_decl();
     PrintOptions print_opts;
     print_opts.float_precision = opts.float_precision;
