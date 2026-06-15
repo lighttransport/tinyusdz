@@ -366,6 +366,39 @@ static void test_crate_style_variant_holder() {
   std::cout << "  OK" << std::endl;
 }
 
+// USDA-authored `<name>.connect = </path>` must parse as a CONNECTION (stored in
+// the connection map, re-emitted as `.connect`), not as a string value
+// (`float x = "/path"`, invalid USDA). And `custom rel <name> = </path>` must
+// parse as a qualified relationship, not choke ("Expected attribute type").
+static void test_usda_connection_and_custom_rel() {
+  std::cout << "test_usda_connection_and_custom_rel..." << std::endl;
+  const std::string f = "/tmp/next_usda_conn.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Shader \"S\"\n{\n"
+         "    float inputs:metallic.connect = </Other.inputs:metallic>\n"
+         "    custom rel field:density = </Vol/density>\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  // custom rel must not fail the parse.
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("inputs:metallic.connect = </Other.inputs:metallic>") !=
+             std::string::npos &&
+         "connection must re-emit as `.connect`");
+  assert(usda.find("inputs:metallic = \"") == std::string::npos &&
+         "connection wrongly emitted as a string value");
+  assert(usda.find("field:density") != std::string::npos &&
+         "custom rel target dropped");
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // A referenced asset's attribute connection targets must be remapped from the
 // asset-local namespace into the composed (referencing) namespace -- including
 // connections to a property on the referenced ROOT prim itself ("/Mat.attr",
@@ -2684,6 +2717,7 @@ int main() {
   test_compose_prim_lazy();
   test_child_order_weak_to_strong();
   test_crate_style_variant_holder();
+  test_usda_connection_and_custom_rel();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();
