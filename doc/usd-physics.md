@@ -489,12 +489,17 @@ status line) instead of being dropped silently:
 
 | Feature | Behavior |
 |---|---|
-| MJCF body with multiple `<joint>` | only the first joint is converted; the remaining DOFs are dropped (USD joints are pairwise) |
+| MJCF body with multiple `<joint>` | converted to a chain of single-DOF joints through `(N-1)` massless intermediate link Xforms (`<body>__mjcdof_k`), preserving every DOF; only the first joint carries the body offset |
 | MJCF `ball` joint | mapped to `PhysicsSphericalJoint`; the single-slider preview leaves it at rest (3 DOF can't be driven by one scalar) |
-| MJCF non-diagonal `fullinertia` | only the diagonal is exported (`physics:diagonalInertia`); off-diagonal terms (`physics:principalAxes`) are not authored |
+| MJCF non-diagonal `fullinertia` | diagonalized into `physics:diagonalInertia` (principal moments) + `physics:principalAxes` (eigenvector quaternion), the lossless USD representation |
 | URDF `<mimic>` | exported as `NewtonMimicAPI` when the target joint is also exported |
 | MJCF joint-targeted `<actuator>` | exported as `NewtonActuator` best-effort (`kp`/`kv` or `gainprm`/`biasprm`, force/control range, delay); non-joint actuators are not converted |
-| MJCF `<tendon>`, `<equality>`, `<contact>` | not converted to USD physics |
+| MJCF `<tendon><fixed>` | `MjcTendon` (type=fixed) under `/World/Tendons` — `mjc:path`→coupled joints, `mjc:path:coef`, stiffness/damping/range |
+| MJCF `<tendon><spatial>` (muscles) | `MjcTendon` (type=spatial) routed through `<site>` markers (`/World/Sites`, `MjcSiteAPI`); wrap `<geom sidesite>` via the sidesite point; pulleys not modeled. Visualized as polylines in the web demo source view |
+| MJCF `<site>` | `GeomSphere` marker under `/World/Sites` + `MjcSiteAPI` (the routing points for spatial tendons) |
+| MJCF `<actuator><muscle>` / `<general class="muscle">` | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) |
+| MJCF `<equality>` (connect/weld/joint) | converted to an Xform host prim under `/World/Equalities` carrying the matching `MjcEquality{Connect,Weld,Joint}API` + `mjc:*` attributes |
+| MJCF `<contact><exclude>` | converted to `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) on the first body |
 
 ---
 

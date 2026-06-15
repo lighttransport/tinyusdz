@@ -525,6 +525,104 @@ def Shader "tex" {
   TEST_CHECK(uv->outputsRGBA.authored());
 }
 
+// Regression: a shader network built PROGRAMMATICALLY (a Prim wrapping a typed
+// Shader, so prim_type_name() is empty — unlike the USDA-parsed prims that
+// every other test here uses, where the reader sets it to "Shader") must keep
+// its inputs/outputs through USDC. ConvertSinglePrim used to read
+// prim_type_name() without the typed-name fallback, so the "Shader"/"Material"
+// spec emitters never ran for in-memory prims and only `info:id` survived —
+// every shader input/connection/output was silently dropped on USDC/USDZ write
+// (it round-tripped fine through USDA, masking the bug). This mirrors how the
+// tydra converters (e.g. MJCF -> USD) author UsdShade networks.
+void usdc_writer_inmemory_shader_inputs_test(void) {
+  Material mat;
+  mat.name = "mat";
+  mat.surface.set(Path("/mat/PreviewSurface", "outputs:surface"));
+
+  Shader ps_shader;
+  ps_shader.name = "PreviewSurface";
+  ps_shader.info_id = "UsdPreviewSurface";
+  {
+    UsdPreviewSurface ps;
+    ps.outputsSurface.set_authored(true);
+    ps.diffuseColor.set_connection(Path("/mat/DiffuseTexture", "outputs:rgb"));
+    ps.diffuseColor.set_value_empty();
+    ps_shader.value = std::move(ps);
+  }
+
+  Shader tex_shader;
+  tex_shader.name = "DiffuseTexture";
+  tex_shader.info_id = "UsdUVTexture";
+  {
+    UsdUVTexture tex;
+    tex.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("assets/diffuse.png")));
+    tex.wrapS.set_value(
+        Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
+    tex.sourceColorSpace.set_value(Animatable<UsdUVTexture::SourceColorSpace>(
+        UsdUVTexture::SourceColorSpace::SRGB));
+    tex.outputsRGB.set_authored(true);
+    tex_shader.value = std::move(tex);
+  }
+
+  Prim mat_prim(mat);
+  std::string aerr;
+  TEST_CHECK(mat_prim.add_child(Prim(ps_shader), true, &aerr));
+  TEST_CHECK(mat_prim.add_child(Prim(tex_shader), true, &aerr));
+
+  Stage stage_in;
+  TEST_CHECK(stage_in.add_root_prim(std::move(mat_prim)));
+
+  std::vector<uint8_t> buf;
+  std::string warn, err;
+  bool wrote = usdc::SaveAsUSDCToMemory(stage_in, &buf, &warn, &err);
+  if (!wrote) { TEST_MSG("usdc write failed: %s", err.c_str()); }
+  TEST_CHECK(wrote);
+
+  Stage stage;
+  bool read =
+      LoadUSDCFromMemory(buf.data(), buf.size(), "test.usdc", &stage, &warn, &err);
+  if (!read) { TEST_MSG("usdc read failed: %s", err.c_str()); }
+  TEST_CHECK(read);
+
+  const Prim *matp = find_root_prim(stage, "mat");
+  TEST_CHECK(matp != nullptr);
+  if (!matp) return;
+
+  const Shader *tex_out = nullptr;
+  const Shader *ps_out = nullptr;
+  for (const auto &c : matp->children()) {
+    if (c.element_name() == "DiffuseTexture") tex_out = c.data().as<Shader>();
+    else if (c.element_name() == "PreviewSurface") ps_out = c.data().as<Shader>();
+  }
+
+  // UsdUVTexture::file must survive (the headline regression).
+  TEST_CHECK(tex_out != nullptr);
+  if (tex_out) {
+    const auto *uv = tex_out->value.as<UsdUVTexture>();
+    TEST_CHECK(uv != nullptr);
+    if (uv) {
+      TEST_CHECK(uv->file.authored());
+      TEST_CHECK(uv->wrapS.authored());
+      TEST_CHECK(uv->sourceColorSpace.authored());
+      TEST_CHECK(uv->outputsRGB.authored());
+      auto file_opt = uv->file.get_value();
+      value::AssetPath ap;
+      bool got = file_opt.has_value() && file_opt.value().get_scalar(&ap);
+      TEST_CHECK(got);
+      if (got) TEST_CHECK(ap.GetAssetPath() == "assets/diffuse.png");
+    }
+  }
+
+  // PreviewSurface diffuseColor connection must survive too.
+  TEST_CHECK(ps_out != nullptr);
+  if (ps_out) {
+    const auto *pso = ps_out->value.as<UsdPreviewSurface>();
+    TEST_CHECK(pso != nullptr);
+    if (pso) TEST_CHECK(pso->diffuseColor.authored());
+  }
+}
+
 void usdc_writer_primvarreader_test(void) {
   const char *usda = R"(#usda 1.0
 def Shader "reader" {

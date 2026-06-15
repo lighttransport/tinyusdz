@@ -37,3 +37,63 @@ void urdf_json_spherical_joint_export_test(void);
 void urdf_json_newton_api_export_test(void);
 void urdf_json_mjcf_contact_export_test(void);
 void physics_urdf_upaxis_axis_invariant_test(void);
+
+// Large-scene crate-writer regression canaries
+void physics_rigidbody_mass_usdc_roundtrip_test(void);
+void physics_collision_material_usdc_roundtrip_test(void);
+void physics_drive_limit_usdc_roundtrip_test(void);
+void physics_joints_localframe_usdc_roundtrip_test(void);
+void physics_collision_group_usdc_roundtrip_test(void);
+void physics_scene_full_mjc_newton_usdc_roundtrip_test(void);
+void physics_to_json_after_usdc_test(void);
+void physx_scene_rigidbody_roundtrip_test(void);
+
+// Phase 1d: MJCF tendon / equality conversion (JSON->USD)
+void urdf_json_mjcf_tendon_export_test(void);
+void urdf_json_mjcf_equality_export_test(void);
+
+// Phase 1c: full inertia tensor diagonalization
+void urdf_json_fullinertia_diagonalize_test(void);
+
+// Phase 3b: schema-coverage tests
+void physics_articulation_root_api_test(void);
+void mjc_equality_api_test(void);
+
+// Spatial (muscle) tendon + sites + muscle actuator conversion
+void urdf_json_mjcf_muscle_export_test(void);
+
+// Full <option>/<flag>/<compiler> -> MjcSceneAPI
+void urdf_json_mjc_scene_options_test(void);
+
+// <keyframe> -> MjcKeyframe
+void urdf_json_mjc_keyframe_export_test(void);
+
+// <light>/<camera> -> UsdLux + GeomCamera
+void urdf_json_mjc_lights_cameras_test(void);
+
+// <asset><material> -> UsdShade Material + binding
+void urdf_json_mjc_materials_test(void);
+
+// <sensor> -> MjcSensor typed prim
+void urdf_json_mjc_sensors_test(void);
+
+// adhesion/cylinder/... actuator coverage
+void urdf_json_mjc_actuator_types_test(void);
+
+// <contact><pair> conversion
+void urdf_json_mjc_contact_pair_test(void);
+
+// mocap body + <custom> conversion
+void urdf_json_mjc_mocap_custom_test(void);
+
+// MjcActuator full-field USDC round-trip (ctrlRange/forceRange/gainPrm/...)
+void physics_mjc_actuator_usdc_roundtrip_test(void);
+
+// <extension><plugin> + <actuator><plugin> -> MjcPlugins + MjcActuator plugin
+void urdf_json_mjc_plugin_test(void);
+
+// static "world" link (worldbody-level geoms) -> static collider, no artic root
+void physics_static_world_link_test(void);
+
+// <freejoint> -> floating-base articulation root with mjc:freeJoint marker
+void physics_freejoint_floating_base_test(void);
