@@ -877,6 +877,37 @@ struct Cache::Impl {
             vsrc.variant = vd;
             out->push_back(std::move(vsrc));
           }
+          // Composition arcs authored on the variant OPTION (e.g. a `payload`
+          // that supplies the def-Mesh geometry — XGen assets author geometry on
+          // the selected variant, not in its body). Compose at the variant's
+          // strength (after the variant's own content/inline, before the host's
+          // references), anchored to the layer that authored the variant so a
+          // relative `@./geo.usd@` resolves correctly.
+          for (const std::string &s : vd->inherits) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit,
+                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
+          }
+          for (const std::string &s : vd->references) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference,
+                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
+          }
+          if (!vd->payloads.empty()) {
+            const std::string root_prim_path = src.map.Apply(src.site);
+            for (const std::string &pl_str : vd->payloads) {
+              CompositionArc arc = Compositor::ParsePayload(pl_str);
+              if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+                deferred_payload_prims.insert(root_prim_path);
+                continue;
+              }
+              deferred_payload_prims.erase(root_prim_path);
+              ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
+                         chain, warn, err, sr.layer_id);
+            }
+          }
+          for (const std::string &s : vd->specializes) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
+                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
+          }
         }
 
         // Crate representation: pxr-authored crates store variant content as
