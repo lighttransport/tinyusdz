@@ -10,11 +10,31 @@
 #include <fstream>
 #include <iomanip>
 #include <algorithm>
+#include <functional>
+#include <vector>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#endif
 
 namespace tinyusdz {
 namespace next {
 
 namespace {
+
+// Parallel-stitch context. When non-null on WritePrimSpec, a child prim whose
+// index is a "frontier" subtree root is spliced from a precomputed string
+// (serialized in parallel on a worker thread) instead of being recursed into on
+// the main thread. `frontier_of[child_idx]` is the frontier slot (or -1); `emit`
+// blocks until that slot is ready, writes it to `os`, frees it, and advances the
+// consumer cursor. Splicing produces exactly what recursing would have, so the
+// byte output is independent of thread count.
+struct StitchCtx {
+  const std::vector<int>* frontier_of = nullptr;
+  std::function<void(std::ostream&, int)> emit;
+};
 
 // Get specifier keyword
 const char* SpecifierKeyword(PrimSpecifier spec) {
@@ -444,10 +464,12 @@ void WriteRelationship(std::ostream& os, const std::string& name,
 
 // Forward declaration
 void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
-                   int depth, const USDAWriteOptions& opts);
+                   int depth, const USDAWriteOptions& opts,
+                   const StitchCtx* sctx = nullptr);
 
 void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
-                   int depth, const USDAWriteOptions& opts) {
+                   int depth, const USDAWriteOptions& opts,
+                   const StitchCtx* sctx) {
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -612,18 +634,263 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
-  // Write children
+  // Write children. In stitch mode, a child that is a frontier subtree root is
+  // spliced from its precomputed (parallel-serialized) string instead of being
+  // recursed into here; this yields exactly the same bytes as recursing.
   for (uint32_t child_idx : spec.child_indices()) {
     const PrimSpec* child = layer.prim(child_idx);
     if (child) {
       os << "\n";
-      WritePrimSpec(os, *child, layer, content_depth, opts);
+      if (sctx) {
+        int fs = (*sctx->frontier_of)[child_idx];
+        if (fs >= 0) { sctx->emit(os, fs); continue; }
+      }
+      WritePrimSpec(os, *child, layer, content_depth, opts, sctx);
     }
   }
 
   WriteIndent(os, depth, opts.indent);
   os << "}\n";
 }
+
+// Serialize the layer-stage header metadata + all root prims serially (the
+// classic streaming path). Shared by the serial entry and as a fallback.
+void WriteStageBodySerial(std::ostream& os, const Layer& layer,
+                          const LayerMeta& meta, const USDAWriteOptions& opts) {
+  WriteLayerMeta(os, meta, opts);
+  for (uint32_t root_idx : layer.root_indices()) {
+    const PrimSpec* root = layer.prim(root_idx);
+    if (root) {
+      WritePrimSpec(os, *root, layer, 0, opts);
+      os << "\n";
+    }
+  }
+}
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+// Resolve the effective worker count from the option (1 = serial; <=0 = auto;
+// >1 = exactly that many). USDA serialization of large scenes is memory-
+// bandwidth bound (it streams GBs of formatted text), so throughput peaks around
+// ~8 threads and degrades past that from allocator/bandwidth contention; the
+// auto default is therefore capped at kAutoCap. An explicit request is honored
+// as-is so callers can override on unusual hardware.
+int ResolveWriteThreads(int requested) {
+  if (requested == 1) return 1;
+  if (requested > 1) return requested;
+  constexpr int kAutoCap = 8;
+  int hw = static_cast<int>(std::thread::hardware_concurrency());
+  if (hw < 1) hw = 1;
+  return std::min(hw, kAutoCap);
+}
+
+// Per-prim serialized-size proxy: a small base cost (header + scalar props) plus
+// the element count of every array-valued property (cheap: array_size() reads a
+// stored length, even for lazy/undecoded arrays — no materialization). This
+// reflects OUTPUT TEXT size, so a prim holding a giant array (e.g. instanced
+// geometry on Moana Island) is weighted heavily even though it is a single node;
+// a plain node-count proxy would mislabel it as light and never isolate it.
+uint64_t SelfWeight(const PrimSpec& spec) {
+  uint64_t w = 8;  // base: specifier/type/name/braces + small scalar props
+  for (const auto& slot : spec.properties().slots()) {
+    if (slot.is_relationship()) continue;
+    const Value* v = spec.property_value(slot.name_id);
+    if (v && v->is_array()) w += v->array_size();
+  }
+  return w;
+}
+
+// Subtree weights (self + sum of children), iterative post-order so deep trees
+// don't overflow the stack.
+void ComputeSubtreeWeights(const Layer& layer, std::vector<uint64_t>& weight) {
+  const size_t n = layer.prim_count();
+  weight.assign(n, 0);
+  std::vector<std::pair<uint32_t, size_t>> st;  // (prim idx, child cursor)
+  for (uint32_t r : layer.root_indices()) {
+    if (!layer.prim(r)) continue;
+    st.emplace_back(r, 0);
+    while (!st.empty()) {
+      uint32_t idx = st.back().first;
+      size_t cursor = st.back().second;
+      const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
+      if (cursor < ch.size()) {
+        st.back().second = cursor + 1;
+        uint32_t c = ch[cursor];
+        if (layer.prim(c)) st.emplace_back(c, 0);
+      } else {
+        uint64_t w = SelfWeight(*layer.prim(idx));
+        for (uint32_t c : ch) {
+          if (layer.prim(c)) w += weight[c];
+        }
+        weight[idx] = w;
+        st.pop_back();
+      }
+    }
+  }
+}
+
+// Pick a disjoint frontier of subtree roots covering all leaves. Splitting is
+// SIZE-bounded: a node becomes a frontier piece once its subtree weight (node
+// count) is at or below `threshold`, otherwise it is split into its children.
+// This caps the work AND the serialized-text size of any single piece, so no
+// worker ever builds a multi-GB buffer (the cause of the low-thread memory blow
+// up), and pieces are numerous/even enough to balance the pool — independent of
+// the thread count. `threshold` aims for ~nthreads*32 pieces but never goes
+// below a floor so we don't make a huge number of tiny pieces.
+void SelectFrontier(const Layer& layer, const std::vector<uint64_t>& weight,
+                    int nthreads, std::vector<char>& is_final) {
+  is_final.assign(layer.prim_count(), 0);
+  uint64_t total = 0;
+  for (uint32_t r : layer.root_indices()) {
+    if (layer.prim(r)) total += weight[r];
+  }
+  const uint64_t floor = 8192;
+  uint64_t threshold = floor;
+  const uint64_t aim = static_cast<uint64_t>(nthreads) * 32;
+  if (aim > 0 && total / aim > threshold) {
+    threshold = total / aim;
+  }
+
+  std::vector<uint32_t> st;  // nodes to classify
+  for (uint32_t r : layer.root_indices()) {
+    if (layer.prim(r)) st.push_back(r);
+  }
+  while (!st.empty()) {
+    uint32_t idx = st.back();
+    st.pop_back();
+    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
+    bool has_child = false;
+    for (uint32_t c : ch) { if (layer.prim(c)) { has_child = true; break; } }
+    if (!has_child || weight[idx] <= threshold) {
+      is_final[idx] = 1;  // small enough (or a leaf) -> a frontier piece
+    } else {
+      for (uint32_t c : ch) {
+        if (layer.prim(c)) st.push_back(c);
+      }
+    }
+  }
+}
+
+// Pre-order DFS assigning each frontier node a slot in traversal order (so the
+// consumer hits slots 0,1,2,... in order); frontier nodes are not descended.
+void BuildPreorderFrontier(const Layer& layer, const std::vector<char>& is_final,
+                           std::vector<int>& frontier_of,
+                           std::vector<std::pair<uint32_t, int>>& flist) {
+  frontier_of.assign(layer.prim_count(), -1);
+  std::vector<std::pair<uint32_t, int>> st;  // (idx, depth)
+  const std::vector<uint32_t>& roots = layer.root_indices();
+  for (size_t i = roots.size(); i-- > 0;) {
+    if (layer.prim(roots[i])) st.emplace_back(roots[i], 0);
+  }
+  while (!st.empty()) {
+    uint32_t idx = st.back().first;
+    int depth = st.back().second;
+    st.pop_back();
+    if (is_final[idx]) {
+      frontier_of[idx] = static_cast<int>(flist.size());
+      flist.emplace_back(idx, depth);
+      continue;  // do not descend; serialized as a unit
+    }
+    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
+    for (size_t i = ch.size(); i-- > 0;) {
+      if (layer.prim(ch[i])) st.emplace_back(ch[i], depth + 1);
+    }
+  }
+}
+
+// Parallel stage body: serialize frontier subtrees on a worker pool while the
+// main thread walks the tree and splices each subtree (in order) into `os`.
+// Bounded in-flight buffers (window W) keep peak memory near the serial path.
+void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
+                            const LayerMeta& meta, const USDAWriteOptions& opts,
+                            int nthreads) {
+  std::vector<uint64_t> weight;
+  ComputeSubtreeWeights(layer, weight);
+  std::vector<char> is_final;
+  SelectFrontier(layer, weight, nthreads, is_final);
+  std::vector<int> frontier_of;
+  std::vector<std::pair<uint32_t, int>> flist;
+  BuildPreorderFrontier(layer, is_final, frontier_of, flist);
+
+  const size_t m = flist.size();
+  if (m <= 1) {  // nothing worth parallelizing
+    WriteStageBodySerial(os, layer, meta, opts);
+    return;
+  }
+
+  // Pre-warm the global interning table on the main thread (its lazy init is the
+  // only non-reentrant spot on the write path; reads are thread-safe after).
+  (void)GetPropNameTable();
+
+  std::vector<std::string> results(m);
+  std::vector<char> ready(m, 0);
+  std::mutex mu;
+  std::condition_variable cv;
+  std::atomic<size_t> next{0};
+  size_t consumed = 0;  // guarded by mu
+  const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
+
+  auto worker = [&]() {
+    for (;;) {
+      size_t i = next.fetch_add(1);
+      if (i >= m) break;
+      {  // backpressure: stay within W of the consumer
+        std::unique_lock<std::mutex> lk(mu);
+        cv.wait(lk, [&] { return i < consumed + W; });
+      }
+      std::ostringstream oss;
+      WritePrimSpec(oss, *layer.prim(flist[i].first), layer, flist[i].second,
+                    opts, /*sctx=*/nullptr);
+      {
+        std::lock_guard<std::mutex> lk(mu);
+        results[i] = oss.str();
+        ready[i] = 1;
+      }
+      cv.notify_all();
+    }
+  };
+
+  const int nw = std::min<int>(nthreads, static_cast<int>(m));
+  std::vector<std::thread> pool;
+  pool.reserve(nw);
+  for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
+
+  auto emit = [&](std::ostream& o, int slot) {
+    const size_t s = static_cast<size_t>(slot);
+    std::unique_lock<std::mutex> lk(mu);
+    cv.wait(lk, [&] { return ready[s] != 0; });
+    std::string str = std::move(results[s]);
+    results[s].clear();
+    results[s].shrink_to_fit();
+    lk.unlock();
+    o.write(str.data(), static_cast<std::streamsize>(str.size()));
+    lk.lock();
+    consumed = s + 1;
+    lk.unlock();
+    cv.notify_all();
+  };
+
+  StitchCtx sctx;
+  sctx.frontier_of = &frontier_of;
+  sctx.emit = emit;
+
+  WriteLayerMeta(os, meta, opts);
+  for (uint32_t root_idx : layer.root_indices()) {
+    const PrimSpec* root = layer.prim(root_idx);
+    if (!root) continue;
+    int fs = frontier_of[root_idx];
+    if (fs >= 0) {
+      emit(os, fs);
+    } else {
+      WritePrimSpec(os, *root, layer, 0, opts, &sctx);
+    }
+    os << "\n";
+  }
+
+  for (auto& th : pool) th.join();
+}
+
+#endif  // TINYUSDZ_ENABLE_THREAD
 
 }  // anonymous namespace
 
@@ -671,16 +938,16 @@ USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
 
-  WriteLayerMeta(os, meta, options);
-
-  // Write root prims
-  for (uint32_t root_idx : root_layer->root_indices()) {
-    const PrimSpec* root = root_layer->prim(root_idx);
-    if (root) {
-      WritePrimSpec(os, *root, *root_layer, 0, options);
-      os << "\n";
-    }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const int nthreads = ResolveWriteThreads(options.num_threads);
+  if (nthreads > 1) {
+    WriteStageBodyParallel(os, *root_layer, meta, options, nthreads);
+  } else {
+    WriteStageBodySerial(os, *root_layer, meta, options);
   }
+#else
+  WriteStageBodySerial(os, *root_layer, meta, options);
+#endif
 
   if (os.good()) {
     result.success = true;

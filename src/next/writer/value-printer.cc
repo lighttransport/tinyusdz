@@ -6,6 +6,7 @@
 #include "value-printer.hh"
 #include "../types/type-id.hh"
 #include "dtoa.hh"
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -35,6 +36,16 @@ inline void AppendI64(std::string& o, int64_t v) {
   } else {
     AppendU64(o, static_cast<uint64_t>(v));
   }
+}
+
+// Reserve headroom for an array, but cap the up-front growth so a single huge
+// array doesn't trigger a giant mmap. Beyond the cap, std::string's geometric
+// growth handles it with cheap amortized reallocations — and, crucially, avoids
+// the multi-hundred-MB simultaneous allocations that thrash the allocator when
+// many subtrees are serialized in parallel.
+inline void ReserveArrayHeadroom(std::string& o, size_t want) {
+  constexpr size_t kCap = 8u << 20;  // 8 MiB
+  o.reserve(o.size() + std::min<size_t>(want, kCap) + 8);
 }
 
 // Escape a string for USDA output
@@ -143,7 +154,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::Int: {
         if (const auto* a = value.as_int_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          out.reserve(out.size() + limit * 8 + 8);
+          ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
@@ -152,7 +163,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::UInt: {
         if (const auto* a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          out.reserve(out.size() + limit * 8 + 8);
+          ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
@@ -161,7 +172,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::Int64: {
         if (const auto* a = value.as_int64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          out.reserve(out.size() + limit * 10 + 8);
+          ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
@@ -170,7 +181,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::UInt64: {
         if (const auto* a = value.as_uint64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          out.reserve(out.size() + limit * 10 + 8);
+          ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
@@ -206,7 +217,7 @@ void PrintValueInto(std::string& out, const Value& value,
           if (const auto* a = value.as_double_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
-            out.reserve(out.size() + limit * comp_count * 12 + 8);
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
             for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_double(a->data() + i * comp_count); }
             if (limit < n) out += ", ...";
           }
@@ -214,7 +225,7 @@ void PrintValueInto(std::string& out, const Value& value,
           if (const auto* a = value.as_float_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
-            out.reserve(out.size() + limit * comp_count * 12 + 8);
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
             for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_float(a->data() + i * comp_count); }
             if (limit < n) out += ", ...";
           }
