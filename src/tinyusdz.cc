@@ -127,9 +127,7 @@ static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, s
   size_t bytes_to_show = std::min(length, max_bytes);
   
   for (size_t i = 0; i < bytes_to_show; i++) {
-    char hex[3];
-    snprintf(hex, sizeof(hex), "%02x", addr[i]);
-    result += hex;
+    result += fmt::hex(addr[i], 2);
     if (i < bytes_to_show - 1) {
       result += " ";
     }
