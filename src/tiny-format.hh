@@ -7,6 +7,8 @@
 ///
 #pragma once
 
+#include <cstdint>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -15,6 +17,17 @@
 
 namespace tinyusdz {
 namespace fmt {
+
+/// Lower-case hexadecimal of `v`, zero-padded to `width` digits (0 = no
+/// padding). A small type-safe replacement for `snprintf("%0*llx", ...)` /
+/// `%016llx`, usable directly or via `format("...{}...", hex(v, 16))`.
+inline std::string hex(uint64_t v, int width = 0) {
+  std::ostringstream ss;
+  ss << std::hex << std::setfill('0');
+  if (width > 0) ss << std::setw(width);
+  ss << v;
+  return ss.str();
+}
 
 namespace detail {
 

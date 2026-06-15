@@ -9,6 +9,7 @@
 #include "../core/attr-metas.hh"
 #include "../core/composition-types.hh"
 #include "../hash-util.hh"
+#include "../tiny-format.hh"
 #include "../common-macros.inc"
 #include <array>
 #include <sstream>
@@ -1019,11 +1020,9 @@ static void SerializePrim(
     std::string nm;
     out += "r:";
     if (TopLevelProtoName(t, rootNames, &nm) && protoNames.count(nm)) {
-      char b[24];
-      std::snprintf(b, sizeof(b), "P%016llx",
-                    static_cast<unsigned long long>(ProtoHashByName(
-                        nm, roots, rootNames, protoNames, cache, depth + 1)));
-      out += b;
+      out += "P";
+      out += fmt::hex(
+          ProtoHashByName(nm, roots, rootNames, protoNames, cache, depth + 1), 16);
     } else {
       out += t;
     }
@@ -1108,10 +1107,7 @@ size_t CanonicalizeInstances(Layer &layer) {
   for (const auto &nm : protoNames) {
     uint64_t h = detail::ProtoHashByName(nm, rootPtr, rootNames, protoNames,
                                          cache, 0);
-    char b[32];
-    std::snprintf(b, sizeof(b), "__Proto_%016llx",
-                  static_cast<unsigned long long>(h));
-    canon[nm] = b;
+    canon[nm] = "__Proto_" + fmt::hex(h, 16);
   }
 
   // Retarget every reference, then rename the prototype roots (identical-content
