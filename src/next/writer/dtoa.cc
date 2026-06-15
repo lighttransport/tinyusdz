@@ -244,6 +244,20 @@ std::string dtos(double v) {
   return std::string(buffer, end);
 }
 
+// Append variants: format straight into `out` with no intermediate std::string,
+// reusing the exact same dtoa_impl as dtos() (byte-for-byte identical result).
+void dtos_append(std::string& out, float v) {
+  char buffer[24];
+  char* end = dtoa_impl(v, buffer);
+  out.append(buffer, static_cast<size_t>(end - buffer));
+}
+
+void dtos_append(std::string& out, double v) {
+  char buffer[32];
+  char* end = dtoa_impl(v, buffer);
+  out.append(buffer, static_cast<size_t>(end - buffer));
+}
+
 }  // namespace next
 }  // namespace tinyusdz
 

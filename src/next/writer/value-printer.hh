@@ -33,6 +33,12 @@ struct PrintOptions {
 /// Print a Value to string (USDA format)
 std::string PrintValue(const Value& value, const PrintOptions& opts = {});
 
+/// Append a Value's USDA representation directly into `out` (no intermediate
+/// allocation; the hot path for large numeric arrays). Byte-identical to
+/// appending PrintValue(value, opts).
+void PrintValueInto(std::string& out, const Value& value,
+                    const PrintOptions& opts = {});
+
 /// Print a Value type name
 std::string PrintTypeName(TypeId type_id, bool is_array = false);
 
