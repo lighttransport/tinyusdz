@@ -582,6 +582,13 @@ public:
   /// Add a property slot without value (for time-sampled properties)
   void add_property_slot(PropNameId name_id, TypeId type_id, uint16_t flags);
 
+  /// Mark an existing property slot as time-sampled. Needed when an attribute is
+  /// declared first (e.g. `<type> <name> ( meta )`) and its `.timeSamples` arrive
+  /// on a later statement: the slot already exists, so the time-sampled flag must
+  /// be OR'd onto it (else the writer's is_time_sampled() check drops the
+  /// samples). No-op if the slot is absent.
+  void mark_property_time_sampled(PropNameId name_id);
+
   /// Field-level fill-absent: if a slot for `name_id` exists but carries no
   /// authored default value (a connection-only / declared-only attribute), set
   /// its default to `value`. No-op if the slot is absent or already has a value.
