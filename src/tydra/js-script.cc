@@ -1349,7 +1349,7 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, 
 #pragma clang diagnostic pop
 #endif
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 

@@ -1402,6 +1402,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
+  # clang21's -Weverything enables -Wnrvo, which fires on any function with
+  # multiple return paths returning different objects (e.g. an early `return {}`
+  # plus a final `return named`). It is pedantic informational noise, not a bug;
+  # suppress it. (Older clang silently ignores the unknown -Wno- flag.)
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 20)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
+  endif()
+
   if(TINYUSDZ_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
@@ -2539,7 +2547,19 @@ if(TINYUSDZ_BUILD_TESTS)
     # regression of the variant-deferral in an iterative flatten loop (not just
     # the library) is caught. The C++ test above drives the library with its own
     # deferred loop and would not notice a driver revert.
-    if(UNIX AND TARGET tusdcat)
+    #
+    # Skipped on 32-bit AddressSanitizer builds: the flatten itself is correct
+    # and tiny there (~7 MB peak RSS without ASan), but ASan's shadow + per-
+    # allocation metadata overhead exhausts the limited 32-bit address space
+    # during this run on CI ("AddressSanitizer: out of memory ... failed to mmap
+    # InternalMmapVector"). Coverage is retained by the library-level
+    # feat-variant-payload-chain test and the 64-bit driver run.
+    if(SANITIZE_ADDRESS AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+      set(_skip_vchain_driver TRUE)
+    else()
+      set(_skip_vchain_driver FALSE)
+    endif()
+    if(UNIX AND TARGET tusdcat AND NOT _skip_vchain_driver)
       set(_vchain_tusdzconvert "")
       if(TARGET tusdzconvert)
         set(_vchain_tusdzconvert "$<TARGET_FILE:tusdzconvert>")
