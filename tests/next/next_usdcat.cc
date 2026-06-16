@@ -50,6 +50,11 @@ int main(int argc, char **argv) {
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
+  // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
+  // no threading). It is byte-identical to serial; it helps small compose-bound
+  // scenes and currently regresses huge instanced ones, so it stays off by
+  // default. (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
+  int compose_threads = 1;
   const char *filename = nullptr;
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
   for (int i = 1; i < argc; ++i) {
@@ -88,6 +93,9 @@ int main(int argc, char **argv) {
                              "(deterministic|usdcat)\n", m);
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
+      compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
+      if (compose_threads < 1) compose_threads = 1;
     } else {
       filename = argv[i];
     }
@@ -96,6 +104,7 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "Usage: next_usdcat [-l|-f|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
+                         "[--compose-threads N] "
                          "file.usd[acz]\n");
     return 2;
   }
@@ -199,13 +208,9 @@ int main(int argc, char **argv) {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
-    // Parallel compose (pre-warm sources_cache) is OPT-IN and byte-identical:
-    // default serial; TINYUSDZ_NEXT_NUM_THREADS > 1 enables it (it wins on small
-    // compose-bound scenes but currently regresses huge instanced scenes -- see
-    // cache.cc ParallelWarmSources). Left at the default (1 = serial) otherwise.
-    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
-      opts.num_threads = std::atoi(nt);
-    }
+    // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
+    // and byte-identical to serial. Default 1 = serial (no threading).
+    opts.num_threads = compose_threads;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);
