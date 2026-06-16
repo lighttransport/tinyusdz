@@ -1756,6 +1756,16 @@ struct Cache::Impl {
       stack.pop_back();
       if (it.depth > options.max_namespace_depth) continue;
       const std::vector<Src> &srcs = SourcesForPath(it.p, warn, err);
+      // Instancing-aware: the serial BuildStage composes only the prototype
+      // member of an instance group and stops at every instance (is_instance ->
+      // continue) -- it never descends an instance's subtree. Mirror that here so
+      // warming does not resolve the (redundant) subtrees of every instance. On
+      // heavily-instanced scenes the instances vastly outnumber the prototypes,
+      // so these subtree resolutions dominate the worker + merge cost while the
+      // serial build discards all but one per group. Stopping is byte-neutral:
+      // warming only fills a cache; an unwarmed prototype subtree simply resolves
+      // (identically) in the serial walk.
+      if (options.detect_instances && IsInstanceableSources(srcs)) continue;
       const std::vector<std::string> children = ComposeChildNames(srcs);
       for (auto cit = children.rbegin(); cit != children.rend(); ++cit) {
         stack.push_back({it.p.append_child(*cit), it.depth + 1});
@@ -1800,6 +1810,9 @@ struct Cache::Impl {
   // any un-warmed path resolves serially.
   void ParallelWarmSources(const std::vector<std::string> &root_names, int nt,
                            std::string *warn, std::string *err) {
+    using PWClock = std::chrono::steady_clock;
+    const bool prof = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+    auto t_start = prof ? PWClock::now() : PWClock::time_point{};
     const size_t want = static_cast<size_t>(nt) * 4;
     const uint32_t kMaxFrontierDepth = 8;
     std::vector<std::pair<Path, uint32_t>> level;  // (src_path, depth)
@@ -1815,6 +1828,13 @@ struct Cache::Impl {
           continue;
         }
         const std::vector<Src> &srcs = SourcesForPath(pr.first, warn, err);
+        // Instancing-aware (see WarmSubtree): an instanceable prim's subtree is
+        // composed at most once (its prototype), so do not expand the frontier
+        // into it -- treat it as a leaf root the worker will stop at immediately.
+        if (options.detect_instances && IsInstanceableSources(srcs)) {
+          next.push_back(pr);
+          continue;
+        }
         const std::vector<std::string> children = ComposeChildNames(srcs);
         if (children.empty()) {
           next.push_back(pr);  // leaf: nothing below to parallelize
@@ -1829,6 +1849,7 @@ struct Cache::Impl {
       if (!grew) break;
     }
     if (level.size() < 2) return;  // not enough fan-out to parallelize
+    auto t_discover = prof ? PWClock::now() : PWClock::time_point{};
 
     // Snapshot the main resolution context built by the serial discovery above.
     const size_t seed_stack_count = layer_stacks.size();
@@ -1875,11 +1896,25 @@ struct Cache::Impl {
       });
     }
     for (auto &t : ts) t.join();
+    auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
 
     for (int t = 0; t < W; ++t) {
       MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count);
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
       if (err) *err += werr[static_cast<size_t>(t)];
+    }
+    if (prof) {
+      auto ms = [](PWClock::time_point a, PWClock::time_point b) {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(b - a)
+                   .count() / 1e6;
+      };
+      auto t_merge = PWClock::now();
+      std::fprintf(stderr,
+                   "[next_warm] frontier=%zu W=%d discover=%.1fms workers=%.1fms "
+                   "merge=%.1fms cache=%zu\n",
+                   level.size(), W, ms(t_start, t_discover),
+                   ms(t_discover, t_workers), ms(t_workers, t_merge),
+                   sources_cache.size());
     }
   }
 #endif  // TINYUSDZ_ENABLE_THREAD
