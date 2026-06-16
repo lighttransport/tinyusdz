@@ -1018,17 +1018,21 @@ USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
                             const USDAWriteOptions& options) {
   USDAWriteResult result;
 
-  // Write layer header
-  WriteLayerMeta(os, layer.meta(), options);
-
-  // Write root prims
-  for (uint32_t root_idx : layer.root_indices()) {
-    const PrimSpec* root = layer.prim(root_idx);
-    if (root) {
-      WritePrimSpec(os, *root, layer, 0, options);
-      os << "\n";
-    }
+  // Serialize the layer (header meta + root prims) using the same dispatch as
+  // WriteUSDA(Stage): parallel subtree serialization when threads are enabled
+  // and >1 worker is requested, else the serial streaming path. The Layer's own
+  // metadata is used directly (no Stage->LayerMeta synthesis). Output is
+  // byte-identical regardless of thread count.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const int nthreads = ResolveWriteThreads(options.num_threads);
+  if (nthreads > 1) {
+    WriteStageBodyParallel(os, layer, layer.meta(), options, nthreads);
+  } else {
+    WriteStageBodySerial(os, layer, layer.meta(), options);
   }
+#else
+  WriteStageBodySerial(os, layer, layer.meta(), options);
+#endif
 
   os.flush();
   if (os.good()) {
