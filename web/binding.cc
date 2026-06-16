@@ -63,6 +63,7 @@
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
 #include "crate-writer.hh"
 #include "image-writer.hh"
@@ -7549,6 +7550,82 @@ class TinyUSDZLoaderNative {
     return true;
   }
 
+  bool applyGeometryOptimizationToLayerOptions(emscripten::val options) {
+    if (options.isUndefined() || options.isNull()) {
+      return true;
+    }
+
+    tinyusdz::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.geometry_optimization =
+            tinyusdz::usdz::GeometryOptimizationMode::Off;
+      } else if (m == "mergemeshes" || m == "merge" ||
+                 m == "meshmerge") {
+        opt.geometry_optimization =
+            tinyusdz::usdz::GeometryOptimizationMode::MergeMeshes;
+      } else {
+        error_ = "Invalid geometry optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    emscripten::val mode_val = options["optimizeGeometry"];
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["optimizeMeshes"];
+    }
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["geometryOptimization"];
+    }
+    if (!mode_val.isUndefined() && !mode_val.isNull()) {
+      if (!parse_mode(mode_val.as<std::string>())) {
+        return false;
+      }
+    }
+    if (opt.geometry_optimization ==
+        tinyusdz::usdz::GeometryOptimizationMode::Off) {
+      return true;
+    }
+
+    auto set_int = [&](const char *name, int *dst) {
+      emscripten::val v = options[name];
+      if (!v.isUndefined() && !v.isNull()) {
+        *dst = v.as<int>();
+      }
+    };
+    set_int("meshMergeMaxInputFaces", &opt.mesh_merge_max_input_faces);
+    set_int("meshMergeMaxInputPoints", &opt.mesh_merge_max_input_points);
+    set_int("meshMergeMaxAggregateFaces",
+            &opt.mesh_merge_max_aggregate_faces);
+    set_int("meshMergeMinGroupSize", &opt.mesh_merge_min_group_size);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Geometry optimization requires a loaded Layer.";
+      return false;
+    }
+
+    tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::usdz::GeometryOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!tinyusdz::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
+                                                 &owarn, &oerr)) {
+      error_ = "Geometry optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Geometry optimization: " +
+             std::to_string(opt_stats.num_meshes_before) + " -> " +
+             std::to_string(opt_stats.num_meshes_after) + ", merged " +
+             std::to_string(opt_stats.num_meshes_merged) + " into " +
+             std::to_string(opt_stats.num_mesh_aggregates) +
+             " aggregate(s).\n";
+    return true;
+  }
+
   /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
   /// paths according to `remap` ({oldName: newName}). Use when textures are
   /// renamed (e.g. transcoded PNG -> JPG) so references follow.
@@ -7611,6 +7688,9 @@ class TinyUSDZLoaderNative {
   emscripten::val exportAsUSDZWithOptions(emscripten::val remap,
                                           emscripten::val options) {
     if (!applyMaterialOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+    if (!applyGeometryOptimizationToLayerOptions(options)) {
       return emscripten::val::null();
     }
 
@@ -7697,6 +7777,9 @@ class TinyUSDZLoaderNative {
       return emscripten::val::null();
     }
     if (!applyMaterialOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+    if (!applyGeometryOptimizationToLayerOptions(options)) {
       return emscripten::val::null();
     }
 

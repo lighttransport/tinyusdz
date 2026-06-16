@@ -18,6 +18,8 @@ void usdz_convert_jpeg_roundtrip_test(void);
 void usdz_convert_remap_asset_paths_test(void);
 void usdz_convert_material_dedupe_test(void);
 void usdz_convert_material_preview_atlas_fallback_test(void);
+void usdz_convert_geometry_merge_test(void);
+void usdz_convert_geometry_subset_merge_test(void);
 void usdz_convert_error_path_test(void);
 void usdz_convert_adversarial_image_test(void);
 void usdz_convert_pack_channels_error_test(void);

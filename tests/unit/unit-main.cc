@@ -729,6 +729,8 @@ TEST_LIST = {
   { "usdz_convert_remap_asset_paths_test", usdz_convert_remap_asset_paths_test },
   { "usdz_convert_material_dedupe_test", usdz_convert_material_dedupe_test },
   { "usdz_convert_material_preview_atlas_fallback_test", usdz_convert_material_preview_atlas_fallback_test },
+  { "usdz_convert_geometry_merge_test", usdz_convert_geometry_merge_test },
+  { "usdz_convert_geometry_subset_merge_test", usdz_convert_geometry_subset_merge_test },
   { "usdz_convert_error_path_test", usdz_convert_error_path_test },
   { "usdz_convert_adversarial_image_test", usdz_convert_adversarial_image_test },
   { "usdz_convert_pack_channels_error_test", usdz_convert_pack_channels_error_test },
