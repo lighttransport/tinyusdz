@@ -117,6 +117,19 @@ int main() {
   }
   // After the copy is destroyed, the original still resolves.
 
+  // materialized_copy(): decode into a temp WITHOUT disturbing the lazy original
+  // (the writer's transient-decode path that keeps peak RSS bounded to ~one
+  // array). The decoded temp must match the source bytes, and pv stays lazy.
+  {
+    Value mc = pv->materialized_copy();
+    assert(!mc.is_lazy());                 // returned value is decoded
+    assert(pv->is_lazy());                 // ORIGINAL untouched (still lazy)
+    const std::vector<float>* mcarr = mc.as_float_array();
+    assert(mcarr && mcarr->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) assert((*mcarr)[i] == points[i]);
+  }
+  assert(pv->is_lazy());  // still lazy after the temp is destroyed
+
   // Materialize the original via accessor; verify contents byte-for-byte.
   const std::vector<float>* arr = pv->as_float_array();
   assert(arr);

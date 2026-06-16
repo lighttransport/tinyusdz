@@ -507,6 +507,124 @@ void comp_variant_nested_children_test(void) {
 }
 
 // ---------------------------------------------------------------------------
+// comp_reference_suffix_fallback_test
+// References authored against another machine's layout (UE USD exports):
+// escaping '../' runs and Windows drive-prefixed paths. The resolver suffix
+// fallback must rebase them onto the search paths (scene root), with a
+// rebase warning; a genuinely-missing asset still composes (skipped) with an
+// "Asset not found" warning.
+// ---------------------------------------------------------------------------
+void comp_reference_suffix_fallback_test(void) {
+  namespace fs = std::filesystem;
+
+  std::error_code ec;
+  fs::path dir =
+      fs::temp_directory_path(ec) / "tinyusdz_comp_reference_suffix_fallback";
+  TEST_CHECK(!ec);
+  if (ec) {
+    return;
+  }
+
+  fs::create_directories(dir / "Assets", ec);
+  TEST_CHECK(!ec);
+  if (ec) {
+    return;
+  }
+
+  const std::string leaf_usda = R"(#usda 1.0
+(
+    defaultPrim = "Leaf"
+)
+
+def Xform "Leaf"
+{
+    custom token marker = "leaf"
+}
+)";
+
+  TEST_CHECK(WriteTextFileForCompositionTest(
+      (dir / "Assets" / "sfb_leaf.usda").string(), leaf_usda));
+  TEST_CHECK(WriteTextFileForCompositionTest(
+      (dir / "Assets" / "sfb_leaf2.usda").string(), leaf_usda));
+
+  const std::string root_usda = R"(#usda 1.0
+
+def Xform "RefEscape" (
+    prepend references = @../../../../../USD_Exports/SfbScene/Assets/sfb_leaf.usda@
+)
+{
+}
+
+def Xform "RefDrive" (
+    prepend references = @F:/USD_Exports/SfbScene/Assets/sfb_leaf2.usda@
+)
+{
+}
+
+def Xform "RefMissing" (
+    prepend references = @../../sfb_no_such_dir/sfb_nothing.usda@
+)
+{
+}
+)";
+
+  const fs::path root_path = dir / "root.usda";
+  TEST_CHECK(WriteTextFileForCompositionTest(root_path.string(), root_usda));
+
+  Layer root_layer;
+  std::string warn, err;
+  TEST_CHECK(LoadLayerFromFile(root_path.string(), &root_layer, &warn, &err));
+  if (!err.empty()) {
+    TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
+  }
+
+  AssetResolutionResolver resolver;
+  resolver.set_current_working_path(dir.string());
+  resolver.set_search_paths({dir.string()});
+
+  ReferencesCompositionOptions options;
+  options.allow_parent_relative_paths = true;
+
+  Layer composited;
+  warn.clear();
+  err.clear();
+  TEST_CHECK(CompositeReferences(resolver, root_layer, &composited, &warn,
+                                 &err, options));
+  if (!err.empty()) {
+    TEST_MSG("CompositeReferences error: %s", err.c_str());
+  }
+
+  // Escaping '../' reference rebased onto <dir>/Assets/sfb_leaf.usda.
+  auto escape_it = composited.primspecs().find("RefEscape");
+  TEST_CHECK(escape_it != composited.primspecs().end());
+  if (escape_it != composited.primspecs().end()) {
+    TEST_CHECK(escape_it->second.props().count("marker") == 1);
+  }
+
+  // Drive-prefixed reference rebased onto <dir>/Assets/sfb_leaf2.usda.
+  auto drive_it = composited.primspecs().find("RefDrive");
+  TEST_CHECK(drive_it != composited.primspecs().end());
+  if (drive_it != composited.primspecs().end()) {
+    TEST_CHECK(drive_it->second.props().count("marker") == 1);
+  }
+
+  // Rebases are surfaced as warnings.
+  TEST_CHECK(warn.find("suffix fallback") != std::string::npos);
+  if (warn.find("suffix fallback") == std::string::npos) {
+    TEST_MSG("warn: %s", warn.c_str());
+  }
+
+  // Genuinely-missing asset: composition succeeds, prim left as-authored,
+  // not-found warning surfaced.
+  auto missing_it = composited.primspecs().find("RefMissing");
+  TEST_CHECK(missing_it != composited.primspecs().end());
+  if (missing_it != composited.primspecs().end()) {
+    TEST_CHECK(missing_it->second.props().count("marker") == 0);
+  }
+  TEST_CHECK(warn.find("Asset not found") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
 // comp_sublayer_variant_sets_merge_test
 // Stronger and weaker sublayers can author different variantSets and selection
 // entries on the same prim. The composed prim must keep all set names so all

@@ -15,6 +15,7 @@ namespace tinyusdz {
 namespace next {
 
 struct LazyArrayRef;  // crate/lazy-array.hh
+struct Dict;          // recursive USD dictionary (defined below)
 
 /// Value class - type-erased container for USD values
 /// Uses Small Buffer Optimization to avoid heap allocation for small types
@@ -93,6 +94,12 @@ public:
   static Value MakeAssetPath(const std::string& s);
   static Value MakeAssetPath(std::string&& s);
 
+  // Dictionary (recursive key->Value map; insertion-ordered for round-trip).
+  // Stored behind a shared_ptr<Dict> in the SBO with copy-on-write, so copying
+  // a dict-valued Value bumps a refcount and never deep-copies until mutated.
+  static Value MakeDictionary();
+  static Value MakeDictionary(Dict&& d);
+
   // Semantic type factories (same storage as vectors)
   static Value MakePoint3f(float x, float y, float z);
   static Value MakePoint3d(double x, double y, double z);
@@ -156,11 +163,19 @@ public:
   /// Get the type ID
   TypeId type_id() const { return type_id_; }
 
-  /// Check if empty (no value stored)
-  bool is_empty() const { return type_id_ == TypeId::Invalid; }
+  /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
+  /// it is an authored opinion that blocks weaker values and must round-trip.
+  bool is_empty() const { return type_id_ == TypeId::Invalid && !is_block_; }
+
+  /// True if this is an authored value block (`= None`) — a typed opinion that
+  /// carries no data but suppresses weaker opinions and emits `= None`.
+  bool is_block() const { return is_block_; }
 
   /// Check if this is an array value
   bool is_array() const { return is_array_; }
+
+  /// Check if this is a dictionary value
+  bool is_dictionary() const { return type_id_ == TypeId::Dictionary; }
 
   /// Get array size (0 if not an array)
   size_t array_size() const { return is_array_ ? array_size_ : 0; }
@@ -171,6 +186,11 @@ public:
   // ============================================================
   // Lazy array references (crate-backed, undecoded)
   // ============================================================
+
+  /// Construct an authored value block (`= None`): no data, no type, but a real
+  /// opinion (is_empty()==false) that blocks weaker values and re-emits `= None`.
+  /// The attribute's declared type comes from the slot / property_type_name.
+  static Value MakeBlock();
 
   /// Construct a lazy array value that references an undecoded block inside a
   /// retained CrateDataSource. The payload is decoded on first access.
@@ -191,6 +211,14 @@ public:
 
   /// Decode a lazy array into concrete storage (idempotent; no-op if not lazy).
   void materialize();
+
+  /// Decode a lazy array into a fresh temporary Value WITHOUT mutating *this
+  /// (the source Value stays lazy). For non-lazy values, returns an ordinary
+  /// copy-on-write copy (preserves dirty_). On decode failure, returns an empty
+  /// Value (prints as "None", matching in-place materialize() failure). Used by
+  /// the writer to format a lazy array once and free it immediately, so peak
+  /// resident decoded-array memory is bounded to ~one array.
+  Value materialized_copy() const;
 
   // ============================================================
   // Type-safe accessors (return nullptr if wrong type)
@@ -237,6 +265,11 @@ public:
   // Token and AssetPath as string
   const std::string* as_token() const;
   const std::string* as_asset_path() const;
+
+  // Dictionary access (nullptr if not a dictionary). The mutable accessor
+  // copy-on-write-detaches before returning a writable view.
+  const Dict* as_dictionary() const;
+  Dict* as_dictionary();
 
   // Array accessors
   const std::vector<float>* as_float_array() const;
@@ -286,6 +319,7 @@ private:
   bool is_array_ = false;
   bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
   bool dirty_ = false;    // materialized and possibly mutated (no byte pass-through)
+  bool is_block_ = false; // authored `= None` block: no data, but not is_empty()
   uint32_t array_size_ = 0;
 
   // Storage - either inline or heap-allocated
@@ -302,6 +336,35 @@ private:
 
   void* data_ptr();
   const void* data_ptr() const;
+};
+
+/// Recursive USD dictionary. Entries are kept in insertion order so the writer
+/// re-emits them exactly as authored. A value may itself be a Dictionary.
+struct Dict {
+  std::vector<std::pair<std::string, Value>> entries;
+
+  const Value* find(const std::string& key) const {
+    for (const auto& kv : entries) {
+      if (kv.first == key) return &kv.second;
+    }
+    return nullptr;
+  }
+  Value* find(const std::string& key) {
+    for (auto& kv : entries) {
+      if (kv.first == key) return &kv.second;
+    }
+    return nullptr;
+  }
+  /// Replace the value for an existing key, or append a new entry.
+  void set(std::string key, Value v) {
+    if (Value* existing = find(key)) {
+      *existing = std::move(v);
+    } else {
+      entries.emplace_back(std::move(key), std::move(v));
+    }
+  }
+  size_t size() const { return entries.size(); }
+  bool empty() const { return entries.empty(); }
 };
 
 }  // namespace next

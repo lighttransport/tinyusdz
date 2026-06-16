@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
@@ -30,7 +31,9 @@
 #include "value-types.hh"
 
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/).
+#include "io-util.hh"  // AssetPathSuffixCandidates (UE-export suffix fallback)
 #include "next/pipeline/flatten.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
@@ -1088,6 +1091,16 @@ struct EMAssetResolutionResolver {
     } 
 
     return cache.at(asset_name);
+  }
+
+  std::string takeAssetString(const std::string &asset_name) {
+    auto it = cache.find(asset_name);
+    if (it == cache.end()) {
+      return std::string();
+    }
+    std::string binary = std::move(it->second.binary);
+    cache.erase(it);
+    return binary;
   }
 
   std::string getHash(const std::string &asset_name) const {
@@ -3117,10 +3130,19 @@ class TinyUSDZLoaderNative {
       // - [ ] Specializes
       //
 
+      // Allow parent-relative/drive-prefixed asset paths (UE exports); the
+      // sandboxed in-memory resolver bounds what is reachable.
+      tinyusdz::SublayersCompositionOptions sublayer_options;
+      sublayer_options.allow_parent_relative_paths = true;
+      tinyusdz::ReferencesCompositionOptions references_options;
+      references_options.allow_parent_relative_paths = true;
+      tinyusdz::PayloadCompositionOptions payload_options;
+      payload_options.allow_parent_relative_paths = true;
+
       tinyusdz::Layer src_layer = root_layer;
       if (comp_features.subLayers) {
         tinyusdz::Layer composited_layer;
-        if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+        if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_, sublayer_options)) {
           //std::cerr << "Failed to composite subLayers: " << err << "\n";
           return false;
         }
@@ -3143,7 +3165,7 @@ class TinyUSDZLoaderNative {
             has_unresolved = true;
 
             tinyusdz::Layer composited_layer;
-            if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+            if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_, references_options)) {
               return false;
             }
 
@@ -3160,7 +3182,7 @@ class TinyUSDZLoaderNative {
             has_unresolved = true;
 
             tinyusdz::Layer composited_layer;
-            if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+            if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_, payload_options)) {
               return false;
             }
 
@@ -3184,8 +3206,16 @@ class TinyUSDZLoaderNative {
         }
 
         if (comp_features.variantSets) {
+          // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+          // and payloads are resolved (see ShouldDeferVariantComposition).
           if (!src_layer.check_unresolved_variant()) {
             std::cout << "# iter " << i << ": no unresolved variant.\n";
+          } else if (tinyusdz::ShouldDeferVariantComposition(
+                         src_layer, comp_features.references,
+                         comp_features.payload)) {
+            std::cout << "# iter " << i
+                      << ": variant resolution deferred (refs/payloads pending).\n";
+            has_unresolved = true;
           } else {
             has_unresolved = true;
 
@@ -5590,7 +5620,12 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::ReferencesCompositionOptions references_options;
     references_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
-    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_, references_options)) {
+    references_options.layer_cache = &compose_layer_cache_;
+    // InPlace: consumes layer_ (no internal arcs) instead of holding the
+    // input + output copies concurrently — halves the peak of the pass.
+    if (!tinyusdz::CompositeReferencesInPlace(resolver,
+            std::make_unique<tinyusdz::Layer>(std::move(layer_)),
+            &composed_layer_, &warn_, &error_, references_options)) {
       std::cerr << "Failed to composite references: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5626,7 +5661,10 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::PayloadCompositionOptions payload_options;
     payload_options.allow_parent_relative_paths = allow_parent_relative_asset_paths_;
-    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_, payload_options)) {
+    payload_options.layer_cache = &compose_layer_cache_;
+    if (!tinyusdz::CompositePayloadInPlace(resolver,
+            std::make_unique<tinyusdz::Layer>(std::move(layer_)),
+            &composed_layer_, &warn_, &error_, payload_options)) {
       std::cerr << "Failed to composite payload: \n";
       if (composited_) {
         // make 'layer_' and 'composed_layer_' invalid
@@ -5784,6 +5822,18 @@ class TinyUSDZLoaderNative {
 
   void clearAssets() {
     em_resolver_.clear();
+    compose_layer_cache_.clear();
+  }
+
+  /// Free the pre-composition source layer. After composition converges the
+  /// composed layer (`composed_layer_`) is the live one, but `layer_` still
+  /// holds the previous iteration's full copy — for a flattened multi-GB
+  /// scene that is ~half the heap. Call once composition is done and only
+  /// the composed layer will be used (export/remap). No-op unless composited.
+  void releaseSourceLayer() {
+    if (composited_) {
+      layer_ = tinyusdz::Layer();
+    }
   }
 
   /// Reset all state - clears render scene, assets, and all cached data
@@ -5805,6 +5855,7 @@ class TinyUSDZLoaderNative {
     // Clear layers
     layer_ = tinyusdz::Layer();
     composed_layer_ = tinyusdz::Layer();
+    compose_layer_cache_.clear();
 
     // Clear USDZ asset
     usdz_asset_ = tinyusdz::USDZAsset();
@@ -6319,6 +6370,26 @@ class TinyUSDZLoaderNative {
     return u8;
   }
 
+  static bool copyUint8ArrayToString(const emscripten::val &data,
+                                     std::string *out) {
+    if (!out || data.isNull() || data.isUndefined()) return false;
+    size_t size = data["byteLength"].as<size_t>();
+    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
+    if (size == 0 || size > kMaxLayerBytes) return false;
+    try {
+      out->resize(size);
+    } catch (const std::bad_alloc &) {
+      return false;
+    }
+    emscripten::val view = emscripten::val::global("Uint8Array").new_(
+        data["buffer"], data["byteOffset"],
+        emscripten::val(static_cast<double>(size)));
+    emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(
+        size, reinterpret_cast<uint8_t *>(&(*out)[0])));
+    heapView.call<void>("set", view);
+    return true;
+  }
+
   // ============================================================
   // next: low-memory lazy-ValueRep flatten pipeline
   // ============================================================
@@ -6352,6 +6423,9 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("readMs", stats.read_ms);
+    result.set("composeMs", stats.compose_ms);
+    result.set("writeMs", stats.write_ms);
     return result;
   }
 
@@ -6435,6 +6509,456 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("readMs", stats.read_ms);
+    result.set("composeMs", stats.compose_ms);
+    result.set("writeMs", stats.write_ms);
+    return result;
+  }
+
+  /// Multi-asset variant of the next flatten: external reference / payload /
+  /// sublayer arcs resolve against the wasm asset cache and load through it.
+  /// The JS side registers each dependency USD layer via setAsset() under its
+  /// root-relative name (the same names convertSourceToUSDZStreaming already
+  /// feeds), streams the root crate into a zero-copy buffer, and calls this
+  /// with `rootName` = the root layer's root-relative name (the anchor for
+  /// arcs authored in it). Dependency layers are CONSUMED from the cache as
+  /// they load (the compositor caches each parsed layer per resolved path), so
+  /// the raw layer bytes never sit in the heap twice. Output streams to
+  /// `chunkCb` exactly like nextFlattenBufferToSink (views are only valid
+  /// during the call); pass a JS null/undefined chunkCb to get a buffered
+  /// `data` result instead.
+  emscripten::val nextFlattenMultiBufferToSink(const std::string &uuid,
+                                               const std::string &rootName,
+                                               bool lazyArrays,
+                                               emscripten::val chunkCb) {
+    return nextFlattenMultiBufferToSinkFetch(
+        uuid, rootName, lazyArrays, chunkCb, emscripten::val::undefined(),
+        emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenMultiBufferToSinkFetch(
+      const std::string &uuid, const std::string &rootName, bool lazyArrays,
+      emscripten::val chunkCb, emscripten::val layerExistsCb,
+      emscripten::val layerFetchCb) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazyArrays;
+    opts.root_anchor_path = rootName;
+
+    // Resolver: map an arc's asset path to a wasm asset-cache KEY. Cache keys
+    // are root-relative forward-slash names, so try the anchor-relative join
+    // first (anchor is itself a cache key or rootName), then the raw path,
+    // then the UE-export suffix fallback (escaping ../ chains or absolute
+    // drive paths rebased onto the scene root, longest suffix first).
+    using tinyusdz::next::AssetResolver;
+    AssetResolver resolver;
+    // Keys the loader has already consumed from the cache: the resolver must
+    // keep resolving them (the compositor reloads nothing — it caches each
+    // parsed layer per resolved key — but it RESOLVES every arc occurrence).
+    auto consumed = std::make_shared<std::unordered_set<std::string>>();
+    auto resolved_cache =
+        std::make_shared<std::unordered_map<std::string, std::string>>();
+    const bool has_layer_exists =
+        !layerExistsCb.isNull() && !layerExistsCb.isUndefined();
+    const bool has_layer_fetch =
+        !layerFetchCb.isNull() && !layerFetchCb.isUndefined();
+    resolver.SetCustomResolver(
+        [this, consumed, resolved_cache, layerExistsCb, has_layer_exists](
+            const std::string &asset, const std::string &anchor) -> std::string {
+      const std::string cache_key = anchor + "\n" + asset;
+      auto hit = resolved_cache->find(cache_key);
+      if (hit != resolved_cache->end()) {
+        return hit->second;
+      }
+      auto try_key = [this, &consumed, &layerExistsCb, has_layer_exists](
+                         std::string key) -> std::string {
+        key = AssetResolver::NormalizePath(key);
+        while (key.rfind("./", 0) == 0) key = key.substr(2);
+        if (em_resolver_.has(key) || consumed->count(key)) return key;
+        if (has_layer_exists) {
+          emscripten::val exists = layerExistsCb(key);
+          if (exists.isTrue()) return key;
+        }
+        return std::string();
+      };
+      if (!anchor.empty()) {
+        std::string k = try_key(AssetResolver::JoinPath(
+            AssetResolver::GetDirectory(anchor), asset));
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      {
+        std::string k = try_key(asset);
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      for (const auto &cand : tinyusdz::io::AssetPathSuffixCandidates(asset)) {
+        std::string k = try_key(cand);
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      (*resolved_cache)[cache_key] = std::string();
+      return std::string();
+    });
+    opts.resolver = &resolver;
+
+    // Loader: pull the layer's bytes out of the asset cache (consuming the
+    // entry — the parsed layer retains its own copy as the lazy-array source)
+    // and parse it as a lazy crate, mirroring MakeFileSystemLayerLoader.
+    const tinyusdz::next::CrateReadOptions read_opts = opts.read;
+    opts.layer_loader = [this, read_opts, consumed, layerFetchCb,
+                         has_layer_fetch](const std::string &key,
+                                          std::string *error)
+        -> std::unique_ptr<tinyusdz::next::Layer> {
+      std::string bytes;
+      if (em_resolver_.has(key)) {
+        bytes = em_resolver_.takeAssetString(key);
+        consumed->insert(key);
+      } else if (has_layer_fetch) {
+        emscripten::val fetched = layerFetchCb(key);
+        if (!copyUint8ArrayToString(fetched, &bytes)) {
+          if (error) *error = "asset fetch failed: " + key;
+          return nullptr;
+        }
+        consumed->insert(key);
+      } else {
+        if (error) *error = "asset not in cache: " + key;
+        return nullptr;
+      }
+      if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
+        if (error) {
+          *error = "not a USDC crate (USDA dependencies are not supported by "
+                   "the next loader yet): " + key;
+        }
+        return nullptr;
+      }
+      tinyusdz::next::CrateReader reader(read_opts);
+      tinyusdz::next::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
+      if (!rr.success) {
+        if (error) {
+          *error = rr.errors.empty() ? ("crate read failed: " + key)
+                                     : rr.errors[0].message;
+        }
+        return nullptr;
+      }
+      std::unique_ptr<tinyusdz::next::Layer> layer = rr.stage.ReleaseRootLayer();
+      if (layer) layer->build_path_index();  // compositor looks prims up by path
+      return layer;
+    };
+
+    const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool ok = false;
+    std::vector<uint8_t> out;
+    bool aborted = false;
+    if (buffered) {
+      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
+          std::move(input), out, opts, &stats, &err);
+    } else {
+      opts.write.streaming = true;
+      tinyusdz::next::CrateWriteSink sink =
+          [&](const uint8_t *data, size_t size) -> bool {
+        emscripten::val view(emscripten::typed_memory_view(size, data));
+        emscripten::val r = chunkCb(view);
+        if (r.isFalse()) {
+          aborted = true;
+          return false;
+        }
+        return true;
+      };
+      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
+          std::move(input), sink, opts, &stats, &err);
+    }
+    result.set("success", ok);
+    if (!ok) {
+      result.set("error", aborted ? "aborted by sink" : err);
+      return result;
+    }
+    if (buffered) result.set("data", toOwnedUint8Array(out));
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("readMs", stats.read_ms);
+    result.set("composeMs", stats.compose_ms);
+    result.set("writeMs", stats.write_ms);
+    {
+      emscripten::val assets = emscripten::val::array();
+      for (const auto &path : stats.referenced_assets) {
+        assets.call<void>("push", path);
+      }
+      result.set("assetPaths", assets);
+      result.set("assetPathCount",
+                 static_cast<double>(stats.referenced_assets.size()));
+    }
+    // Non-fatal composition errors (unresolved arcs): surface so partial
+    // composition is visible to the JS caller.
+    {
+      emscripten::val errs = emscripten::val::array();
+      const size_t kMaxErrs = 20;
+      for (size_t i = 0; i < stats.composition_errors.size() && i < kMaxErrs; ++i) {
+        errs.call<void>("push", stats.composition_errors[i]);
+      }
+      result.set("compositionErrors", errs);
+      result.set("compositionErrorCount",
+                 static_cast<double>(stats.composition_errors.size()));
+    }
+    return result;
+  }
+
+  emscripten::val nextFlattenAsyncBegin(const std::string &uuid,
+                                        const std::string &rootName,
+                                        bool lazyArrays) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+
+    std::string session_id = generateUUID();
+    NextAsyncFlattenSession session;
+    session.root = std::move(input);
+    session.root_name = rootName;
+    session.lazy_arrays = lazyArrays;
+    next_async_flatten_sessions_[session_id] = std::move(session);
+
+    result.set("success", true);
+    result.set("session", session_id);
+    result.set("status", "ready");
+    return result;
+  }
+
+  emscripten::val nextFlattenAsyncProvideLayer(const std::string &session,
+                                               const std::string &key,
+                                               emscripten::val data) {
+    emscripten::val result = emscripten::val::object();
+    auto it = next_async_flatten_sessions_.find(session);
+    if (it == next_async_flatten_sessions_.end()) {
+      result.set("success", false);
+      result.set("error", "Unknown next flatten session: " + session);
+      return result;
+    }
+    std::string bytes;
+    if (!copyUint8ArrayToString(data, &bytes)) {
+      result.set("success", false);
+      result.set("error", "Invalid or empty layer data for: " + key);
+      return result;
+    }
+    std::string norm_key = tinyusdz::next::AssetResolver::NormalizePath(key);
+    while (norm_key.rfind("./", 0) == 0) norm_key = norm_key.substr(2);
+    it->second.layers[norm_key] = std::move(bytes);
+    it->second.parsed_layers.erase(norm_key);
+    result.set("success", true);
+    return result;
+  }
+
+  emscripten::val nextFlattenAsyncEnd(const std::string &session) {
+    emscripten::val result = emscripten::val::object();
+    result.set("success", next_async_flatten_sessions_.erase(session) != 0);
+    return result;
+  }
+
+  emscripten::val nextFlattenAsyncStep(const std::string &session,
+                                       emscripten::val chunkCb) {
+    emscripten::val result = emscripten::val::object();
+    auto sit = next_async_flatten_sessions_.find(session);
+    if (sit == next_async_flatten_sessions_.end()) {
+      result.set("success", false);
+      result.set("error", "Unknown next flatten session: " + session);
+      return result;
+    }
+    NextAsyncFlattenSession &state = sit->second;
+
+    tinyusdz::next::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = state.lazy_arrays;
+    opts.root_anchor_path = state.root_name;
+    opts.fail_on_composition_error = true;
+
+    using tinyusdz::next::AssetResolver;
+    AssetResolver resolver;
+    std::string missing_key;
+    auto consumed = std::make_shared<std::unordered_set<std::string>>();
+    auto resolved_cache =
+        std::make_shared<std::unordered_map<std::string, std::string>>();
+    resolver.SetCustomResolver(
+        [&state, consumed, resolved_cache](const std::string &asset,
+                                           const std::string &anchor) -> std::string {
+      const std::string cache_key = anchor + "\n" + asset;
+      auto hit = resolved_cache->find(cache_key);
+      if (hit != resolved_cache->end()) return hit->second;
+      auto try_key = [&state, &consumed](std::string key) -> std::string {
+        key = AssetResolver::NormalizePath(key);
+        while (key.rfind("./", 0) == 0) key = key.substr(2);
+        return (state.layers.count(key) || consumed->count(key)) ? key
+                                                                 : std::string();
+      };
+      if (!anchor.empty()) {
+        std::string k = try_key(AssetResolver::JoinPath(
+            AssetResolver::GetDirectory(anchor), asset));
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      {
+        std::string k = try_key(asset);
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      for (const auto &cand : tinyusdz::io::AssetPathSuffixCandidates(asset)) {
+        std::string k = try_key(cand);
+        if (!k.empty()) {
+          (*resolved_cache)[cache_key] = k;
+          return k;
+        }
+      }
+      // Return the best normalized candidate so the loader can surface exactly
+      // which layer JS should fetch.
+      std::string request = asset;
+      if (!anchor.empty()) {
+        request = AssetResolver::JoinPath(AssetResolver::GetDirectory(anchor),
+                                          asset);
+      }
+      request = AssetResolver::NormalizePath(request);
+      while (request.rfind("./", 0) == 0) request = request.substr(2);
+      (*resolved_cache)[cache_key] = request;
+      return request;
+    });
+    opts.resolver = &resolver;
+
+    const tinyusdz::next::CrateReadOptions read_opts = opts.read;
+    opts.layer_loader = [&state, read_opts, consumed, &missing_key](
+                            const std::string &key, std::string *error)
+        -> std::unique_ptr<tinyusdz::next::Layer> {
+      auto cached = state.parsed_layers.find(key);
+      if (cached != state.parsed_layers.end() && cached->second) {
+        consumed->insert(key);
+        std::unique_ptr<tinyusdz::next::Layer> layer(
+            new tinyusdz::next::Layer(cached->second->Clone()));
+        layer->build_path_index();
+        return layer;
+      }
+
+      auto it = state.layers.find(key);
+      if (it == state.layers.end()) {
+        missing_key = key;
+        if (error) *error = "NEED_LAYER:" + key;
+        return nullptr;
+      }
+      consumed->insert(key);
+      const std::string &src = it->second;
+      if (src.size() < 8 || std::memcmp(src.data(), "PXR-USDC", 8) != 0) {
+        if (error) {
+          *error = "not a USDC crate (USDA dependencies are not supported by "
+                   "the next loader yet): " + key;
+        }
+        return nullptr;
+      }
+      tinyusdz::next::CrateReader reader(read_opts);
+      tinyusdz::next::CrateReadResult rr = reader.Read(
+          reinterpret_cast<const uint8_t *>(src.data()), src.size());
+      if (!rr.success) {
+        if (error) {
+          *error = rr.errors.empty() ? ("crate read failed: " + key)
+                                     : rr.errors[0].message;
+        }
+        return nullptr;
+      }
+      std::unique_ptr<tinyusdz::next::Layer> layer = rr.stage.ReleaseRootLayer();
+      if (layer) layer->build_path_index();
+      if (!layer) return nullptr;
+      state.parsed_layers[key] =
+          std::shared_ptr<tinyusdz::next::Layer>(
+              new tinyusdz::next::Layer(layer->Clone()));
+      return layer;
+    };
+
+    const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
+    tinyusdz::next::pipeline::FlattenStats stats;
+    std::string err;
+    bool ok = false;
+    std::vector<uint8_t> out;
+    bool aborted = false;
+    const uint8_t *root_data =
+        reinterpret_cast<const uint8_t *>(state.root.data());
+    const size_t root_size = state.root.size();
+    if (buffered) {
+      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDC(
+          root_data, root_size, out, opts, &stats, &err);
+    } else {
+      opts.write.streaming = true;
+      tinyusdz::next::CrateWriteSink sink =
+          [&](const uint8_t *data, size_t size) -> bool {
+        emscripten::val view(emscripten::typed_memory_view(size, data));
+        emscripten::val r = chunkCb(view);
+        if (r.isFalse()) {
+          aborted = true;
+          return false;
+        }
+        return true;
+      };
+      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCToSink(
+          root_data, root_size, sink, opts, &stats, &err);
+    }
+
+    if (!missing_key.empty()) {
+      result.set("success", true);
+      result.set("status", "need-layer");
+      result.set("key", missing_key);
+      return result;
+    }
+    result.set("success", ok);
+    if (!ok) {
+      if (aborted) {
+        result.set("success", true);
+        result.set("status", "ready");
+        return result;
+      }
+      result.set("status", "error");
+      result.set("error", err);
+      return result;
+    }
+
+    result.set("status", "done");
+    if (buffered) result.set("data", toOwnedUint8Array(out));
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("readMs", stats.read_ms);
+    result.set("composeMs", stats.compose_ms);
+    result.set("writeMs", stats.write_ms);
+    {
+      emscripten::val assets = emscripten::val::array();
+      for (const auto &path : stats.referenced_assets) {
+        assets.call<void>("push", path);
+      }
+      result.set("assetPaths", assets);
+      result.set("assetPathCount",
+                 static_cast<double>(stats.referenced_assets.size()));
+    }
     return result;
   }
 
@@ -6787,11 +7311,31 @@ class TinyUSDZLoaderNative {
     tinyusdz::Layer src_layer =
         composited_ ? std::move(composed_layer_) : std::move(layer_);
 
+    // Parent-relative ('../') and drive-prefixed asset paths are legitimate in
+    // UE-exported scenes; the sandboxed in-memory resolver bounds what is
+    // reachable, and the resolver suffix-fallback rebases escaping paths onto
+    // the uploaded folder root.
+    tinyusdz::SublayersCompositionOptions sublayer_options;
+    sublayer_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+    tinyusdz::ReferencesCompositionOptions references_options;
+    references_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+    tinyusdz::PayloadCompositionOptions payload_options;
+    payload_options.allow_parent_relative_paths =
+        allow_parent_relative_asset_paths_;
+
+    // Parse each referenced file once across the whole fixed-point loop; all
+    // arcs to the same file share one copy of the heavy attribute data (COW).
+    std::map<std::string, tinyusdz::Layer> layer_cache;
+    references_options.layer_cache = &layer_cache;
+    payload_options.layer_cache = &layer_cache;
+
     // LIVRPS flatten: subLayers, then references/payload/inherits/variants to a
     // fixed point. Each Composite* moves the prior layer into the next.
     {
       tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_)) {
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, &warn_, &error_, sublayer_options)) {
         error_ = "Failed to composite subLayers: " + error_;
         return false;
       }
@@ -6802,12 +7346,18 @@ class TinyUSDZLoaderNative {
       bool unresolved = false;
       if (src_layer.check_unresolved_references()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeReferences(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        // InPlace: consumes src_layer (no internal arcs) instead of holding
+        // input + output copies — halves the peak of the pass.
+        if (!tinyusdz::CompositeReferencesInPlace(resolver,
+                std::make_unique<tinyusdz::Layer>(std::move(src_layer)), &tmp,
+                &warn_, &error_, references_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_payload()) {
         tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositePayload(resolver, src_layer, &tmp, &warn_, &error_)) return false;
+        if (!tinyusdz::CompositePayloadInPlace(resolver,
+                std::make_unique<tinyusdz::Layer>(std::move(src_layer)), &tmp,
+                &warn_, &error_, payload_options)) return false;
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_inherits()) {
@@ -6816,9 +7366,15 @@ class TinyUSDZLoaderNative {
         src_layer = std::move(tmp); unresolved = true;
       }
       if (src_layer.check_unresolved_variant()) {
-        tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
-        src_layer = std::move(tmp); unresolved = true;
+        // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+        // and payloads are resolved (this loop always resolves both).
+        if (tinyusdz::ShouldDeferVariantComposition(src_layer)) {
+          unresolved = true;  // loop again to settle refs/payloads first
+        } else {
+          tinyusdz::Layer tmp;
+          if (!tinyusdz::CompositeVariant(src_layer, &tmp, &warn_, &error_)) return false;
+          src_layer = std::move(tmp); unresolved = true;
+        }
       }
       if (!unresolved) break;
     }
@@ -6891,6 +7447,29 @@ class TinyUSDZLoaderNative {
     usdz_export_buf_ = std::move(output);
     return emscripten::val(emscripten::typed_memory_view(
         usdz_export_buf_.size(), usdz_export_buf_.data()));
+  }
+
+  /// Rewrite texture asset paths in the loaded (composed, when flattened)
+  /// Layer per `remap` ({oldName: newName}). For streaming USDZ packers that
+  /// export the Layer directly (exportLayerAsUSDC*) and rename textures
+  /// (e.g. PNG -> JPG): the references must follow before the root is written.
+  /// Returns the number of references rewritten.
+  int remapLayerAssetPaths(emscripten::val remap) {
+    if (!loaded_) {
+      error_ = "No layer loaded";
+      return -1;
+    }
+    std::map<std::string, std::string> remap_map;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      remap_map[k] = remap[k].as<std::string>();
+    }
+    tinyusdz::Layer &layer = composited_ ? composed_layer_ : layer_;
+    return int(
+        tinyusdz::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
   }
 
   /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
@@ -7564,6 +8143,18 @@ class TinyUSDZLoaderNative {
   // WASM: the EM resolver is a sandboxed cache (FILESYSTEM=0), so there is no
   // real directory to traverse out of, and USD `../foo.usd` refs are common.
   bool allow_parent_relative_asset_paths_{true};
+  // Parsed-layer cache shared across the JS-driven composeReferences/
+  // composePayload fixed-point loop (cleared by clearAssets()/reset()).
+  std::map<std::string, tinyusdz::Layer> compose_layer_cache_;
+
+  struct NextAsyncFlattenSession {
+    std::string root;
+    std::string root_name;
+    bool lazy_arrays = true;
+    std::map<std::string, std::string> layers;
+    std::map<std::string, std::shared_ptr<tinyusdz::next::Layer>> parsed_layers;
+  };
+  std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
 
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
@@ -8811,6 +9402,18 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
       .function("nextFlattenBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenBufferToSink)
+      .function("nextFlattenMultiBufferToSink",
+                &TinyUSDZLoaderNative::nextFlattenMultiBufferToSink)
+      .function("nextFlattenMultiBufferToSinkFetch",
+                &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetch)
+      .function("nextFlattenAsyncBegin",
+                &TinyUSDZLoaderNative::nextFlattenAsyncBegin)
+      .function("nextFlattenAsyncProvideLayer",
+                &TinyUSDZLoaderNative::nextFlattenAsyncProvideLayer)
+      .function("nextFlattenAsyncStep",
+                &TinyUSDZLoaderNative::nextFlattenAsyncStep)
+      .function("nextFlattenAsyncEnd",
+                &TinyUSDZLoaderNative::nextFlattenAsyncEnd)
 #if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif
@@ -9055,6 +9658,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
+      .function("releaseSourceLayer",
+                &TinyUSDZLoaderNative::releaseSourceLayer)
       .function("reset",
                 &TinyUSDZLoaderNative::reset)
       .function("getMemoryStats",
@@ -9110,6 +9715,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("debugLogMemory", &TinyUSDZLoaderNative::debugLogMemory)
       .function("exportAsUSDZ", &TinyUSDZLoaderNative::exportAsUSDZ)
       .function("exportAsUSDZWithRemap", &TinyUSDZLoaderNative::exportAsUSDZWithRemap)
+      .function("remapLayerAssetPaths", &TinyUSDZLoaderNative::remapLayerAssetPaths)
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
       .function("exportLayerAsUSDZWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDZWithOptions)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
@@ -9183,6 +9789,20 @@ static std::string optStr(const emscripten::val& opts, const char* key,
   emscripten::val v = opts[key];
   if (v.isUndefined() || v.isNull()) return def;
   return v.as<std::string>();
+}
+
+static bool optBool(const emscripten::val& opts, const char* key, bool def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<bool>();
+}
+
+static double optDouble(const emscripten::val& opts, const char* key, double def) {
+  if (opts.isUndefined() || opts.isNull()) return def;
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<double>();
 }
 
 static tinyusdz::image::PngEncoder parsePngEncoder(const std::string& s) {
@@ -9370,6 +9990,14 @@ emscripten::val convertImage(const emscripten::val& data,
       return (int)((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
                    (uint32_t(p[2]) << 8) | uint32_t(p[3]));
     };
+    // PNG->PNG routing: the scanline-streamed Transcode/Resize path keeps the
+    // whole image out of the heap but pays miniz filter+deflate per row —
+    // ~6x slower than whole-image stb-decode + fpng-encode (2 vs 13 MP/s on a
+    // 2048^2 texture). Streaming is therefore OPT-IN via lowMemory:1; the
+    // default falls through to the fast whole-image path below. (The
+    // whole-image PNG writer emits IHDR+IDAT only — palette/ancillary chunks
+    // are not preserved — which is fine for texture re-encode.)
+    const bool low_memory = optInt(opts, "lowMemory", 0) != 0;
     if (fmt0 == "png" && is_png) {
       const int W = rd32(buffer.data() + 16);  // IHDR width
       const int H = rd32(buffer.data() + 20);  // IHDR height
@@ -9411,7 +10039,7 @@ emscripten::val convertImage(const emscripten::val& data,
           result.set("data", bytesToUint8Array(trans));
           return result;
         }
-      } else if (!wantResize) {
+      } else if (!wantResize && low_memory) {
         if (tinyusdz::imageio::TranscodePNG(buffer.data(), buffer.size(),
                                             trans)) {
           result.set("success", true);
@@ -9421,7 +10049,7 @@ emscripten::val convertImage(const emscripten::val& data,
           result.set("data", bytesToUint8Array(trans));
           return result;
         }
-      } else {
+      } else if (wantResize && low_memory) {
         // srgb=false (linear) matches ResizeImage(Auto) on a colorspace-less PNG;
         // resizeColorspace:"srgb" opts into linear-light resampling.
         if (tinyusdz::imageio::ResizePNG(buffer.data(), buffer.size(),
@@ -9848,6 +10476,23 @@ emscripten::val usddiff(const emscripten::val& opts) {
   const std::string rhsName = optStr(right, "name", "right");
   const std::string format = optStr(opts, "format", "text");
 
+  // Diff tolerance / options, flat on `opts` (matching the tusddiff CLI):
+  //   ulps (sets float+double; default 1), eps (absEps), compareMetadata,
+  //   fuzzyAssetPaths.
+  tydra::DiffOptions diffOpts;
+  {
+    const int ulps = optInt(opts, "ulps", -1);
+    if (ulps >= 0) {
+      diffOpts.floatUlps = static_cast<uint32_t>(ulps);
+      diffOpts.doubleUlps = static_cast<uint64_t>(ulps);
+    }
+    diffOpts.absEps = optDouble(opts, "eps", diffOpts.absEps);
+    diffOpts.compareMetadata =
+        optBool(opts, "compareMetadata", diffOpts.compareMetadata);
+    diffOpts.fuzzyAssetPaths =
+        optBool(opts, "fuzzyAssetPaths", diffOpts.fuzzyAssetPaths);
+  }
+
   USDLoadOptions loadOpts;
 
   Layer lhsLayer, rhsLayer;
@@ -9876,20 +10521,24 @@ emscripten::val usddiff(const emscripten::val& opts) {
 
   tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
   tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
-  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs);
+  tydra::LayerMetaDiff layerMetaDiff;
+  tydra::Diff(lhsLayer, rhsLayer, psDiffs, propDiffs, diffOpts, &layerMetaDiff);
 
-  const bool hasDiffs = !psDiffs.empty() || !propDiffs.empty();
+  const bool hasDiffs =
+      !psDiffs.empty() || !propDiffs.empty() || layerMetaDiff.changed();
 
   result.set("success", true);
   result.set("hasDiffs", hasDiffs);
   if (!accumWarn.empty()) result.set("warn", accumWarn);
 
   if (format == "json" || format == "both") {
-    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName));
+    result.set("json", tydra::DiffToJSON(lhsLayer, rhsLayer, lhsName, rhsName,
+                                         diffOpts));
   }
   if (format == "text" || format == "both") {
     if (hasDiffs) {
-      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName));
+      result.set("text", tydra::DiffToText(lhsLayer, rhsLayer, lhsName, rhsName,
+                                           diffOpts));
     } else {
       result.set("text", std::string("No differences found.\n"));
     }

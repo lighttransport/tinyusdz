@@ -3,17 +3,12 @@
 //
 // large-scene-loader.hh - Memory-bounded loading of very large USD scenes.
 //
-// Production scenes (Disney Moana Island, Animal Logic ALab, Activision
-// Caldera) are 10-20 GB on disk across thousands of payloaded files. Loading
-// them within a fixed RAM budget requires (a) deferring geometry payloads,
-// (b) parsing each referenced file exactly once, and (c) tolerating
-// '..'-relative asset paths. This class wires the existing primitives
-// (LoadLayerFromFile, CompositeSublayersInPlace, CompositionGraph with its
-// lazy-payload API, and pcp::LayerRegistry for parse-once) into one entry point
-// and keeps the composition graph alive so geometry payloads can be streamed in
-// on demand after the initial (light) load.
+// Two backends, selected at compile time by TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE:
 //
-// See doc/large-scene.md for the scene analyses and the overall strategy.
+//   Default (no define):      CompositionGraph (old, stable).
+//   TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE:
+//                             next::pcp::Cache (new, incremental payload
+//                             load/unload without full stage rebuild).
 //
 #pragma once
 
@@ -21,9 +16,15 @@
 #include <string>
 #include <vector>
 
-#include "composition-graph.hh"  // CompositionGraph (+ Layer, AssetResolutionResolver)
-#include "pcp/layer-registry.hh"  // pcp::LayerRegistry
 #include "stage.hh"
+
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#include "next/pcp/cache.hh"
+#include "next/resolver/asset-resolver.hh"
+#else
+#include "composition-graph.hh"
+#include "pcp/layer-registry.hh"
+#endif
 
 namespace tinyusdz {
 
@@ -46,7 +47,7 @@ struct LargeSceneLoadOptions {
 
   // Parse each referenced/payload file exactly once and share it (the single
   // biggest win for scenes with tens of thousands of files). Backed by
-  // pcp::LayerRegistry.
+  // pcp::LayerRegistry in the old path; the new next::pcp::Cache always dedups.
   bool dedup_layers{true};
 
   // Detect scenegraph instances during composition.
@@ -67,10 +68,8 @@ struct LargeSceneLoadOptions {
   uint32_t max_composition_depth{1024};
 };
 
-// Owns the Stage plus the composition graph, resolver, flattened root layer and
-// layer registry that back it, so deferred payloads can be loaded/unloaded
-// after Load() returns. Non-copyable and non-movable: a pointer to `this` is
-// registered as the layer-loading seam userdata, so the object must not move.
+// Owns the Stage plus the composition backend, resolver and ancillary state
+// so deferred payloads can be loaded/unloaded after Load() returns.
 class LargeSceneLoader {
  public:
   LargeSceneLoader();
@@ -86,8 +85,13 @@ class LargeSceneLoader {
   bool Load(const std::string &filename, const LargeSceneLoadOptions &options,
             std::string *warn, std::string *err);
 
+#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
   Stage &stage() { return _stage; }
   const Stage &stage() const { return _stage; }
+#else
+  next::Stage &stage() { return _stage; }
+  const next::Stage &stage() const { return _stage; }
+#endif
 
   // -- Deferred (unloaded) payload streaming --
 
@@ -96,8 +100,7 @@ class LargeSceneLoader {
   size_t deferred_count() const;
 
   // Load / unload a single deferred payload, then call rebuild_stage() to
-  // reflect the change in stage(). NOTE: single-threaded only (mutates the
-  // graph in place). Returns false with *err on failure.
+  // reflect the change in stage().
   bool load_payload(const Path &prim_path, std::string *warn, std::string *err);
   bool unload_payload(const Path &prim_path, std::string *warn,
                       std::string *err);
@@ -112,28 +115,41 @@ class LargeSceneLoader {
   size_t estimate_stage_memory_bytes() const;
 
   // Number of unique files actually parsed (cache misses) by the layer
-  // registry. With dedup_layers, this is the count of distinct files.
+  // registry.
   size_t layer_parse_count() const;
 
  private:
-  // Layer-loading seam trampoline (matches CompositionLoadLayerFn).
+#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+  Stage _stage;
+#else
+  next::Stage _stage;
+#endif
+  bool _loaded{false};
+
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+  std::unique_ptr<next::AssetResolver> _resolver;
+  std::unique_ptr<next::pcp::Cache> _cache;
+#else
   static const Layer *LoadLayerThunk(void *userdata,
                                      const std::string &asset_path,
                                      const std::string &cwp, std::string *warn,
                                      std::string *err);
 
-  Stage _stage;
   std::unique_ptr<AssetResolutionResolver> _resolver;
   std::unique_ptr<pcp::LayerRegistry> _registry;
-  std::unique_ptr<Layer> _flattened;  // composed root; outlives the graph
+  std::unique_ptr<Layer> _flattened;
   std::unique_ptr<CompositionGraph> _graph;
-  bool _loaded{false};
+#endif
 };
 
 // One-shot convenience: load + compose into `stage`. Does NOT keep a handle for
 // on-demand payload streaming (use LargeSceneLoader for that).
+// Available only in the old backend path (CompositionGraph).
+// In the new backend path use LargeSceneLoader or next::pcp::ComposeStageFromFile.
+#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,
                        const LargeSceneLoadOptions &options = {});
+#endif
 
 }  // namespace tinyusdz

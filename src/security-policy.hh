@@ -63,7 +63,10 @@ inline bool EstimateBase64DecodedSize(const std::string &data,
 //
 // When `allow_parent_refs` is true, '..' segments are permitted: a "<seg>/.."
 // pair is collapsed lexically, and any leading '..' that cannot be collapsed is
-// preserved in the output. Absolute paths and Windows drives are still rejected.
+// preserved in the output. POSIX-absolute paths are still rejected, but a
+// Windows drive prefix (e.g. "F:/USD_Exports/...", as authored by UnrealEngine
+// USD exports) is demoted to a relative path by stripping the drive — the
+// resolver's suffix fallback then rebases it onto the local search paths.
 // Resolving the surviving '..' (against a base/search directory) is then the
 // asset resolver's responsibility — appropriate when a custom, sandboxed
 // resolver (e.g. an in-memory or fetch-backed handler) controls what is
@@ -82,13 +85,23 @@ inline bool ValidateAndNormalizeAssetPath(const std::string &path,
   std::string p = path;
   std::replace(p.begin(), p.end(), '\\', '/');
 
-  if (!p.empty() && p[0] == '/') {
-    return false;
-  }
-
   if (p.size() >= 2 &&
       ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) &&
       p[1] == ':') {
+    if (!allow_parent_refs) {
+      return false;
+    }
+    // Demote drive-absolute to relative for resolver rebasing.
+    p = p.substr(2);
+    while (!p.empty() && p[0] == '/') {
+      p = p.substr(1);
+    }
+    if (p.empty()) {
+      return false;
+    }
+  }
+
+  if (!p.empty() && p[0] == '/') {
     return false;
   }
 

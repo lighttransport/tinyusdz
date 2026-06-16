@@ -879,6 +879,52 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
   }
 }
 
+std::string NormalizePath(const std::string &path) {
+  if (path.empty()) {
+    return path;
+  }
+
+  const bool absolute = (path[0] == '/');
+
+  std::vector<std::string> out;
+  size_t i = 0;
+  const size_t n = path.size();
+  while (i < n) {
+    size_t j = path.find('/', i);
+    if (j == std::string::npos) {
+      j = n;
+    }
+    const std::string seg = path.substr(i, j - i);
+    i = j + 1;
+
+    if (seg.empty() || seg == ".") {
+      // collapse empty (from `//`) and `.`
+    } else if (seg == "..") {
+      if (!out.empty() && out.back() != "..") {
+        out.pop_back();
+      } else if (!absolute) {
+        // keep leading `..` for relative paths that climb above the anchor
+        out.push_back("..");
+      }
+      // `..` at the root of an absolute path is dropped (matches realpath/pxr).
+    } else {
+      out.push_back(seg);
+    }
+  }
+
+  std::string result = absolute ? "/" : std::string();
+  for (size_t k = 0; k < out.size(); k++) {
+    if (k) {
+      result += "/";
+    }
+    result += out[k];
+  }
+  if (result.empty()) {
+    result = absolute ? "/" : ".";
+  }
+  return result;
+}
+
 bool USDFileExists(const std::string &fpath) {
   size_t read_len = 9;  // USD file must be at least 9 bytes or more.
 
@@ -998,6 +1044,55 @@ std::string FindFile(const std::string &filename,
   }
 
   return std::string();
+}
+
+std::vector<std::string> AssetPathSuffixCandidates(
+    const std::string &asset_path) {
+  std::vector<std::string> candidates;
+
+  if (asset_path.empty()) {
+    return candidates;
+  }
+
+  std::string p = asset_path;
+  std::replace(p.begin(), p.end(), '\\', '/');
+
+  // Strip a Windows drive prefix(e.g. "F:")
+  if ((p.size() >= 2) &&
+      (((p[0] >= 'A') && (p[0] <= 'Z')) || ((p[0] >= 'a') && (p[0] <= 'z'))) &&
+      (p[1] == ':')) {
+    p = p.substr(2);
+  }
+
+  // Strip leading '/', './' and '../' runs.
+  size_t pos = 0;
+  while (pos < p.size()) {
+    if (p[pos] == '/') {
+      pos++;
+    } else if (p.compare(pos, 2, "./") == 0) {
+      pos += 2;
+    } else if (p.compare(pos, 3, "../") == 0) {
+      pos += 3;
+    } else {
+      break;
+    }
+  }
+  p = p.substr(pos);
+
+  // Emit progressively shorter suffixes, longest first, down to the basename.
+  while (p.size()) {
+    if (p != asset_path) {
+      candidates.push_back(p);
+    }
+
+    size_t slash_loc = p.find('/');
+    if (slash_loc == std::string::npos) {
+      break;
+    }
+    p = p.substr(slash_loc + 1);
+  }
+
+  return candidates;
 }
 
 }  // namespace io

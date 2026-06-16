@@ -377,7 +377,7 @@ static ParseResult ParseTypedAttributeUnified(
             animatable_value.set(std::move(pv.value()));
             has_default = true;
           } else {
-            ret.code = ParseResult::ResultCode::InternalError;
+            ret.code = ParseResult::ResultCode::TypeMismatch;
             ret.err = fmt::format("take_value<{}> failed. Attribute has type {}",
                                   value::TypeTraits<T>::type_name(), attr.get_var().type_name());
             return ret;
@@ -398,8 +398,9 @@ static ParseResult ParseTypedAttributeUnified(
             target.set_value(std::move(pv.value()));
             has_default = true;
           } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Internal data corrupted.";
+            ret.code = ParseResult::ResultCode::TypeMismatch;
+            ret.err = fmt::format("take_value<{}> failed. Attribute has type {}",
+                                  value::TypeTraits<T>::type_name(), attr.get_var().type_name());
             return ret;
           }
         } else if (!has_connections) {

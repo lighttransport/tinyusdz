@@ -31,6 +31,7 @@ set(TINYUSDZ_NEXT_SOURCES
     parser/lexer.cc
     parser/value-parser.cc
     parser/ascii-parser.cc
+    parser/simd-scan.cc
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
@@ -44,6 +45,7 @@ set(TINYUSDZ_NEXT_SOURCES
     reader/usdz-reader.cc
 
     # Writers
+    writer/dtoa.cc
     writer/value-printer.cc
     writer/prim-printer.cc
     writer/usda-writer.cc
@@ -184,8 +186,9 @@ add_library(tinyusdz_next STATIC
     ${LZ4_SOURCES}
 )
 
-# Set C++14 standard
-target_compile_features(tinyusdz_next PUBLIC cxx_std_14)
+# C++17 (matches the parent project). The USDA writer formats floats via the
+# vendored dragonbox dtoa (writer/dtoa.cc).
+target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
 
 # Optional threading: enables the parallel layer-prefetch path in next::pcp.
 option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
@@ -278,6 +281,26 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_usdc_roundtrip PRIVATE tinyusdz_next)
 
+    add_executable(test_complex_usda
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_complex_usda.cc
+    )
+    target_link_libraries(test_complex_usda PRIVATE tinyusdz_next)
+
+    add_executable(test_roundtrip_fidelity
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_roundtrip_fidelity.cc
+    )
+    target_link_libraries(test_roundtrip_fidelity PRIVATE tinyusdz_next)
+
+    add_executable(test_crate_dict
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_dict.cc
+    )
+    target_link_libraries(test_crate_dict PRIVATE tinyusdz_next)
+
+    add_executable(test_crate_alloc_guard
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_alloc_guard.cc
+    )
+    target_link_libraries(test_crate_alloc_guard PRIVATE tinyusdz_next)
+
     add_executable(test_lazy_array
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_array.cc
     )
@@ -292,6 +315,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_pcp_compose.cc
     )
     target_link_libraries(bench_pcp_compose PRIVATE tinyusdz_next)
+
+    add_executable(bench_extref_compose
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_extref_compose.cc
+    )
+    target_link_libraries(bench_extref_compose PRIVATE tinyusdz_next)
 
     add_executable(test_schemas
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas.cc
@@ -433,6 +461,14 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_roundtrip COMMAND test_usdc_roundtrip
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_complex_usda COMMAND test_complex_usda
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_roundtrip_fidelity COMMAND test_roundtrip_fidelity
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_crate_dict COMMAND test_crate_dict
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_crate_alloc_guard COMMAND test_crate_alloc_guard
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_lazy_array COMMAND test_lazy_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas COMMAND test_schemas
@@ -471,11 +507,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     --mode load
                     --tusdcat "$<TARGET_FILE:next_usdcat>"
                     --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
-                    # Regression ratchet, not a quality bar: 219 of 280 corpus
-                    # files fail today on known next parser gaps (see
-                    # corpus-parse-results/summary.md). Lower this as gaps
-                    # close; raising it requires justification.
-                    --max-fail 220
+                    # Regression ratchet: 0 of 280 corpus files fail to parse
+                    # today (some USDC files load with warnings on unsupported
+                    # binary value types — see corpus-parse-results/summary.md).
+                    # A tiny headroom guards against environment differences;
+                    # raising it requires justification.
+                    --max-fail 3
         )
     endif()
 endif()

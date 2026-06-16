@@ -108,6 +108,9 @@ option(TINYUSDZ_WITH_TYDRA
 option(TINYUSDZ_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
+option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
+       "Use next::pcp::Cache backend for LargeSceneLoader (experimental; links tinyusdz_next)."
+       OFF)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -744,6 +747,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
@@ -800,6 +805,22 @@ if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
   # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+endif()
+
+# Image decode/resize/encode TUs are the hot path of texture re-encode (USDZ
+# conversion of large scenes). MinSizeRel/-Oz builds (e.g. the wasm targets)
+# cripple them (PNG transcode drops to ~2 MP/s), for a few hundred KB of code
+# size: compile just these TUs at -O3 regardless of build type.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/image-loader.cc       # stb_image decode
+    ${PROJECT_SOURCE_DIR}/src/image-writer.cc       # stb_image_write / fpng entry
+    ${PROJECT_SOURCE_DIR}/src/image-util.cc         # stb_image_resize
+    ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc # streaming PNG transcode/resize
+    ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc # ResizeImage
+    ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp     # fpng PNG encoder
+    ${PROJECT_SOURCE_DIR}/src/external/miniz.c      # zlib inflate/deflate (PNG transcode)
+    PROPERTIES COMPILE_OPTIONS "-O3")
 endif()
 
 # fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
@@ -1412,6 +1433,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-query.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-scene.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-validate.cc
+      ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-diff.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools-usdz.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
@@ -1663,6 +1685,13 @@ if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
 endif()
 
 #
+# Optional: next::pcp::Cache backend for LargeSceneLoader
+#
+if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next tinyusdz_next_build)
+endif()
+
+#
 # CMake's Object libary have some issue on MSVC build, so build STATIC and SHARED lib indepdendently.
 #
 
@@ -1789,6 +1818,12 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_PCP)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_PCP")
+  endif()
+
+  if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PUBLIC "TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE")
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_next)
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
@@ -2403,6 +2438,150 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # tydra value-level diff API (ULP tolerance, metadata reasons, value display)
+    if(TINYUSDZ_WITH_TYDRA)
+      add_executable(feat-diff tests/feat/diff/test-diff.cc)
+      add_sanitizers(feat-diff)
+      target_link_libraries(feat-diff PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_include_directories(feat-diff PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-diff COMMAND feat-diff
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
+
+    # Composition: a local-only child PrimSpec must survive a reference/inherit/
+    # specialize/variant flatten (regression for InheritPrimSpecImpl dropping
+    # dst-only children).
+    add_executable(feat-localchild tests/feat/composition-localchild/test-localchild.cc)
+    add_sanitizers(feat-localchild)
+    target_link_libraries(feat-localchild PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-localchild PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-localchild COMMAND feat-localchild
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition: a variant selection on the referencing prim must win over the
+    # referenced asset's own default, even when the populated variantSet lives
+    # several arcs deep (reference -> empty variant + payload -> reference ->
+    # populated variantSet). Regression for Pixar Kitchen_set Chair.usd: the
+    # referenced default selection clobbered the local one, and eager variant
+    # resolution consumed the local selection against empty variant blocks.
+    add_executable(feat-variant-payload-chain
+                   tests/feat/variant-payload-chain/test-variant-payload-chain.cc)
+    add_sanitizers(feat-variant-payload-chain)
+    target_link_libraries(feat-variant-payload-chain PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-payload-chain PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # USDC reader must carry the authored specifier (def/over/class) into the
+    # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
+    # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
+    add_executable(feat-usdc-specifier
+                   tests/feat/usdc-specifier/test-usdc-specifier.cc)
+    add_sanitizers(feat-usdc-specifier)
+    target_link_libraries(feat-usdc-specifier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usdc-specifier PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usdc-specifier COMMAND feat-usdc-specifier
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # On --flatten a composed prim's `apiSchemas` list-op must bake to EXPLICIT
+    # form (pxrUSD usdcat drops the `prepend`/`append` qualifier). Without it the
+    # whole-scene diff vs usdcat on UE-exported assets showed ~2800 spurious
+    # `meta:apiSchemas` modifications (every referenced mesh prepends
+    # MaterialBindingAPI). Verifies FlattenAppliedSchemas() bakes + recurses, and
+    # that a plain load (no flatten) preserves the authored `prepend`.
+    add_executable(feat-flatten-apischemas
+                   tests/feat/flatten-apischemas/test-flatten-apischemas.cc)
+    add_sanitizers(feat-flatten-apischemas)
+    target_link_libraries(feat-flatten-apischemas PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-flatten-apischemas PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-flatten-apischemas COMMAND feat-flatten-apischemas
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Variant composition must respect LIVRPS: a host's local `over` for a prim
+    # that the selected variant DEFINES must (1) be promoted over->def with the
+    # variant's typeName, and (2) keep its directly-authored local attribute
+    # opinion winning over the variant's (Local > Variant). Regresses a
+    # UE-exported variant-LOD case (variant geometry vanishing as `over`, and a
+    # deep sourceAsset override flipping one material variant to another).
+    add_executable(feat-variant-local-override
+                   tests/feat/variant-local-override/test-variant-local-override.cc)
+    add_sanitizers(feat-variant-local-override)
+    target_link_libraries(feat-variant-local-override PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-local-override PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-local-override COMMAND feat-variant-local-override
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # OpenUSD inserts variant-selected children BEFORE local children; tinyusdz
+    # used to append them. Regresses CompositeVariant prepend + primChildren sync.
+    add_executable(feat-variant-child-order
+                   tests/feat/variant-child-order/test-variant-child-order.cc)
+    add_sanitizers(feat-variant-child-order)
+    target_link_libraries(feat-variant-child-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-child-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-child-order COMMAND feat-variant-child-order
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Opt-in authored-order emission: a flattened crate must be able to reproduce
+    # the authored prim-child order (from the crate `primChildren` field), like
+    # usdcat, instead of the default lexicographical order. Verifies default
+    # output stays lexicographical and pprint::SetPreserveAuthoredOrder(true)
+    # yields authored order through a USDA->USDC->flatten round-trip.
+    add_executable(feat-preserve-order
+                   tests/feat/preserve-order/test-preserve-order.cc)
+    add_sanitizers(feat-preserve-order)
+    target_link_libraries(feat-preserve-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-preserve-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-preserve-order COMMAND feat-preserve-order
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Opt-in OpenUSD-compatible float notation (SetUSDFloatFormat): fixed for
+    # decimal exponents in [-6,15), unpadded/sign-less exponent outside -- matches
+    # usdcat. Default stays tinyusdz's shortest-&-robust notation.
+    add_executable(feat-usd-float-format
+                   tests/feat/usd-float-format/test-usd-float-format.cc)
+    add_sanitizers(feat-usd-float-format)
+    target_link_libraries(feat-usd-float-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usd-float-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usd-float-format COMMAND feat-usd-float-format
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Opt-in OpenUSD-compatible USDA text layout (SetUSDTextFormat): metadata
+    # paren on the `def` line, apiSchemas first, blank line between siblings.
+    add_executable(feat-usd-text-format
+                   tests/feat/usd-text-format/test-usd-text-format.cc)
+    add_sanitizers(feat-usd-text-format)
+    target_link_libraries(feat-usd-text-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-usd-text-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-usd-text-format COMMAND feat-usd-text-format
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Opt-in asset-path normalization on flatten (io::NormalizePath +
+    # SetNormalizeAssetPathOnFlatten): collapse `.`/`..` when anchoring a
+    # referenced asset's relative path, matching usdcat.
+    add_executable(feat-asset-path-normalize
+                   tests/feat/asset-path-normalize/test-asset-path-normalize.cc)
+    add_sanitizers(feat-asset-path-normalize)
+    target_link_libraries(feat-asset-path-normalize PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-asset-path-normalize PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-asset-path-normalize COMMAND feat-asset-path-normalize
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
+    # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
+    # regression of the variant-deferral in an iterative flatten loop (not just
+    # the library) is caught. The C++ test above drives the library with its own
+    # deferred loop and would not notice a driver revert.
+    if(UNIX AND TARGET tusdcat)
+      set(_vchain_tusdzconvert "")
+      if(TARGET tusdzconvert)
+        set(_vchain_tusdzconvert "$<TARGET_FILE:tusdzconvert>")
+      endif()
+      add_test(NAME feat-variant-chain-driver
+               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
+                       $<TARGET_FILE:tusdcat> ${PROJECT_SOURCE_DIR}
+                       ${_vchain_tusdzconvert})
+    endif()
 
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)

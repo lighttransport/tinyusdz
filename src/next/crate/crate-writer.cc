@@ -261,6 +261,8 @@ public:
     value_offsets_.clear();
     arrays_passed_through_ = 0;
     arrays_reencoded_ = 0;
+    block_dedup_.clear();
+    blocks_deduped_ = 0;
     // Reserve block index 0 (empty placeholder). The writer emits empty arrays
     // as a ValueRep with payload==0 / non-inlined (pxrUSD's empty-array marker);
     // reserving index 0 ensures no real block is ever referenced by payload 0,
@@ -442,6 +444,7 @@ public:
     result_.field_count = fields_.size();
     result_.arrays_passed_through = arrays_passed_through_;
     result_.arrays_reencoded = arrays_reencoded_;
+    result_.blocks_deduped = blocks_deduped_;
 
     return result_;
   }
@@ -496,9 +499,63 @@ private:
   uint64_t value_start_offset_ = 0; // absolute file offset of VALUE section start
   std::vector<uint64_t> value_offsets_; // offset in VALUE section for each data block
 
+  // Append `block` to value_data_ unless an existing block has identical bytes;
+  // returns the (shared or new) block index. Must NOT be used for blocks that
+  // are patched in place after creation (the TimeSamples indirection header):
+  // sharing one would apply the index->offset patch twice.
+  uint64_t InternBlock(DataBlock&& block) {
+    const size_t n = block.size();
+    if (n == 0) {
+      // Never share the empty block: payload 0 is the reserved empty-array
+      // marker and a zero-length block at a nonzero offset has no meaning.
+      uint64_t idx = value_data_.size();
+      value_data_.push_back(std::move(block));
+      return idx;
+    }
+    const uint8_t* p = block.bytes();
+    const uint64_t h = HashBlockBytes(p, n);
+    auto range = block_dedup_.equal_range(h);
+    for (auto it = range.first; it != range.second; ++it) {
+      const DataBlock& ex = value_data_[it->second];
+      if (ex.size() == n && std::memcmp(ex.bytes(), p, n) == 0) {
+        ++blocks_deduped_;
+        return it->second;
+      }
+    }
+    uint64_t idx = value_data_.size();
+    value_data_.push_back(std::move(block));
+    block_dedup_.emplace(h, idx);
+    return idx;
+  }
+
   // Lazy-array write accounting.
   size_t arrays_passed_through_ = 0;
   size_t arrays_reencoded_ = 0;
+
+  // Cross-spec block dedup: content hash -> block indices with that hash.
+  // Flattened composition duplicates referenced array payloads per instance;
+  // content-addressing the VALUE blocks writes each distinct payload once.
+  std::unordered_multimap<uint64_t, uint64_t> block_dedup_;
+  size_t blocks_deduped_ = 0;
+
+  static uint64_t HashBlockBytes(const uint8_t* p, size_t n) {
+    // FNV-1a over (length, head, tail) — cheap on multi-MB blocks; candidates
+    // are confirmed with a full memcmp, so collisions only cost compares.
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const uint8_t* q, size_t m) {
+      for (size_t i = 0; i < m; ++i) { h ^= q[i]; h *= 1099511628211ull; }
+    };
+    mix(reinterpret_cast<const uint8_t*>(&n), sizeof(n));
+    if (n <= 512) {
+      mix(p, n);
+    } else {
+      mix(p, 256);
+      mix(p + n / 2 - 128, 256);
+      mix(p + n - 256, 256);
+    }
+    return h;
+  }
+
 
   // ============================================================
   // Table building
@@ -632,8 +689,7 @@ private:
     block.type = type;
     block.data.resize(size);
     std::memcpy(block.data.data(), data, size);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build an explicit PathListOp value_data_ block for relationship/connection
@@ -657,8 +713,7 @@ private:
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build a VariantSelectionMap value_data_ block (CrateTypeId 45):
@@ -678,8 +733,7 @@ private:
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    value_data_.push_back(std::move(block));
-    return value_data_.size() - 1;
+    return InternBlock(std::move(block));
   }
 
   // Build a TokenVector field ([u64 count][u32 token_idx]*count) — used for
@@ -694,8 +748,7 @@ private:
       uint32_t tok = InternToken(names[i]);
       std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
     }
-    uint64_t data_idx = value_data_.size();
-    value_data_.push_back({TypeId::Token, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
@@ -737,8 +790,7 @@ private:
         ti++;
       }
     }
-    uint64_t times_block_idx = value_data_.size();
-    value_data_.push_back({TypeId::Double, std::move(times_data)});
+    uint64_t times_block_idx = InternBlock({TypeId::Double, std::move(times_data)});
 
     std::vector<ValueRep> sample_reps(num_samples);
     ti = 0;
@@ -826,6 +878,15 @@ private:
         flds.push_back(vf);
       }
 
+      // The legacy `custom` qualifier (pxr stores a bool field); round-trips
+      // through the reader's `custom` branch. Inlined Bool=true.
+      if (slot.flags & PropSlot::kFlagCustom) {
+        CrateField cf;
+        cf.token_index.value = InternToken("custom");
+        cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        flds.push_back(cf);
+      }
+
       if (val) {
         CrateField df;
         df.token_index.value = InternToken("default");
@@ -851,6 +912,37 @@ private:
       }
 
       if (has_ts) flds.push_back(BuildTimeSamplesField(prim, slot.name_id));
+
+      // Per-property metadata (interpolation/elementSize/colorSpace/customData).
+      if (const PropMeta* pm = prim.property_meta(slot.name_id)) {
+        auto tok_field = [&](const char* name, const std::string& v) {
+          CrateField f;
+          f.token_index.value = InternToken(name);
+          f.value_rep =
+              ValueRep::Make(CrateTypeId::Token, InternToken(v), false, true);
+          flds.push_back(f);
+        };
+        if (pm->authored & PropMeta::kInterpolation)
+          tok_field("interpolation", pm->interpolation);
+        if (pm->authored & PropMeta::kColorSpace)
+          tok_field("colorSpace", pm->colorSpace);
+        if (pm->authored & PropMeta::kElementSize) {
+          CrateField f;
+          f.token_index.value = InternToken("elementSize");
+          f.value_rep = ValueRep::Make(
+              CrateTypeId::Int,
+              static_cast<uint64_t>(static_cast<uint32_t>(pm->elementSize)),
+              false, true);
+          flds.push_back(f);
+        }
+        if ((pm->authored & PropMeta::kCustomData) &&
+            pm->customData.is_dictionary()) {
+          CrateField f;
+          f.token_index.value = InternToken("customData");
+          f.value_rep = EncodeValue(pm->customData);  // pxr binary VtDictionary
+          flds.push_back(f);
+        }
+      }
 
       EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
@@ -973,8 +1065,7 @@ private:
     block.src = lr->source;  // pins the source buffer alive until the write
     block.src_offset = lr->block_offset;
     block.src_len = lr->block_len;
-    uint64_t idx = value_data_.size();
-    value_data_.push_back(std::move(block));
+    uint64_t idx = InternBlock(std::move(block));
 
     *out_rep = ValueRep::Make(lr->crate_type, idx, /*array=*/true,
                               /*inlined=*/false, lr->rep.is_compressed());
@@ -985,7 +1076,43 @@ private:
   // For inlinable scalars, payload contains the value directly.
   // For larger values, payload contains an index into value_data_.
   // Returns the ValueRep and records the field's VALUE section offset.
+  // Encode a VtDictionary in pxr binary form (OpenUSD WriteMap + _RecursiveWrite
+  // of each Write(VtValue)):
+  //   [u64 count] then per entry [u32 keyStrIdx][i64 recOffset=8][u64 ValueRep]
+  // The recursive forward offset is a constant 8: the ValueRep immediately
+  // follows it and the rep's payload is an absolute offset to the value's data
+  // block (pxr's reader follows that payload, so no inline data is required).
+  // Embedded non-inline reps are relocated by _PatchDictBlock once block offsets
+  // are known. The block is patched in place, so it must NOT be deduped/shared
+  // (push directly, do not InternBlock).
+  ValueRep EncodeDictionary(const Dict& d) {
+    std::vector<uint8_t> blk;
+    auto put_u64 = [&](uint64_t v) {
+      for (int i = 0; i < 8; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
+    };
+    auto put_u32 = [&](uint32_t v) {
+      for (int i = 0; i < 4; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
+    };
+    put_u64(static_cast<uint64_t>(d.entries.size()));
+    for (const auto& kv : d.entries) {
+      uint32_t kidx = InternString(kv.first);
+      ValueRep vr = EncodeValue(kv.second);  // recursive (nested dicts/arrays)
+      put_u32(kidx);
+      put_u64(static_cast<uint64_t>(static_cast<int64_t>(8)));  // recOffset = 8
+      put_u64(vr.raw());
+    }
+    uint64_t idx = value_data_.size();
+    value_data_.push_back({TypeId::Dictionary, std::move(blk)});
+    return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
+  }
+
   ValueRep EncodeValue(const Value& val) {
+    if (val.is_dictionary()) {
+      const Dict* d = val.as_dictionary();
+      return d ? EncodeDictionary(*d)
+               : ValueRep::Make(CrateTypeId::Dictionary, 0, false, false);
+    }
+
     TypeId type_id = val.type_id();
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
@@ -1402,11 +1529,10 @@ private:
       }
 
       if (!arr_data.empty()) {
-        uint64_t idx = value_data_.size();
         DataBlock block;
         block.type = type_id;
         block.data = std::move(arr_data);
-        value_data_.push_back(std::move(block));
+        uint64_t idx = InternBlock(std::move(block));
         // Return non-inline value rep (index will be resolved to offset later)
         return ValueRep::Make(crate_type, idx, true, false, data_compressed);
       }
@@ -1488,6 +1614,41 @@ private:
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+
+      // framesPerSecond / kilogramsPerUnit (only when authored).
+      if (layer.meta().framesPerSecond_set) {
+        CrateField f;
+        f.token_index.value = InternToken("framesPerSecond");
+        double v = layer.meta().framesPerSecond;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (layer.meta().kilogramsPerUnit_set) {
+        CrateField f;
+        f.token_index.value = InternToken("kilogramsPerUnit");
+        double v = layer.meta().kilogramsPerUnit;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Dictionary-valued stage metadata (pxr binary VtDictionary).
+      auto add_layer_dict = [&](const char* name, const Value& v) {
+        if (!v.is_dictionary() || !v.as_dictionary() ||
+            v.as_dictionary()->empty()) {
+          return;
+        }
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = EncodeValue(v);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_layer_dict("customLayerData", layer.meta().customLayerData);
+      add_layer_dict("expressionVariables", layer.meta().expressionVariables);
 
       // doc
       if (!layer.meta().doc.empty()) {
@@ -1642,23 +1803,26 @@ private:
         fields_.push_back(f);
       }
 
-      // apiSchemas
+      // apiSchemas — a flattened (explicit) TokenListOp. The on-disk layout the
+      // reader (DecodeTokenListOp) and pxrUSD expect is
+      //   [u8 ListOpHeader=0x02 explicit][u64 count][u32 token_idx]*count
+      // (the earlier code omitted the header byte, so the count's low byte was
+      // misread as the header -> apiSchemas did not round-trip).
       if (!prim.meta().apiSchemas().empty()) {
-        // Write as array of tokens
-        // Build data: uint64_t count + (uint32_t token_idx) * count
         size_t count = prim.meta().apiSchemas().size();
-        std::vector<uint8_t> api_data(8 + count * 4);
-        std::memcpy(api_data.data(), &count, 8);
+        std::vector<uint8_t> api_data(1 + 8 + count * 4);
+        api_data[0] = 0x02;  // kHasExplicit
+        uint64_t cnt = count;
+        std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
           uint32_t tok_idx = InternToken(prim.meta().apiSchemas()[i]);
-          std::memcpy(api_data.data() + 8 + i * 4, &tok_idx, 4);
+          std::memcpy(api_data.data() + 1 + 8 + i * 4, &tok_idx, 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(api_data)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(api_data)});
 
         CrateField f;
         f.token_index.value = InternToken("apiSchemas");
-        f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, true, false);
+        f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -1730,6 +1894,44 @@ private:
       if (!prim.meta().comment().empty()) {
         add_string_field("comment", prim.meta().comment());
       }
+
+      // kind (token), displayName (string), instanceable (bool).
+      if (!prim.meta().kind().empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("kind");
+        f.value_rep = ValueRep::Make(CrateTypeId::Token,
+                                     InternToken(prim.meta().kind()), false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (!prim.meta().displayName().empty()) {
+        add_string_field("displayName", prim.meta().displayName());
+      }
+      if (prim.meta().instanceable) {
+        CrateField f;
+        f.token_index.value = InternToken("instanceable");
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Dictionary-valued metadata: pxr binary VtDictionary (round-trips through
+      // both this reader and OpenUSD).
+      auto add_dict_field = [&](const char* name, const Value& v) {
+        if (!v.is_dictionary() || !v.as_dictionary() ||
+            v.as_dictionary()->empty()) {
+          return;
+        }
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = EncodeValue(v);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_dict_field("customData", prim.meta().customData());
+      add_dict_field("assetInfo", prim.meta().assetInfo());
+      add_dict_field("sdrMetadata", prim.meta().sdrMetadata());
+      add_dict_field("clips", prim.meta().clips());
       // variantSelection: a VariantSelectionMap of each set's selected variant.
       // The reader rebuilds the VariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The
@@ -1773,8 +1975,7 @@ private:
           uint32_t tok = InternToken(prop_names[i]);
           std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
         CrateField pf;
         pf.token_index.value = InternToken("properties");
         pf.value_rep =
@@ -1829,8 +2030,7 @@ private:
         for (size_t i = 0; i < n; ++i) {
           std::memcpy(raw.data() + 8 + i * 4, &root_child_tokens[i], 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
 
         CrateField pc_field;
         pc_field.token_index.value = InternToken("primChildren");
@@ -1883,8 +2083,7 @@ private:
         for (size_t k = 0; k < child_tokens.size(); ++k) {
           std::memcpy(raw.data() + 8 + k * 4, &child_tokens[k], 4);
         }
-        uint64_t data_idx = value_data_.size();
-        value_data_.push_back({TypeId::Token, std::move(raw)});
+        uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
 
         CrateField f;
         f.token_index.value = InternToken("primChildren");
@@ -2027,15 +2226,63 @@ private:
       std::string full_path;
       uint32_t index;
     };
+    // pxr's compressed path tree requires EVERY ancestor of every path to be
+    // present as a node. Connection/relationship TARGET paths can reference
+    // prims that have no spec in this layer (e.g. material shader outputs in
+    // a not-yet-composed referenced file), so synthesize the missing ancestor
+    // chain (tree-only nodes; no spec refers to them).
+    {
+      std::unordered_set<std::string> have(paths_.begin(), paths_.end());
+      const size_t orig = paths_.size();
+      for (size_t i = 0; i < orig; i++) {
+        std::string p = paths_[i];
+        size_t dot = p.rfind('.');
+        size_t slash = p.rfind('/');
+        if (dot != std::string::npos &&
+            (slash == std::string::npos || dot > slash)) {
+          p = p.substr(0, dot);  // property path: start from its prim part
+          if (!p.empty() && p != "/" && have.insert(p).second) {
+            paths_.push_back(p);
+          }
+        }
+        while (p.size() > 1) {
+          size_t sl = p.rfind('/');
+          if (sl == std::string::npos || sl == 0) break;
+          p = p.substr(0, sl);
+          if (!have.insert(p).second) break;  // rest of the chain exists
+          paths_.push_back(p);
+        }
+      }
+    }
+
     std::vector<PathEntry> sorted;
     sorted.reserve(paths_.size());
     for (size_t i = 0; i < paths_.size(); i++) {
       sorted.push_back({paths_[i], static_cast<uint32_t>(i)});
     }
-    // Sort lexicographically by full path
+    // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
+    // sibling name extends another with a character below '/' (e.g. prims
+    // "SM_x" and "SM_x-y": '-' < '/' puts "/A/SM_x-y" BETWEEN "/A/SM_x" and
+    // its children, splitting the subtree and corrupting the jump encoding).
+    // Rank the structural separators below every name character instead:
+    // '/' < '.' < everything else.
+    auto char_rank = [](unsigned char c) -> unsigned int {
+      if (c == '/') return 0;
+      if (c == '.') return 1;
+      return 2u + c;
+    };
+    auto preorder_less = [&char_rank](const std::string& a, const std::string& b) {
+      const size_t n = (std::min)(a.size(), b.size());
+      for (size_t i = 0; i < n; ++i) {
+        unsigned int ra = char_rank(static_cast<unsigned char>(a[i]));
+        unsigned int rb = char_rank(static_cast<unsigned char>(b[i]));
+        if (ra != rb) return ra < rb;
+      }
+      return a.size() < b.size();
+    };
     std::sort(sorted.begin(), sorted.end(),
-              [](const PathEntry& a, const PathEntry& b) {
-                return a.full_path < b.full_path;
+              [&preorder_less](const PathEntry& a, const PathEntry& b) {
+                return preorder_less(a.full_path, b.full_path);
               });
 
     size_t num_paths = sorted.size();
@@ -2286,6 +2533,34 @@ private:
     }
   }
 
+  // Relocate the embedded value ValueReps inside a Dictionary block (built by
+  // EncodeDictionary) from block-index payloads to absolute file offsets. Block
+  // layout: [u64 count] then per entry [u32 keyStrIdx][i64 recOffset][u64 rep]
+  // (20 bytes/entry); the rep sits 12 bytes into each entry.
+  void _PatchDictBlock(uint64_t data_idx) {
+    if (data_idx >= value_data_.size()) return;
+    DataBlock& block = value_data_[data_idx];
+    if (block.data.size() < 8) return;
+    uint64_t count;
+    std::memcpy(&count, block.data.data(), 8);
+    for (uint64_t i = 0; i < count; ++i) {
+      const size_t voff = 8 + static_cast<size_t>(i) * 20 + 12;
+      if (voff + 8 > block.data.size()) break;
+      uint64_t vrep_raw;
+      std::memcpy(&vrep_raw, block.data.data() + voff, 8);
+      ValueRep vrep(vrep_raw);
+      if (vrep.is_inlined()) continue;
+      uint64_t payload = vrep.payload();
+      if (payload != 0 && payload < value_offsets_.size()) {
+        uint64_t abs_offset =
+            value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+        vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset, vrep.is_array(),
+                                  false, vrep.is_compressed()).raw();
+        std::memcpy(block.data.data() + voff, &vrep_raw, 8);
+      }
+    }
+  }
+
   // Compute the VALUE section layout (8-byte-aligned block offsets) and patch
   // every field/time-sample ValueRep with its absolute file offset. Returns the
   // total VALUE section size in bytes (== the offset just past the last block).
@@ -2326,6 +2601,15 @@ private:
       // Patch embedded ValueReps in TimeSamples data blocks
       if (type == CrateTypeId::TimeSamples) {
         _PatchTimeSamplesBlock(data_idx);
+      }
+    }
+
+    // Patch embedded ValueReps in Dictionary blocks. Nested dictionaries are
+    // referenced from other dict blocks (not from fields), so iterate every
+    // block rather than only field-referenced ones.
+    for (size_t i = 0; i < value_data_.size(); ++i) {
+      if (value_data_[i].type == TypeId::Dictionary) {
+        _PatchDictBlock(static_cast<uint64_t>(i));
       }
     }
 

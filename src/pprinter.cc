@@ -22,141 +22,183 @@
 namespace tinyusdz {
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
-  std::stringstream meta_ss;
+  // Each authored field is collected as (sortKey, rendered-text). usdcat writes
+  // layer metadata fields in ALPHABETICAL order by their Sdf field TOKEN (note
+  // `doc` sorts as "documentation"); the default keeps tinyusdz's historical
+  // emission order. So under the USD-text-format opt-in we sort by sortKey,
+  // otherwise we emit in insertion (historical) order -- byte-identical default.
+  std::vector<std::pair<std::string, std::string>> fields;
+  auto add = [&](const std::string &sort_key, const std::string &text) {
+    fields.emplace_back(sort_key, text);
+  };
 
-  if (metas.doc.value.empty()) {
-    // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
-    // tinyusdz::version_major
-    //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
-    //    << tinyusdz::version_rev << "\"\n";
-  } else {
-    meta_ss << pprint::Indent(indent) << "doc = " << to_string(metas.doc)
-            << "\n";
+  // Double-scalar layer metadata (metersPerUnit etc.). The default uses
+  // std::ostream's 6-significant-digit formatting, which is LOSSY (e.g. the
+  // float-widened 0.009999999776482582 prints as "0.01"). usdcat uses the
+  // shortest round-trip representation, so under the OpenUSD float-format opt-in
+  // emit these via dtos() to match (and avoid the precision loss).
+  const bool usd_num = GetUSDFloatFormat();
+  auto dnum = [usd_num](double v) -> std::string {
+    if (usd_num) {
+      return dtos(v);
+    }
+    std::ostringstream os;
+    os << v;
+    return os.str();
+  };
+
+  if (!metas.doc.value.empty()) {
+    add("documentation", pprint::Indent(indent) + "doc = " +
+                             to_string(metas.doc) + "\n");
   }
 
   if (metas.metersPerUnit.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "metersPerUnit = " << dnum(metas.metersPerUnit.get_value()) << "\n";
+    add("metersPerUnit", ss.str());
   }
 
   if (metas.kilogramsPerUnit.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "kilogramsPerUnit = " << metas.kilogramsPerUnit.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "kilogramsPerUnit = " << dnum(metas.kilogramsPerUnit.get_value()) << "\n";
+    add("kilogramsPerUnit", ss.str());
   }
 
   if (metas.upAxis.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "upAxis = " << quote(to_string(metas.upAxis.get_value()))
-            << "\n";
+    add("upAxis", pprint::Indent(indent) + "upAxis = " +
+                      quote(to_string(metas.upAxis.get_value())) + "\n");
   }
 
   if (metas.timeCodesPerSecond.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "timeCodesPerSecond = " << metas.timeCodesPerSecond.get_value()
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "timeCodesPerSecond = " << dnum(metas.timeCodesPerSecond.get_value()) << "\n";
+    add("timeCodesPerSecond", ss.str());
   }
 
   if (metas.startTimeCode.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "startTimeCode = " << metas.startTimeCode.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "startTimeCode = " << dnum(metas.startTimeCode.get_value()) << "\n";
+    add("startTimeCode", ss.str());
   }
 
   if (metas.endTimeCode.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "endTimeCode = " << metas.endTimeCode.get_value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "endTimeCode = " << dnum(metas.endTimeCode.get_value()) << "\n";
+    add("endTimeCode", ss.str());
   }
 
   if (metas.framesPerSecond.authored()) {
-    meta_ss << pprint::Indent(indent)
-            << "framesPerSecond = " << metas.framesPerSecond.get_value()
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "framesPerSecond = " << dnum(metas.framesPerSecond.get_value()) << "\n";
+    add("framesPerSecond", ss.str());
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (metas.subLayers.size()) {
-    meta_ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers
-            << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers << "\n";
+    add("subLayers", ss.str());
   }
 
   if (metas.defaultPrim.str().size()) {
-    meta_ss << pprint::Indent(1)
-            << "defaultPrim = " << tinyusdz::quote(metas.defaultPrim.str())
-            << "\n";
+    add("defaultPrim", pprint::Indent(1) + "defaultPrim = " +
+                           tinyusdz::quote(metas.defaultPrim.str()) + "\n");
   }
 
   if (metas.autoPlay.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "autoPlay = " << to_string(metas.autoPlay.get_value()) << "\n";
+    add("autoPlay", pprint::Indent(1) + "autoPlay = " +
+                        to_string(metas.autoPlay.get_value()) + "\n");
   }
 
   if (metas.playbackMode.authored()) {
     auto v = metas.playbackMode.get_value();
-    if (v == LayerMetas::PlaybackMode::PlaybackModeLoop) {
-      meta_ss << pprint::Indent(indent) << "playbackMode = \"loop\"\n";
-    } else {  // None
-      meta_ss << pprint::Indent(indent) << "playbackMode = \"none\"\n";
-    }
+    const char *pv = (v == LayerMetas::PlaybackMode::PlaybackModeLoop)
+                         ? "playbackMode = \"loop\"\n"
+                         : "playbackMode = \"none\"\n";
+    add("playbackMode", pprint::Indent(indent) + pv);
   }
 
   if (!metas.comment.value.empty()) {
     // Stage meta omits 'comment'
-    meta_ss << pprint::Indent(indent) << to_string(metas.comment) << "\n";
+    add("comment", pprint::Indent(indent) + to_string(metas.comment) + "\n");
   }
 
   if (metas.customLayerData.size()) {
-    meta_ss << print_customData(metas.customLayerData, "customLayerData",
-                                /* indent */ 1);
+    add("customLayerData",
+        print_customData(metas.customLayerData, "customLayerData",
+                         /* indent */ 1));
   } else if (metas.customLayerDataAuthored) {
     // Print empty customLayerData if explicitly authored (match pxrUSD behavior)
-    meta_ss << pprint::Indent(1) << "customLayerData = {\n";
-    meta_ss << pprint::Indent(1) << "}\n";
+    add("customLayerData", pprint::Indent(1) + "customLayerData = {\n" +
+                               pprint::Indent(1) + "}\n");
   }
 
   // AOUSD Core Spec layer metadata
   if (metas.colorConfiguration) {
-    meta_ss << pprint::Indent(indent)
-            << "colorConfiguration = "
-            << metas.colorConfiguration.value() << "\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent)
+       << "colorConfiguration = " << metas.colorConfiguration.value() << "\n";
+    add("colorConfiguration", ss.str());
   }
 
   if (metas.colorManagementSystem) {
-    meta_ss << pprint::Indent(indent)
-            << "colorManagementSystem = "
-            << quote(metas.colorManagementSystem.value().str()) << "\n";
+    add("colorManagementSystem",
+        pprint::Indent(indent) + "colorManagementSystem = " +
+            quote(metas.colorManagementSystem.value().str()) + "\n");
   }
 
   if (metas.owner) {
-    meta_ss << pprint::Indent(indent)
-            << "owner = " << quote(metas.owner.value()) << "\n";
+    add("owner", pprint::Indent(indent) + "owner = " +
+                     quote(metas.owner.value()) + "\n");
   }
 
   if (metas.hasOwnedSubLayers) {
-    meta_ss << pprint::Indent(indent)
-            << "hasOwnedSubLayers = "
-            << (metas.hasOwnedSubLayers.value() ? "true" : "false") << "\n";
+    add("hasOwnedSubLayers",
+        pprint::Indent(indent) + "hasOwnedSubLayers = " +
+            (metas.hasOwnedSubLayers.value() ? "true" : "false") + "\n");
   }
 
   if (metas.expressionVariables) {
-    meta_ss << print_customData(metas.expressionVariables.value(),
-                                "expressionVariables", indent);
+    add("expressionVariables",
+        print_customData(metas.expressionVariables.value(),
+                         "expressionVariables", indent));
   }
 
   // AOUSD Core Spec 10.3.2.6: relocates
   if (!metas.layerRelocates.empty()) {
-    meta_ss << pprint::Indent(indent) << "relocates = {\n";
+    std::stringstream ss;
+    ss << pprint::Indent(indent) << "relocates = {\n";
     for (size_t i = 0; i < metas.layerRelocates.size(); i++) {
       const auto &entry = metas.layerRelocates[i];
-      meta_ss << pprint::Indent(indent + 1)
-              << "<" << entry.first.full_path_name() << "> : "
-              << "<" << entry.second.full_path_name() << ">";
+      ss << pprint::Indent(indent + 1) << "<" << entry.first.full_path_name()
+         << "> : " << "<" << entry.second.full_path_name() << ">";
       if (i + 1 < metas.layerRelocates.size()) {
-        meta_ss << ",";
+        ss << ",";
       }
-      meta_ss << "\n";
+      ss << "\n";
     }
-    meta_ss << pprint::Indent(indent) << "}\n";
+    ss << pprint::Indent(indent) << "}\n";
+    add("layerRelocates", ss.str());
   }
 
+  if (pprint::GetUSDTextFormat()) {
+    std::stable_sort(fields.begin(), fields.end(),
+                     [](const std::pair<std::string, std::string> &a,
+                        const std::pair<std::string, std::string> &b) {
+                       return a.first < b.first;
+                     });
+  }
+
+  std::stringstream meta_ss;
+  for (const auto &f : fields) {
+    meta_ss << f.second;
+  }
   return meta_ss.str();
 }
 
@@ -312,7 +354,30 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
         ss << "\n";
       }
 
-      if (item.prim->metas().primChildren.size() == item.prim->children().size()) {
+      if (pprint::GetPreserveAuthoredOrder() &&
+          !item.prim->metas().primChildren.empty()) {
+        // Opt-in authored order (matches usdcat): emit children named in the
+        // `primChildren` field first, in that order, then any remaining children
+        // lexicographically. Unlike the exact-size path below this tolerates a
+        // `primChildren` that no longer matches the child set (e.g. composition
+        // added children not recorded in the field) -- exactly OpenUSD's rule of
+        // "listed order, else lexicographical".
+        std::map<std::string, const Prim *> byName;  // sorted => lexicographical
+        for (size_t i = 0; i < item.prim->children().size(); i++) {
+          byName.emplace(item.prim->children()[i].element_name(),
+                         &item.prim->children()[i]);
+        }
+        std::set<std::string> emitted;
+        for (const auto &nameTok : item.prim->metas().primChildren) {
+          const auto it = byName.find(nameTok.str());
+          if (it != byName.end() && emitted.insert(it->first).second) {
+            ordered_children.push_back(it->second);
+          }
+        }
+        for (const auto &kv : byName) {
+          if (!emitted.count(kv.first)) ordered_children.push_back(kv.second);
+        }
+      } else if (item.prim->metas().primChildren.size() == item.prim->children().size()) {
         std::map<std::string, const Prim *> primNameTable;
         for (size_t i = 0; i < item.prim->children().size(); i++) {
           primNameTable.emplace(item.prim->children()[i].element_name(),
@@ -380,8 +445,15 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     }
 
     // ENTER phase
+    const bool usd_text = pprint::GetUSDTextFormat();
     if (item.need_separator) {
-      ss << pprint::Indent(item.indent) << "\n";
+      // usdcat separates siblings with a PLAIN blank line; tinyusdz's default
+      // indents it.
+      if (usd_text) {
+        ss << "\n";
+      } else {
+        ss << pprint::Indent(item.indent) << "\n";
+      }
     }
 
     ss << pprint::Indent(item.indent) << to_string(item.primspec->specifier()) << " ";
@@ -391,25 +463,69 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
       ss << item.primspec->typeName() << " ";
     }
 
-    ss << "\"" << item.primspec->name() << "\"\n";
+    ss << "\"" << item.primspec->name() << "\"";
 
     if (item.primspec->metas().authored()) {
-      ss << pprint::Indent(item.indent) << "(\n";
+      // usdcat puts the metadata opening paren on the `def` line (`def M "n" (`);
+      // tinyusdz's default puts it on its own line.
+      if (usd_text) {
+        ss << " (\n";
+      } else {
+        ss << "\n" << pprint::Indent(item.indent) << "(\n";
+      }
       ss << print_prim_metas(item.primspec->metas(), item.indent + 1);
       ss << pprint::Indent(item.indent) << ")\n";
+    } else {
+      ss << "\n";
     }
     ss << pprint::Indent(item.indent) << "{\n";
 
+    const bool preserve_order = pprint::GetPreserveAuthoredOrder();
+
+    // Properties stay alphabetical (std::map order): pxr/usdcat ALSO sorts
+    // properties alphabetically (its crate writer sorts the `properties` field),
+    // so the default already matches usdcat. Only prim CHILDREN preserve authored
+    // order in USD, handled below.
     ss << print_props(item.primspec->props(), item.indent + 1);
+
+    // usdcat blank-lines BETWEEN body sections: a blank line precedes each child
+    // prim, but NOT the property block. So the FIRST child gets a separator only
+    // when the prim authored properties (otherwise it sits directly under `{`).
+    const bool has_props = !item.primspec->props().empty();
 
     // Push EXIT (processed after all children)
     stack.push_back({item.primspec, item.indent, EXIT, false});
 
-    // Push children in reverse order
+    // Children: under the opt-in, emit those named in `primChildren` first (in
+    // that order), then any remainder lexicographically; otherwise keep authored
+    // vector order. Pushed in reverse so the first child is processed first.
     const auto& children = item.primspec->children();
-    for (size_t i = children.size(); i > 0; --i) {
-      bool need_sep = (i < children.size());  // not the first child
-      stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
+    if (preserve_order && !item.primspec->metas().primChildren.empty()) {
+      std::map<std::string, const PrimSpec *> byName;  // sorted => lexicographical
+      for (const auto &c : children) byName.emplace(c.name(), &c);
+      std::vector<const PrimSpec *> ordered;
+      std::set<std::string> emitted;
+      for (const auto &tok : item.primspec->metas().primChildren) {
+        const auto it = byName.find(tok.str());
+        if (it != byName.end() && emitted.insert(it->first).second) {
+          ordered.push_back(it->second);
+        }
+      }
+      for (const auto &kv : byName) {
+        if (!emitted.count(kv.first)) ordered.push_back(kv.second);
+      }
+      for (size_t i = ordered.size(); i > 0; --i) {
+        // usdcat: blank line before every child except the first; the first child
+        // also gets one when properties precede it. ordered[0] is i==1.
+        bool need_sep = usd_text ? (i != 1 || has_props) : (i < ordered.size());
+        stack.push_back({ordered[i - 1], item.indent + 1, ENTER, need_sep});
+      }
+    } else {
+      for (size_t i = children.size(); i > 0; --i) {
+        bool need_sep =
+            usd_text ? (i != 1 || has_props) : (i < children.size());
+        stack.push_back({&children[i - 1], item.indent + 1, ENTER, need_sep});
+      }
     }
   }
 

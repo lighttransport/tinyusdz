@@ -382,6 +382,299 @@ static void test_variant_roundtrip() {
         "grafted child retains its property after round-trip");
 }
 
+// A modelingVariant set with two options ("ChairA"/"ChairB"); each option
+// carries a distinguishing "which" property only when `populated`.
+static VariantSetData MakeModelingVariantSet(bool populated) {
+  VariantSetData vsd;
+  vsd.name = "modelingVariant";
+  VariantData a; a.name = "ChairA";
+  VariantData b; b.name = "ChairB";
+  if (populated) {
+    a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
+    b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
+  }
+  vsd.variants.push_back(std::move(a));
+  vsd.variants.push_back(std::move(b));
+  return vsd;
+}
+
+// Regression (Pixar Kitchen_set Chair.usd): a variant selection authored on the
+// REFERENCING prim must win over the referenced asset's OWN default selection.
+//   /C1 references @geom@</Chair>, selects non-default "ChairB"
+//   geom/Chair: populated variantSet + its own (weaker) default "ChairA"
+// The main backend (examples/tusdcat) regressed on the larger Kitchen_set chain;
+// the next backend composes all arcs per-prim before ApplyVariants, so the local
+// selection is still present when the variant is baked. Confirms that here.
+static void test_variant_selection_over_reference() {
+  std::cout << "[variants: local selection wins over referenced default]\n";
+  Layer root;
+  {
+    PrimSpec c1 = MakePrim("/C1", "Xform");
+    c1.meta().references.push_back("@geom@</Chair>");
+    c1.meta().variantSelection = "modelingVariant=ChairB";  // strong, non-default
+    root.add_prim(std::move(c1));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+        // Referenced asset: populated variantSet + its own default "ChairA".
+        auto l = std::make_unique<Layer>();
+        PrimSpec chair = MakePrim("/Chair", "Xform");
+        chair.meta().variantSelection = "modelingVariant=ChairA";
+        chair.meta().variantSets().push_back(
+            MakeModelingVariantSet(/*populated=*/true));
+        l->add_prim(std::move(chair));
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* which = out ? PropOf(*out, "/C1", "which") : nullptr;
+  CHECK(which != nullptr,
+        "/C1.which present (selected variant's opinion applied to host)");
+  if (which) {
+    const std::string* s = which->as_string();
+    CHECK(s && *s == "I_am_ChairB",
+          std::string("local 'ChairB' wins over referenced default 'ChairA' "
+                      "(got '") +
+              (s ? *s : std::string("<non-string>")) + "')");
+  }
+}
+
+// Regression: the next backend must resolve the arcs authored on an
+// EXTERNALLY-referenced target (its payload / nested references), not just the
+// arcs on the prim itself. The exact Pixar Kitchen_set Chair.usd shape:
+//   /C1 references @asset@</Chair>, selects non-default "ChairB"
+//   asset/Chair: EMPTY variant blocks + payload -> @payload@ + own default "ChairA"
+//   payload/Chair: references @geom@</Chair>
+//   geom/Chair: POPULATED variantSet + own (weakest) default "ChairA"
+// GetComposedExternalLayer() composes each referenced layer's own arcs (variants
+// deferred) before its opinions are merged into the host, and CopyLocalOpinions
+// merges variantSet CONTENT per-variant so the deep populated blocks fill the
+// asset's empty ones. The host then bakes its own "ChairB" selection.
+static void test_variant_ref_payload_chain() {
+  std::cout << "[variants: selection across ref->payload->ref chain]\n";
+  Layer root;
+  {
+    PrimSpec c1 = MakePrim("/C1", "Xform");
+    c1.meta().references.push_back("@asset@</Chair>");
+    c1.meta().variantSelection = "modelingVariant=ChairB";
+    root.add_prim(std::move(c1));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        if (path.find("asset") != std::string::npos) {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().payloads.push_back("@payload@</Chair>");
+          chair.meta().variantSelection = "modelingVariant=ChairA";
+          chair.meta().variantSets().push_back(
+              MakeModelingVariantSet(/*populated=*/false));
+          l->add_prim(std::move(chair));
+        } else if (path.find("payload") != std::string::npos) {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().references.push_back("@geom@</Chair>");
+          l->add_prim(std::move(chair));
+        } else {
+          PrimSpec chair = MakePrim("/Chair", "Xform");
+          chair.meta().variantSelection = "modelingVariant=ChairA";
+          chair.meta().variantSets().push_back(
+              MakeModelingVariantSet(/*populated=*/true));
+          l->add_prim(std::move(chair));
+        }
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* which = out ? PropOf(*out, "/C1", "which") : nullptr;
+  CHECK(which != nullptr,
+        "/C1.which present (deep populated variant content reached the host "
+        "through the ref->payload->ref chain)");
+  if (which) {
+    const std::string* s = which->as_string();
+    CHECK(s && *s == "I_am_ChairB",
+          std::string("local 'ChairB' wins across the full ref+payload chain "
+                      "(got '") +
+              (s ? *s : std::string("<non-string>")) + "', want 'I_am_ChairB')");
+  }
+}
+
+// Subtree-scoped external composition: a SELF-CONTAINED arc-bearing prim of a
+// multi-prim library composes alone (only its subtree is materialized; the
+// library's other prims are not needed) and yields the same result as composing
+// it inside the whole layer. AssetA's only arc is an EXTERNAL reference, so it
+// is self-contained; the library also holds an unrelated /Base and a
+// NON-self-contained /AssetC to ensure they are neither needed nor leaked.
+static void test_extref_self_contained_subtree() {
+  std::cout << "[extref: self-contained subtree composed alone]\n";
+  Layer root;
+  {
+    PrimSpec r = MakePrim("/R", "Xform");
+    r.meta().references.push_back("@lib@</AssetA>");
+    root.add_prim(std::move(r));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        if (path.find("shader") != std::string::npos) {
+          PrimSpec s = MakePrim("/S", "Shader");
+          s.add_property("mat", Value(std::string("red")));
+          l->add_prim(std::move(s));
+        } else {
+          PrimSpec a = MakePrim("/AssetA", "Xform");
+          a.meta().references.push_back("@shader@</S>");  // external → self-contained
+          l->add_prim(std::move(a));
+          PrimSpec ag = MakePrim("/AssetA/Geom", "Mesh");  // a descendant to graft
+          ag.add_property("n", Value(int32_t(5)));
+          l->add_prim(std::move(ag));
+          PrimSpec base = MakePrim("/Base", "Xform");
+          base.add_property("base", Value(int32_t(7)));
+          l->add_prim(std::move(base));
+          PrimSpec c = MakePrim("/AssetC", "Xform");
+          c.meta().references.push_back("</Base>");  // internal → NOT self-contained
+          l->add_prim(std::move(c));
+        }
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* mat = out ? PropOf(*out, "/R", "mat") : nullptr;
+  CHECK(mat && mat->as_string() && *mat->as_string() == "red",
+        "self-contained AssetA's external ref resolved via subtree compose");
+  CHECK(out && out->prim_at_path("/R/Geom") != nullptr,
+        "AssetA's descendant grafted from the extracted subtree");
+  CHECK(PropOf(*out, "/R/Geom", "n") != nullptr,
+        "grafted descendant carries its property");
+  CHECK(out && out->prim_at_path("/R/Base") == nullptr,
+        "unrelated library sibling not leaked into the host");
+}
+
+// Fallback: a referenced prim whose INTERNAL reference escapes its subtree is
+// NOT self-contained and must compose against the whole layer so the sibling
+// target resolves.
+static void test_extref_non_self_contained_fallback() {
+  std::cout << "[extref: non-self-contained subtree falls back to whole layer]\n";
+  Layer root;
+  {
+    PrimSpec r = MakePrim("/R", "Xform");
+    r.meta().references.push_back("@lib@</AssetC>");
+    root.add_prim(std::move(r));
+  }
+  root.finalize();
+
+  Compositor comp;
+  comp.SetLayerLoader(
+      [](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+        auto l = std::make_unique<Layer>();
+        PrimSpec base = MakePrim("/Base", "Xform");
+        base.add_property("base", Value(int32_t(7)));
+        l->add_prim(std::move(base));
+        PrimSpec c = MakePrim("/AssetC", "Xform");
+        c.meta().references.push_back("</Base>");  // internal ref to a sibling
+        l->add_prim(std::move(c));
+        l->finalize();
+        return l;
+      });
+
+  auto out = comp.Compose(root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* base = out ? PropOf(*out, "/R", "base") : nullptr;
+  CHECK(base && base->as_int() && *base->as_int() == 7,
+        "AssetC's internal ref to sibling /Base resolved via whole-layer compose");
+}
+
+// The crate (USDC) reader records a variant selection as BOTH a per-set
+// VariantSetData.selected AND the legacy variantSelection string. A host that
+// overrides a referenced asset's variant must win regardless of which form it
+// carries; the asset's (weaker) per-set `selected` must not ride along the
+// CopyLocalOpinions variantSet merge and defeat the override in ApplyVariants
+// (which prefers vs.selected over the legacy string).
+static void test_variant_selected_field_over_reference() {
+  std::cout << "[variants: host selection wins over referenced vs.selected]\n";
+
+  // A modelingVariant set carrying its own per-set `selected` (reader form).
+  auto makeSet = [](const std::string& sel) {
+    VariantSetData vsd;
+    vsd.name = "modelingVariant";
+    vsd.selected = sel;
+    VariantData a; a.name = "ChairA";
+    a.properties.emplace_back("which", Value(std::string("I_am_ChairA")));
+    VariantData b; b.name = "ChairB";
+    b.properties.emplace_back("which", Value(std::string("I_am_ChairB")));
+    vsd.variants.push_back(std::move(a));
+    vsd.variants.push_back(std::move(b));
+    return vsd;
+  };
+  // Referenced asset always selects its OWN default "ChairA" via vs.selected.
+  auto loader = [&](const std::string&, std::string*) -> std::unique_ptr<Layer> {
+    auto l = std::make_unique<Layer>();
+    PrimSpec ch = MakePrim("/Chair", "Xform");
+    ch.meta().variantSets().push_back(makeSet("ChairA"));
+    ch.meta().variantSelection = "modelingVariant=ChairA";
+    l->add_prim(std::move(ch));
+    l->finalize();
+    return l;
+  };
+  auto whichOf = [](const Layer* out, const std::string& prim) {
+    const Value* w = out ? PropOf(*out, prim, "which") : nullptr;
+    return (w && w->as_string()) ? *w->as_string() : std::string("<none>");
+  };
+
+  // (1) reader-consistent host: BOTH per-set selected AND the string = "ChairB".
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H1", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    c.meta().variantSets().push_back(makeSet("ChairB"));
+    c.meta().variantSelection = "modelingVariant=ChairB";
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H1") == "I_am_ChairB",
+          "host vs.selected 'ChairB' wins over referenced vs.selected 'ChairA'");
+  }
+
+  // (2) string-only host: the asset's per-set `selected` must NOT defeat the
+  // host's legacy variantSelection (the hardened merge suppresses it).
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H2", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    c.meta().variantSelection = "modelingVariant=ChairB";  // string only
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H2") == "I_am_ChairB",
+          "host variantSelection string 'ChairB' wins over referenced vs.selected");
+  }
+
+  // (3) control: host does NOT override → the asset's own default ChairA stands
+  // (the hardening must not suppress a referenced selection the host didn't override).
+  {
+    Layer root;
+    PrimSpec c = MakePrim("/H3", "Xform");
+    c.meta().references.push_back("@asset@</Chair>");
+    root.add_prim(std::move(c));
+    root.finalize();
+    Compositor comp; comp.SetLayerLoader(loader);
+    CHECK(whichOf(comp.Compose(root).get(), "/H3") == "I_am_ChairA",
+          "no host override → referenced default 'ChairA' applies");
+  }
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -393,6 +686,11 @@ int main() {
   test_variants_multiset();
   test_variant_subprim();
   test_variant_roundtrip();
+  test_variant_selection_over_reference();
+  test_variant_ref_payload_chain();
+  test_extref_self_contained_subtree();
+  test_extref_non_self_contained_fallback();
+  test_variant_selected_field_over_reference();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";

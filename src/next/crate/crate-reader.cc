@@ -9,6 +9,8 @@
 #include "stream-reader.hh"
 #include "../types/type-info.hh"
 #include "../layer/layer.hh"
+#include "../parser/lexer.hh"          // dict-as-USDA-text decode
+#include "../parser/value-parser.hh"  // ParseDict
 
 #include "safe-arithmetic.hh"
 
@@ -19,9 +21,19 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace tinyusdz {
 namespace next {
+
+// Decode a dictionary that was written as USDA dict text in a String field
+// (see crate-writer add_dict_field). Returns an empty Value on failure.
+static Value ParseDictText(const std::string& text) {
+  if (text.empty()) return Value();
+  Lexer lexer(text.data(), text.size());
+  ParseResult r = ParseDict(lexer);
+  return r.success ? std::move(r.value) : Value();
+}
 
 // ============================================================
 // TokenPool (Phase 8.2: TfToken-lite)
@@ -187,11 +199,27 @@ private:
   // Decode a PathListOp (CrateTypeId 34) or PathVector (40) value into the
   // referenced path strings (resolved through the reconstructed paths_ table).
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
+  // Decode a ReferenceListOp (35) / PayloadListOp (55) into composition arc
+  // strings "@asset@</prim>[?layerOffset=o:s]" (the form Compositor::
+  // ParseReference consumes). List-edit semantics are flattened: explicit/
+  // added/prepended/appended entries are kept, deleted/ordered are read and
+  // discarded.
+  bool DecodeReferenceListOp(ValueRep rep, bool is_payload,
+                             std::vector<std::string>& out);
 
   // Decode a VariantSelectionMap (CrateTypeId 45): [u64 count][(u32 key_str_idx,
   // u32 val_str_idx) * count] -> (variantSet, selection) pairs.
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
+
+  // Decode a TokenListOp (CrateTypeId 32): [u8 header][present token vectors].
+  // Returns the effective additive list (explicit + added + prepended +
+  // appended); deleted/ordered are read and discarded.
+  bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
+
+  // Decode a binary VtDictionary (CrateTypeId 31): [u64 count][(u32 key_str_idx,
+  // u64 value ValueRep) * count]. Values are decoded recursively.
+  bool DecodeDictionary(ValueRep rep, Value& out, int depth);
 
   void AddError(const std::string& msg);
   void AddWarning(const std::string& msg);
@@ -335,18 +363,36 @@ bool CrateReader::Impl::DecodeTimeSamples(
   out->clear();
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
 
-  // Header at rep.payload():
-  //   [i64 fwd1][ValueRep times][i64 fwd2][u64 N][ValueRep vals[N]]
-  // `times` points to a [u64 count][double[count]] block (pxr indirection).
-  if (!reader_->seek(static_cast<size_t>(rep.payload()))) return false;
-  int64_t fwd1 = 0;
+  // pxr crate TimeSamples are DOUBLY recursive (crateFile.cpp RecursiveRead):
+  //   at payload P:        [i64 off_t]                 -> times block at P+off_t
+  //   at P+off_t:          [ValueRep times][i64 off_v] -> values block follows
+  //   at (P+off_t+8)+off_v:[u64 N][ValueRep vals[N]]
+  // Each `[i64 off]` is a relative jump: after reading the 8-byte offset at
+  // position Q, the target is Q+off (i.e. seek_from_current(off-8)).
+  const int64_t P = static_cast<int64_t>(rep.payload());
+  if (P < 0 || !reader_->seek(static_cast<size_t>(P))) return false;
+
+  int64_t off_t = 0;
+  if (!reader_->read(&off_t, 8)) return false;
+  const int64_t times_pos = P + off_t;  // Q=P, target=Q+off_t
+  if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
   uint64_t times_rep_raw = 0;
-  int64_t fwd2 = 0;
+  if (!reader_->read_u64(times_rep_raw)) return false;
+  const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
+
+  Value times_val;
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
+  const std::vector<double>* times = times_val.as_double_array();
+  if (!times) return false;
+
+  // Values block: follow the second recursive offset.
+  if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
+  int64_t off_v = 0;
+  if (!reader_->read(&off_v, 8)) return false;
+  const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
+  if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read(&fwd1, 8) || !reader_->read_u64(times_rep_raw) ||
-      !reader_->read(&fwd2, 8) || !reader_->read_u64(n)) {
-    return false;
-  }
+  if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
 
   // Read all sample ValueReps before decoding (decoding seeks elsewhere).
@@ -357,13 +403,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
     sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
   }
 
-  // Decode the time codes (a double array).
-  Value times_val;
-  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
-  const std::vector<double>* times = times_val.as_double_array();
-  if (!times) return false;
   const size_t count = std::min<size_t>(times->size(), sample_reps.size());
-
   out->reserve(count);
   for (size_t i = 0; i < count; ++i) {
     Value v;  // a ValueBlock sample (no authored value at this time) stays empty
@@ -789,6 +829,94 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Vec4h: return UnpackVec4h(rep, out);
     case CrateTypeId::Quath: return UnpackQuath(rep, out);
 
+    case CrateTypeId::ReferenceListOp:
+    case CrateTypeId::PayloadListOp: {
+      std::vector<std::string> arcs;
+      if (!DecodeReferenceListOp(rep, type_id == CrateTypeId::PayloadListOp,
+                                 arcs)) {
+        return false;
+      }
+      out = Value::MakeTokenArray(std::move(arcs));
+      return true;
+    }
+
+    case CrateTypeId::Invalid:     // an empty VtValue (e.g. an empty dict entry)
+      out = Value();
+      return true;
+
+    case CrateTypeId::ValueBlock:  // a blocked (`= None`) value: a real opinion
+      out = Value::MakeBlock();    // that suppresses weaker values and re-emits
+      return true;                 // `= None` (not a declared-only attribute).
+
+    // TokenVector / StringVector / DoubleVector: std::vector<T> stored as a
+    // non-array value ([u64 count][elements]); an empty vector inlines as
+    // payload 0.
+    case CrateTypeId::TokenVector:
+    case CrateTypeId::StringVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeTokenArray(std::vector<std::string>{});
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      // The on-disk payload is n uint32_t indices; require them to physically
+      // fit in the remaining file before allocating idxs(n)/data(n). Otherwise a
+      // malformed count would drive a multi-GB allocation before the read below.
+      if (!reader_->has_elements(static_cast<size_t>(n), sizeof(uint32_t))) return false;
+      std::vector<uint32_t> idxs(static_cast<size_t>(n));
+      size_t bytes;
+      if (!safe::mul(static_cast<size_t>(n), sizeof(uint32_t), &bytes)) return false;
+      if (n && !reader_->read(idxs.data(), bytes)) return false;
+      std::vector<std::string> data(static_cast<size_t>(n));
+      for (size_t i = 0; i < n; i++) {
+        std::string s;
+        // TokenVector indexes the token table; StringVector the string table.
+        if (type_id == CrateTypeId::TokenVector) {
+          if (idxs[i] >= tokens_.size()) return false;
+          s = tokens_.str(idxs[i]);
+        } else {
+          GetString(idxs[i], s);
+        }
+        data[i] = std::move(s);
+      }
+      out = Value::MakeTokenArray(std::move(data));
+      return true;
+    }
+
+    case CrateTypeId::DoubleVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeDoubleArray(std::vector<double>{});
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      // n doubles must physically be present in the remaining file before we
+      // allocate; bound the count against the file to avoid a malformed-count
+      // multi-GB allocation ahead of the read below.
+      if (!reader_->has_elements(static_cast<size_t>(n), sizeof(double))) return false;
+      std::vector<double> data(static_cast<size_t>(n));
+      size_t bytes;
+      if (!safe::mul(static_cast<size_t>(n), sizeof(double), &bytes)) return false;
+      if (n && !reader_->read(data.data(), bytes)) return false;
+      out = Value::MakeDoubleArray(std::move(data));
+      return true;
+    }
+
+    case CrateTypeId::TokenListOp:
+    case CrateTypeId::StringListOp: {
+      std::vector<std::string> toks;
+      if (!DecodeTokenListOp(rep, toks)) return false;
+      out = Value::MakeTokenArray(std::move(toks));
+      return true;
+    }
+
+    case CrateTypeId::Dictionary:
+      return DecodeDictionary(rep, out, 0);
+
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));
       return false;
@@ -870,6 +998,26 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 
   const bool compressed = rep.is_compressed();
 
+  // Guard the element allocation BEFORE allocating any std::vector(count). The
+  // per-type cases below allocate count*elem bytes first and only then call
+  // read_raw() (whose has_elements() check would catch an over-long uncompressed
+  // run) — so a malformed count (e.g. 1e9 matrix4d = 128 GB) would OOM before
+  // that check. Bound it here against the file-size-relative cap. For an
+  // uncompressed array the element bytes must physically be present in the file;
+  // for a compressed array the file-relative cap still limits the decoded size.
+  {
+    const uint64_t stride = CrateArrayElemStride(type_id);
+    const uint64_t elem_bytes = stride ? stride : 1;
+    if (!compressed && stride > 0 && !reader_->has_elements(
+            static_cast<size_t>(count), static_cast<size_t>(stride))) {
+      AddWarning("Array element count exceeds available file bytes");
+      return false;
+    }
+    if (!CheckByteAllocation(count * elem_bytes, "Array payload")) {
+      return false;
+    }
+  }
+
   // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place,
   // mirroring ReadFields. dst must hold `count` uint32_t.
   auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
@@ -896,11 +1044,53 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     return reader_->read(dst, static_cast<size_t>(count) * elem_size);
   };
 
+  // Decode a compressed floating-point array (pxrUSD format): [i8 code] then
+  // 'i' -> compressed int32s cast to T; 't' -> [u32 lutSize][T lut][compressed
+  // u32 indices]. Fills `count` elements of T into `dst`.
+  auto read_compressed_floating = [&](auto* dst) -> bool {
+    using T = typename std::remove_pointer<decltype(dst)>::type;
+    int8_t code = 0;
+    if (!reader_->read_i8(code)) return false;
+    if (code == 'i') {
+      std::vector<uint32_t> ints(static_cast<size_t>(count));
+      if (!read_compressed_u32(ints.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
+      }
+      return true;
+    }
+    if (code == 't') {
+      uint32_t lut_size = 0;
+      if (!reader_->read_u32(lut_size)) return false;
+      if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
+      // The LUT holds lut_size elements read directly from the file; bound the
+      // count against the remaining file before allocating to avoid a
+      // malformed-count huge allocation ahead of the read below.
+      if (!reader_->has_elements(size_t(lut_size), sizeof(T))) return false;
+      std::vector<T> lut(lut_size);
+      size_t lut_bytes;
+      if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
+      if (!reader_->read(lut.data(), lut_bytes)) return false;
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (!read_compressed_u32(idxs.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        if (idxs[i] >= lut_size) return false;
+        dst[i] = lut[idxs[i]];
+      }
+      return true;
+    }
+    AddWarning("Unknown compressed floating-point array code");
+    return false;
+  };
+
   switch (type_id) {
     case CrateTypeId::Float: {
-      if (compressed) { AddWarning("Compressed float arrays not supported"); return false; }
       std::vector<float> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(float))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(float))) {
+        return false;
+      }
       out = Value::MakeFloatArray(std::move(data));
       return true;
     }
@@ -937,9 +1127,12 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Double: {
-      if (compressed) { AddWarning("Compressed double arrays not supported"); return false; }
       std::vector<double> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(double))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(double))) {
+        return false;
+      }
       out = Value::MakeDoubleArray(std::move(data));
       return true;
     }
@@ -1761,6 +1954,9 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
+  if (!CheckElementAllocation(num_paths, sizeof(std::string), "Path table")) {
+    return false;
+  }
   paths_.resize(static_cast<size_t>(num_paths));
   if (paths_.size() > 0) {
     paths_[0] = "/";
@@ -1914,6 +2110,35 @@ bool CrateReader::Impl::BuildStage() {
       } else if (field.first == "endTimeCode") {
         const double* d = field.second.as_double();
         if (d) layer.meta().endTimeCode = *d;
+      } else if (field.first == "framesPerSecond") {
+        const double* d = field.second.as_double();
+        if (d) {
+          layer.meta().framesPerSecond = *d;
+          layer.meta().framesPerSecond_set = true;
+        }
+      } else if (field.first == "kilogramsPerUnit") {
+        const double* d = field.second.as_double();
+        if (d) {
+          layer.meta().kilogramsPerUnit = *d;
+          layer.meta().kilogramsPerUnit_set = true;
+        }
+      } else if (field.first == "customLayerData" ||
+                 field.first == "expressionVariables") {
+        // pxr-authored: binary VtDictionary; next-authored: USDA dict text.
+        Value d;
+        if (field.second.is_dictionary()) {
+          d = std::move(field.second);
+        } else if (const std::string* s = field.second.as_string()) {
+          d = ParseDictText(*s);
+        } else if (const std::string* s = field.second.as_token()) {
+          d = ParseDictText(*s);
+        }
+        if (d.is_dictionary()) {
+          if (field.first == "customLayerData")
+            layer.meta().customLayerData = std::move(d);
+          else
+            layer.meta().expressionVariables = std::move(d);
+        }
       } else if (field.first == "doc") {
         if (const std::string* s = field.second.as_string())
           layer.meta().doc = *s;
@@ -2001,7 +2226,10 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::pair<std::string, Value>> fields;
     ResolveFieldset(spec.fieldset_index.value, fields);
 
-    entry.type_name = "Xform";
+    // Untyped prims stay untyped: composition fills the type from the
+    // referenced prim (a forced "Xform" default would mask e.g. a referenced
+    // Mesh definition; the writer already skips empty type names).
+    entry.type_name.clear();
     entry.specifier = PrimSpecifier::Def;
     for (auto& f : fields) {
       if (f.first == "typeName") {
@@ -2033,7 +2261,16 @@ bool CrateReader::Impl::BuildStage() {
     bool is_connection = false;
     std::vector<std::string> connection_targets;
     bool uniform = false;
+    bool custom = false;
     std::vector<std::pair<double, Value>> time_samples;
+    // Per-property metadata (round-tripped via attribute spec fields).
+    std::string interpolation;
+    std::string color_space;
+    int32_t element_size = 1;
+    bool has_interpolation = false;
+    bool has_color_space = false;
+    bool has_element_size = false;
+    Value custom_data;  // dictionary
   };
   struct RelInfo {
     std::string name;
@@ -2118,6 +2355,48 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        }
+      } else if (f.first == "custom") {
+        // The legacy `custom` qualifier (pxr stores a bool field). Preserved on
+        // read; the USDA writer only re-emits it under emit_custom/--openusd-compat.
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const bool* b = v.as_bool()) ai.custom = *b;
+        }
+      } else if (f.first == "interpolation") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) {
+            ai.interpolation = *s;
+            ai.has_interpolation = true;
+          }
+        }
+      } else if (f.first == "colorSpace") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const std::string* s = v.as_token()) {
+            ai.color_space = *s;
+            ai.has_color_space = true;
+          }
+        }
+      } else if (f.first == "elementSize") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (const int32_t* i = v.as_int()) {
+            ai.element_size = *i;
+            ai.has_element_size = true;
+          }
+        }
+      } else if (f.first == "customData") {
+        Value v;
+        if (UnpackValue(f.second, v)) {
+          if (v.is_dictionary()) {
+            ai.custom_data = std::move(v);
+          } else if (const std::string* s = v.as_string()) {
+            ai.custom_data = ParseDictText(*s);
+          } else if (const std::string* s = v.as_token()) {
+            ai.custom_data = ParseDictText(*s);
+          }
         }
       }
     }
@@ -2216,6 +2495,15 @@ bool CrateReader::Impl::BuildStage() {
       // regular properties. (Guarded by ps; if current() were null we simply
       // skip them rather than crash.)
       if (ps) {
+        if (field.first == "apiSchemas") {
+          // Applied API schemas. pxrUSD stores this as a TokenListOp; by the
+          // time it reaches this field loop UnpackValue has flattened it to its
+          // effective token list. Route it to PrimSpecMeta (the composed/flatten
+          // form pxr writes as `apiSchemas = [...]` in the metadata block);
+          // otherwise it leaks as a phantom `token[] apiSchemas` body property.
+          append_token_list(field.second, ps->meta().apiSchemas(), "apiSchemas");
+          continue;
+        }
         if (field.first == "references") {
           append_token_list(field.second, ps->meta().references, "references");
           continue;
@@ -2263,6 +2551,49 @@ bool CrateReader::Impl::BuildStage() {
             ps->meta().comment() = *s;
           continue;
         }
+        if (field.first == "kind") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().kind() = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().kind() = *s;
+          continue;
+        }
+        if (field.first == "displayName") {
+          if (const std::string* s = field.second.as_string())
+            ps->meta().displayName() = *s;
+          else if (const std::string* s = field.second.as_token())
+            ps->meta().displayName() = *s;
+          continue;
+        }
+        if (field.first == "instanceable") {
+          if (const bool* b = field.second.as_bool())
+            ps->meta().instanceable = *b;
+          continue;
+        }
+        if (field.first == "customData" || field.first == "assetInfo" ||
+            field.first == "sdrMetadata" || field.first == "clips") {
+          // pxr-authored: a binary VtDictionary (already decoded to a Dictionary
+          // Value). next-authored: USDA dict text in a String field.
+          Value d;
+          if (field.second.is_dictionary()) {
+            d = std::move(field.second);
+          } else if (const std::string* s = field.second.as_string()) {
+            d = ParseDictText(*s);
+          } else if (const std::string* s = field.second.as_token()) {
+            d = ParseDictText(*s);
+          }
+          if (d.is_dictionary()) {
+            if (field.first == "customData")
+              ps->meta().customData() = std::move(d);
+            else if (field.first == "assetInfo")
+              ps->meta().assetInfo() = std::move(d);
+            else if (field.first == "sdrMetadata")
+              ps->meta().sdrMetadata() = std::move(d);
+            else
+              ps->meta().clips() = std::move(d);
+          }
+          continue;
+        }
         if (field.first == "variantSets") {
           // Writer stores the variant-set names only; reconstruct name entries.
           std::vector<std::string> names;
@@ -2280,6 +2611,28 @@ bool CrateReader::Impl::BuildStage() {
       // stray property. (Uniformity is not yet round-tripped — see review note.)
       if (field.first == "variability") continue;
 
+      // Reserved Sdf children-key ordering fields. pxrUSD stores prim/property
+      // order in these (SdfChildrenKeys); USDA flatten output does NOT emit them
+      // as body attributes -- order is implicit in the authored child/property
+      // sequence. Composition derives child order from child_indices() directly
+      // (see cache.cc ComposeInto), so consume these so they do not leak as
+      // phantom `token[] primChildren`/`properties` attributes.
+      if (field.first == "primChildren" || field.first == "properties" ||
+          field.first == "propertyChildren" ||
+          field.first == "variantChildren" ||
+          field.first == "variantSetChildren") {
+        continue;
+      }
+
+      // `variantSetNames` (the declared list of variant-set names) likewise must
+      // not leak as a phantom `string[] variantSetNames` body property. The
+      // compositor drives variants from the bracketed-holder specs + the
+      // variantSelection (not from this list), and flatten output drops variant
+      // metadata entirely (see cache.cc ComposeInto), so consume it.
+      if (field.first == "variantSetNames") {
+        continue;
+      }
+
       uint16_t flags = 0;
       builder.add_property(field.first, std::move(field.second), flags);
     }
@@ -2292,7 +2645,11 @@ bool CrateReader::Impl::BuildStage() {
         if (ps->property(ai.name)) continue;  // inline opinion wins
         uint16_t flags = 0;
         if (ai.uniform) flags |= PropSlot::kFlagUniform;
+        if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
+        // The writer gates timeSamples emission on the slot flag, so mark a
+        // time-sampled attribute (the value lives in add_time_sample below).
+        if (!ai.time_samples.empty()) flags |= PropSlot::kFlagTimeSampled;
         const bool is_array =
             ai.type_name.size() >= 2 &&
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
@@ -2321,6 +2678,27 @@ bool CrateReader::Impl::BuildStage() {
         }
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));
+        }
+        // Per-property metadata.
+        if (ai.has_interpolation || ai.has_color_space || ai.has_element_size ||
+            ai.custom_data.is_dictionary()) {
+          PropMeta& pm = ps->ensure_property_meta(ai.name);
+          if (ai.has_interpolation) {
+            pm.interpolation = ai.interpolation;
+            pm.authored |= PropMeta::kInterpolation;
+          }
+          if (ai.has_color_space) {
+            pm.colorSpace = ai.color_space;
+            pm.authored |= PropMeta::kColorSpace;
+          }
+          if (ai.has_element_size) {
+            pm.elementSize = ai.element_size;
+            pm.authored |= PropMeta::kElementSize;
+          }
+          if (ai.custom_data.is_dictionary()) {
+            pm.customData = std::move(ai.custom_data);
+            pm.authored |= PropMeta::kCustomData;
+          }
         }
       }
     }
@@ -2495,6 +2873,81 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   return true;
 }
 
+bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
+                                              std::vector<std::string>& out) {
+  const CrateTypeId tid = rep.type_id();
+  if (tid != CrateTypeId::ReferenceListOp && tid != CrateTypeId::PayloadListOp) {
+    return false;
+  }
+  if (rep.payload() == 0) return true;  // empty listop
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  // Payload items carry a LayerOffset only from crate 0.8.0 on.
+  const bool payload_has_offset =
+      !is_payload || (version_.minor >= 8);
+
+  // Read one SdfReference/SdfPayload item; when `keep`, append its arc string.
+  auto read_item = [&](bool keep) -> bool {
+    uint32_t asset_idx = 0, path_idx = 0;
+    if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+      return false;
+    }
+    double offset = 0.0, scale = 1.0;
+    if (payload_has_offset) {
+      if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+        return false;
+      }
+    }
+    if (!is_payload) {
+      // customData dict: u64 count, then per-entry recursive offsets. UE/pxr
+      // references rarely author it; decoding requires recursive value reads,
+      // so bail (drop the whole listop with a warning) when non-empty.
+      uint64_t dict_count = 0;
+      if (!reader_->read_u64(dict_count)) return false;
+      if (dict_count != 0) {
+        AddWarning("Reference customData is not supported; arc dropped");
+        return false;
+      }
+    }
+    if (!keep) return true;
+
+    std::string asset;
+    GetString(asset_idx, asset);
+    std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+    std::string arc = "@" + asset + "@";
+    if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
+    if (offset != 0.0 || scale != 1.0) {
+      arc += "?layerOffset=" + std::to_string(offset) + ":" +
+             std::to_string(scale);
+    }
+    out.push_back(std::move(arc));
+    return true;
+  };
+
+  auto read_run = [&](bool keep) -> bool {
+    uint64_t n = 0;
+    if (!reader_->read_u64(n)) return false;
+    if (n > options_.max_array_elements) return false;
+    for (uint64_t i = 0; i < n; ++i) {
+      if (!read_item(keep)) return false;
+    }
+    return true;
+  };
+
+  // ListOpHeader bits / read order match DecodePathTargets.
+  uint8_t bits = 0;
+  if (!reader_->read_u8(bits)) return false;
+  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
+                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  if ((bits & kHasExplicit) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !read_run(true)) return false;
+  if ((bits & kHasPrepended) && !read_run(true)) return false;
+  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasDeleted) && !read_run(false)) return false;
+  if ((bits & kHasOrdered) && !read_run(false)) return false;
+  return true;
+}
+
 bool CrateReader::Impl::DecodeVariantSelectionMap(
     ValueRep rep, std::vector<std::pair<std::string, std::string>>& out) {
   if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
@@ -2514,10 +2967,127 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
   return true;
 }
 
+bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
+                                          std::vector<std::string>& out) {
+  const CrateTypeId tid = rep.type_id();
+  if (tid != CrateTypeId::TokenListOp && tid != CrateTypeId::StringListOp) {
+    return false;
+  }
+  if (rep.payload() == 0) return true;  // empty listop
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  const bool is_token = (tid == CrateTypeId::TokenListOp);
+  // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
+  auto read_run = [&](bool keep) -> bool {
+    uint64_t n = 0;
+    if (!reader_->read_u64(n)) return false;
+    if (n > options_.max_array_elements) return false;
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!reader_->read_u32(idx)) return false;
+      if (!keep) continue;
+      std::string s;
+      if (is_token) {
+        if (idx >= tokens_.size()) return false;
+        s = tokens_.str(idx);
+      } else {
+        GetString(idx, s);
+      }
+      out.push_back(std::move(s));
+    }
+    return true;
+  };
+
+  // ListOpHeader bits / read order match DecodeReferenceListOp.
+  uint8_t bits = 0;
+  if (!reader_->read_u8(bits)) return false;
+  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
+                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  if ((bits & kHasExplicit) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !read_run(true)) return false;
+  if ((bits & kHasPrepended) && !read_run(true)) return false;
+  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasDeleted) && !read_run(false)) return false;
+  if ((bits & kHasOrdered) && !read_run(false)) return false;
+  return true;
+}
+
+bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
+  if (rep.type_id() != CrateTypeId::Dictionary) return false;
+  if (depth > 64) return false;
+  if (rep.payload() == 0) {
+    out = Value::MakeDictionary();
+    return true;
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  uint64_t count = 0;
+  if (!reader_->read_u64(count)) return false;
+  if (count > options_.max_array_elements) return false;
+
+  // pxr WriteMap layout: [u64 count] then per entry [u32 keyStringIdx] followed
+  // by a Write(VtValue): an int64 forward offset, the nested value data, then
+  // the 8-byte ValueRep (_RecursiveWrite). So entries are *variable*-stride: the
+  // ValueRep lives at (valStart + recOffset) and the next entry begins right
+  // after it. We must read sequentially and restore the position after each
+  // value decode (which seeks to the ValueRep's payload elsewhere).
+  Value dv = Value::MakeDictionary();
+  Dict* d = dv.as_dictionary();
+  for (uint64_t i = 0; i < count; ++i) {
+    uint32_t kidx = 0;
+    if (!reader_->read_u32(kidx)) return false;
+    std::string key;
+    GetString(kidx, key);
+
+    const size_t val_start = reader_->position();
+    uint64_t rec_off_raw = 0;
+    if (!reader_->read_u64(rec_off_raw)) return false;
+    const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
+    const size_t rep_pos =
+        static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
+    if (!reader_->seek(rep_pos)) return false;
+    uint64_t vrep_raw = 0;
+    if (!reader_->read_u64(vrep_raw)) return false;
+    const size_t next_entry_pos = reader_->position();  // rep_pos + 8
+
+    ValueRep vr(vrep_raw);
+    Value cv;
+    if (vr.type_id() == CrateTypeId::Dictionary) {
+      DecodeDictionary(vr, cv, depth + 1);
+    } else if (vr.type_id() != CrateTypeId::Invalid) {
+      UnpackValue(vr, cv);
+    }
+    d->set(std::move(key), std::move(cv));
+
+    if (!reader_->seek(next_entry_pos)) return false;  // resume after this value
+  }
+  out = std::move(dv);
+  return true;
+}
+
 bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
   if (bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
     AddError(std::string(what) + " size exceeds addressable memory");
     return false;
+  }
+  // Always-on guard: a decoded in-memory buffer cannot plausibly exceed the
+  // input file size by more than the maximum stream compression ratio. This
+  // bounds allocations driven by a malformed/hostile count even when no
+  // explicit max_memory budget is configured (a tiny file can otherwise claim a
+  // multi-GB array/section and exhaust memory). The +slack admits small files
+  // with legitimately larger decoded buffers.
+  if (reader_) {
+    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    constexpr uint64_t kMaxRatio = 256;  // LZ4-ish worst-case headroom
+    constexpr uint64_t kSlack = 64ull * 1024 * 1024;  // 64 MiB
+    constexpr uint64_t kU64Max = (std::numeric_limits<uint64_t>::max)();
+    const uint64_t cap = (file_size > (kU64Max - kSlack) / kMaxRatio)
+                             ? kU64Max
+                             : file_size * kMaxRatio + kSlack;
+    if (bytes > cap) {
+      AddError(std::string(what) +
+               " exceeds file-size-relative allocation cap");
+      return false;
+    }
   }
   if (options_.max_memory && bytes > static_cast<uint64_t>(options_.max_memory)) {
     AddError(std::string(what) + " exceeds max_memory budget");

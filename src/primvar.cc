@@ -33,7 +33,7 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
   }
 
   if (has_timesamples()) {
-    const std::vector<value::TimeSamples::Sample> &samples = _ts.get_samples();
+    const std::vector<value::TimeSamples::Sample> &samples = ts_raw().get_samples();
 
     if (samples.empty()) {
       // ???

@@ -24,6 +24,7 @@ void usdc_writer_shader_terminal_test(void);
 void usdc_writer_layer_empty_shader_outputs_test(void);
 void usdc_writer_material_outputs_test(void);
 void usdc_writer_uvtexture_test(void);
+void usdc_writer_inmemory_shader_inputs_test(void);
 void usdc_writer_primvarreader_test(void);
 void usdc_writer_transform2d_test(void);
 void usdc_writer_previewsurface_full_test(void);

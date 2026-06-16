@@ -9,6 +9,8 @@
 #include "../reader/usdc-reader.hh"
 
 #include <algorithm>
+#include <cstring>
+#include <fstream>
 
 namespace tinyusdz {
 namespace next {
@@ -29,9 +31,22 @@ std::string ToLowerExt(const std::string &path) {
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err) {
-  const std::string ext = ToLowerExt(resolved_path);
+  std::string ext = ToLowerExt(resolved_path);
 
-  if (ext == "usda" || ext == "usd") {
+  // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
+  // magic ("PXR-USDC"); UE-exported scenes ship the root layer as `.usd` crate.
+  if (ext == "usd") {
+    char magic[8] = {0};
+    std::ifstream f(resolved_path, std::ios::binary);
+    if (f.read(magic, sizeof(magic)) &&
+        std::memcmp(magic, "PXR-USDC", sizeof(magic)) == 0) {
+      ext = "usdc";
+    } else {
+      ext = "usda";
+    }
+  }
+
+  if (ext == "usda") {
     LoadResult r = LoadUSDAFromFile(resolved_path);
     if (!r.success) {
       if (err) *err += "Failed to load USDA layer: " + resolved_path + " : " +

@@ -47,6 +47,37 @@ void print_mem(const char *tag) {
   std::printf("  [%s] process RSS = %.1f MiB\n", tag, double(kb) / 1024.0);
 }
 
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+size_t count_prims(const tinyusdz::next::Stage &stage) {
+  size_t n = 0;
+  stage.Traverse([&](const tinyusdz::next::UsdPrim &) {
+    ++n;
+    return true;
+  });
+  return n;
+}
+
+size_t root_prim_count(const tinyusdz::next::Stage &stage) {
+  return stage.GetRootPrims().size();
+}
+#else
+size_t count_prim_tree(const tinyusdz::Prim &p) {
+  size_t n = 1;
+  for (const auto &c : p.children()) n += count_prim_tree(c);
+  return n;
+}
+
+size_t count_prims(const tinyusdz::Stage &stage) {
+  size_t n = 0;
+  for (const auto &rp : stage.root_prims()) n += count_prim_tree(rp);
+  return n;
+}
+
+size_t root_prim_count(const tinyusdz::Stage &stage) {
+  return stage.root_prims().size();
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -100,18 +131,8 @@ int main(int argc, char **argv) {
   }
   if (!warn.empty()) std::printf("warn: %s\n", warn.c_str());
 
-  // Count all composed prims (recursively) to show that referenced descendants
-  // were reconstructed into the namespace.
-  std::function<size_t(const tinyusdz::Prim &)> count_prims =
-      [&](const tinyusdz::Prim &p) -> size_t {
-    size_t n = 1;
-    for (const auto &c : p.children()) n += count_prims(c);
-    return n;
-  };
-  size_t total_prims = 0;
-  for (const auto &rp : loader.stage().root_prims()) total_prims += count_prims(rp);
-
-  const size_t n_roots = loader.stage().root_prims().size();
+  const size_t total_prims = count_prims(loader.stage());
+  const size_t n_roots = root_prim_count(loader.stage());
   std::printf("Loaded.\n");
   std::printf("  root prims        = %zu\n", n_roots);
   std::printf("  total prims       = %zu\n", total_prims);

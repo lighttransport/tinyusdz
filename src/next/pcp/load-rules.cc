@@ -54,7 +54,10 @@ void LoadRules::ReplaceSubtree(const std::string &path, Rule rule) {
 LoadRules::Effect LoadRules::GetEffect(const std::string &path) const {
   if (rules_.empty()) return Effect::Default;
 
-  // Longest ancestor-or-equal rule (the closest governing prefix).
+  // Find the closest ancestor-or-equal rule (the longest prefix match).
+  // Mirrors OpenUSD's GetEffectiveRuleForPath using a linear scan of our
+  // unsorted rule vector (rulesets are small: a handful of Load/Unload
+  // calls).
   const std::pair<std::string, Rule> *best = nullptr;
   for (const auto &r : rules_) {
     if (IsAncestorOrEqual(r.first, path)) {
@@ -63,14 +66,20 @@ LoadRules::Effect LoadRules::GetEffect(const std::string &path) const {
   }
 
   if (best) {
+    // AllRule on the closest ancestor-or-equal: loads this prim and all
+    // descendants unconditionally.
     if (best->second == Rule::All) return Effect::All;
+
+    // OnlyRule on `path` itself: loads this prim but not descendants.
     if (best->first == path && best->second == Rule::Only) return Effect::Only;
-    // best is a None ancestor, or an Only ancestor that is not `path` itself:
-    // `path`'s own payload is not directly included -- but a deeper Load rule
-    // makes `path` part of an ancestor chain to something loaded (-> Only).
+
+    // Closest rule is a None ancestor, or an Only ancestor that is NOT
+    // `path` itself. Fall through to the descendant check: a descendant
+    // with All/Only can still make path an ancestor of loaded content.
   }
 
-  // Any descendant rule that loads makes `path` an ancestor of a loaded prim.
+  // Check descendants: if any descendant (at any depth, not just direct
+  // children) has All or Only, path is an ancestor of loaded content -> Only.
   for (const auto &r : rules_) {
     if (IsStrictDescendant(r.first, path) &&
         (r.second == Rule::All || r.second == Rule::Only)) {

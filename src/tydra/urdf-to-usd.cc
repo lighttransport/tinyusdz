@@ -24,7 +24,9 @@
 #include "mjcPhysics.hh"
 #include "stage.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 #include "usdPhysics.hh"
+#include "usdShade.hh"
 #include "value-types.hh"
 #include "xform.hh"
 
@@ -340,6 +342,97 @@ void AddTransformOp(Xformable &xformable, const value::matrix4d &matrix) {
   op.op_type = XformOp::OpType::Transform;
   op.set_value(matrix);
   xformable.xformOps.push_back(op);
+}
+
+// Jacobi eigenvalue decomposition of a symmetric 3x3 matrix. Outputs the
+// eigenvalues `eval[i]` and their eigenvectors as the columns of `evec`
+// (orthonormal). Used to diagonalize a full inertia tensor into principal
+// moments (eigenvalues) + a principal-axes rotation (eigenvectors).
+void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
+                           double evec[3][3]) {
+  double a[3][3];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) a[i][j] = in[i][j];
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++) evec[i][j] = (i == j) ? 1.0 : 0.0;
+
+  for (int sweep = 0; sweep < 100; sweep++) {
+    double off = std::fabs(a[0][1]) + std::fabs(a[0][2]) + std::fabs(a[1][2]);
+    if (off < 1e-18) break;
+    for (int p = 0; p < 2; p++) {
+      for (int q = p + 1; q < 3; q++) {
+        if (std::fabs(a[p][q]) < 1e-300) continue;
+        const double theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+        const double t = (theta >= 0.0 ? 1.0 : -1.0) /
+                         (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
+        const double c = 1.0 / std::sqrt(t * t + 1.0);
+        const double s = t * c;
+        // Apply the Givens rotation a := Jᵀ a J for indices (p, q).
+        const double app = a[p][p], aqq = a[q][q], apq = a[p][q];
+        a[p][p] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+        a[q][q] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+        a[p][q] = a[q][p] = 0.0;
+        const int r = 3 - p - q;  // the third index
+        const double arp = a[r][p], arq = a[r][q];
+        a[r][p] = a[p][r] = c * arp - s * arq;
+        a[r][q] = a[q][r] = s * arp + c * arq;
+        // Accumulate the eigenvectors.
+        for (int k = 0; k < 3; k++) {
+          const double ekp = evec[k][p], ekq = evec[k][q];
+          evec[k][p] = c * ekp - s * ekq;
+          evec[k][q] = s * ekp + c * ekq;
+        }
+      }
+    }
+  }
+  for (int i = 0; i < 3; i++) eval[i] = a[i][i];
+}
+
+// Convert a 3x3 rotation matrix (columns = orthonormal basis) into a quatf.
+// Forces a right-handed (det +1) frame so the quaternion is well-formed.
+value::quatf RotationMatrixToQuatf(double r[3][3]) {
+  // Ensure proper rotation: if det < 0, flip the third column.
+  const double det =
+      r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) -
+      r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) +
+      r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+  if (det < 0.0) {
+    r[0][2] = -r[0][2];
+    r[1][2] = -r[1][2];
+    r[2][2] = -r[2][2];
+  }
+  const double tr = r[0][0] + r[1][1] + r[2][2];
+  double w, x, y, z;
+  if (tr > 0.0) {
+    double S = std::sqrt(tr + 1.0) * 2.0;
+    w = 0.25 * S;
+    x = (r[2][1] - r[1][2]) / S;
+    y = (r[0][2] - r[2][0]) / S;
+    z = (r[1][0] - r[0][1]) / S;
+  } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+    double S = std::sqrt(1.0 + r[0][0] - r[1][1] - r[2][2]) * 2.0;
+    w = (r[2][1] - r[1][2]) / S;
+    x = 0.25 * S;
+    y = (r[0][1] + r[1][0]) / S;
+    z = (r[0][2] + r[2][0]) / S;
+  } else if (r[1][1] > r[2][2]) {
+    double S = std::sqrt(1.0 + r[1][1] - r[0][0] - r[2][2]) * 2.0;
+    w = (r[0][2] - r[2][0]) / S;
+    x = (r[0][1] + r[1][0]) / S;
+    y = 0.25 * S;
+    z = (r[1][2] + r[2][1]) / S;
+  } else {
+    double S = std::sqrt(1.0 + r[2][2] - r[0][0] - r[1][1]) * 2.0;
+    w = (r[1][0] - r[0][1]) / S;
+    x = (r[0][2] + r[2][0]) / S;
+    y = (r[1][2] + r[2][1]) / S;
+    z = 0.25 * S;
+  }
+  value::quatf q;
+  q.real = static_cast<float>(w);
+  q.imag = value::float3{static_cast<float>(x), static_cast<float>(y),
+                         static_cast<float>(z)};
+  return q;
 }
 
 template <typename GeomT>
@@ -700,6 +793,108 @@ void AddNewtonSceneOptions(const nlohmann::json &root, PhysicsScene &scene) {
   scene.newtonScene = newton_scene;
 }
 
+// Populate the full MjcSceneAPI from a payload `mjcScene` block carrying the
+// MuJoCo <option>/<option><flag>/<compiler> attributes (MJCF attr names). The
+// schema (src/mjcPhysics.hh) and its USDA/USDC round-trip already support all
+// of these; the parsers previously emitted only timestep.
+void ApplyMjcSceneOptions(const nlohmann::json &root, MjcSceneAPI &mjc) {
+  const nlohmann::json *ms = JsonObjectOrNull(root, "mjcScene");
+  if (!ms) return;
+
+  auto setNum = [](const nlohmann::json &o, const char *k, auto &field) {
+    double v;
+    if (JsonNumber(o, k, &v)) field.set_value(v);
+  };
+  auto setInt = [](const nlohmann::json &o, const char *k, auto &field) {
+    int v;
+    if (JsonIntFromObjectOrParent(o, "", k, &v)) field.set_value(v);
+  };
+  auto setTok = [](const nlohmann::json &o, const char *k, auto &field) {
+    const std::string v = JsonString(o, k);
+    if (!v.empty()) field.set_value(value::token(v));
+  };
+  auto setBool = [](const nlohmann::json &o, const char *k, auto &field) {
+    bool v;
+    if (JsonBool(o, k, &v)) field.set_value(v);
+  };
+  auto setVec3 = [](const nlohmann::json &o, const char *k, auto &field) {
+    const auto a = JsonDoubleArray(o, k);
+    if (a.size() >= 3) field.set_value(value::double3{a[0], a[1], a[2]});
+  };
+
+  if (const nlohmann::json *o = JsonObjectOrNull(*ms, "option")) {
+    setNum(*o, "timestep", mjc.timestep);
+    setNum(*o, "impratio", mjc.impratio);
+    setNum(*o, "density", mjc.density);
+    setNum(*o, "viscosity", mjc.viscosity);
+    setNum(*o, "o_margin", mjc.o_margin);
+    setNum(*o, "tolerance", mjc.tolerance);
+    setNum(*o, "ls_tolerance", mjc.ls_tolerance);
+    setNum(*o, "noslip_tolerance", mjc.noslip_tolerance);
+    setNum(*o, "ccd_tolerance", mjc.ccd_tolerance);
+    setInt(*o, "iterations", mjc.iterations);
+    setInt(*o, "ls_iterations", mjc.ls_iterations);
+    setInt(*o, "noslip_iterations", mjc.noslip_iterations);
+    setInt(*o, "ccd_iterations", mjc.ccd_iterations);
+    setInt(*o, "sdf_iterations", mjc.sdf_iterations);
+    setInt(*o, "sdf_initpoints", mjc.sdf_initpoints);
+    setTok(*o, "integrator", mjc.integrator);
+    setTok(*o, "cone", mjc.cone);
+    setTok(*o, "jacobian", mjc.jacobian);
+    setTok(*o, "solver", mjc.solver);
+    setVec3(*o, "wind", mjc.wind);
+    setVec3(*o, "magnetic", mjc.magnetic);
+    const auto sr = JsonDoubleArray(*o, "o_solref");
+    if (!sr.empty()) mjc.o_solref.set_value(sr);
+    const auto si = JsonDoubleArray(*o, "o_solimp");
+    if (!si.empty()) mjc.o_solimp.set_value(si);
+    const auto fr = JsonDoubleArray(*o, "o_friction");
+    if (!fr.empty()) mjc.o_friction.set_value(fr);
+  }
+
+  if (const nlohmann::json *f = JsonObjectOrNull(*ms, "flag")) {
+    setBool(*f, "constraint", mjc.flag_constraint);
+    setBool(*f, "equality", mjc.flag_equality);
+    setBool(*f, "frictionloss", mjc.flag_frictionloss);
+    setBool(*f, "limit", mjc.flag_limit);
+    setBool(*f, "contact", mjc.flag_contact);
+    setBool(*f, "gravity", mjc.flag_gravity);
+    setBool(*f, "clampctrl", mjc.flag_clampctrl);
+    setBool(*f, "warmstart", mjc.flag_warmstart);
+    setBool(*f, "filterparent", mjc.flag_filterparent);
+    setBool(*f, "actuation", mjc.flag_actuation);
+    setBool(*f, "refsafe", mjc.flag_refsafe);
+    setBool(*f, "sensor", mjc.flag_sensor);
+    setBool(*f, "midphase", mjc.flag_midphase);
+    setBool(*f, "nativeccd", mjc.flag_nativeccd);
+    setBool(*f, "eulerdamp", mjc.flag_eulerdamp);
+    setBool(*f, "autoreset", mjc.flag_autoreset);
+    setBool(*f, "island", mjc.flag_island);
+    setBool(*f, "override", mjc.flag_override);
+    setBool(*f, "energy", mjc.flag_energy);
+    setBool(*f, "fwdinv", mjc.flag_fwdinv);
+    setBool(*f, "invdiscrete", mjc.flag_invdiscrete);
+    setBool(*f, "multiccd", mjc.flag_multiccd);
+  }
+
+  if (const nlohmann::json *c = JsonObjectOrNull(*ms, "compiler")) {
+    setBool(*c, "autolimits", mjc.compiler_autoLimits);
+    setNum(*c, "boundmass", mjc.compiler_boundMass);
+    setNum(*c, "boundinertia", mjc.compiler_boundInertia);
+    setNum(*c, "settotalmass", mjc.compiler_setTotalMass);
+    setBool(*c, "usethread", mjc.compiler_useThread);
+    setBool(*c, "balanceinertia", mjc.compiler_balanceInertia);
+    setTok(*c, "angle", mjc.compiler_angle);
+    setBool(*c, "fitaabb", mjc.compiler_fitAABB);
+    setBool(*c, "fusestatic", mjc.compiler_fuseStatic);
+    setTok(*c, "inertiafromgeom", mjc.compiler_inertiaFromGeom);
+    setBool(*c, "alignfree", mjc.compiler_alignFree);
+    setInt(*c, "inertiagrouprange_min", mjc.compiler_inertiaGroupRangeMin);
+    setInt(*c, "inertiagrouprange_max", mjc.compiler_inertiaGroupRangeMax);
+    setBool(*c, "saveinertial", mjc.compiler_saveInertial);
+  }
+}
+
 std::vector<std::pair<APISchemas::APIName, std::string>>
 NewtonActuatorSchemas(const nlohmann::json &act_json) {
   std::vector<std::pair<APISchemas::APIName, std::string>> schemas;
@@ -801,6 +996,641 @@ bool AddNewtonActuatorFromJson(
   if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
     SetErr(err, "Failed to add Newton actuator `" + act.name +
                     "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <tendon><fixed> -> MjcTendon prim. The "fixed" tendon couples joints
+// with per-joint coefficients (Sum_i coef_i * q_i is constrained); we map the
+// referenced joints into the mjc:path rel and the coefficients into
+// mjc:path:coef. Spatial tendons (sites) are not yet emitted — a warning is
+// raised by the parser. JSON shape:
+//   { "name", "type":"fixed", "joints":[{"joint","coef"},...],
+//     "stiffness","damping","range":[lo,hi],"limited","frictionloss","margin",
+//     "springlength":[...] }
+bool AddMjcTendonFromJson(
+    Prim &tendons_prim, const nlohmann::json &t_json,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    const std::map<std::string, std::string> &site_name_to_usd,
+    std::map<std::string, std::string> &tendon_name_to_usd,
+    size_t index, std::string *warn, std::string *err) {
+  MjcTendon tendon;
+  const std::string source_name =
+      JsonString(t_json, "name", "tendon_" + std::to_string(index));
+  tendon.name = SanitizeUSDIdentifier(source_name, "tendon");
+  tendon_name_to_usd[source_name] = tendon.name;
+  const std::string type = JsonString(t_json, "type", "fixed");
+  tendon.type.set_value(value::token(type));
+
+  std::vector<Path> targets;
+  if (type == "spatial") {
+    // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints ->
+    // mjc:path rel to the routing site prims (wrap geoms approximated by their
+    // sidesite via point). mjc:path:coef carries the per-waypoint coefficient
+    // (1 for sites; pulley divisors are not modeled here).
+    std::vector<double> coefs;
+    if (t_json.contains("path") && t_json["path"].is_array()) {
+      for (const auto &wp : t_json["path"]) {
+        if (!wp.is_object()) continue;
+        std::string site_ref;
+        if (wp.contains("site")) site_ref = JsonString(wp, "site");
+        else if (wp.contains("sidesite")) site_ref = JsonString(wp, "sidesite");
+        if (site_ref.empty()) continue;  // pulley / unresolvable geom wrap
+        auto it = site_name_to_usd.find(site_ref);
+        if (it == site_name_to_usd.end()) continue;
+        targets.emplace_back("/World/Sites/" + it->second, "");
+        coefs.push_back(1.0);
+      }
+    }
+    if (targets.size() < 2) {
+      AppendWarn(warn, "Skipping spatial tendon `" + tendon.name +
+                           "`: fewer than 2 routing sites were exported.\n");
+      return true;
+    }
+    tendon.path.set(std::move(targets));
+    tendon.path_coef.set_value(coefs);
+    const auto rgba = JsonDoubleArray(t_json, "rgba");
+    if (rgba.size() >= 4) {
+      tendon.rgba.set_value(value::color4f{
+          static_cast<float>(rgba[0]), static_cast<float>(rgba[1]),
+          static_cast<float>(rgba[2]), static_cast<float>(rgba[3])});
+    }
+    double w = 0.0;
+    if (JsonNumber(t_json, "width", &w)) tendon.width.set_value(w);
+  } else {
+    // Fixed tendon: linear combination of joint coordinates.
+    std::vector<double> coefs;
+    if (t_json.contains("joints") && t_json["joints"].is_array()) {
+      for (const auto &je : t_json["joints"]) {
+        if (!je.is_object()) continue;
+        const std::string jname = JsonString(je, "joint");
+        auto it = joint_name_to_usd.find(jname);
+        if (it == joint_name_to_usd.end()) {
+          AppendWarn(warn, "Tendon `" + tendon.name + "` references joint `" +
+                               jname + "` that was not exported; skipping it.\n");
+          continue;
+        }
+        targets.emplace_back("/World/Joints/" + it->second, "");
+        double coef = 1.0;
+        JsonNumber(je, "coef", &coef);
+        coefs.push_back(coef);
+      }
+    }
+    if (targets.empty()) {
+      AppendWarn(warn, "Skipping tendon `" + tendon.name +
+                           "`: no referenced joint was exported.\n");
+      return true;
+    }
+    tendon.path.set(std::move(targets));
+    tendon.path_coef.set_value(coefs);
+  }
+
+  double v = 0.0;
+  if (JsonNumber(t_json, "stiffness", &v)) tendon.stiffness.set_value(v);
+  if (JsonNumber(t_json, "damping", &v)) tendon.damping.set_value(v);
+  if (JsonNumber(t_json, "frictionloss", &v)) tendon.frictionloss.set_value(v);
+  if (JsonNumber(t_json, "margin", &v)) tendon.margin.set_value(v);
+  if (JsonNumber(t_json, "armature", &v)) tendon.armature.set_value(v);
+  if (t_json.contains("range") && t_json["range"].is_array() &&
+      t_json["range"].size() >= 2) {
+    tendon.range_min.set_value(t_json["range"][0].get<double>());
+    tendon.range_max.set_value(t_json["range"][1].get<double>());
+    tendon.limited.set_value(value::token("true"));
+  }
+  if (t_json.contains("limited")) {
+    tendon.limited.set_value(value::token(JsonString(t_json, "limited", "auto")));
+  }
+  std::vector<double> springlen = JsonDoubleArray(t_json, "springlength");
+  if (!springlen.empty()) tendon.springlength.set_value(springlen);
+
+  std::string add_err;
+  if (!tendons_prim.add_child(Prim(tendon), true, &add_err)) {
+    SetErr(err, "Failed to add tendon `" + tendon.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <site> -> a small GeomSphere marker under /World/Sites carrying
+// MjcSiteAPI and a baked world transform (sites are the routing points for
+// spatial/muscle tendons). Records source-name -> USD-name in site_name_to_usd
+// so tendons can resolve their path. JSON: { name, matrix:[16], group, size }.
+bool AddMjcSiteFromJson(Prim &sites_prim, const nlohmann::json &s_json,
+                        std::set<std::string> &used_names,
+                        std::map<std::string, std::string> &site_name_to_usd,
+                        size_t index, std::string *err) {
+  const std::string source_name =
+      JsonString(s_json, "name", "site_" + std::to_string(index));
+  const std::string usd_name =
+      UniqueUSDIdentifier(source_name, used_names, "site");
+  site_name_to_usd[source_name] = usd_name;
+
+  GeomSphere site;
+  site.name = usd_name;
+  double radius = 0.005;
+  JsonNumber(s_json, "size", &radius);
+  if (radius <= 0.0) radius = 0.005;
+  site.radius.set_value(radius);
+  const std::vector<double> matrix = JsonDoubleArray(s_json, "matrix");
+  if (matrix.size() == 16) {
+    AddTransformOp(site, MatrixFromUSDArray(matrix));
+  }
+  AppendAPISchema(site.metas(), APISchemas::APIName::MjcSiteAPI);
+  int group = 0;
+  if (JsonIntFromObjectOrParent(s_json, "", "group", &group)) {
+    AddAttr(site.props, "mjc:group", group, /*uniform=*/true);
+  }
+  // Sites are markers, not colliders / visuals by default (MuJoCo group>=3).
+  site.purpose.set_value(Purpose::Guide);
+
+  std::string add_err;
+  if (!sites_prim.add_child(Prim(site), true, &add_err)) {
+    SetErr(err, "Failed to add site `" + usd_name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <equality> -> an Xform host prim carrying the matching MjcEquality*API
+// applied schema plus mjc:* attrs in the generic props map (these round-trip
+// through the generic props pass, mirroring the physx:* preservation contract).
+// connect/weld relate two bodies; joint relates two joints. JSON shape:
+//   { "name","type":"connect|weld|joint",
+//     "body1","body2","anchor":[x,y,z],            (connect/weld)
+//     "joint1","joint2","polycoef":[c0..c4],        (joint)
+//     "torquescale",                                 (weld)
+//     "solref":[...],"solimp":[...] }
+bool AddMjcEqualityFromJson(
+    Prim &equalities_prim, const nlohmann::json &e_json,
+    const std::map<std::string, std::string> &link_name_to_usd,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    size_t index, std::string *warn, std::string *err) {
+  const std::string type = JsonString(e_json, "type", "connect");
+  Xform host;
+  host.name = SanitizeUSDIdentifier(
+      JsonString(e_json, "name", "equality_" + std::to_string(index)),
+      "equality");
+
+  APISchemas::APIName api_name = APISchemas::APIName::MjcEqualityConnectAPI;
+  if (type == "weld") api_name = APISchemas::APIName::MjcEqualityWeldAPI;
+  else if (type == "joint") api_name = APISchemas::APIName::MjcEqualityJointAPI;
+  AppendAPISchema(host.metas(), api_name);
+
+  // Resolve the two related entities into rel targets so the constraint topology
+  // survives. connect/weld -> bodies (links); joint -> joints.
+  auto resolve_link = [&](const std::string &n, std::vector<Path> *out) {
+    auto it = link_name_to_usd.find(n);
+    if (it != link_name_to_usd.end())
+      out->emplace_back("/World/Links/" + it->second, "");
+  };
+  auto resolve_joint = [&](const std::string &n, std::vector<Path> *out) {
+    auto it = joint_name_to_usd.find(n);
+    if (it != joint_name_to_usd.end())
+      out->emplace_back("/World/Joints/" + it->second, "");
+  };
+
+  std::vector<Path> targets;
+  if (type == "joint") {
+    resolve_joint(JsonString(e_json, "joint1"), &targets);
+    resolve_joint(JsonString(e_json, "joint2"), &targets);
+  } else {
+    resolve_link(JsonString(e_json, "body1"), &targets);
+    resolve_link(JsonString(e_json, "body2"), &targets);
+  }
+  if (!targets.empty()) {
+    Relationship rel;
+    rel.set(targets);
+    host.props["mjc:target"] = Property(std::move(rel), false);
+  }
+
+  // Type-specific scalar/array attrs as generic mjc:* props.
+  double v = 0.0;
+  if (type == "weld" && JsonNumber(e_json, "torquescale", &v)) {
+    AddAttr(host.props, "mjc:torqueScale", static_cast<float>(v));
+  }
+  if (type == "joint" && e_json.contains("polycoef") &&
+      e_json["polycoef"].is_array()) {
+    const auto &pc = e_json["polycoef"];
+    const char *coef_names[5] = {"mjc:coef0", "mjc:coef1", "mjc:coef2",
+                                 "mjc:coef3", "mjc:coef4"};
+    for (size_t i = 0; i < pc.size() && i < 5; i++) {
+      if (pc[i].is_number()) AddAttr(host.props, coef_names[i], pc[i].get<double>());
+    }
+  }
+  std::vector<double> solref = JsonDoubleArray(e_json, "solref");
+  if (!solref.empty()) AddAttr(host.props, "mjc:solref", solref);
+  std::vector<double> solimp = JsonDoubleArray(e_json, "solimp");
+  if (!solimp.empty()) AddAttr(host.props, "mjc:solimp", solimp);
+  std::vector<double> anchor = JsonDoubleArray(e_json, "anchor");
+  if (!anchor.empty()) AddAttr(host.props, "mjc:anchor", anchor);
+
+  std::string add_err;
+  if (!equalities_prim.add_child(Prim(host), true, &add_err)) {
+    SetErr(err, "Failed to add equality `" + host.name + "`: " + add_err);
+    return false;
+  }
+  (void)warn;
+  return true;
+}
+
+// MJCF <general>/<muscle> (and tendon/site-targeted) actuators -> MjcActuator
+// prim, preserving the MuJoCo gain/bias/lengthrange parameters. The mjc:target
+// rel resolves to the tendon (muscles), joint, or site the actuator drives.
+// JSON: { name, actuatorType, targetTendon|targetJoint|targetSite,
+//         gainPrm, biasPrm, lengthRange, ctrlRange, forceRange, gear }.
+bool AddMjcActuatorFromJson(
+    Prim &actuators_prim, const nlohmann::json &a_json,
+    const std::map<std::string, std::string> &joint_name_to_usd,
+    const std::map<std::string, std::string> &tendon_name_to_usd,
+    const std::map<std::string, std::string> &site_name_to_usd,
+    const std::map<std::string, std::string> &link_name_to_usd,
+    std::set<std::string> &used_names, size_t index, std::string *warn,
+    std::string *err) {
+  MjcActuator act;
+  act.name = UniqueUSDIdentifier(
+      JsonString(a_json, "name", "actuator_" + std::to_string(index)),
+      used_names, "actuator");
+
+  // Resolve the driven entity into mjc:target.
+  std::vector<Path> targets;
+  const std::string t_tendon = JsonString(a_json, "targetTendon");
+  const std::string t_joint = JsonString(a_json, "targetJoint");
+  const std::string t_site = JsonString(a_json, "targetSite");
+  const std::string t_body = JsonString(a_json, "targetBody");
+  if (!t_tendon.empty()) {
+    auto it = tendon_name_to_usd.find(t_tendon);
+    if (it != tendon_name_to_usd.end())
+      targets.emplace_back("/World/Tendons/" + it->second, "");
+  } else if (!t_joint.empty()) {
+    auto it = joint_name_to_usd.find(t_joint);
+    if (it != joint_name_to_usd.end())
+      targets.emplace_back("/World/Joints/" + it->second, "");
+  } else if (!t_site.empty()) {
+    auto it = site_name_to_usd.find(t_site);
+    if (it != site_name_to_usd.end())
+      targets.emplace_back("/World/Sites/" + it->second, "");
+  } else if (!t_body.empty()) {  // <adhesion body=..>
+    auto it = link_name_to_usd.find(t_body);
+    if (it != link_name_to_usd.end())
+      targets.emplace_back("/World/Links/" + it->second, "");
+  }
+  if (!targets.empty()) act.target.set(std::move(targets));
+
+  std::vector<double> gainPrm = JsonDoubleArray(a_json, "gainPrm");
+  if (!gainPrm.empty()) act.gainPrm.set_value(gainPrm);
+  std::vector<double> biasPrm = JsonDoubleArray(a_json, "biasPrm");
+  if (!biasPrm.empty()) act.biasPrm.set_value(biasPrm);
+  std::vector<double> gear = JsonDoubleArray(a_json, "gear");
+  if (!gear.empty()) act.gear.set_value(gear);
+  if (a_json.contains("lengthRange") && a_json["lengthRange"].is_array() &&
+      a_json["lengthRange"].size() >= 2) {
+    act.lengthRange_min.set_value(a_json["lengthRange"][0].get<double>());
+    act.lengthRange_max.set_value(a_json["lengthRange"][1].get<double>());
+  }
+  if (a_json.contains("ctrlRange") && a_json["ctrlRange"].is_array() &&
+      a_json["ctrlRange"].size() >= 2) {
+    act.ctrlRange_min.set_value(a_json["ctrlRange"][0].get<double>());
+    act.ctrlRange_max.set_value(a_json["ctrlRange"][1].get<double>());
+  }
+  if (a_json.contains("forceRange") && a_json["forceRange"].is_array() &&
+      a_json["forceRange"].size() >= 2) {
+    act.forceRange_min.set_value(a_json["forceRange"][0].get<double>());
+    act.forceRange_max.set_value(a_json["forceRange"][1].get<double>());
+  }
+  if (a_json.contains("gainType"))
+    act.gainType.set_value(value::token(JsonString(a_json, "gainType", "fixed")));
+  if (a_json.contains("biasType"))
+    act.biasType.set_value(value::token(JsonString(a_json, "biasType", "none")));
+  if (a_json.contains("dynType"))
+    act.dynType.set_value(value::token(JsonString(a_json, "dynType", "none")));
+  if (a_json.contains("plugin"))
+    act.plugin.set_value(value::token(JsonString(a_json, "plugin", "")));
+  if (a_json.contains("instance"))
+    act.instance.set_value(value::token(JsonString(a_json, "instance", "")));
+
+  std::string add_err;
+  if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
+    SetErr(err, "Failed to add MjcActuator `" + act.name + "`: " + add_err);
+    return false;
+  }
+  (void)warn;
+  return true;
+}
+
+// MJCF <keyframe><key> -> MjcKeyframe prim (qpos/qvel/act/ctrl/mpos/mquat).
+bool AddMjcKeyframeFromJson(Prim &keyframes_prim, const nlohmann::json &k_json,
+                           std::set<std::string> &used_names, size_t index,
+                           std::string *err) {
+  MjcKeyframe kf;
+  kf.name = UniqueUSDIdentifier(
+      JsonString(k_json, "name", "key_" + std::to_string(index)), used_names,
+      "key");
+  auto setArr = [&](const char *key, auto &field) {
+    auto v = JsonDoubleArray(k_json, key);
+    if (!v.empty()) field.set_value(v);
+  };
+  setArr("qpos", kf.qpos);
+  setArr("qvel", kf.qvel);
+  setArr("act", kf.act);
+  setArr("ctrl", kf.ctrl);
+  setArr("mpos", kf.mpos);
+  setArr("mquat", kf.mquat);
+
+  std::string add_err;
+  if (!keyframes_prim.add_child(Prim(kf), true, &add_err)) {
+    SetErr(err, "Failed to add MjcKeyframe `" + kf.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <sensor> child -> MjcSensor prim. A single typed prim covers all sensor
+// kinds; the kind is `mjc:type` (the element name) and the measured object is
+// `mjc:objtype`/`mjc:objname` (+ reftype/refname for frame sensors). JSON:
+//   { name, type, objtype, objname, reftype, refname, group, cutoff, noise, user }.
+bool AddMjcSensorFromJson(Prim &sensors_prim, const nlohmann::json &s_json,
+                          std::set<std::string> &used_names, size_t index,
+                          std::string *err) {
+  MjcSensor sensor;
+  sensor.name = UniqueUSDIdentifier(
+      JsonString(s_json, "name", "sensor_" + std::to_string(index)), used_names,
+      "sensor");
+  auto tok = [&](const char *k, auto &field) {
+    const std::string v = JsonString(s_json, k);
+    if (!v.empty()) field.set_value(value::token(v));
+  };
+  tok("type", sensor.type);
+  tok("objtype", sensor.objType);
+  tok("objname", sensor.objName);
+  tok("reftype", sensor.refType);
+  tok("refname", sensor.refName);
+  int g = 0;
+  if (JsonIntFromObjectOrParent(s_json, "", "group", &g)) sensor.group.set_value(g);
+  double v = 0.0;
+  if (JsonNumber(s_json, "cutoff", &v)) sensor.cutoff.set_value(v);
+  if (JsonNumber(s_json, "noise", &v)) sensor.noise.set_value(v);
+  const auto user = JsonDoubleArray(s_json, "user");
+  if (!user.empty()) sensor.user.set_value(user);
+
+  std::string add_err;
+  if (!sensors_prim.add_child(Prim(sensor), true, &add_err)) {
+    SetErr(err, "Failed to add MjcSensor `" + sensor.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <contact><pair> -> an Xform host prim under /World/Contacts carrying the
+// pair geoms + collision params as generic mjc:* props (round-trips like the
+// equality host prims; no dedicated schema). JSON: { name, geom1, geom2,
+// condim, friction, solref, solimp, margin, gap }.
+bool AddContactPairFromJson(Prim &contacts_prim, const nlohmann::json &p_json,
+                            std::set<std::string> &used_names, size_t index,
+                            std::string *err) {
+  Xform host;
+  host.name = UniqueUSDIdentifier(
+      JsonString(p_json, "name", "pair_" + std::to_string(index)), used_names,
+      "pair");
+  AddAttr(host.props, "mjc:geom1", value::token(JsonString(p_json, "geom1")), true);
+  AddAttr(host.props, "mjc:geom2", value::token(JsonString(p_json, "geom2")), true);
+  int condim = 0;
+  if (JsonIntFromObjectOrParent(p_json, "", "condim", &condim))
+    AddAttr(host.props, "mjc:condim", condim, true);
+  double v = 0.0;
+  if (JsonNumber(p_json, "margin", &v)) AddAttr(host.props, "mjc:margin", v);
+  if (JsonNumber(p_json, "gap", &v)) AddAttr(host.props, "mjc:gap", v);
+  const auto friction = JsonDoubleArray(p_json, "friction");
+  if (!friction.empty()) AddAttr(host.props, "mjc:friction", friction);
+  const auto solref = JsonDoubleArray(p_json, "solref");
+  if (!solref.empty()) AddAttr(host.props, "mjc:solref", solref);
+  const auto solimp = JsonDoubleArray(p_json, "solimp");
+  if (!solimp.empty()) AddAttr(host.props, "mjc:solimp", solimp);
+
+  std::string add_err;
+  if (!contacts_prim.add_child(Prim(host), true, &add_err)) {
+    SetErr(err, "Failed to add contact pair `" + host.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// Build a row-vector local->world transform for a light whose emission axis
+// (USD light -Z) points along the world-space `dir`, positioned at the world
+// matrix's translation. `world` is the baked body*light frame (row-major,
+// translation in row 3); `local_dir` is the MJCF <light dir> in that frame.
+value::matrix4d LightTransformMatrix(const value::matrix4d &world,
+                                     const std::array<double, 3> &local_dir) {
+  // Rotate local_dir by the world frame's upper-3x3 (row-vector: v' = v * R).
+  double wd[3];
+  for (int j = 0; j < 3; j++) {
+    wd[j] = local_dir[0] * world.m[0][j] + local_dir[1] * world.m[1][j] +
+            local_dir[2] * world.m[2][j];
+  }
+  auto norm = [](double v[3]) {
+    double n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (n > 1e-12) { v[0] /= n; v[1] /= n; v[2] /= n; }
+  };
+  norm(wd);
+  // USD light emits along -Z, so the local Z axis (world) = -dir.
+  double z[3] = {-wd[0], -wd[1], -wd[2]};
+  // Pick an up reference not parallel to z.
+  double up[3] = {0, 0, 1};
+  if (std::fabs(z[2]) > 0.95) { up[0] = 0; up[1] = 1; up[2] = 0; }
+  double x[3] = {up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2],
+                 up[0] * z[1] - up[1] * z[0]};
+  norm(x);
+  double y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2],
+                 z[0] * x[1] - z[1] * x[0]};
+  value::matrix4d m;
+  Identity(&m);
+  for (int j = 0; j < 3; j++) {
+    m.m[0][j] = x[j];
+    m.m[1][j] = y[j];
+    m.m[2][j] = z[j];
+    m.m[3][j] = world.m[3][j];  // world translation
+  }
+  return m;
+}
+
+// MJCF <light> -> UsdLux: directional -> DistantLight, point/spot -> SphereLight
+// (spot gets a shaping cone). Color from <light diffuse>. JSON:
+//   { name, type, matrix:[16 world], dir:[3 local], color:[3], castshadow, cutoff }.
+bool AddLightFromJson(Prim &lights_prim, const nlohmann::json &l_json,
+                      std::set<std::string> &used_names, size_t index,
+                      std::string *err) {
+  const std::string usd_name = UniqueUSDIdentifier(
+      JsonString(l_json, "name", "light_" + std::to_string(index)), used_names,
+      "light");
+  const std::string type = JsonString(l_json, "type", "spot");
+  const value::matrix4d world = MatrixFromUSDArray(JsonDoubleArray(l_json, "matrix"));
+  std::array<double, 3> dir{0, 0, -1};
+  const auto d = JsonDoubleArray(l_json, "dir");
+  if (d.size() >= 3) dir = {d[0], d[1], d[2]};
+  const value::matrix4d xform = LightTransformMatrix(world, dir);
+
+  value::color3f color{1.0f, 1.0f, 1.0f};
+  const auto c = JsonFloatArray(l_json, "color");
+  if (c.size() >= 3) color = {c[0], c[1], c[2]};
+  bool castshadow = true;
+  JsonBool(l_json, "castshadow", &castshadow);
+
+  std::string add_err;
+  if (type == "directional") {
+    DistantLight light;
+    light.name = usd_name;
+    light.color.set_value(Animatable<value::color3f>(color));
+    light.shadowEnable.set_value(Animatable<bool>(castshadow));
+    AddTransformOp(light, xform);
+    if (!lights_prim.add_child(Prim(usd_name, light), true, &add_err)) {
+      SetErr(err, "Failed to add light `" + usd_name + "`: " + add_err);
+      return false;
+    }
+  } else {
+    SphereLight light;
+    light.name = usd_name;
+    light.radius.set_value(Animatable<float>(0.02f));  // near-point
+    light.color.set_value(Animatable<value::color3f>(color));
+    light.shadowEnable.set_value(Animatable<bool>(castshadow));
+    if (type == "spot") {
+      double cutoff = 45.0;
+      JsonNumber(l_json, "cutoff", &cutoff);
+      light.shapingConeAngle.set_value(Animatable<float>(static_cast<float>(cutoff)));
+    }
+    AddTransformOp(light, xform);
+    if (!lights_prim.add_child(Prim(usd_name, light), true, &add_err)) {
+      SetErr(err, "Failed to add light `" + usd_name + "`: " + add_err);
+      return false;
+    }
+  }
+  return true;
+}
+
+// MJCF <camera> -> UsdGeomCamera. fovy (vertical, degrees) -> verticalAperture
+// for the default focalLength; orthographic projection honored. JSON:
+//   { name, matrix:[16 world], fovy, orthographic }.
+bool AddCameraFromJson(Prim &cameras_prim, const nlohmann::json &c_json,
+                       std::set<std::string> &used_names, size_t index,
+                       std::string *err) {
+  GeomCamera cam;
+  cam.name = UniqueUSDIdentifier(
+      JsonString(c_json, "name", "camera_" + std::to_string(index)), used_names,
+      "camera");
+  AddTransformOp(cam, MatrixFromUSDArray(JsonDoubleArray(c_json, "matrix")));
+  double fovy = 45.0;
+  if (JsonNumber(c_json, "fovy", &fovy) && fovy > 0.0 && fovy < 180.0) {
+    // verticalAperture = 2 * focalLength * tan(fovy/2). Keep the default
+    // focalLength (50mm) and derive a matching vertical aperture (and a square
+    // horizontal aperture as a sensor-agnostic default).
+    const double f = 50.0;
+    const double va = 2.0 * f * std::tan(fovy * 0.5 * 3.14159265358979323846 / 180.0);
+    cam.focalLength.set_value(Animatable<float>(static_cast<float>(f)));
+    cam.verticalAperture.set_value(Animatable<float>(static_cast<float>(va)));
+    cam.horizontalAperture.set_value(Animatable<float>(static_cast<float>(va)));
+  }
+  bool ortho = false;
+  if (JsonBool(c_json, "orthographic", &ortho) && ortho) {
+    cam.projection.set_value(Animatable<GeomCamera::Projection>(
+        GeomCamera::Projection::Orthographic));
+  }
+  std::string add_err;
+  if (!cameras_prim.add_child(Prim(cam), true, &add_err)) {
+    SetErr(err, "Failed to add camera `" + cam.name + "`: " + add_err);
+    return false;
+  }
+  return true;
+}
+
+// MJCF <asset><material> -> UsdShade Material + child UsdPreviewSurface shader
+// under /World/Materials. Color/PBR-scalar only (rgba/metallic/roughness/
+// emission); texture maps are a documented follow-on. Geoms bind via a
+// deterministic /World/Materials/<sanitized-name> path (see AddMeshFromJson).
+bool AddMaterialFromJson(Prim &materials_prim, const nlohmann::json &m_json,
+                         std::set<std::string> &used_names, size_t index,
+                         std::string *err) {
+  const std::string src =
+      JsonString(m_json, "name", "material_" + std::to_string(index));
+  const std::string usd = SanitizeUSDIdentifier(src, "material");
+  if (!used_names.insert(usd).second) return true;  // MJCF names are unique
+
+  Material mat;
+  mat.name = usd;
+  Shader shader;
+  shader.name = "PreviewSurface";
+  shader.info_id = kUsdPreviewSurface;
+
+  UsdPreviewSurface ps;
+  ps.outputsSurface.set_authored(true);
+  const auto rgba = JsonFloatArray(m_json, "rgba");
+  value::color3f base{0.8f, 0.8f, 0.8f};
+  if (rgba.size() >= 3) {
+    base = value::color3f{rgba[0], rgba[1], rgba[2]};
+    ps.diffuseColor.set_value(Animatable<value::color3f>(base));
+  }
+  if (rgba.size() >= 4) ps.opacity.set_value(Animatable<float>(rgba[3]));
+  double v = 0.0;
+  if (JsonNumber(m_json, "metallic", &v))
+    ps.metallic.set_value(Animatable<float>(static_cast<float>(v)));
+  if (JsonNumber(m_json, "roughness", &v))
+    ps.roughness.set_value(Animatable<float>(static_cast<float>(v)));
+  double emission = 0.0;
+  if (JsonNumber(m_json, "emission", &emission) && emission > 0.0) {
+    ps.emissiveColor.set_value(Animatable<value::color3f>(value::color3f{
+        base[0] * static_cast<float>(emission),
+        base[1] * static_cast<float>(emission),
+        base[2] * static_cast<float>(emission)}));
+  }
+  // A texture map (<asset><texture file=...>) connects diffuseColor to a
+  // UsdUVTexture fed by a UsdPrimvarReader_float2 reading the mesh `st` primvar:
+  //   PreviewSurface.diffuseColor <- DiffuseTexture.outputs:rgb
+  //   DiffuseTexture.st           <- stReader.outputs:result
+  const std::string mat_path = "/World/Materials/" + usd;
+  const std::string tex_file = JsonString(m_json, "texture");
+  const bool has_texture = !tex_file.empty();
+  if (has_texture) {
+    ps.diffuseColor.set_connection(Path(mat_path + "/DiffuseTexture", "outputs:rgb"));
+    ps.diffuseColor.set_value_empty();
+  }
+  shader.value = std::move(ps);
+  mat.surface.set(Path(mat_path + "/PreviewSurface", "outputs:surface"));
+
+  Prim mat_prim(mat);
+  std::string add_err;
+  if (!mat_prim.add_child(Prim(shader), true, &add_err)) {
+    SetErr(err, "Failed to add shader for material `" + usd + "`: " + add_err);
+    return false;
+  }
+  if (has_texture) {
+    UsdPrimvarReader_float2 reader;
+    reader.varname.set_value(Animatable<std::string>("st"));
+    reader.result.set_authored(true);
+    Shader reader_shader;
+    reader_shader.name = "stReader";
+    reader_shader.info_id = kUsdPrimvarReader_float2;
+    reader_shader.value = std::move(reader);
+
+    UsdUVTexture tex;
+    tex.file.set_value(Animatable<value::AssetPath>(value::AssetPath(tex_file)));
+    tex.st.set_connection(Path(mat_path + "/stReader", "outputs:result"));
+    tex.st.set_value_empty();
+    tex.wrapS.set_value(Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
+    tex.wrapT.set_value(Animatable<UsdUVTexture::Wrap>(UsdUVTexture::Wrap::Repeat));
+    tex.sourceColorSpace.set_value(
+        Animatable<UsdUVTexture::SourceColorSpace>(UsdUVTexture::SourceColorSpace::SRGB));
+    tex.outputsRGB.set_authored(true);
+    Shader tex_shader;
+    tex_shader.name = "DiffuseTexture";
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = std::move(tex);
+
+    if (!mat_prim.add_child(Prim(reader_shader), true, &add_err) ||
+        !mat_prim.add_child(Prim(tex_shader), true, &add_err)) {
+      SetErr(err, "Failed to add texture shaders for material `" + usd + "`: " + add_err);
+      return false;
+    }
+  }
+  if (!materials_prim.add_child(std::move(mat_prim), true, &add_err)) {
+    SetErr(err, "Failed to add material `" + usd + "`: " + add_err);
     return false;
   }
   return true;
@@ -921,6 +1751,17 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
     AddCollisionAPIs(mesh, true, mesh_json, mjcf_source);
   } else {
     AddAPISchemas(mesh.metas(), {{APISchemas::APIName::MjcImageableAPI, ""}});
+    // Bind a UsdShade material (MJCF <geom material=..> -> /World/Materials/<m>).
+    // Material names are unique in MJCF, so a deterministic sanitized path lets
+    // us bind without threading a name map; the material prim is emitted later.
+    const std::string mat_name = JsonString(mesh_json, "material");
+    if (!mat_name.empty()) {
+      Relationship mat_rel;
+      mat_rel.set(Path("/World/Materials/" +
+                       SanitizeUSDIdentifier(mat_name, "material"), ""));
+      mesh.set_materialBinding(mat_rel);
+      AppendAPISchema(mesh.metas(), APISchemas::APIName::MaterialBindingAPI);
+    }
     if (mjcf_source) {
       int32_t group = 0;
       if (JsonIntFromObjectOrParent(mesh_json, "mjc", "group", &group) ||
@@ -1078,6 +1919,17 @@ bool ConvertURDFJsonToUSDStage(
       (root.contains("actuators") && root["actuators"].is_array())
           ? root["actuators"]
           : empty_array;
+  const nlohmann::json &tendons_json =
+      (root.contains("tendons") && root["tendons"].is_array())
+          ? root["tendons"]
+          : empty_array;
+  const nlohmann::json &equalities_json =
+      (root.contains("equalities") && root["equalities"].is_array())
+          ? root["equalities"]
+          : empty_array;
+  const nlohmann::json &sites_json =
+      (root.contains("sites") && root["sites"].is_array()) ? root["sites"]
+                                                           : empty_array;
   const std::string source_format = JsonString(root, "sourceFormat");
   const bool mjcf_source = (source_format == "mjcf" ||
                             source_format == "MJCF" ||
@@ -1092,6 +1944,11 @@ bool ConvertURDFJsonToUSDStage(
   const std::string up_axis = JsonString(root, "upAxis", "Y");
   const bool y_up = !(up_axis == "Z" || up_axis == "z");
   stage.metas().upAxis = y_up ? Axis::Y : Axis::Z;
+  // MuJoCo authors in SI units (meters, kilograms). Declare the stage scale so
+  // usdchecker's StageMetadataChecker passes and DCCs interpret distances and
+  // masses correctly (1 stage unit = 1 m / 1 kg).
+  stage.metas().metersPerUnit = 1.0;
+  stage.metas().kilogramsPerUnit = 1.0;
 
   Xform world;
   world.name = "World";
@@ -1129,6 +1986,8 @@ bool ConvertURDFJsonToUSDStage(
     if (JsonNumber(root, "timestep", &timestep)) {
       mjc_scene.timestep.set_value(timestep);
     }
+    // Full <option>/<flag>/<compiler> set (overrides/augments timestep).
+    ApplyMjcSceneOptions(root, mjc_scene);
     scene.mjcScene = mjc_scene;
     AddNewtonSceneOptions(root, scene);
     AddAPISchemas(scene.metas(), {
@@ -1167,6 +2026,12 @@ bool ConvertURDFJsonToUSDStage(
     link_name_to_usd[link_name] = usd_link_name;
     link_name_to_index[link_name] = link_prims.size();
 
+    // A world-fixed link (e.g. the synthetic "world" link holding worldbody-
+    // level floor/ground/hfield geoms) is a static collider, not a dynamic
+    // body: rigidBodyEnabled=false and no articulation root.
+    bool is_static = false;
+    JsonBool(link_json, "static", &is_static);
+
     Xform link_xform;
     link_xform.name = usd_link_name;
     AddAPISchemas(link_xform.metas(), {
@@ -1174,9 +2039,22 @@ bool ConvertURDFJsonToUSDStage(
                                           ""},
                                          {APISchemas::APIName::PhysicsMassAPI, ""},
                                      });
-    AddAttr(link_xform.props, "physics:rigidBodyEnabled", true);
+    AddAttr(link_xform.props, "physics:rigidBodyEnabled", !is_static);
     AddAttr(link_xform.props, "physics:startsAsleep", false);
-    if (!child_links.count(link_name)) {
+    // MuJoCo mocap body (externally driven, not simulated).
+    bool is_mocap = false;
+    if (JsonBool(link_json, "mocap", &is_mocap) && is_mocap) {
+      AddAttr(link_xform.props, "mjc:mocap", true, /*uniform=*/true);
+    }
+    // MuJoCo <freejoint>: a 6-DOF floating base. Mark it so a floating-base
+    // articulation root is distinguishable from a fixed (anchored) base, which
+    // is a parentless link WITHOUT this flag.
+    bool is_floating = false;
+    JsonBool(link_json, "floating", &is_floating);
+    if (is_floating) {
+      AddAttr(link_xform.props, "mjc:freeJoint", true, /*uniform=*/true);
+    }
+    if (!is_static && !child_links.count(link_name)) {
       AppendAPISchema(link_xform.metas(),
                       APISchemas::APIName::PhysicsArticulationRootAPI);
       AppendAPISchema(link_xform.metas(),
@@ -1196,10 +2074,32 @@ bool ConvertURDFJsonToUSDStage(
         AddAttr(link_xform.props, "physics:centerOfMass",
                 value::point3f{com[0], com[1], com[2]});
       }
-      std::vector<float> inertia = JsonFloatArray(inertial, "diagonalInertia");
-      if (inertia.size() >= 3) {
+      // Full (non-diagonal) inertia tensor: diagonalize into principal moments
+      // (physics:diagonalInertia) + a principal-axes rotation
+      // (physics:principalAxes), the lossless USD representation. Falls back to
+      // the diagonal-only path when only diaginertia was authored.
+      std::vector<double> fullI = JsonDoubleArray(inertial, "fullInertia");
+      if (fullI.size() >= 6) {
+        // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
+        const double m[3][3] = {{fullI[0], fullI[3], fullI[4]},
+                                {fullI[3], fullI[1], fullI[5]},
+                                {fullI[4], fullI[5], fullI[2]}};
+        double eval[3];
+        double evec[3][3];
+        JacobiEigenSymmetric3(m, eval, evec);
         AddAttr(link_xform.props, "physics:diagonalInertia",
-                value::float3{inertia[0], inertia[1], inertia[2]});
+                value::float3{static_cast<float>(eval[0]),
+                              static_cast<float>(eval[1]),
+                              static_cast<float>(eval[2])});
+        AddAttr(link_xform.props, "physics:principalAxes",
+                RotationMatrixToQuatf(evec));
+      } else {
+        std::vector<float> inertia =
+            JsonFloatArray(inertial, "diagonalInertia");
+        if (inertia.size() >= 3) {
+          AddAttr(link_xform.props, "physics:diagonalInertia",
+                  value::float3{inertia[0], inertia[1], inertia[2]});
+        }
       }
     }
 
@@ -1429,6 +2329,259 @@ bool ConvertURDFJsonToUSDStage(
     }
     has_actuators = !actuators_prim.children().empty();
   }
+
+  // MJCF <site> -> /World/Sites/<name> (GeomSphere markers + MjcSiteAPI). Built
+  // before tendons so spatial (muscle) tendons can resolve their routing sites.
+  Prim sites_prim;
+  bool has_sites = false;
+  std::map<std::string, std::string> site_name_to_usd;
+  if (!sites_json.empty()) {
+    Xform sites_scope;
+    sites_scope.name = "Sites";
+    sites_prim = Prim(sites_scope);
+    std::set<std::string> used_site_names;
+    for (size_t i = 0; i < sites_json.size(); i++) {
+      if (!AddMjcSiteFromJson(sites_prim, sites_json[i], used_site_names,
+                              site_name_to_usd, i, err)) {
+        return false;
+      }
+    }
+    has_sites = !sites_prim.children().empty();
+  }
+
+  // MJCF <tendon> -> /World/Tendons/<name> (MjcTendon prims).
+  Prim tendons_prim;
+  bool has_tendons = false;
+  std::map<std::string, std::string> tendon_name_to_usd;
+  if (!tendons_json.empty()) {
+    Xform tendons_scope;
+    tendons_scope.name = "Tendons";
+    tendons_prim = Prim(tendons_scope);
+    for (size_t i = 0; i < tendons_json.size(); i++) {
+      if (!AddMjcTendonFromJson(tendons_prim, tendons_json[i], joint_name_to_usd,
+                                site_name_to_usd, tendon_name_to_usd, i, warn,
+                                err)) {
+        return false;
+      }
+    }
+    has_tendons = !tendons_prim.children().empty();
+  }
+
+  // MJCF <general>/<muscle> actuators -> /World/MjcActuators (MjcActuator prims).
+  const nlohmann::json &mjc_actuators_json =
+      (root.contains("mjcActuators") && root["mjcActuators"].is_array())
+          ? root["mjcActuators"]
+          : empty_array;
+  Prim mjc_actuators_prim;
+  bool has_mjc_actuators = false;
+  if (!mjc_actuators_json.empty()) {
+    Xform scope;
+    scope.name = "MjcActuators";
+    mjc_actuators_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < mjc_actuators_json.size(); i++) {
+      if (!AddMjcActuatorFromJson(mjc_actuators_prim, mjc_actuators_json[i],
+                                  joint_name_to_usd, tendon_name_to_usd,
+                                  site_name_to_usd, link_name_to_usd, used, i,
+                                  warn, err)) {
+        return false;
+      }
+    }
+    has_mjc_actuators = !mjc_actuators_prim.children().empty();
+  }
+
+  // MJCF <keyframe> -> /World/Keyframes/<name> (MjcKeyframe prims).
+  const nlohmann::json &keyframes_json =
+      (root.contains("keyframes") && root["keyframes"].is_array())
+          ? root["keyframes"]
+          : empty_array;
+  Prim keyframes_prim;
+  bool has_keyframes = false;
+  if (!keyframes_json.empty()) {
+    Xform scope;
+    scope.name = "Keyframes";
+    keyframes_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < keyframes_json.size(); i++) {
+      if (!AddMjcKeyframeFromJson(keyframes_prim, keyframes_json[i], used, i,
+                                  err)) {
+        return false;
+      }
+    }
+    has_keyframes = !keyframes_prim.children().empty();
+  }
+
+  // MJCF <sensor> -> /World/Sensors (MjcSensor prims).
+  const nlohmann::json &sensors_json =
+      (root.contains("sensors") && root["sensors"].is_array()) ? root["sensors"]
+                                                               : empty_array;
+  Prim sensors_prim;
+  bool has_sensors = false;
+  if (!sensors_json.empty()) {
+    Xform scope;
+    scope.name = "Sensors";
+    sensors_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < sensors_json.size(); i++) {
+      if (!AddMjcSensorFromJson(sensors_prim, sensors_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_sensors = !sensors_prim.children().empty();
+  }
+
+  // MJCF <contact><pair> -> /World/Contacts (host Xforms with mjc:* props).
+  const nlohmann::json &contact_pairs_json =
+      (root.contains("contactPairs") && root["contactPairs"].is_array())
+          ? root["contactPairs"]
+          : empty_array;
+  Prim contacts_prim;
+  bool has_contacts = false;
+  if (!contact_pairs_json.empty()) {
+    Xform scope;
+    scope.name = "Contacts";
+    contacts_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < contact_pairs_json.size(); i++) {
+      if (!AddContactPairFromJson(contacts_prim, contact_pairs_json[i], used, i,
+                                  err)) {
+        return false;
+      }
+    }
+    has_contacts = !contacts_prim.children().empty();
+  }
+
+  // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX knobs).
+  Prim custom_prim;
+  bool has_custom = false;
+  if (const nlohmann::json *custom = JsonObjectOrNull(root, "custom")) {
+    Xform scope;
+    scope.name = "MjcCustom";
+    if (custom->contains("numeric") && (*custom)["numeric"].is_array()) {
+      for (const auto &n : (*custom)["numeric"]) {
+        const std::string nm = JsonString(n, "name");
+        if (nm.empty()) continue;
+        AddAttr(scope.props, "mjc:custom:" + nm, JsonDoubleArray(n, "data"));
+      }
+    }
+    if (custom->contains("text") && (*custom)["text"].is_array()) {
+      for (const auto &t : (*custom)["text"]) {
+        const std::string nm = JsonString(t, "name");
+        if (nm.empty()) continue;
+        AddAttr(scope.props, "mjc:customtext:" + nm,
+                value::token(JsonString(t, "data")));
+      }
+    }
+    if (!scope.props.empty()) {
+      custom_prim = Prim(scope);
+      has_custom = true;
+    }
+  }
+
+  // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins. The
+  // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
+  // MjcActuator's mjc:instance; preserve it so the engine-plugin setup survives.
+  Prim plugins_prim;
+  bool has_plugins = false;
+  if (root.contains("plugins") && root["plugins"].is_array()) {
+    Xform scope;
+    scope.name = "MjcPlugins";
+    for (const auto &p : root["plugins"]) {
+      const std::string inst = JsonString(p, "instance");
+      if (inst.empty()) continue;
+      const std::string plugin_id = JsonString(p, "plugin");
+      if (!plugin_id.empty()) {
+        AddAttr(scope.props, "mjc:plugin:" + inst + ":plugin",
+                value::token(plugin_id));
+      }
+      if (p.contains("config") && p["config"].is_object()) {
+        for (auto it = p["config"].begin(); it != p["config"].end(); ++it) {
+          if (!it.value().is_string()) continue;
+          AddAttr(scope.props,
+                  "mjc:plugin:" + inst + ":config:" + it.key(),
+                  value::token(it.value().get<std::string>()));
+        }
+      }
+    }
+    if (!scope.props.empty()) {
+      plugins_prim = Prim(scope);
+      has_plugins = true;
+    }
+  }
+
+  // MJCF <light> -> /World/Lights (UsdLux); <camera> -> /World/Cameras.
+  const nlohmann::json &lights_json =
+      (root.contains("lights") && root["lights"].is_array()) ? root["lights"]
+                                                             : empty_array;
+  const nlohmann::json &cameras_json =
+      (root.contains("cameras") && root["cameras"].is_array()) ? root["cameras"]
+                                                               : empty_array;
+  Prim lights_prim;
+  bool has_lights = false;
+  if (!lights_json.empty()) {
+    Xform scope;
+    scope.name = "Lights";
+    lights_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < lights_json.size(); i++) {
+      if (!AddLightFromJson(lights_prim, lights_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_lights = !lights_prim.children().empty();
+  }
+  Prim cameras_prim;
+  bool has_cameras = false;
+  if (!cameras_json.empty()) {
+    Xform scope;
+    scope.name = "Cameras";
+    cameras_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < cameras_json.size(); i++) {
+      if (!AddCameraFromJson(cameras_prim, cameras_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_cameras = !cameras_prim.children().empty();
+  }
+
+  // MJCF <asset><material> -> /World/Materials (UsdShade Material). Geoms bind
+  // via /World/Materials/<sanitized-name> (set in AddMeshFromJson).
+  const nlohmann::json &materials_json =
+      (root.contains("materials") && root["materials"].is_array())
+          ? root["materials"]
+          : empty_array;
+  Prim materials_prim;
+  bool has_materials = false;
+  if (!materials_json.empty()) {
+    Xform scope;
+    scope.name = "Materials";
+    materials_prim = Prim(scope);
+    std::set<std::string> used;
+    for (size_t i = 0; i < materials_json.size(); i++) {
+      if (!AddMaterialFromJson(materials_prim, materials_json[i], used, i, err)) {
+        return false;
+      }
+    }
+    has_materials = !materials_prim.children().empty();
+  }
+
+  // MJCF <equality> -> /World/Equalities/<name> (Xform + MjcEquality*API).
+  Prim equalities_prim;
+  bool has_equalities = false;
+  if (!equalities_json.empty()) {
+    Xform equalities_scope;
+    equalities_scope.name = "Equalities";
+    equalities_prim = Prim(equalities_scope);
+    for (size_t i = 0; i < equalities_json.size(); i++) {
+      if (!AddMjcEqualityFromJson(equalities_prim, equalities_json[i],
+                                  link_name_to_usd, joint_name_to_usd, i, warn,
+                                  err)) {
+        return false;
+      }
+    }
+    has_equalities = !equalities_prim.children().empty();
+  }
   {
     std::string add_err;
     if (!world_prim.add_child(Prim(scene), true, &add_err) ||
@@ -1440,6 +2593,66 @@ bool ConvertURDFJsonToUSDStage(
     if (has_actuators &&
         !world_prim.add_child(std::move(actuators_prim), true, &add_err)) {
       SetErr(err, "Failed to add Newton actuator scope: " + add_err);
+      return false;
+    }
+    if (has_tendons &&
+        !world_prim.add_child(std::move(tendons_prim), true, &add_err)) {
+      SetErr(err, "Failed to add tendon scope: " + add_err);
+      return false;
+    }
+    if (has_equalities &&
+        !world_prim.add_child(std::move(equalities_prim), true, &add_err)) {
+      SetErr(err, "Failed to add equality scope: " + add_err);
+      return false;
+    }
+    if (has_sites &&
+        !world_prim.add_child(std::move(sites_prim), true, &add_err)) {
+      SetErr(err, "Failed to add site scope: " + add_err);
+      return false;
+    }
+    if (has_mjc_actuators &&
+        !world_prim.add_child(std::move(mjc_actuators_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcActuator scope: " + add_err);
+      return false;
+    }
+    if (has_keyframes &&
+        !world_prim.add_child(std::move(keyframes_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Keyframes scope: " + add_err);
+      return false;
+    }
+    if (has_lights &&
+        !world_prim.add_child(std::move(lights_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Lights scope: " + add_err);
+      return false;
+    }
+    if (has_cameras &&
+        !world_prim.add_child(std::move(cameras_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Cameras scope: " + add_err);
+      return false;
+    }
+    if (has_materials &&
+        !world_prim.add_child(std::move(materials_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Materials scope: " + add_err);
+      return false;
+    }
+    if (has_sensors &&
+        !world_prim.add_child(std::move(sensors_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Sensors scope: " + add_err);
+      return false;
+    }
+    if (has_contacts &&
+        !world_prim.add_child(std::move(contacts_prim), true, &add_err)) {
+      SetErr(err, "Failed to add Contacts scope: " + add_err);
+      return false;
+    }
+    if (has_custom &&
+        !world_prim.add_child(std::move(custom_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcCustom scope: " + add_err);
+      return false;
+    }
+    if (has_plugins &&
+        !world_prim.add_child(std::move(plugins_prim), true, &add_err)) {
+      SetErr(err, "Failed to add MjcPlugins scope: " + add_err);
       return false;
     }
   }

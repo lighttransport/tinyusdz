@@ -121,6 +121,15 @@ struct ReferencesCompositionOptions {
   /// metadata even for skipped arcs).
   ///
   std::function<bool(const Path &prim_path, const Reference &reference)> load_policy;
+
+  // Optional cache of parsed referenced layers (keyed internally by resolved
+  // path + resolution context). Each referenced file is parsed once and its
+  // Layer copied per arc — with the copy-on-write value storage, every
+  // referencing prim then SHARES one copy of the heavy attribute arrays
+  // (UE-export scenes reference the same mesh files thousands of times).
+  // Owned by the caller and typically kept alive across the whole fixed-point
+  // composition loop. nullptr = parse per arc (legacy behavior).
+  std::map<std::string, Layer> *layer_cache{nullptr};
 };
 
 struct PayloadCompositionOptions {
@@ -143,6 +152,9 @@ struct PayloadCompositionOptions {
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
   bool allow_parent_relative_paths{false};
+
+  // See ReferencesCompositionOptions::layer_cache.
+  std::map<std::string, Layer> *layer_cache{nullptr};
 
   ///
   /// Lazy payload loading policy.
@@ -216,6 +228,60 @@ bool HasInherits(const Layer &layer);
 /// @param[in] layer Layer
 ///
 bool HasVariants(const Layer &layer);
+
+///
+/// AOUSD Core Spec 10.3.2.5: variant selection is computed from opinions across
+/// ALL composition arcs, so an iterative flatten must DEFER variant composition
+/// until references and payloads are resolved. Otherwise a strong local variant
+/// selection is baked against an empty/placeholder variantSet from a weaker
+/// layer and consumed, so a deep default selection ends up winning (e.g. Pixar
+/// Kitchen_set's Chair.usd: empty variant blocks + a payload chain to the layer
+/// that holds the real variantSet).
+///
+/// Returns true when variant composition for `layer` should be deferred because
+/// references and/or payloads are still unresolved (gated by the enabled-arc
+/// flags — pass the driver's composition-feature toggles). The reference/payload
+/// checks do not descend into unselected variant blocks, so deferring cannot
+/// deadlock on arcs that only appear once a variant is selected.
+///
+/// @param[in] layer Layer
+/// @param[in] references_enabled Whether the caller resolves `references`.
+/// @param[in] payload_enabled Whether the caller resolves `payload`.
+///
+bool ShouldDeferVariantComposition(const Layer &layer,
+                                   bool references_enabled = true,
+                                   bool payload_enabled = true);
+
+///
+/// Bake every PrimSpec's `apiSchemas` applied-schema list-op into EXPLICIT form
+/// (recursively, in place). Call this ONCE after a Layer has been fully
+/// flattened (all arcs composed): pxrUSD's `usdcat --flatten` emits a composed
+/// prim's apiSchemas as `apiSchemas = [...]` (explicit), never the authored
+/// `prepend`/`append` qualifier -- the qualifier is meaningful only against
+/// weaker opinions, which no longer exist in a flattened layer (keeping it would
+/// wrongly re-prepend if the flattened layer were itself re-referenced). Resolve
+/// the authored ops (prepend/append/add/delete/explicit) into one explicit op
+/// carrying the composed name set. No-op for prims with no authored apiSchemas
+/// or authored as `apiSchemas = None`.
+///
+/// MUST run only at the END of flatten, not between composition iterations: a
+/// mid-flatten reset-to-explicit would shadow apiSchemas a later arc still adds.
+///
+/// @param[in,out] layer Fully-flattened Layer to finalize.
+///
+void FlattenAppliedSchemas(Layer &layer);
+
+///
+/// Opt-in: when making an authored RELATIVE asset path absolute on flatten,
+/// lexically NORMALIZE the result (collapse `.`/`..`), matching OpenUSD usdcat
+/// (`.../Meshes/Foo/../../../Materials/x.png` -> `.../Materials/x.png`). Default
+/// false keeps tinyusdz's existing behavior (the joined path retains `..`).
+///
+/// MUST be set BEFORE composition/flatten (it is consumed while resolving asset
+/// attributes, not at print time).
+///
+void SetNormalizeAssetPathOnFlatten(bool enable);
+bool GetNormalizeAssetPathOnFlatten();
 
 ///
 /// Return true when any PrimSpec in the Layer contains `over` Prim.
