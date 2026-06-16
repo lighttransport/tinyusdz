@@ -1322,7 +1322,7 @@ struct Cache::Impl {
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) {
     using ProfClock = std::chrono::steady_clock;
-    const bool prof = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+    const bool prof = options.enable_timing;
     std::vector<BuildStageWork> stack;
     stack.push_back(root_work);
 
@@ -1444,7 +1444,7 @@ struct Cache::Impl {
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
     }
-    if (std::getenv("TINYUSDZ_NEXT_TIMING")) {
+    if (options.enable_timing) {
       std::fprintf(stderr,
                    "[next_build] sources=%.1fms compose=%.1fms register=%.1fms\n",
                    prof_sources_ns_ / 1e6, prof_compose_ns_ / 1e6,
@@ -1811,7 +1811,7 @@ struct Cache::Impl {
   void ParallelWarmSources(const std::vector<std::string> &root_names, int nt,
                            std::string *warn, std::string *err) {
     using PWClock = std::chrono::steady_clock;
-    const bool prof = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+    const bool prof = options.enable_timing;
     auto t_start = prof ? PWClock::now() : PWClock::time_point{};
     const size_t want = static_cast<size_t>(nt) * 4;
     const uint32_t kMaxFrontierDepth = 8;
@@ -2375,7 +2375,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            const CompositionOptions &options, std::string *warn,
                            std::string *err) {
   if (!root_layer || !out_stage) return false;
-  const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  const bool timing = options.enable_timing;
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
     return std::chrono::duration<double, std::milli>(d).count();
