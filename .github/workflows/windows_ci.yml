@@ -27,7 +27,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
       - name: Configure
-        run: cmake -G "Visual Studio 18 2026" -A x64 -DTINYUSDZ_WITH_OPENSUBDIV=On -DTINYUSDZ_WITH_TINYSUBDIV=Off -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On -Bbuild_next -H.
+        # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
+        # `run:` step executes in PowerShell, which mis-parses `-H.`.
+        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DTINYUSDZ_WITH_OPENSUBDIV=On -DTINYUSDZ_WITH_TINYSUBDIV=Off -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On
       - name: Build
         run: cmake --build build_next --config Release
       - name: Test
