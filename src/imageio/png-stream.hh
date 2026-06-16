@@ -87,11 +87,15 @@ class PngScanlineWriter {
   // IDAT run with the freshly deflated rows. Produces byte-equivalent metadata
   // to the input (preserves palette, ancillary chunks, bit depth). `templ` must
   // outlive Finish().
-  bool BeginPassthrough(const PngScanlineReader &templ, int deflate_level = 9);
+  //
+  // deflate_level defaults to 6 (zlib default): level 9 is several times
+  // slower for a few percent smaller output, and dominated texture re-encode
+  // wall time on large scenes (~2 MP/s per 2048^2 texture).
+  bool BeginPassthrough(const PngScanlineReader &templ, int deflate_level = 6);
 
   // Fresh mode: synthesize IHDR for a (possibly transformed) image; Finish()
   // emits signature + IHDR + IDAT + IEND only (no palette/ancillary).
-  bool Begin(const PngImageInfo &info, int deflate_level = 9);
+  bool Begin(const PngImageInfo &info, int deflate_level = 6);
 
   // Filter + deflate one scanline (info().row_bytes bytes).
   bool WriteRow(const uint8_t *row);

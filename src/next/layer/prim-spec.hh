@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <functional>
 
 namespace tinyusdz {
 namespace next {
@@ -74,14 +75,39 @@ struct VariantData;
 struct VariantSetData;
 class Layer;  // for VariantData::content (variant subtree)
 
+/// One attribute authored inside a variant option. Carries the property flags
+/// (custom / uniform / connection / array) so the variant graft preserves them
+/// — a bare name->Value pair would silently drop `custom`/`uniform`.
+struct VariantProperty {
+  std::string name;
+  Value value;
+  uint16_t flags = 0;
+
+  VariantProperty() = default;
+  VariantProperty(std::string n, Value v, uint16_t f = 0)
+      : name(std::move(n)), value(std::move(v)), flags(f) {}
+};
+
 /// Variant data - properties and prims inside a single variant option
 struct VariantData {
   std::string name;
   bool active = true;
   bool hidden = false;
   std::string doc;
-  std::vector<std::pair<std::string, Value>> properties;
+  std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  // Composition arcs authored in the variant OPTION's metadata block, e.g.
+  // `"opt" ( prepend payload = @./geo.usd@</geo> ) {}`. Stored in the same
+  // canonical "@asset@</prim>" / "</prim>" encoding as PrimSpecMeta's arc
+  // vectors (Compositor::ParseReference/ParsePayload decodes them). Composed
+  // when this variant is selected — the geometry-defining payload of XGen-style
+  // assets lives here, not in the variant body. Empty on the common case.
+  std::vector<std::string> references;
+  std::vector<std::string> payloads;
+  std::vector<std::string> inherits;
+  std::vector<std::string> specializes;
+  // Nested variant sets authored inside this variant option (recursive).
+  std::vector<VariantSetData> variantSets;
   // Optional subtree for variants that add prim-level opinions and/or child
   // prims: a Layer whose root prim "__self__" carries the host opinions and
   // whose descendants become the host prim's children when this variant is
@@ -136,6 +162,8 @@ struct ArcListOpEdits {
 struct PrimSpecMetaExt {
   std::string doc;
   std::string comment;
+  std::string kind;         // model kind (component/group/assembly/...)
+  std::string displayName;  // UI display name
   // When non-empty (set by composition), this prim is an instance whose
   // children come from the prototype prim at this path (no duplicated subtree).
   std::string instance_prototype;
@@ -147,6 +175,11 @@ struct PrimSpecMetaExt {
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Relocates: namespace renames (absolute source path -> absolute target path).
   std::vector<std::pair<std::string, std::string>> relocates;
+  // Dictionary-valued metadata (each a Dictionary Value; empty when unauthored).
+  Value customData;
+  Value assetInfo;
+  Value sdrMetadata;
+  Value clips;
   // Arc list-op qualifiers (Phase 7 S5); null unless authored.
   std::unique_ptr<ArcListOpEdits> arc_edits;
 
@@ -154,11 +187,17 @@ struct PrimSpecMetaExt {
   PrimSpecMetaExt(const PrimSpecMetaExt &o)
       : doc(o.doc),
         comment(o.comment),
+        kind(o.kind),
+        displayName(o.displayName),
         instance_prototype(o.instance_prototype),
         apiSchemas(o.apiSchemas),
         variantSets(o.variantSets),
         variantSelections(o.variantSelections),
         relocates(o.relocates),
+        customData(o.customData),
+        assetInfo(o.assetInfo),
+        sdrMetadata(o.sdrMetadata),
+        clips(o.clips),
         arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
   PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
 };
@@ -240,6 +279,22 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->comment;
   }
+  const std::string &kind() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->kind : kEmpty;
+  }
+  std::string &kind() {
+    ensure_ext();
+    return ext_->kind;
+  }
+  const std::string &displayName() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->displayName : kEmpty;
+  }
+  std::string &displayName() {
+    ensure_ext();
+    return ext_->displayName;
+  }
   const std::string &instance_prototype() const {
     static const std::string kEmpty;
     return ext_ ? ext_->instance_prototype : kEmpty;
@@ -281,9 +336,83 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->relocates;
   }
+  const Value &customData() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->customData : kEmpty;
+  }
+  Value &customData() {
+    ensure_ext();
+    return ext_->customData;
+  }
+  const Value &assetInfo() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->assetInfo : kEmpty;
+  }
+  Value &assetInfo() {
+    ensure_ext();
+    return ext_->assetInfo;
+  }
+  const Value &sdrMetadata() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->sdrMetadata : kEmpty;
+  }
+  Value &sdrMetadata() {
+    ensure_ext();
+    return ext_->sdrMetadata;
+  }
+  const Value &clips() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->clips : kEmpty;
+  }
+  Value &clips() {
+    ensure_ext();
+    return ext_->clips;
+  }
 
  private:
   std::unique_ptr<PrimSpecMetaExt> ext_;
+};
+
+/// Per-property metadata (the `( ... )` block after an attribute/relationship).
+/// Lazily allocated per property in PrimSpec::prop_metas_, so an ordinary
+/// property pays nothing. `authored` records which fields were explicitly set so
+/// the writer re-emits exactly the authored opinions (e.g. elementSize=1).
+struct PropMeta {
+  uint32_t authored = 0;
+  enum : uint32_t {
+    kInterpolation  = 1u << 0,  kElementSize   = 1u << 1,
+    kColorSpace     = 1u << 2,  kDisplayName   = 1u << 3,
+    kDisplayGroup   = 1u << 4,  kDoc           = 1u << 5,
+    kHidden         = 1u << 6,  kRenderType    = 1u << 7,
+    kConnectability = 1u << 8,  kOutputName    = 1u << 9,
+    kBindMaterialAs = 1u << 10, kKind          = 1u << 11,
+    kWeight         = 1u << 12, kUnauthoredIdx = 1u << 13,
+    kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
+    kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
+  };
+  // token / string fields
+  std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
+  std::string colorSpace;
+  std::string renderType;
+  std::string connectability;
+  std::string outputName;
+  std::string bindMaterialAs;
+  std::string kind;
+  std::string displayName;
+  std::string displayGroup;
+  std::string doc;
+  // scalar fields
+  int32_t elementSize = 1;
+  int32_t unauthoredValuesIndex = -1;
+  double  weight = 0.0;
+  bool    hidden = false;
+  // array / dict fields
+  std::vector<std::string> allowedTokens;
+  Value customData;
+  Value assetInfo;
+  Value sdrMetadata;
+
+  bool empty() const { return authored == 0; }
 };
 
 /// Value storage block
@@ -453,6 +582,21 @@ public:
   /// Add a property slot without value (for time-sampled properties)
   void add_property_slot(PropNameId name_id, TypeId type_id, uint16_t flags);
 
+  /// Mark an existing property slot as time-sampled. Needed when an attribute is
+  /// declared first (e.g. `<type> <name> ( meta )`) and its `.timeSamples` arrive
+  /// on a later statement: the slot already exists, so the time-sampled flag must
+  /// be OR'd onto it (else the writer's is_time_sampled() check drops the
+  /// samples). No-op if the slot is absent.
+  void mark_property_time_sampled(PropNameId name_id);
+
+  /// Field-level fill-absent: if a slot for `name_id` exists but carries no
+  /// authored default value (a connection-only / declared-only attribute), set
+  /// its default to `value`. No-op if the slot is absent or already has a value.
+  /// pxr composes an attribute's default value and its connections as
+  /// independent fields, so a weaker source's default fills a stronger
+  /// connection-only opinion. Returns true if a value was filled.
+  bool fill_property_value_if_absent(PropNameId name_id, Value value);
+
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
 
@@ -523,6 +667,14 @@ public:
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
 
+  /// Rewrite relationship + connection target paths that lie WITHIN `old_prefix`
+  /// (== it, or a descendant `old_prefix/...`) to the corresponding path under
+  /// `new_prefix`. Used by the extracted-prototype flatten to retarget internal
+  /// material:binding / connections when a prototype subtree moves to a
+  /// `/Flattened_Prototype_N` root. Targets outside `old_prefix` are untouched.
+  void remap_target_prefix(const std::string& old_prefix,
+                           const std::string& new_prefix);
+
   /// Record the declared USD type name of a property (e.g. "color3f",
   /// "token", "float[]"). Needed to faithfully re-emit attributes that have
   /// no authored default value (connection-only / declared-only) and to
@@ -534,6 +686,18 @@ public:
   const std::string* property_type_name(const std::string& prop_name) const;
 
   // ============================================================
+  // Per-property metadata (interpolation / customData / ...)
+  // ============================================================
+
+  /// Get a property's metadata, or nullptr if none authored (never allocates).
+  const PropMeta* property_meta(PropNameId name_id) const;
+  const PropMeta* property_meta(const std::string& prop_name) const;
+
+  /// Get (lazily allocating) a property's mutable metadata for population.
+  PropMeta& ensure_property_meta(const std::string& prop_name);
+  PropMeta& ensure_property_meta(PropNameId name_id);
+
+  // ============================================================
   // Children (stored as indices into Layer's prim array)
   // ============================================================
 
@@ -542,6 +706,12 @@ public:
 
   /// Add child index
   void add_child_index(uint32_t index);
+
+  /// Drop all child links (orphan the subtree). The child prims remain in the
+  /// Layer but become unreachable from this prim — used by the extracted-
+  /// prototype flatten to move an instance's inline subtree onto a
+  /// `/Flattened_Prototype_N` root.
+  void clear_child_indices() { child_indices_.clear(); }
 
   /// Get child count
   size_t child_count() const { return child_indices_.size(); }
@@ -588,6 +758,11 @@ private:
   // "string pooling" of the original low-memory plan (typeNames are highly
   // repeated, so interning collapses ~150k strings to a few dozen).
   std::unordered_map<uint32_t, uint32_t> prop_type_names_;
+
+  // Per-property metadata, keyed by interned PropNameId.id (lazily allocated, so
+  // ordinary properties cost nothing). Same side-table pattern as
+  // prop_type_names_ / connections_ — sort-stable across finalize_properties().
+  std::unordered_map<uint32_t, std::unique_ptr<PropMeta>> prop_metas_;
 
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;

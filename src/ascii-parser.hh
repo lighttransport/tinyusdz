@@ -1259,8 +1259,10 @@ class AsciiParser {
 
   StageMetas _stage_metas;
 
-  // Memory tracking
-  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  // Memory tracking. Default 16GB (matches the public LoadOptions default and
+  // is overridden per-load via SetMaxMemoryLimit). The previous 128GB default
+  // was effectively unlimited, making the tracker a no-op guard.
+  uint64_t _max_memory_limit_bytes{16ull * 1024ull * 1024ull * 1024ull};
   uint64_t _memory_usage{0};
   uint32_t _dict_nesting_depth{0}; ///< Tracks ParseDict recursion depth
 

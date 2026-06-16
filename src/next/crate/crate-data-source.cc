@@ -298,6 +298,30 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 
   const bool compressed = rep.is_compressed();
 
+  // Guard the per-element allocation BEFORE allocating any std::vector(count):
+  // the cases below allocate count*elem bytes and only then call read_raw()
+  // (whose has_elements() check is too late). A malformed count (e.g. 1e9
+  // matrix4d = 128 GB) would OOM first. For an uncompressed array the bytes must
+  // be present in the file; for any array, cap the decoded size at the input
+  // size times the maximum stream compression ratio (mirrors the eager reader's
+  // CheckByteAllocation).
+  {
+    const uint64_t stride = CrateArrayElemStride(type_id);
+    const uint64_t elem_bytes = stride ? stride : 1;
+    if (!compressed && stride > 0 &&
+        !r.has_elements(static_cast<size_t>(count), static_cast<size_t>(stride))) {
+      return false;
+    }
+    constexpr uint64_t kMaxRatio = 256;
+    constexpr uint64_t kSlack = 64ull * 1024 * 1024;
+    constexpr uint64_t kU64Max = (std::numeric_limits<uint64_t>::max)();
+    const uint64_t fsz = static_cast<uint64_t>(size);
+    const uint64_t cap = (fsz > (kU64Max - kSlack) / kMaxRatio)
+                             ? kU64Max
+                             : fsz * kMaxRatio + kSlack;
+    if (count > cap / elem_bytes) return false;  // count*elem_bytes > cap
+  }
+
   auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
     uint64_t comp_size;
     if (!r.read_u64(comp_size)) return false;

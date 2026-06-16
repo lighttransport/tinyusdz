@@ -31,6 +31,7 @@
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "memory-budget.hh"
+#include "safe-arithmetic.hh"
 #include "parser-timing.hh"
 #include "path-util.hh"
 #include "core/prim-spec.hh"
@@ -222,7 +223,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 #endif
 
-  // Read all ValueReps first
+  // Read all ValueReps first (bounded by times.size() above, but budget it
+  // explicitly so the reservation is accounted for like every other allocation).
+  size_t reps_bytes;
+  if (!safe::n_to_size<crate::ValueRep>(num_values, &reps_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: num_values * sizeof(ValueRep)");
+  }
+  CHECK_MEMORY_USAGE(reps_bytes);
   std::vector<crate::ValueRep> value_reps(static_cast<size_t>(num_values));
   for (size_t i = 0; i < num_values; i++) {
     if (!ReadValueRep(&value_reps[i])) {

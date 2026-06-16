@@ -29,6 +29,14 @@
 #include <string>
 #include <vector>
 
+// Local (file-scope) PNG/image decoder for <asset><hfield file="...png">.
+// STB_IMAGE_STATIC keeps the implementation private to this TU so it cannot
+// collide with any copy linked into libtinyusdz_static.
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -57,7 +65,17 @@ struct MeshAsset {
 struct MeshData {
   std::vector<float> positions;
   std::vector<float> normals;
+  std::vector<float> uvs;  // 2 per vertex (st), parallel to positions; empty if none
   std::vector<int32_t> indices;
+};
+
+// <asset><hfield>: a row-major nrow x ncol grid of elevations normalized to
+// [0,1], plus size = (radius_x, radius_y, elevation_z, base_z).
+struct HFieldAsset {
+  int nrow{0};
+  int ncol{0};
+  std::array<double, 4> size{{1.0, 1.0, 1.0, 0.1}};
+  std::vector<float> data;  // nrow*ncol, normalized [0,1], row 0 = -y edge
 };
 
 struct MeshPayload {
@@ -73,6 +91,14 @@ struct Stats {
   size_t visuals{0};
   size_t collisions{0};
   size_t actuators{0};
+  size_t tendons{0};
+  size_t equalities{0};
+  size_t contact_excludes{0};
+  size_t sites{0};
+  size_t keyframes{0};
+  size_t materials{0};
+  size_t sensors{0};
+  size_t contact_pairs{0};
 };
 
 // Resolved attribute map (attr name -> value) for MuJoCo <default> classes.
@@ -704,6 +730,8 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
   }
 
   std::vector<std::array<float, 3>> vertices;
+  std::vector<std::array<float, 2>> texcoords;  // vt (u,v)
+  bool all_have_uv = true;  // drop UVs unless every face-vertex has a vt index
   std::string line;
   while (std::getline(ifs, line)) {
     std::stringstream ss(line);
@@ -713,34 +741,62 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       std::array<float, 3> v{{0.0f, 0.0f, 0.0f}};
       ss >> v[0] >> v[1] >> v[2];
       vertices.push_back(v);
+    } else if (tag == "vt") {
+      std::array<float, 2> t{{0.0f, 0.0f}};
+      ss >> t[0] >> t[1];
+      texcoords.push_back(t);
     } else if (tag == "f") {
-      std::vector<int> face;
+      std::vector<int> face;      // vertex indices
+      std::vector<int> face_uv;   // parallel vt indices (-1 if absent)
       std::string tok;
       while (ss >> tok) {
         const size_t slash = tok.find('/');
-        {
-          nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
-          if (!idx_opt.has_value()) {
-            std::cerr << "Invalid face vertex index: " << tok << "\n";
-            return false;
-          }
-          int idx_val = idx_opt.value();
-          face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
+        nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
+        if (!idx_opt.has_value()) {
+          std::cerr << "Invalid face vertex index: " << tok << "\n";
+          return false;
         }
+        const int idx_val = idx_opt.value();
+        face.push_back(idx_val > 0 ? idx_val - 1 : static_cast<int>(vertices.size()) + idx_val);
+        // OBJ face token: v/vt/vn (vt optional). Parse the vt field.
+        int vt = -1;
+        if (slash != std::string::npos) {
+          const size_t slash2 = tok.find('/', slash + 1);
+          const std::string vt_str = tok.substr(
+              slash + 1, slash2 == std::string::npos ? std::string::npos : slash2 - slash - 1);
+          nonstd::optional<int> vt_opt = vt_str.empty() ? nonstd::nullopt : tinyusdz::atoi(vt_str);
+          if (vt_opt.has_value()) {
+            vt = vt_opt.value() > 0 ? vt_opt.value() - 1
+                                    : static_cast<int>(texcoords.size()) + vt_opt.value();
+          }
+        }
+        if (vt < 0) all_have_uv = false;
+        face_uv.push_back(vt);
       }
       for (size_t i = 1; i + 1 < face.size(); i++) {
         const int tri[3] = {face[0], face[i], face[i + 1]};
-        for (int vi : tri) {
+        const int triuv[3] = {face_uv[0], face_uv[i], face_uv[i + 1]};
+        for (int k = 0; k < 3; k++) {
+          const int vi = tri[k];
           if (vi < 0 || size_t(vi) >= vertices.size()) continue;
           const auto &v = vertices[size_t(vi)];
           mesh->positions.push_back(v[0]);
           mesh->positions.push_back(v[1]);
           mesh->positions.push_back(v[2]);
+          const int ti = triuv[k];
+          if (ti >= 0 && size_t(ti) < texcoords.size()) {
+            mesh->uvs.push_back(texcoords[size_t(ti)][0]);
+            mesh->uvs.push_back(texcoords[size_t(ti)][1]);
+          } else {
+            mesh->uvs.push_back(0.0f);
+            mesh->uvs.push_back(0.0f);
+          }
           mesh->indices.push_back(static_cast<int32_t>(mesh->indices.size()));
         }
       }
     }
   }
+  if (!all_have_uv || texcoords.empty()) mesh->uvs.clear();
   return !mesh->positions.empty();
 }
 
@@ -759,13 +815,13 @@ nlohmann::json MeshPayloadToJson(const MeshPayload &payload) {
         {"matrix", payload.matrix},
         {"shape", payload.shape}};
   }
-  return {
-      {"name", payload.name},
-      {"matrix", payload.matrix},
-      {"geometry",
-       {{"positions", payload.mesh.positions},
-        {"normals", payload.mesh.normals},
-        {"indices", payload.mesh.indices}}}};
+  nlohmann::json geometry = {{"positions", payload.mesh.positions},
+                             {"normals", payload.mesh.normals},
+                             {"indices", payload.mesh.indices}};
+  if (!payload.mesh.uvs.empty()) geometry["uvs"] = payload.mesh.uvs;
+  return {{"name", payload.name},
+          {"matrix", payload.matrix},
+          {"geometry", std::move(geometry)}};
 }
 
 // --- MJCF <default> class resolution ---------------------------------------
@@ -950,9 +1006,141 @@ std::map<std::string, MeshAsset> CollectMujocoAssets(
   return assets;
 }
 
+// Normalize raw elevation samples to [0,1] the way MuJoCo's compiler does:
+// subtract the min, divide by the range (constant fields collapse to 0).
+void NormalizeHField(std::vector<float> *data) {
+  if (data->empty()) return;
+  float emin = (*data)[0], emax = (*data)[0];
+  for (float v : *data) { emin = std::min(emin, v); emax = std::max(emax, v); }
+  const float range = emax - emin;
+  for (float &v : *data) {
+    v -= emin;
+    if (range > 1e-9f) v /= range;
+  }
+}
+
+// Collect <asset><hfield> declarations. File-based fields decode a (grayscale)
+// PNG with rows reversed (MuJoCo stores row 0 at the -y edge); inline fields
+// read nrow/ncol/elevation. All are normalized to [0,1].
+std::map<std::string, HFieldAsset> CollectMujocoHFields(
+    const pugi::xml_node &root, const fs::path &base_dir) {
+  std::map<std::string, HFieldAsset> hfields;
+  const auto compiler = Child(root, "compiler");
+  std::string dir_attr = compiler ? Attr(compiler, "meshdir") : std::string();
+  if (dir_attr.empty() && compiler) dir_attr = Attr(compiler, "assetdir");
+  const fs::path mesh_dir = dir_attr.empty() ? base_dir : base_dir / dir_attr;
+  const std::map<std::string, fs::path> index = BuildMeshIndex(base_dir);
+
+  for (const auto &asset_node : Children(root, "asset")) {
+    for (const auto &hf_node : Children(asset_node, "hfield")) {
+      std::string name = Attr(hf_node, "name");
+      const std::string file = Attr(hf_node, "file");
+      if (name.empty()) {
+        name = file.empty() ? std::string() : fs::path(file).stem().string();
+      }
+      if (name.empty()) continue;
+      HFieldAsset hf;
+      const std::vector<double> sz = ParseDoubles(Attr(hf_node, "size"));
+      for (size_t i = 0; i < 4 && i < sz.size(); ++i) hf.size[i] = sz[i];
+
+      if (!file.empty()) {
+        const fs::path path =
+            ResolveMeshPath(base_dir, mesh_dir, file, index);
+        int w = 0, h = 0, comp = 0;
+        unsigned char *img =
+            stbi_load(path.string().c_str(), &w, &h, &comp, 1);  // force grey
+        if (img && w > 0 && h > 0) {
+          hf.ncol = w;
+          hf.nrow = h;
+          hf.data.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+          for (int r = 0; r < h; ++r) {
+            for (int c = 0; c < w; ++c) {
+              // reverse rows: data row 0 is the bottom (-y) image row
+              hf.data[static_cast<size_t>(r) * w + c] =
+                  static_cast<float>(img[c + (h - 1 - r) * w]);
+            }
+          }
+        }
+        if (img) stbi_image_free(img);
+      } else {
+        hf.nrow = static_cast<int>(ParseDoubleAttr(hf_node, "nrow", 0.0));
+        hf.ncol = static_cast<int>(ParseDoubleAttr(hf_node, "ncol", 0.0));
+        const std::vector<double> elev = ParseDoubles(Attr(hf_node, "elevation"));
+        if (hf.nrow > 0 && hf.ncol > 0 &&
+            elev.size() == static_cast<size_t>(hf.nrow) * hf.ncol) {
+          hf.data.assign(elev.begin(), elev.end());
+        }
+      }
+      if (hf.nrow > 0 && hf.ncol > 0 && !hf.data.empty()) {
+        NormalizeHField(&hf.data);
+        hfields[name] = std::move(hf);
+      }
+    }
+  }
+  return hfields;
+}
+
+// Tessellate a heightfield's top surface into a triangle mesh in the field's
+// local frame: x spans [-rx,rx] across ncol columns, y spans [-ry,ry] across
+// nrow rows, z = normalized_elevation * elevation_z. Per-vertex normals come
+// from the local height gradient (smooth shading).
+MeshData TessellateHField(const HFieldAsset &hf) {
+  MeshData mesh;
+  const int nr = hf.nrow, nc = hf.ncol;
+  if (nr < 2 || nc < 2) return mesh;
+  const double rx = hf.size[0], ry = hf.size[1], ez = hf.size[2];
+  const double dx = (2.0 * rx) / (nc - 1);
+  const double dy = (2.0 * ry) / (nr - 1);
+  auto H = [&](int r, int c) -> double {
+    r = std::max(0, std::min(nr - 1, r));
+    c = std::max(0, std::min(nc - 1, c));
+    return static_cast<double>(hf.data[static_cast<size_t>(r) * nc + c]) * ez;
+  };
+  mesh.positions.reserve(static_cast<size_t>(nr) * nc * 3);
+  mesh.normals.reserve(static_cast<size_t>(nr) * nc * 3);
+  for (int r = 0; r < nr; ++r) {
+    for (int c = 0; c < nc; ++c) {
+      mesh.positions.push_back(static_cast<float>(-rx + c * dx));
+      mesh.positions.push_back(static_cast<float>(-ry + r * dy));
+      mesh.positions.push_back(static_cast<float>(H(r, c)));
+      // Normal from the height-field gradient. Use the ACTUAL neighbor span so
+      // the border ring is a correct one-sided difference (interior: 2 cells;
+      // edges: 1 cell) rather than a half-magnitude central difference.
+      const int cl = std::max(0, c - 1), cr = std::min(nc - 1, c + 1);
+      const int rb = std::max(0, r - 1), rt = std::min(nr - 1, r + 1);
+      const double hx = (H(r, cr) - H(r, cl)) / ((cr - cl) * dx);
+      const double hy = (H(rt, c) - H(rb, c)) / ((rt - rb) * dy);
+      double nx = -hx, ny = -hy, nz = 1.0;
+      const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 1e-12) { nx /= len; ny /= len; nz /= len; }
+      mesh.normals.push_back(static_cast<float>(nx));
+      mesh.normals.push_back(static_cast<float>(ny));
+      mesh.normals.push_back(static_cast<float>(nz));
+    }
+  }
+  mesh.indices.reserve(static_cast<size_t>(nr - 1) * (nc - 1) * 6);
+  for (int r = 0; r < nr - 1; ++r) {
+    for (int c = 0; c < nc - 1; ++c) {
+      const int32_t v00 = r * nc + c;
+      const int32_t v01 = r * nc + (c + 1);
+      const int32_t v10 = (r + 1) * nc + c;
+      const int32_t v11 = (r + 1) * nc + (c + 1);
+      // two CCW triangles (viewed from +z)
+      mesh.indices.push_back(v00);
+      mesh.indices.push_back(v01);
+      mesh.indices.push_back(v11);
+      mesh.indices.push_back(v00);
+      mesh.indices.push_back(v11);
+      mesh.indices.push_back(v10);
+    }
+  }
+  return mesh;
+}
+
 bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
                       const std::string &cls_name,
                       const std::map<std::string, MeshAsset> &assets,
+                      const std::map<std::string, HFieldAsset> &hfields,
                       const Options &opts, const Context &ctx,
                       const std::vector<double> &body_world,
                       MeshPayload *payload, bool *is_visual, std::string *err) {
@@ -1009,6 +1197,19 @@ bool BuildGeomPayload(const pugi::xml_node &geom_node, const AttrMap &cls,
     // G * refframe(refpos/refquat) * scale, matching the JS mesh handling.
     payload->matrix = MultiplyMatrix(payload->matrix, MeshRefMatrix(it->second));
     payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(scale));
+  } else if (type == "hfield") {
+    // <geom type="hfield" hfield="name"> -> tessellated GeomMesh (top surface).
+    const std::string hf_name = Eff(geom_node, cls, "hfield");
+    const auto it = hfields.find(hf_name);
+    if (it == hfields.end()) {
+      if (err) *err = "Missing MJCF hfield asset: " + hf_name;
+      return false;
+    }
+    payload->mesh = TessellateHField(it->second);
+    if (payload->mesh.positions.empty()) {
+      if (err) *err = "Empty/invalid hfield asset: " + hf_name;
+      return false;
+    }
   } else if (type == "box") {
     const auto half = ParseDouble3(Eff(geom_node, cls, "size"),
                                    {{0.05, 0.05, 0.05}});
@@ -1101,11 +1302,18 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   const auto com =
       ParseDouble3(Attr(inertial_node, "pos"), {{0.0, 0.0, 0.0}});
   inertial["centerOfMass"] = {com[0], com[1], com[2]};
-  // MJCF inertia: <inertial fullinertia="Ixx Iyy Izz Ixy Ixz Iyz"> (first 3 are
-  // the diagonal) or the more common <inertial diaginertia="Ixx Iyy Izz">.
+  // MJCF inertia: <inertial fullinertia="Ixx Iyy Izz Ixy Ixz Iyz"> (full
+  // symmetric tensor) or the more common <inertial diaginertia="Ixx Iyy Izz">.
   const std::vector<double> full =
       ParseDoubles(Attr(inertial_node, "fullinertia"));
-  if (full.size() >= 3) {
+  if (full.size() >= 6) {
+    // Carry all 6 components so the converter can diagonalize them into
+    // diagonalInertia (eigenvalues) + principalAxes (eigenvector quaternion).
+    // Keep a diagonal fallback for consumers that ignore fullInertia.
+    inertial["fullInertia"] = {full[0], full[1], full[2],
+                               full[3], full[4], full[5]};
+    inertial["diagonalInertia"] = {full[0], full[1], full[2]};
+  } else if (full.size() >= 3) {
     inertial["diagonalInertia"] = {full[0], full[1], full[2]};
   } else {
     const std::vector<double> diag =
@@ -1117,26 +1325,37 @@ nlohmann::json InertialToJson(const pugi::xml_node &body_node) {
   return inertial;
 }
 
-void AddJointJson(const pugi::xml_node &body_node, const AttrMap &jcls,
-                  const Context &ctx, const std::string &parent_name,
-                  const std::string &child_name, nlohmann::json *joints) {
-  const auto joint_node = Child(body_node, "joint");
+// Build one joint JSON entry from an explicit <joint> node (or a null node for
+// a fixed connection), wiring parent_name -> child_name with the given origin
+// frame. `origin_matrix` (16 elems) and `origin_pos` are the joint frame; in a
+// multi-DOF chain only the first joint carries the body offset (the rest are at
+// identity). A null joint_node yields a PhysicsFixedJoint.
+void AddJointFromNode(const pugi::xml_node &joint_node, const AttrMap &jcls,
+                      const Context &ctx, const std::string &parent_name,
+                      const std::string &child_name,
+                      const std::vector<double> &origin_matrix,
+                      const std::array<double, 3> &origin_pos,
+                      nlohmann::json *joints) {
   nlohmann::json joint = nlohmann::json::object();
   joint["name"] = joint_node ? Attr(joint_node, "name", parent_name + "_to_" + child_name)
                              : parent_name + "_to_" + child_name + "_fixed";
   const std::string mj_type =
       joint_node ? Eff(joint_node, jcls, "type", "hinge") : "fixed";
+  // MuJoCo ball (3-DOF rotation) -> USD PhysicsSphericalJoint. Matches the JS
+  // parsers (web/js/cli/urdf-to-usd.js, web/js/urdf.js); the USD converter
+  // already handles "spherical". (free/floating base is still emitted as
+  // "fixed" here — handled separately as the articulation root.)
   joint["type"] = (mj_type == "hinge") ? "revolute" :
-                  (mj_type == "slide") ? "prismatic" : "fixed";
+                  (mj_type == "slide") ? "prismatic" :
+                  (mj_type == "ball")  ? "spherical" : "fixed";
   joint["parent"] = parent_name;
   joint["child"] = child_name;
   const auto axis = ParseDouble3(joint_node ? Eff(joint_node, jcls, "axis") : "",
                                  {{0.0, 0.0, 1.0}});
   joint["axis"] = {axis[0], axis[1], axis[2]};
   joint["axisToken"] = AxisToken(axis);
-  const auto origin = ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
-  joint["origin"] = {origin[0], origin[1], origin[2]};
-  joint["originMatrix"] = PoseMatrix(body_node, ctx);
+  joint["origin"] = {origin_pos[0], origin_pos[1], origin_pos[2]};
+  joint["originMatrix"] = origin_matrix;
 
   if (joint_node) {
     const std::vector<double> range = ParseDoubles(Eff(joint_node, jcls, "range"));
@@ -1179,17 +1398,71 @@ void AddJointJson(const pugi::xml_node &body_node, const AttrMap &jcls,
 }
 
 void AddMujocoActuatorsJson(const pugi::xml_node &root,
-                            nlohmann::json *actuators, Stats *stats) {
+                            nlohmann::json *actuators,
+                            nlohmann::json *mjc_actuators, Stats *stats) {
   if (!actuators) return;
   const auto actuator_root = Child(root, "actuator");
   if (!actuator_root) return;
 
   for (const auto &act_node : actuator_root.children()) {
+    const std::string type = act_node.name();
     const std::string joint = Attr(act_node, "joint");
+    const std::string tendon = Attr(act_node, "tendon");
+    const std::string site = Attr(act_node, "site");
+    const std::string body = Attr(act_node, "body");
+
+    // Muscle/general/adhesion/cylinder/intvelocity/damper, or any tendon-/site-/
+    // body-targeted actuator -> MjcActuator (preserves the MuJoCo gain/bias/
+    // lengthrange params; e.g. ms_human_700 muscles, flybody adhesion). Plain
+    // joint-targeted position/velocity/motor actuators keep the Newton PD path.
+    const bool is_mjc = (type == "muscle" || type == "general" ||
+                         type == "adhesion" || type == "cylinder" ||
+                         type == "intvelocity" || type == "damper" ||
+                         type == "plugin" ||
+                         !tendon.empty() || !site.empty() || !body.empty());
+    if (is_mjc && mjc_actuators) {
+      const std::string fallback_target =
+          !joint.empty() ? joint
+                         : (!tendon.empty() ? tendon
+                                            : (!site.empty() ? site : body));
+      nlohmann::json a = nlohmann::json::object();
+      a["name"] = Attr(act_node, "name", type + "_" + fallback_target);
+      a["actuatorType"] = type;
+      if (!joint.empty()) a["targetJoint"] = joint;
+      if (!tendon.empty()) a["targetTendon"] = tendon;
+      if (!site.empty()) a["targetSite"] = site;
+      if (!body.empty()) a["targetBody"] = body;
+      const auto gainprm = ParseDoubles(Attr(act_node, "gainprm"));
+      if (!gainprm.empty()) a["gainPrm"] = gainprm;
+      else if (HasAttr(act_node, "gain"))  // <adhesion gain=..> scalar
+        a["gainPrm"] = {ParseDoubleAttr(act_node, "gain", 0.0)};
+      const auto biasprm = ParseDoubles(Attr(act_node, "biasprm"));
+      if (!biasprm.empty()) a["biasPrm"] = biasprm;
+      const auto lengthrange = ParseDoubles(Attr(act_node, "lengthrange"));
+      if (lengthrange.size() >= 2)
+        a["lengthRange"] = {lengthrange[0], lengthrange[1]};
+      const auto ctrlrange = ParseDoubles(Attr(act_node, "ctrlrange"));
+      if (ctrlrange.size() >= 2) a["ctrlRange"] = {ctrlrange[0], ctrlrange[1]};
+      const auto forcerange = ParseDoubles(Attr(act_node, "forcerange"));
+      if (forcerange.size() >= 2)
+        a["forceRange"] = {forcerange[0], forcerange[1]};
+      const auto gear = ParseDoubles(Attr(act_node, "gear"));
+      if (!gear.empty()) a["gear"] = gear;
+      if (HasAttr(act_node, "dyntype")) a["dynType"] = Attr(act_node, "dyntype");
+      if (HasAttr(act_node, "gaintype")) a["gainType"] = Attr(act_node, "gaintype");
+      if (HasAttr(act_node, "biastype")) a["biasType"] = Attr(act_node, "biastype");
+      // Engine-plugin actuator (<plugin plugin=".." instance="..">): preserve the
+      // plugin id + referenced <extension> instance name.
+      if (HasAttr(act_node, "plugin")) a["plugin"] = Attr(act_node, "plugin");
+      if (HasAttr(act_node, "instance")) a["instance"] = Attr(act_node, "instance");
+      mjc_actuators->push_back(std::move(a));
+      if (stats) stats->actuators++;
+      continue;
+    }
+
     if (joint.empty()) {
       continue;
     }
-    const std::string type = act_node.name();
     nlohmann::json act = nlohmann::json::object();
     act["name"] = Attr(act_node, "name", type + "_" + joint);
     act["joint"] = joint;
@@ -1230,11 +1503,545 @@ void AddMujocoActuatorsJson(const pugi::xml_node &root,
   }
 }
 
+// MJCF <tendon><fixed> -> JSON tendon entries consumed by AddMjcTendonFromJson.
+// A fixed tendon constrains a linear combination of joint coordinates; we carry
+// the {joint, coef} list plus the spring/damper/range scalars. Spatial tendons
+// (sites/pulleys) aren't representable without sites yet -> warn and skip.
+void AddMujocoTendonsJson(const pugi::xml_node &root, const Context &ctx,
+                          nlohmann::json *tendons, Stats *stats) {
+  if (!tendons) return;
+  const auto tendon_root = Child(root, "tendon");
+  if (!tendon_root) return;
+  for (const auto &t_node : tendon_root.children()) {
+    const std::string kind = t_node.name();  // "fixed" or "spatial"
+    if (kind != "fixed" && kind != "spatial") continue;
+    nlohmann::json tendon = nlohmann::json::object();
+    tendon["name"] = Attr(t_node, "name", "tendon_" + std::to_string(stats ? stats->tendons : 0));
+    tendon["type"] = kind;
+    if (kind == "fixed") {
+      // Fixed tendon: linear combination of joint coordinates.
+      nlohmann::json jlist = nlohmann::json::array();
+      for (const auto &j_node : Children(t_node, "joint")) {
+        const std::string jn = Attr(j_node, "joint");
+        if (jn.empty()) continue;
+        nlohmann::json je = nlohmann::json::object();
+        je["joint"] = jn;
+        je["coef"] = ParseDoubleAttr(j_node, "coef", 1.0);
+        jlist.push_back(std::move(je));
+      }
+      if (jlist.empty()) continue;
+      tendon["joints"] = std::move(jlist);
+    } else {
+      // Spatial tendon (muscle path): ordered <site>/<geom sidesite=...> waypoints.
+      nlohmann::json waypoints = nlohmann::json::array();
+      for (const auto &w : t_node.children()) {
+        const std::string wn = w.name();
+        if (wn == "site" && HasAttr(w, "site")) {
+          waypoints.push_back({{"site", Attr(w, "site")}});
+        } else if (wn == "geom") {
+          nlohmann::json wp = {{"geom", Attr(w, "geom")}};
+          if (HasAttr(w, "sidesite")) wp["sidesite"] = Attr(w, "sidesite");
+          waypoints.push_back(std::move(wp));
+        } else if (wn == "pulley" && HasAttr(w, "divisor")) {
+          waypoints.push_back({{"pulley", ParseDoubleAttr(w, "divisor", 1.0)}});
+        }
+      }
+      if (waypoints.size() < 2) continue;
+      tendon["path"] = std::move(waypoints);
+      if (HasAttr(t_node, "width"))
+        tendon["width"] = ParseDoubleAttr(t_node, "width", 0.003);
+      const auto rgba = ParseDoubles(Attr(t_node, "rgba"));
+      if (rgba.size() >= 4) tendon["rgba"] = {rgba[0], rgba[1], rgba[2], rgba[3]};
+    }
+    if (HasAttr(t_node, "stiffness"))
+      tendon["stiffness"] = ParseDoubleAttr(t_node, "stiffness", 0.0);
+    if (HasAttr(t_node, "damping"))
+      tendon["damping"] = ParseDoubleAttr(t_node, "damping", 0.0);
+    if (HasAttr(t_node, "frictionloss"))
+      tendon["frictionloss"] = ParseDoubleAttr(t_node, "frictionloss", 0.0);
+    if (HasAttr(t_node, "margin"))
+      tendon["margin"] = ParseDoubleAttr(t_node, "margin", 0.0);
+    const auto range = ParseDoubles(Attr(t_node, "range"));
+    if (range.size() >= 2) tendon["range"] = {range[0], range[1]};
+    const auto springlen = ParseDoubles(Attr(t_node, "springlength"));
+    if (!springlen.empty()) tendon["springlength"] = springlen;
+    tendons->push_back(std::move(tendon));
+    if (stats) stats->tendons++;
+  }
+  (void)ctx;
+}
+
+// MJCF <site> (in bodies) -> JSON site entries with a baked world transform,
+// consumed by the converter to emit MjcSite marker prims. Sites are the routing
+// points for spatial (muscle) tendons. Recurses the body tree.
+void CollectMujocoSitesJson(const pugi::xml_node &body_node,
+                            const std::vector<double> &parent_world,
+                            const Context &ctx, nlohmann::json *sites,
+                            Stats *stats) {
+  const std::vector<double> body_world =
+      MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
+  for (const auto &s_node : Children(body_node, "site")) {
+    const std::string name = Attr(s_node, "name");
+    if (name.empty()) continue;
+    const std::vector<double> site_world =
+        MultiplyMatrix(body_world, PoseMatrix(s_node, ctx));
+    nlohmann::json site = {{"name", name}, {"matrix", site_world}};
+    if (HasAttr(s_node, "group")) site["group"] = std::atoi(Attr(s_node, "group").c_str());
+    const auto size = ParseDoubles(Attr(s_node, "size"));
+    if (!size.empty()) site["size"] = size[0];
+    sites->push_back(std::move(site));
+    if (stats) stats->sites++;
+  }
+  for (const auto &child : Children(body_node, "body")) {
+    CollectMujocoSitesJson(child, body_world, ctx, sites, stats);
+  }
+}
+
+bool MjcBoolAttr(const std::string &v);  // defined below
+
+// MJCF <sensor> children -> JSON sensor entries consumed by the converter's
+// AddMjcSensorFromJson -> MjcSensor prim. The sensor kind is the element name;
+// the measured object is captured via objtype/objname (frame sensors carry them
+// explicitly, others attach via site/joint/actuator/tendon/body/geom).
+void AddMujocoSensorsJson(const pugi::xml_node &root, nlohmann::json *sensors,
+                          Stats *stats) {
+  if (!sensors) return;
+  const auto sensor_root = Child(root, "sensor");
+  if (!sensor_root) return;
+  for (const auto &s_node : sensor_root.children()) {
+    const std::string type = s_node.name();
+    if (type.empty()) continue;
+    nlohmann::json s = {{"type", type}};
+    s["name"] = Attr(s_node, "name", type + "_" + std::to_string(sensors->size()));
+    if (HasAttr(s_node, "objtype")) {
+      s["objtype"] = Attr(s_node, "objtype");
+      s["objname"] = Attr(s_node, "objname");
+    } else {
+      // Infer objtype from the attachment attribute the sensor type uses.
+      for (const char *k : {"site", "joint", "actuator", "tendon", "body", "geom"}) {
+        if (HasAttr(s_node, k)) { s["objtype"] = k; s["objname"] = Attr(s_node, k); break; }
+      }
+    }
+    if (HasAttr(s_node, "reftype")) s["reftype"] = Attr(s_node, "reftype");
+    if (HasAttr(s_node, "refname")) s["refname"] = Attr(s_node, "refname");
+    if (HasAttr(s_node, "group")) s["group"] = static_cast<int>(ParseDoubleAttr(s_node, "group", 0.0));
+    if (HasAttr(s_node, "cutoff")) s["cutoff"] = ParseDoubleAttr(s_node, "cutoff", 0.0);
+    if (HasAttr(s_node, "noise")) s["noise"] = ParseDoubleAttr(s_node, "noise", 0.0);
+    const auto user = ParseDoubles(Attr(s_node, "user"));
+    if (!user.empty()) s["user"] = user;
+    sensors->push_back(std::move(s));
+    if (stats) stats->sensors++;
+  }
+}
+
+// MJCF <custom><numeric|text> -> JSON consumed by the converter to preserve
+// model metadata / MJX compile knobs (e.g. max_contact_points) as mjc:custom:*.
+void AddMujocoCustomJson(const pugi::xml_node &root, nlohmann::json *custom) {
+  if (!custom) return;
+  const auto custom_root = Child(root, "custom");
+  if (!custom_root) return;
+  nlohmann::json numerics = nlohmann::json::array();
+  for (const auto &n : Children(custom_root, "numeric")) {
+    const std::string name = Attr(n, "name");
+    if (name.empty()) continue;
+    numerics.push_back({{"name", name}, {"data", ParseDoubles(Attr(n, "data"))}});
+  }
+  nlohmann::json texts = nlohmann::json::array();
+  for (const auto &t : Children(custom_root, "text")) {
+    const std::string name = Attr(t, "name");
+    if (name.empty()) continue;
+    texts.push_back({{"name", name}, {"data", Attr(t, "data")}});
+  }
+  if (!numerics.empty()) (*custom)["numeric"] = std::move(numerics);
+  if (!texts.empty()) (*custom)["text"] = std::move(texts);
+}
+
+// <extension><plugin plugin="..."><instance name="..."><config key= value=>
+// -> JSON plugin-instance declarations. The instance config (e.g. a PID's
+// kp/ki/kd) is what an <actuator><plugin instance=".."> references.
+void AddMujocoPluginsJson(const pugi::xml_node &root, nlohmann::json *plugins) {
+  if (!plugins) return;
+  const auto extension = Child(root, "extension");
+  if (!extension) return;
+  for (const auto &plugin_node : Children(extension, "plugin")) {
+    const std::string plugin_id = Attr(plugin_node, "plugin");
+    for (const auto &inst : Children(plugin_node, "instance")) {
+      const std::string inst_name = Attr(inst, "name");
+      if (inst_name.empty()) continue;
+      nlohmann::json p = nlohmann::json::object();
+      p["instance"] = inst_name;
+      if (!plugin_id.empty()) p["plugin"] = plugin_id;
+      nlohmann::json config = nlohmann::json::object();
+      for (const auto &cfg : Children(inst, "config")) {
+        const std::string key = Attr(cfg, "key");
+        if (key.empty()) continue;
+        config[key] = Attr(cfg, "value");
+      }
+      if (!config.empty()) p["config"] = std::move(config);
+      plugins->push_back(std::move(p));
+    }
+  }
+}
+
+// MJCF <light>/<camera> (in worldbody or nested bodies) -> JSON with a baked
+// world matrix, consumed by the converter's AddLightFromJson/AddCameraFromJson.
+// `frame_world` is the world transform of `frame_node`'s frame.
+void CollectMujocoLightsCamerasJson(const pugi::xml_node &frame_node,
+                                    const std::vector<double> &frame_world,
+                                    const Context &ctx, nlohmann::json *lights,
+                                    nlohmann::json *cameras) {
+  for (const auto &l : Children(frame_node, "light")) {
+    nlohmann::json light = nlohmann::json::object();
+    light["name"] = Attr(l, "name", "light");
+    std::string type = Attr(l, "type");
+    if (type.empty())
+      type = MjcBoolAttr(Attr(l, "directional", "false")) ? "directional" : "spot";
+    light["type"] = type;
+    light["matrix"] = MultiplyMatrix(frame_world, PoseMatrix(l, ctx));
+    const auto dir = ParseDouble3(Attr(l, "dir"), {{0.0, 0.0, -1.0}});
+    light["dir"] = {dir[0], dir[1], dir[2]};
+    const auto diffuse = ParseDoubles(Attr(l, "diffuse"));
+    if (diffuse.size() >= 3) light["color"] = {diffuse[0], diffuse[1], diffuse[2]};
+    if (HasAttr(l, "castshadow"))
+      light["castshadow"] = MjcBoolAttr(Attr(l, "castshadow"));
+    if (HasAttr(l, "cutoff")) light["cutoff"] = ParseDoubleAttr(l, "cutoff", 45.0);
+    lights->push_back(std::move(light));
+  }
+  for (const auto &c : Children(frame_node, "camera")) {
+    nlohmann::json cam = nlohmann::json::object();
+    cam["name"] = Attr(c, "name", "camera");
+    cam["matrix"] = MultiplyMatrix(frame_world, PoseMatrix(c, ctx));
+    if (HasAttr(c, "fovy")) cam["fovy"] = ParseDoubleAttr(c, "fovy", 45.0);
+    const std::string proj = Attr(c, "projection");
+    if (proj == "orthographic" || MjcBoolAttr(Attr(c, "orthographic", "false")))
+      cam["orthographic"] = true;
+    cameras->push_back(std::move(cam));
+  }
+  for (const auto &child : Children(frame_node, "body")) {
+    const std::vector<double> body_world =
+        MultiplyMatrix(frame_world, PoseMatrix(child, ctx));
+    CollectMujocoLightsCamerasJson(child, body_world, ctx, lights, cameras);
+  }
+}
+
+// MJCF <equality> -> JSON entries consumed by AddMjcEqualityFromJson.
+void AddMujocoEqualityJson(const pugi::xml_node &root, nlohmann::json *equalities,
+                           Stats *stats) {
+  if (!equalities) return;
+  const auto eq_root = Child(root, "equality");
+  if (!eq_root) return;
+  for (const auto &e_node : eq_root.children()) {
+    const std::string kind = e_node.name();  // connect | weld | joint
+    if (kind != "connect" && kind != "weld" && kind != "joint") continue;
+    nlohmann::json eq = nlohmann::json::object();
+    eq["name"] = Attr(e_node, "name", kind + "_" +
+                      std::to_string(stats ? stats->equalities : 0));
+    eq["type"] = kind;
+    if (kind == "joint") {
+      eq["joint1"] = Attr(e_node, "joint1");
+      if (HasAttr(e_node, "joint2")) eq["joint2"] = Attr(e_node, "joint2");
+      const auto poly = ParseDoubles(Attr(e_node, "polycoef"));
+      if (!poly.empty()) eq["polycoef"] = poly;
+    } else {
+      eq["body1"] = Attr(e_node, "body1");
+      if (HasAttr(e_node, "body2")) eq["body2"] = Attr(e_node, "body2");
+      const auto anchor = ParseDoubles(Attr(e_node, "anchor"));
+      if (!anchor.empty()) eq["anchor"] = anchor;
+      if (kind == "weld" && HasAttr(e_node, "torquescale"))
+        eq["torquescale"] = ParseDoubleAttr(e_node, "torquescale", 1.0);
+    }
+    const auto solref = ParseDoubles(Attr(e_node, "solref"));
+    if (!solref.empty()) eq["solref"] = solref;
+    const auto solimp = ParseDoubles(Attr(e_node, "solimp"));
+    if (!solimp.empty()) eq["solimp"] = solimp;
+    equalities->push_back(std::move(eq));
+    if (stats) stats->equalities++;
+  }
+}
+
+// MJCF <contact><exclude body1 body2> -> filteredPairs entries (maps to
+// PhysicsFilteredPairsAPI in the converter, which already handles this array).
+void AddMujocoContactExcludesJson(const pugi::xml_node &root,
+                                  nlohmann::json *filtered_pairs, Stats *stats) {
+  if (!filtered_pairs) return;
+  const auto contact_root = Child(root, "contact");
+  if (!contact_root) return;
+  for (const auto &c_node : Children(contact_root, "exclude")) {
+    const std::string b1 = Attr(c_node, "body1");
+    const std::string b2 = Attr(c_node, "body2");
+    if (b1.empty() || b2.empty()) continue;
+    filtered_pairs->push_back({{"body1", b1}, {"body2", b2}});
+    if (stats) stats->contact_excludes++;
+  }
+}
+
+// MJCF <contact><pair> -> JSON entries consumed by AddContactPairFromJson. An
+// explicit collision pair between two geoms with its own friction/solver params.
+void AddMujocoContactPairsJson(const pugi::xml_node &root,
+                               nlohmann::json *pairs, Stats *stats) {
+  if (!pairs) return;
+  const auto contact_root = Child(root, "contact");
+  if (!contact_root) return;
+  for (const auto &p : Children(contact_root, "pair")) {
+    const std::string g1 = Attr(p, "geom1");
+    const std::string g2 = Attr(p, "geom2");
+    if (g1.empty() || g2.empty()) continue;
+    nlohmann::json pr = {{"geom1", g1}, {"geom2", g2}};
+    pr["name"] = Attr(p, "name", "pair_" + std::to_string(pairs->size()));
+    if (HasAttr(p, "condim")) pr["condim"] = static_cast<int>(ParseDoubleAttr(p, "condim", 3.0));
+    if (HasAttr(p, "margin")) pr["margin"] = ParseDoubleAttr(p, "margin", 0.0);
+    if (HasAttr(p, "gap")) pr["gap"] = ParseDoubleAttr(p, "gap", 0.0);
+    const auto friction = ParseDoubles(Attr(p, "friction"));
+    if (!friction.empty()) pr["friction"] = friction;
+    const auto solref = ParseDoubles(Attr(p, "solref"));
+    if (!solref.empty()) pr["solref"] = solref;
+    const auto solimp = ParseDoubles(Attr(p, "solimp"));
+    if (!solimp.empty()) pr["solimp"] = solimp;
+    pairs->push_back(std::move(pr));
+    if (stats) stats->contact_pairs++;
+  }
+}
+
+// Normalize a MuJoCo boolean/flag attribute: <flag x="enable|disable"> and
+// <compiler x="true|false"> both occur; map enable/true/1 -> true.
+bool MjcBoolAttr(const std::string &v) {
+  return v == "true" || v == "enable" || v == "1";
+}
+
+// Read the full <option>/<option><flag>/<compiler> attribute set into a
+// `mjcScene` JSON block (MJCF attr names) consumed by the converter's
+// ApplyMjcSceneOptions -> MjcSceneAPI. (The MjcSceneAPI schema + USDC
+// round-trip already support all of these; only timestep was emitted before.)
+nlohmann::json BuildMjcSceneJson(const pugi::xml_node &root) {
+  nlohmann::json ms = nlohmann::json::object();
+  if (const auto option = Child(root, "option")) {
+    nlohmann::json opt = nlohmann::json::object();
+    auto num = [&](const char *k) { if (HasAttr(option, k)) opt[k] = ParseDoubleAttr(option, k, 0.0); };
+    auto inum = [&](const char *k) { if (HasAttr(option, k)) opt[k] = static_cast<int>(ParseDoubleAttr(option, k, 0.0)); };
+    auto tok = [&](const char *k) { if (HasAttr(option, k)) opt[k] = Attr(option, k); };
+    auto vec = [&](const char *k) { auto v = ParseDoubles(Attr(option, k)); if (!v.empty()) opt[k] = v; };
+    num("timestep"); num("impratio"); num("density"); num("viscosity"); num("o_margin");
+    num("tolerance"); num("ls_tolerance"); num("noslip_tolerance"); num("ccd_tolerance");
+    inum("iterations"); inum("ls_iterations"); inum("noslip_iterations");
+    inum("ccd_iterations"); inum("sdf_iterations"); inum("sdf_initpoints");
+    tok("integrator"); tok("cone"); tok("jacobian"); tok("solver");
+    vec("wind"); vec("magnetic"); vec("o_solref"); vec("o_solimp"); vec("o_friction");
+    if (!opt.empty()) ms["option"] = std::move(opt);
+    if (const auto flag = Child(option, "flag")) {
+      nlohmann::json fl = nlohmann::json::object();
+      static const char *kFlags[] = {
+          "constraint", "equality", "frictionloss", "limit", "contact",
+          "gravity", "clampctrl", "warmstart", "filterparent", "actuation",
+          "refsafe", "sensor", "midphase", "nativeccd", "eulerdamp",
+          "autoreset", "island", "override", "energy", "fwdinv",
+          "invdiscrete", "multiccd"};
+      for (const char *k : kFlags)
+        if (HasAttr(flag, k)) fl[k] = MjcBoolAttr(Attr(flag, k));
+      if (!fl.empty()) ms["flag"] = std::move(fl);
+    }
+  }
+  if (const auto compiler = Child(root, "compiler")) {
+    nlohmann::json comp = nlohmann::json::object();
+    auto num = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = ParseDoubleAttr(compiler, k, 0.0); };
+    auto tok = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = Attr(compiler, k); };
+    auto boolean = [&](const char *k) { if (HasAttr(compiler, k)) comp[k] = MjcBoolAttr(Attr(compiler, k)); };
+    boolean("autolimits"); num("boundmass"); num("boundinertia"); num("settotalmass");
+    boolean("usethread"); boolean("balanceinertia"); tok("angle"); boolean("fitaabb");
+    boolean("fusestatic"); tok("inertiafromgeom"); boolean("alignfree"); boolean("saveinertial");
+    const auto igr = ParseDoubles(Attr(compiler, "inertiagrouprange"));
+    if (igr.size() >= 2) {
+      comp["inertiagrouprange_min"] = static_cast<int>(igr[0]);
+      comp["inertiagrouprange_max"] = static_cast<int>(igr[1]);
+    }
+    if (!comp.empty()) ms["compiler"] = std::move(comp);
+  }
+  return ms;
+}
+
+// MJCF <asset><material> -> JSON material entries consumed by the converter's
+// AddMaterialFromJson -> UsdShade Material (UsdPreviewSurface). Color/PBR-scalar
+// only; texture maps are a documented follow-on.
+void AddMujocoMaterialsJson(const pugi::xml_node &root, const fs::path &base_dir,
+                            nlohmann::json *materials, Stats *stats) {
+  if (!materials) return;
+  const auto asset = Child(root, "asset");
+  if (!asset) return;
+  // Resolve <texture name file=...> to an absolute path so a material's
+  // `texture` becomes a UsdUVTexture in the converter. Builtin (file-less)
+  // textures are skipped (no image to reference).
+  std::string tdir;
+  if (const auto compiler = Child(root, "compiler")) {
+    tdir = Attr(compiler, "texturedir");
+    if (tdir.empty()) tdir = Attr(compiler, "assetdir");
+  }
+  const fs::path tex_dir = tdir.empty() ? base_dir : base_dir / tdir;
+  const auto index = BuildMeshIndex(base_dir);
+  std::map<std::string, std::string> tex_files;
+  for (const auto &t_node : Children(asset, "texture")) {
+    const std::string tname = Attr(t_node, "name");
+    const std::string tfile = Attr(t_node, "file");
+    if (tname.empty() || tfile.empty()) continue;
+    tex_files[tname] = ResolveMeshPath(base_dir, tex_dir, tfile, index).string();
+  }
+  for (const auto &m_node : Children(asset, "material")) {
+    const std::string name = Attr(m_node, "name");
+    if (name.empty()) continue;
+    nlohmann::json mat = {{"name", name}};
+    const auto rgba = ParseDoubles(Attr(m_node, "rgba"));
+    if (rgba.size() >= 4) mat["rgba"] = {rgba[0], rgba[1], rgba[2], rgba[3]};
+    if (HasAttr(m_node, "metallic")) mat["metallic"] = ParseDoubleAttr(m_node, "metallic", 0.0);
+    if (HasAttr(m_node, "roughness")) mat["roughness"] = ParseDoubleAttr(m_node, "roughness", 0.5);
+    if (HasAttr(m_node, "specular")) mat["specular"] = ParseDoubleAttr(m_node, "specular", 0.0);
+    if (HasAttr(m_node, "emission")) mat["emission"] = ParseDoubleAttr(m_node, "emission", 0.0);
+    if (HasAttr(m_node, "reflectance")) mat["reflectance"] = ParseDoubleAttr(m_node, "reflectance", 0.0);
+    const std::string tref = Attr(m_node, "texture");
+    if (!tref.empty()) {
+      const auto it = tex_files.find(tref);
+      if (it != tex_files.end()) {
+        // Emit a portable, source-relative reference (e.g. "assets/foo.png")
+        // for inputs:file so the exported usda/usdc opens beside its assets
+        // instead of carrying a machine-specific absolute path. Keep the
+        // absolute source in `texture_abs` (ignored by the converter) so usdz
+        // export can embed the bytes into the package.
+        const fs::path abs_tex = fs::absolute(it->second);
+        std::error_code ec;
+        const fs::path rel = fs::relative(abs_tex, base_dir, ec);
+        const std::string rel_s = rel.generic_string();
+        mat["texture"] = (ec || rel_s.empty() || rel_s.rfind("..", 0) == 0)
+                             ? abs_tex.filename().string()
+                             : rel_s;
+        mat["texture_abs"] = abs_tex.string();
+      }
+    }
+    materials->push_back(std::move(mat));
+    if (stats) stats->materials++;
+  }
+}
+
+// MJCF <keyframe><key qpos/qvel/act/ctrl/mpos/mquat> -> JSON keyframe entries
+// consumed by the converter's AddMjcKeyframeFromJson -> MjcKeyframe prim.
+void AddMujocoKeyframesJson(const pugi::xml_node &root, nlohmann::json *keyframes,
+                            Stats *stats) {
+  if (!keyframes) return;
+  const auto kf_root = Child(root, "keyframe");
+  if (!kf_root) return;
+  for (const auto &key : Children(kf_root, "key")) {
+    nlohmann::json k = nlohmann::json::object();
+    k["name"] = Attr(key, "name", "key_" + std::to_string(keyframes->size()));
+    auto arr = [&](const char *attr) {
+      auto v = ParseDoubles(Attr(key, attr));
+      if (!v.empty()) k[attr] = v;
+    };
+    arr("qpos"); arr("qvel"); arr("act"); arr("ctrl"); arr("mpos"); arr("mquat");
+    if (HasAttr(key, "time")) k["time"] = ParseDoubleAttr(key, "time", 0.0);
+    keyframes->push_back(std::move(k));
+    if (stats) stats->keyframes++;
+  }
+}
+
+// Bake one <geom> into a link's "visuals"/"collisions" arrays. Shared by the
+// per-body traversal and the worldbody-level (static) geom collection.
+bool AppendGeomToLink(const pugi::xml_node &geom_node, const std::string &cc,
+                      const std::map<std::string, MeshAsset> &assets,
+                      const std::map<std::string, HFieldAsset> &hfields,
+                      const Options &opts, const Context &ctx,
+                      const std::vector<double> &body_world,
+                      nlohmann::json *link, Stats *stats, std::string *err,
+                      bool dual_collider = false) {
+  const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
+  std::string cls_name = Attr(geom_node, "class");
+  if (cls_name.empty()) cls_name = cc;
+  MeshPayload payload;
+  bool visual = true;
+  if (!BuildGeomPayload(geom_node, cls, cls_name, assets, hfields, opts, ctx,
+                        body_world, &payload, &visual, err)) {
+    return false;
+  }
+  if (visual) {
+    nlohmann::json visual_json = MeshPayloadToJson(payload);
+    AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
+    const std::string mat = Eff(geom_node, cls, "material");
+    if (!mat.empty()) visual_json["material"] = mat;
+    (*link)["visuals"].push_back(std::move(visual_json));
+    if (stats) stats->visuals++;
+    // A world-fixed geom that is visible AND a collider (MuJoCo default
+    // contype=conaffinity=1; non-collider only when BOTH are 0) is ALSO emitted
+    // as a USD collider so floors/ground/hfield actually collide. The owning
+    // link is static, so use an exact triangle-mesh collider (`none`) rather
+    // than a convex hull, which would flatten terrain. Robot bodies keep the
+    // group-based visual/collision split (they ship dedicated collision geoms).
+    if (dual_collider) {
+      const int contype =
+          static_cast<int>(EffDouble(geom_node, cls, "contype", 1.0));
+      const int conaffinity =
+          static_cast<int>(EffDouble(geom_node, cls, "conaffinity", 1.0));
+      if (contype != 0 || conaffinity != 0) {
+        nlohmann::json col = MeshPayloadToJson(payload);
+        AddGeomPhysicsAttrs(geom_node, cls, &col);
+        col["approximation"] = "none";
+        (*link)["collisions"].push_back(std::move(col));
+        if (stats) stats->collisions++;
+      }
+    }
+  } else {
+    nlohmann::json col = MeshPayloadToJson(payload);
+    AddGeomPhysicsAttrs(geom_node, cls, &col);
+    // Default approximation `convexHull` matches
+    // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
+    // mujoco-usd-converter convention (one Mesh per geom +
+    // `UsdPhysicsMeshCollisionAPI` with hull approximation).
+    col["approximation"] = "convexHull";
+    (*link)["collisions"].push_back(std::move(col));
+    if (stats) stats->collisions++;
+  }
+  return true;
+}
+
+// Geoms that are direct children of <worldbody> (e.g. a ground/floor plane or
+// heightfield) are world-fixed and belong to no body. Collect them onto a
+// single static root link named "world" so they still convert. Accumulates
+// across every <worldbody> block (post-<include> merge). World-fixed colliders
+// are emitted as both a render mesh and a (triangle) collider via dual_collider.
+bool AddWorldbodyGeomsLink(const std::vector<pugi::xml_node> &worldbodies,
+                           const std::map<std::string, MeshAsset> &assets,
+                           const std::map<std::string, HFieldAsset> &hfields,
+                           const Options &opts, const Context &ctx,
+                           nlohmann::json *links, Stats *stats,
+                           std::string *err) {
+  nlohmann::json link = {{"name", "world"},
+                         {"static", true},
+                         {"inertial", {{"mass", 0.0}}},
+                         {"visuals", nlohmann::json::array()},
+                         {"collisions", nlohmann::json::array()}};
+  for (const auto &worldbody : worldbodies) {
+    for (const auto &geom_node : Children(worldbody, "geom")) {
+      std::string gerr;
+      if (!AppendGeomToLink(geom_node, "", assets, hfields, opts, ctx,
+                            IdentityMatrix(), &link, stats, &gerr,
+                            /*dual_collider=*/true)) {
+        // Match the per-body geom path: a build failure is fatal unless the
+        // caller opted into --allow-missing.
+        if (!opts.allow_missing) {
+          if (err) *err = gerr.empty() ? "worldbody geom failed" : gerr;
+          return false;
+        }
+        std::cerr << "WARN: " << (gerr.empty() ? "worldbody geom skipped" : gerr)
+                  << "\n";
+      }
+    }
+  }
+  if (link["visuals"].empty() && link["collisions"].empty()) return true;
+  links->push_back(std::move(link));
+  if (stats) stats->links++;
+  return true;
+}
+
 bool VisitMujocoBody(const pugi::xml_node &body_node,
                      const std::string &parent_name,
                      const std::string &childclass,
                      const std::vector<double> &parent_world,
                      const std::map<std::string, MeshAsset> &assets,
+                     const std::map<std::string, HFieldAsset> &hfields,
                      const Options &opts, const Context &ctx,
                      nlohmann::json *links, nlohmann::json *joints,
                      Stats *stats, std::string *err) {
@@ -1249,20 +2056,28 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       MultiplyMatrix(parent_world, PoseMatrix(body_node, ctx));
   const std::string body_name =
       Attr(body_node, "name", "body_" + std::to_string(stats->links));
+  // A <freejoint> (or <joint type="free">) makes this body a 6-DOF floating
+  // base: it is NOT joined to its parent. Mark it so the converter emits a free
+  // articulation root (vs a fixed base, which has no such joint).
+  bool has_free = static_cast<bool>(Child(body_node, "freejoint"));
+  if (!has_free) {
+    for (const auto &jn : Children(body_node, "joint")) {
+      if (ToLower(Attr(jn, "type")) == "free") { has_free = true; break; }
+    }
+  }
   nlohmann::json link = {
       {"name", body_name},
       {"inertial", InertialToJson(body_node)},
       {"visuals", nlohmann::json::array()},
       {"collisions", nlohmann::json::array()}};
+  if (has_free) link["floating"] = true;
+  // MuJoCo mocap body (driven externally; not simulated). Flag it so the USD
+  // link records mjc:mocap.
+  if (MjcBoolAttr(Attr(body_node, "mocap", "false"))) link["mocap"] = true;
 
   for (const auto &geom_node : Children(body_node, "geom")) {
-    const AttrMap &cls = ResolveGeomClass(geom_node, ctx.defaults, cc);
-    std::string cls_name = Attr(geom_node, "class");
-    if (cls_name.empty()) cls_name = cc;
-    MeshPayload payload;
-    bool visual = true;
-    if (!BuildGeomPayload(geom_node, cls, cls_name, assets, opts, ctx,
-                          body_world, &payload, &visual, err)) {
+    if (!AppendGeomToLink(geom_node, cc, assets, hfields, opts, ctx, body_world,
+                          &link, stats, err)) {
       if (opts.allow_missing) {
         std::cerr << "WARN: " << (err ? *err : "mesh skipped") << "\n";
         if (err) err->clear();
@@ -1270,41 +2085,337 @@ bool VisitMujocoBody(const pugi::xml_node &body_node,
       }
       return false;
     }
-    if (visual) {
-      nlohmann::json visual_json = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, cls, &visual_json);
-      link["visuals"].push_back(std::move(visual_json));
-      stats->visuals++;
-    } else {
-      nlohmann::json col = MeshPayloadToJson(payload);
-      AddGeomPhysicsAttrs(geom_node, cls, &col);
-      // Default approximation `convexHull` matches
-      // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
-      // mujoco-usd-converter convention (one Mesh per geom +
-      // `UsdPhysicsMeshCollisionAPI` with hull approximation). Authors
-      // who need triangle-soup contact can override per-geom in JSON.
-      col["approximation"] = "convexHull";
-      link["collisions"].push_back(std::move(col));
-      stats->collisions++;
-    }
   }
 
   links->push_back(std::move(link));
   stats->links++;
-  if (!parent_name.empty()) {
-    const auto joint_node = Child(body_node, "joint");
-    const AttrMap &jcls = ResolveJointClass(joint_node, ctx.defaults, cc);
-    AddJointJson(body_node, jcls, ctx, parent_name, body_name, joints);
-    stats->joints++;
+  if (!parent_name.empty() && !has_free) {
+    const std::vector<double> body_matrix = PoseMatrix(body_node, ctx);
+    const std::array<double, 3> body_pos =
+        ParseDouble3(Attr(body_node, "pos"), {{0.0, 0.0, 0.0}});
+    const std::vector<double> identity = IdentityMatrix();
+    const std::array<double, 3> zero_pos = {{0.0, 0.0, 0.0}};
+    const std::vector<pugi::xml_node> joint_nodes =
+        Children(body_node, "joint");
+
+    if (joint_nodes.size() <= 1) {
+      // 0 joints -> fixed connection; 1 joint -> single DOF (the common case).
+      const pugi::xml_node jn =
+          joint_nodes.empty() ? pugi::xml_node() : joint_nodes[0];
+      const AttrMap &jcls = ResolveJointClass(jn, ctx.defaults, cc);
+      AddJointFromNode(jn, jcls, ctx, parent_name, body_name, body_matrix,
+                       body_pos, joints);
+      stats->joints++;
+    } else {
+      // MuJoCo allows multiple <joint> per body (e.g. ball+slide, or a stack of
+      // hinges) — they compose in sequence. Represent the N DOFs as a chain of
+      // (N-1) massless intermediate link Xforms joined by single-DOF joints:
+      //   parent --j0--> dof_1 --j1--> ... --j(N-1)--> body
+      // Only the first joint carries the body offset; intermediates sit at the
+      // body frame (identity). Geometry is world-baked on `body`, so the empty
+      // intermediate links add no visible geometry.
+      std::string prev = parent_name;
+      for (size_t k = 0; k < joint_nodes.size(); k++) {
+        const bool last = (k + 1 == joint_nodes.size());
+        const std::string child =
+            last ? body_name : (body_name + "__mjcdof_" + std::to_string(k + 1));
+        if (!last) {
+          // Emit a massless intermediate link (no geometry, no mass).
+          nlohmann::json dof_link = {{"name", child},
+                                     {"inertial", {{"mass", 0.0}}},
+                                     {"visuals", nlohmann::json::array()},
+                                     {"collisions", nlohmann::json::array()}};
+          links->push_back(std::move(dof_link));
+          stats->links++;
+        }
+        const AttrMap &jcls =
+            ResolveJointClass(joint_nodes[k], ctx.defaults, cc);
+        AddJointFromNode(joint_nodes[k], jcls, ctx, prev, child,
+                         (k == 0) ? body_matrix : identity,
+                         (k == 0) ? body_pos : zero_pos, joints);
+        stats->joints++;
+        prev = child;
+      }
+    }
   }
 
   for (const auto &child_body : Children(body_node, "body")) {
-    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, opts,
-                         ctx, links, joints, stats, err)) {
+    if (!VisitMujocoBody(child_body, body_name, cc, body_world, assets, hfields,
+                         opts, ctx, links, joints, stats, err)) {
       return false;
     }
   }
   return true;
+}
+
+// --- MJCF <attach> sub-model composition -----------------------------------
+// `<asset><model name file>` declares a child model; `<attach model body
+// prefix>` grafts that child's body subtree at the attach point, prefixing
+// every name + reference. We expand it at the XML level (after include
+// expansion) so the rest of the pipeline sees one flat model. Used by
+// iit_softfoot/scene.xml (the only menagerie model using <attach>).
+
+// Attributes whose value is a name or a reference to one (prefixed on attach).
+const std::set<std::string> &AttachRefAttrs() {
+  static const std::set<std::string> s = {
+      "name", "class", "childclass", "material", "mesh", "hfield", "texture",
+      "joint", "joint1", "joint2", "site", "site1", "site2", "refsite",
+      "sidesite", "tendon", "tendon1", "tendon2", "body", "body1", "body2",
+      "geom", "geom1", "geom2", "objname"};
+  return s;
+}
+
+void PrefixAttachSubtree(pugi::xml_node node, const std::string &prefix,
+                         bool rad_to_deg) {
+  for (pugi::xml_attribute a : node.attributes()) {
+    if (AttachRefAttrs().count(a.name())) {
+      const std::string v = a.value();
+      if (!v.empty()) a.set_value((prefix + v).c_str());
+    }
+  }
+  if (rad_to_deg) {
+    // The child model authored angles in radians but the merged model is parsed
+    // in degrees; convert orientation angles so geometry stays correct. (Joint
+    // range/ref are left as-is — they affect limits, not the rest pose.)
+    const double k = 57.295779513082323;  // 180/pi
+    if (pugi::xml_attribute e = node.attribute("euler")) {
+      const auto v = ParseDoubles(e.value());
+      if (v.size() == 3) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g",
+                      v[0] * k, v[1] * k, v[2] * k);
+        e.set_value(buf);
+      }
+    }
+    if (pugi::xml_attribute aa = node.attribute("axisangle")) {
+      const auto v = ParseDoubles(aa.value());
+      if (v.size() == 4) {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g %.10g", v[0], v[1],
+                      v[2], v[3] * k);
+        aa.set_value(buf);
+      }
+    }
+  }
+  for (pugi::xml_node c : node.children()) {
+    PrefixAttachSubtree(c, prefix, rad_to_deg);
+  }
+}
+
+void CollectAttachNodes(pugi::xml_node n, std::vector<pugi::xml_node> *out) {
+  for (pugi::xml_node c : n.children()) {
+    if (std::string(c.name()) == "attach") out->push_back(c);
+    CollectAttachNodes(c, out);
+  }
+}
+
+pugi::xml_node FindBodyByName(pugi::xml_node n, const std::string &name) {
+  for (pugi::xml_node b : n.children("body")) {
+    if (std::string(b.attribute("name").as_string()) == name) return b;
+    if (pugi::xml_node r = FindBodyByName(b, name)) return r;
+  }
+  return pugi::xml_node();
+}
+
+bool ExpandAttachments(pugi::xml_node root, const fs::path &base_dir,
+                       std::string *err) {
+  std::map<std::string, fs::path> models;
+  for (pugi::xml_node asset : root.children("asset")) {
+    for (pugi::xml_node m : asset.children("model")) {
+      const std::string name = m.attribute("name").as_string();
+      const std::string file = m.attribute("file").as_string();
+      if (!name.empty() && !file.empty()) {
+        models[name] = fs::weakly_canonical(base_dir / file);
+      }
+    }
+  }
+  std::vector<pugi::xml_node> attaches;
+  CollectAttachNodes(root, &attaches);
+  if (attaches.empty()) return true;
+
+  bool parent_radian = false;
+  if (pugi::xml_node comp = root.child("compiler")) {
+    parent_radian = ToLower(comp.attribute("angle").as_string("degree")) == "radian";
+  }
+
+  for (pugi::xml_node attach : attaches) {
+    const std::string model_name = attach.attribute("model").as_string();
+    const std::string body_name = attach.attribute("body").as_string();
+    const std::string prefix = attach.attribute("prefix").as_string();
+    const auto it = models.find(model_name);
+    if (it == models.end()) {
+      std::cerr << "WARN: <attach> references unknown model `" << model_name
+                << "`\n";
+      continue;
+    }
+    std::string child_xml;
+    if (!ReadFile(it->second, &child_xml, err)) return false;
+    std::set<fs::path> seen;
+    std::string child_expanded;
+    if (!ExpandIncludes(child_xml, it->second.parent_path(), &seen,
+                        &child_expanded, err)) {
+      return false;
+    }
+    pugi::xml_document child_doc;
+    if (!child_doc.load_string(child_expanded.c_str())) {
+      if (err) *err = "Failed to parse attached model: " + it->second.string();
+      return false;
+    }
+    pugi::xml_node child_root = child_doc.child("mujoco");
+    if (!child_root) continue;
+
+    const fs::path child_dir = it->second.parent_path();
+    std::string child_meshdir;
+    bool child_radian = false;
+    if (pugi::xml_node cc = child_root.child("compiler")) {
+      child_meshdir = cc.attribute("meshdir").as_string();
+      if (child_meshdir.empty()) child_meshdir = cc.attribute("assetdir").as_string();
+      child_radian = ToLower(cc.attribute("angle").as_string("degree")) == "radian";
+    }
+    const bool rad_to_deg = child_radian && !parent_radian;
+
+    // Make the child's mesh/hfield file paths absolute so they still resolve
+    // after the assets are merged into the (differently-rooted) parent model.
+    for (pugi::xml_node asset : child_root.children("asset")) {
+      for (const char *tag : {"mesh", "hfield", "skin"}) {
+        for (pugi::xml_node a : asset.children(tag)) {
+          pugi::xml_attribute f = a.attribute("file");
+          if (f && !std::string(f.value()).empty() &&
+              fs::path(f.value()).is_relative()) {
+            const fs::path abs =
+                fs::weakly_canonical(child_dir / child_meshdir / f.value());
+            f.set_value(abs.string().c_str());
+          }
+        }
+      }
+    }
+
+    PrefixAttachSubtree(child_root, prefix, rad_to_deg);
+
+    pugi::xml_node found;
+    for (pugi::xml_node wb : child_root.children("worldbody")) {
+      found = FindBodyByName(wb, prefix + body_name);
+      if (found) break;
+    }
+    if (!found) {
+      std::cerr << "WARN: <attach> body `" << body_name
+                << "` not found in model `" << model_name << "`\n";
+      continue;
+    }
+
+    pugi::xml_node parent = attach.parent();
+    parent.insert_copy_before(found, attach);
+    parent.remove_child(attach);
+
+    // Merge the child's model-level sections (prefixed) into the parent.
+    for (const char *sec : {"default", "asset", "tendon", "actuator", "sensor",
+                            "equality", "contact", "keyframe"}) {
+      pugi::xml_node child_sec = child_root.child(sec);
+      if (!child_sec) continue;
+      pugi::xml_node main_sec = root.child(sec);
+      if (!main_sec) main_sec = root.append_child(sec);
+      for (pugi::xml_node c : child_sec.children()) {
+        if (std::string(c.name()) == "model") continue;  // don't recurse models
+        main_sec.append_copy(c);
+      }
+    }
+  }
+  return true;
+}
+
+// --- MJCF <frame> flattening -----------------------------------------------
+// A <frame> is a pure coordinate transform applied to all its direct children
+// (it is NOT a body). MuJoCo 3 uses it to group/offset geoms/bodies. We dissolve
+// each frame by composing its transform into every child's pose and moving the
+// children up to the frame's parent, so the rest of the pipeline never sees a
+// <frame>. Used by apptronik_apollo (frames wrap finger-mesh geoms).
+
+void SetNodeAttr(pugi::xml_node n, const char *name, const char *val) {
+  pugi::xml_attribute a = n.attribute(name);
+  if (a) a.set_value(val); else n.append_attribute(name).set_value(val);
+}
+
+// Column-major 4x4 -> translation + quaternion {w,x,y,z}.
+void DecomposePosQuat(const std::vector<double> &m, std::array<double, 3> *pos,
+                      Quat *q) {
+  *pos = {{m[12], m[13], m[14]}};
+  const double trace = m[0] + m[5] + m[10];
+  double w, x, y, z;
+  if (trace > 0.0) {
+    const double S = 2.0 * std::sqrt(trace + 1.0);
+    w = 0.25 * S; x = (m[6] - m[9]) / S; y = (m[8] - m[2]) / S; z = (m[1] - m[4]) / S;
+  } else if (m[0] > m[5] && m[0] > m[10]) {
+    const double S = 2.0 * std::sqrt(1.0 + m[0] - m[5] - m[10]);
+    w = (m[6] - m[9]) / S; x = 0.25 * S; y = (m[4] + m[1]) / S; z = (m[8] + m[2]) / S;
+  } else if (m[5] > m[10]) {
+    const double S = 2.0 * std::sqrt(1.0 + m[5] - m[0] - m[10]);
+    w = (m[8] - m[2]) / S; x = (m[4] + m[1]) / S; y = 0.25 * S; z = (m[9] + m[6]) / S;
+  } else {
+    const double S = 2.0 * std::sqrt(1.0 + m[10] - m[0] - m[5]);
+    w = (m[1] - m[4]) / S; x = (m[8] + m[2]) / S; y = (m[9] + m[6]) / S; z = 0.25 * S;
+  }
+  *q = QuatNormalize({{w, x, y, z}});
+}
+
+void FlattenFramesIn(pugi::xml_node parent, const Context &ctx) {
+  // Bottom-up: flatten frames nested inside children before dissolving the
+  // frames directly under `parent`.
+  for (pugi::xml_node c : parent.children()) FlattenFramesIn(c, ctx);
+
+  pugi::xml_node child = parent.first_child();
+  while (child) {
+    pugi::xml_node next = child.next_sibling();
+    if (std::string(child.name()) == "frame") {
+      const std::array<double, 3> fpos = ParseDouble3(Attr(child, "pos"), {{0, 0, 0}});
+      const Quat fq = OrientationQuat(Attr(child, "quat"), Attr(child, "axisangle"),
+                                      Attr(child, "euler"), Attr(child, "xyaxes"),
+                                      Attr(child, "zaxis"), ctx);
+      const std::vector<double> fm = MatrixFromPosQuat(fpos, fq);
+      const std::string fcc = Attr(child, "childclass");
+      for (pugi::xml_node gc : child.children()) {
+        const std::array<double, 3> cpos = ParseDouble3(Attr(gc, "pos"), {{0, 0, 0}});
+        const Quat cq = OrientationQuat(Attr(gc, "quat"), Attr(gc, "axisangle"),
+                                        Attr(gc, "euler"), Attr(gc, "xyaxes"),
+                                        Attr(gc, "zaxis"), ctx);
+        const std::vector<double> cm = MultiplyMatrix(fm, MatrixFromPosQuat(cpos, cq));
+        std::array<double, 3> npos;
+        Quat nq;
+        DecomposePosQuat(cm, &npos, &nq);
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", npos[0], npos[1], npos[2]);
+        SetNodeAttr(gc, "pos", buf);
+        std::snprintf(buf, sizeof(buf), "%.12g %.12g %.12g %.12g", nq[0], nq[1], nq[2], nq[3]);
+        SetNodeAttr(gc, "quat", buf);
+        gc.remove_attribute("euler");
+        gc.remove_attribute("axisangle");
+        gc.remove_attribute("xyaxes");
+        gc.remove_attribute("zaxis");
+        // A capsule/cylinder fromto is in the frame's coordinates too.
+        if (pugi::xml_attribute ft = gc.attribute("fromto")) {
+          const auto v = ParseDoubles(ft.value());
+          if (v.size() == 6) {
+            auto tp = [&](double a, double b, double c) {
+              return std::array<double, 3>{{fm[0] * a + fm[4] * b + fm[8] * c + fm[12],
+                                            fm[1] * a + fm[5] * b + fm[9] * c + fm[13],
+                                            fm[2] * a + fm[6] * b + fm[10] * c + fm[14]}};
+            };
+            const auto p0 = tp(v[0], v[1], v[2]);
+            const auto p1 = tp(v[3], v[4], v[5]);
+            std::snprintf(buf, sizeof(buf), "%.10g %.10g %.10g %.10g %.10g %.10g",
+                          p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]);
+            SetNodeAttr(gc, "fromto", buf);
+          }
+        }
+        // Propagate the frame's childclass to children that don't set one.
+        if (!fcc.empty() && !gc.attribute("childclass") && !gc.attribute("class")) {
+          SetNodeAttr(gc, "childclass", fcc.c_str());
+        }
+        parent.insert_copy_before(gc, child);
+      }
+      parent.remove_child(child);
+    }
+    child = next;
+  }
 }
 
 bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
@@ -1328,9 +2439,18 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
     return false;
   }
 
+  // Expand <attach> sub-models (graft + prefix child body subtrees) before any
+  // semantic parsing, so assets/defaults/tendons/etc. see the merged model.
+  if (!ExpandAttachments(root, input_filename.parent_path(), err)) {
+    return false;
+  }
+
   const auto assets = CollectMujocoAssets(root, input_filename.parent_path());
-  const auto worldbody = Child(root, "worldbody");
-  if (!worldbody) {
+  const auto hfields = CollectMujocoHFields(root, input_filename.parent_path());
+  // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
+  // <include>) into a single world; visit them all, not just the first.
+  const auto worldbodies = Children(root, "worldbody");
+  if (worldbodies.empty()) {
     if (err) *err = "MJCF has no <worldbody>.";
     return false;
   }
@@ -1347,25 +2467,80 @@ bool BuildMujocoPayload(const std::string &xml, const fs::path &input_filename,
   }
   ctx.defaults = ParseDefaults(root);
 
+  // Dissolve <frame> grouping transforms now that the angle/eulerseq context is
+  // known, so body/geom/site traversal never has to look inside a <frame>.
+  for (const auto &worldbody : Children(root, "worldbody")) {
+    FlattenFramesIn(worldbody, ctx);
+  }
+
   nlohmann::json links = nlohmann::json::array();
   nlohmann::json joints = nlohmann::json::array();
   nlohmann::json actuators = nlohmann::json::array();
-  for (const auto &body : Children(worldbody, "body")) {
-    if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, opts, ctx,
-                         &links, &joints, stats, err)) {
-      return false;
+  nlohmann::json tendons = nlohmann::json::array();
+  nlohmann::json equalities = nlohmann::json::array();
+  nlohmann::json filtered_pairs = nlohmann::json::array();
+  nlohmann::json sites = nlohmann::json::array();
+  nlohmann::json mjc_actuators = nlohmann::json::array();
+  nlohmann::json keyframes = nlohmann::json::array();
+  nlohmann::json lights = nlohmann::json::array();
+  nlohmann::json cameras = nlohmann::json::array();
+  nlohmann::json materials = nlohmann::json::array();
+  nlohmann::json sensors = nlohmann::json::array();
+  nlohmann::json contact_pairs = nlohmann::json::array();
+  for (const auto &worldbody : worldbodies) {
+    for (const auto &body : Children(worldbody, "body")) {
+      if (!VisitMujocoBody(body, "", "", IdentityMatrix(), assets, hfields, opts,
+                           ctx, &links, &joints, stats, err)) {
+        return false;
+      }
+      CollectMujocoSitesJson(body, IdentityMatrix(), ctx, &sites, stats);
     }
+    CollectMujocoLightsCamerasJson(worldbody, IdentityMatrix(), ctx, &lights,
+                                   &cameras);
   }
-  AddMujocoActuatorsJson(root, &actuators, stats);
+  // World-fixed geoms living directly under <worldbody> (floor/ground/hfield).
+  if (!AddWorldbodyGeomsLink(worldbodies, assets, hfields, opts, ctx, &links,
+                             stats, err)) {
+    return false;
+  }
+  AddMujocoActuatorsJson(root, &actuators, &mjc_actuators, stats);
+  AddMujocoTendonsJson(root, ctx, &tendons, stats);
+  AddMujocoEqualityJson(root, &equalities, stats);
+  AddMujocoContactExcludesJson(root, &filtered_pairs, stats);
+  AddMujocoKeyframesJson(root, &keyframes, stats);
+  AddMujocoMaterialsJson(root, input_filename.parent_path(), &materials, stats);
+  AddMujocoSensorsJson(root, &sensors, stats);
+  AddMujocoContactPairsJson(root, &contact_pairs, stats);
+  nlohmann::json custom = nlohmann::json::object();
+  AddMujocoCustomJson(root, &custom);
+  nlohmann::json plugins = nlohmann::json::array();
+  AddMujocoPluginsJson(root, &plugins);
 
   (*payload) = {
       {"name", Attr(root, "model", input_filename.stem().string())},
       {"upAxis", opts.up_axis},
+      {"sourceFormat", "mjcf"},
       {"gravity", opts.up_axis == "Z" ? nlohmann::json::array({0, 0, -1})
                                        : nlohmann::json::array({0, -1, 0})},
       {"links", std::move(links)},
       {"joints", std::move(joints)},
       {"actuators", std::move(actuators)}};
+  if (!tendons.empty()) (*payload)["tendons"] = std::move(tendons);
+  if (!equalities.empty()) (*payload)["equalities"] = std::move(equalities);
+  if (!filtered_pairs.empty())
+    (*payload)["filteredPairs"] = std::move(filtered_pairs);
+  if (!sites.empty()) (*payload)["sites"] = std::move(sites);
+  if (!mjc_actuators.empty()) (*payload)["mjcActuators"] = std::move(mjc_actuators);
+  nlohmann::json mjc_scene = BuildMjcSceneJson(root);
+  if (!mjc_scene.empty()) (*payload)["mjcScene"] = std::move(mjc_scene);
+  if (!keyframes.empty()) (*payload)["keyframes"] = std::move(keyframes);
+  if (!lights.empty()) (*payload)["lights"] = std::move(lights);
+  if (!cameras.empty()) (*payload)["cameras"] = std::move(cameras);
+  if (!materials.empty()) (*payload)["materials"] = std::move(materials);
+  if (!sensors.empty()) (*payload)["sensors"] = std::move(sensors);
+  if (!contact_pairs.empty()) (*payload)["contactPairs"] = std::move(contact_pairs);
+  if (!custom.empty()) (*payload)["custom"] = std::move(custom);
+  if (!plugins.empty()) (*payload)["plugins"] = std::move(plugins);
   const auto option = Child(root, "option");
   if (option && HasAttr(option, "timestep")) {
     (*payload)["timestep"] = ParseDoubleAttr(option, "timestep", 0.0);
@@ -1389,7 +2564,9 @@ fs::path OutputPath(const Options &opts, const std::string &format) {
 }
 
 bool SaveStage(const tinyusdz::Stage &stage, const fs::path &filename,
-               const std::string &format, std::string *err) {
+               const std::string &format,
+               const std::map<std::string, std::vector<uint8_t>> &assets,
+               std::string *err) {
   std::string warn;
   bool ok = false;
   if (format == "usda") {
@@ -1397,7 +2574,8 @@ bool SaveStage(const tinyusdz::Stage &stage, const fs::path &filename,
   } else if (format == "usdc") {
     ok = tinyusdz::usdc::SaveAsUSDCToFile(filename.string(), stage, &warn, err);
   } else if (format == "usdz") {
-    const std::map<std::string, std::vector<uint8_t>> assets;
+    // Embed referenced textures so the .usdz is self-contained; the archive
+    // names match the (relative) inputs:file references in the stage.
     ok = tinyusdz::SaveAsUSDZToFile(filename.string(), stage, assets, &warn, err);
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
@@ -1451,12 +2629,32 @@ int main(int argc, char **argv) {
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
 
+  // Gather referenced texture bytes (keyed by their relative archive name) so a
+  // usdz output is a self-contained package. usda/usdc reference the texture by
+  // the same relative path and resolve it beside the .usd on disk.
+  std::map<std::string, std::vector<uint8_t>> tex_assets;
+  if (payload.contains("materials")) {
+    for (const auto &m : payload["materials"]) {
+      if (!m.contains("texture") || !m.contains("texture_abs")) continue;
+      const std::string arc = m["texture"].get<std::string>();
+      if (arc.empty() || tex_assets.count(arc)) continue;
+      std::string bytes;
+      std::string rerr;
+      if (ReadFile(fs::path(m["texture_abs"].get<std::string>()), &bytes, &rerr)) {
+        tex_assets[arc] =
+            std::vector<uint8_t>(bytes.begin(), bytes.end());
+      } else {
+        std::cerr << "WARN: texture not embedded into usdz: " << rerr << "\n";
+      }
+    }
+  }
+
   const std::vector<std::string> formats =
       opts.format == "all" ? std::vector<std::string>{"usda", "usdc", "usdz"}
                            : std::vector<std::string>{opts.format};
   for (const std::string &format : formats) {
     const fs::path out = OutputPath(opts, format);
-    if (!SaveStage(stage, out, format, &err)) {
+    if (!SaveStage(stage, out, format, tex_assets, &err)) {
       std::cerr << "urdf-to-usd: failed to write " << out << ": " << err << "\n";
       return EXIT_FAILURE;
     }
@@ -1466,6 +2664,6 @@ int main(int argc, char **argv) {
   std::cout << "Converted " << payload.value("name", std::string("scene")) << ": "
             << stats.links << " links, " << stats.joints << " joints, "
             << stats.visuals << " visual meshes, " << stats.collisions
-            << " collisions, " << stats.actuators << " Newton actuators.\n";
+            << " collisions, " << stats.actuators << " actuators.\n";
   return EXIT_SUCCESS;
 }

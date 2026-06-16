@@ -33,42 +33,68 @@ void PrintIndent(std::ostream& os, int depth, const std::string& indent) {
 // Print a single property
 void PrintProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
                    int depth, const PrimPrintOptions& opts) {
-  PrintIndent(os, depth, opts.indent);
-
   // Get property name
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
 
-  // Get type name
-  TypeId type_id = static_cast<TypeId>(slot.value_type);
-  std::string type_name = GetTypeName(type_id);
-
-  // Check for variability qualifiers
-  if (slot.is_uniform()) {
-    os << "uniform ";
+  // Type name: prefer the declared type recorded on read (preserves role
+  // types like `color3f`/`normal3f` and array `[]` that the raw TypeId loses),
+  // else synthesize from the slot's value type.
+  std::string type_name;
+  if (const std::string* tn = spec.property_type_name(name)) {
+    type_name = *tn;
+  } else {
+    type_name = GetTypeName(static_cast<TypeId>(slot.value_type));
+    if (slot.is_array()) type_name += "[]";
   }
-  if (slot.is_custom()) {
-    os << "custom ";
+
+  // Emit the leading qualifiers + `type name`, shared by the value line and the
+  // `.connect` line (USDA repeats the type on each statement).
+  auto emit_decl = [&](const std::string& suffix) {
+    PrintIndent(os, depth, opts.indent);
+    if (slot.is_uniform()) os << "uniform ";
+    // `custom` is deprecated; emit only under opt-in.
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    os << type_name << " " << name << suffix;
+  };
+
+  const Value* value =
+      opts.print_values ? spec.property_value(slot.name_id) : nullptr;
+  const bool has_value = value && !value->is_empty();
+  const std::vector<Path>* conns = spec.connection(name);
+  const bool has_conn = conns && !conns->empty();
+
+  // Authored default value (a property may carry BOTH a value and a connection
+  // — they are separate USDA statements).
+  if (has_value) {
+    emit_decl(" = ");
+    PrintOptions print_opts;
+    print_opts.indent = opts.indent;
+    os << PrintValue(*value, print_opts) << "\n";
   }
 
-  // Print type and name
-  os << type_name;
-  if (slot.is_array()) {
-    os << "[]";
-  }
-  os << " " << name;
-
-  // Print value if requested
-  if (opts.print_values) {
-    const Value* value = spec.property_value(slot.name_id);
-    if (value && !value->is_empty()) {
-      PrintOptions print_opts;
-      print_opts.indent = opts.indent;
-      os << " = " << PrintValue(*value, print_opts);
+  // Connection target(s): `<type> <name>.connect = </path>` (or `[...]`).
+  if (has_conn) {
+    emit_decl(".connect = ");
+    if (conns->size() == 1) {
+      os << "<" << (*conns)[0].str() << ">";
+    } else {
+      os << "[";
+      for (size_t i = 0; i < conns->size(); ++i) {
+        if (i) os << ", ";
+        os << "<" << (*conns)[i].str() << ">";
+      }
+      os << "]";
     }
+    os << "\n";
   }
 
-  os << "\n";
+  // Declared-only attribute (no value, no connection): emit the bare
+  // declaration so connection-targets/typed-only props round-trip.
+  if (!has_value && !has_conn) {
+    emit_decl("");
+    os << "\n";
+  }
 }
 
 // Print relationships

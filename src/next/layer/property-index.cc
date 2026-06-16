@@ -225,6 +225,12 @@ const PropSlot* PropIndex::find(PropNameId name_id) const {
   return nullptr;
 }
 
+PropSlot* PropIndex::find_mutable(PropNameId name_id) {
+  // const_cast is safe: *this is non-const, so the slot returned by find()
+  // aliases our own non-const slots_ storage.
+  return const_cast<PropSlot*>(find(name_id));
+}
+
 const PropSlot* PropIndex::find(const std::string& name) const {
   PropNameId id = GetPropNameTable().find(name);
   if (!id.is_valid()) {

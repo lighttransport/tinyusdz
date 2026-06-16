@@ -152,12 +152,12 @@ const ParserProfilingConfig& ParserProfiler::GetConfig() const {
 ParserTimer* ParserProfiler::GetTimer(const std::string& parser_name) {
   // std::map does not invalidate element pointers on insert, so the returned
   // pointer remains valid after the lock is released.
-  std::lock_guard<std::mutex> lock(mu_);
+  MutexLockGuard lock(mu_);
   return &timers_[parser_name];
 }
 
 std::string ParserProfiler::GenerateReport() const {
-  std::lock_guard<std::mutex> lock(mu_);
+  MutexLockGuard lock(mu_);
   std::ostringstream oss;
   oss << "TinyUSDZ Parser Profiling Report\n";
   oss << "================================\n\n";
@@ -176,7 +176,7 @@ std::string ParserProfiler::GenerateReport() const {
 }
 
 void ParserProfiler::ClearAll() {
-  std::lock_guard<std::mutex> lock(mu_);
+  MutexLockGuard lock(mu_);
   for (auto& pair : timers_) {
     pair.second.Clear();
   }

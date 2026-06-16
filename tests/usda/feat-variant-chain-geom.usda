@@ -1,0 +1,22 @@
+#usda 1.0
+
+def Xform "Chair" (
+    variants = {
+        string modelingVariant = "ChairA"
+    }
+    add variantSets = "modelingVariant"
+)
+{
+    variantSet "modelingVariant" = {
+        "ChairA" {
+            def "Geom" {
+                custom string which = "I_am_ChairA"
+            }
+        }
+        "ChairB" {
+            def "Geom" {
+                custom string which = "I_am_ChairB"
+            }
+        }
+    }
+}

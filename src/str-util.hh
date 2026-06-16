@@ -420,6 +420,22 @@ constexpr size_t DTOS_MAX_CHARS_DOUBLE = 32;
 size_t dtos(float v, char* buffer);
 size_t dtos(double v, char* buffer);
 
+///
+/// Opt-in: format floats/doubles like OpenUSD's usdcat instead of tinyusdz's
+/// default (shortest & robust). Default false = existing behavior.
+///
+/// OpenUSD (pxr_double_conversion ToShortest/ToShortestSingle) uses fixed
+/// notation for decimal exponents in [-6, 15) and scientific outside, with NO
+/// `+` sign on positive exponents and NO zero-padding (e.g. `0.0000019073486`,
+/// `1e-7`, `1.234e15`). tinyusdz's default switches to scientific below 1e-4 and
+/// pads the exponent to two digits with a sign (`1.9073486e-06`, `e+15`). Both
+/// produce the same shortest round-trip digits; only the notation differs.
+///
+/// Plain global (not thread_local) so parallel-print workers observe it.
+///
+void SetUSDFloatFormat(bool enable);
+bool GetUSDFloatFormat();
+
 // Forward declarations for types (actual definitions in value-types.hh)
 namespace value {
 struct half;

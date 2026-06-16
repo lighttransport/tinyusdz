@@ -1,0 +1,27 @@
+#usda 1.0
+(
+    defaultPrim = "Geom"
+)
+
+# Referenced asset: LODs are authored as a `LOD` variantSet (default selects
+# LODa). LODb exists ONLY inside the (unselected) LODb variant — it is NOT a
+# direct child of Geom.
+def Xform "Geom" (
+    variants = {
+        string LOD = "LODa"
+    }
+    prepend variantSets = "LOD"
+)
+{
+    def Scope "Materials"
+    {
+    }
+    variantSet "LOD" = {
+        "LODa" {
+            def Mesh "LODa" { int[] faceVertexCounts = [3] }
+        }
+        "LODb" {
+            def Mesh "LODb" { int[] faceVertexCounts = [4] }
+        }
+    }
+}

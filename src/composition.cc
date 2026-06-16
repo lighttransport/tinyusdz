@@ -4,6 +4,7 @@
 #include "composition.hh"
 
 #include <algorithm>
+#include <mutex>
 #include <set>
 #include <stack>
 #include <unordered_map>
@@ -257,6 +258,12 @@ bool IsURIAssetPath(const std::string &asset_path) {
   return asset_path.find("://") != std::string::npos;
 }
 
+// Opt-in (SetNormalizeAssetPathOnFlatten): lexically collapse `.`/`..` in asset
+// paths made absolute on flatten, matching usdcat. Plain global, read during
+// composition; set before flatten. The public setter/getter live in the
+// tinyusdz namespace (see below); this global is file-local.
+static bool g_normalize_asset_path_on_flatten = false;
+
 std::string ResolveAuthoredAssetPathForFlatten(
     const std::string &asset_path,
     const std::string &current_working_path) {
@@ -265,7 +272,11 @@ std::string ResolveAuthoredAssetPathForFlatten(
     return asset_path;
   }
 
-  return io::JoinPath(current_working_path, asset_path);
+  std::string joined = io::JoinPath(current_working_path, asset_path);
+  if (g_normalize_asset_path_on_flatten) {
+    joined = io::NormalizePath(joined);
+  }
+  return joined;
 }
 
 void ResolveAssetAttributesInPrimSpecTree(
@@ -390,7 +401,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                const bool error_when_asset_not_found,
                const bool error_when_unsupported_fileformat,
                const bool allow_parent_relative_paths, std::string *warn,
-               std::string *err) {
+               std::string *err,
+               std::map<std::string, Layer> *layer_cache = nullptr) {
   if (!dst_layer) {
     PUSH_ERROR_AND_RETURN(
         "[Internal error]. `dst_layer` output arg is nullptr.");
@@ -421,23 +433,40 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   // resolve path
   // TODO: Store resolved path to Reference?
-  std::string resolved_path = resolver.resolve(asset_path);
+  bool used_suffix_fallback{false};
+  std::string resolved_path =
+      resolver.resolve(asset_path, &used_suffix_fallback);
 
   DCOUT("Loading references: " << resolved_path
                                << ", asset_path: " << asset_path);
+
+  // Dedupe per-asset-path warnings: UE-exported scenes repeat the same
+  // authored path across thousands of arcs.
+  static std::set<std::string> s_warned_asset_paths;
+  static std::mutex s_warned_asset_paths_mutex;
+  auto warn_once = [&](const std::string &key, const std::string &msg) {
+    std::lock_guard<std::mutex> lock(s_warned_asset_paths_mutex);
+    if (s_warned_asset_paths.insert(key).second) {
+      PUSH_WARN(msg);
+    }
+  };
+
+  if (used_suffix_fallback) {
+    warn_once(asset_path,
+              fmt::format("Asset `{}` not found at authored path; rebased to "
+                          "`{}` via suffix fallback.",
+                          asset_path, resolved_path));
+  }
 
   if (resolved_path.empty()) {
     if (error_when_asset_not_found) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to resolve asset path `{}`", asset_path));
     } else {
-      PUSH_WARN(fmt::format("Asset not found: `{}`", asset_path));
-      PUSH_WARN(
-          fmt::format("  current working path: `{}`", current_working_path));
-      PUSH_WARN(fmt::format("  resolver.current_working_path: `{}`",
-                            resolver.current_working_path()));
-      PUSH_WARN(fmt::format("  search_paths: `{}`", search_paths));
-      PUSH_WARN(fmt::format("  resolver.search_paths: `{}`",
+      warn_once(asset_path,
+                fmt::format("Asset not found: `{}` (current working path `{}`, "
+                            "search_paths `{}`)",
+                            asset_path, resolver.current_working_path(),
                             resolver.search_paths()));
       (*dst_primspec_root) = nullptr;
       return true;
@@ -457,8 +486,30 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     resolver.add_search_path(base_dir);
   }
 
+  // Parsed-layer cache: keyed by the resolved path plus the resolution
+  // context that gets stamped into the loaded prims (the search paths; the
+  // working path is derived from the resolved file's own directory and is
+  // context-independent). On a hit the Layer COPY shares all heavy attribute
+  // payloads via the copy-on-write value storage.
+  std::string layer_cache_key;
+  bool layer_from_cache = false;
+  Layer cached_layer_local;
+  if (layer_cache) {
+    layer_cache_key = resolved_path;
+    for (const auto &sp : resolver.search_paths()) {
+      layer_cache_key += '\n';
+      layer_cache_key += sp;
+    }
+    auto it = layer_cache->find(layer_cache_key);
+    if (it != layer_cache->end()) {
+      cached_layer_local = it->second;  // COW copy
+      layer_from_cache = true;
+    }
+  }
+
   Asset asset;
-  if (!resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
+  if (!layer_from_cache &&
+      !resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Failed to open asset `{}`.", resolved_path));
   }
@@ -472,6 +523,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   DCOUT("Opened resolved assst: " << resolved_path
                                   << ", asset_path: " << asset_path);
 
+  if (!layer_from_cache) {
   if (IsBuiltinFileFormat(asset_path)) {
     if (IsUSDFileFormat(asset_path) || IsMtlxFileFormat(asset_path)) {
       // ok
@@ -504,11 +556,15 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
   }
 
-  Layer layer;
+  }  // !layer_from_cache (format checks)
+
+  Layer layer = std::move(cached_layer_local);
   std::string _warn;
   std::string _err;
 
-  if (IsUSDFileFormat(asset_path)) {
+  if (layer_from_cache) {
+    // parsed + sublayer-composited copy from the cache; skip the parse.
+  } else if (IsUSDFileFormat(asset_path)) {
     // Pass the RESOLVED (anchored) path so the loaded layer's prims are stamped
     // with the resolved directory as their current-working-path. Using the
     // authored (relative) asset_path here would lose the parent-directory
@@ -570,7 +626,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   // OpenChessSet's *_payload.usd / *.usd), compose those subLayers here so the
   // target's prims are present before the "no prims" check below (matching
   // OpenUSD). Sublayers are resolved relative to this asset's directory.
-  if (IsUSDFileFormat(asset_path) && !layer.metas().subLayers.empty()) {
+  if (!layer_from_cache && IsUSDFileFormat(asset_path) &&
+      !layer.metas().subLayers.empty()) {
     layer.set_asset_resolution_state(
         base_dir.empty() ? resolver.current_working_path() : base_dir,
         resolver.search_paths());
@@ -587,6 +644,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to composite subLayers of `{}`", asset_path));
     }
     layer = std::move(sublayer_composited);
+  }
+
+  if (layer_cache && !layer_from_cache) {
+    // Cache the parsed (and sublayer-composited) layer; later arcs to the
+    // same file take a COW copy instead of re-parsing.
+    (*layer_cache)[layer_cache_key] = layer;
   }
 
   if (_warn.size()) {
@@ -1256,7 +1319,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1376,7 +1440,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1531,7 +1596,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1632,7 +1698,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths, warn, err,
+                   options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -2051,7 +2118,7 @@ bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `references` ok.");
   return true;
@@ -2066,6 +2133,99 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   ArcVisitedSet visited;
   return CompositeReferencesImpl(resolver, in_layer, composited_layer,
                                  warn, err, options, visited);
+}
+
+namespace {
+
+// True when any prim in the layer authors an internal arc (a reference or
+// payload whose asset path is empty: `references = </some/Prim>`). Internal
+// arcs are resolved by looking prims up in the *pristine* input layer, so the
+// move-based InPlace composition (which consumes the input) must fall back to
+// the copying path when they are present.
+bool LayerHasInternalArcs(const Layer &layer, bool check_references,
+                          bool check_payload) {
+  std::vector<const PrimSpec *> stack;
+  for (const auto &item : layer.primspecs()) {
+    stack.push_back(&item.second);
+  }
+  while (!stack.empty()) {
+    const PrimSpec *ps = stack.back();
+    stack.pop_back();
+
+    if (check_references && ps->metas().references) {
+      for (const auto &ref_op : ps->metas().references.value()) {
+        for (const auto &ref : ref_op.second) {
+          if (ref.asset_path.GetAssetPath().empty()) {
+            return true;
+          }
+        }
+      }
+    }
+    if (check_payload && ps->metas().payload) {
+      for (const auto &pl_op : ps->metas().payload.value()) {
+        for (const auto &pl : pl_op.second) {
+          if (pl.asset_path.GetAssetPath().empty()) {
+            return true;
+          }
+        }
+      }
+    }
+
+    for (const auto &child : ps->children()) {
+      stack.push_back(&child);
+    }
+    for (const auto &variant_set_item : ps->variantSets()) {
+      for (const auto &variant_item : variant_set_item.second.variantSet) {
+        stack.push_back(&variant_item.second);
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
+                                std::unique_ptr<Layer> layer,
+                                Layer *composited_layer, std::string *warn,
+                                std::string *err,
+                                ReferencesCompositionOptions options) {
+  if (!layer || !composited_layer) {
+    return false;
+  }
+
+  ArcVisitedSet visited;
+
+  // Internal references need pristine-layer lookups: keep the input alive and
+  // use the copying path.
+  if (LayerHasInternalArcs(*layer, /* references */ true, /* payload */ false)) {
+    return CompositeReferencesImpl(resolver, *layer, composited_layer, warn,
+                                   err, options, visited);
+  }
+
+  // No internal arcs: consume the input instead of deep-copying it, halving
+  // the peak of the pass (the copying path holds input + output).
+  std::vector<std::string> search_paths = layer->get_asset_search_paths();
+  Layer dst = std::move(*layer);
+  layer.reset();
+
+  for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
+    // `dst` doubles as the internal-lookup layer; never consulted since the
+    // scan above found no internal arcs (arcs appended during this pass are
+    // processed by the next fixed-point iteration, which rescans).
+    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths,
+                                primPath, dst, item.second, warn, err, options,
+                                visited)) {
+      if (err) {
+        (*err) += "Composite `references` failed.\n";
+      }
+      return false;
+    }
+  }
+
+  (*composited_layer) = std::move(dst);
+  return true;
 }
 
 namespace {
@@ -2151,7 +2311,7 @@ bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_lay
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `payload` ok.");
   return true;
@@ -2165,6 +2325,43 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   ArcVisitedSet visited;
   return CompositePayloadImpl(resolver, in_layer, composited_layer,
                               warn, err, options, visited);
+}
+
+bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
+                             std::unique_ptr<Layer> layer,
+                             Layer *composited_layer, std::string *warn,
+                             std::string *err,
+                             PayloadCompositionOptions options) {
+  if (!layer || !composited_layer) {
+    return false;
+  }
+
+  ArcVisitedSet visited;
+
+  // Internal payload arcs need pristine-layer lookups: copying path.
+  if (LayerHasInternalArcs(*layer, /* references */ false, /* payload */ true)) {
+    return CompositePayloadImpl(resolver, *layer, composited_layer, warn, err,
+                                options, visited);
+  }
+
+  // No internal arcs: consume the input instead of deep-copying it.
+  Layer dst = std::move(*layer);
+  layer.reset();
+
+  for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
+    if (!CompositePayloadRec(/* depth */ 0, resolver,
+                             item.second.get_asset_search_paths(), primPath,
+                             dst, item.second, warn, err, options, visited)) {
+      if (err) {
+        (*err) += "Composite `payload` failed.\n";
+      }
+      return false;
+    }
+  }
+
+  (*composited_layer) = std::move(dst);
+  return true;
 }
 
 bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
@@ -2181,7 +2378,7 @@ bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `variantSet` ok.");
   return true;
@@ -2203,7 +2400,7 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `inherits` ok.");
   return true;
@@ -2322,7 +2519,7 @@ bool CompositeSpecializes(const Layer &in_layer, Layer *composited_layer,
     }
   }
 
-  (*composited_layer) = dst;
+  (*composited_layer) = std::move(dst);
 
   DCOUT("Composite `specializes` ok.");
   return true;
@@ -2339,6 +2536,14 @@ static Property ComposeStrongerPropertyOverWeaker(const Property &stronger,
 
   Attribute &composed_attr = composed.attribute();
   const Attribute &weaker_attr = weaker.get_attribute();
+
+  // Attribute metadata composes per field: the stronger opinion wins where it
+  // authored a field, the weaker fills the rest. e.g. a variant (or override)
+  // that supplies a new VALUE but not metadata must keep the weaker layer's
+  // `customData` (Pixar Kitchen_set: a PlateB variant overrides displayColor's
+  // value but inherits the asset's `customData = { Maya = { generated = 1 } }`).
+  composed_attr.metas().merge_from(weaker_attr.metas(),
+                                   /*override_existing=*/false);
 
   if (!composed_attr.has_connections() && weaker_attr.has_connections()) {
     composed_attr.set_connections(weaker_attr.connections());
@@ -2369,6 +2574,42 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   // Override metadataum
   dst.metas().update_from(src.metas());
   DCOUT("update_from done");
+
+  // AOUSD Core Spec 12.2.1 (specifier): the composed prim is DEFINED if ANY
+  // opinion defines it. OverridePrimSpec merges a weaker `src` under a stronger
+  // `dst`; when `dst` is a pure `over` and `src` is defining (def/class),
+  // promote `dst` to the defining specifier. Without this a variant's
+  // `def Mesh "LOD0"` merged under a locally-authored `over "LOD0"` (a deep
+  // reference override, seen on UE-exported assets) stays `over` with no typeName --
+  // the prim's definition silently vanishes on flatten. CombinePrimSpecRec
+  // applies the same rule on the reference/sublayer path; this is its
+  // counterpart for the variant-merge / append-reference path. The promotion
+  // only ever turns `over` into `def`/`class` (never demotes), so it is correct
+  // regardless of which side is the stronger opinion.
+  if (dst.specifier() == Specifier::Over &&
+      (src.specifier() == Specifier::Def ||
+       src.specifier() == Specifier::Class)) {
+    dst.specifier() = src.specifier();
+
+    // The definition -- and therefore the anchor for its relative
+    // reference/payload asset paths -- comes from this defining `src`. A pure
+    // `over` carries the overriding layer's working path; keeping it would
+    // mis-anchor arcs authored in the defining layer (e.g. a variant's
+    // `../../../Materials/...` reference). Adopt the defining layer's
+    // asset-resolution anchor so those arcs resolve correctly.
+    if (!src.get_current_working_path().empty()) {
+      dst.set_asset_resolution_state(src.get_current_working_path(),
+                                     src.get_asset_search_paths());
+    }
+  }
+
+  // AOUSD Core Spec 12.2.2 (typeName): take the typeName from the defining spec
+  // when the stronger `over` has none.
+  if (dst.typeName().empty() && !src.typeName().empty() &&
+      (src.specifier() == Specifier::Def ||
+       src.specifier() == Specifier::Class)) {
+    dst.typeName() = src.typeName();
+  }
 
   // Override properties with AOUSD Core Spec 12.2.4 (custom) handling:
   // The `custom` flag is true if ANY opinion in the stack says true.
@@ -2512,6 +2753,14 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     dst_child_index.emplace(dst.children()[i].name(), i);
   }
 
+  // Names present in `src`(=ps) before we append, so dst-only children can be
+  // detected below.
+  std::unordered_set<std::string> src_child_names;
+  src_child_names.reserve(ps.children().size());
+  for (const auto &c : ps.children()) {
+    src_child_names.insert(c.name());
+  }
+
   for (auto &child : ps.children()) {
     auto it = dst_child_index.find(child.name());
 
@@ -2519,6 +2768,19 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
       if (!OverridePrimSpecRec(1, child, dst.children()[it->second], warn, err)) {
         return false;
       }
+    }
+  }
+
+  // Carry over dst-only children: a stronger (dst) opinion that introduces a
+  // child NOT present in `src` must survive composition, exactly as the
+  // property loop above re-adds dst-only properties. Without this, a
+  // locally-authored child placed alongside a reference/inherit/specialize
+  // (e.g. a `def "LOD2"` next to a referenced asset whose LODs come from a
+  // variant) is silently dropped. Appended after the src children (which keeps
+  // the referenced/base children first, then local additions).
+  for (const auto &dchild : dst.children()) {
+    if (src_child_names.count(dchild.name()) == 0) {
+      ps.children().push_back(dchild);
     }
   }
 
@@ -2576,6 +2838,114 @@ bool HasInherits(const Layer &layer) {
 
 bool HasVariants(const Layer &layer) {
   return layer.check_unresolved_variant();
+}
+
+bool ShouldDeferVariantComposition(const Layer &layer, bool references_enabled,
+                                   bool payload_enabled) {
+  if (references_enabled && layer.check_unresolved_references()) return true;
+  if (payload_enabled && layer.check_unresolved_payload()) return true;
+  return false;
+}
+
+namespace {
+
+// Resolve one apiSchemas applied-schema list-op into its baked EXPLICIT form,
+// then rewrite `authoredOps` to a single ResetToExplicit op (the USDA/USDC
+// writers emit that without a `prepend`/`append` qualifier). Operates on the
+// authored raw-string ops so unknown schemas resolve uniformly.
+//
+// Resolution follows SdfListOp semantics, which are keyed by qualifier CATEGORY,
+// not the order ops happen to be stored in: a `delete` removes its targets from
+// the final set regardless of where it sits relative to the `prepend`/`append`
+// that introduced them. (The crate reader emits ops in a fixed order --
+// add/append/delete/prepend -- so applying them sequentially would make a
+// delete-before-prepend a spurious no-op.) An `explicit` (ResetToExplicit) op is
+// absolute: pxr stores a list-op in EITHER explicit mode OR the
+// prepend/append/add/delete/order set, never both.
+void BakeAppliedSchemaListOp(APISchemas &schemas) {
+  if (schemas.explicitlyEmpty) {
+    // Authored as `apiSchemas = None`; pxrUSD keeps it verbatim on flatten.
+    return;
+  }
+  if (schemas.authoredOps.empty()) {
+    // Resolved (names/listOpQual) view with no authored ops: just force the
+    // qualifier explicit so the writer drops any `prepend`/`append`.
+    schemas.listOpQual = ListEditQual::ResetToExplicit;
+    return;
+  }
+
+  using Item = std::pair<std::string, std::string>;  // (schemaName, instance)
+
+  bool has_explicit = false;
+  std::vector<Item> explicit_items, prepended, appended;
+  std::set<Item> deleted;
+  for (const auto &op : schemas.authoredOps) {
+    switch (op.first) {
+      case ListEditQual::ResetToExplicit:
+        has_explicit = true;
+        explicit_items = op.second;
+        break;
+      case ListEditQual::Prepend:
+        prepended.insert(prepended.end(), op.second.begin(), op.second.end());
+        break;
+      case ListEditQual::Append:
+      case ListEditQual::Add:
+        appended.insert(appended.end(), op.second.begin(), op.second.end());
+        break;
+      case ListEditQual::Delete:
+        deleted.insert(op.second.begin(), op.second.end());
+        break;
+      default:
+        // Order/Invalid: not part of the resolved applied-schema set.
+        break;
+    }
+  }
+
+  // Compose against an EMPTY base: a fully flattened layer has no weaker opinion
+  // left for this prim's authored op to edit (the reference/sublayer that
+  // contributed it was already consumed into `authoredOps`).
+  std::vector<Item> resolved;
+  std::set<Item> seen;
+  auto add_unique = [&](const Item &it) {
+    if (deleted.count(it)) return;
+    if (seen.insert(it).second) resolved.push_back(it);
+  };
+  if (has_explicit) {
+    for (const auto &it : explicit_items) add_unique(it);
+  } else {
+    for (const auto &it : prepended) add_unique(it);
+    for (const auto &it : appended) add_unique(it);
+  }
+
+  schemas.authoredOps.clear();
+  schemas.authoredOps.push_back({ListEditQual::ResetToExplicit, resolved});
+  schemas.listOpQual = ListEditQual::ResetToExplicit;
+}
+
+void FlattenAppliedSchemasRec(PrimSpec &ps) {
+  if (ps.metas().has_apiSchemas()) {
+    APISchemas schemas = ps.metas().get_apiSchemas();
+    BakeAppliedSchemaListOp(schemas);
+    ps.metas().set_apiSchemas(schemas);
+  }
+  for (auto &child : ps.children()) {
+    FlattenAppliedSchemasRec(child);
+  }
+}
+
+}  // namespace
+
+void FlattenAppliedSchemas(Layer &layer) {
+  for (auto &kv : layer.primspecs()) {
+    FlattenAppliedSchemasRec(kv.second);
+  }
+}
+
+void SetNormalizeAssetPathOnFlatten(bool enable) {
+  g_normalize_asset_path_on_flatten = enable;
+}
+bool GetNormalizeAssetPathOnFlatten() {
+  return g_normalize_asset_path_on_flatten;
 }
 
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
@@ -2978,7 +3348,7 @@ bool CompositeRelocates(const Layer &in_layer, Layer *composited_layer,
   // Clear layerRelocates after processing
   dst.metas().layerRelocates.clear();
 
-  *composited_layer = dst;
+  *composited_layer = std::move(dst);
   DCOUT("Composite `relocates` ok.");
   return true;
 }

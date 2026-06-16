@@ -409,6 +409,8 @@ void print_help() {
   std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
+  std::cout << "  --no-asset-path-fallback Disable suffix-fallback rebasing of "
+               "unresolvable composition asset paths\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
   std::cout << "                      (disable stack snipping and line truncation)\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
@@ -479,11 +481,14 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  bool preserve_order{false};
+  bool openusd_compat{false};
   std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
   bool error_detail{false};
   bool show_progress{false};
+  bool asset_path_fallback{true};
   bool compress_float_arrays{false};
   OutputFormat output_format{OutputFormat::Infer};
 
@@ -522,6 +527,25 @@ int main(int argc, char **argv) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
+    } else if ((arg.compare("--preserve-order") == 0) ||
+               (arg.compare("--usd-order") == 0)) {
+      // Opt-in: emit prim children in authored (USD) order recovered from the
+      // crate's primChildren field instead of the default lexicographical order
+      // (properties stay alphabetical, matching usdcat). Must be set BEFORE
+      // loading so the USDC reader records the order metadata.
+      preserve_order = true;
+      tinyusdz::pprint::SetPreserveAuthoredOrder(true);
+    } else if (arg.compare("--openusd-compat") == 0) {
+      // Aggregate opt-in: emit output as close to OpenUSD `usdcat` as tinyusdz
+      // can -- authored child order + alphabetical properties (Layer output),
+      // OpenUSD float notation, and OpenUSD USDA text layout (metadata paren on
+      // the `def` line, plain blank separators).
+      preserve_order = true;
+      openusd_compat = true;
+      tinyusdz::pprint::SetPreserveAuthoredOrder(true);
+      tinyusdz::SetUSDFloatFormat(true);
+      tinyusdz::pprint::SetUSDTextFormat(true);
+      tinyusdz::SetNormalizeAssetPathOnFlatten(true);
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
@@ -563,6 +587,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--no-asset-path-fallback") == 0) {
+      asset_path_fallback = false;
     } else if (arg.compare("--error-detail") == 0) {
       error_detail = true;
     } else if (arg.compare("--progress") == 0) {
@@ -975,7 +1001,7 @@ int main(int argc, char **argv) {
     tinyusdz::Layer root_layer;
     bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
-      std::cout << "WARN: " << warn << "\n";
+      std::cerr << "WARN: " << warn << "\n"; warn.clear();
     }
 
     if (!ret) {
@@ -1004,6 +1030,7 @@ int main(int argc, char **argv) {
     tinyusdz::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
+    resolver.set_enable_suffix_fallback(asset_path_fallback);
 
     //
     // LIVRPS strength ordering
@@ -1028,6 +1055,12 @@ int main(int argc, char **argv) {
     tinyusdz::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
 
+    // Parse each referenced file once across the whole fixed-point loop; all
+    // arcs to the same file share one copy of the heavy attribute data (COW).
+    std::map<std::string, tinyusdz::Layer> layer_cache;
+    reference_opts.layer_cache = &layer_cache;
+    payload_opts.layer_cache = &layer_cache;
+
     // Whether to dump each INTERMEDIATE composited layer as USDA text per
     // iteration (debug aid). For heavy scenes this USDA serialization is itself
     // the blow-up (e.g. baked vertex-animation timeSamples), and it happens
@@ -1045,7 +1078,7 @@ int main(int argc, char **argv) {
       }
 
       if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
+        std::cerr << "WARN: " << warn << "\n"; warn.clear();
       }
 
       if (print_intermediate) {
@@ -1068,13 +1101,17 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err, reference_opts)) {
+          // InPlace: consumes src_layer (no internal arcs) instead of holding
+          // input + output copies — halves the peak of the pass.
+          if (!tinyusdz::CompositeReferencesInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, reference_opts)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1093,13 +1130,15 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err, payload_opts)) {
+          if (!tinyusdz::CompositePayloadInPlace(resolver,
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err, payload_opts)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1124,7 +1163,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1137,8 +1176,17 @@ int main(int argc, char **argv) {
       }
 
       if (comp_features.variantSets) {
+        // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+        // and payloads are resolved (see ShouldDeferVariantComposition) — the
+        // populated variantSet may live in a referenced/payloaded sublayer.
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
+        } else if (tinyusdz::ShouldDeferVariantComposition(
+                       src_layer, comp_features.references,
+                       comp_features.payload)) {
+          std::cout << "# iter " << i
+                    << ": variant resolution deferred (refs/payloads pending).\n";
+          has_unresolved = true;
         } else {
           has_unresolved = true;
 
@@ -1149,7 +1197,7 @@ int main(int argc, char **argv) {
           }
 
           if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            std::cerr << "WARN: " << warn << "\n"; warn.clear();
           }
 
           if (print_intermediate) {
@@ -1189,6 +1237,43 @@ int main(int argc, char **argv) {
         }
       }
 
+    }
+
+    // Flatten finalize: the layer is now fully composed, so bake every
+    // apiSchemas list-op to explicit form -- matches `usdcat --flatten`, which
+    // never emits a `prepend`/`append` qualifier on a composed prim. Must run
+    // after the iteration loop (a mid-flatten reset would shadow apiSchemas a
+    // later arc still contributes).
+    tinyusdz::FlattenAppliedSchemas(src_layer);
+
+    // --preserve-order (USDA only): emit the composed LAYER directly so prim
+    // children AND properties keep their authored order (the generic PrimSpec
+    // property map + primChildren/properties metadata honor the order under
+    // pprint::SetPreserveAuthoredOrder). The Stage path serializes typed prims
+    // in schema-fixed attribute order, so it cannot reproduce usdcat's property
+    // order. Captured BEFORE the Layer is moved into LayerToStage below.
+    std::string preserved_layer_usda;
+    const bool emit_preserved_layer =
+        preserve_order && !json_output &&
+        output_format != OutputFormat::USDC &&
+        output_format != OutputFormat::USDZ;  // USDA or Infer(stdout)
+    if (emit_preserved_layer) {
+      // --openusd-compat: stamp the flattened layer's `documentation` with the
+      // same provenance line `usdcat --flatten` injects (UsdStage::Flatten with
+      // addSourceFileComment=true): "Generated from Composed Stage of root layer
+      // <root layer path>\n", appended after any existing doc (separated by a
+      // blank line), and emitted triple-quoted. Only under --openusd-compat: the
+      // line embeds an absolute, machine-specific path, so it is intentionally
+      // omitted by default (and from --preserve-order) for reproducible output.
+      if (openusd_compat) {
+        std::string &docval = src_layer.metas().doc.value;
+        if (!docval.empty()) {
+          docval += "\n\n";
+        }
+        docval += "Generated from Composed Stage of root layer " + filepath + "\n";
+        src_layer.metas().doc.is_triple_quoted = true;
+      }
+      preserved_layer_usda = tinyusdz::to_string(src_layer);
     }
 
     tinyusdz::Stage comp_stage;
@@ -1251,6 +1336,10 @@ int main(int argc, char **argv) {
                     << ") and the compact USDC fallback failed: " << c_err << "\n";
           return EXIT_FAILURE;
         }
+      } else if (emit_preserved_layer) {
+        // --preserve-order: emit the composed Layer (authored child/property
+        // order) instead of the Stage.
+        std::cout << preserved_layer_usda << "\n";
       } else {
         // Guard the (potentially huge) USDA serialization against allocation
         // failure: turn an out-of-memory condition into a clean error instead of
@@ -1268,7 +1357,22 @@ int main(int argc, char **argv) {
     }
 
     if (has_output_file) {
-      if (!WriteStageToFile(comp_stage, output_filepath, output_format)) {
+      if (emit_preserved_layer) {
+        // --preserve-order: write the composed Layer (authored order) as USDA.
+        // usdcat ends the file with a trailing blank line; match it (the stdout
+        // path above already appends a newline).
+        if (preserve_order && !preserved_layer_usda.empty() &&
+            preserved_layer_usda.back() == '\n') {
+          preserved_layer_usda.push_back('\n');
+        }
+        if (!tinyusdz::io::WriteWholeFile(output_filepath,
+                reinterpret_cast<const uint8_t *>(preserved_layer_usda.data()),
+                preserved_layer_usda.size(), &err)) {
+          std::cerr << "Failed to write " << output_filepath << ": " << err << "\n";
+          return EXIT_FAILURE;
+        }
+        std::cout << "Wrote USDA to [" << output_filepath << "]\n";
+      } else if (!WriteStageToFile(comp_stage, output_filepath, output_format)) {
         return EXIT_FAILURE;
       }
     }

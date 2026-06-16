@@ -136,6 +136,26 @@ bool ReconstructPrim<MjcKeyframe>(
 }
 
 // ============================================================================
+// MjcSensor
+// ============================================================================
+template <>
+bool ReconstructPrim<MjcSensor>(
+    const Specifier &spec, PropertyMap &properties, const ReferenceList &references,
+    MjcSensor *sensor, std::string *warn, std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec; (void)references; (void)options;
+  std::set<std::string> table;
+#define PRIM_PTR_ sensor
+  for (auto &prop : properties) {
+    MJC_SENSOR_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, MjcSensor, sensor->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+#undef PRIM_PTR_
+  return true;
+}
+
+// ============================================================================
 // PhysicsCollisionGroup
 // ============================================================================
 template <>
@@ -175,6 +195,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcActuator)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NewtonActuator)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcTendon)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcKeyframe)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(MjcSensor)
 
 }  // namespace prim
 }  // namespace tinyusdz

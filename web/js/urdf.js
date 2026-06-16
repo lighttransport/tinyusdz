@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -40,6 +41,9 @@ const state = {
   jointControls: new Map(),
   collisionMeshes: [],
   visualMeshes: [],
+  muscleObjects: [],
+  usdMuscleObjects: [],
+  muscleLineData: null,
   settings: {
     upAxis: 'Z',
     showVisuals: true,
@@ -59,7 +63,13 @@ const state = {
     showLinkNames: false,
     showJointNames: false,
     jointsCollapsed: false,
-    applyHomePose: false
+    applyHomePose: false,
+    showMuscles: true,
+    // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
+    // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
+    // visual/auxiliary split). Geoms with no group fall back to showVisuals/
+    // showCollisions (e.g. URDF / converted-USD meshes carry no MuJoCo group).
+    geomGroups: { 0: true, 1: true, 2: true, 3: false, 4: false, 5: false }
   }
 };
 
@@ -256,6 +266,9 @@ function clearRobot() {
   state.jointValues = {};
   state.collisionMeshes = [];
   state.visualMeshes = [];
+  for (const obj of state.muscleObjects) clearObjectFromGroup(robotGroup, obj);
+  state.muscleObjects = [];
+  state.muscleLineData = null;
   jointControlsEl.innerHTML = '';
   updateButtonStates();
   clearGhosts();
@@ -269,6 +282,8 @@ function clearUSD() {
   if (state.usdRestObject && state.usdRestObject !== state.usdObject) {
     disposeObject(state.usdRestObject);
   }
+  for (const obj of state.usdMuscleObjects) clearObjectFromGroup(usdGroup, obj);
+  state.usdMuscleObjects = [];
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
@@ -383,7 +398,10 @@ async function loadUSDObjectFromBytes(bytes, filename) {
   const sceneData = await parseUSDSceneFromArrayBuffer(
     loader,
     data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-    filename
+    filename,
+    // Decode in-package textures (e.g. an embedded-texture USDZ) in the native
+    // loader so the converted-USD view shows materials instead of a flat color.
+    { loadTextureInNative: true }
   );
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -465,6 +483,66 @@ async function loadSTLMeshFromFile(file) {
   group.name = mesh.name;
   group.add(mesh);
   return group;
+}
+
+// Apply a MuJoCo geom/material rgba to a visual mesh: tint the (cloned)
+// material and, when alpha < 1, render it transparent — so e.g. ms_human_700's
+// semi-transparent leg bones show the muscles behind them, matching the MuJoCo
+// viewer. Materials are already cloned per-geom (cloneRenderableObject), but we
+// clone again defensively before mutating.
+function applyRgbaToMesh(mesh, info) {
+  if (!mesh?.isMesh || !mesh.material || !info?.rgba) return;
+  const rgba = info.rgba;
+  const emission = info.emission || 0;
+  const apply = (src) => {
+    const mat = src.clone ? src.clone() : src;
+    if (mat.color && rgba.length >= 3) mat.color.setRGB(rgba[0], rgba[1], rgba[2]);
+    // MuJoCo material `emission` makes the geom self-lit (e.g. the bright
+    // "green pulleys"); map it to an emissive tint so it reads at full color.
+    const emissive = emission > 0 && mat.emissive;
+    if (emissive) {
+      mat.emissive.setRGB(rgba[0] * emission, rgba[1] * emission, rgba[2] * emission);
+    }
+    // Honor alpha<1 as transparency — EXCEPT for self-lit (emissive) geoms,
+    // which MuJoCo draws as a solid bright color; many overlapping low-alpha
+    // cylinders (e.g. the pulley grid) otherwise blend into muddy artifacts.
+    const alpha = rgba.length >= 4 ? rgba[3] : 1;
+    if (alpha < 1 && !emissive) {
+      mat.transparent = true;
+      mat.opacity = alpha;
+      mat.depthWrite = false;
+    }
+    return mat;
+  };
+  mesh.material = Array.isArray(mesh.material) ? mesh.material.map(apply) : apply(mesh.material);
+}
+
+const _rgbCss = (c) => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
+
+function makeCanvas2D(size) {
+  const canvas = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(size, size)
+    : Object.assign(document.createElement('canvas'), { width: size, height: size });
+  return { canvas, ctx: canvas.getContext('2d') };
+}
+
+// MuJoCo builtin "checker": a 2x2 checkerboard of rgb1/rgb2 (material texrepeat
+// tiles it). Returns a THREE.CanvasTexture.
+function makeCheckerTexture(def) {
+  const { canvas, ctx } = makeCanvas2D(256);
+  ctx.fillStyle = _rgbCss(def.rgb1); ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = _rgbCss(def.rgb2);
+  ctx.fillRect(0, 0, 128, 128); ctx.fillRect(128, 128, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
+// MuJoCo builtin "gradient": vertical rgb1 (top) -> rgb2 (bottom).
+function makeGradientTexture(def) {
+  const { canvas, ctx } = makeCanvas2D(256);
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, _rgbCss(def.rgb1)); g.addColorStop(1, _rgbCss(def.rgb2));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(canvas);
 }
 
 function makeMissingMesh(path) {
@@ -1146,6 +1224,110 @@ function parseNumbers(text, fallback = []) {
   return values.length ? values : fallback;
 }
 
+// Attributes whose value is a name or a reference to one (prefixed on <attach>).
+const ATTACH_REF_ATTRS = new Set([
+  'name', 'class', 'childclass', 'material', 'mesh', 'hfield', 'texture',
+  'joint', 'joint1', 'joint2', 'site', 'site1', 'site2', 'refsite', 'sidesite',
+  'tendon', 'tendon1', 'tendon2', 'body', 'body1', 'body2', 'geom', 'geom1',
+  'geom2', 'objname']);
+
+function prefixAttachSubtree(node, prefix, radToDeg) {
+  if (node.nodeType !== 1) return;
+  for (const attr of Array.from(node.attributes)) {
+    if (ATTACH_REF_ATTRS.has(attr.name) && attr.value) {
+      node.setAttribute(attr.name, prefix + attr.value);
+    }
+  }
+  if (radToDeg) {
+    // Child authored angles in radians; the merged model is parsed in degrees.
+    const k = 180 / Math.PI;
+    const e = node.getAttribute('euler');
+    if (e) { const v = parseNumbers(e, []); if (v.length === 3) node.setAttribute('euler', v.map((x) => x * k).join(' ')); }
+    const aa = node.getAttribute('axisangle');
+    if (aa) { const v = parseNumbers(aa, []); if (v.length === 4) { v[3] *= k; node.setAttribute('axisangle', v.join(' ')); } }
+  }
+  for (const c of childElements(node)) prefixAttachSubtree(c, prefix, radToDeg);
+}
+
+function findBodyByNameDeep(node, name) {
+  for (const b of childElements(node, 'body')) {
+    if (b.getAttribute('name') === name) return b;
+    const r = findBodyByNameDeep(b, name);
+    if (r) return r;
+  }
+  return null;
+}
+
+// MJCF <asset><model name file> + <attach model body prefix>: graft the child
+// model's named body subtree at the attach point, prefixing every name +
+// reference, and merge the child's defaults/assets/tendons/actuators/etc.
+// Mirrors the C++ ExpandAttachments. Used by iit_softfoot/scene.xml.
+async function expandMujocoAttachments(root, baseDir) {
+  const models = new Map();
+  for (const m of root.querySelectorAll('asset model')) {
+    const name = m.getAttribute('name');
+    const file = m.getAttribute('file');
+    if (name && file) models.set(name, file);
+  }
+  const attaches = Array.from(root.querySelectorAll('attach'));
+  if (!attaches.length) return;
+
+  const compilerEl = firstChildElement(root, 'compiler');
+  const parentRadian = (compilerEl?.getAttribute('angle') || 'degree').toLowerCase() === 'radian';
+  const ownerDoc = root.ownerDocument;
+
+  for (const attach of attaches) {
+    const modelName = attach.getAttribute('model');
+    const bodyName = attach.getAttribute('body') || '';
+    const prefix = attach.getAttribute('prefix') || '';
+    const file = models.get(modelName);
+    if (!file) { console.warn(`MJCF <attach>: unknown model "${modelName}"`); continue; }
+    const childPath = joinPath(baseDir, file);
+    const entry = resolveAssetEntry(childPath) || resolveAssetEntry(file);
+    if (!entry) { console.warn(`MJCF <attach>: model file not found: ${file}`); continue; }
+
+    const childDir = dirname(entry.rel);
+    const childExpanded = await expandMujocoIncludes(await entry.file.text(), childDir);
+    const childRoot = parseXMLDocument(childExpanded).documentElement;
+    const cc = firstChildElement(childRoot, 'compiler');
+    const childMeshdir = cc?.getAttribute('meshdir') || cc?.getAttribute('assetdir') || '';
+    const childRadian = (cc?.getAttribute('angle') || 'degree').toLowerCase() === 'radian';
+    const radToDeg = childRadian && !parentRadian;
+
+    // Rewrite child mesh/hfield file paths so they resolve against the merged
+    // model's asset folder (the child's dir + its meshdir).
+    for (const tag of ['mesh', 'hfield', 'skin']) {
+      for (const a of childRoot.querySelectorAll(`asset ${tag}`)) {
+        const f = a.getAttribute('file');
+        if (f) a.setAttribute('file', joinPath(joinPath(childDir, childMeshdir), f));
+      }
+    }
+
+    prefixAttachSubtree(childRoot, prefix, radToDeg);
+
+    let found = null;
+    for (const wb of childRoot.querySelectorAll('worldbody')) {
+      found = findBodyByNameDeep(wb, prefix + bodyName);
+      if (found) break;
+    }
+    if (!found) { console.warn(`MJCF <attach>: body "${bodyName}" not found in "${modelName}"`); continue; }
+
+    attach.parentNode.insertBefore(ownerDoc.importNode(found, true), attach);
+    attach.parentNode.removeChild(attach);
+
+    for (const sec of ['default', 'asset', 'tendon', 'actuator', 'sensor', 'equality', 'contact', 'keyframe']) {
+      const childSec = firstChildElement(childRoot, sec);
+      if (!childSec) continue;
+      let mainSec = firstChildElement(root, sec);
+      if (!mainSec) { mainSec = ownerDoc.createElement(sec); root.appendChild(mainSec); }
+      for (const c of childElements(childSec)) {
+        if (c.localName === 'model') continue;
+        mainSec.appendChild(ownerDoc.importNode(c, true));
+      }
+    }
+  }
+}
+
 function parseURDFMetadata(text) {
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   const robotEl = doc.querySelector('robot');
@@ -1272,6 +1454,9 @@ function attrsFromElement(el) {
 // MuJoCo <compiler> context for angle units + euler sequence. Set per-parse in
 // parseMJCFWithMeshes; defaults match MuJoCo (degrees, "xyz").
 let mjcfPoseCtx = { toRad: Math.PI / 180, eulerseq: 'xyz' };
+// <asset><hfield> name -> { nrow, ncol, size, data } for the current model,
+// populated (async, PNG-decoded) by parseMJCFWithMeshes.
+let mjcfHFields = new Map();
 
 function eulerQuatFromSeq(angles, seq, toRad) {
   const axisFor = (c) => (c === 'x' ? new THREE.Vector3(1, 0, 0)
@@ -1329,6 +1514,35 @@ function matrixFromPoseAttrs(attrs = {}) {
   const translation = new THREE.Vector3(pos[0] || 0, pos[1] || 0, pos[2] || 0);
   const quat = orientationQuat(attrs, mjcfPoseCtx);
   return new THREE.Matrix4().compose(translation, quat, new THREE.Vector3(1, 1, 1));
+}
+
+// A MuJoCo 3 <frame> is a pure coordinate transform applied to its children (not
+// a body). Dissolve each frame by composing its transform into every child's
+// pose and lifting the children to the frame's parent, so downstream traversal
+// never sees a <frame>. Needs mjcfPoseCtx set (uses the compiler angle units).
+function flattenMujocoFrames(parent) {
+  for (const c of Array.from(childElements(parent))) flattenMujocoFrames(c);
+  for (const frame of Array.from(childElements(parent, 'frame'))) {
+    const fm = matrixFromPoseAttrs(attrsFromElement(frame));
+    const fcc = frame.getAttribute('childclass');
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+    for (const gc of Array.from(childElements(frame))) {
+      const cm = new THREE.Matrix4().multiplyMatrices(fm, matrixFromPoseAttrs(attrsFromElement(gc)));
+      cm.decompose(pos, quat, scl);
+      gc.setAttribute('pos', `${pos.x} ${pos.y} ${pos.z}`);
+      gc.setAttribute('quat', `${quat.w} ${quat.x} ${quat.y} ${quat.z}`);  // MuJoCo wxyz
+      for (const a of ['euler', 'axisangle', 'xyaxes', 'zaxis']) gc.removeAttribute(a);
+      const ft = parseNumbers(gc.getAttribute('fromto'), []);
+      if (ft.length === 6) {
+        const p0 = new THREE.Vector3(ft[0], ft[1], ft[2]).applyMatrix4(fm);
+        const p1 = new THREE.Vector3(ft[3], ft[4], ft[5]).applyMatrix4(fm);
+        gc.setAttribute('fromto', `${p0.x} ${p0.y} ${p0.z} ${p1.x} ${p1.y} ${p1.z}`);
+      }
+      if (fcc && !gc.getAttribute('childclass') && !gc.getAttribute('class')) gc.setAttribute('childclass', fcc);
+      parent.insertBefore(gc, frame);  // DOM move
+    }
+    parent.removeChild(frame);
+  }
 }
 
 function decomposeMatrix(matrix) {
@@ -1705,9 +1919,128 @@ function shapePayloadForMujocoGeom(geomAttrs, originMatrix, fallbackName) {
   return null;
 }
 
+// Tessellate a heightfield's top surface into a THREE.BufferGeometry, matching
+// the CLI's buildHFieldGeometry / C++ TessellateHField exactly: x in [-rx,rx]
+// over ncol, y in [-ry,ry] over nrow, z = normalized*elevation_z, with smooth
+// per-vertex normals from the (edge-correct) height gradient.
+function buildHFieldGeometry(hf) {
+  const nr = hf.nrow, nc = hf.ncol;
+  const rx = hf.size[0], ry = hf.size[1], ez = hf.size[2] ?? 1;
+  const dx = (2 * rx) / (nc - 1), dy = (2 * ry) / (nr - 1);
+  const H = (r, c) => {
+    r = Math.max(0, Math.min(nr - 1, r));
+    c = Math.max(0, Math.min(nc - 1, c));
+    return hf.data[r * nc + c] * ez;
+  };
+  const positions = new Float32Array(nr * nc * 3);
+  const normals = new Float32Array(nr * nc * 3);
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const i = (r * nc + c) * 3;
+      positions[i] = -rx + c * dx;
+      positions[i + 1] = -ry + r * dy;
+      positions[i + 2] = H(r, c);
+      const cl = Math.max(0, c - 1), cr = Math.min(nc - 1, c + 1);
+      const rb = Math.max(0, r - 1), rt = Math.min(nr - 1, r + 1);
+      const hx = (H(r, cr) - H(r, cl)) / ((cr - cl) * dx);
+      const hy = (H(rt, c) - H(rb, c)) / ((rt - rb) * dy);
+      let nx = -hx, ny = -hy, nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normals[i] = nx / len; normals[i + 1] = ny / len; normals[i + 2] = nz / len;
+    }
+  }
+  const indices = new Uint32Array((nr - 1) * (nc - 1) * 6);
+  let k = 0;
+  for (let r = 0; r < nr - 1; r++) {
+    for (let c = 0; c < nc - 1; c++) {
+      const v00 = r * nc + c, v01 = r * nc + (c + 1);
+      const v10 = (r + 1) * nc + c, v11 = (r + 1) * nc + (c + 1);
+      indices[k++] = v00; indices[k++] = v01; indices[k++] = v11;
+      indices[k++] = v00; indices[k++] = v11; indices[k++] = v10;
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geom.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geom;
+}
+
+// Decode an image File to a grayscale (luminance) pixel array via the browser's
+// image pipeline (createImageBitmap + canvas), for <asset><hfield file=.png>.
+async function decodeImageToGray(file) {
+  const bitmap = await createImageBitmap(file);
+  const w = bitmap.width, h = bitmap.height;
+  const canvas = (typeof OffscreenCanvas !== 'undefined')
+    ? new OffscreenCanvas(w, h)
+    : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  const px = ctx.getImageData(0, 0, w, h).data;  // RGBA, rows top-to-bottom
+  bitmap.close?.();
+  const gray = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    gray[i] = Math.round(0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2]);
+  }
+  return { width: w, height: h, gray };
+}
+
+// Collect <asset><hfield> (name -> { nrow, ncol, size, data[0..1] }). File-based
+// fields decode a PNG (rows reversed: MuJoCo row 0 = -y edge); inline fields use
+// nrow/ncol/elevation. Async because the browser image decode is async.
+async function collectMujocoHFields(root) {
+  const compiler = firstChildElement(root, 'compiler');
+  const meshDir = compiler?.getAttribute('meshdir') || compiler?.getAttribute('assetdir') || '';
+  const hfields = new Map();
+  for (const asset of childElements(root, 'asset')) {
+    for (const hf of childElements(asset, 'hfield')) {
+      const file = hf.getAttribute('file') || '';
+      const name = hf.getAttribute('name') || (file ? file.split('/').pop().replace(/\.[^.]+$/, '') : '');
+      if (!name) continue;
+      const size = parseNumbers(hf.getAttribute('size'), [1, 1, 1, 0.1]);
+      let nrow = 0, ncol = 0, data = null;
+      if (file) {
+        const entry = resolveAssetEntry(joinPath(meshDir, file)) || resolveAssetEntry(file);
+        if (entry) {
+          try {
+            const png = await decodeImageToGray(entry.file);
+            ncol = png.width; nrow = png.height;
+            data = new Float32Array(nrow * ncol);
+            for (let r = 0; r < nrow; r++) {
+              for (let c = 0; c < ncol; c++) {
+                data[r * ncol + c] = png.gray[c + (nrow - 1 - r) * ncol];
+              }
+            }
+          } catch (err) {
+            console.warn(`MJCF hfield decode failed for ${file}:`, err);
+          }
+        }
+      } else {
+        nrow = Math.trunc(Number(hf.getAttribute('nrow')) || 0);
+        ncol = Math.trunc(Number(hf.getAttribute('ncol')) || 0);
+        const elev = parseNumbers(hf.getAttribute('elevation'), []);
+        if (nrow > 0 && ncol > 0 && elev.length === nrow * ncol) data = Float32Array.from(elev);
+      }
+      if (nrow > 1 && ncol > 1 && data) {
+        let emin = Infinity, emax = -Infinity;
+        for (const v of data) { if (v < emin) emin = v; if (v > emax) emax = v; }
+        const range = emax - emin;
+        for (let i = 0; i < data.length; i++) { data[i] -= emin; if (range > 1e-9) data[i] /= range; }
+        hfields.set(name, { nrow, ncol, size, data });
+      }
+    }
+  }
+  return hfields;
+}
+
 async function loadMujocoGeomObject(geomAttrs, meshAssets, fallbackName) {
   const attrs = geomAttrs || {};
   const geomType = attrs.type || (attrs.mesh ? 'mesh' : 'sphere');
+  if (geomType === 'hfield') {
+    const hf = mjcfHFields.get(attrs.hfield);
+    if (!hf) return makeMissingMesh(attrs.hfield || fallbackName);
+    return primitiveObjectFromGeometry(buildHFieldGeometry(hf), fallbackName);
+  }
   if (geomType === 'mesh') {
     const meshAsset = meshAssets.get(attrs.mesh);
     if (!meshAsset) return makeMissingMesh(attrs.mesh || fallbackName);
@@ -1780,6 +2113,25 @@ function classifyMujocoGeom(geomAttrs) {
   const className = String(attrs.class || '').toLowerCase();
   if (className.includes('collision') || className.includes('collider')) return false;
   return true;
+}
+
+// A geom's MuJoCo display group (0-5), resolved from its own/class `group`.
+// Ungrouped geoms default to 0 (visible) or 3 (collision-class / non-visual).
+function mujocoGeomGroup(geomAttrs, isVisual) {
+  const g = Number((geomAttrs || {}).group);
+  if (Number.isFinite(g)) return Math.max(0, Math.min(5, Math.trunc(g)));
+  return isVisual ? 0 : 3;
+}
+
+// True when a geom actually collides (MuJoCo default contype=conaffinity=1;
+// only a pure decoration sets BOTH to 0, e.g. iit_softfoot's group-4
+// virtual_pulley cylinders). Used to keep the red collision overlay limited to
+// real colliders while non-collider auxiliary geoms keep their own rgba.
+function isMujocoCollider(geomAttrs) {
+  const attrs = geomAttrs || {};
+  const ct = attrs.contype !== undefined ? Number(attrs.contype) : 1;
+  const ca = attrs.conaffinity !== undefined ? Number(attrs.conaffinity) : 1;
+  return ct !== 0 || ca !== 0;
 }
 
 function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
@@ -1869,6 +2221,219 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
+// Compute merged line-segment data for MuJoCo spatial tendons (muscles, e.g.
+// ms_human_700 / iit_softfoot): each <tendon><spatial> routes through an
+// ordered sequence of <site>s (and optional wrap <geom sidesite=...>), so we
+// emit a polyline through the resolved site world positions, colored by the
+// tendon's rgba (resolved from <default><tendon rgba=...>). All segments merge
+// into one buffer (one draw call) so thousands of muscles stay cheap.
+// `sitesByName` maps site name -> { pos: THREE.Vector3 (model-space) }.
+// Returns { positions, colors, tendonCount } (model-space) or null. The data is
+// reused to draw the muscles on BOTH the MJCF source and the converted-USD
+// view, which share the same model coordinate space.
+function computeMuscleLineData(root, sitesByName) {
+  // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
+  // only tracks geom/joint, so read the tendon default directly here). MuJoCo's
+  // tendon `width` is the rendered tube RADIUS.
+  let defRgba = [0.95, 0.3, 0.3, 1];
+  let defWidth = 0.003;
+  const rootDefault = firstChildElement(root, 'default');
+  const defTendon = rootDefault ? firstChildElement(rootDefault, 'tendon') : null;
+  if (defTendon?.getAttribute('rgba')) {
+    defRgba = parseNumbers(defTendon.getAttribute('rgba'), defRgba);
+  }
+  if (defTendon?.getAttribute('width')) {
+    defWidth = Number(defTendon.getAttribute('width')) || defWidth;
+  }
+
+  // Per-segment parallel arrays: positions (6 each: a,b), rgba (4 each), radii.
+  const positions = [];
+  const rgba = [];
+  const radii = [];
+  let tendonCount = 0;
+  for (const tendonRoot of childElements(root, 'tendon')) {
+    for (const spatial of childElements(tendonRoot, 'spatial')) {
+      const col = spatial.getAttribute('rgba')
+        ? parseNumbers(spatial.getAttribute('rgba'), defRgba) : defRgba;
+      const width = spatial.getAttribute('width')
+        ? (Number(spatial.getAttribute('width')) || defWidth) : defWidth;
+      // Resolve the ordered waypoints: <site> by name, and <geom sidesite=...>
+      // wraps approximated by their sidesite (the via point on the wrap surface).
+      const pts = [];
+      for (const child of childElements(spatial)) {
+        let ref = null;
+        if (child.localName === 'site') ref = child.getAttribute('site');
+        else if (child.localName === 'geom') ref = child.getAttribute('sidesite');
+        if (!ref) continue;
+        const site = sitesByName.get(ref);
+        if (site) pts.push(site.pos);
+      }
+      if (pts.length < 2) continue;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        positions.push(pts[i].x, pts[i].y, pts[i].z,
+                       pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+        rgba.push(col[0], col[1], col[2], col[3] ?? 1);
+        radii.push(width);
+      }
+      tendonCount++;
+    }
+  }
+  if (!positions.length) return null;
+  return { positions, rgba, radii, tendonCount };
+}
+
+const MUSCLE_TUBE_AXIS = new THREE.Vector3(0, 1, 0);
+
+// Build a THREE.Group of muscle tubes from computeMuscleLineData() data: each
+// spatial-tendon segment becomes a small cylinder (radius = tendon width),
+// merged into a single mesh (one draw call) with per-vertex RGBA so a tendon's
+// alpha<1 renders transparent. Built fresh per view (source + USD) since a
+// BufferGeometry can't be shared across two scenes with independent disposal.
+function makeMuscleGroup(data) {
+  if (!data || !data.radii.length) return null;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const mid = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const unitScale = new THREE.Vector3(1, 1, 1);
+  const xform = new THREE.Matrix4();
+  const segGeos = [];
+  let anyTransparent = false;
+  for (let s = 0; s < data.radii.length; s++) {
+    a.set(data.positions[6 * s], data.positions[6 * s + 1], data.positions[6 * s + 2]);
+    b.set(data.positions[6 * s + 3], data.positions[6 * s + 4], data.positions[6 * s + 5]);
+    dir.subVectors(b, a);
+    const len = dir.length();
+    if (len < 1e-9) continue;
+    const r = data.radii[s];
+    const geo = new THREE.CylinderGeometry(r, r, len, 6, 1, false);
+    q.setFromUnitVectors(MUSCLE_TUBE_AXIS, dir.divideScalar(len));
+    mid.addVectors(a, b).multiplyScalar(0.5);
+    geo.applyMatrix4(xform.compose(mid, q, unitScale));
+    const cr = data.rgba[4 * s], cg = data.rgba[4 * s + 1];
+    const cb = data.rgba[4 * s + 2], ca = data.rgba[4 * s + 3];
+    if (ca < 1) anyTransparent = true;
+    const n = geo.attributes.position.count;
+    const colArr = new Float32Array(n * 4);
+    for (let v = 0; v < n; v++) {
+      colArr[4 * v] = cr; colArr[4 * v + 1] = cg;
+      colArr[4 * v + 2] = cb; colArr[4 * v + 3] = ca;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colArr, 4));
+    segGeos.push(geo);
+  }
+  if (!segGeos.length) return null;
+  const merged = BufferGeometryUtils.mergeGeometries(segGeos, false);
+  for (const g of segGeos) g.dispose();
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.5,
+    metalness: 0.0,
+    transparent: anyTransparent,
+    depthWrite: !anyTransparent
+  });
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.name = 'mjcf_muscles';
+  const muscleGroup = new THREE.Group();
+  muscleGroup.name = 'muscles';
+  muscleGroup.add(mesh);
+  muscleGroup.userData.tendonCount = data.tendonCount;
+  return muscleGroup;
+}
+
+// MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
+function mjcBoolAttr(v) { return v === 'true' || v === 'enable' || v === '1'; }
+
+// MJCF <light>/<camera> -> exportPayload lights/cameras with a baked world
+// matrix (-> UsdLux + GeomCamera in the converted USD).
+function collectMujocoLightsCameras(worldbody) {
+  const lights = [];
+  const cameras = [];
+  const visit = (node, world) => {
+    for (const l of childElements(node, 'light')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(l)));
+      const directional = mjcBoolAttr(l.getAttribute('directional') || 'false');
+      const light = {
+        name: l.getAttribute('name') || 'light',
+        type: l.getAttribute('type') || (directional ? 'directional' : 'spot'),
+        matrix: matrixToUSDArray(m),
+        dir: parseNumbers(l.getAttribute('dir'), [0, 0, -1]).slice(0, 3)
+      };
+      const diffuse = parseNumbers(l.getAttribute('diffuse'), []);
+      if (diffuse.length >= 3) light.color = diffuse.slice(0, 3);
+      if (l.getAttribute('castshadow') !== null) light.castshadow = mjcBoolAttr(l.getAttribute('castshadow'));
+      if (l.getAttribute('cutoff') !== null) light.cutoff = Number(l.getAttribute('cutoff'));
+      lights.push(light);
+    }
+    for (const c of childElements(node, 'camera')) {
+      const m = new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(c)));
+      const cam = { name: c.getAttribute('name') || 'camera', matrix: matrixToUSDArray(m) };
+      if (c.getAttribute('fovy') !== null) cam.fovy = Number(c.getAttribute('fovy'));
+      if (c.getAttribute('projection') === 'orthographic'
+          || (c.getAttribute('orthographic') !== null && mjcBoolAttr(c.getAttribute('orthographic')))) {
+        cam.orthographic = true;
+      }
+      cameras.push(cam);
+    }
+    for (const b of childElements(node, 'body')) {
+      visit(b, new THREE.Matrix4().copy(world).multiply(matrixFromPoseAttrs(attrsFromElement(b))));
+    }
+  };
+  visit(worldbody, new THREE.Matrix4());
+  return { lights, cameras };
+}
+
+// MJCF <option>/<option><flag>/<compiler> -> exportPayload.mjcScene, consumed by
+// the C++ converter's ApplyMjcSceneOptions -> MjcSceneAPI (so the converted USD
+// carries the full simulation options, not just timestep).
+function parseMujocoSceneOptions(root) {
+  const ms = {};
+  const option = firstChildElement(root, 'option');
+  if (option) {
+    const opt = {};
+    const num = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = Number(v); };
+    const inum = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = Math.round(Number(v)); };
+    const tok = (k) => { const v = option.getAttribute(k); if (v !== null) opt[k] = v; };
+    const vec = (k) => { const v = parseNumbers(option.getAttribute(k), []); if (v.length) opt[k] = v; };
+    ['timestep', 'impratio', 'density', 'viscosity', 'o_margin', 'tolerance',
+     'ls_tolerance', 'noslip_tolerance', 'ccd_tolerance'].forEach(num);
+    ['iterations', 'ls_iterations', 'noslip_iterations', 'ccd_iterations',
+     'sdf_iterations', 'sdf_initpoints'].forEach(inum);
+    ['integrator', 'cone', 'jacobian', 'solver'].forEach(tok);
+    ['wind', 'magnetic', 'o_solref', 'o_solimp', 'o_friction'].forEach(vec);
+    if (Object.keys(opt).length) ms.option = opt;
+    const flag = firstChildElement(option, 'flag');
+    if (flag) {
+      const fl = {};
+      ['constraint', 'equality', 'frictionloss', 'limit', 'contact', 'gravity',
+       'clampctrl', 'warmstart', 'filterparent', 'actuation', 'refsafe', 'sensor',
+       'midphase', 'nativeccd', 'eulerdamp', 'autoreset', 'island', 'override',
+       'energy', 'fwdinv', 'invdiscrete', 'multiccd'].forEach((k) => {
+        const v = flag.getAttribute(k); if (v !== null) fl[k] = mjcBoolAttr(v);
+      });
+      if (Object.keys(fl).length) ms.flag = fl;
+    }
+  }
+  const compiler = firstChildElement(root, 'compiler');
+  if (compiler) {
+    const comp = {};
+    const num = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = Number(v); };
+    const tok = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = v; };
+    const boolean = (k) => { const v = compiler.getAttribute(k); if (v !== null) comp[k] = mjcBoolAttr(v); };
+    boolean('autolimits'); num('boundmass'); num('boundinertia'); num('settotalmass');
+    boolean('usethread'); boolean('balanceinertia'); tok('angle'); boolean('fitaabb');
+    boolean('fusestatic'); tok('inertiafromgeom'); boolean('alignfree'); boolean('saveinertial');
+    const igr = parseNumbers(compiler.getAttribute('inertiagrouprange'), []);
+    if (igr.length >= 2) {
+      comp.inertiagrouprange_min = Math.round(igr[0]);
+      comp.inertiagrouprange_max = Math.round(igr[1]);
+    }
+    if (Object.keys(comp).length) ms.compiler = comp;
+  }
+  return ms;
+}
+
 async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const expanded = await expandMujocoIncludes(xmlText, baseDir);
   const doc = parseXMLDocument(expanded);
@@ -1876,6 +2441,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   if (root.localName !== 'mujoco') {
     throw new Error(`Expected MJCF <mujoco> root, got <${root.localName || 'unknown'}>.`);
   }
+
+  // Graft <attach> sub-models into the tree before any semantic parsing.
+  await expandMujocoAttachments(root, baseDir);
+  // Decode <asset><hfield> (PNG/inline) for <geom type="hfield"> tessellation.
+  mjcfHFields = await collectMujocoHFields(root);
 
   // Honor <compiler angle="..." eulerseq="..."> for all orientation specifiers.
   const compilerEl = firstChildElement(root, 'compiler');
@@ -1885,10 +2455,82 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     eulerseq: compilerEl?.getAttribute('eulerseq') || 'xyz'
   };
 
+  // Dissolve <frame> grouping transforms (needs the angle ctx above).
+  for (const worldbody of childElements(root, 'worldbody')) flattenMujocoFrames(worldbody);
+
   warnUnsupportedMujocoElements(root);
 
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
+  // <asset><material name rgba emission>: name -> {rgba, emission}, to color
+  // geoms that reference a material rather than a direct rgba (e.g. ms_human_700
+  // bones, iit_softfoot's emissive "green pulleys").
+  // <asset><texture> name -> definition (builtin checker/gradient or file).
+  const textureDefs = new Map();
+  for (const t of root.querySelectorAll('asset texture')) {
+    const name = t.getAttribute('name') || t.getAttribute('file');
+    if (!name) continue;
+    textureDefs.set(name, {
+      type: t.getAttribute('type') || '2d',
+      builtin: t.getAttribute('builtin') || 'none',
+      file: t.getAttribute('file') || '',
+      rgb1: parseNumbers(t.getAttribute('rgb1'), [0.8, 0.8, 0.8]),
+      rgb2: parseNumbers(t.getAttribute('rgb2'), [0.5, 0.5, 0.5]),
+      markrgb: parseNumbers(t.getAttribute('markrgb'), [0, 0, 0]),
+      mark: t.getAttribute('mark') || 'none',
+      width: Number(t.getAttribute('width')) || 0,
+      height: Number(t.getAttribute('height')) || 0
+    });
+  }
+  const materialDefs = new Map();
+  for (const m of root.querySelectorAll('asset material')) {
+    const name = m.getAttribute('name');
+    if (!name) continue;
+    const rgba = parseNumbers(m.getAttribute('rgba'), []);
+    const emission = Number(m.getAttribute('emission'));
+    materialDefs.set(name, {
+      rgba: rgba.length >= 3 ? rgba : null,
+      emission: Number.isFinite(emission) ? emission : 0,
+      texture: m.getAttribute('texture') || '',
+      texrepeat: parseNumbers(m.getAttribute('texrepeat'), [1, 1])
+    });
+  }
+  // A geom's effective display material {rgba, emission, texDef, texrepeat}: its
+  // own `rgba` (no emission/texture), else its <material> (which may carry a
+  // texture), else null (keep the loader's neutral default).
+  const effectiveGeomRgba = (attrs) => {
+    const direct = parseNumbers(attrs.rgba, []);
+    if (direct.length >= 3) return { rgba: direct, emission: 0 };
+    if (attrs.material && materialDefs.has(attrs.material)) {
+      const d = materialDefs.get(attrs.material);
+      const tex = d.texture && textureDefs.get(d.texture);
+      if (d.rgba || tex) return { ...d, texDef: tex || null };
+    }
+    return null;
+  };
+  // Build (and cache) a THREE.Texture for a <texture> def: builtin checker/
+  // gradient via canvas, or a file texture loaded from the asset folder.
+  const textureCache = new Map();
+  const getMujocoTexture = async (def) => {
+    if (!def) return null;
+    const key = def.file || `${def.builtin}:${def.rgb1.join()}:${def.rgb2.join()}`;
+    if (textureCache.has(key)) return textureCache.get(key);
+    let tex = null;
+    if (def.file) {
+      const file = resolveAssetFile(def.file);
+      if (file) {
+        try { tex = await new THREE.TextureLoader().loadAsync(objectURLForFile(file)); }
+        catch (e) { console.warn(`MJCF texture load failed: ${def.file}`, e); }
+      }
+    } else if (def.builtin === 'checker') {
+      tex = makeCheckerTexture(def);
+    } else if (def.builtin === 'gradient') {
+      tex = makeGradientTexture(def);
+    }
+    if (tex) { tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; }
+    textureCache.set(key, tex);
+    return tex;
+  };
   const actuators = buildMujocoActuators(root);
   const group = new THREE.Group();
   group.name = root.getAttribute('model') || filename.replace(/\.[^.]+$/, '') || 'mujoco_scene';
@@ -1923,6 +2565,88 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const joints = [];
   let visualCount = 0;
   let collisionCount = 0;
+  // site name -> { pos: THREE.Vector3 in model space } for muscle/tendon routing.
+  const sitesByName = new Map();
+  state.muscleObjects = [];
+
+  // Bake one <geom> into a link's THREE object + its payload. Shared by the
+  // per-body traversal and the worldbody-level (static) geom collection.
+  async function processGeomForLink(geomNode, linkObject, linkPayload, linkName, childClass, bodyWorldMatrix, geomIndex) {
+    const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
+    const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
+    const isVisual = classifyMujocoGeom(geomAttrs);
+    let payloads = null;
+    if (!isVisual) {
+      payloads = shapePayloadForMujocoGeom(
+        geomAttrs,
+        new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
+        geomName
+      );
+    }
+    if (!payloads) payloads = await mujocoGeomPayloads(geomAttrs, meshAssets, geomName, bodyWorldMatrix);
+
+    const object = await loadMujocoGeomObject(geomAttrs, meshAssets, geomName);
+    object.name = geomName;
+    applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
+    linkObject.add(object);
+    const geomRgba = effectiveGeomRgba(geomAttrs);
+    const geomGroup = mujocoGeomGroup(geomAttrs, isVisual);
+    const geomIsCollider = isMujocoCollider(geomAttrs);
+    object.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.userData.urdfOwnerLink = linkObject;
+      obj.userData.urdfOwnerLinkName = linkName;
+      obj.userData.urdfCollision = !isVisual;
+      obj.userData.mujocoGroup = geomGroup;
+      if (isVisual) {
+        if (geomRgba) applyRgbaToMesh(obj, geomRgba);
+        state.visualMeshes.push(obj);
+      } else if (!geomIsCollider) {
+        if (geomRgba) applyRgbaToMesh(obj, geomRgba);
+        state.collisionMeshes.push(obj);
+      } else {
+        obj.userData.originalMaterial = obj.material;
+        obj.material = collisionMaterial;
+        state.collisionMeshes.push(obj);
+      }
+    });
+
+    // Apply a material's texture (builtin checker/gradient or file) to the
+    // visual meshes — e.g. the iconic checkered ground plane, or robot skins.
+    if (isVisual && geomRgba?.texDef) {
+      const tex = await getMujocoTexture(geomRgba.texDef);
+      if (tex) {
+        const rep = geomRgba.texrepeat || [1, 1];
+        object.traverse((obj) => {
+          if (!obj.isMesh || !obj.material) return;
+          const mat = obj.material.clone ? obj.material.clone() : obj.material;
+          const t = tex.clone();
+          t.needsUpdate = true;
+          t.wrapS = THREE.RepeatWrapping;
+          t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(rep[0] || 1, rep[1] || 1);
+          mat.map = t;
+          if (mat.color) mat.color.setRGB(1, 1, 1);  // show the texture untinted
+          mat.needsUpdate = true;
+          obj.material = mat;
+        });
+      }
+    }
+
+    if (isVisual) {
+      if (geomAttrs.material) {
+        for (const p of payloads) p.material = geomAttrs.material;
+      }
+      linkPayload.visuals.push(...payloads);
+      visualCount += payloads.length;
+    } else {
+      for (const payload of payloads) {
+        payload.approximation = payload.approximation || 'convexHull';
+      }
+      linkPayload.collisions.push(...payloads);
+      collisionCount += payloads.length;
+    }
+  }
 
   async function visitBody(
     bodyNode,
@@ -1936,12 +2660,20 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
     const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
+    // <freejoint>/<joint type="free"> -> 6-DOF floating base (not joined to its
+    // parent); marked so the converter emits a free articulation root.
+    const hasFree = !!firstChildElement(bodyNode, 'freejoint')
+      || childElements(bodyNode, 'joint').some((j) => j.getAttribute('type') === 'free');
     const linkPayload = {
       name: linkName,
       inertial: parseMujocoInertial(bodyNode),
       visuals: [],
       collisions: []
     };
+    if (hasFree) linkPayload.floating = true;
+    if (bodyAttrs.mocap !== undefined && mjcBoolAttr(bodyAttrs.mocap)) {
+      linkPayload.mocap = true;
+    }
 
     const pivot = new THREE.Group();
     pivot.name = `${linkName}_joint`;
@@ -1953,7 +2685,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     pivot.add(linkObject);
     group.links[linkName] = linkObject;
 
-    if (parentName) {
+    if (parentName && !hasFree) {
       const jointNodes = childElements(bodyNode, 'joint');
       const jointNode = jointNodes[0] || null;
       // MuJoCo allows several <joint> per body (a composite/universal joint).
@@ -2033,55 +2765,25 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
 
     let geomIndex = 0;
     for (const geomNode of childElements(bodyNode, 'geom')) {
-      const geomAttrs = resolveMujocoAttrs(geomNode, defaults, 'geom', childClass);
-      const geomName = geomAttrs.name || geomAttrs.mesh || `${linkName}_geom_${geomIndex}`;
-      const isVisual = classifyMujocoGeom(geomAttrs);
-      let payloads = null;
-      if (!isVisual) {
-        payloads = shapePayloadForMujocoGeom(
-          geomAttrs,
-          new THREE.Matrix4().copy(bodyWorldMatrix).multiply(matrixFromPoseAttrs(geomAttrs)),
-          geomName
-        );
-      }
-      if (!payloads) payloads = await mujocoGeomPayloads(geomAttrs, meshAssets, geomName, bodyWorldMatrix);
-
-      const object = await loadMujocoGeomObject(geomAttrs, meshAssets, geomName);
-      object.name = geomName;
-      applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets);
-      linkObject.add(object);
-      object.traverse((obj) => {
-        if (!obj.isMesh) return;
-        obj.userData.urdfOwnerLink = linkObject;
-        obj.userData.urdfOwnerLinkName = linkName;
-        obj.userData.urdfCollision = !isVisual;
-        if (isVisual) {
-          state.visualMeshes.push(obj);
-        } else {
-          obj.userData.originalMaterial = obj.material;
-          obj.material = collisionMaterial;
-          state.collisionMeshes.push(obj);
-        }
-      });
-
-      if (isVisual) {
-        linkPayload.visuals.push(...payloads);
-        visualCount += payloads.length;
-      } else {
-        // Default approximation `convexHull` matches the writer in
-        // `src/tydra/urdf-to-usd.cc::AddCollisionAPIs` and the
-        // mujoco-usd-converter convention. Per-geom overrides via
-        // payload.approximation are preserved.
-        for (const payload of payloads) {
-          payload.approximation = payload.approximation || 'convexHull';
-        }
-        linkPayload.collisions.push(...payloads);
-        collisionCount += payloads.length;
-      }
+      await processGeomForLink(geomNode, linkObject, linkPayload, linkName, childClass, bodyWorldMatrix, geomIndex);
       geomIndex++;
     }
 
     links.push(linkPayload);
+
+    // Collect <site> world positions for muscle/spatial-tendon routing. Sites
+    // are body-local frames; bake to model space via the accumulated
+    // bodyWorldMatrix (matching how the merged muscle lines are positioned).
+    for (const siteNode of childElements(bodyNode, 'site')) {
+      const siteAttrs = attrsFromElement(siteNode);
+      const siteName = siteAttrs.name;
+      if (!siteName) continue;
+      const siteLocal = matrixFromPoseAttrs(siteAttrs);
+      const siteWorld = new THREE.Matrix4().copy(bodyWorldMatrix).multiply(siteLocal);
+      sitesByName.set(siteName, {
+        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld)
+      });
+    }
 
     for (const childBody of childElements(bodyNode, 'body')) {
       await visitBody(childBody, linkObject, linkName, bodyWorldMatrix, childClass);
@@ -2092,6 +2794,38 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     for (const bodyNode of childElements(worldbody, 'body')) {
       await visitBody(bodyNode, group);
     }
+  }
+
+  // World-fixed geoms directly under <worldbody> (floor/ground/obstacles) belong
+  // to no body; collect them onto a single static "world" link group so scenes
+  // show their ground. Mirrors the CLI's AddWorldbodyGeomsLink.
+  const worldGroup = new THREE.Group();
+  worldGroup.name = 'world';
+  const worldLinkPayload = { name: 'world', static: true, inertial: { mass: 0 }, visuals: [], collisions: [] };
+  let worldGeomIndex = 0;
+  for (const worldbody of childElements(root, 'worldbody')) {
+    for (const geomNode of childElements(worldbody, 'geom')) {
+      await processGeomForLink(geomNode, worldGroup, worldLinkPayload, 'world', '', new THREE.Matrix4(), worldGeomIndex);
+      worldGeomIndex++;
+    }
+  }
+  if (worldGroup.children.length) group.add(worldGroup);
+  if (worldLinkPayload.visuals.length || worldLinkPayload.collisions.length) links.push(worldLinkPayload);
+
+  // Muscle / spatial-tendon visualization (e.g. ms_human_700, iit_softfoot).
+  // Drawn as polylines through the routing sites, in model space, added to the
+  // model root so it rides the same up-axis orientation as the body meshes. The
+  // line data is stashed in state so the converted-USD view can draw the same
+  // muscles (it shares the model coordinate space).
+  let muscleTendonCount = 0;
+  const muscleData = computeMuscleLineData(root, sitesByName);
+  state.muscleLineData = muscleData;
+  const muscleGroup = makeMuscleGroup(muscleData);
+  if (muscleGroup) {
+    muscleGroup.visible = state.settings.showMuscles;
+    group.add(muscleGroup);
+    state.muscleObjects.push(muscleGroup);
+    muscleTendonCount = muscleGroup.userData.tendonCount || 0;
   }
 
   // Parse the model's "home" keyframe (qpos) so the robot can be posed in its
@@ -2114,6 +2848,124 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     };
   }
 
+  const mjcSceneOptions = parseMujocoSceneOptions(root);
+  // <texture name file=...> -> file path, so a material's texture becomes a
+  // UsdUVTexture in the converted USD (builtin/file-less textures skipped).
+  const texFiles = new Map();
+  for (const t of root.querySelectorAll('asset texture')) {
+    const tn = t.getAttribute('name'); const tf = t.getAttribute('file');
+    if (tn && tf) texFiles.set(tn, resolveAssetEntry(tf)?.rel || tf);
+  }
+  const materialsPayload = [];
+  for (const m of root.querySelectorAll('asset material')) {
+    if (!m.getAttribute('name')) continue;
+    const mat = { name: m.getAttribute('name') };
+    const rgba = parseNumbers(m.getAttribute('rgba'), []);
+    if (rgba.length >= 4) mat.rgba = rgba.slice(0, 4);
+    for (const k of ['metallic', 'roughness', 'specular', 'emission', 'reflectance']) {
+      const v = m.getAttribute(k);
+      if (v !== null) mat[k] = Number(v);
+    }
+    const texRef = m.getAttribute('texture');
+    if (texRef && texFiles.has(texRef)) mat.texture = texFiles.get(texRef);
+    materialsPayload.push(mat);
+  }
+  const sensorsPayload = [];
+  const sensorRootEl = firstChildElement(root, 'sensor');
+  if (sensorRootEl) {
+    for (const node of childElements(sensorRootEl)) {
+      const type = node.localName;
+      if (!type) continue;
+      const s = { type, name: node.getAttribute('name') || `${type}_${sensorsPayload.length}` };
+      if (node.getAttribute('objtype') !== null) {
+        s.objtype = node.getAttribute('objtype');
+        if (node.getAttribute('objname') !== null) s.objname = node.getAttribute('objname');
+      } else {
+        for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+          if (node.getAttribute(k) !== null) { s.objtype = k; s.objname = node.getAttribute(k); break; }
+        }
+      }
+      if (node.getAttribute('reftype') !== null) s.reftype = node.getAttribute('reftype');
+      if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      if (node.getAttribute('cutoff') !== null) s.cutoff = Number(node.getAttribute('cutoff'));
+      if (node.getAttribute('noise') !== null) s.noise = Number(node.getAttribute('noise'));
+      sensorsPayload.push(s);
+    }
+  }
+  const contactPairsPayload = [];
+  for (const node of root.querySelectorAll('contact pair')) {
+    if (!node.getAttribute('geom1') || !node.getAttribute('geom2')) continue;
+    const pr = { name: node.getAttribute('name') || `pair_${contactPairsPayload.length}`,
+                 geom1: node.getAttribute('geom1'), geom2: node.getAttribute('geom2') };
+    if (node.getAttribute('condim') !== null) pr.condim = Math.round(Number(node.getAttribute('condim')));
+    for (const k of ['margin', 'gap']) {
+      if (node.getAttribute(k) !== null) pr[k] = Number(node.getAttribute(k));
+    }
+    for (const k of ['friction', 'solref', 'solimp']) {
+      const a = parseNumbers(node.getAttribute(k), []);
+      if (a.length) pr[k] = a;
+    }
+    contactPairsPayload.push(pr);
+  }
+  const customPayload = {};
+  const customRootEl = firstChildElement(root, 'custom');
+  if (customRootEl) {
+    const numeric = [];
+    for (const n of childElements(customRootEl, 'numeric')) {
+      if (!n.getAttribute('name')) continue;
+      numeric.push({ name: n.getAttribute('name'), data: parseNumbers(n.getAttribute('data'), []) });
+    }
+    const text = [];
+    for (const t of childElements(customRootEl, 'text')) {
+      if (!t.getAttribute('name')) continue;
+      text.push({ name: t.getAttribute('name'), data: t.getAttribute('data') || '' });
+    }
+    if (numeric.length) customPayload.numeric = numeric;
+    if (text.length) customPayload.text = text;
+  }
+  // <extension><plugin plugin="..."><instance name="..."><config key= value=>
+  // -> plugin-instance declarations (engine plugins, e.g. shadow_dexee PID).
+  const pluginsPayload = [];
+  const extensionEl = firstChildElement(root, 'extension');
+  if (extensionEl) {
+    for (const pluginNode of childElements(extensionEl, 'plugin')) {
+      const pluginId = pluginNode.getAttribute('plugin') || '';
+      for (const inst of childElements(pluginNode, 'instance')) {
+        const instName = inst.getAttribute('name') || '';
+        if (!instName) continue;
+        const p = { instance: instName };
+        if (pluginId) p.plugin = pluginId;
+        const config = {};
+        for (const cfg of childElements(inst, 'config')) {
+          const key = cfg.getAttribute('key') || '';
+          if (!key) continue;
+          config[key] = cfg.getAttribute('value') || '';
+        }
+        if (Object.keys(config).length) p.config = config;
+        pluginsPayload.push(p);
+      }
+    }
+  }
+  // MuJoCo merges every <worldbody> block (the local one plus any pulled in via
+  // <include>); collect lights/cameras from them all, not just the first.
+  const lightsPayload = [];
+  const camerasPayload = [];
+  for (const worldbodyEl of childElements(root, 'worldbody')) {
+    const lc = collectMujocoLightsCameras(worldbodyEl);
+    lightsPayload.push(...lc.lights);
+    camerasPayload.push(...lc.cameras);
+  }
+  // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
+  // from group.homeKeyframe above, which is only used to pose the source view.
+  const keyframesPayload = [];
+  for (const key of root.querySelectorAll('keyframe key')) {
+    const k = { name: key.getAttribute('name') || `key_${keyframesPayload.length}` };
+    for (const a of ['qpos', 'qvel', 'act', 'ctrl', 'mpos', 'mquat']) {
+      const v = parseNumbers(key.getAttribute(a), []);
+      if (v.length) k[a] = v;
+    }
+    keyframesPayload.push(k);
+  }
   state.exportPayload = {
     name: group.name,
     upAxis: state.settings.upAxis,
@@ -2121,14 +2973,25 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     timestep: numberAttr(firstChildElement(root, 'option'), 'timestep'),
     links,
     joints,
-    actuators
+    actuators,
+    ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
+    ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
+    ...(lightsPayload.length ? { lights: lightsPayload } : {}),
+    ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
+    ...(materialsPayload.length ? { materials: materialsPayload } : {}),
+    ...(sensorsPayload.length ? { sensors: sensorsPayload } : {}),
+    ...(contactPairsPayload.length ? { contactPairs: contactPairsPayload } : {}),
+    ...(Object.keys(customPayload).length ? { custom: customPayload } : {}),
+    ...(pluginsPayload.length ? { plugins: pluginsPayload } : {})
   };
   group.userData.stats = {
     links: links.length,
     joints: joints.length,
     visuals: visualCount,
     collisions: collisionCount,
-    actuators: actuators.length
+    actuators: actuators.length,
+    sites: sitesByName.size,
+    muscles: muscleTendonCount
   };
   return group;
 }
@@ -2230,12 +3093,27 @@ function classifyRobotMeshes(robot) {
   applyVisibility();
 }
 
+// A geom mesh's visibility: MuJoCo-tagged source geoms follow their group's
+// toggle; everything else (URDF / converted-USD meshes) follows the coarse
+// visual/collision toggles.
+function geomMeshVisible(mesh, isVisualList) {
+  const g = mesh.userData?.mujocoGroup;
+  if (g !== undefined && g !== null) return state.settings.geomGroups[g] !== false;
+  return isVisualList ? state.settings.showVisuals : state.settings.showCollisions;
+}
+
 function applyVisibility() {
-  for (const mesh of state.visualMeshes) mesh.visible = state.settings.showVisuals;
-  for (const mesh of state.collisionMeshes) mesh.visible = state.settings.showCollisions;
+  for (const mesh of state.visualMeshes) mesh.visible = geomMeshVisible(mesh, true);
+  for (const mesh of state.collisionMeshes) mesh.visible = geomMeshVisible(mesh, false);
+  applyMuscleVisibility();
   applyRenderableVisibility(state.usdObject);
   applyRenderableVisibility(state.usdGhost);
   applyRenderableVisibility(state.sourceGhost);
+}
+
+function applyMuscleVisibility() {
+  for (const obj of state.muscleObjects) obj.visible = state.settings.showMuscles;
+  for (const obj of state.usdMuscleObjects) obj.visible = state.settings.showMuscles;
 }
 
 function currentFitObjects() {
@@ -2323,6 +3201,16 @@ function buildGUI() {
   });
   gui.add(state.settings, 'showVisuals').name('Visual meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
+  gui.add(state.settings, 'showMuscles').name('Muscles').onChange(applyMuscleVisibility);
+  // Per-MuJoCo-geom-group visibility (mirrors the MuJoCo viewer's group toggles).
+  // Applies to MJCF source geoms tagged with a group; e.g. enable Group 4 to see
+  // iit_softfoot's virtual-pulley tubes. Spatial tendons (the yellow streamlines)
+  // are a separate entity controlled by 'Muscles', not by group.
+  const groupFolder = gui.addFolder('Geom groups (source)');
+  for (let g = 0; g <= 5; g++) {
+    groupFolder.add(state.settings.geomGroups, String(g)).name(`Group ${g}`).onChange(applyVisibility);
+  }
+  groupFolder.close();
   gui.add(state.settings, 'ignoreJointLimits').name('Ignore limits').onChange(rebuildJointControls);
   gui.add(state.settings, 'hideFixedJoints').name('Hide fixed joints').onChange(rebuildJointControls);
   gui.add(state.settings, 'applyHomePose').name('Home pose').onChange(() => {
@@ -3519,10 +4407,37 @@ function exportNativeStage(native, format, payload = null) {
   };
 }
 
-async function createUSDBytesFromSource(format) {
+// Feed referenced texture bytes into the WASM asset cache so exportAsUSDZ()
+// embeds them into the package (the archive name matches the relative
+// inputs:file reference the converter authored). usda/usdc don't need this —
+// they reference the texture by the same relative path on disk.
+async function registerTextureAssets(native, payload) {
+  if (!native.setAsset) return;
+  for (const m of payload.materials || []) {
+    if (!m.texture) continue;
+    const file = resolveAssetEntry(m.texture)?.file;
+    if (!file) continue;
+    try {
+      native.setAsset(m.texture, new Uint8Array(await file.arrayBuffer()));
+    } catch (err) {
+      console.warn(`texture not embedded into usdz: ${m.texture}: ${err.message}`);
+    }
+  }
+}
+
+async function createUSDBytesFromSource(format, { autoEmbedTextures = false } = {}) {
   const native = await ensureNativeExporter();
   const payload = buildCurrentExportPayload();
   registerNativeMeshBuffers(native, payload);
+  // For the on-screen comparison view, upgrade a textured scene to an embedded
+  // USDZ so the loaded converted-USD carries the texture bytes (a usdc would
+  // only reference a relative path the browser can't fetch). Explicit exports
+  // keep the format the user asked for.
+  if (autoEmbedTextures && format !== 'usdz' &&
+      (payload.materials || []).some((m) => m.texture)) {
+    format = 'usdz';
+  }
+  if (format === 'usdz') await registerTextureAssets(native, payload);
   setStatus(`Creating USD Physics + MuJoCo stage for ${payload.name}...`);
   const ok = native.createURDFPhysicsScene(JSON.stringify(payload));
   if (!ok) throw new Error(native.error());
@@ -3551,7 +4466,7 @@ function exportSourceXML() {
 }
 
 async function convertSourceToUSD(format = 'usdc') {
-  const result = await createUSDBytesFromSource(format);
+  const result = await createUSDBytesFromSource(format, { autoEmbedTextures: true });
   clearUSD();
   const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
   state.usdObject = object;
@@ -3588,6 +4503,18 @@ async function convertSourceToUSD(format = 'usdc') {
     }
   } catch (err) {
     console.warn('USD Physics articulation skipped:', err);
+  }
+  // Draw the muscle/spatial-tendon polylines on the USD view too. The converted
+  // USD carries the muscle topology (MjcTendon + MjcSite prims), but the site
+  // markers are guide-purpose (not rendered); reuse the model-space line data
+  // computed at MJCF-parse time (both views share the model coordinate space).
+  if (state.muscleLineData) {
+    const usdMuscle = makeMuscleGroup(state.muscleLineData);
+    if (usdMuscle) {
+      usdMuscle.visible = state.settings.showMuscles;
+      usdGroup.add(usdMuscle);
+      state.usdMuscleObjects.push(usdMuscle);
+    }
   }
   state.usdIsConverted = true;
   updateButtonStates();

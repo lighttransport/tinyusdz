@@ -142,6 +142,7 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(NewtonActuator)
   GET_PRIM_PROPS(MjcTendon)
   GET_PRIM_PROPS(MjcKeyframe)
+  GET_PRIM_PROPS(MjcSensor)
   // UsdSkel — required so authored attributes in the props map (joints,
   // jointNames, blendShapeWeights, etc.) survive the USDC writer when the
   // typed-builtin fields are unauthored.
@@ -419,7 +420,17 @@ bool CrateWriter::ConvertSinglePrim(
   }
 
   Path prim_path(abs_path_str, "");
+  // prim_type_name() carries the parser-set / user-set string, but is empty for
+  // in-memory authored prims (e.g. those built by the tydra converters). Fall
+  // back to the typed schema name — mirrors ExtractPrimProperties — so the
+  // type-specific spec emitters below (Material outputs, Shader inputs) run for
+  // programmatically-built prims too. Without this, an authored UsdShade
+  // network round-trips through USDA but loses every shader input/output on
+  // USDC/USDZ write (only `info:id` survived via the generic prop path).
   std::string type_name = prim.prim_type_name();
+  if (type_name.empty()) {
+    type_name = prim.type_name();
+  }
 
   // All specs this prim contributes (its Prim spec + Attribute/Relationship/
   // Connection specs) are appended to spec_data_ within this call. Record the
@@ -1371,6 +1382,7 @@ bool CrateWriter::ExtractPrimProperties(
     GET_SPEC(NewtonActuator)
     GET_SPEC(MjcTendon)
     GET_SPEC(MjcKeyframe)
+    GET_SPEC(MjcSensor)
 #undef GET_SPEC
 spec_resolved:;
   }
@@ -1515,6 +1527,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMjcTendonProperties(prim, prim_path, fields, err);
   } else if (type_name == "MjcKeyframe") {
     return ExtractMjcKeyframeProperties(prim, prim_path, fields, err);
+  } else if (type_name == "MjcSensor") {
+    return ExtractMjcSensorProperties(prim, prim_path, fields, err);
   // AR/Interactive (Apple Preliminary_*)
   } else if (type_name == "Preliminary_PhysicsGravitationalForce") {
     return ExtractPreliminaryGravitationalForceProperties(prim, prim_path, fields, err);
@@ -2197,7 +2211,7 @@ bool CrateWriter::ConvertAttributeToFields(
   // 2c. Extract time samples
   if (pvar.has_timesamples()) {
     // Convert TimeSamples to CrateValue
-    const value::TimeSamples& ts = pvar._ts;
+    const value::TimeSamples& ts = pvar.ts_raw();
 
     // Create a CrateValue with TimeSamples
     crate::CrateValue ts_crate_val;

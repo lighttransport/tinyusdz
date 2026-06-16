@@ -302,8 +302,16 @@ int main(int argc, char **argv) {
       }
 
       if (comp_features.variantSets) {
+        // AOUSD Core Spec 10.3.2.5: defer variant composition until references
+        // and payloads are resolved (see ShouldDeferVariantComposition).
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
+        } else if (tinyusdz::ShouldDeferVariantComposition(
+                       src_layer, comp_features.references,
+                       comp_features.payload)) {
+          std::cout << "# iter " << i
+                    << ": variant resolution deferred (refs/payloads pending).\n";
+          has_unresolved = true;
         } else {
           has_unresolved = true;
 

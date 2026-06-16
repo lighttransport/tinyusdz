@@ -53,6 +53,27 @@ void Layer::build_path_index() {
   }
 }
 
+void Layer::sort_prims_by_path() {
+  std::stable_sort(prims_.begin(), prims_.end(),
+                   [](const PrimSpec& a, const PrimSpec& b) {
+                     return a.path().str() < b.path().str();
+                   });
+  path_to_index_.clear();
+}
+
+Layer Layer::Clone() const {
+  Layer out;
+  out.prims_.reserve(prims_.size());
+  for (const PrimSpec& prim : prims_) {
+    out.prims_.push_back(prim.Clone());
+  }
+  out.root_indices_ = root_indices_;
+  out.meta_ = meta_;
+  out.finalized_ = finalized_;
+  out.build_path_index();
+  return out;
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 
@@ -230,8 +251,7 @@ void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Va
     bool is_array = value.is_array();
     p->add_time_sample(name_id, time, std::move(value));
 
-    // Ensure property slot exists with time sampled flag
-    // We create/update slot after adding sample so we have type info
+    // Ensure property slot exists with the time-sampled flag set.
     const PropSlot* existing = p->property(name_id);
     if (!existing) {
       // Create property slot for this time-sampled property
@@ -241,6 +261,11 @@ void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Va
       }
       // Add slot with type info but no default value
       p->add_property_slot(name_id, type_id, flags);
+    } else {
+      // The attribute was already declared (e.g. a `<type> <name> ( meta )` line
+      // before its `.timeSamples`): OR the flag onto the existing slot, else the
+      // writer never emits the samples and they are silently lost on roundtrip.
+      p->mark_property_time_sampled(name_id);
     }
   }
 }

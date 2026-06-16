@@ -5,6 +5,8 @@
 
 #include "value-printer.hh"
 #include "../types/type-id.hh"
+#include "dtoa.hh"
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -14,35 +16,36 @@ namespace next {
 
 namespace {
 
-// Format a float value
-std::string FormatFloat(float v, int precision) {
-  if (std::isnan(v)) return "nan";
-  if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
+// Append helpers: format straight into a reused std::string with no per-element
+// heap allocation. Byte-identical to the corresponding `ss << v` (classic
+// locale: plain decimal, leading '-' for negatives, no '+'/padding/separators).
+inline void AppendFloat(std::string& o, float v) { dtos_append(o, v); }
+inline void AppendDouble(std::string& o, double v) { dtos_append(o, v); }
 
-  std::ostringstream ss;
-  ss << std::setprecision(precision) << v;
-  std::string s = ss.str();
-
-  // Ensure there's a decimal point for clarity
-  if (s.find('.') == std::string::npos && s.find('e') == std::string::npos) {
-    s += ".0";
+inline void AppendU64(std::string& o, uint64_t v) {
+  char buf[20];
+  char* p = buf + sizeof(buf);
+  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
+  o.append(p, static_cast<size_t>(buf + sizeof(buf) - p));
+}
+inline void AppendI64(std::string& o, int64_t v) {
+  if (v < 0) {
+    o += '-';
+    // Negate in unsigned space so INT64_MIN is handled without UB.
+    AppendU64(o, ~static_cast<uint64_t>(v) + 1u);
+  } else {
+    AppendU64(o, static_cast<uint64_t>(v));
   }
-  return s;
 }
 
-// Format a double value
-std::string FormatDouble(double v, int precision) {
-  if (std::isnan(v)) return "nan";
-  if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
-
-  std::ostringstream ss;
-  ss << std::setprecision(precision) << v;
-  std::string s = ss.str();
-
-  if (s.find('.') == std::string::npos && s.find('e') == std::string::npos) {
-    s += ".0";
-  }
-  return s;
+// Reserve headroom for an array, but cap the up-front growth so a single huge
+// array doesn't trigger a giant mmap. Beyond the cap, std::string's geometric
+// growth handles it with cheap amortized reallocations — and, crucially, avoids
+// the multi-hundred-MB simultaneous allocations that thrash the allocator when
+// many subtrees are serialized in parallel.
+inline void ReserveArrayHeadroom(std::string& o, size_t want) {
+  constexpr size_t kCap = 8u << 20;  // 8 MiB
+  o.reserve(o.size() + std::min<size_t>(want, kCap) + 8);
 }
 
 // Escape a string for USDA output
@@ -64,146 +67,267 @@ std::string EscapeString(const std::string& s) {
   return result;
 }
 
+// Forward decl: recursive dictionary printer (defined after PrintValue).
+std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+                                    int base_depth);
+
 }  // anonymous namespace
 
-std::string PrintValue(const Value& value, const PrintOptions& opts) {
+void PrintValueInto(std::string& out, const Value& value,
+                    const PrintOptions& opts) {
   if (value.is_empty()) {
-    return "None";
+    out += "None";
+    return;
   }
 
   TypeId type_id = value.type_id();
 
   // Handle arrays
   if (value.is_array()) {
-    std::ostringstream ss;
-    ss << "[";
+    const size_t maxN = opts.max_array_elements;
 
-    if (type_id == TypeId::Float) {
-      const auto* arr = value.as_float_array();
-      if (arr) {
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, arr->size()) : arr->size();
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << FormatFloat((*arr)[i], opts.float_precision);
+    const bool is_matrix =
+        (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d ||
+         type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d ||
+         type_id == TypeId::Matrix4f || type_id == TypeId::Matrix4d);
+    const size_t mat_dim =
+        (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d) ? 2 :
+        (type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d) ? 3 : 4;
+    size_t comp_count = GetComponentCount(type_id);
+    if (comp_count < 1) comp_count = 1;
+
+    // Reserve a generous estimate (over-reserve is the accepted marginal memory)
+    // so large numeric arrays append without reallocation churn.
+    out += "[";
+
+    // Emit a single element (scalar, vector tuple, or nested matrix rows).
+    auto emit_elem_float = [&](const float* d) {
+      if (is_matrix) {
+        out += "(";
+        for (size_t r = 0; r < mat_dim; ++r) {
+          if (r) out += ", ";
+          out += "(";
+          for (size_t c = 0; c < mat_dim; ++c) {
+            if (c) out += ", ";
+            AppendFloat(out, d[r * mat_dim + c]);
+          }
+          out += ")";
         }
-        if (limit < arr->size()) {
-          ss << ", ...";
+        out += ")";
+      } else if (comp_count > 1) {
+        out += "(";
+        for (size_t c = 0; c < comp_count; ++c) {
+          if (c) out += ", ";
+          AppendFloat(out, d[c]);
         }
+        out += ")";
+      } else {
+        AppendFloat(out, d[0]);
       }
-    } else if (type_id == TypeId::Int) {
-      const auto* arr = value.as_int_array();
-      if (arr) {
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, arr->size()) : arr->size();
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << (*arr)[i];
+    };
+    auto emit_elem_double = [&](const double* d) {
+      if (is_matrix) {
+        out += "(";
+        for (size_t r = 0; r < mat_dim; ++r) {
+          if (r) out += ", ";
+          out += "(";
+          for (size_t c = 0; c < mat_dim; ++c) {
+            if (c) out += ", ";
+            AppendDouble(out, d[r * mat_dim + c]);
+          }
+          out += ")";
         }
-        if (limit < arr->size()) {
-          ss << ", ...";
+        out += ")";
+      } else if (comp_count > 1) {
+        out += "(";
+        for (size_t c = 0; c < comp_count; ++c) {
+          if (c) out += ", ";
+          AppendDouble(out, d[c]);
         }
+        out += ")";
+      } else {
+        AppendDouble(out, d[0]);
       }
-    } else if (type_id == TypeId::Float3) {
-      // Float3 array - stored as flat floats
-      const auto* arr = value.as_float_array();
-      if (arr && arr->size() >= 3) {
-        size_t count = arr->size() / 3;
-        size_t limit = opts.max_array_elements > 0 ?
-                       std::min(opts.max_array_elements, count) : count;
-        for (size_t i = 0; i < limit; ++i) {
-          if (i > 0) ss << ", ";
-          ss << "(" << FormatFloat((*arr)[i*3], opts.float_precision)
-             << ", " << FormatFloat((*arr)[i*3+1], opts.float_precision)
-             << ", " << FormatFloat((*arr)[i*3+2], opts.float_precision) << ")";
+    };
+
+    switch (type_id) {
+      case TypeId::Int: {
+        if (const auto* a = value.as_int_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          ReserveArrayHeadroom(out, limit * 8);
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          if (limit < a->size()) out += ", ...";
         }
-        if (limit < count) {
-          ss << ", ...";
+        break;
+      }
+      case TypeId::UInt: {
+        if (const auto* a = value.as_uint_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          ReserveArrayHeadroom(out, limit * 8);
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          if (limit < a->size()) out += ", ...";
         }
+        break;
+      }
+      case TypeId::Int64: {
+        if (const auto* a = value.as_int64_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          ReserveArrayHeadroom(out, limit * 10);
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          if (limit < a->size()) out += ", ...";
+        }
+        break;
+      }
+      case TypeId::UInt64: {
+        if (const auto* a = value.as_uint64_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          ReserveArrayHeadroom(out, limit * 10);
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          if (limit < a->size()) out += ", ...";
+        }
+        break;
+      }
+      case TypeId::Bool: {
+        if (const auto* a = value.as_bool_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "true" : "false"); }
+          if (limit < a->size()) out += ", ...";
+        }
+        break;
+      }
+      case TypeId::Token:
+      case TypeId::String:
+      case TypeId::AssetPath: {
+        if (const auto* a = value.as_token_array()) {
+          size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+          for (size_t i = 0; i < limit; ++i) {
+            if (i) out += ", ";
+            if (type_id == TypeId::AssetPath) { out += '@'; out += (*a)[i]; out += '@'; }
+            else out += EscapeString((*a)[i]);
+          }
+          if (limit < a->size()) out += ", ...";
+        }
+        break;
+      }
+      default: {
+        // float- or double-backed scalar / vector / matrix arrays
+        const bool dbl = (GetComponentType(type_id) == TypeId::Double) ||
+                         type_id == TypeId::Double;
+        if (dbl) {
+          if (const auto* a = value.as_double_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
+            for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_double(a->data() + i * comp_count); }
+            if (limit < n) out += ", ...";
+          }
+        } else {
+          if (const auto* a = value.as_float_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
+            for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_float(a->data() + i * comp_count); }
+            if (limit < n) out += ", ...";
+          }
+        }
+        break;
       }
     }
 
-    ss << "]";
-    return ss.str();
+    out += "]";
+    return;
   }
 
   // Handle scalars and vectors
   switch (type_id) {
     case TypeId::Bool: {
       const bool* v = value.as_bool();
-      return v ? (*v ? "true" : "false") : "None";
+      out += v ? (*v ? "true" : "false") : "None";
+      return;
     }
 
     case TypeId::Int: {
       const int32_t* v = value.as_int();
-      return v ? std::to_string(*v) : "None";
+      if (v) AppendI64(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::UInt: {
       const uint32_t* v = value.as_uint();
-      return v ? std::to_string(*v) : "None";
+      if (v) AppendU64(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::Int64: {
       const int64_t* v = value.as_int64();
-      return v ? std::to_string(*v) : "None";
+      if (v) AppendI64(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::UInt64: {
       const uint64_t* v = value.as_uint64();
-      return v ? std::to_string(*v) : "None";
+      if (v) AppendU64(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::Float: {
       const float* v = value.as_float();
-      return v ? FormatFloat(*v, opts.float_precision) : "None";
+      if (v) AppendFloat(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::Double: {
       const double* v = value.as_double();
-      return v ? FormatDouble(*v, opts.double_precision) : "None";
+      if (v) AppendDouble(out, *v); else out += "None";
+      return;
     }
 
     case TypeId::String: {
       const std::string* v = value.as_string();
-      return v ? EscapeString(*v) : "None";
+      out += v ? EscapeString(*v) : "None";
+      return;
     }
 
     case TypeId::Token: {
       const std::string* v = value.as_token();
-      return v ? EscapeString(*v) : "None";
+      out += v ? EscapeString(*v) : "None";
+      return;
     }
 
     case TypeId::AssetPath: {
       const std::string* v = value.as_asset_path();
-      return v ? ("@" + *v + "@") : "None";
+      if (v) { out += '@'; out += *v; out += '@'; } else out += "None";
+      return;
     }
 
     case TypeId::Int2: {
       const int32_t* v = value.as_int2();
-      if (!v) return "None";
-      return "(" + std::to_string(v[0]) + ", " + std::to_string(v[1]) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]); out += ')';
+      return;
     }
 
     case TypeId::Int3: {
       const int32_t* v = value.as_int3();
-      if (!v) return "None";
-      return "(" + std::to_string(v[0]) + ", " + std::to_string(v[1]) +
-             ", " + std::to_string(v[2]) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
+      out += ", "; AppendI64(out, v[2]); out += ')';
+      return;
     }
 
     case TypeId::Int4: {
       const int32_t* v = value.as_int4();
-      if (!v) return "None";
-      return "(" + std::to_string(v[0]) + ", " + std::to_string(v[1]) +
-             ", " + std::to_string(v[2]) + ", " + std::to_string(v[3]) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
+      out += ", "; AppendI64(out, v[2]); out += ", "; AppendI64(out, v[3]); out += ')';
+      return;
     }
 
     case TypeId::Float2: {
       const float* v = value.as_float2();
-      if (!v) return "None";
-      return "(" + FormatFloat(v[0], opts.float_precision) + ", " +
-             FormatFloat(v[1], opts.float_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]); out += ')';
+      return;
     }
 
     case TypeId::Float3:
@@ -212,27 +336,26 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
     case TypeId::Normal3f:
     case TypeId::Color3f: {
       const float* v = value.as_float3();
-      if (!v) return "None";
-      return "(" + FormatFloat(v[0], opts.float_precision) + ", " +
-             FormatFloat(v[1], opts.float_precision) + ", " +
-             FormatFloat(v[2], opts.float_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]);
+      out += ", "; AppendFloat(out, v[2]); out += ')';
+      return;
     }
 
     case TypeId::Float4:
     case TypeId::Color4f: {
       const float* v = value.as_float4();
-      if (!v) return "None";
-      return "(" + FormatFloat(v[0], opts.float_precision) + ", " +
-             FormatFloat(v[1], opts.float_precision) + ", " +
-             FormatFloat(v[2], opts.float_precision) + ", " +
-             FormatFloat(v[3], opts.float_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]);
+      out += ", "; AppendFloat(out, v[2]); out += ", "; AppendFloat(out, v[3]); out += ')';
+      return;
     }
 
     case TypeId::Double2: {
       const double* v = value.as_double2();
-      if (!v) return "None";
-      return "(" + FormatDouble(v[0], opts.double_precision) + ", " +
-             FormatDouble(v[1], opts.double_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]); out += ')';
+      return;
     }
 
     case TypeId::Double3:
@@ -240,129 +363,168 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
     case TypeId::Vector3d:
     case TypeId::Normal3d: {
       const double* v = value.as_double3();
-      if (!v) return "None";
-      return "(" + FormatDouble(v[0], opts.double_precision) + ", " +
-             FormatDouble(v[1], opts.double_precision) + ", " +
-             FormatDouble(v[2], opts.double_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
+      out += ", "; AppendDouble(out, v[2]); out += ')';
+      return;
     }
 
     case TypeId::Double4: {
       const double* v = value.as_double4();
-      if (!v) return "None";
-      return "(" + FormatDouble(v[0], opts.double_precision) + ", " +
-             FormatDouble(v[1], opts.double_precision) + ", " +
-             FormatDouble(v[2], opts.double_precision) + ", " +
-             FormatDouble(v[3], opts.double_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
+      out += ", "; AppendDouble(out, v[2]); out += ", "; AppendDouble(out, v[3]); out += ')';
+      return;
     }
 
     case TypeId::Quatf: {
       const float* v = value.as_float4();  // Quat stored as 4 floats
-      if (!v) return "None";
-      return "(" + FormatFloat(v[0], opts.float_precision) + ", " +
-             FormatFloat(v[1], opts.float_precision) + ", " +
-             FormatFloat(v[2], opts.float_precision) + ", " +
-             FormatFloat(v[3], opts.float_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]);
+      out += ", "; AppendFloat(out, v[2]); out += ", "; AppendFloat(out, v[3]); out += ')';
+      return;
     }
 
     case TypeId::Quatd: {
       const double* v = value.as_double4();
-      if (!v) return "None";
-      return "(" + FormatDouble(v[0], opts.double_precision) + ", " +
-             FormatDouble(v[1], opts.double_precision) + ", " +
-             FormatDouble(v[2], opts.double_precision) + ", " +
-             FormatDouble(v[3], opts.double_precision) + ")";
+      if (!v) { out += "None"; return; }
+      out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
+      out += ", "; AppendDouble(out, v[2]); out += ", "; AppendDouble(out, v[3]); out += ')';
+      return;
     }
 
     case TypeId::Matrix2f: {
       const float* v = value.as_matrix2f();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((" << FormatFloat(v[0], opts.float_precision) << ", "
-         << FormatFloat(v[1], opts.float_precision) << "), ("
-         << FormatFloat(v[2], opts.float_precision) << ", "
-         << FormatFloat(v[3], opts.float_precision) << "))";
-      return ss.str();
+      if (!v) { out += "None"; return; }
+      out += "(("; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]);
+      out += "), ("; AppendFloat(out, v[2]); out += ", "; AppendFloat(out, v[3]); out += "))";
+      return;
     }
 
     case TypeId::Matrix3f: {
       const float* v = value.as_matrix3f();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((";
+      if (!v) { out += "None"; return; }
+      out += "((";
       for (int row = 0; row < 3; ++row) {
-        if (row > 0) ss << "), (";
+        if (row > 0) out += "), (";
         for (int col = 0; col < 3; ++col) {
-          if (col > 0) ss << ", ";
-          ss << FormatFloat(v[row * 3 + col], opts.float_precision);
+          if (col > 0) out += ", ";
+          AppendFloat(out, v[row * 3 + col]);
         }
       }
-      ss << "))";
-      return ss.str();
+      out += "))";
+      return;
     }
 
     case TypeId::Matrix4f: {
       const float* v = value.as_matrix4f();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((";
+      if (!v) { out += "None"; return; }
+      out += "((";
       for (int row = 0; row < 4; ++row) {
-        if (row > 0) ss << "), (";
+        if (row > 0) out += "), (";
         for (int col = 0; col < 4; ++col) {
-          if (col > 0) ss << ", ";
-          ss << FormatFloat(v[row * 4 + col], opts.float_precision);
+          if (col > 0) out += ", ";
+          AppendFloat(out, v[row * 4 + col]);
         }
       }
-      ss << "))";
-      return ss.str();
+      out += "))";
+      return;
     }
 
     case TypeId::Matrix2d: {
       const double* v = value.as_matrix2d();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((" << FormatDouble(v[0], opts.double_precision) << ", "
-         << FormatDouble(v[1], opts.double_precision) << "), ("
-         << FormatDouble(v[2], opts.double_precision) << ", "
-         << FormatDouble(v[3], opts.double_precision) << "))";
-      return ss.str();
+      if (!v) { out += "None"; return; }
+      out += "(("; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
+      out += "), ("; AppendDouble(out, v[2]); out += ", "; AppendDouble(out, v[3]); out += "))";
+      return;
     }
 
     case TypeId::Matrix3d: {
       const double* v = value.as_matrix3d();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((";
+      if (!v) { out += "None"; return; }
+      out += "((";
       for (int row = 0; row < 3; ++row) {
-        if (row > 0) ss << "), (";
+        if (row > 0) out += "), (";
         for (int col = 0; col < 3; ++col) {
-          if (col > 0) ss << ", ";
-          ss << FormatDouble(v[row * 3 + col], opts.double_precision);
+          if (col > 0) out += ", ";
+          AppendDouble(out, v[row * 3 + col]);
         }
       }
-      ss << "))";
-      return ss.str();
+      out += "))";
+      return;
     }
 
     case TypeId::Matrix4d: {
       const double* v = value.as_matrix4d();
-      if (!v) return "None";
-      std::ostringstream ss;
-      ss << "((";
+      if (!v) { out += "None"; return; }
+      out += "((";
       for (int row = 0; row < 4; ++row) {
-        if (row > 0) ss << "), (";
+        if (row > 0) out += "), (";
         for (int col = 0; col < 4; ++col) {
-          if (col > 0) ss << ", ";
-          ss << FormatDouble(v[row * 4 + col], opts.double_precision);
+          if (col > 0) out += ", ";
+          AppendDouble(out, v[row * 4 + col]);
         }
       }
-      ss << "))";
-      return ss.str();
+      out += "))";
+      return;
+    }
+
+    case TypeId::Dictionary: {
+      const Dict* d = value.as_dictionary();
+      if (d) out += PrintDictionaryIndented(*d, opts, 0); else out += "{\n}";
+      return;
     }
 
     default:
-      return "<unsupported type " + std::to_string(static_cast<int>(type_id)) + ">";
+      out += "<unsupported type ";
+      AppendI64(out, static_cast<int>(type_id));
+      out += ">";
+      return;
   }
 }
+
+std::string PrintValue(const Value& value, const PrintOptions& opts) {
+  std::string out;
+  PrintValueInto(out, value, opts);
+  return out;
+}
+
+namespace {
+
+std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+                                    int base_depth) {
+  std::string s;
+  s += "{\n";
+  std::string inner;
+  for (int i = 0; i <= base_depth; ++i) inner += opts.indent;
+  std::string closing;
+  for (int i = 0; i < base_depth; ++i) closing += opts.indent;
+
+  for (const auto& kv : d.entries) {
+    const std::string& key = kv.first;
+    const Value& val = kv.second;
+    s += inner;
+    if (val.is_dictionary()) {
+      s += "dictionary ";
+      s += key;
+      s += " = ";
+      s += PrintDictionaryIndented(*val.as_dictionary(), opts, base_depth + 1);
+      s += "\n";
+    } else {
+      s += PrintTypeName(val.type_id(), val.is_array());
+      s += " ";
+      s += key;
+      s += " = ";
+      PrintValueInto(s, val, opts);
+      s += "\n";
+    }
+  }
+  s += closing;
+  s += "}";
+  return s;
+}
+
+}  // anonymous namespace
 
 std::string PrintTypeName(TypeId type_id, bool is_array) {
   const char* type_name = GetTypeName(type_id);
@@ -375,13 +537,16 @@ std::string PrintTypeName(TypeId type_id, bool is_array) {
 
 std::string PrintAttributeValue(const std::string& type_name, const std::string& attr_name,
                                  const Value& value, const PrintOptions& opts) {
-  std::ostringstream ss;
-  ss << type_name;
+  std::string s;
+  s += type_name;
   if (value.is_array()) {
-    ss << "[]";
+    s += "[]";
   }
-  ss << " " << attr_name << " = " << PrintValue(value, opts);
-  return ss.str();
+  s += " ";
+  s += attr_name;
+  s += " = ";
+  PrintValueInto(s, value, opts);
+  return s;
 }
 
 }  // namespace next

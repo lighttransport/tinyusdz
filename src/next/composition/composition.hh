@@ -128,15 +128,20 @@ public:
   static VariantSelection ParseVariantSelection(const std::string& str);
 
   /// Merge local opinions from `source` into `target` (strongest-wins,
-  /// fill-absent): type name, properties, time samples, and metadata. Public so
-  /// the pcp value-resolution path can reuse it. Does NOT copy relationships or
-  /// children (callers handle those, incl. namespace remapping).
+  /// fill-absent): type name, properties (incl. connection targets),
+  /// relationships, time samples, and metadata. Public so the pcp
+  /// value-resolution path can reuse it.
   /// Time-sample times are remapped by the layer offset
   /// `t -> time_offset + time_scale*t` (identity by default), baking a
   /// composition arc's layer offset into the flattened result.
-  static void CopyLocalOpinions(PrimSpec& target, const PrimSpec& source,
-                                double time_offset = 0.0,
-                                double time_scale = 1.0);
+  /// `remap_path`, if set, rewrites relationship/connection TARGET paths from
+  /// the source (arc-local) namespace into the composed namespace — pass the
+  /// arc's NamespaceMapping::Apply so a referenced asset's internal targets
+  /// resolve to their flattened paths. Default (empty) leaves targets verbatim.
+  static void CopyLocalOpinions(
+      PrimSpec& target, const PrimSpec& source, double time_offset = 0.0,
+      double time_scale = 1.0,
+      const std::function<std::string(const std::string&)>& remap_path = {});
 
   // ============================================================
   // Layer cache
@@ -144,6 +149,15 @@ public:
 
   /// Get a cached layer (loads if not cached)
   const Layer* GetCachedLayer(const std::string& path);
+
+  /// Get an external layer with its OWN composition arcs (references / payloads
+  /// / inherits / specializes) already expanded, variant selection deferred to
+  /// the referencing prim. Cached; falls back to the raw layer when it has no
+  /// such arcs or a composition cycle is detected. When `subtree_root` is given,
+  /// only that (self-contained) subtree is composed/materialized rather than the
+  /// whole layer.
+  const Layer* GetComposedExternalLayer(const std::string& path,
+                                        const std::string& subtree_root = "");
 
   /// Clear the layer cache
   void ClearCache();
@@ -160,6 +174,15 @@ private:
   // Layer cache: resolved path -> layer
   std::map<std::string, std::unique_ptr<Layer>> layer_cache_;
 
+  // Cache of external layers with their OWN arcs already expanded (variants
+  // deferred), and the set of paths currently being so composed (cross-layer
+  // cycle guard). Shared (shared_ptr) with the sub-Compositors that compose
+  // referenced layers, so the cache and cycle guard span the whole recursion.
+  // Lazily created on first external reference.
+  std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
+      composed_ext_cache_;
+  std::shared_ptr<std::set<std::string>> composing_ext_;
+
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;
 
@@ -168,7 +191,15 @@ private:
   // subtree prims to append to the result after the pass (cannot add during
   // iteration). Cleared at the start of each Compose().
   std::set<std::string> arc_resolved_;
-  std::vector<PrimSpec> pending_graft_;
+  // Grafted subtrees buffered during pass 2 (appended afterwards). The anchor
+  // (resolved path of the layer the subtree came from) rides along so a later
+  // pass can resolve the grafted prims' OWN arcs — e.g. a referenced mesh file
+  // whose material prims reference `../../Materials/x.usd` relative to itself.
+  struct PendingGraft {
+    PrimSpec prim;
+    std::string anchor;
+  };
+  std::vector<PendingGraft> pending_graft_;
   std::set<std::string> graft_paths_;
 
   // Internal composition methods
@@ -188,9 +219,11 @@ private:
   void ResolveRefArc(Layer& layer, PrimSpec& prim, const CompositionArc& arc,
                      const std::string& anchor_path, int depth);
   // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
-  void GraftSubtree(const Layer& src, const std::string& src_root,
+  void GraftSubtree(const Layer& src, const std::string& src_anchor,
+                    const std::string& src_root,
                     const std::string& dst_root);
-  bool ApplyVariants(PrimSpec& prim, const Layer& layer, int depth);
+  bool ApplyVariants(PrimSpec& prim, const Layer& layer,
+                     const std::string& anchor_path, int depth);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

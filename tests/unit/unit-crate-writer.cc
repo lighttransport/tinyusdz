@@ -206,7 +206,7 @@ void crate_writer_timesamples_test(void) {
     ts.add_sample(time, pos_value);
   }
 
-  translate_op._var._ts = ts;
+  translate_op._var.set_timesamples(ts);
 
   // Set default value
   value::float3 default_pos;

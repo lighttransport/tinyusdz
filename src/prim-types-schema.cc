@@ -85,6 +85,7 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(NewtonActuator)
   GET_PRIM_META(MjcTendon)
   GET_PRIM_META(MjcKeyframe)
+  GET_PRIM_META(MjcSensor)
 
 #undef GET_PRIM_META
 
@@ -145,6 +146,7 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(NewtonActuator)
   GET_PRIM_META(MjcTendon)
   GET_PRIM_META(MjcKeyframe)
+  GET_PRIM_META(MjcSensor)
 
 #undef GET_PRIM_META
 
@@ -231,6 +233,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(NewtonActuator)
   EXTRACT_NAME_AND_RETURN_PATH(MjcTendon)
   EXTRACT_NAME_AND_RETURN_PATH(MjcKeyframe)
+  EXTRACT_NAME_AND_RETURN_PATH(MjcSensor)
   // AR/Interactive (Apple Preliminary_*)
   EXTRACT_NAME_AND_RETURN_PATH(Preliminary_PhysicsGravitationalForce)
   EXTRACT_NAME_AND_RETURN_PATH(Preliminary_InfiniteColliderPlane)
@@ -324,6 +327,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, NewtonActuator)
   SET_ELEMENT_NAME(elementName, MjcTendon)
   SET_ELEMENT_NAME(elementName, MjcKeyframe)
+  SET_ELEMENT_NAME(elementName, MjcSensor)
   // AR/Interactive (Apple Preliminary_*)
   SET_ELEMENT_NAME(elementName, Preliminary_PhysicsGravitationalForce)
   SET_ELEMENT_NAME(elementName, Preliminary_InfiniteColliderPlane)
