@@ -92,6 +92,16 @@ void PrintUsage(const char *prog) {
       "  -numThreads <N>           Texture worker threads (default 0 = all cores; 1 = sequential).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
       "\n"
+      "Material optimization:\n"
+      "  -optimizeMaterials <off|dedupe|preview|atlas>\n"
+      "                            Optimize flattened material/shader networks for realtime delivery.\n"
+      "                            preview/atlas currently fall back safely to exact dedupe.\n"
+      "  -materialAtlasSize <N>    Max generated atlas edge (default 4096).\n"
+      "  -materialAtlasTileSize <N> Tile edge for atlas mode (default 512).\n"
+      "  -materialAtlasPadding <N> Gutter padding pixels for atlas mode (default 2).\n"
+      "  -materialAtlasMinGroupSize <N>\n"
+      "                            Minimum compatible materials before atlas generation (default 2).\n"
+      "\n"
       "Fit textures to a total size budget:\n"
       "  -targetTextureSize <size> Shrink all textures so their total fits <size>\n"
       "                            (e.g. 100MB, 50mb, 1048576). Implies a fit search.\n"
@@ -184,6 +194,30 @@ bool ParseTextureFormat(const std::string &s, usdz::OutputTextureFormat *out) {
   }
   if (v == "jpeg" || v == "jpg") {
     *out = usdz::OutputTextureFormat::JPEG;
+    return true;
+  }
+  return false;
+}
+
+bool ParseMaterialOptimizationMode(
+    const std::string &s, usdz::MaterialOptimizationMode *out) {
+  if (out == nullptr) return false;
+  std::string v = to_lower(s);
+  if (v == "off" || v == "none") {
+    *out = usdz::MaterialOptimizationMode::Off;
+    return true;
+  }
+  if (v == "dedupe" || v == "dedup") {
+    *out = usdz::MaterialOptimizationMode::Dedupe;
+    return true;
+  }
+  if (v == "preview" || v == "previewsurface" ||
+      v == "usdpreviewsurface") {
+    *out = usdz::MaterialOptimizationMode::Preview;
+    return true;
+  }
+  if (v == "atlas") {
+    *out = usdz::MaterialOptimizationMode::Atlas;
     return true;
   }
   return false;
@@ -454,6 +488,12 @@ int main(int argc, char **argv) {
   parser.add_option("-jpegQuality", true, "1-100");
   parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
+  parser.add_option("-optimizeMaterials", true, "off|dedupe|preview|atlas");
+  parser.add_option("-materialAtlasSize", true, "Material atlas max edge");
+  parser.add_option("-materialAtlasTileSize", true, "Material atlas tile edge");
+  parser.add_option("-materialAtlasPadding", true, "Material atlas padding");
+  parser.add_option("-materialAtlasMinGroupSize", true,
+                    "Material atlas min group size");
   parser.add_option("-targetTextureSize", true, "Total texture budget (e.g. 100MB)");
   parser.add_option("-fitStrategy", true, "size|quality");
   parser.add_option("-fitMinTextureSize", true, "Min longest edge for size fit");
@@ -618,6 +658,66 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
+  if (parser.is_set("-optimizeMaterials")) {
+    std::string mode;
+    parser.get("-optimizeMaterials", mode);
+    if (!ParseMaterialOptimizationMode(mode, &opts.material_optimization)) {
+      std::cerr << "ERROR: -optimizeMaterials must be off, dedupe, preview, "
+                   "or atlas (got '"
+                << mode << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasSize")) {
+    std::string n;
+    parser.get("-materialAtlasSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_size) ||
+        opts.material_atlas_size < 1 ||
+        opts.material_atlas_size > 32768) {
+      std::cerr << "ERROR: -materialAtlasSize must be 1-32768 (got '" << n
+                << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasTileSize")) {
+    std::string n;
+    parser.get("-materialAtlasTileSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_tile_size) ||
+        opts.material_atlas_tile_size < 1 ||
+        opts.material_atlas_tile_size > opts.material_atlas_size) {
+      std::cerr << "ERROR: -materialAtlasTileSize must be positive and <= "
+                   "-materialAtlasSize (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasPadding")) {
+    std::string n;
+    parser.get("-materialAtlasPadding", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_padding) ||
+        opts.material_atlas_padding < 0 ||
+        opts.material_atlas_padding > 1024) {
+      std::cerr << "ERROR: -materialAtlasPadding must be 0-1024 (got '" << n
+                << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasMinGroupSize")) {
+    std::string n;
+    parser.get("-materialAtlasMinGroupSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_min_group_size) ||
+        opts.material_atlas_min_group_size < 1) {
+      std::cerr << "ERROR: -materialAtlasMinGroupSize must be positive (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (opts.material_optimization != usdz::MaterialOptimizationMode::Off &&
+      !opts.flatten) {
+    std::cerr << "WARN: material optimization requires flattened output; "
+                 "ignoring -noFlatten.\n";
+    opts.flatten = true;
+  }
   if (parser.is_set("-targetTextureSize")) {
     std::string s;
     parser.get("-targetTextureSize", s);
@@ -681,6 +781,18 @@ int main(int argc, char **argv) {
             << ", resized: " << stats.num_textures_resized
             << ", reencoded: " << stats.num_textures_reencoded
             << ", passthrough: " << stats.num_textures_passthrough << "\n";
+  if (opts.material_optimization != usdz::MaterialOptimizationMode::Off) {
+    std::cout << "  materials: " << stats.num_materials_before << " -> "
+              << stats.num_materials_after
+              << ", deduped: " << stats.num_materials_deduped
+              << ", preview-converted: "
+              << stats.num_materials_preview_converted
+              << ", skipped: " << stats.num_materials_skipped
+              << ", atlas materials: "
+              << stats.num_material_atlas_materials
+              << ", atlas textures: "
+              << stats.num_material_atlas_textures << "\n";
+  }
 
   // Optionally run pxrUSD usdcat to produce a reference file for comparison.
   // usdcat's --usdFormat flag requires a .usd extension on the output file.
