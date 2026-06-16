@@ -28,5 +28,22 @@ std::string dtos(double v);
 void dtos_append(std::string& out, float v);
 void dtos_append(std::string& out, double v);
 
+/// Freestanding `printf("%.*g", precision, v)` formatter (no libc / no locale):
+/// round to `precision` significant digits, choose fixed vs scientific by the %g
+/// rule (fixed iff -4 <= decimal-exponent < precision), strip trailing zeros,
+/// scientific exponent `e±dd`. Used for the USDA layer-meta + time-sample-key
+/// doubles (which previously went through ostream `setprecision`).
+///
+/// Contract: BYTE-IDENTICAL to `%.*g` whenever the value's shortest round-trip
+/// decimal fits in `precision` significant digits — which holds for every
+/// authored USD scalar (metersPerUnit, fps, time codes like 13.944, …) and is
+/// verified byte-identical across the flatten test scenes. It is built on the
+/// dragonbox SHORTEST digits rounded to `precision`, so for an arbitrary
+/// full-precision double whose shortest needs > precision digits it can differ
+/// from libc by one ULP in the last digit (a double-rounding artifact);
+/// exact-in-all-cases rounding would need exact (big-integer) digit extraction.
+std::string format_g(double v, int precision);
+void format_g_append(std::string& out, double v, int precision);
+
 }  // namespace next
 }  // namespace tinyusdz
