@@ -100,8 +100,13 @@ class LayerRegistry {
 
 /// Load a layer from a resolved file path, dispatching by extension to the
 /// next USDA / USDC readers. Returns nullptr on failure. (USDZ: TODO.)
+/// `parse_num_threads` forwards to ParseOptions::num_threads for the USDA
+/// large-array parallel parse (0 = auto, 1 = serial, >1 = that many); ignored
+/// for crate. Lets a caller drive parse parallelism explicitly instead of via a
+/// process-environment variable.
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
-                                         std::string *warn, std::string *err);
+                                         std::string *warn, std::string *err,
+                                         int parse_num_threads = 0);
 
 }  // namespace pcp
 }  // namespace next

@@ -127,7 +127,14 @@ int main(int argc, char **argv) {
   // Compose-free RAW parse->write path (measure parser/writer in isolation).
   if (rewrite_layer) {
     std::string warn, err;
-    auto layer = pcp::LoadLayerFromFile(filename, &warn, &err);  // PARSE only
+    // Parse-thread hint (large-array parallel parse): explicit arg to the library
+    // (which no longer reads the environment itself). 0 = auto, 1 = serial.
+    int parse_threads = 0;
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      parse_threads = std::atoi(nt);
+    }
+    auto layer =
+        pcp::LoadLayerFromFile(filename, &warn, &err, parse_threads);  // PARSE only
     const auto t_parsed = Clock::now();
     emit_lines(warn, "WARN : ");
     if (!layer) {
@@ -211,6 +218,9 @@ int main(int argc, char **argv) {
     // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
     // and byte-identical to serial. Default 1 = serial (no threading).
     opts.num_threads = compose_threads;
+    // Forward the CLI timing flag to the library (which no longer reads the env):
+    // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
+    opts.enable_timing = timing;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);

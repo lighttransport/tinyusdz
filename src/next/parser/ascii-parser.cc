@@ -120,6 +120,7 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   builder_ = std::make_unique<LayerBuilder>(*layer_);
 
   lexer_ = std::make_unique<Lexer>(data, length);
+  lexer_->num_threads = options_.num_threads;
 
   // Parse stage metadata (header block)
   if (!ParseStageMetadata()) {

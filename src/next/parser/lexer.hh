@@ -122,6 +122,12 @@ public:
   /// Set error message
   void set_error(const std::string& msg);
 
+  /// Worker-thread hint for the parallel large-array parse path, forwarded from
+  /// ParseOptions::num_threads (0 = auto, 1 = serial, >1 = that many). Carried on
+  /// the lexer because the stateless value-parser array helpers receive only the
+  /// lexer; replaces the former TINYUSDZ_NEXT_NUM_THREADS env read.
+  int num_threads = 0;
+
 private:
   const char* data_;
   size_t length_;
