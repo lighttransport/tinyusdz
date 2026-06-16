@@ -168,6 +168,26 @@ bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
 
   tinyusdz::Layer work = *out->comp.rootLayer;  // compose from a copy
 
+  // Apply variant selection overrides before composition.
+  if (!opts.variantOverrides.empty()) {
+    tinyusdz::VariantSelectorMap vsmap;
+    for (const auto& [primPath, selections] : opts.variantOverrides) {
+      tinyusdz::Path path(primPath, "");
+      tinyusdz::VariantSelector sel;
+      sel.selection = selections.empty() ? "" : selections.begin()->second;
+      sel.vsmap = selections;
+      vsmap[path] = sel;
+    }
+    tinyusdz::Layer variantLayer;
+    std::string vwarn, verr;
+    if (tinyusdz::ApplyVariantSelector(work, vsmap, &variantLayer, &vwarn, &verr)) {
+      work = std::move(variantLayer);
+      if (!vwarn.empty()) out->warn += vwarn;
+    } else {
+      if (!verr.empty()) out->warn += "Variant override failed: " + verr + "\n";
+    }
+  }
+
   out->comp.deferred.clear();
   tinyusdz::Layer composed;
   if (!ComposeToFixedPoint(resolver, std::move(work), opts, &composed,

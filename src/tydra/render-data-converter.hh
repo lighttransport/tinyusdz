@@ -1030,6 +1030,46 @@ class RenderSceneConverter {
           &blendshapes,
       RenderMesh *dst);
 
+  bool ConvertCylinder(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCylinder &cylinder, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertCone(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCone &cone, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertCapsule(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCapsule &capsule, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertPlane(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomPlane &plane, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
   bool ConvertMesh(
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
