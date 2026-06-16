@@ -67,7 +67,7 @@ A directory is read recursively; a single `.usd` reads its sibling textures; a
 | `-o`, `--output <file>` | Output `.usdz` path (default `<root>.usdz`). |
 | `--root <relpath>` | Root USD layer within the input dir (default: auto). |
 | `--resize <N>` | Cap each texture's longest edge to N pixels. |
-| `--texture-format <keep\|png\|jpeg>` | Texture output (default `keep`). |
+| `--texture-format <keep\|png\|jpeg\|exr>` | Texture output (default `keep`). `keep` preserves each source format (EXR stays EXR, resize-only — HDR retained); `exr` forces fp16 EXR for **all** textures; `png`/`jpeg` tone-map EXR to LDR. |
 | `--root-layer-format <usdc\|usda>` | USDZ root layer (default `usdc`). |
 | `--arkit-compatible` | Force an ARKit-friendly flattened USDC package. |
 | `--no-flatten` | Accepted for parity; the JS/WASM export still flattens. |
@@ -111,9 +111,22 @@ node cli/usdzconvert.js big.usdz -o out.usdz --no-reencode --max-usdc-mb 1500
 # ARKit flatten, textures kept (low-heap)
 node cli/usdzconvert.js big.usdz -o out.usdz --arkit-compatible --no-reencode --max-usdc-mb 1500
 
+# Resize to 512 px and transcode all textures to PNG
+node cli/usdzconvert.js ./model_folder -o model.usdz --resize 512 --texture-format png -v
+
+# Keep HDR: force fp16 EXR for every texture (recent USDZ allows EXR)
+node cli/usdzconvert.js ./model_folder -o model_hdr.usdz --texture-format exr
+
 # Build an ORM map
 node cli/usdzconvert.js --repack orm.png -packR ao.png:0 -packG rough.png:0 -packB metal.png:0 --pack-channels 3
 ```
+
+> **Format-change rewrites scale to large scenes.** When a format change renames
+> a texture (e.g. EXR→PNG under `--texture-format png`), every `UsdUVTexture`
+> `inputs:file` referencing it is rewritten to the new name. This rewrite now
+> covers scenes with **tens of thousands** of texture prims; an earlier internal
+> 10k-prim collection cap could silently leave references past the cutoff
+> pointing at the now-absent original (a dangling asset reference).
 
 ---
 
@@ -146,7 +159,7 @@ const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
 | `arkitCompatible` | `false` | ARKit-friendly flattened USDC package. |
 | `rootLayerFormat` | `'usdc'` | `'usdc'` or `'usda'`. |
 | `reencode` | `true` | Re-encode textures; `false` = passthrough. |
-| `textureFormat` | `'keep'` | `'keep' \| 'png' \| 'jpeg'`. |
+| `textureFormat` | `'keep'` | `'keep' \| 'png' \| 'jpeg' \| 'exr'`. `'keep'` preserves source format (EXR→EXR, resize-only); `'exr'` forces fp16 EXR; `'png'`/`'jpeg'` tone-map EXR to LDR. |
 | `maxTextureSize` | `0` | Cap longest edge (px); 0 = no resize. |
 | `targetTextureBytes` | `0` | Fit all textures into a total byte budget. |
 | `fitStrategy` | `'size'` | `'size'` or `'quality'`. |
