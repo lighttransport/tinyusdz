@@ -18,12 +18,6 @@
 #include <iostream>
 #include <string>
 
-#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
-#include <fcntl.h>
-#include <unistd.h>
-#define NEXT_USDCAT_HAS_DUP2 1
-#endif
-
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -151,28 +145,25 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
-    // `-o <file>` redirects stdout to the file at the fd level, so the output
-    // goes through the EXACT same std::cout path (and performance) as a shell
-    // redirect — just to a named file we can measure/re-parse.
+    // Write through the next StreamWriter with the native C-stdio backend
+    // (buffered + blocked writes). `-o <file>` targets a FILE*; otherwise stdout.
+    // This is the default native sink; a WASM/WASI host would supply its own
+    // StreamWriter::BlockSink instead.
+    std::FILE* fp = stdout;
     if (out_path) {
-#if defined(NEXT_USDCAT_HAS_DUP2)
-      int fd = ::open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-      if (fd < 0 || ::dup2(fd, STDOUT_FILENO) < 0) {
+      fp = std::fopen(out_path, "wb");
+      if (!fp) {
         std::fprintf(stderr, "ERR : cannot open output file: %s\n", out_path);
         return 1;
       }
-      ::close(fd);
-#else
-      std::fprintf(stderr, "ERR : -o not supported on this platform\n");
-      return 2;
-#endif
     }
-    // Stream directly to stdout instead of building the whole (multi-GB on
-    // large scenes) USDA text in one std::string first. On Caldera-class scenes
-    // this alone removes several GB of peak RSS.
-    std::ios::sync_with_stdio(false);
-    USDAWriteResult res = WriteUSDA(std::cout, stage, wopts);
-    std::cout.flush();
+    USDAWriteResult res;
+    {
+      StreamWriter w(StdioSink(fp));
+      res = WriteUSDA(w, stage, wopts);  // flushes the buffer before returning
+    }
+    std::fflush(fp);
+    if (out_path) std::fclose(fp);
     size_t bytes_written = res.bytes_written;
     const auto t_written = Clock::now();
     if (timing) {

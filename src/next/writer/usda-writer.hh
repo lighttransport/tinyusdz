@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "stream-writer.hh"
 #include <string>
 #include <ostream>
 
@@ -64,7 +65,12 @@ struct USDAWriteResult {
 std::string WriteUSDAToString(const Stage& stage,
                                const USDAWriteOptions& options = {});
 
-/// Write Stage to stream
+/// Write Stage to a StreamWriter (stdio-independent core; supply any backend —
+/// stdio, file, std::string, or a host-provided WASM/WASI block sink).
+USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
+                          const USDAWriteOptions& options = {});
+
+/// Write Stage to a std::ostream (compatibility wrapper over the StreamWriter core).
 USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
                            const USDAWriteOptions& options = {});
 
@@ -78,7 +84,11 @@ USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
 std::string WriteLayerToString(const Layer& layer,
                                 const USDAWriteOptions& options = {});
 
-/// Write Layer to stream
+/// Write Layer to a StreamWriter (stdio-independent core).
+USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
+                           const USDAWriteOptions& options = {});
+
+/// Write Layer to a std::ostream (compatibility wrapper).
 USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
                             const USDAWriteOptions& options = {});
 
