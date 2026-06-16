@@ -145,13 +145,46 @@ ParseResult ParseBool(Lexer& lexer) {
   return ParseResult::Error("Expected boolean value");
 }
 
+// Our own decimal string->int (no libc strtol, no octal/hex; USD integers are
+// decimal). Lenient like the strtol-family it replaces: optional sign + decimal
+// digits, ignore trailing chars, saturate on overflow (matching strtol's
+// ERANGE clamp after the int32/int64 cast). Callers pass clean lexer Number
+// tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
+static inline int64_t DecToI64(const char* s) {
+  if (!s) return 0;
+  bool neg = false;
+  if (*s == '+' || *s == '-') { neg = (*s == '-'); ++s; }
+  const uint64_t lim =
+      neg ? (static_cast<uint64_t>(INT64_MAX) + 1u) : static_cast<uint64_t>(INT64_MAX);
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (lim - d) / 10u) { v = lim; break; }  // saturate
+    v = v * 10u + d;
+    ++s;
+  }
+  return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
+}
+static inline uint64_t DecToU64(const char* s) {
+  if (!s) return 0;
+  if (*s == '+') ++s;
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (UINT64_MAX - d) / 10u) { v = UINT64_MAX; break; }  // saturate
+    v = v * 10u + d;
+    ++s;
+  }
+  return v;
+}
+
 ParseResult ParseInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = static_cast<int32_t>(std::strtol(tok.value.c_str(), nullptr, 0));
+  int32_t value = static_cast<int32_t>(DecToI64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -161,7 +194,7 @@ ParseResult ParseUInt(Lexer& lexer) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = static_cast<uint32_t>(std::strtoul(tok.value.c_str(), nullptr, 0));
+  uint32_t value = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -171,7 +204,7 @@ ParseResult ParseInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
-  int64_t value = std::strtoll(tok.value.c_str(), nullptr, 0);
+  int64_t value = DecToI64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
@@ -181,7 +214,7 @@ ParseResult ParseUInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
-  uint64_t value = std::strtoull(tok.value.c_str(), nullptr, 0);
+  uint64_t value = DecToU64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
@@ -318,7 +351,7 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = static_cast<int32_t>(std::strtol(tok.value.c_str(), nullptr, 0));
+    out[i] = static_cast<int32_t>(DecToI64(tok.value.c_str()));
     lexer.next();
 
     if (i < count - 1) {
@@ -343,7 +376,7 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       lexer.set_error("Expected non-negative unsigned integer in tuple");
       return false;
     }
-    out[i] = static_cast<uint32_t>(std::strtoul(tok.value.c_str(), nullptr, 0));
+    out[i] = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
     lexer.next();
 
     if (i < count - 1) {
@@ -834,73 +867,48 @@ struct SliceParser {
     return true;
   }
 
-  // strtoll/strtoull are locale-aware, base-0 (octal/hex), and were the single
-  // hottest parse symbol on mesh-heavy scenes (huge index arrays). Fast-path a
-  // plain decimal `[+-]?digits` run with a tight loop; fall back to strtoll only
-  // for the ambiguous/overflowing forms it must still handle identically.
-  bool parse_i64_slow(int64_t* out) {
-    errno = 0;
-    char* next = nullptr;
-    long long v = std::strtoll(p, &next, 0);
-    if (next == p || errno == ERANGE) return false;
-    p = next;
-    *out = static_cast<int64_t>(v);
-    return true;
-  }
-  bool parse_u64_slow(uint64_t* out) {
-    errno = 0;
-    char* next = nullptr;
-    unsigned long long v = std::strtoull(p, &next, 0);
-    if (next == p || errno == ERANGE) return false;
-    p = next;
-    *out = static_cast<uint64_t>(v);
-    return true;
-  }
-
+  // Decimal `[+-]?digits` integer parse with in-loop overflow detection. USD
+  // integer literals are decimal; this is our own atoi (modeled on
+  // src/tiny-string.cc str::parse_int64) so the parser depends on neither libc
+  // strtoll (locale-aware, base-0 octal/hex, and the hottest symbol on mesh
+  // scenes) nor std stdio — important for WASM/WASI. Overflow returns false,
+  // matching strtoll's ERANGE rejection.
   bool parse_i64(int64_t* out) {
     skip_ws();
-    if (p >= end) return false;
     const char* q = p;
+    if (q >= end) return false;
     bool neg = false;
     if (*q == '+' || *q == '-') { neg = (*q == '-'); ++q; }
-    // Not a digit, or a base-0 octal/hex prefix (leading 0 then digit/x): let
-    // strtoll(base 0) decide so results match exactly.
-    if (q >= end || *q < '0' || *q > '9') return parse_i64_slow(out);
-    if (*q == '0' && q + 1 < end &&
-        ((q[1] >= '0' && q[1] <= '9') || q[1] == 'x' || q[1] == 'X')) {
-      return parse_i64_slow(out);
-    }
+    if (q >= end || *q < '0' || *q > '9') return false;
+    // Largest magnitude: INT64_MAX, or INT64_MAX+1 for a negative value.
+    const uint64_t limit = neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
+                               : static_cast<uint64_t>(INT64_MAX);
     uint64_t val = 0;
-    int ndig = 0;
     while (q < end && *q >= '0' && *q <= '9') {
-      val = val * 10u + static_cast<uint64_t>(*q - '0');
+      const uint64_t d = static_cast<uint64_t>(*q - '0');
+      if (val > (limit - d) / 10u) return false;  // would overflow
+      val = val * 10u + d;
       ++q;
-      ++ndig;
     }
-    if (ndig > 18) return parse_i64_slow(out);  // potential overflow -> strtoll
-    *out = neg ? -static_cast<int64_t>(val) : static_cast<int64_t>(val);
+    // 0u - val gives the two's-complement negation, correct even at INT64_MIN.
+    *out = neg ? static_cast<int64_t>(0u - val) : static_cast<int64_t>(val);
     p = q;
     return true;
   }
 
   bool parse_u64(uint64_t* out) {
     skip_ws();
-    if (p >= end || *p == '-') return false;
     const char* q = p;
+    if (q >= end || *q == '-') return false;
     if (*q == '+') ++q;
-    if (q >= end || *q < '0' || *q > '9') return parse_u64_slow(out);
-    if (*q == '0' && q + 1 < end &&
-        ((q[1] >= '0' && q[1] <= '9') || q[1] == 'x' || q[1] == 'X')) {
-      return parse_u64_slow(out);
-    }
+    if (q >= end || *q < '0' || *q > '9') return false;
     uint64_t val = 0;
-    int ndig = 0;
     while (q < end && *q >= '0' && *q <= '9') {
-      val = val * 10u + static_cast<uint64_t>(*q - '0');
+      const uint64_t d = static_cast<uint64_t>(*q - '0');
+      if (val > (UINT64_MAX - d) / 10u) return false;  // would overflow
+      val = val * 10u + d;
       ++q;
-      ++ndig;
     }
-    if (ndig > 18) return parse_u64_slow(out);
     *out = val;
     p = q;
     return true;
