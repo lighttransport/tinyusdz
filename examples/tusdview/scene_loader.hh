@@ -45,6 +45,10 @@ struct LoadOptions {
   // screenshot at a specific frame); interactive playback re-evaluates via
   // RenderSceneAtTime().
   double timecode{std::numeric_limits<double>::quiet_NaN()};
+  // Variant selection overrides: key = prim full path, value = map of
+  // variantSet name -> variant name. Applied before composition so variant
+  // arcs resolve with the user's choices instead of the layer defaults.
+  std::map<std::string, std::map<std::string, std::string>> variantOverrides;
 };
 
 // A payload/reference arc that was skipped during composition.

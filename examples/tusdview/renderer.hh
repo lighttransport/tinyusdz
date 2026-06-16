@@ -108,6 +108,10 @@ class Renderer {
   // for per-frame node/xform animation alongside GPU skinning. No-op if
   // unsupported.
   virtual void updateMeshWorld(int /*meshIndex*/, const float /*world*/[16]) {}
+  // Replace an entire mesh (vertices + indices + submeshes) — used by adaptive
+  // re-tessellation where the vertex/index count may change. The mesh at
+  // `meshIndex` is deleted and re-created with the new data.
+  virtual void replaceMesh(int /*meshIndex*/, const DrawMeshCPU& /*mesh*/) {}
   // Number of uploaded meshes. `updateMeshVertices`/`updateMeshWorld` index by
   // DrawScene mesh order, which only matches when this equals the DrawScene
   // mesh count; callers verify before per-index updates.

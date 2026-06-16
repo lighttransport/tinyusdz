@@ -212,6 +212,265 @@ bool RenderSceneConverter::ConvertSphere(
                      material_subsets, blendshapes, dstMesh);
 }
 
+//
+// Convert GeomCylinder to RenderMesh
+//
+bool RenderSceneConverter::ConvertCylinder(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCylinder &cylinder, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 1.0;
+  cylinder.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  cylinder.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+  int heightSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCylinderMesh(radius, height, radialSegs, heightSegs,
+                       points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = cylinder.orientation;
+  temp_mesh.doubleSided = cylinder.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomCone to RenderMesh
+//
+bool RenderSceneConverter::ConvertCone(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCone &cone, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 1.0;
+  cone.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  cone.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateConeMesh(radius, height, radialSegs,
+                   points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = cone.orientation;
+  temp_mesh.doubleSided = cone.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomCapsule to RenderMesh
+//
+bool RenderSceneConverter::ConvertCapsule(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCapsule &capsule, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 0.5;
+  capsule.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  capsule.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+  int heightSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCapsuleMesh(radius, height, radialSegs, heightSegs,
+                      points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = capsule.orientation;
+  temp_mesh.doubleSided = capsule.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomPlane to RenderMesh
+//
+bool RenderSceneConverter::ConvertPlane(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomPlane &plane, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double width = 1.0;
+  plane.width.get_value().get_scalar(&width);
+  double length = 1.0;
+  plane.length.get_value().get_scalar(&length);
+
+  int widthSegs = 1;
+  int lengthSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GeneratePlaneMesh(width, length, widthSegs, lengthSegs,
+                    points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = plane.orientation;
+  temp_mesh.doubleSided = plane.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
 // Helper to get NodeCategory from NodeType
 static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   switch (nodeType) {
@@ -330,8 +589,10 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE) {
-      // GeomCube and GeomSphere are converted to meshes
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE ||
+               prim->type_id() == value::TYPE_ID_GEOM_CYLINDER || prim->type_id() == value::TYPE_ID_GEOM_CONE ||
+               prim->type_id() == value::TYPE_ID_GEOM_CAPSULE || prim->type_id() == value::TYPE_ID_GEOM_PLANE) {
+      // Parametric primitives are converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.nodeType = NodeType::Mesh;
@@ -722,6 +983,10 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
   PathPrimMap<GeomMesh> meshPrimMap;
   PathPrimMap<GeomCube> cubePrimMap;
   PathPrimMap<GeomSphere> spherePrimMap;
+  PathPrimMap<GeomCylinder> cylinderPrimMap;
+  PathPrimMap<GeomCone> conePrimMap;
+  PathPrimMap<GeomCapsule> capsulePrimMap;
+  PathPrimMap<GeomPlane> planePrimMap;
   PathPrimMap<Material> materialPrimMap;
   PathPrimMap<Skeleton> allSkeletons;
   PathPrimMap<SkelRoot> allSkelRoots;
@@ -750,6 +1015,18 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
           break;
         case value::TYPE_ID_GEOM_SPHERE:
           if (const auto *p = prim.as<GeomSphere>()) spherePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CYLINDER:
+          if (const auto *p = prim.as<GeomCylinder>()) cylinderPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CONE:
+          if (const auto *p = prim.as<GeomCone>()) conePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CAPSULE:
+          if (const auto *p = prim.as<GeomCapsule>()) capsulePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_PLANE:
+          if (const auto *p = prim.as<GeomPlane>()) planePrimMap[path_buf] = p;
           break;
         case value::TYPE_ID_MATERIAL:
           if (const auto *p = prim.as<Material>()) materialPrimMap[path_buf] = p;
@@ -817,12 +1094,17 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
                                      &_skelRootToSkeleton);
   DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
 
-  // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
-  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
+  // Total meshes includes GeomMesh and all parametric primitives (all converted to meshes)
+  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size() +
+                              cylinderPrimMap.size() + conePrimMap.size() +
+                              capsulePrimMap.size() + planePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
   DCOUT("[Tydra] Found " << total_meshes << " meshes ("
         << meshPrimMap.size() << " mesh, " << cubePrimMap.size() << " cube, "
-        << spherePrimMap.size() << " sphere), " << total_materials << " materials");
+        << spherePrimMap.size() << " sphere, "
+        << cylinderPrimMap.size() << " cylinder, " << conePrimMap.size() << " cone, "
+        << capsulePrimMap.size() << " capsule, " << planePrimMap.size() << " plane), "
+        << total_materials << " materials");
 
   // Report counting complete via detailed progress
   _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;

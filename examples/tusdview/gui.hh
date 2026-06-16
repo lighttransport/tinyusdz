@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-// tusdview - ImGui docking GUI: dockspace, prim hierarchy browser, property
-// inspector table, stats overlay, and the 3D viewport (offscreen image + Maya
-// navigation).
 #pragma once
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "camera_nav.hh"
 #include "gpu_scene.hh"
+#include "gui_stringify.hh"
 #include "imgui.h"  // ImGuiTextFilter
 #include "load_control.hh"
 #include "renderer.hh"
@@ -28,7 +27,6 @@ namespace tusdview {
 
 class Gui {
  public:
-  // Live status of an in-flight async load (fed by App each frame).
   struct LoadStatus {
     bool active{false};
     std::string path;
@@ -37,17 +35,15 @@ class Gui {
     float elapsed{0.0f};
   };
 
-  // Current animation playback state (fed by App each frame). The viewer owns
-  // the clock; the panel displays it and emits play/stop/seek actions.
   struct TimelineInfo {
     bool hasAnimation{false};
     double start{0.0};
     double end{0.0};
     double fps{24.0};
     double current{0.0};
-    double applied{0.0};  // time code of the geometry currently displayed
+    double applied{0.0};
     bool playing{false};
-    bool converting{false};  // a re-evaluation worker is running
+    bool converting{false};
   };
 
   struct SkinningInfo {
@@ -56,54 +52,60 @@ class Gui {
     std::string reason;
   };
 
-  // (Re)bind the scene being viewed. Resets selection.
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
 
-  // Build all panels for one frame.
   void frame(Renderer* renderer, OrbitCamera* camera);
-  // Render the 3D viewport texture after the app has consumed same-frame UI
-  // actions. ImGui::Image keeps only the texture handle, so updating the texture
-  // before present removes a frame of latency for timeline/skinning changes.
   void renderViewportScene();
 
-  // Menu/toolbar actions requested this frame (app consumes, then clearActions).
   bool wantOpen() const { return wantOpen_; }
   bool wantReload() const { return wantReload_; }
   bool wantQuit() const { return wantQuit_; }
   bool wantCancelLoad() const { return wantCancelLoad_; }
-  // Lazy payload actions: load every deferred payload, or specific prim paths
-  // (rows of the Payloads panel). App consumes both after the frame.
   bool wantLoadAllPayloads() const { return wantLoadAllPayloads_; }
   std::vector<std::string> takePayloadLoadRequests() {
     return std::move(payloadLoadRequests_);
   }
-  // Timeline actions (consumed by App after the frame). loopPlayback()/
-  // playSpeed() are persistent toggles, not one-shot actions.
+  bool wantVariantSwitch() const { return wantVariantSwitch_; }
+  const std::map<std::string, std::map<std::string, std::string>>&
+  variantOverrides() const { return variantOverrides_; }
   bool wantTogglePlay() const { return wantTogglePlay_; }
   bool wantStop() const { return wantStop_; }
+  bool wantStepForward() const { return wantStepForward_; }
+  bool wantStepBackward() const { return wantStepBackward_; }
   bool hasSeek() const { return hasSeek_; }
   double seekTime() const { return seekTime_; }
   bool loopPlayback() const { return loop_; }
   float playSpeed() const { return speed_; }
+  float tessellationQuality() const { return tessQuality_; }
   bool showSkeletonOverlay() const { return showSkeleton_; }
+  enum class TransformMode { None, Translate, Rotate, Scale };
+  TransformMode transformMode() const { return xformMode_; }
+  void setTransformMode(TransformMode m) { xformMode_ = m; }
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
     wantLoadAllPayloads_ = false;
     payloadLoadRequests_.clear();
+    wantVariantSwitch_ = false;
+    variantOverrides_.clear();
     wantTogglePlay_ = wantStop_ = hasSeek_ = false;
+    wantStepForward_ = wantStepBackward_ = false;
     hasSkinningModeRequest_ = false;
   }
 
-  // Selection: set focus by absolute prim path (meshIndex < 0 = look up by path);
-  // read the current focus. Used by the GUI and the MCP server.
   void selectByPath(const std::string& absPath, int meshIndex);
-  void clearSelection();  // deselect (e.g. clicking empty viewport space)
+  void clearSelection();
+  void requestVariantSwitch(
+      const std::string& primPath,
+      const std::map<std::string, std::string>& selections) {
+    variantOverrides_[primPath] = selections;
+    wantVariantSwitch_ = true;
+  }
   const std::string& selectedPath() const { return selPath_; }
   int selectedMeshIndex() const { return selMeshIndex_; }
   void saveCameraBookmark(int slot);
@@ -120,7 +122,7 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawPrimTree(const tinyusdz::Prim& prim);  // returns true if shown (filter)
+  bool drawPrimTree(const tinyusdz::Prim& prim);
   bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
   void drawSelectionList();
@@ -128,6 +130,8 @@ class Gui {
   void drawStats();
   void drawPayloads();
   void drawTimeline();
+  void drawMaterialsPanel();
+  void drawCompositionGraph();
   void drawViewport();
   void drawAboutModal();
   void drawLoadingModal();
@@ -136,7 +140,7 @@ class Gui {
   void drawSelectionBreadcrumbs(const char* idSuffix);
   bool framePath(const std::string& absPath);
   void handleNavigation();
-  void buildHelpers();  // grid / axes / bbox / skeleton lines for the current frame
+  void buildHelpers();
   bool meshPurposeVisible(const std::string& purpose) const;
   bool meshVisibleForView(size_t meshIndex) const;
   void buildViewVisibilityMask();
@@ -150,23 +154,19 @@ class Gui {
   std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
-  // Pick the nearest mesh hit by a ray through viewport-local pixel (px,py).
-  // Returns the DrawScene mesh index, or -1 on a miss. Per-click cost only.
   int pickMesh(float px, float py, int vpW, int vpH) const;
-  // Camera framing / visibility helpers (shared by hotkeys and the View menu).
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
-  void frameSelected();  // F: fit the selected mesh's AABB (fall back to scene)
-  void frameAll();       // A: fit the whole-scene AABB
-  void unhideAll();      // restore every mesh to visible
+  void frameSelected();
+  void frameAll();
+  void unhideAll();
 
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
 
-  // Selection
   struct CameraBookmark {
     bool valid{false};
     light3d::Vec3 target{0.0f, 0.0f, 0.0f};
@@ -179,46 +179,57 @@ class Gui {
   const tinyusdz::Prim* selPrim_{nullptr};
   std::string selPath_;
   int selMeshIndex_{-1};
-  std::vector<std::pair<std::string, int>> selectionList_;  // path, draw mesh index
+  std::vector<std::pair<std::string, int>> selectionList_;
   std::array<CameraBookmark, 3> cameraBookmarks_{};
   std::vector<std::string> selectionHistory_;
   int selectionHistoryIndex_{-1};
 
   RenderMode mode_{RenderMode::Shaded};
+  // Transform manipulator mode.
+  TransformMode xformMode_{TransformMode::None};
+  int gizmoAxis_{-1};         // -1 = none, 0=X, 1=Y, 2=Z
+  bool gizmoActive_{false};   // currently dragging the gizmo
+  ImVec2 gizmoMouseStart_;    // mouse position at drag start
+  float gizmoStartPos_[3];    // world position at drag start
   bool showRenderNodes_{false};
   bool dockBuilt_{false};
 
-  // Per-panel search/filter (case-insensitive substring; ImGui built-in).
-  ImGuiTextFilter hierFilter_;   // Hierarchy: prim name/type/path
-  ImGuiTextFilter propFilter_;   // Inspector: property name/value
-  ImGuiTextFilter metaFilter_;   // Stage metadata: key/value
+  ImGuiTextFilter hierFilter_;
+  ImGuiTextFilter propFilter_;
+  ImGuiTextFilter metaFilter_;
 
-  // Helper display toggles (View menu).
+  // View menu toggles
   bool showGrid_{true};
   bool showAxes_{true};
   bool showSceneBbox_{false};
   bool showPrimBbox_{true};
-  bool showSkeleton_{true};  // UsdSkel joint hierarchy as world-space lines
+  bool showSkeleton_{true};
+  bool showLights_{false};
+  bool showCameras_{false};
+  bool showExtent_{false};
+  bool showPrimLabels_{false};
   bool showPurposeDefault_{true};
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{true};
-  bool showNavHelp_{true};   // in-viewport navigation cheatsheet/status overlay
+  bool showNavHelp_{true};
   bool showAbout_{false};
-  std::vector<HelperVertex> helperLines_;   // depth-tested (grid/axes/bbox)
-  std::vector<HelperVertex> overlayLines_;  // X-ray on top (skeleton bones)
+  float tessQuality_{1.0f};
+  std::vector<HelperVertex> helperLines_;
+  std::vector<HelperVertex> overlayLines_;
 
-  // Per-mesh visibility (Maya hide/show/isolate). Index i <-> draw_->meshes[i];
-  // reset to all-visible on setScene. Empty == all visible.
   std::vector<uint8_t> meshVisible_;
-  std::vector<uint8_t> viewVisible_;  // per-frame purpose+mesh visibility mask
+  std::vector<uint8_t> viewVisible_;
   bool revealSelectionInHierarchy_{false};
 
   struct InspectorPropRow {
     std::string name;
     std::string value;
+    std::string typeStr;
     std::string attrMeta;
     bool gotProperty{false};
+    bool hasColor{false};
+    float color[4]{0.0f, 0.0f, 0.0f, 1.0f};
   };
   const tinyusdz::Prim* inspectorCachePrim_{nullptr};
   std::string inspectorCachePath_;
@@ -227,9 +238,8 @@ class Gui {
   std::string inspectorCacheError_;
   std::vector<InspectorPropRow> inspectorCacheRows_;
 
-  // Viewport interaction
   bool vpHovered_{false};
-  int navMode_{0};  // 0 none, 1 orbit, 2 pan, 3 dolly
+  int navMode_{0};
   int viewportW_{0};
   int viewportH_{0};
   bool regionSelecting_{false};
@@ -243,14 +253,17 @@ class Gui {
   bool wantCancelLoad_{false};
   bool wantLoadAllPayloads_{false};
   std::vector<std::string> payloadLoadRequests_;
+  bool wantVariantSwitch_{false};
+  std::map<std::string, std::map<std::string, std::string>> variantOverrides_;
 
-  // Timeline / playback.
   TimelineInfo timeline_;
   SkinningInfo skinning_;
   bool hasSkinningModeRequest_{false};
   SkinningMode requestedSkinningMode_{SkinningMode::Auto};
   bool wantTogglePlay_{false};
   bool wantStop_{false};
+  bool wantStepForward_{false};
+  bool wantStepBackward_{false};
   bool hasSeek_{false};
   double seekTime_{0.0};
   bool loop_{true};

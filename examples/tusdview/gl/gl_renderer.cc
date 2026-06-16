@@ -314,6 +314,102 @@ void GLRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
               sizeof(float) * 16);
 }
 
+void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  GLMesh& gm = meshes_[static_cast<size_t>(meshIndex)];
+
+  // Delete old GPU resources.
+  if (gm.vao) glDeleteVertexArrays(1, &gm.vao);
+  if (gm.vbo) glDeleteBuffers(1, &gm.vbo);
+  if (gm.ebo) glDeleteBuffers(1, &gm.ebo);
+  if (gm.jointVbo) glDeleteBuffers(1, &gm.jointVbo);
+  if (gm.weightVbo) glDeleteBuffers(1, &gm.weightVbo);
+  if (gm.influenceVbo) glDeleteBuffers(1, &gm.influenceVbo);
+  if (gm.influenceTex) glDeleteTextures(1, &gm.influenceTex);
+
+  // Re-create with new data (same logic as appendMesh, but in-place).
+  gm = GLMesh{};
+  gm.submeshes = sm.submeshes;
+  std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  gm.doubleSided = sm.doubleSided;
+  gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
+               sm.jointWt.size() == sm.vertices.size() * 4;
+  gm.extendedSkinned =
+      gm.skinned && sm.influenceOffsetCount.size() == sm.vertices.size() * 2 &&
+      !sm.influenceTexels.empty() && sm.influenceTexWidth > 0 &&
+      sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
+  gm.influenceTexWidth = sm.influenceTexWidth;
+  gm.vertexCount = sm.vertices.size();
+
+  glGenVertexArrays(1, &gm.vao);
+  glBindVertexArray(gm.vao);
+  glGenBuffers(1, &gm.vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
+               sm.vertices.data(), GL_STATIC_DRAW);
+  glGenBuffers(1, &gm.ebo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(sm.indices.size() * sizeof(uint32_t)),
+               sm.indices.data(), GL_STATIC_DRAW);
+  const GLsizei stride = sizeof(DrawVertex);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  if (gm.skinned) {
+    glGenBuffers(1, &gm.jointVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
+                 sm.jointIdx.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glGenBuffers(1, &gm.weightVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
+                 sm.jointWt.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    if (gm.extendedSkinned) {
+      glGenBuffers(1, &gm.influenceVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.influenceOffsetCount.size() *
+                                           sizeof(uint32_t)),
+                   sm.influenceOffsetCount.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(5);
+      glVertexAttribIPointer(5, 2, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (void*)0);
+      glGenTextures(1, &gm.influenceTex);
+      glBindTexture(GL_TEXTURE_2D, gm.influenceTex);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, sm.influenceTexWidth,
+                   sm.influenceTexHeight, 0, GL_RGBA, GL_FLOAT,
+                   sm.influenceTexels.data());
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+      glDisableVertexAttribArray(5);
+      glVertexAttribI2ui(5, 0, 0);
+    }
+  } else {
+    glDisableVertexAttribArray(3);
+    glDisableVertexAttribArray(4);
+    glDisableVertexAttribArray(5);
+    glVertexAttribI4ui(3, 0, 0, 0, 0);
+    glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
+    glVertexAttribI2ui(5, 0, 0);
+  }
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;

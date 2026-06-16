@@ -16,6 +16,7 @@
 #include "gpu_scene.hh"
 #include "gui.hh"
 #include "load_control.hh"
+#include "parametric_tess.hh"
 #include "renderer.hh"
 #include "scene_loader.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -156,6 +157,7 @@ class App
   void startReconvertAsync(double t);
   void finishReconvertIfReady();   // swap in completed geometry, preserve camera
   void cancelAndJoinReconvert();   // stop a running reconvert worker
+  void registerParametricPrims();  // scan stage for parametric prims for adaptive tess
 
   Backend backend_;
   bool allowBackendFallback_{false};
@@ -167,6 +169,8 @@ class App
   LoadOptions loadOpts_;
   OrbitCamera camera_;
   Gui gui_;
+  AdaptiveTessellator tess_;      // adaptive re-tessellation for parametric prims
+  float tessQuality_{1.0f};      // tessellation quality multiplier
 
   float uiScale_{2.0f};      // widget scale (defaults to font px / 16)
   float fontSizePx_{32.0f};  // font size in pixels

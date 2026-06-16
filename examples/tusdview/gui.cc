@@ -8,13 +8,16 @@
 #include <utility>
 
 #include "core/prim.hh"
+#include "gizmo_build.hh"
 #include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
+#include "pprint-enum.hh"
 #include "skinning.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/shader-network.hh"
 
 namespace tusdview {
 
@@ -232,6 +235,8 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawStageMeta();
   drawStats();
   drawPayloads();
+  drawMaterialsPanel();
+  drawCompositionGraph();
   drawViewport();
   drawTimeline();
   drawAboutModal();
@@ -344,6 +349,7 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderDockWindow("Selection", right);
   ImGui::DockBuilderDockWindow("Camera", right);
   ImGui::DockBuilderDockWindow("Stage", rightBottom);
+  ImGui::DockBuilderDockWindow("Materials", rightBottom);
   ImGui::DockBuilderDockWindow("Payloads", rightBottom);
   ImGui::DockBuilderDockWindow("Viewport", center);
   ImGui::DockBuilderDockWindow("Timeline", centerBottom);
@@ -495,6 +501,7 @@ void Gui::drawDockspaceAndMenu() {
         if (!selPath_.empty()) revealSelectionInHierarchy_ = true;
       }
       ImGui::Separator();
+
       ImGui::MenuItem("Grid", nullptr, &showGrid_);
       ImGui::MenuItem("Axes", nullptr, &showAxes_);
       ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
@@ -508,6 +515,25 @@ void Gui::drawDockspaceAndMenu() {
         ImGui::MenuItem("guide", nullptr, &showPurposeGuide_);
         ImGui::EndMenu();
       }
+      ImGui::Separator();
+      ImGui::MenuItem("Lights", nullptr, &showLights_);
+      ImGui::MenuItem("Cameras", nullptr, &showCameras_);
+      ImGui::MenuItem("Extent attribute", nullptr, &showExtent_);
+      ImGui::MenuItem("Prim labels", nullptr, &showPrimLabels_);
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Transform")) {
+        bool tNone = xformMode_ == TransformMode::None;
+        bool tTrans = xformMode_ == TransformMode::Translate;
+        bool tRot = xformMode_ == TransformMode::Rotate;
+        bool tScale = xformMode_ == TransformMode::Scale;
+        if (ImGui::MenuItem("None", nullptr, tNone)) xformMode_ = TransformMode::None;
+        if (ImGui::MenuItem("Translate", "W", tTrans)) xformMode_ = TransformMode::Translate;
+        if (ImGui::MenuItem("Rotate", "E", tRot)) xformMode_ = TransformMode::Rotate;
+        if (ImGui::MenuItem("Scale", "R", tScale)) xformMode_ = TransformMode::Scale;
+        ImGui::EndMenu();
+      }
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderFloat("Tessellation", &tessQuality_, 0.25f, 4.0f, "%.2f");
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -775,6 +801,86 @@ bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
   if (label.empty()) label = "<root>";
   if (!typeName.empty()) label += "  [" + typeName + "]";
 
+  std::string subd = SubdivisionSchemeName(prim);
+  std::string vis = VisibilityState(prim);
+  std::string badges;
+  if (!subd.empty() && subd != "none") badges += " [" + subd + "]";
+  if (vis == "invisible") badges += " [invisible]";
+  // Purpose badge
+  {
+    auto tryPurpose = [&](auto* gprim) -> std::string {
+      if (gprim->purpose.authored()) {
+        auto v = gprim->purpose.get_value();
+        if (v != tinyusdz::Purpose::Default) return tinyusdz::to_string(v);
+      }
+      return {};
+    };
+    std::string purpose;
+    if (auto* m = prim.as<tinyusdz::GeomMesh>()) purpose = tryPurpose(m);
+    else if (auto* s = prim.as<tinyusdz::GeomSphere>()) purpose = tryPurpose(s);
+    else if (auto* c = prim.as<tinyusdz::GeomCube>()) purpose = tryPurpose(c);
+    else if (auto* y = prim.as<tinyusdz::GeomCylinder>()) purpose = tryPurpose(y);
+    else if (auto* o = prim.as<tinyusdz::GeomCone>()) purpose = tryPurpose(o);
+    else if (auto* p = prim.as<tinyusdz::GeomCapsule>()) purpose = tryPurpose(p);
+    else if (auto* n = prim.as<tinyusdz::GeomPlane>()) purpose = tryPurpose(n);
+    else if (auto* b = prim.as<tinyusdz::GeomBasisCurves>()) purpose = tryPurpose(b);
+    else if (auto* pt = prim.as<tinyusdz::GeomPoints>()) purpose = tryPurpose(pt);
+    if (!purpose.empty()) badges += " [purpose:" + purpose + "]";
+  }
+  // Material badge
+  const std::string absPath = prim.absolute_path().full_path_name();
+  if (loaded_ && loaded_->ok &&
+      (prim.is<tinyusdz::GeomMesh>() || prim.is<tinyusdz::GeomBasisCurves>() ||
+       prim.is<tinyusdz::GeomPoints>())) {
+    tinyusdz::Path matPath;
+    const tinyusdz::Material* matPtr = nullptr;
+    std::string matErr;
+    if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+            loaded_->stage, prim, "", &matPath, &matPtr, &matErr)) {
+      badges += " [mat:" + std::string(matPath.prim_part().c_str()) + "]";
+    }
+  }
+  // Instance / composition arc badges
+  if (!prim.IsActive()) badges += " [inactive]";
+  if (prim.specifier() == tinyusdz::Specifier::Over) badges += " [over]";
+  else if (prim.specifier() == tinyusdz::Specifier::Class) badges += " [class]";
+  if (prim.IsInstance()) badges += " [instance]";
+  if (prim.metas().get_instanceable()) badges += " [instanceable]";
+  {
+    const auto& m = prim.metas();
+    if (m.has_kind()) badges += " [" + tinyusdz::to_string(m.get_kind()) + "]";
+    if (m.references.has_value() && !m.references->empty()) {
+      size_t count = 0;
+      for (const auto& [qual, refs] : *m.references) count += refs.size();
+      if (count > 0) badges += " [ref:" + std::to_string(count) + "]";
+    }
+    if (m.payload.has_value()) {
+      bool isDeferred = false;
+      if (loaded_) {
+        for (const auto& da : loaded_->comp.deferred) {
+          if (da.primPath == absPath) { isDeferred = true; break; }
+        }
+      }
+      badges += isDeferred ? " [payload:defer]" : " [payload:loaded]";
+    }
+    if (m.inherits.has_value() && !m.inherits->empty()) badges += " [inherits]";
+  }
+  // Visibility indicator
+  {
+    bool anyHidden = false, anyVisible = false;
+    if (draw_) {
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (draw_->meshes[mi].absPath == absPath) {
+          if (mi < meshVisible_.size() && !meshVisible_[mi]) anyHidden = true;
+          else anyVisible = true;
+        }
+      }
+    }
+    if (anyHidden && !anyVisible) badges += " [hidden]";
+    else if (anyHidden) badges += " [mixed]";
+  }
+  label += badges;
+
   ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                              ImGuiTreeNodeFlags_OpenOnDoubleClick |
                              ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -782,13 +888,15 @@ bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
   if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
   if (selPrim_ == &prim) flags |= ImGuiTreeNodeFlags_Selected;
 
-  const std::string absPath = prim.absolute_path().full_path_name();
   if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
   else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
            PathIsSameOrDescendant(selPath_, absPath)) {
     ImGui::SetNextItemOpen(true, ImGuiCond_Always);
   }
   const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", absPath.c_str());
+  }
   if (selPrim_ == &prim && revealSelectionInHierarchy_) {
     ImGui::SetScrollHereY(0.35f);
     revealSelectionInHierarchy_ = false;
@@ -799,6 +907,41 @@ bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       if (!framePath(absPath)) frameSelected();
     }
+  }
+  if (ImGui::BeginPopupContextItem()) {
+    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(absPath.c_str());
+    if (ImGui::MenuItem("Frame selection")) { if (!framePath(absPath)) frameSelected(); }
+    // Hide/show
+    bool hasDeferred = false;
+    if (loaded_) {
+      for (const auto& da : loaded_->comp.deferred) {
+        if (da.primPath == absPath) { hasDeferred = true; break; }
+      }
+    }
+    if (hasDeferred && ImGui::MenuItem("Load payload")) payloadLoadRequests_.push_back(absPath);
+    ImGui::Separator();
+    std::vector<size_t> primMeshIndices;
+    if (draw_) {
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (draw_->meshes[mi].absPath == absPath) primMeshIndices.push_back(mi);
+      }
+    }
+    if (!primMeshIndices.empty()) {
+      bool anyHidden = false;
+      for (size_t mi : primMeshIndices) {
+        if (mi < meshVisible_.size() && !meshVisible_[mi]) { anyHidden = true; break; }
+      }
+      if (anyHidden) {
+        if (ImGui::MenuItem("Show")) {
+          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 1;
+        }
+      } else {
+        if (ImGui::MenuItem("Hide", "Ctrl+H")) {
+          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 0;
+        }
+      }
+    }
+    ImGui::EndPopup();
   }
   if (open) {
     for (const auto& c : prim.children()) drawPrimTree(c);
@@ -878,7 +1021,40 @@ void Gui::rebuildInspectorCache() {
     row.gotProperty = tydra::GetProperty(*selPrim_, name, &prop, &perr);
     if (row.gotProperty) {
       row.value = PropertyToString(prop);
-      if (prop.is_attribute()) row.attrMeta = AttrMetaSummary(prop.get_attribute());
+      if (prop.is_attribute()) {
+        row.typeStr = prop.value_type_name();
+        const auto& a = prop.get_attribute();
+        if (a.is_connection()) row.typeStr += " (connect)";
+        else if (a.has_value() || a.has_timesamples()) row.typeStr += " (authored)";
+        else row.typeStr += " (default)";
+        row.attrMeta = AttrMetaSummary(a);
+        // Color swatch detection
+        const std::string& tn = prop.value_type_name();
+        if (a.has_value() && (tn == "color3f" || tn == "color4f" || tn == "color3d")) {
+          const auto& v = a.get_var().value_raw();
+          if (tn == "color3f") {
+            if (const auto* c = v.as<tinyusdz::value::color3f>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = 1.0f;
+            }
+          } else if (tn == "color4f") {
+            if (const auto* c = v.as<tinyusdz::value::color4f>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = c->a;
+            }
+          } else if (tn == "color3d") {
+            if (const auto* c = v.as<tinyusdz::value::color3d>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = 1.0f;
+            }
+          }
+        }
+      } else if (prop.is_relationship()) {
+        row.typeStr = "rel";
+      }
     } else {
       row.value = perr.empty() ? "<error>" : perr;
     }
@@ -974,21 +1150,172 @@ void Gui::drawInspector() {
         ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
       HintWrapped(inspectorCacheMeta_.c_str());
     }
+
+    // GPrim properties (doubleSided, orientation, visibility, purpose)
+    {
+      std::string gprimSummary = GPrimPropertySummary(*selPrim_);
+      if (!gprimSummary.empty() &&
+          ImGui::CollapsingHeader("GPrim properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+        HintWrapped(gprimSummary.c_str());
+      }
+    }
+
+    // Variant sets with combo boxes
+    {
+      const auto& vsMap = selPrim_->variantSets();
+      if (!vsMap.empty() &&
+          ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const auto& metas = selPrim_->metas();
+        const auto* curSel = metas.variants.has_value() ? &(*metas.variants) : nullptr;
+        for (const auto& [setName, vs] : vsMap) {
+          if (vs.variantSet.empty()) continue;
+          std::string preview = "(default)";
+          if (curSel) {
+            auto it = curSel->find(setName);
+            if (it != curSel->end()) preview = it->second;
+          }
+          std::string comboLabel = setName + "##variant";
+          if (ImGui::BeginCombo(comboLabel.c_str(), preview.c_str())) {
+            for (const auto& [vName, var] : vs.variantSet) {
+              bool selected = (vName == preview);
+              if (ImGui::Selectable(vName.c_str(), selected)) {
+                if (!curSel || preview != vName) {
+                  std::map<std::string, std::string> overrides;
+                  if (curSel) overrides = *curSel;
+                  overrides[setName] = vName;
+                  requestVariantSwitch(selPath_, overrides);
+                }
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        }
+      }
+    }
+
+    // Composition sources / arcs
+    {
+      const auto& metas = selPrim_->metas();
+      bool hasArcs = false;
+      std::string compSummary;
+      auto addArc = [&](const char* k, const std::string& v) {
+        if (!compSummary.empty()) compSummary += "\n";
+        compSummary += k;
+        compSummary += ": ";
+        compSummary += v;
+        hasArcs = true;
+      };
+      if (metas.references.has_value() && !metas.references->empty()) {
+        size_t count = 0;
+        for (const auto& [qual, refs] : *metas.references) count += refs.size();
+        addArc("references", std::to_string(count) + " arc(s)");
+      }
+      if (metas.payload.has_value()) {
+        addArc("payload", "(authored)");
+      }
+      if (metas.inherits.has_value() && !metas.inherits->empty()) {
+        addArc("inherits", std::to_string(metas.inherits->size()) + " path(s)");
+      }
+      if (metas.specializes.has_value() && !metas.specializes->empty()) {
+        addArc("specializes", std::to_string(metas.specializes->size()) + " path(s)");
+      }
+      if (hasArcs &&
+          ImGui::CollapsingHeader("Composition arcs", ImGuiTreeNodeFlags_DefaultOpen)) {
+        HintWrapped(compSummary.c_str());
+      }
+    }
+
+    // Material binding
+    if (loaded_ && loaded_->ok &&
+        (selPrim_->is<tinyusdz::GeomMesh>() || selPrim_->is<tinyusdz::GeomBasisCurves>() ||
+         selPrim_->is<tinyusdz::GeomPoints>())) {
+      tinyusdz::Path matPath;
+      const tinyusdz::Material* matPtr = nullptr;
+      std::string matErr;
+      if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+              loaded_->stage, *selPrim_, "", &matPath, &matPtr, &matErr)) {
+        const std::string matPathStr = matPath.full_path_name();
+        std::string matLabel = "Material: " + matPathStr;
+        if (ImGui::CollapsingHeader("Material binding", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton(matLabel.c_str())) {
+            selectByPath(matPathStr, -1);
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to navigate");
+          (void)matPtr;
+        }
+      }
+    }
+
+    // Shader graph viewer (for Material/Shader prims).
+    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<tinyusdz::Material>()) {
+      if (ImGui::CollapsingHeader("Shader graph", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Recursive lambda to trace shader connections.
+        std::function<void(const std::string&, int)> traceShader;
+        traceShader = [&](const std::string& shaderPath, int depth) {
+          if (depth > 4) { ImGui::TextDisabled("  ..."); return; }
+          const tinyusdz::Prim* sprim = nullptr;
+          std::function<void(const tinyusdz::Prim&, const std::string&)> findPrim;
+          findPrim = [&](const tinyusdz::Prim& p, const std::string& target) {
+            if (p.absolute_path().full_path_name() == target) { sprim = &p; return; }
+            for (const auto& c : p.children()) findPrim(c, target);
+          };
+          for (const auto& r : loaded_->stage.root_prims()) findPrim(r, shaderPath);
+          if (!sprim) { ImGui::TextDisabled("  %s", shaderPath.c_str()); return; }
+          ImGui::TextDisabled("  %s  %s", sprim->type_name().c_str(), shaderPath.c_str());
+          std::vector<std::string> names;
+          std::string perr;
+          if (tydra::GetPropertyNames(*sprim, &names, &perr)) {
+            for (const auto& n : names) {
+              tinyusdz::Property prop;
+              if (tydra::GetProperty(*sprim, n, &prop, &perr) &&
+                  prop.is_attribute() && prop.get_attribute().has_connections()) {
+                for (const auto& cpath : prop.get_attribute().connections()) {
+                  ImGui::TextDisabled("    %s ->", n.c_str());
+                  traceShader(cpath.full_path_name(), depth + 1);
+                }
+              }
+            }
+          }
+        };
+        // Trace from Material outputs.
+        std::vector<std::string> pnames;
+        std::string perr;
+        if (tydra::GetPropertyNames(*selPrim_, &pnames, &perr)) {
+          for (const auto& n : pnames) {
+            tinyusdz::Property prop;
+            if (tydra::GetProperty(*selPrim_, n, &prop, &perr) &&
+                prop.is_attribute() && prop.get_attribute().has_connections()) {
+              for (const auto& cp : prop.get_attribute().connections()) {
+                ImGui::TextDisabled("outputs:%s", n.c_str());
+                ImGui::Indent();
+                traceShader(cp.full_path_name(), 0);
+                ImGui::Unindent();
+              }
+            }
+          }
+        }
+      }
+    }
+
     ImGui::Separator();
-    propFilter_.Draw("Search##props", -1.0f);  // property name / value
+    propFilter_.Draw("Search##props", -1.0f);  // property name / value / type
 
     if (inspectorCacheError_.empty()) {
-      if (ImGui::BeginTable("##props", 2,
+      if (ImGui::BeginTable("##props", 3,
                             ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
                                 ImGuiTableFlags_BordersInnerH |
                                 ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed,
                                 ImGui::GetFontSize() * 8.0f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::GetFontSize() * 6.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
         for (const InspectorPropRow& row : inspectorCacheRows_) {
-          // Filter rows by property name or value.
+          // Filter rows by property name, type or value.
           if (propFilter_.IsActive() && !propFilter_.PassFilter(row.name.c_str()) &&
+              !propFilter_.PassFilter(row.typeStr.c_str()) &&
               !propFilter_.PassFilter(row.value.c_str()) &&
               !propFilter_.PassFilter(row.attrMeta.c_str())) {
             continue;
@@ -997,8 +1324,29 @@ void Gui::drawInspector() {
           ImGui::TableSetColumnIndex(0);
           ImGui::TextUnformatted(row.name.c_str());
           ImGui::TableSetColumnIndex(1);
+          ImGui::TextUnformatted(row.typeStr.c_str());
+          ImGui::TableSetColumnIndex(2);
           if (row.gotProperty) {
-            ImGui::TextWrapped("%s", row.value.c_str());
+            // Color swatch before value if applicable
+            if (row.hasColor) {
+              ImVec4 c(row.color[0], row.color[1], row.color[2], row.color[3]);
+              ImGui::ColorButton("##swatch", c,
+                                 ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                                 ImVec2(ImGui::GetFontSize(), ImGui::GetFontSize()));
+              ImGui::SameLine();
+            }
+            if (ImGui::BeginChild(("##val-" + row.name).c_str(),
+                                  ImVec2(0, ImGui::GetTextLineHeightWithSpacing()),
+                                  false, ImGuiWindowFlags_NoScrollbar)) {
+              ImGui::TextUnformatted(row.value.c_str());
+              if (ImGui::IsItemHovered() && !row.value.empty()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                  ImGui::SetClipboardText(row.value.c_str());
+                }
+              }
+            }
+            ImGui::EndChild();
             if (!row.attrMeta.empty()) HintWrapped(row.attrMeta.c_str());
           } else {
             ImGui::TextDisabled("<error>");
@@ -1283,6 +1631,184 @@ void Gui::drawPayloads() {
   ImGui::End();
 }
 
+void Gui::drawMaterialsPanel() {
+  ImGui::Begin("Materials");
+  if (draw_ && !draw_->materials.empty()) {
+    ImGui::Text("Total: %zu materials", draw_->materials.size());
+    ImGui::Text("Textures: %zu", draw_->textures.size());
+    ImGui::Separator();
+    for (size_t i = 0; i < draw_->materials.size(); ++i) {
+      const auto& mat = draw_->materials[i];
+      ImGui::PushID(static_cast<int>(i));
+      std::string headerLabel = mat.name.empty()
+                                    ? ("Material " + std::to_string(i))
+                                    : mat.name;
+      if (ImGui::CollapsingHeader(headerLabel.c_str(),
+                                  ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Base color:  %.3f %.3f %.3f",
+                    mat.baseColor[0], mat.baseColor[1], mat.baseColor[2]);
+        ImGui::Text("Roughness:   %.3f", mat.roughness);
+        ImGui::Text("Metallic:    %.3f", mat.metallic);
+        ImGui::Text("Emissive:    %.3f %.3f %.3f",
+                    mat.emissive[0], mat.emissive[1], mat.emissive[2]);
+        ImGui::Text("Alpha:       %.3f", mat.alpha);
+        const char* alphaModeStr = "opaque";
+        if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) alphaModeStr = "mask";
+        else if (mat.alphaMode == static_cast<int>(AlphaMode::Blend)) alphaModeStr = "blend";
+        ImGui::Text("Alpha mode:  %s", alphaModeStr);
+        if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) {
+          ImGui::Text("Alpha cutoff: %.3f", mat.alphaCutoff);
+        }
+        if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
+        if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
+        if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
+        if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
+      }
+      ImGui::PopID();
+    }
+  } else {
+    ImGui::TextDisabled("No materials loaded.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawCompositionGraph() {
+  ImGui::Begin("Composition Graph");
+  if (!selPrim_) {
+    ImGui::TextDisabled("Select a prim to see its composition arcs.");
+    ImGui::End();
+    return;
+  }
+  const auto& m = selPrim_->metas();
+
+  // Collect arcs into a simple data structure.
+  struct ArcNode {
+    std::string label;
+    std::string detail;
+    ImU32 color;
+  };
+  std::vector<ArcNode> arcs;
+
+  auto addArc = [&](const char* type, const std::string& detail, ImU32 color) {
+    arcs.push_back({type, detail, color});
+  };
+
+  if (m.references.has_value() && !m.references->empty()) {
+    for (const auto& [qual, refs] : *m.references) {
+      for (const auto& ref : refs) {
+        std::string qstr = tinyusdz::to_string(qual);
+        std::string detail = qstr + " " + ref.asset_path.GetAssetPath();
+        addArc("reference", detail, IM_COL32(100, 180, 255, 220));
+      }
+    }
+  }
+  if (m.payload.has_value() && !m.payload->empty()) {
+    for (const auto& [qual, pls] : *m.payload) {
+      for (const auto& pl : pls) {
+        addArc("payload", pl.asset_path.GetAssetPath(), IM_COL32(255, 180, 80, 220));
+      }
+    }
+  }
+  if (m.inherits.has_value() && !m.inherits->empty()) {
+    for (const auto& [qual, inh] : *m.inherits) {
+      for (const auto& p : inh) {
+        addArc("inherits", p.full_path_name(), IM_COL32(180, 255, 120, 220));
+      }
+    }
+  }
+  if (m.specializes.has_value() && !m.specializes->empty()) {
+    for (const auto& [qual, spec] : *m.specializes) {
+      for (const auto& p : spec) {
+        addArc("specializes", p.full_path_name(), IM_COL32(220, 140, 255, 220));
+      }
+    }
+  }
+  if (m.variantSets.has_value() && !m.variantSets->empty()) {
+    for (const auto& [qual, vs] : *m.variantSets) {
+      for (const auto& vsName : vs) {
+        addArc("variantSet", vsName, IM_COL32(255, 220, 100, 220));
+      }
+    }
+  }
+
+  if (arcs.empty()) {
+    ImGui::TextDisabled("No composition arcs on this prim.");
+    ImGui::End();
+    return;
+  }
+
+  // Draw the prim and its arcs as a simple graph.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+  ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+  if (canvasSize.x < 10 || canvasSize.y < 10) { ImGui::End(); return; }
+
+  const float primBoxW = 200.0f;
+  const float primBoxH = 40.0f;
+  const float arcBoxW = 220.0f;
+  const float arcBoxH = 36.0f;
+  const float spacing = 16.0f;
+  const float topMargin = 20.0f;
+
+  // Center the prim node at the top.
+  float cx = canvasPos.x + canvasSize.x * 0.5f;
+  float primX = cx - primBoxW * 0.5f;
+  float primY = canvasPos.y + topMargin;
+
+  // Draw prim node.
+  ImVec2 primMin(primX, primY);
+  ImVec2 primMax(primX + primBoxW, primY + primBoxH);
+  dl->AddRectFilled(primMin, primMax, IM_COL32(70, 80, 110, 220), 6.0f);
+  dl->AddRect(primMin, primMax, IM_COL32(130, 150, 190, 255), 6.0f);
+  dl->AddText(ImVec2(primX + 8, primY + 10), IM_COL32(255, 255, 255, 255),
+              selPrim_->element_name().c_str());
+
+  // Layout arcs below in 2 columns.
+  int cols = std::min(static_cast<int>(arcs.size()), 2);
+  float totalWidth = cols * arcBoxW + (cols - 1) * spacing;
+  float startX = canvasPos.x + std::max(0.0f, (canvasSize.x - totalWidth) * 0.5f);
+
+  for (size_t i = 0; i < arcs.size(); ++i) {
+    int col = static_cast<int>(i) % cols;
+    int row = static_cast<int>(i) / cols;
+    float ax = startX + col * (arcBoxW + spacing);
+    float ay = primY + primBoxH + 50.0f + row * (arcBoxH + 10.0f);
+
+    // Connection line from prim bottom to arc top.
+    float primMidX = cx;
+    float arcMidX = ax + arcBoxW * 0.5f;
+    dl->AddLine(ImVec2(primMidX, primY + primBoxH),
+                ImVec2(arcMidX, ay), IM_COL32(180, 180, 200, 180), 1.5f);
+
+    // Arc node box.
+    ImVec2 arcMin(ax, ay);
+    ImVec2 arcMax(ax + arcBoxW, ay + arcBoxH);
+    dl->AddRectFilled(arcMin, arcMax, arcs[i].color, 4.0f);
+    dl->AddRect(arcMin, arcMax, IM_COL32(200, 200, 220, 180), 4.0f);
+
+    // Arc type label (e.g. "reference").
+    dl->AddText(ImVec2(ax + 6, ay + 2), IM_COL32(255, 255, 255, 255),
+                arcs[i].label.c_str());
+    // Arc detail (e.g. "prepend /path/to/file.usda").
+    std::string detail = arcs[i].detail;
+    if (detail.size() > 32) { detail.resize(29); detail += "..."; }
+    dl->AddText(ImVec2(ax + 6, ay + 18), IM_COL32(220, 220, 240, 200),
+                detail.c_str());
+
+    // Click handling: if mouse is over this node, select it.
+    if (ImGui::IsMouseHoveringRect(arcMin, arcMax) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      // For refs/payloads with asset paths, try to open them; for others, no-op.
+      (void)0;
+    }
+  }
+
+  ImGui::Dummy(ImVec2(canvasSize.x, primY + primBoxH + 50.0f +
+                      ((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
+                      topMargin));
+  ImGui::End();
+}
+
 void Gui::drawTimeline() {
   ImGui::Begin("Timeline");
   if (!timeline_.hasAnimation) {
@@ -1301,6 +1827,10 @@ void Gui::drawTimeline() {
   if (ImGui::Button("Stop", ImVec2(70, 0))) {
     wantStop_ = true;
   }
+  ImGui::SameLine();
+  if (ImGui::Button("|<", ImVec2(40, 0))) { wantStepBackward_ = true; }
+  ImGui::SameLine();
+  if (ImGui::Button(">|", ImVec2(40, 0))) { wantStepForward_ = true; }
   ImGui::SameLine();
   ImGui::Checkbox("Loop", &loop_);
   ImGui::SameLine();
@@ -1341,6 +1871,11 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
+    {
+      size_t totalVerts = 0;
+      for (const auto& m : draw_->meshes) totalVerts += m.vertices.size();
+      ImGui::Text("Vertices: %zu", totalVerts);
+    }
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
     ImGui::Text("Materials: %zu", draw_->materials.size());
     ImGui::Text("Textures: %zu", draw_->textures.size());
@@ -1607,6 +2142,27 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(190, 225, 205, 255), lineBookmarks);
   }
+
+  // Axis indicator in bottom-right corner
+  {
+    const float axSize = 60.0f;
+    const float axPad = 12.0f;
+    const ImVec2 axOrigin(imageMax.x - axPad - axSize, imageMax.y - axPad - axSize);
+    if (cam_) {
+      const float L = axSize * 0.25f;
+      const float oX = axOrigin.x + axSize * 0.5f;
+      const float oY = axOrigin.y + axSize * 0.5f;
+      const ImU32 colX = IM_COL32(230, 50, 50, 220);
+      const ImU32 colY = IM_COL32(50, 220, 60, 220);
+      const ImU32 colZ = IM_COL32(80, 130, 255, 220);
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX + L, oY), colX, 2.5f);
+      dl->AddText(ImVec2(oX + L + 2, oY - 5), colX, "X");
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX, oY - L), colY, 2.5f);
+      dl->AddText(ImVec2(oX - 3, oY - L - 12), colY, "Y");
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX - L * 0.5f, oY + L * 0.5f), colZ, 2.5f);
+      dl->AddText(ImVec2(oX - L * 0.5f - 8, oY + L * 0.5f + 2), colZ, "Z");
+    }
+  }
 }
 
 int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
@@ -1832,13 +2388,142 @@ void Gui::drawViewport() {
     const ImVec2 imageMax = ImGui::GetItemRectMax();
     drawNavigationOverlay(imageMin, imageMax);
 
+    // Prim path labels overlay
+    if (showPrimLabels_ && draw_ && cam_ && renderer_) {
+      const bool z01 = renderer_->caps().usesZeroToOneDepth;
+      const light3d::Mat4 VP = cam_->proj(z01) * cam_->view();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const float vpW_f = static_cast<float>(w);
+      const float vpH_f = static_cast<float>(h);
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (!meshVisibleForView(mi)) continue;
+        const DrawMeshCPU& m = draw_->meshes[mi];
+        // Project AABB center to screen
+        float cx = (m.aabbMin[0] + m.aabbMax[0]) * 0.5f;
+        float cy = (m.aabbMin[1] + m.aabbMax[1]) * 0.5f;
+        float cz = (m.aabbMin[2] + m.aabbMax[2]) * 0.5f;
+        const float* vp = VP.m;
+        float px = vp[0] * cx + vp[4] * cy + vp[8] * cz + vp[12];
+        float py = vp[1] * cx + vp[5] * cy + vp[9] * cz + vp[13];
+        float pw = vp[3] * cx + vp[7] * cy + vp[11] * cz + vp[15];
+        if (pw <= 1e-6f) continue;
+        float invW = 1.0f / pw;
+        float sx = (px * invW * 0.5f + 0.5f) * vpW_f + imageMin.x;
+        float sy = (1.0f - (py * invW * 0.5f + 0.5f)) * vpH_f + imageMin.y;
+        if (sx < imageMin.x || sx > imageMax.x || sy < imageMin.y || sy > imageMax.y) continue;
+        dl->AddText(ImVec2(sx + 4, sy - 8), IM_COL32(255, 255, 200, 200),
+                    m.absPath.c_str());
+      }
+    }
+
+    // Gizmo interaction (translate manipulator).
+    if (xformMode_ == TransformMode::Translate && draw_ && /*vpHovered_ &&*/
+        selMeshIndex_ >= 0 &&
+        static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+      ImGuiIO& io = ImGui::GetIO();
+      const bool plainLeft = navMode_ == 0 && !io.KeyAlt;
+      const float* W = draw_->meshes[static_cast<size_t>(selMeshIndex_)].world;
+      float tx = W[12], ty = W[13], tz = W[14];
+      float gizmoLen = 1.0f;
+      if (draw_->hasBounds) {
+        const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+        const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+        gizmoLen = std::max(light3d::length(smx - smn) * 0.15f, 0.5f);
+      }
+      const light3d::Mat4 viewM = cam_->view();
+      const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
+      const light3d::Mat4 vp = projM * viewM;
+      // Project a point to screen-space NDC.
+      auto project = [&](float x, float y, float z) -> ImVec2 {
+        float c[4];
+        for (int r = 0; r < 4; ++r)
+          c[r] = vp.m[0*4+r]*x + vp.m[1*4+r]*y + vp.m[2*4+r]*z + vp.m[3*4+r];
+        if (std::abs(c[3]) < 1e-10f) return ImVec2(-1e9,-1e9);
+        float nx = c[0]/c[3], ny = c[1]/c[3];
+        return ImVec2((nx*0.5f+0.5f)*w, (1.0f-(ny*0.5f+0.5f))*h);
+      };
+      ImVec2 origin2D = project(tx, ty, tz);
+      // Axis endpoints in screen space.
+      struct Axis2D { ImVec2 tip; float r,g,b; int idx; };
+      Axis2D axes2D[3] = {
+        {project(tx+gizmoLen, ty, tz), 0.9f,0.2f,0.2f, 0},
+        {project(tx, ty+gizmoLen, tz), 0.2f,0.9f,0.2f, 1},
+        {project(tx, ty, tz+gizmoLen), 0.2f,0.3f,0.9f, 2},
+      };
+      // For gizmo-active state, compute displacement along axis.
+      if (gizmoActive_ && gizmoAxis_ >= 0 && gizmoAxis_ < 3) {
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+          ImVec2 delta = io.MouseDelta;
+          float scale = 0.01f * cam_->distance();
+          float dir[3] = {0,0,0}; dir[gizmoAxis_] = 1.0f;
+          float d = (delta.x - delta.y) * 0.5f * scale;
+          gizmoStartPos_[0] += dir[0] * d;
+          gizmoStartPos_[1] += dir[1] * d;
+          gizmoStartPos_[2] += dir[2] * d;
+          auto& mesh = const_cast<DrawMeshCPU&>(draw_->meshes[static_cast<size_t>(selMeshIndex_)]);
+          mesh.world[12] = gizmoStartPos_[0];
+          mesh.world[13] = gizmoStartPos_[1];
+          mesh.world[14] = gizmoStartPos_[2];
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+          gizmoActive_ = false;
+          gizmoAxis_ = -1;
+        }
+      } else if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Screen-space pick: find closest axis to mouse cursor.
+        ImVec2 mouse = {io.MousePos.x - imageMin.x, io.MousePos.y - imageMin.y};
+        float bestDist = 1e10f;
+        int bestAxis = -1;
+        for (int i = 0; i < 3; ++i) {
+          if (axes2D[i].tip.x < -1e8f) continue;
+          // Distance from mouse to line segment (origin2D to tip).
+          ImVec2 d = {axes2D[i].tip.x - origin2D.x, axes2D[i].tip.y - origin2D.y};
+          float len2 = d.x*d.x + d.y*d.y;
+          if (len2 < 1e-6f) continue;
+          float t = ((mouse.x - origin2D.x)*d.x + (mouse.y - origin2D.y)*d.y) / len2;
+          t = std::max(0.0f, std::min(1.0f, t));
+          float px2 = origin2D.x + t*d.x - mouse.x;
+          float py2 = origin2D.y + t*d.y - mouse.y;
+          float dist2 = px2*px2 + py2*py2;
+          if (dist2 < bestDist) { bestDist = dist2; bestAxis = i; }
+        }
+        if (bestAxis >= 0 && bestDist < 400.0f) {  // 20px threshold squared
+          gizmoAxis_ = bestAxis;
+          gizmoMouseStart_ = io.MousePos;
+          gizmoStartPos_[0] = tx; gizmoStartPos_[1] = ty; gizmoStartPos_[2] = tz;
+          gizmoActive_ = true;
+        } else {
+          beginRegionSelection(io.MousePos);
+        }
+      } else if (vpHovered_ && !io.MouseDown[0]) {
+        // Hover: update gizmoAxis_ for highlighting.
+        ImVec2 mouse = {io.MousePos.x - imageMin.x, io.MousePos.y - imageMin.y};
+        float bestDist = 400.0f;
+        int bestAxis = -1;
+        for (int i = 0; i < 3; ++i) {
+          if (axes2D[i].tip.x < -1e8f) continue;
+          ImVec2 d = {axes2D[i].tip.x - origin2D.x, axes2D[i].tip.y - origin2D.y};
+          float len2 = d.x*d.x + d.y*d.y;
+          if (len2 < 1e-6f) continue;
+          float t = ((mouse.x - origin2D.x)*d.x + (mouse.y - origin2D.y)*d.y) / len2;
+          t = std::max(0.0f, std::min(1.0f, t));
+          float px2 = origin2D.x + t*d.x - mouse.x;
+          float py2 = origin2D.y + t*d.y - mouse.y;
+          float dist2 = px2*px2 + py2*py2;
+          if (dist2 < bestDist) { bestDist = dist2; bestAxis = i; }
+        }
+        gizmoAxis_ = bestAxis;
+      }
+    }
+
     // Plain left click picks one mesh; plain left drag selects all visible mesh
     // prims whose projected bounds intersect the drag rectangle. Alt+drag stays
     // reserved for camera navigation.
     {
       ImGuiIO& io = ImGui::GetIO();
       const bool plainLeft = navMode_ == 0 && !io.KeyAlt;
-      if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+          !gizmoActive_) {
         beginRegionSelection(io.MousePos);
       }
       if (regionSelecting_) {
@@ -1978,6 +2663,42 @@ void Gui::buildHelpers() {
     addBox(m.aabbMin, m.aabbMax, 1.00f, 0.60f, 0.10f);
   }
 
+  // Extent attribute bbox
+  if (showExtent_ && loaded_ && selPrim_) {
+    tinyusdz::Property extentProp;
+    std::string extentErr;
+    if (tydra::GetProperty(*selPrim_, "extent", &extentProp, &extentErr)) {
+      if (extentProp.is_attribute()) {
+        const auto& attr = extentProp.get_attribute();
+        if (attr.has_value()) {
+          const auto& v = attr.get_var().value_raw();
+          const float* vf = v.as<float>();
+          if (vf) {
+            // extent is typically vec3f[2] = {min, max}
+            float mn[3] = {vf[0], vf[1], vf[2]};
+            float mx[3] = {vf[3], vf[4], vf[5]};
+            addBox(mn, mx, 0.30f, 1.00f, 0.50f);
+          }
+        }
+      }
+    }
+  }
+
+  // Light and camera gizmos
+  if ((showLights_ || showCameras_) && loaded_ && loaded_->ok) {
+    std::unordered_map<int, std::array<float, 16>> lightXforms;
+    std::unordered_map<int, std::array<float, 16>> camXforms;
+    for (const auto& n : loaded_->render.nodes) {
+      CollectLightCameraTransforms(n, lightXforms, camXforms);
+    }
+    if (showLights_) {
+      BuildLightGizmos(loaded_->render, lightXforms, helperLines_);
+    }
+    if (showCameras_) {
+      BuildCameraGizmos(loaded_->render, camXforms, helperLines_);
+    }
+  }
+
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
   // Draw the same animated joint hierarchy used for skinning, then apply the
   // skinned mesh world matrix to match the rendered character placement.
@@ -2088,6 +2809,48 @@ void Gui::buildHelpers() {
         if (!densePointSamples && par >= 0 && static_cast<size_t>(par) < nj) {
           const light3d::Vec3& pp = jp[static_cast<size_t>(par)];
           addOverlay(pp.x, pp.y, pp.z, p.x, p.y, p.z, 0.10f, 0.80f, 0.90f);
+        }
+      }
+    }
+  }
+
+  // Translation gizmo at the selected mesh world position.
+  if (xformMode_ == TransformMode::Translate && draw_ && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    const float* W = draw_->meshes[static_cast<size_t>(selMeshIndex_)].world;
+    float tx = W[12], ty = W[13], tz = W[14];
+    float gizmoLen = 1.0f;
+    if (draw_->hasBounds) {
+      const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+      const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+      gizmoLen = std::max(light3d::length(smx - smn) * 0.15f, 0.5f);
+    }
+    const struct { float dx, dy, dz; float r, g, b; } axes[4] = {
+      {gizmoLen, 0, 0, 0.9f, 0.2f, 0.2f},
+      {0, gizmoLen, 0, 0.2f, 0.9f, 0.2f},
+      {0, 0, gizmoLen, 0.2f, 0.3f, 0.9f},
+      {-gizmoLen * 0.3f, 0, 0, 0.6f, 0.1f, 0.1f},
+    };
+    for (int i = 0; i < 4; ++i) {
+      float ex = tx + axes[i].dx, ey = ty + axes[i].dy, ez = tz + axes[i].dz;
+      float r = axes[i].r, g = axes[i].g, b = axes[i].b;
+      if (gizmoActive_ && i == gizmoAxis_) { r = 1.0f; g = 1.0f; b = 0.0f; }
+      else if (!gizmoActive_ && i == gizmoAxis_) {
+        r = std::min(1.0f, r * 1.5f); g = std::min(1.0f, g * 1.5f); b = std::min(1.0f, b * 1.5f);
+      }
+      addOverlay(tx, ty, tz, ex, ey, ez, r, g, b);
+      if (i < 3) {
+        float nx = axes[i].dx / gizmoLen, ny = axes[i].dy / gizmoLen, nz = axes[i].dz / gizmoLen;
+        float perpX = 1.0f - std::abs(nx), perpY = 1.0f - std::abs(ny), perpZ = 1.0f - std::abs(nz);
+        float plen = std::sqrt(perpX*perpX + perpY*perpY + perpZ*perpZ);
+        if (plen > 1e-6f) { perpX /= plen; perpY /= plen; perpZ /= plen; }
+        float coneLen = gizmoLen * 0.12f, coneW = gizmoLen * 0.06f;
+        for (int j = 0; j < 2; ++j) {
+          float sign = (j == 0) ? 1.0f : -1.0f;
+          addOverlay(ex, ey, ez,
+                     ex - nx * coneLen + perpX * sign * coneW,
+                     ey - ny * coneLen + perpY * sign * coneW,
+                     ez - nz * coneLen + perpZ * sign * coneW, r, g, b);
         }
       }
     }
