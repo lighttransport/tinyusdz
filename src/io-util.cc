@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 
 #ifdef _WIN32
@@ -1093,6 +1094,171 @@ std::vector<std::string> AssetPathSuffixCandidates(
 
   return candidates;
 }
+
+//
+// Directory / temp-path utilities.
+//
+// GetTempDir is implemented with native OS APIs (Win32 GetTempPath / POSIX env)
+// per request; the remaining helpers wrap the vendored ghc::filesystem so that
+// callers never need <filesystem>.
+//
+std::string GetTempDir() {
+#if defined(_WIN32)
+  // GetTempPathW writes a path terminated with a backslash.
+  wchar_t buf[MAX_PATH + 1];
+  DWORD n = GetTempPathW(MAX_PATH + 1, buf);
+  if (n == 0 || n > MAX_PATH) {
+    return ".";
+  }
+  std::string s = WcharToUTF8(std::wstring(buf, size_t(n)));
+  while (!s.empty() && (s.back() == '\\' || s.back() == '/')) {
+    s.pop_back();
+  }
+  return s.empty() ? std::string(".") : s;
+#else
+  const char *names[] = {"TMPDIR", "TMP", "TEMP", "TEMPDIR"};
+  for (const char *name : names) {
+    const char *v = std::getenv(name);
+    if (v && v[0]) {
+      std::string s(v);
+      while (s.size() > 1 && s.back() == '/') {
+        s.pop_back();
+      }
+      return s;
+    }
+  }
+  return "/tmp";
+#endif
+}
+
+// The helpers below instantiate ghc::filesystem templates; suppress
+// -Weverything for them the same way the header include is wrapped above (this
+// TU is compiled with -Weverything -Werror).
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+std::string GetCurrentDir() {
+#if defined(__wasi__)
+  return ".";
+#else
+  std::error_code ec;
+  ghc::filesystem::path p = ghc::filesystem::current_path(ec);
+  if (ec) {
+    return ".";
+  }
+  return p.string();
+#endif
+}
+
+bool IsDirectory(const std::string &path) {
+#if defined(__wasi__)
+  (void)path;
+  return false;
+#else
+  std::error_code ec;
+  return ghc::filesystem::is_directory(ghc::filesystem::path(path), ec);
+#endif
+}
+
+bool CreateDirectories(const std::string &path) {
+#if defined(__wasi__)
+  (void)path;
+  return false;
+#else
+  if (path.empty()) {
+    return false;
+  }
+  std::error_code ec;
+  ghc::filesystem::path p(path);
+  if (ghc::filesystem::is_directory(p, ec)) {
+    return true;
+  }
+  ghc::filesystem::create_directories(p, ec);
+  return ghc::filesystem::is_directory(p, ec);
+#endif
+}
+
+bool RemoveFile(const std::string &path) {
+#if defined(__wasi__)
+  (void)path;
+  return false;
+#else
+  std::error_code ec;
+  ghc::filesystem::remove(ghc::filesystem::path(path), ec);
+  return !ec;
+#endif
+}
+
+bool RemoveAll(const std::string &path) {
+#if defined(__wasi__)
+  (void)path;
+  return false;
+#else
+  std::error_code ec;
+  ghc::filesystem::remove_all(ghc::filesystem::path(path), ec);
+  return !ec;
+#endif
+}
+
+std::string AbsPath(const std::string &path) {
+#if defined(__wasi__)
+  return path;
+#else
+  std::error_code ec;
+  ghc::filesystem::path p = ghc::filesystem::absolute(ghc::filesystem::path(path), ec);
+  if (ec) {
+    return path;
+  }
+  return p.lexically_normal().string();
+#endif
+}
+
+std::string RelativePath(const std::string &path, const std::string &base) {
+#if defined(__wasi__)
+  (void)base;
+  return path;
+#else
+  std::error_code ec;
+  ghc::filesystem::path p =
+      ghc::filesystem::relative(ghc::filesystem::path(path), ghc::filesystem::path(base), ec);
+  if (ec) {
+    return std::string();
+  }
+  return p.generic_string();
+#endif
+}
+
+std::vector<std::string> ListDir(const std::string &dir, bool recursive) {
+  std::vector<std::string> out;
+#if !defined(__wasi__)
+  std::error_code ec;
+  ghc::filesystem::path base(dir);
+  if (recursive) {
+    ghc::filesystem::recursive_directory_iterator it(base, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+      ghc::filesystem::path rel = ghc::filesystem::relative(it->path(), base, ec);
+      if (!ec) {
+        out.push_back(rel.generic_string());
+      }
+    }
+  } else {
+    ghc::filesystem::directory_iterator it(base, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+      out.push_back(it->path().filename().string());
+    }
+  }
+#else
+  (void)dir;
+  (void)recursive;
+#endif
+  return out;
+}
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 }  // namespace io
 }  // namespace tinyusdz

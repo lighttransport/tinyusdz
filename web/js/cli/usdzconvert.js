@@ -44,7 +44,11 @@ Convert options:
                                       gamma-space) — correct without guessing;
                            'srgb'   = force linear-light for ALL resized textures;
                            'linear' = force gamma-space for all (default).
-  --texture-format <fmt>   Texture output: keep, png, jpeg (default: keep)
+  --texture-format <fmt>   Texture output: keep, png, jpeg, exr (default: keep).
+                           'keep' preserves each source format (EXR stays EXR,
+                           resize-only — HDR is retained). 'exr' forces EXR (fp16)
+                           output for all textures (allowed in recent USDZ);
+                           'png'/'jpeg' tone-map EXR to LDR.
   --root-layer-format <fmt> USDZ root layer: usdc, usda (default: usdc)
   --arkit-compatible       Force ARKit-friendly flattened USDC package metadata
   --no-flatten             Accepted for parity; JS/WASM export still flattens
@@ -337,8 +341,8 @@ async function main() {
 
   const native = await loadWasm(() => import(wasmGlue));
   if (o.verbose) console.log('WASM module loaded.');
-  if (!['keep', 'png', 'jpeg', 'jpg'].includes(String(o.textureFormat).toLowerCase())) {
-    console.error('Invalid --texture-format. Expected keep, png, or jpeg.');
+  if (!['keep', 'png', 'jpeg', 'jpg', 'exr'].includes(String(o.textureFormat).toLowerCase())) {
+    console.error('Invalid --texture-format. Expected keep, png, jpeg, or exr.');
     process.exit(1);
   }
   if (!['usdc', 'usda'].includes(String(o.rootLayerFormat).toLowerCase())) {
