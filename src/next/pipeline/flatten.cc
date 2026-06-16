@@ -8,6 +8,7 @@
 #include <cstring>
 #include <chrono>
 #include <fstream>
+#include <iterator>  // std::istreambuf_iterator (not guaranteed via <fstream> on MSVC)
 #include <set>
 
 #include "../layer/layer.hh"
