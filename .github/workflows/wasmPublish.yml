@@ -65,6 +65,14 @@ jobs:
           source ./emsdk/emsdk_env.sh
           cmake --build web/cmake-build64 --parallel
 
+      # Exercise the WASM `next` (low-memory lazy-ValueRep) flatten pipeline on
+      # both arches before packaging, so a next-path regression blocks publish.
+      - name: Smoke test (next pipeline)
+        working-directory: ${{ github.workspace }}/web/js
+        run: |
+          node tests/usdzconvert-next.test.mjs
+          TINYUSDZ_WASM64=1 node tests/usdzconvert-next.test.mjs
+
       - name: Install npm dependencies
         working-directory: ${{ github.workspace }}/web/npm
         run: |
