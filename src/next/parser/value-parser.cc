@@ -9,6 +9,7 @@
 #include "../types/type-info.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
@@ -17,6 +18,10 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -1062,10 +1067,187 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
   }
 }
 
+// ============================================================
+// Parallel numeric array parse (large "simple" arrays)
+// ============================================================
+//
+// Distributes the per-element fast_float work across worker threads for big
+// numeric arrays. Each worker parses a byte sub-range that contains WHOLE
+// elements (boundaries snapped to a top-level separator comma), into a private
+// vector; the main thread concatenates them in order. The result is byte-
+// identical to the serial parse and independent of the thread count: every token
+// is produced by the same fast_float, and element order is preserved. Only used
+// when the captured array is "simple" (no comments/strings/asset-refs/nested
+// brackets), so every comma/paren is a pure separator. On any worker failure
+// (a boundary edge case), the caller falls back to a serial parse — so the
+// parallel path can only ever be an optimization, never a correctness risk.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+static int ResolveParseThreads() {
+  static const int n = [] {
+    if (const char* e = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      int v = std::atoi(e);
+      if (v == 1) return 1;
+      if (v > 1) return v;
+    }
+    int hw = static_cast<int>(std::thread::hardware_concurrency());
+    if (hw < 1) hw = 1;
+    return std::min(hw, 8);
+  }();
+  return n;
+}
+
+// Min array text size to bother spawning threads, and min bytes per worker chunk.
+// Conservative: only clearly-large arrays parallelize (the gain is memory-bandwidth
+// bound, so a lower threshold only adds thread-spawn overhead on medium arrays for
+// no extra throughput).
+constexpr size_t kParallelArrayMinBytes = size_t(4) << 20;  // 4 MiB
+constexpr size_t kParallelChunkMinBytes = size_t(1) << 20;  // 1 MiB
+
+// Parse one byte range [b,e) of comma-separated elements (N scalars each; N>1 are
+// paren-wrapped vector tuples) into `local`. Returns false on any malformed token.
+// A non-final chunk ends right after a boundary separator comma (expected); the
+// final chunk (`is_last`) ends at the ']' and must reject a trailing comma, to
+// stay byte-for-byte equivalent to the serial parse on malformed input.
+template <class T, uint32_t N, class ParseOne>
+bool ParseChunkFlat(const char* b, const char* e, bool is_last,
+                    std::vector<T>* local, ParseOne parse_one) {
+  SliceParser sp{b, e};
+  sp.skip_ws();
+  if (sp.p >= sp.end) return true;  // empty chunk
+  while (true) {
+    if (N == 1) {
+      T v{};
+      if (!parse_one(&sp, &v)) return false;
+      local->push_back(v);
+    } else {
+      if (!sp.consume('(')) return false;
+      for (uint32_t i = 0; i < N; i++) {
+        T v{};
+        if (!parse_one(&sp, &v)) return false;
+        local->push_back(v);
+        if (i + 1 < N && !sp.consume(',')) return false;
+      }
+      if (!sp.consume(')')) return false;
+    }
+    const bool had_comma = sp.maybe_consume(',');
+    sp.skip_ws();
+    if (sp.p >= sp.end) {
+      // Reached the chunk end. A trailing separator is the normal inter-chunk
+      // boundary, but on the FINAL chunk it is a trailing comma before ']' which
+      // the serial parser rejects.
+      if (had_comma && is_last) return false;
+      return true;
+    }
+    if (!had_comma) return false;  // adjacent elements with no separator
+  }
+}
+
+// Snap a target offset forward to a top-level element-separator boundary, returning
+// the position just AFTER the separator comma (or `end` if none remains).
+template <uint32_t N>
+const char* SnapElementBoundary(const char* t, const char* end) {
+  if (N > 1) {
+    // Vector tuple: the first ')' at/after t closes a tuple (vectors don't nest),
+    // after which the next ',' is a top-level separator.
+    const char* rp = static_cast<const char*>(std::memchr(t, ')', size_t(end - t)));
+    if (!rp) return end;
+    t = rp + 1;
+  }
+  const char* c = static_cast<const char*>(std::memchr(t, ',', size_t(end - t)));
+  return c ? c + 1 : end;
+}
+
+// Returns true and fills *out on success; false => caller does a serial fallback.
+template <class T, uint32_t N, class ParseOne>
+bool ParseNumericArrayParallel(const char* data, size_t len, std::vector<T>* out,
+                               ParseOne parse_one) {
+  // Captured span includes the outer '[' .. ']'.
+  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+  const char* content_begin = data + 1;
+  const char* content_end = data + len - 1;
+  const size_t content_len = size_t(content_end - content_begin);
+  if (content_len < kParallelArrayMinBytes) return false;
+
+  const int nt = ResolveParseThreads();
+  if (nt <= 1) return false;
+  size_t nchunks = std::min<size_t>(size_t(nt), content_len / kParallelChunkMinBytes);
+  if (nchunks < 2) return false;
+
+  std::vector<const char*> cut(nchunks + 1);
+  cut[0] = content_begin;
+  cut[nchunks] = content_end;
+  for (size_t k = 1; k < nchunks; k++) {
+    const char* target = content_begin + (content_len * k) / nchunks;
+    const char* c = SnapElementBoundary<N>(target, content_end);
+    if (c < cut[k - 1]) c = cut[k - 1];  // keep monotonic
+    cut[k] = c;
+  }
+
+  std::vector<std::vector<T>> locals(nchunks);
+  std::vector<char> ok(nchunks, 1);
+  std::vector<std::thread> threads;
+  threads.reserve(nchunks);
+  for (size_t k = 0; k < nchunks; k++) {
+    const char* b = cut[k];
+    const char* e = cut[k + 1];
+    if (b >= e) continue;  // empty chunk
+    const bool is_last = (e == content_end);
+    threads.emplace_back([b, e, is_last, k, &locals, &ok, parse_one]() {
+      ok[k] = ParseChunkFlat<T, N>(b, e, is_last, &locals[k], parse_one) ? 1 : 0;
+    });
+  }
+  for (auto& th : threads) th.join();
+  for (char c : ok) {
+    if (!c) return false;  // boundary edge -> serial fallback
+  }
+
+  size_t total = 0;
+  for (const auto& l : locals) total += l.size();
+  out->clear();
+  out->reserve(total);
+  for (auto& l : locals) out->insert(out->end(), l.begin(), l.end());
+  return true;
+}
+
+#endif  // TINYUSDZ_ENABLE_THREAD
+
+// Parse a scalar numeric array, using the parallel path for large simple arrays
+// and falling back to the serial SliceParser otherwise.
+template <class T, class ParseOne>
+bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
+                                   std::vector<T>* out, ParseOne parse_one) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (simple && ParseNumericArrayParallel<T, 1>(data, len, out, parse_one)) {
+    return true;
+  }
+#else
+  (void)simple;
+#endif
+  SliceParser sp{data, data + len};
+  return ParseScalarArray<T>(&sp, out, parse_one);
+}
+
+// Same, for paren-wrapped single-level vector tuples (float3, double2, ...).
+template <class T, uint32_t N, class ParseOne>
+bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
+                                  std::vector<T>* out, ParseOne parse_one) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (simple && ParseNumericArrayParallel<T, N>(data, len, out, parse_one)) {
+    return true;
+  }
+#else
+  (void)simple;
+#endif
+  SliceParser sp{data, data + len};
+  return ParseTupleArray<T, N>(&sp, out, parse_one);
+}
+
 ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   const char* data = nullptr;
   size_t len = 0;
-  if (!lexer.capture_bracketed_literal(&data, &len)) {
+  bool simple = false;
+  if (!lexer.capture_bracketed_literal(&data, &len, &simple)) {
     return ParseResult::Error(lexer.error());
   }
   SliceParser sp{data, data + len};
@@ -1075,21 +1257,21 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
 
   if (element_type == TypeId::Float) {
     std::vector<float> values;
-    if (!ParseScalarArray<float>(&sp, &values, parse_float)) {
+    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, &values, parse_float)) {
       return ParseResult::Error("Failed to parse float array");
     }
     return ParseResult::Ok(Value::MakeFloatArray(std::move(values)));
   }
   if (element_type == TypeId::Double) {
     std::vector<double> values;
-    if (!ParseScalarArray<double>(&sp, &values, parse_double)) {
+    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, &values, parse_double)) {
       return ParseResult::Error("Failed to parse double array");
     }
     return ParseResult::Ok(Value::MakeDoubleArray(std::move(values)));
   }
   if (element_type == TypeId::Half) {
     std::vector<float> values;
-    if (!ParseScalarArray<float>(&sp, &values, parse_float)) {
+    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, &values, parse_float)) {
       return ParseResult::Error("Failed to parse half array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
@@ -1111,7 +1293,7 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
       *v = static_cast<int32_t>(tmp);
       return true;
     };
-    if (!ParseScalarArray<int32_t>(&sp, &values, parse_i32)) {
+    if (!ParseScalarArrayMaybeParallel<int32_t>(data, len, simple, &values, parse_i32)) {
       return ParseResult::Error("Failed to parse int array");
     }
     return ParseResult::Ok(Value::MakeIntArray(std::move(values)));
@@ -1124,7 +1306,7 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
       *v = static_cast<uint32_t>(tmp);
       return true;
     };
-    if (!ParseScalarArray<uint32_t>(&sp, &values, parse_u32)) {
+    if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, &values, parse_u32)) {
       return ParseResult::Error("Failed to parse uint array");
     }
     return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
@@ -1132,7 +1314,7 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   if (element_type == TypeId::Int64) {
     std::vector<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
-    if (!ParseScalarArray<int64_t>(&sp, &values, parse_i64)) {
+    if (!ParseScalarArrayMaybeParallel<int64_t>(data, len, simple, &values, parse_i64)) {
       return ParseResult::Error("Failed to parse int64 array");
     }
     return ParseResult::Ok(Value::MakeInt64Array(std::move(values)));
@@ -1140,7 +1322,7 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   if (element_type == TypeId::UInt64) {
     std::vector<uint64_t> values;
     auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
-    if (!ParseScalarArray<uint64_t>(&sp, &values, parse_u64)) {
+    if (!ParseScalarArrayMaybeParallel<uint64_t>(data, len, simple, &values, parse_u64)) {
       return ParseResult::Error("Failed to parse uint64 array");
     }
     return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
@@ -1164,42 +1346,42 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
 
   if (IsFloat2Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArray<float, 2>(&sp, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 2>(data, len, simple, &values, parse_float)) {
       return ParseResult::Error("Failed to parse float2 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 2));
   }
   if (IsFloat3Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArray<float, 3>(&sp, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 3>(data, len, simple, &values, parse_float)) {
       return ParseResult::Error("Failed to parse float3 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 3));
   }
   if (IsFloat4Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArray<float, 4>(&sp, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 4>(data, len, simple, &values, parse_float)) {
       return ParseResult::Error("Failed to parse float4 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
   }
   if (IsDouble2Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArray<double, 2>(&sp, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 2>(data, len, simple, &values, parse_double)) {
       return ParseResult::Error("Failed to parse double2 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 2));
   }
   if (IsDouble3Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArray<double, 3>(&sp, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 3>(data, len, simple, &values, parse_double)) {
       return ParseResult::Error("Failed to parse double3 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 3));
   }
   if (IsDouble4Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArray<double, 4>(&sp, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 4>(data, len, simple, &values, parse_double)) {
       return ParseResult::Error("Failed to parse double4 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
