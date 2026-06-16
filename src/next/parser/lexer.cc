@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Lexer implementation
 
 #include "lexer.hh"
+#include "../strfmt.hh"
 #include "simd-scan.hh"
 
 #include <cctype>
@@ -312,7 +313,7 @@ bool Lexer::expect(TokenType type, std::string& out_value) {
 
 void Lexer::set_error(const std::string& msg) {
   if (error_.empty()) {
-    error_ = "Line " + std::to_string(line_) + ", column " + std::to_string(column_) + ": " + msg;
+    error_ = "Line " + UIntToStr(line_) + ", column " + UIntToStr(column_) + ": " + msg;
   }
 }
 

@@ -7,6 +7,8 @@
 #include "cache.hh"
 
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
+#include "../strfmt.hh"                    // AppendUInt / IntToStr / UIntToStr
+#include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
 
 #include <algorithm>
 #include <deque>
@@ -28,6 +30,18 @@
 namespace tinyusdz {
 namespace next {
 namespace pcp {
+
+// One-decimal fixed formatting (locale-free, no printf/iostream) for the
+// diagnostic timing readouts emitted through the logger.
+static std::string FmtMs(double ms) {
+  std::string s;
+  if (ms < 0) { s += '-'; ms = -ms; }
+  uint64_t tenths = static_cast<uint64_t>(ms * 10.0 + 0.5);  // rounded
+  AppendUInt(s, tenths / 10);
+  s += '.';
+  AppendUInt(s, tenths % 10);
+  return s;
+}
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 // Serializes the Cache's shared mutable state so it is safe to use
@@ -1445,10 +1459,9 @@ struct Cache::Impl {
                  warn, err);
     }
     if (options.enable_timing) {
-      std::fprintf(stderr,
-                   "[next_build] sources=%.1fms compose=%.1fms register=%.1fms\n",
-                   prof_sources_ns_ / 1e6, prof_compose_ns_ / 1e6,
-                   prof_reg_ns_ / 1e6);
+      TUSDZ_LOG_I("[next_build] sources=" + FmtMs(prof_sources_ns_ / 1e6) +
+                  "ms compose=" + FmtMs(prof_compose_ns_ / 1e6) +
+                  "ms register=" + FmtMs(prof_reg_ns_ / 1e6) + "ms");
     }
 
     switch (options.instance_flatten_mode) {
@@ -1546,7 +1559,7 @@ struct Cache::Impl {
         std::vector<std::pair<std::string, std::string>> labelled;
         labelled.reserve(protos.size());
         for (size_t i = 0; i < protos.size(); ++i)
-          labelled.emplace_back("__Prototype_" + std::to_string(i + 1), protos[i]);
+          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), protos[i]);
         std::sort(labelled.begin(), labelled.end(),
                   [](const auto &a, const auto &b) { return a.first < b.first; });
         ordered.reserve(labelled.size());
@@ -1560,7 +1573,7 @@ struct Cache::Impl {
       size_t n = 1;
       for (const std::string &proto : ordered) {
         std::string p;
-        do { p = "/Flattened_Prototype_" + std::to_string(n++); }
+        do { p = "/Flattened_Prototype_" + UIntToStr(n++); }
         while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
         fpath[proto] = p;
       }
@@ -1909,12 +1922,12 @@ struct Cache::Impl {
                    .count() / 1e6;
       };
       auto t_merge = PWClock::now();
-      std::fprintf(stderr,
-                   "[next_warm] frontier=%zu W=%d discover=%.1fms workers=%.1fms "
-                   "merge=%.1fms cache=%zu\n",
-                   level.size(), W, ms(t_start, t_discover),
-                   ms(t_discover, t_workers), ms(t_workers, t_merge),
-                   sources_cache.size());
+      TUSDZ_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
+                  " W=" + IntToStr(W) +
+                  " discover=" + FmtMs(ms(t_start, t_discover)) +
+                  "ms workers=" + FmtMs(ms(t_discover, t_workers)) +
+                  "ms merge=" + FmtMs(ms(t_workers, t_merge)) +
+                  "ms cache=" + UIntToStr(sources_cache.size()));
     }
   }
 #endif  // TINYUSDZ_ENABLE_THREAD
@@ -2392,8 +2405,8 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   bool ok = cache.BuildStage(out_stage, warn, err);
   const auto t2 = Clock::now();
   if (timing) {
-    std::fprintf(stderr, "[next_compose] open=%.1fms build_stage=%.1fms\n",
-                 ms(t1 - t0), ms(t2 - t1));
+    TUSDZ_LOG_I("[next_compose] open=" + FmtMs(ms(t1 - t0)) +
+                "ms build_stage=" + FmtMs(ms(t2 - t1)) + "ms");
   }
   return ok;
 }
