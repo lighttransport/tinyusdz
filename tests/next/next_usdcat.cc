@@ -18,6 +18,7 @@
 #include <iostream>
 #include <string>
 
+#include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -118,6 +119,14 @@ int main(int argc, char **argv) {
   // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
   // TINYUSDZ_NEXT_TIMING is set. Used to prioritize/measure perf work.
   const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  if (timing) {
+    // The next library emits its [next_build]/[next_warm]/[next_compose] timing
+    // through tinyusdz::logging now (not a hardcoded stderr fprintf). Point the
+    // logger at stderr and enable Info so those lines appear like before.
+    tinyusdz::logging::Logger::getInstance().setStream(&std::cerr);
+    tinyusdz::logging::Logger::getInstance().setLogLevel(
+        tinyusdz::logging::LogLevel::Info);
+  }
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
     return std::chrono::duration<double, std::milli>(d).count();

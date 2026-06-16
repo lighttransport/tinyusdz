@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Value Parser implementation
 
 #include "value-parser.hh"
+#include "../strfmt.hh"
 #include "lexer.hh"
 #include "../crate/crate-format.hh"
 #include "../types/type-info.hh"
@@ -732,7 +733,7 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
     const char* tn = GetTypeName(expected_type);
     return ParseResult::Error("No parser for type " +
                               (tn ? std::string(tn)
-                                  : "#" + std::to_string(int(expected_type))));
+                                  : "#" + IntToStr(int(expected_type))));
   }
 
   ParseResult result = fn(lexer);

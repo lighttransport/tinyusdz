@@ -7,10 +7,9 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "../strfmt.hh"
 #include "../layer/property-index.hh"
-#include <sstream>
-#include <fstream>
-#include <iomanip>
+#include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -39,17 +38,8 @@ struct StitchCtx {
   std::function<void(StreamWriter&, int)> emit;
 };
 
-// Freestanding integer -> decimal string (no libc itoa / std::to_string).
-inline std::string UIntToStr(uint64_t v) {
-  char buf[20];
-  char* p = buf + sizeof(buf);
-  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
-  return std::string(p, static_cast<size_t>(buf + sizeof(buf) - p));
-}
-inline std::string IntToStr(long long v) {
-  if (v < 0) return "-" + UIntToStr(~static_cast<uint64_t>(v) + 1u);
-  return UIntToStr(static_cast<uint64_t>(v));
-}
+// Freestanding integer -> decimal string: IntToStr/UIntToStr live in ../strfmt.hh
+// (shared with the value printer).
 
 // Get specifier keyword
 const char* SpecifierKeyword(PrimSpecifier spec) {
@@ -180,13 +170,12 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (!meta.subLayers.empty()) {
-    std::ostringstream ss;
-    ss << opts.indent << "subLayers = [\n";
+    std::string s = opts.indent + "subLayers = [\n";
     for (const auto& layer : meta.subLayers) {
-      ss << opts.indent << opts.indent << "@" << layer << "@,\n";
+      s += opts.indent + opts.indent + "@" + layer + "@,\n";
     }
-    ss << opts.indent << "]";
-    lines.push_back(ss.str());
+    s += opts.indent + "]";
+    lines.push_back(std::move(s));
   }
 
   for (size_t i = 0; i < lines.size(); ++i) {

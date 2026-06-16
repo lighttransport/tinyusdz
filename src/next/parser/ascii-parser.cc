@@ -4,13 +4,13 @@
 // TinyUSDZ Next - USDA ASCII Parser implementation
 
 #include "ascii-parser.hh"
+#include "../strfmt.hh"
 #include "lexer.hh"
 #include "value-parser.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
 #include <fstream>
-#include <sstream>
 #include <system_error>
 
 namespace tinyusdz {
@@ -1541,7 +1541,7 @@ void AsciiParser::Impl::AddError(const std::string& message) {
 }
 
 void AsciiParser::Impl::AddWarning(const std::string& message) {
-  warnings_.push_back("Line " + std::to_string(lexer_ ? lexer_->line() : 0) + ": " + message);
+  warnings_.push_back("Line " + UIntToStr(lexer_ ? lexer_->line() : 0) + ": " + message);
 }
 
 bool AsciiParser::Impl::Match(TokenType type) {

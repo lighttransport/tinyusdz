@@ -5,10 +5,9 @@
 
 #include "value-printer.hh"
 #include "../types/type-id.hh"
+#include "../strfmt.hh"
 #include "dtoa.hh"
 #include <algorithm>
-#include <sstream>
-#include <iomanip>
 #include <cmath>
 
 namespace tinyusdz {
@@ -22,21 +21,8 @@ namespace {
 inline void AppendFloat(std::string& o, float v) { dtos_append(o, v); }
 inline void AppendDouble(std::string& o, double v) { dtos_append(o, v); }
 
-inline void AppendU64(std::string& o, uint64_t v) {
-  char buf[20];
-  char* p = buf + sizeof(buf);
-  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
-  o.append(p, static_cast<size_t>(buf + sizeof(buf) - p));
-}
-inline void AppendI64(std::string& o, int64_t v) {
-  if (v < 0) {
-    o += '-';
-    // Negate in unsigned space so INT64_MIN is handled without UB.
-    AppendU64(o, ~static_cast<uint64_t>(v) + 1u);
-  } else {
-    AppendU64(o, static_cast<uint64_t>(v));
-  }
-}
+// Integer append helpers live in ../strfmt.hh (AppendInt/AppendUInt), shared with
+// the USDA writer.
 
 // Reserve headroom for an array, but cap the up-front growth so a single huge
 // array doesn't trigger a giant mmap. Beyond the cap, std::string's geometric
@@ -155,7 +141,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_int_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -164,7 +150,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -173,7 +159,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_int64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -182,7 +168,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_uint64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -248,25 +234,25 @@ void PrintValueInto(std::string& out, const Value& value,
 
     case TypeId::Int: {
       const int32_t* v = value.as_int();
-      if (v) AppendI64(out, *v); else out += "None";
+      if (v) AppendInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::UInt: {
       const uint32_t* v = value.as_uint();
-      if (v) AppendU64(out, *v); else out += "None";
+      if (v) AppendUInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::Int64: {
       const int64_t* v = value.as_int64();
-      if (v) AppendI64(out, *v); else out += "None";
+      if (v) AppendInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::UInt64: {
       const uint64_t* v = value.as_uint64();
-      if (v) AppendU64(out, *v); else out += "None";
+      if (v) AppendUInt(out, *v); else out += "None";
       return;
     }
 
@@ -303,23 +289,23 @@ void PrintValueInto(std::string& out, const Value& value,
     case TypeId::Int2: {
       const int32_t* v = value.as_int2();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]); out += ')';
       return;
     }
 
     case TypeId::Int3: {
       const int32_t* v = value.as_int3();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
-      out += ", "; AppendI64(out, v[2]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]);
+      out += ", "; AppendInt(out, v[2]); out += ')';
       return;
     }
 
     case TypeId::Int4: {
       const int32_t* v = value.as_int4();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
-      out += ", "; AppendI64(out, v[2]); out += ", "; AppendI64(out, v[3]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]);
+      out += ", "; AppendInt(out, v[2]); out += ", "; AppendInt(out, v[3]); out += ')';
       return;
     }
 
@@ -477,7 +463,7 @@ void PrintValueInto(std::string& out, const Value& value,
 
     default:
       out += "<unsupported type ";
-      AppendI64(out, static_cast<int>(type_id));
+      AppendInt(out, static_cast<int>(type_id));
       out += ">";
       return;
   }
