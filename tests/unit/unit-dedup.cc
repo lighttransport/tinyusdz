@@ -22,7 +22,6 @@
 #include <functional>
 #include <fstream>
 #include <limits>
-#include <filesystem>
 
 using namespace tinyusdz;
 using namespace tinyusdz::experimental;
@@ -43,11 +42,10 @@ static size_t GetFileSize(const std::string& filename) {
 // Build a portable temp file path. A hardcoded "/tmp/..." does not exist on
 // Windows, where WriteStageUSDC would then fail to open the output file.
 static std::string TempPath(const std::string& name) {
-  namespace fs = std::filesystem;
-  fs::path base = fs::temp_directory_path() / "tinyusdz_dedup_test";
-  std::error_code ec;
-  fs::create_directories(base, ec);
-  return (base / name).string();
+  const std::string base =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_dedup_test");
+  tinyusdz::io::CreateDirectories(base);
+  return tinyusdz::io::JoinPath(base, name);
 }
 
 // Build a Stage with a single Xform prim carrying one custom timesampled
@@ -431,8 +429,8 @@ void dedup_cross_attribute_timesamples_test(void) {
   Stage stage = MakeMultiAttrAnimStage("CrossAttrTS", "double3", samples,
                                        value::Value(default_value));
 
-  const std::string f_dedup = "/tmp/test_cross_attr_ts_dedup.usdc";
-  const std::string f_no = "/tmp/test_cross_attr_ts_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_cross_attr_ts_dedup.usdc");
+  const std::string f_no = TempPath("test_cross_attr_ts_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
@@ -480,8 +478,8 @@ void dedup_default_scalar_values_test(void) {
     Prim prim("DefaultScalars", xform);
     stage.root_prims().emplace_back(prim);
 
-    const std::string f_dedup = "/tmp/test_default_scalar_dedup.usdc";
-    const std::string f_no = "/tmp/test_default_scalar_no_dedup.usdc";
+    const std::string f_dedup = TempPath("test_default_scalar_dedup.usdc");
+    const std::string f_no = TempPath("test_default_scalar_no_dedup.usdc");
     TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
     TEST_CHECK(WriteStageUSDC(stage, f_no, false));
     const size_t size_dedup = GetFileSize(f_dedup);
@@ -503,8 +501,8 @@ void dedup_default_scalar_values_test(void) {
     Prim prim("DefaultDoubles", xform);
     stage.root_prims().emplace_back(prim);
 
-    const std::string f_dedup = "/tmp/test_default_double_dedup.usdc";
-    const std::string f_no = "/tmp/test_default_double_no_dedup.usdc";
+    const std::string f_dedup = TempPath("test_default_double_dedup.usdc");
+    const std::string f_no = TempPath("test_default_double_no_dedup.usdc");
     TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
     TEST_CHECK(WriteStageUSDC(stage, f_no, false));
     const size_t size_dedup = GetFileSize(f_dedup);
@@ -579,7 +577,7 @@ void inline_openusd_value_coverage_test(void) {
   Prim prim("InlineCoverage", xform);
   stage.root_prims().emplace_back(prim);
 
-  const std::string filename = "/tmp/test_inline_openusd_coverage.usdc";
+  const std::string filename = TempPath("test_inline_openusd_coverage.usdc");
   TEST_CHECK(WriteStageUSDC(stage, filename, true));
 
   std::vector<CrateValueRep> default_reps;
@@ -654,8 +652,8 @@ void dedup_shared_times_arrays_test(void) {
   Stage stage = MakeMultiAttrAnimStage("SharedTimes", "double3", samples,
                                        value::Value(default_value));
 
-  const std::string f_dedup = "/tmp/test_shared_times_dedup.usdc";
-  const std::string f_no = "/tmp/test_shared_times_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_shared_times_dedup.usdc");
+  const std::string f_no = TempPath("test_shared_times_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
   const size_t size_dedup = GetFileSize(f_dedup);
@@ -679,7 +677,7 @@ void dedup_low_memory_budget_test(void) {
   Stage stage = MakeAnimStage("LowMemDedup", "float[]", ts,
                               value::Value(large_array));
 
-  const std::string filename = "/tmp/test_low_memory_dedup.usdc";
+  const std::string filename = TempPath("test_low_memory_dedup.usdc");
   std::string err;
   CrateWriter writer(filename);
   CrateWriter::Options opts;
@@ -1202,8 +1200,8 @@ void dedup_cross_attr_value_readback_test(void) {
     return stage;
   };
 
-  const std::string f_dedup = "/tmp/test_cross_attr_readback_dedup.usdc";
-  const std::string f_no = "/tmp/test_cross_attr_readback_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_cross_attr_readback_dedup.usdc");
+  const std::string f_no = TempPath("test_cross_attr_readback_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(build(), f_dedup, true));
   TEST_CHECK(WriteStageUSDC(build(), f_no, false));
 
@@ -1298,7 +1296,7 @@ void dedup_cross_type_no_false_share_test(void) {
   Prim prim("NoFalseShare", xform);
   stage.root_prims().emplace_back(prim);
 
-  const std::string fn = "/tmp/test_no_false_share.usdc";
+  const std::string fn = TempPath("test_no_false_share.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   Layer layer;
@@ -1382,8 +1380,8 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
     stage.root_prims().emplace_back(prim);
   }
 
-  const std::string f_dedup = "/tmp/test_nan_dedup.usdc";
-  const std::string f_no = "/tmp/test_nan_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_nan_dedup.usdc");
+  const std::string f_no = TempPath("test_nan_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
   // Identical NaN samples collapse -> dedup strictly smaller.
@@ -1459,8 +1457,8 @@ void dedup_blocked_timesamples_roundtrip_test(void) {
       MakeMultiAttrAnimStage("BlockedTS", "double3", {make_ts(), make_ts()},
                              value::Value(v));
 
-  const std::string f_dedup = "/tmp/test_blocked_ts_dedup.usdc";
-  const std::string f_no = "/tmp/test_blocked_ts_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_blocked_ts_dedup.usdc");
+  const std::string f_no = TempPath("test_blocked_ts_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
   // Two identical (blocked-containing) timesamples -> cross-attr dedup shrinks.
@@ -1532,8 +1530,8 @@ void dedup_blocked_array_timesamples_roundtrip_test(void) {
       MakeMultiAttrAnimStage("BlockedArrTS", "float[]", {make_ts(), make_ts()},
                              value::Value(std::vector<float>(arr)));
 
-  const std::string f_dedup = "/tmp/test_blocked_arr_ts_dedup.usdc";
-  const std::string f_no = "/tmp/test_blocked_arr_ts_no_dedup.usdc";
+  const std::string f_dedup = TempPath("test_blocked_arr_ts_dedup.usdc");
+  const std::string f_no = TempPath("test_blocked_arr_ts_no_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, f_dedup, true));
   TEST_CHECK(WriteStageUSDC(stage, f_no, false));
 
@@ -1591,7 +1589,7 @@ void dedup_empty_array_roundtrip_test(void) {
   Prim prim("EmptyArr", xform);
   stage.root_prims().emplace_back(prim);
 
-  const std::string fn = "/tmp/test_empty_array_dedup.usdc";
+  const std::string fn = TempPath("test_empty_array_dedup.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   Layer layer;
@@ -1660,7 +1658,7 @@ void inline_inf_double_test(void) {
   Prim prim("InfDouble", xform);
   stage.root_prims().emplace_back(prim);
 
-  const std::string fn = "/tmp/test_inline_inf_double.usdc";
+  const std::string fn = TempPath("test_inline_inf_double.usdc");
   TEST_CHECK(WriteStageUSDC(stage, fn, /*dedup*/ true));
 
   std::vector<CrateValueRep> reps;

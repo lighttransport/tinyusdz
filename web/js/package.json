@@ -52,6 +52,7 @@
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
     "usd-export": "vite-node cli/usd-export-cli.js",
     "usdzconvert": "node cli/usdzconvert.js",
+    "usdcat": "node cli/usdcat.js",
     "usddiff": "node cli/usddiff.js",
     "phys-sim": "node cli/phys-sim.js",
     "urdf-to-usd": "node cli/urdf-to-usd.js",
