@@ -471,6 +471,12 @@ void PrimSpec::finalize_properties() {
   props_.sort();
 }
 
+void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->flags |= PropSlot::kFlagTimeSampled;
+  }
+}
+
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
   // Use deduplicated storage for array values (common case for animation)
   if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
