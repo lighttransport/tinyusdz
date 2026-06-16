@@ -17,6 +17,7 @@
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
+#include "../strfmt.hh"
 
 #include <deque>
 #include <functional>
@@ -169,11 +170,11 @@ class PrimIndex {
 
   std::string DumpToString() const {
     std::string s = "PrimIndex<" + prim_path_.str() + "> nodes=" +
-                    std::to_string(nodes_.size()) + "\n";
+                    UIntToStr(nodes_.size()) + "\n";
     for (uint16_t oi : strength_order_) {
       const CompNode &n = nodes_[oi];
-      s += "  [" + std::to_string(oi) + "] " + ArcTypeName(n.arc_type) +
-           " stack=" + std::to_string(n.layer_stack_idx) + " site=" +
+      s += "  [" + UIntToStr(oi) + "] " + ArcTypeName(n.arc_type) +
+           " stack=" + UIntToStr(n.layer_stack_idx) + " site=" +
            SitePath(n) + (n.has_specs() ? " (specs)" : "") + "\n";
     }
     return s;

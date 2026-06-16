@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Reader implementation
 
 #include "usdc-reader.hh"
+#include "../strfmt.hh"
 
 #include <fstream>
 
@@ -31,7 +32,7 @@ USDCLoadResult ConvertResult(CrateReadResult&& crate_result) {
 
   if (!result.errors.empty()) {
     const auto& first_err = result.errors[0];
-    result.error_summary = "Offset " + std::to_string(first_err.offset) +
+    result.error_summary = "Offset " + UIntToStr(first_err.offset) +
                            ": " + first_err.message;
   }
 
