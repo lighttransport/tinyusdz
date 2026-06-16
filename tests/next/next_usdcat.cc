@@ -18,6 +18,12 @@
 #include <iostream>
 #include <string>
 
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <fcntl.h>
+#include <unistd.h>
+#define NEXT_USDCAT_HAS_DUP2 1
+#endif
+
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -46,11 +52,15 @@ int main(int argc, char **argv) {
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
   const char *filename = nullptr;
+  const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
+    } else if ((std::strcmp(argv[i], "-o") == 0 ||
+                std::strcmp(argv[i], "--output") == 0) && i + 1 < argc) {
+      out_path = argv[++i];
     } else if (std::strcmp(argv[i], "--openusd-compat") == 0) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
     } else if (std::strcmp(argv[i], "--instance-mode") == 0 && i + 1 < argc) {
@@ -82,9 +92,10 @@ int main(int argc, char **argv) {
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] [--instance-mode "
-                         "native|holder|prototypes] [--prototype-numbering "
-                         "deterministic|usdcat] file.usd[acz]\n");
+    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] [-o out.usda] "
+                         "[--instance-mode native|holder|prototypes] "
+                         "[--prototype-numbering deterministic|usdcat] "
+                         "file.usd[acz]\n");
     return 2;
   }
 
@@ -140,18 +151,42 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
-    // Stream directly to stdout instead of building the whole (multi-GB on large
-    // scenes) USDA text in one std::string first. On Caldera-class scenes this
-    // alone removes several GB of peak RSS.
+    // `-o <file>` redirects stdout to the file at the fd level, so the output
+    // goes through the EXACT same std::cout path (and performance) as a shell
+    // redirect — just to a named file we can measure/re-parse.
+    if (out_path) {
+#if defined(NEXT_USDCAT_HAS_DUP2)
+      int fd = ::open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (fd < 0 || ::dup2(fd, STDOUT_FILENO) < 0) {
+        std::fprintf(stderr, "ERR : cannot open output file: %s\n", out_path);
+        return 1;
+      }
+      ::close(fd);
+#else
+      std::fprintf(stderr, "ERR : -o not supported on this platform\n");
+      return 2;
+#endif
+    }
+    // Stream directly to stdout instead of building the whole (multi-GB on
+    // large scenes) USDA text in one std::string first. On Caldera-class scenes
+    // this alone removes several GB of peak RSS.
     std::ios::sync_with_stdio(false);
-    WriteUSDA(std::cout, stage, wopts);
+    USDAWriteResult res = WriteUSDA(std::cout, stage, wopts);
     std::cout.flush();
+    size_t bytes_written = res.bytes_written;
     const auto t_written = Clock::now();
     if (timing) {
+      const double wms = ms(t_written - t_loaded);
       std::fprintf(stderr,
                    "[next_usdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
-                   ms(t_loaded - t_start), ms(t_written - t_loaded),
-                   ms(t_written - t_start));
+                   ms(t_loaded - t_start), wms, ms(t_written - t_start));
+      if (bytes_written > 0 && wms > 0.0) {
+        std::fprintf(stderr,
+                     "[next_usdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
+                     bytes_written,
+                     double(bytes_written) / 1048576.0 / (wms / 1000.0),
+                     out_path ? " -> " : "", out_path ? out_path : "");
+      }
     }
   } else {
     std::printf("loaded: %zu prims\n", stage.GetStats().prim_count);
