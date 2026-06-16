@@ -54,6 +54,7 @@ RECONSTRUCT_PRIM_DECL(GeomCone);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(SphereLight);
@@ -62,6 +63,10 @@ RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
+RECONSTRUCT_PRIM_DECL(GeometryLight);
+RECONSTRUCT_PRIM_DECL(PortalLight);
+RECONSTRUCT_PRIM_DECL(LightFilter);
+RECONSTRUCT_PRIM_DECL(PluginLightFilter);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(Skeleton);
@@ -139,6 +144,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(GeomSphere)
   RECONSTRUCT_PRIM(GeomCapsule)
   RECONSTRUCT_PRIM(GeomBasisCurves)
+  RECONSTRUCT_PRIM(GeomPointInstancer)
   RECONSTRUCT_PRIM(GeomCamera)
   RECONSTRUCT_PRIM(GeomSubset)
   RECONSTRUCT_PRIM(SphereLight)
@@ -147,6 +153,10 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(DiskLight)
   RECONSTRUCT_PRIM(DistantLight)
   RECONSTRUCT_PRIM(RectLight)
+  RECONSTRUCT_PRIM(GeometryLight)
+  RECONSTRUCT_PRIM(PortalLight)
+  RECONSTRUCT_PRIM(LightFilter)
+  RECONSTRUCT_PRIM(PluginLightFilter)
   RECONSTRUCT_PRIM(SkelRoot)
   RECONSTRUCT_PRIM(Skeleton)
   RECONSTRUCT_PRIM(SkelAnimation)
