@@ -1405,8 +1405,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # clang21's -Weverything enables -Wnrvo, which fires on any function with
   # multiple return paths returning different objects (e.g. an early `return {}`
   # plus a final `return named`). It is pedantic informational noise, not a bug;
-  # suppress it. (Older clang silently ignores the unknown -Wno- flag.)
-  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 20)
+  # suppress it. Detect support directly rather than by compiler version: vendor
+  # forks (e.g. the Android NDK clang) can report a high version yet lack -Wnrvo,
+  # and under -Weverything an unknown -Wno- option is *not* silently ignored — it
+  # is promoted to an error via -Wunknown-warning-option. Probe the positive form
+  # (`-Wno-<unknown>` is accepted leniently, so it would not detect the gap).
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag("-Wnrvo" TINYUSDZ_HAS_WNRVO)
+  if (TINYUSDZ_HAS_WNRVO)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
   endif()
 
