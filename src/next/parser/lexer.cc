@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Lexer implementation
 
 #include "lexer.hh"
+#include "simd-scan.hh"
 
 #include <cctype>
 #include <cstring>
@@ -176,6 +177,19 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
 
   int depth = 1;
   while (pos_ < length_ && depth > 0) {
+    // SIMD-skip the "boring" array bytes (digits/commas/whitespace) straight to
+    // the next structural byte {[ ] " ' @ #}; only those need per-char handling.
+    // Equivalent to the old byte-by-byte advance() loop (same stop positions),
+    // just far faster on the big numeric arrays that dominate flattened scenes.
+    {
+      const char* base = data_ + pos_;
+      size_t nl = 0;
+      const char* hit =
+          simdscan::ScanArrayStructural(base, data_ + length_, &nl);
+      pos_ += static_cast<size_t>(hit - base);
+      line_ += nl;  // column_ left approximate inside arrays (error cosmetics)
+      if (pos_ >= length_ || depth <= 0) break;
+    }
     const char c = current_char();
 
     if (c == '#') {
