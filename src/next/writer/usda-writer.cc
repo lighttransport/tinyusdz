@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -34,6 +35,49 @@ namespace {
 struct StitchCtx {
   const std::vector<int>* frontier_of = nullptr;
   std::function<void(std::ostream&, int)> emit;
+};
+
+// A std::streambuf that appends straight into a caller-owned std::string, with a
+// small put-area so the writer's many tiny `os <<` tokens don't pay a virtual
+// call each. Lets the parallel workers serialize a subtree with no
+// std::ostringstream double-buffer and no `.str()` copy. Flush (os.flush() or
+// dtor) drains the put-area before the string is read.
+class StringAppendBuf : public std::streambuf {
+ public:
+  explicit StringAppendBuf(std::string& s) : s_(s) {
+    setp(buf_, buf_ + sizeof(buf_));
+  }
+  ~StringAppendBuf() override { drain(); }
+
+ protected:
+  int_type overflow(int_type c) override {
+    drain();
+    if (!traits_type::eq_int_type(c, traits_type::eof())) {
+      *pptr() = traits_type::to_char_type(c);
+      pbump(1);
+    }
+    return traits_type::not_eof(c);
+  }
+  std::streamsize xsputn(const char* p, std::streamsize n) override {
+    if (n >= 512) {  // big chunk (a PrintValue string): append directly
+      drain();
+      s_.append(p, static_cast<size_t>(n));
+      return n;
+    }
+    if (epptr() - pptr() < n) drain();
+    std::memcpy(pptr(), p, static_cast<size_t>(n));
+    pbump(static_cast<int>(n));
+    return n;
+  }
+  int sync() override { drain(); return 0; }
+
+ private:
+  void drain() {
+    s_.append(pbase(), static_cast<size_t>(pptr() - pbase()));
+    setp(buf_, buf_ + sizeof(buf_));
+  }
+  std::string& s_;
+  char buf_[8192];
 };
 
 // Get specifier keyword
@@ -831,6 +875,7 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
   const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
 
   auto worker = [&]() {
+    std::string local;  // reused across pieces to amortize capacity
     for (;;) {
       size_t i = next.fetch_add(1);
       if (i >= m) break;
@@ -838,12 +883,20 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
         std::unique_lock<std::mutex> lk(mu);
         cv.wait(lk, [&] { return i < consumed + W; });
       }
-      std::ostringstream oss;
-      WritePrimSpec(oss, *layer.prim(flist[i].first), layer, flist[i].second,
-                    opts, /*sctx=*/nullptr);
+      // Serialize straight into a std::string (no std::ostringstream internal
+      // buffer + no .str() copy of the whole subtree). StringAppendBuf batches
+      // the writer's small `os <<` tokens so there is no per-char virtual call.
+      local.clear();
+      {
+        StringAppendBuf sb(local);
+        std::ostream os(&sb);
+        WritePrimSpec(os, *layer.prim(flist[i].first), layer, flist[i].second,
+                      opts, /*sctx=*/nullptr);
+        os.flush();  // drain sb's put-area into `local`
+      }
       {
         std::lock_guard<std::mutex> lk(mu);
-        results[i] = oss.str();
+        results[i] = std::move(local);
         ready[i] = 1;
       }
       cv.notify_all();
