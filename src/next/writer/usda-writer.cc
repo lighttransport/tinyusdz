@@ -38,6 +38,18 @@ struct StitchCtx {
   std::function<void(StreamWriter&, int)> emit;
 };
 
+// Freestanding integer -> decimal string (no libc itoa / std::to_string).
+inline std::string UIntToStr(uint64_t v) {
+  char buf[20];
+  char* p = buf + sizeof(buf);
+  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
+  return std::string(p, static_cast<size_t>(buf + sizeof(buf) - p));
+}
+inline std::string IntToStr(long long v) {
+  if (v < 0) return "-" + UIntToStr(~static_cast<uint64_t>(v) + 1u);
+  return UIntToStr(static_cast<uint64_t>(v));
+}
+
 // Get specifier keyword
 const char* SpecifierKeyword(PrimSpecifier spec) {
   switch (spec) {
@@ -214,7 +226,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kInterpolation)
     kv("interpolation = " + EscapeString(m->interpolation));
   if (m->authored & PropMeta::kElementSize)
-    kv("elementSize = " + std::to_string(m->elementSize));
+    kv("elementSize = " + IntToStr(static_cast<long long>(m->elementSize)));
   if (m->authored & PropMeta::kColorSpace)
     kv("colorSpace = " + EscapeString(m->colorSpace));
   if (m->authored & PropMeta::kCustomData)
@@ -243,7 +255,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     kv("weight = " + ss.str());
   }
   if (m->authored & PropMeta::kUnauthoredIdx)
-    kv("unauthoredValuesIndex = " + std::to_string(m->unauthoredValuesIndex));
+    kv("unauthoredValuesIndex = " + IntToStr(static_cast<long long>(m->unauthoredValuesIndex)));
   if (m->authored & PropMeta::kAllowedTokens) {
     std::string s = "allowedTokens = [";
     for (size_t i = 0; i < m->allowedTokens.size(); ++i) {
