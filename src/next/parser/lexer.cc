@@ -163,7 +163,8 @@ void Lexer::skip_line() {
   }
 }
 
-bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
+bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
+                                      bool* out_simple) {
   if (!out_data || !out_len) return false;
   const Token& tok = peek();
   if (tok.type != TokenType::OpenBracket) {
@@ -175,6 +176,9 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
   const size_t start = pos_ > 0 ? pos_ - 1 : 0;
   has_current_ = false;
 
+  // "Simple" = no comment/string/asset/nested-bracket bytes inside, so every
+  // comma/paren is a pure separator (safe to split for parallel numeric parse).
+  bool simple = true;
   int depth = 1;
   while (pos_ < length_ && depth > 0) {
     // SIMD-skip the "boring" array bytes (digits/commas/whitespace) straight to
@@ -193,11 +197,13 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
     const char c = current_char();
 
     if (c == '#') {
+      simple = false;  // comment bytes may contain commas/parens/']'
       skip_comment();
       continue;
     }
 
     if (c == '"' || c == '\'') {
+      simple = false;  // string bytes may contain separators
       const char quote = c;
       advance();
       bool triple = false;
@@ -229,6 +235,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
     }
 
     if (c == '@') {
+      simple = false;  // asset-ref bytes may contain separators
       advance();
       while (pos_ < length_) {
         if (current_char() == '\\') {
@@ -246,6 +253,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
     }
 
     if (c == '[') {
+      simple = false;  // nested array: separators are not flat
       depth++;
     } else if (c == ']') {
       depth--;
@@ -260,6 +268,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len) {
 
   *out_data = data_ + start;
   *out_len = pos_ - start;
+  if (out_simple) *out_simple = simple;
   has_current_ = false;
   return true;
 }

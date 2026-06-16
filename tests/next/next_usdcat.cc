@@ -19,6 +19,7 @@
 #include <string>
 
 #include "next/pcp/cache.hh"
+#include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
@@ -40,6 +41,10 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
 
 int main(int argc, char **argv) {
   bool flatten = false;
+  // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
+  // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
+  // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
+  bool rewrite_layer = false;
   bool openusd_compat = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
@@ -50,6 +55,8 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
+    } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
+      rewrite_layer = true;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
     } else if ((std::strcmp(argv[i], "-o") == 0 ||
@@ -86,10 +93,15 @@ int main(int argc, char **argv) {
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] [-o out.usda] "
+    std::fprintf(stderr, "Usage: next_usdcat [-l|-f|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "file.usd[acz]\n");
+    return 2;
+  }
+  if (rewrite_layer && flatten) {
+    std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
+                         "(rewrite-layer is a compose-free parse->write).\n");
     return 2;
   }
 
@@ -102,6 +114,73 @@ int main(int argc, char **argv) {
     return std::chrono::duration<double, std::milli>(d).count();
   };
   const auto t_start = Clock::now();
+
+  // Compose-free RAW parse->write path (measure parser/writer in isolation).
+  if (rewrite_layer) {
+    std::string warn, err;
+    auto layer = pcp::LoadLayerFromFile(filename, &warn, &err);  // PARSE only
+    const auto t_parsed = Clock::now();
+    emit_lines(warn, "WARN : ");
+    if (!layer) {
+      emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
+      return 1;
+    }
+    if (!err.empty()) emit_lines(err, "WARN : ");
+
+    USDAWriteOptions wopts;
+    wopts.emit_custom = openusd_compat;
+    wopts.num_threads = 0;  // auto; TINYUSDZ_NEXT_NUM_THREADS overrides (1 = serial)
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      wopts.num_threads = std::atoi(nt);
+    }
+    std::FILE* fp = stdout;
+    if (out_path) {
+      fp = std::fopen(out_path, "wb");
+      if (!fp) {
+        std::fprintf(stderr, "ERR : cannot open output file: %s\n", out_path);
+        return 1;
+      }
+    }
+    USDAWriteResult res;
+    {
+      StreamWriter w(StdioSink(fp));
+      res = WriteLayer(w, *layer, wopts);  // flushes before returning
+    }
+    const bool flush_ok = (std::fflush(fp) == 0);
+    const bool close_ok = out_path ? (std::fclose(fp) == 0) : true;
+    if (!res.success || !flush_ok || !close_ok) {
+      std::fprintf(stderr, "ERR : %s\n",
+                   res.error.empty() ? "write/flush failed (disk full?)"
+                                     : res.error.c_str());
+      return 1;
+    }
+    const auto t_written = Clock::now();
+    if (timing) {
+      const double pms = ms(t_parsed - t_start);
+      const double wms = ms(t_written - t_parsed);
+      std::fprintf(stderr,
+                   "[next_usdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
+                   pms, wms, ms(t_written - t_start));
+      // RAW parse throughput is relative to the input file size.
+      long insz = 0;
+      if (std::FILE* inf = std::fopen(filename, "rb")) {
+        std::fseek(inf, 0, SEEK_END);
+        insz = std::ftell(inf);
+        std::fclose(inf);
+      }
+      if (insz > 0 && pms > 0.0) {
+        std::fprintf(stderr, "[next_usdcat] parsed %ld bytes = %.0f MB/s\n",
+                     insz, double(insz) / 1048576.0 / (pms / 1000.0));
+      }
+      if (res.bytes_written > 0 && wms > 0.0) {
+        std::fprintf(stderr, "[next_usdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
+                     res.bytes_written,
+                     double(res.bytes_written) / 1048576.0 / (wms / 1000.0),
+                     out_path ? " -> " : "", out_path ? out_path : "");
+      }
+    }
+    return 0;
+  }
 
   std::string warn, err;
   Stage stage;
@@ -162,8 +241,14 @@ int main(int argc, char **argv) {
       StreamWriter w(StdioSink(fp));
       res = WriteUSDA(w, stage, wopts);  // flushes the buffer before returning
     }
-    std::fflush(fp);
-    if (out_path) std::fclose(fp);
+    const bool flush_ok = (std::fflush(fp) == 0);
+    const bool close_ok = out_path ? (std::fclose(fp) == 0) : true;
+    if (!res.success || !flush_ok || !close_ok) {
+      std::fprintf(stderr, "ERR : %s\n",
+                   res.error.empty() ? "write/flush failed (disk full?)"
+                                     : res.error.c_str());
+      return 1;
+    }
     size_t bytes_written = res.bytes_written;
     const auto t_written = Clock::now();
     if (timing) {
