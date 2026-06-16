@@ -1081,22 +1081,6 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
 // brackets), so every comma/paren is a pure separator. On any worker failure
 // (a boundary edge case), the caller falls back to a serial parse — so the
 // parallel path can only ever be an optimization, never a correctness risk.
-#if defined(TINYUSDZ_ENABLE_THREAD)
-
-static int ResolveParseThreads() {
-  static const int n = [] {
-    if (const char* e = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
-      int v = std::atoi(e);
-      if (v == 1) return 1;
-      if (v > 1) return v;
-    }
-    int hw = static_cast<int>(std::thread::hardware_concurrency());
-    if (hw < 1) hw = 1;
-    return std::min(hw, 8);
-  }();
-  return n;
-}
-
 // Min array text size to bother spawning threads, and min bytes per worker chunk.
 // Conservative: only clearly-large arrays parallelize (the gain is memory-bandwidth
 // bound, so a lower threshold only adds thread-spawn overhead on medium arrays for
@@ -1113,33 +1097,55 @@ template <class T, uint32_t N, class ParseOne>
 bool ParseChunkFlat(const char* b, const char* e, bool is_last,
                     std::vector<T>* local, ParseOne parse_one) {
   SliceParser sp{b, e};
-  sp.skip_ws();
-  if (sp.p >= sp.end) return true;  // empty chunk
+  // Inline whitespace skip. `simple` arrays (the only ones reaching here) contain
+  // no `#` comments, so this matches SliceParser::skip_ws on this input. Hoisting
+  // it out of parse_one/maybe_consume collapses the 3 skip_ws + the maybe_consume
+  // call per element down to one ws scan per separator — the per-element overhead
+  // dominates for short-token arrays (indices, 0/1 values) where each fast_float
+  // call is tiny.
+  const char* const end = sp.end;
+  auto skipws = [&] {
+    const char* p = sp.p;
+    while (p < end) {
+      const char c = *p;
+      if (c == ' ' || c == '\t' || c == '\r' || c == '\n') ++p;
+      else break;
+    }
+    sp.p = p;
+  };
+  skipws();
+  if (sp.p >= end) return true;  // empty chunk
   while (true) {
     if (N == 1) {
       T v{};
-      if (!parse_one(&sp, &v)) return false;
+      if (!parse_one(&sp, &v)) return false;  // parse_one's own skip_ws is a no-op here
       local->push_back(v);
     } else {
-      if (!sp.consume('(')) return false;
+      if (sp.p >= end || *sp.p != '(') return false;
+      ++sp.p;
       for (uint32_t i = 0; i < N; i++) {
         T v{};
-        if (!parse_one(&sp, &v)) return false;
+        if (!parse_one(&sp, &v)) return false;  // parse_one skips leading ws
         local->push_back(v);
-        if (i + 1 < N && !sp.consume(',')) return false;
+        skipws();
+        if (i + 1 < N) {
+          if (sp.p >= end || *sp.p != ',') return false;
+          ++sp.p;
+        }
       }
-      if (!sp.consume(')')) return false;
+      if (sp.p >= end || *sp.p != ')') return false;
+      ++sp.p;
     }
-    const bool had_comma = sp.maybe_consume(',');
-    sp.skip_ws();
-    if (sp.p >= sp.end) {
-      // Reached the chunk end. A trailing separator is the normal inter-chunk
-      // boundary, but on the FINAL chunk it is a trailing comma before ']' which
-      // the serial parser rejects.
-      if (had_comma && is_last) return false;
-      return true;
+    skipws();
+    if (sp.p >= end) return true;     // last element of chunk, no trailing comma
+    if (*sp.p != ',') return false;   // adjacent elements with no separator
+    ++sp.p;                            // consume the separator comma
+    skipws();
+    if (sp.p >= end) {
+      // Trailing separator: the normal inter-chunk boundary, but on the FINAL
+      // chunk it is a trailing comma before ']' which the serial parser rejects.
+      return is_last ? false : true;
     }
-    if (!had_comma) return false;  // adjacent elements with no separator
   }
 }
 
@@ -1156,6 +1162,22 @@ const char* SnapElementBoundary(const char* t, const char* end) {
   }
   const char* c = static_cast<const char*>(std::memchr(t, ',', size_t(end - t)));
   return c ? c + 1 : end;
+}
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+static int ResolveParseThreads() {
+  static const int n = [] {
+    if (const char* e = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      int v = std::atoi(e);
+      if (v == 1) return 1;
+      if (v > 1) return v;
+    }
+    int hw = static_cast<int>(std::thread::hardware_concurrency());
+    if (hw < 1) hw = 1;
+    return std::min(hw, 8);
+  }();
+  return n;
 }
 
 // Returns true and fills *out on success; false => caller does a serial fallback.
@@ -1214,6 +1236,18 @@ bool ParseNumericArrayParallel(const char* data, size_t len, std::vector<T>* out
 
 // Parse a scalar numeric array, using the parallel path for large simple arrays
 // and falling back to the serial SliceParser otherwise.
+// Serial parse of a whole simple array span ([ .. ]) through the tight
+// ParseChunkFlat inner loop — the same low-per-element-overhead path the parallel
+// workers use, so sub-threshold (and threads-off) arrays get the same speedup.
+template <class T, uint32_t N, class ParseOne>
+bool ParseSimpleArraySerial(const char* data, size_t len, std::vector<T>* out,
+                            ParseOne parse_one) {
+  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+  out->clear();
+  return ParseChunkFlat<T, N>(data + 1, data + len - 1, /*is_last=*/true, out,
+                              parse_one);
+}
+
 template <class T, class ParseOne>
 bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
                                    std::vector<T>* out, ParseOne parse_one) {
@@ -1221,9 +1255,10 @@ bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
   if (simple && ParseNumericArrayParallel<T, 1>(data, len, out, parse_one)) {
     return true;
   }
-#else
-  (void)simple;
 #endif
+  if (simple && ParseSimpleArraySerial<T, 1>(data, len, out, parse_one)) {
+    return true;
+  }
   SliceParser sp{data, data + len};
   return ParseScalarArray<T>(&sp, out, parse_one);
 }
@@ -1236,9 +1271,10 @@ bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
   if (simple && ParseNumericArrayParallel<T, N>(data, len, out, parse_one)) {
     return true;
   }
-#else
-  (void)simple;
 #endif
+  if (simple && ParseSimpleArraySerial<T, N>(data, len, out, parse_one)) {
+    return true;
+  }
   SliceParser sp{data, data + len};
   return ParseTupleArray<T, N>(&sp, out, parse_one);
 }
