@@ -6,10 +6,12 @@
 #include "ascii-parser.hh"
 #include "lexer.hh"
 #include "value-parser.hh"
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 namespace tinyusdz {
 namespace next {
@@ -706,7 +708,16 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
         if (Check(TokenType::Number)) {
           std::string num;
           lexer_->expect(TokenType::Number, num);
-          double v = std::strtod(num.c_str(), nullptr);
+          // Freestanding double parse (fast_float; no libc strtod).
+          double v = 0.0;
+          {
+            const char* b = num.c_str();
+            const char* e = b + num.size();
+            auto r = fast_float::from_chars(b, e, v);
+            if (!(r.ec == std::errc{} && r.ptr == e) && b < e && *b == '+') {
+              fast_float::from_chars(b + 1, e, v);
+            }
+          }
           if (k == "offset") off = v;
           else if (k == "scale") scl = v;
         }
