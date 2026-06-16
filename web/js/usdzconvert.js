@@ -92,6 +92,10 @@ container.innerHTML = `
 
       <label>JPEG quality</label>
       <input id="jpegQuality" type="number" min="1" max="100" value="90" style="padding:4px;width:120px">
+
+      <label>Max USDC size (MB)</label>
+      <input id="maxUsdcMb" type="number" min="0" step="64" value="0" style="padding:4px;width:120px"
+             title="0 = conservative default (~100 MB). Raise for large scenes whose flattened USDC root exceeds it. 2048 (2 GB) is the cross-browser-safe ceiling (Firefox/Safari ArrayBuffer limit + wasm32 2 GB heap); Chrome allows up to ~4096.">
     </div>
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
@@ -170,6 +174,7 @@ const els = {
   arkitCompatible: document.getElementById('arkitCompatible'),
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
+  maxUsdcMb: document.getElementById('maxUsdcMb'),
   nameSuffix: document.getElementById('nameSuffix'),
   nameCustom: document.getElementById('nameCustom'),
   namePreview: document.getElementById('namePreview'),
@@ -513,6 +518,12 @@ els.btnConvert.addEventListener('click', async () => {
       flatten: els.flatten.checked,
       arkitCompatible: els.arkitCompatible.checked,
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
+      // Raise the USDC writer's file-size AND working-memory caps together: a
+      // raised file cap with the conservative default memory cap forces a slow
+      // low-memory writer path (and can abort near the wasm32 2 GB heap). On
+      // wasm32 the heap is bounded at 2 GB regardless, so mirroring is safe.
+      maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
+      maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       log,
     };
     // The browser canvas resizes in gamma space (== "linear" filter). When the

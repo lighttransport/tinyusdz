@@ -46,6 +46,11 @@ if (TINYUSDZ_WASM_SIMD)
     message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
     set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
   endif()
+else()
+  # No wasm SIMD: also force the next parser's scanner onto its scalar path so
+  # Backend() honestly reports "scalar" (the SSE2/NEON gates are inert on wasm
+  # anyway, but keep one SIMD knob coherent across the build).
+  add_compile_definitions(TINYUSDZ_DISABLE_SIMD)
 endif()
 
 set(TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "")

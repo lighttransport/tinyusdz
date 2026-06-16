@@ -81,7 +81,7 @@ jobs:
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-with-osd.sh
     - name: make
-      run: cd build && make
+      run: cmake --build build
     - name: test
       run: cd build && ctest --output-on-failure
 
@@ -122,7 +122,7 @@ jobs:
     - name: configure
       run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cd build && make
+      run: cmake --build build
     - name: tests
       run: cd build && ctest --output-on-failure
 
@@ -247,7 +247,7 @@ jobs:
     - name: configure
       run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cd build && make
+      run: cmake --build build
 
     - name: Upload ARM64 tusdcat binary
       uses: actions/upload-artifact@v4
@@ -292,7 +292,7 @@ jobs:
     - name: configure
       run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
-      run: cd build && make
+      run: cmake --build build
 
     - name: Upload ARM64 tusdcat binary
       uses: actions/upload-artifact@v4

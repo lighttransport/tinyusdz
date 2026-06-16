@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <filesystem>
 #include <fstream>
 #include <cmath>
 #include <map>
@@ -18,6 +17,7 @@
 #include <vector>
 
 #include "layer.hh"
+#include "io-util.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "value-clip-utils.hh"
@@ -45,13 +45,10 @@ std::string ToPosixPath(std::string path) {
 }
 
 std::string MakeTempUSDFilePath(const std::string &prefix) {
-  std::error_code ec;
-  std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
-  if (ec) {
-    dir = std::filesystem::current_path();
-  }
   static int counter = 0;
-  return (dir / (prefix + "_" + std::to_string(counter++) + ".usda")).string();
+  return tinyusdz::io::JoinPath(
+      tinyusdz::io::GetTempDir(),
+      prefix + "_" + std::to_string(counter++) + ".usda");
 }
 
 bool WriteTextFile(const std::string &path, const std::string &content) {
@@ -68,8 +65,7 @@ void CleanupTempFiles(const std::vector<std::string> &paths) {
     if (path.empty()) {
       continue;
     }
-    std::error_code ec;
-    (void)std::filesystem::remove(path, ec);
+    (void)tinyusdz::io::RemoveFile(path);
   }
 }
 
@@ -1657,13 +1653,9 @@ void tydra_udim_texture_test(void) {
   // --- Set up a temp directory with 3 UDIM tiles: 1001, 1002, 1011 ---
   // Tiles: 1001 -> (u0,v0), 1002 -> (u1,v0), 1011 -> (u0,v1).
   // Grid bounds => cols=2, rows=2.
-  std::error_code ec;
-  std::filesystem::path tmpdir =
-      std::filesystem::temp_directory_path(ec) / "tinyusdz_udim_test";
-  if (ec) {
-    tmpdir = std::filesystem::current_path() / "tinyusdz_udim_test";
-  }
-  std::filesystem::create_directories(tmpdir, ec);
+  const std::string tmpdir =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_udim_test");
+  tinyusdz::io::CreateDirectories(tmpdir);
 
   auto make_tile = [](uint8_t r, uint8_t g, uint8_t b) {
     Image img;
@@ -1691,7 +1683,7 @@ void tydra_udim_texture_test(void) {
   for (const auto &ts : tile_specs) {
     Image img = make_tile(ts.r, ts.g, ts.b);
     const std::string path =
-        (tmpdir / ("tile." + std::to_string(ts.id) + ".png")).string();
+        tinyusdz::io::JoinPath(tmpdir, "tile." + std::to_string(ts.id) + ".png");
     auto wret = image::WriteImageToFile(path, img);
     if (!wret) {
       wrote_all = false;
@@ -1709,7 +1701,7 @@ void tydra_udim_texture_test(void) {
   // --- Direct helper test: ExpandUDIMTiles ---
   {
     AssetResolutionResolver resolver;
-    resolver.set_search_paths({tmpdir.string()});
+    resolver.set_search_paths({tmpdir});
 
     std::vector<tydra::UDIMTile> tiles;
     std::string warn, err;
@@ -1799,7 +1791,7 @@ void tydra_udim_texture_test(void) {
   {
     Stage stage = make_stage();
     tydra::RenderSceneConverterEnv env(stage);
-    env.set_search_paths({tmpdir.string()});
+    env.set_search_paths({tmpdir});
     env.material_config.combine_udim_tiles = true;
     env.material_config.udim_max_atlas_size = 256;
 
@@ -1822,7 +1814,7 @@ void tydra_udim_texture_test(void) {
   {
     Stage stage = make_stage();
     tydra::RenderSceneConverterEnv env(stage);
-    env.set_search_paths({tmpdir.string()});
+    env.set_search_paths({tmpdir});
     env.material_config.combine_udim_tiles = false;
 
     tydra::RenderScene scene;
@@ -1847,7 +1839,7 @@ void tydra_udim_texture_test(void) {
   }
 
   CleanupTempFiles(tile_files);
-  std::filesystem::remove(tmpdir, ec);
+  tinyusdz::io::RemoveAll(tmpdir);
 }
 
 void tydra_envmap_loader_policy_test(void) {

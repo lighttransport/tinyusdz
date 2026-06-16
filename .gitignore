@@ -447,3 +447,6 @@ python/tinyusdz/_version.py
 # Local AI assistant scratch files
 .codex
 .claude/
+
+# Private notes / scratch docs (may reference proprietary asset names) — never commit
+priv/

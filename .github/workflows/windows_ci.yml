@@ -14,7 +14,7 @@ on:
 
 jobs:
 
-  # Windows(x64) + Visual Studio 2019 build
+  # Windows(x64) + Visual Studio 2026 build
   build-windows-msvc:
 
     runs-on: windows-latest
@@ -117,7 +117,7 @@ jobs:
           Write-Host "All Windows x64 tests passed!"
           exit 0
 
-  # Windows(32bit) + Visual Studio 2019 build
+  # Windows(32bit) + Visual Studio 2026 build
   build-windows-msvc-win32:
 
     runs-on: windows-latest
