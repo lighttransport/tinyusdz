@@ -1306,8 +1306,16 @@ struct Cache::Impl {
     uint32_t depth = 0;
   };
 
+  // Temporary internal-breakdown profiling accumulators (ns), summed across all
+  // root subtrees; printed by the top-level BuildStage under TINYUSDZ_NEXT_TIMING.
+  mutable uint64_t prof_sources_ns_ = 0;
+  mutable uint64_t prof_compose_ns_ = 0;
+  mutable uint64_t prof_reg_ns_ = 0;
+
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) {
+    using ProfClock = std::chrono::steady_clock;
+    const bool prof = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
     std::vector<BuildStageWork> stack;
     stack.push_back(root_work);
 
@@ -1324,17 +1332,26 @@ struct Cache::Impl {
                  err);
         continue;
       }
+      auto ps0 = prof ? ProfClock::now() : ProfClock::time_point{};
       const std::vector<Src> &srcs = SourcesForPath(w.src_path, warn, err);
+      auto ps1 = prof ? ProfClock::now() : ProfClock::time_point{};
 
       PrimSpec spec(w.out_path.name());
       spec.set_path(w.out_path);
       std::vector<std::string> children = ComposeInto(srcs, &spec);
+      auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
+      if (prof) {
+        prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
+        prof_compose_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps2 - ps1).count();
+      }
 
       // Instancing: register this prim. If it is an instance (not the prototype
       // of its group), link it to the prototype and do NOT duplicate its subtree
       // -- children are provided by the prototype (UsdPrim follows
       // instance_prototype).
+      auto pr0 = prof ? ProfClock::now() : ProfClock::time_point{};
       RegisterInstance(w.out_path.str(), srcs);
+      if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
       bool is_instance = false;
       {
         auto pit = prototype_of.find(w.out_path.str());
@@ -1401,9 +1418,16 @@ struct Cache::Impl {
         if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
       }
     }
+    prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     for (const std::string &nm : root_names) {
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
+    }
+    if (std::getenv("TINYUSDZ_NEXT_TIMING")) {
+      std::fprintf(stderr,
+                   "[next_build] sources=%.1fms compose=%.1fms register=%.1fms\n",
+                   prof_sources_ns_ / 1e6, prof_compose_ns_ / 1e6,
+                   prof_reg_ns_ / 1e6);
     }
 
     switch (options.instance_flatten_mode) {
