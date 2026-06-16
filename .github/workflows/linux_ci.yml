@@ -203,6 +203,30 @@ jobs:
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
+  # Build with the experimental `next` (pcp large-scene) backend enabled.
+  # The default build and the rest of CI do NOT compile src/next/ — it is gated
+  # behind TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE — so this variant exists to keep the
+  # next/ library + examples from silently bit-rotting against core API changes.
+  build-next:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_next -S . -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On \
+          -DTINYUSDZ_WITH_TYDRA=On \
+          -DTINYUSDZ_BUILD_TOOLS=On \
+          -DTINYUSDZ_BUILD_EXAMPLES=On \
+          -DTINYUSDZ_BUILD_TESTS=On
+    - name: make
+      run: cmake --build build_next
+    - name: tests
+      run: cd build_next && ctest --output-on-failure
+
   # ARM64 ASan build — disabled. Deprecated; re-enable when the asan
   # runtime setup on the ubuntu-24.04-arm runner is sorted out.
   # build-arm64-asan:
