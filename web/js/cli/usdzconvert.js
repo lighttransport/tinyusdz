@@ -93,6 +93,14 @@ Convert options:
                            parallel; non-PNG falls back to wasm)
   --texture-jobs <N>       Worker threads for --texture-codec js (default: cores-1)
   --no-reencode            Copy unmodified textures through unchanged
+  --optimize-materials <mode>
+                           Material optimization: off, dedupe, preview, atlas.
+                           preview/atlas currently fall back safely to exact dedupe.
+  --material-atlas-size <N>       Max generated atlas edge (default 4096)
+  --material-atlas-tile-size <N>  Tile edge for atlas mode (default 512)
+  --material-atlas-padding <N>    Gutter padding pixels for atlas mode (default 2)
+  --material-atlas-min-group-size <N>
+                           Minimum compatible materials before atlas generation
   -v, --verbose            Verbose logging
   -h, --help               Show this help
 
@@ -140,6 +148,11 @@ function parseArgs() {
     // node:zlib), in parallel; non-PNG textures still fall back to WASM.
     textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'wasm',
     textureJobs: 0,  // 0 = cpu count - 1
+    optimizeMaterials: 'off',
+    materialAtlasSize: 4096,
+    materialAtlasTileSize: 512,
+    materialAtlasPadding: 2,
+    materialAtlasMinGroupSize: 2,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -168,6 +181,11 @@ function parseArgs() {
     else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '--texture-codec') o.textureCodec = args[++i];
     else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
+    else if (a === '--optimize-materials') o.optimizeMaterials = args[++i];
+    else if (a === '--material-atlas-size') o.materialAtlasSize = parseInt(args[++i], 10) || 4096;
+    else if (a === '--material-atlas-tile-size') o.materialAtlasTileSize = parseInt(args[++i], 10) || 512;
+    else if (a === '--material-atlas-padding') o.materialAtlasPadding = parseInt(args[++i], 10) || 0;
+    else if (a === '--material-atlas-min-group-size') o.materialAtlasMinGroupSize = parseInt(args[++i], 10) || 2;
     else if (a === '--url-list') o.urlList = args[++i];
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
@@ -276,6 +294,11 @@ async function runStreamingConvert(native, o) {
       maxMemMb: o.maxMemMb,
       pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
       streamWrite: o.streamWrite,
+      optimizeMaterials: o.optimizeMaterials,
+      materialAtlasSize: o.materialAtlasSize,
+      materialAtlasTileSize: o.materialAtlasTileSize,
+      materialAtlasPadding: o.materialAtlasPadding,
+      materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 4,
       zipSink,
@@ -348,6 +371,36 @@ async function main() {
   if (!['usdc', 'usda'].includes(String(o.rootLayerFormat).toLowerCase())) {
     console.error('Invalid --root-layer-format. Expected usdc or usda.');
     process.exit(1);
+  }
+  o.optimizeMaterials = String(o.optimizeMaterials || 'off').toLowerCase();
+  if (!['off', 'none', 'dedupe', 'dedup', 'preview', 'previewsurface', 'usdpreviewsurface', 'atlas'].includes(o.optimizeMaterials)) {
+    console.error('Invalid --optimize-materials. Expected off, dedupe, preview, or atlas.');
+    process.exit(1);
+  }
+  if (o.optimizeMaterials === 'none') o.optimizeMaterials = 'off';
+  if (o.optimizeMaterials === 'dedup') o.optimizeMaterials = 'dedupe';
+  if (o.optimizeMaterials === 'previewsurface' || o.optimizeMaterials === 'usdpreviewsurface') {
+    o.optimizeMaterials = 'preview';
+  }
+  if (o.materialAtlasSize < 1 || o.materialAtlasSize > 32768) {
+    console.error('--material-atlas-size must be 1-32768.');
+    process.exit(1);
+  }
+  if (o.materialAtlasTileSize < 1 || o.materialAtlasTileSize > o.materialAtlasSize) {
+    console.error('--material-atlas-tile-size must be positive and <= --material-atlas-size.');
+    process.exit(1);
+  }
+  if (o.materialAtlasPadding < 0 || o.materialAtlasPadding > 1024) {
+    console.error('--material-atlas-padding must be 0-1024.');
+    process.exit(1);
+  }
+  if (o.materialAtlasMinGroupSize < 1) {
+    console.error('--material-atlas-min-group-size must be positive.');
+    process.exit(1);
+  }
+  if (o.optimizeMaterials !== 'off' && o.flatten === false) {
+    console.warn('WARN: material optimization requires flattened output; ignoring --no-flatten.');
+    o.flatten = true;
   }
 
   if (o.repack) {
@@ -448,6 +501,11 @@ async function main() {
       pipeline: o.pipeline,
       streamTextures: o.streamTextures,
       streamWrite: o.streamWrite,
+      optimizeMaterials: o.optimizeMaterials,
+      materialAtlasSize: o.materialAtlasSize,
+      materialAtlasTileSize: o.materialAtlasTileSize,
+      materialAtlasPadding: o.materialAtlasPadding,
+      materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 0,
       zipSink,
