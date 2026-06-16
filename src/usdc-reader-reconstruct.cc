@@ -586,12 +586,36 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         primspec->typeName() = pf.primTypeName;
         primspec->name() = pf.prim_name;
+        // Carry the authored specifier (def/over/class). Without this the
+        // PrimSpec defaults to `def`, silently promoting an authored `over`
+        // (e.g. a variant's pure-override child) to `def` on flatten.
+        primspec->specifier() = pf.specifier.value();
 
         prim::PropertyMap props;
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
         primspec->props() = std::move(props);
+        // Carry the crate's authored prim-CHILD ORDER field onto the PrimSpec
+        // metadata. The crate stores children lexicographically (path table
+        // order), while the authored order lives in the `primChildren`
+        // token-vector field. The Stage reconstruction path records it (see
+        // ParseCommonPrimFields + primMeta.primChildren above); the
+        // Layer/PrimSpec path dropped it, so a flattened crate came out
+        // lexicographically sorted instead of in authored order. Gated behind the
+        // opt-in so the DEFAULT flatten output stays byte-identical (without the
+        // metadata the writers keep their existing lexicographical order); when
+        // enabled, the writers reproduce the authored child order. (The Stage
+        // path always records it, so non-flatten USDC reads are unaffected.)
+        //
+        // NOTE: properties are intentionally NOT reordered -- pxr/usdcat sorts
+        // properties alphabetically (its crate writer sorts the `properties`
+        // field), which the default std::map order already matches.
+        if (pprint::GetPreserveAuthoredOrder()) {
+          if (pf.primMeta.primChildren.empty() && !pf.primChildren.empty()) {
+            pf.primMeta.primChildren = pf.primChildren;
+          }
+        }
         primspec->metas() = std::move(pf.primMeta);
 
         if (primOut) {

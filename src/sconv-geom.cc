@@ -1595,7 +1595,7 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       type_name = xformOp._var.value_raw().type_name();
     } else if (xformOp.has_timesamples()) {
       // Get type from first sample
-      const value::TimeSamples& ts = xformOp._var._ts;
+      const value::TimeSamples& ts = xformOp._var.ts_raw();
       if (ts.size() > 0) {
         type_name = ts.get_samples()[0].value.type_name();
       } else {
@@ -1625,7 +1625,7 @@ bool CrateWriter::ExtractXformOpsFromXformable(
 
     // Add timeSamples if present (as a field on the same spec)
     if (xformOp.has_timesamples()) {
-      const value::TimeSamples& ts = xformOp._var._ts;
+      const value::TimeSamples& ts = xformOp._var.ts_raw();
 
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);

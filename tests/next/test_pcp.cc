@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -245,6 +246,440 @@ static void test_compose_prim_lazy() {
   std::cout << "  OK" << std::endl;
 }
 
+// pxr composes namespace child ORDER weak->strong (PcpComposeSiteChildNames):
+// each arc/layer appends its unseen child names weakest-first, so a reference's
+// children precede local-only children. Here /Inst references /Lib/Asset (kids
+// [X, Materials]) and locally authors [X (over), LocalOnly]; the composed order
+// must be [X, Materials, LocalOnly] -- NOT the strong-first [X, LocalOnly,
+// Materials]. Verified against `usdcat --flatten`.
+static void test_child_order_weak_to_strong() {
+  std::cout << "test_child_order_weak_to_strong..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  // Referenced asset with children [X, Materials].
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Asset", "");
+  lb.begin_prim("X", "Scope");
+  lb.end_prim();  // X
+  lb.begin_prim("Materials", "Scope");
+  lb.end_prim();  // Materials
+  lb.end_prim();  // Asset
+  lb.end_prim();  // Lib
+  // Inst references the asset; local children [X (over), LocalOnly].
+  lb.begin_prim("Inst", "");
+  lb.current()->meta().references.push_back("</Lib/Asset>");
+  lb.begin_prim("X", "");  // local override of the referenced X
+  lb.end_prim();
+  lb.begin_prim("LocalOnly", "Scope");
+  lb.end_prim();
+  lb.end_prim();  // Inst
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  std::vector<std::string> kids =
+      cache.ComposedChildNames(Path("/Inst"), &warn, &err);
+  assert(kids.size() == 3 && "Inst should have 3 children");
+  assert(kids[0] == "X" && "common child X first (reference position)");
+  assert(kids[1] == "Materials" &&
+         "reference-only Materials before local-only (weak->strong)");
+  assert(kids[2] == "LocalOnly" && "local-only child last");
+  std::cout << "  OK" << std::endl;
+}
+
+// Crate-authored variants: pxr crates store variant content as bracketed HOLDER
+// prims ("/Asset/{LOD=high}/LOD0") with a VariantSetData carrying only
+// {name, selected} (no inline content). The compositor must graft the selected
+// holder's descendants onto the host. Combined with a reference + local overrides
+// this reproduces a real UE-exported case: asset locally [Materials] +
+// variant [LOD0]; host references it and authors over LOD0 + def LOD1 -> the
+// composed order is [LOD0, Materials, LOD1] (variant child first, weak->strong),
+// and the "{LOD=high}" marker must NOT appear as a child.
+static void test_crate_style_variant_holder() {
+  std::cout << "test_crate_style_variant_holder..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  // Referenced asset with a crate-style selected variant set.
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Asset", "");
+  {
+    VariantSetData vss;
+    vss.name = "LOD";
+    vss.selected = "high";  // crate form: selection only, no inline content
+    lb.current()->meta().variantSets().push_back(std::move(vss));
+  }
+  lb.begin_prim("Materials", "Scope");  // asset-local child
+  lb.end_prim();
+  lb.begin_prim("{LOD=high}", "");  // bracketed variant holder
+  lb.begin_prim("LOD0", "Scope");   // variant content child
+  lb.end_prim();
+  lb.end_prim();  // {LOD=high}
+  lb.end_prim();  // Asset
+  lb.end_prim();  // Lib
+  // Host references the asset and locally authors over LOD0 + def LOD1.
+  lb.begin_prim("Inst", "");
+  lb.current()->meta().references.push_back("</Lib/Asset>");
+  lb.begin_prim("LOD0", "");  // local override of the variant child
+  lb.end_prim();
+  lb.begin_prim("LOD1", "Scope");  // local-only child
+  lb.end_prim();
+  lb.end_prim();  // Inst
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  std::vector<std::string> kids =
+      cache.ComposedChildNames(Path("/Inst"), &warn, &err);
+  // No bracketed marker child; variant content grafted; weak->strong order.
+  for (const std::string &k : kids)
+    assert(k.front() != '{' && "variant holder marker leaked as a child");
+  assert(kids.size() == 3 && "Inst should have LOD0, Materials, LOD1");
+  assert(kids[0] == "LOD0" && "variant child LOD0 first");
+  assert(kids[1] == "Materials" && "asset-local Materials second");
+  assert(kids[2] == "LOD1" && "host-local LOD1 last");
+
+  // Flatten must DROP variant-selection metadata: the selected variant's content
+  // is grafted inline, so pxr's flattened output carries no `variants = {...}` /
+  // variantSets (usdcat emits zero). Build + write and confirm none leak.
+  Stage stage;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("variants = {") == std::string::npos &&
+         "variant selection metadata must not survive flatten");
+  assert(usda.find("variantSet") == std::string::npos &&
+         "variantSet metadata/property must not survive flatten");
+  // The selected variant's content (LOD0) is still present inline.
+  assert(usda.find("\"LOD0\"") != std::string::npos &&
+         "selected variant content missing from flattened output");
+  std::cout << "  OK" << std::endl;
+}
+
+// USDA-authored `<name>.connect = </path>` must parse as a CONNECTION (stored in
+// the connection map, re-emitted as `.connect`), not as a string value
+// (`float x = "/path"`, invalid USDA). And `custom rel <name> = </path>` must
+// parse as a qualified relationship, not choke ("Expected attribute type").
+static void test_usda_connection_and_custom_rel() {
+  std::cout << "test_usda_connection_and_custom_rel..." << std::endl;
+  const std::string f = "/tmp/next_usda_conn.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Shader \"S\"\n{\n"
+         "    float inputs:metallic.connect = </Other.inputs:metallic>\n"
+         "    custom rel field:density = </Vol/density>\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  // custom rel must not fail the parse.
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("inputs:metallic.connect = </Other.inputs:metallic>") !=
+             std::string::npos &&
+         "connection must re-emit as `.connect`");
+  assert(usda.find("inputs:metallic = \"") == std::string::npos &&
+         "connection wrongly emitted as a string value");
+  assert(usda.find("field:density") != std::string::npos &&
+         "custom rel target dropped");
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A composition arc (payload) authored on a selected variant OPTION's metadata
+// block must be followed -- XGen-style assets author the geometry-defining
+// `def Mesh` in a payload on the variant, not in the variant body. Before the
+// fix the parser dropped variant-option arcs, so the prim stayed empty (the
+// 13411-specifier Moana Island residual). Relative `@./geo@` must anchor to the
+// file that authored the variant.
+static void test_variant_option_payload_arc() {
+  std::cout << "test_variant_option_payload_arc..." << std::endl;
+  const std::string geo = "/tmp/next_varopt_geo.usd";
+  const std::string root = "/tmp/next_varopt_root.usda";
+  {
+    std::ofstream o(geo);
+    o << "#usda 1.0\n"
+         "def \"geo\"\n{\n"
+         "    def Mesh \"shape\"\n    {\n"
+         "        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n"
+         "    }\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def \"Asset\" (\n"
+         "    variants = { string model = \"render\" }\n"
+         "    prepend variantSets = \"model\"\n"
+         ")\n{\n"
+         "    variantSet \"model\" = {\n"
+         "        \"render\" ( prepend payload = "
+         "@./next_varopt_geo.usd@</geo> ) {\n        }\n"
+         "        \"proxy\" {\n        }\n"
+         "    }\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("def Mesh \"shape\"") != std::string::npos &&
+         "variant-option payload geometry was not composed");
+  assert(usda.find("points = [(0, 0, 0)") != std::string::npos &&
+         "variant-option payload mesh points missing");
+  std::remove(geo.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// An authored value block (`= None`) is a real opinion that blocks weaker values
+// and must round-trip as `= None`, NOT collapse to a declared-only attribute
+// (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
+static void test_value_block_roundtrip() {
+  std::cout << "test_value_block_roundtrip..." << std::endl;
+  const std::string base = "/tmp/next_block_base.usda";
+  const std::string root = "/tmp/next_block_root.usda";
+  // A weaker sublayer authors a real index array; the stronger root blocks it.
+  { std::ofstream o(base);
+    o << "#usda 1.0\ndef Mesh \"M\"\n{\n"
+         "    int[] primvars:displayColor:indices = [0, 1, 2]\n}\n"; }
+  { std::ofstream o(root);
+    o << "#usda 1.0\n(\n    subLayers = [ @./next_block_base.usda@ ]\n)\n"
+         "over Mesh \"M\"\n{\n"
+         "    int[] primvars:displayColor:indices = None\n}\n"; }
+  AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
+  Stage stage; std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+  // The block must win over the weaker array and re-emit as `= None`.
+  assert(usda.find("int[] primvars:displayColor:indices = None") !=
+             std::string::npos &&
+         "value block did not re-emit as `= None`");
+  assert(usda.find("indices = [0, 1, 2]") == std::string::npos &&
+         "value block failed to suppress the weaker array opinion");
+  std::remove(base.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// InstanceFlattenMode::ExtractedPrototypes emits usdcat-style flatten: each
+// prototype group's shared subtree moves to a root `over "/Flattened_Prototype_N"`
+// and every member references it. Numbering is deterministic (sorted by prototype
+// path) and reproducible run-to-run. Also covers nesting (a prototype that itself
+// contains an instance references another /Flattened_Prototype_M).
+static void test_extracted_prototypes() {
+  std::cout << "test_extracted_prototypes..." << std::endl;
+  const std::string f = "/tmp/next_extract.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def \"Lib\" ( active = false )\n{\n"
+         "    def Xform \"Leaf\" { def Mesh \"M\" { int[] faceVertexCounts = [3] } }\n"
+         "    def Xform \"Cluster\"\n    {\n"
+         "        def Xform \"A\" ( instanceable = true "
+         "references = </Lib/Leaf> ) {}\n"
+         "        def Xform \"B\" ( instanceable = true "
+         "references = </Lib/Leaf> ) {}\n    }\n}\n"
+         "def Xform \"World\"\n{\n"
+         "    def Xform \"L1\" ( instanceable = true references = </Lib/Leaf> ) {}\n"
+         "    def Xform \"L2\" ( instanceable = true references = </Lib/Leaf> ) {}\n"
+         "    def Xform \"C1\" ( instanceable = true "
+         "references = </Lib/Cluster> ) {}\n"
+         "    def Xform \"C2\" ( instanceable = true "
+         "references = </Lib/Cluster> ) {}\n}\n";
+  }
+  auto flatten = [&](pcp::PrototypeNumbering num) {
+    AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
+    Stage stage; std::string warn, err;
+    pcp::CompositionOptions opts;
+    opts.instance_flatten_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
+    opts.prototype_numbering = num;
+    assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+    return WriteUSDAToString(stage);
+  };
+  const std::string usda = flatten(pcp::PrototypeNumbering::Deterministic);
+  const auto npos = std::string::npos;
+  // Two prototype groups extracted to root /Flattened_Prototype_N `over`s.
+  assert(usda.find("over \"Flattened_Prototype_1\"") != npos &&
+         "no extracted prototype root");
+  assert(usda.find("over \"Flattened_Prototype_2\"") != npos &&
+         "second prototype group not extracted");
+  // The leaf geometry moved onto a prototype root (not inline under an instance).
+  assert(usda.find("def Mesh \"M\"") != npos && "prototype geometry lost");
+  // Instances reference a /Flattened_Prototype_N (not the in-place holder path).
+  assert(usda.find("</Flattened_Prototype_1>") != npos &&
+         "instances do not reference the extracted prototype");
+  // Nested: the Cluster prototype's members reference the Leaf prototype root.
+  assert(usda.find("</Flattened_Prototype_2>") != npos &&
+         "nested prototype reference missing");
+  // Determinism: a second compose is byte-identical.
+  assert(flatten(pcp::PrototypeNumbering::Deterministic) == usda &&
+         "deterministic numbering is not reproducible");
+  // The usdcat-compatible scheme is also deterministic run-to-run.
+  const std::string uc = flatten(pcp::PrototypeNumbering::UsdcatCompatible);
+  assert(flatten(pcp::PrototypeNumbering::UsdcatCompatible) == uc &&
+         "usdcat-compatible numbering is not reproducible");
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A referenced asset's attribute connection targets must be remapped from the
+// asset-local namespace into the composed (referencing) namespace -- including
+// connections to a property on the referenced ROOT prim itself ("/Mat.attr",
+// a '.' boundary, not just descendant "/Mat/Child.attr" '/' boundaries).
+static void test_connection_namespace_remap() {
+  std::cout << "test_connection_namespace_remap..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  // Referenced asset: a Material with a value on its root + two child shaders
+  // whose connection-only inputs target (a) the material root's own property
+  // [. boundary] and (b) a sibling child's output [/ boundary].
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Mat", "Material");
+  lb.add_property("inputs:stPrimvarName", Value(std::string("st")));
+  lb.begin_prim("Reader", "Shader");
+  {
+    PropNameId vid = GetPropNameTable().intern("inputs:varname");
+    lb.current()->add_property_slot(vid, TypeId::String,
+                                    PropSlot::kFlagConnection);
+    // '.' boundary: connection to the referenced root prim's own property.
+    lb.current()->add_connection("inputs:varname",
+                                 Path("/Lib/Mat.inputs:stPrimvarName"));
+  }
+  lb.end_prim();  // Reader
+  lb.begin_prim("Surface", "Shader");
+  {
+    PropNameId did = GetPropNameTable().intern("inputs:diffuse");
+    lb.current()->add_property_slot(did, TypeId::Float3,
+                                    PropSlot::kFlagConnection);
+    // '/' boundary: connection to a descendant prim's property.
+    lb.current()->add_connection("inputs:diffuse",
+                                 Path("/Lib/Mat/Reader.outputs:result"));
+  }
+  lb.end_prim();  // Surface
+  lb.end_prim();  // Mat
+  lb.end_prim();  // Lib
+  // Host references the material asset.
+  lb.begin_prim("World", "Xform");
+  lb.begin_prim("Bound", "");
+  lb.current()->meta().references.push_back("</Lib/Mat>");
+  lb.end_prim();  // Bound
+  lb.end_prim();  // World
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  Stage stage;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+
+  // Connections must resolve to the composed namespace, NOT the asset-local one.
+  // (If remapping failed, the targets would read "/Lib/Mat..." and these exact
+  // composed-namespace strings would be absent -- so the positive checks below
+  // are sufficient. /Lib/Mat is also authored here as the internal-ref source,
+  // with its own identity-mapped connections, so a global "/Lib/Mat" absence
+  // check would not hold.)
+  assert(usda.find("</World/Bound.inputs:stPrimvarName>") != std::string::npos &&
+         "'.' boundary: root-prim-own-property connection not remapped");
+  assert(usda.find("</World/Bound/Reader.outputs:result>") != std::string::npos &&
+         "'/' boundary: descendant connection not remapped");
+  std::cout << "  OK" << std::endl;
+}
+
+// pxr composes an attribute's default VALUE and its CONNECTIONS as independent
+// fields: a stronger source's connection-only opinion must not erase a weaker
+// source's authored default. Here a local `over` adds a connection-only metallic
+// while the referenced material authors `metallic = 0`; the composed attribute
+// must carry BOTH.
+static void test_value_connection_field_compose() {
+  std::cout << "test_value_connection_field_compose..." << std::endl;
+  AssetResolver resolver;
+  std::string warn, err;
+
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Mat", "Material");
+  // (A) Surface.inputs:metallic = 0 (value, no connection).
+  lb.begin_prim("Surface", "Shader");
+  lb.add_property("inputs:metallic", Value(0.0f));
+  lb.end_prim();
+  // (B) Surface2.inputs:roughness = 0 (value) AND a connection -- both authored
+  // in the asset; the host will override with a value-ONLY opinion, and the
+  // weaker connection must survive (mirror of case A).
+  lb.begin_prim("Surface2", "Shader");
+  lb.add_property("inputs:roughness", Value(0.0f));
+  lb.current()->add_connection("inputs:roughness",
+                               Path("/Lib/Mat/Tex2.outputs:r"));
+  lb.end_prim();
+  lb.end_prim();  // Mat
+  lb.end_prim();  // Lib
+  // Host references the material and locally overrides each Surface child.
+  lb.begin_prim("World", "Xform");
+  lb.begin_prim("Bound", "");
+  lb.current()->meta().references.push_back("</Lib/Mat>");
+  // (A) over: connection-only metallic (stronger, no default) over weak value.
+  lb.begin_prim("Surface", "");
+  {
+    PropNameId mid = GetPropNameTable().intern("inputs:metallic");
+    lb.current()->add_property_slot(mid, TypeId::Float,
+                                    PropSlot::kFlagConnection);
+    lb.current()->add_connection("inputs:metallic",
+                                 Path("/World/Bound/Tex.outputs:r"));
+  }
+  lb.end_prim();
+  // (B) over: value-only roughness (stronger) over weak value+connection.
+  lb.begin_prim("Surface2", "");
+  lb.add_property("inputs:roughness", Value(0.0f));
+  lb.end_prim();
+  lb.end_prim();  // Bound
+  lb.end_prim();  // World
+  lb.finalize();
+  auto root = std::make_shared<Layer>(std::move(layer));
+
+  auto o = pcp::Cache::Open(resolver, root);
+  assert(o);
+  pcp::Cache cache = std::move(*o);
+
+  Stage stage;
+  assert(cache.BuildStage(&stage, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+
+  // (A) connection-only override must keep the weaker default value.
+  assert(usda.find("inputs:metallic = 0") != std::string::npos &&
+         "weak source's default value was dropped by the connection-only over");
+  assert(usda.find("inputs:metallic.connect = </World/Bound/Tex.outputs:r>") !=
+             std::string::npos &&
+         "connection opinion missing");
+  // (B) value-only override must keep the weaker connection (remapped), proving
+  // value and connection compose as independent fields in BOTH directions.
+  assert(usda.find("inputs:roughness = 0") != std::string::npos &&
+         "roughness value missing");
+  assert(usda.find("inputs:roughness.connect = </World/Bound/Tex2.outputs:r>") !=
+             std::string::npos &&
+         "weak source's connection was dropped by the value-only over");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_compose_prim_dependency_invalidate() {
   std::cout << "test_compose_prim_dependency_invalidate..." << std::endl;
   AssetResolver resolver;
@@ -269,6 +704,53 @@ static void test_compose_prim_dependency_invalidate() {
   const PrimSpec *after = cache.ComposePrim(Path("/World/I"), &warn, &err);
   assert(after && after->property_value("newClassOpinion") &&
          "dependency invalidation must drop stale ComposePrim cache entries");
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_compose_prim_invalidate_layer_without_index() {
+  std::cout << "test_compose_prim_invalidate_layer_without_index..." << std::endl;
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("A", "Mesh");
+    ab.end_prim();
+    ab.finalize();
+  }
+
+  auto root = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*root);
+    rb.begin_prim("World", "Xform");
+    rb.begin_prim("R", "");
+    rb.current()->meta().references.push_back("@asset@</A>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &p, const std::string &) { return p; });
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("asset", asset);
+
+  std::string warn, err;
+  const PrimSpec *before = cache.ComposePrim(Path("/World/R"), &warn, &err);
+  assert(before && before->property_value("freshLayerOpinion") == nullptr);
+  assert(!cache.HasComputedPrimIndex(Path("/World/R")) &&
+         "test must exercise lazy composition without PrimIndex dependencies");
+
+  PrimSpec *a = asset->prim_at_path_mutable("/A");
+  assert(a);
+  a->add_property("freshLayerOpinion", Value(int32_t(7)));
+  cache.InvalidateLayer("asset");
+  cache.PreloadLayer("asset", asset);
+
+  const PrimSpec *after = cache.ComposePrim(Path("/World/R"), &warn, &err);
+  assert(after && after->property_value("freshLayerOpinion") &&
+         "InvalidateLayer must drop lazy ComposePrim caches even without a PrimIndex");
   std::cout << "  OK" << std::endl;
 }
 
@@ -748,6 +1230,46 @@ static void test_inherits_specializes() {
 }
 
 // Phase 4: variant selection grafts the chosen variant's opinions only.
+// An attribute authored inside a USDA inline variant must keep its qualifier
+// flags (custom / uniform) through parse -> compose -> write. (VariantData stored
+// name->Value without flags, so the variant graft silently dropped them.)
+static void test_variant_inline_property_flags() {
+  std::cout << "test_variant_inline_property_flags..." << std::endl;
+  const std::string root = "/tmp/next_pcp_varflags.usda";
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    variants = { string v = \"a\" }\n"
+         "    prepend variantSets = \"v\"\n"
+         ")\n"
+         "{\n"
+         "    variantSet \"v\" = {\n"
+         "        \"a\" {\n"
+         "            custom bool isAsset = 1\n"
+         "            uniform token axis = \"Z\"\n"
+         "        }\n"
+         "    }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+
+  // emit_custom on so the (preserved) custom flag is visible in the output.
+  USDAWriteOptions opts;
+  opts.emit_custom = true;
+  std::string usda = WriteUSDAToString(stage, opts);
+  assert(usda.find("custom bool isAsset") != std::string::npos &&
+         "custom flag dropped from variant-grafted property");
+  assert(usda.find("uniform token axis") != std::string::npos &&
+         "uniform flag dropped from variant-grafted property");
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_variants() {
   std::cout << "test_variants..." << std::endl;
   AssetResolver resolver;
@@ -851,6 +1373,51 @@ static void test_variants_v2() {
 }
 
 // Phase 5: instancing - structural prototype detection + grouping.
+// CompositionOptions::flatten_instances turns native instancing into a
+// self-contained layer: one member of each prototype group keeps the composed
+// subtree (the holder, non-instanceable) and the others reference it.
+static void test_flatten_instances() {
+  std::cout << "test_flatten_instances..." << std::endl;
+  const std::string asset = "/tmp/next_fi_asset.usda";
+  const std::string root = "/tmp/next_fi_root.usda";
+  { std::ofstream f(asset);
+    f << "#usda 1.0\ndef Xform \"Model\" { def Mesh \"M\" { int n = 1 } }\n"; }
+  { std::ofstream f(root);
+    f << "#usda 1.0\n"
+         "def Xform \"W\"\n{\n"
+         "    def \"A\" (\n        instanceable = true\n"
+         "        prepend references = @next_fi_asset.usda@</Model>\n    ) {}\n"
+         "    def \"B\" (\n        instanceable = true\n"
+         "        prepend references = @next_fi_asset.usda@</Model>\n    ) {}\n"
+         "}\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions opts;
+  opts.flatten_instances = true;
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+  std::string usda = WriteUSDAToString(stage);
+
+  // One of {A,B} is the content holder; the other is an empty instanceable
+  // prim referencing the holder by internal path </W/A> or </W/B>.
+  const bool refs_a = usda.find("</W/A>") != std::string::npos;
+  const bool refs_b = usda.find("</W/B>") != std::string::npos;
+  assert((refs_a ^ refs_b) &&
+         "exactly one of A/B must reference the other as the prototype holder");
+  // The holder retains the composed subtree (Mesh M with n=1).
+  assert(usda.find("def Mesh \"M\"") != std::string::npos &&
+         usda.find("int n = 1") != std::string::npos &&
+         "prototype holder lost its composed subtree");
+  // Internal reference, NOT an external asset path (@...@).
+  assert(usda.find("@</W/") == std::string::npos &&
+         "internal reference was wrongly emitted as an asset path");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_instancing() {
   std::cout << "test_instancing..." << std::endl;
   AssetResolver resolver;
@@ -1415,6 +1982,103 @@ static void test_compose_from_file() {
 
   std::remove(ref.c_str());
   std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A NESTED reference whose inner asset path is relative to ITS OWN directory
+// (e.g. a mesh under Meshes/Sub/ that references `../../Materials/M.usda`) must
+// anchor against the mesh's directory, not the root layer's. Regression for the
+// resolver double-strip bug: the anchor is the referencing FILE path, and
+// AssetResolver derives the directory itself (passing a pre-stripped dir dropped
+// one path level, so deep `../../` paths resolved too high and failed to load).
+static void test_nested_relative_reference() {
+  std::cout << "test_nested_relative_reference..." << std::endl;
+  // Layout under /tmp:
+  //   nrr_root.usda                 -> refs nrr/Meshes/Sub/mesh.usda
+  //   nrr/Meshes/Sub/mesh.usda      -> refs ../../Materials/mat.usda
+  //   nrr/Materials/mat.usda        (defines the leaf Material type)
+  ::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials");
+  { std::ofstream f("/tmp/nrr/Materials/mat.usda");
+    f << "#usda 1.0\ndef Material \"Mat\"\n{\n}\n"; }
+  { std::ofstream f("/tmp/nrr/Meshes/Sub/mesh.usda");
+    f << "#usda 1.0\n"
+         "def Mesh \"Geom\" (\n"
+         "    prepend references = [@../../Materials/mat.usda@</Mat>]\n"
+         ")\n{\n}\n"; }
+  { std::ofstream f("/tmp/nrr_root.usda");
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"M\" (\n"
+         "        prepend references = [@nrr/Meshes/Sub/mesh.usda@</Geom>]\n"
+         "    )\n    {\n    }\n}\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  bool ok = pcp::ComposeStageFromFile("/tmp/nrr_root.usda", resolver, &stage, {},
+                                      &warn, &err);
+  assert(ok && "ComposeStageFromFile failed");
+
+  // The mesh reference composes (type Mesh), and the nested material reference
+  // (anchored to the mesh's dir) must ALSO compose -- proving `../../Materials`
+  // resolved correctly.
+  UsdPrim m = stage.GetPrimAtPath("/World/M");
+  assert(m.IsValid() && m.GetTypeName() == "Mesh" && "mesh ref did not compose");
+  // A failed nested layer load is non-fatal (accumulated in err/warn, not a
+  // hard failure), so the load-failure string is the real regression signal.
+  const std::string diag = warn + err;
+  assert(diag.find("Failed to load") == std::string::npos &&
+         diag.find("Failed to open") == std::string::npos &&
+         "nested ../../ material layer failed to load (anchor double-strip)");
+
+  std::remove("/tmp/nrr_root.usda");
+  std::remove("/tmp/nrr/Meshes/Sub/mesh.usda");
+  std::remove("/tmp/nrr/Materials/mat.usda");
+  std::cout << "  OK" << std::endl;
+}
+
+// A reference/payload authored in a SUBLAYER (or inside a variant) must anchor
+// its relative asset path to the LAYER that authored it, not the layer-stack
+// root. Regression for the ALab failure: entry.usda sublayers
+// deep/dir/mid.usda, which references `../../target/asset.usda` relative to its
+// OWN dir; anchoring to the root made `../../` resolve too high and fail.
+static void test_sublayer_authored_reference_anchor() {
+  std::cout << "test_sublayer_authored_reference_anchor..." << std::endl;
+  // /tmp/sar/entry.usda            (root) -> sublayer a/b/mid.usda
+  // /tmp/sar/a/b/mid.usda          -> /World/P references ../../target/asset.usda
+  // /tmp/sar/target/asset.usda     def Mesh "Geom"
+  ::system("mkdir -p /tmp/sar/a/b /tmp/sar/target");
+  { std::ofstream f("/tmp/sar/target/asset.usda");
+    f << "#usda 1.0\ndef Mesh \"Geom\" { custom int marker = 7 }\n"; }
+  { std::ofstream f("/tmp/sar/a/b/mid.usda");
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"P\" (\n"
+         "        prepend references = @../../target/asset.usda@</Geom>\n"
+         "    )\n    {\n    }\n}\n"; }
+  { std::ofstream f("/tmp/sar/entry.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@a/b/mid.usda@]\n)\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp/sar");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/sar/entry.usda", resolver, &stage, {},
+                                   &warn, &err));
+  // The reference (authored in the sublayer, relative to the sublayer's dir)
+  // must compose: /World/P picks up the asset's Mesh type + marker.
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid() && p.GetTypeName() == "Mesh" &&
+         "sublayer-authored relative reference failed to anchor/compose");
+  const std::string diag = warn + err;
+  assert(diag.find("Failed to load") == std::string::npos &&
+         diag.find("Failed to open") == std::string::npos &&
+         "sublayer-authored reference anchored to the wrong (root) layer");
+
+  std::remove("/tmp/sar/entry.usda");
+  std::remove("/tmp/sar/a/b/mid.usda");
+  std::remove("/tmp/sar/target/asset.usda");
   std::cout << "  OK" << std::endl;
 }
 
@@ -2095,12 +2759,109 @@ static void test_prototype_order_independent() {
   std::cout << "  OK" << std::endl;
 }
 
+// Regression: pcp::Cache must honor the per-set VariantSetData.selected field as
+// a selection opinion. The crate (USDC) reader sets `selected` for EVERY chosen
+// variant set but the legacy variantSelection STRING for only the FIRST set (and
+// no variantSelections map). Reading only the string dropped every set after the
+// first on a multi-set USDC selection; a vs.selected-only selection was ignored
+// entirely.
+static void test_variant_selected_field() {
+  std::cout << "test_variant_selected_field..." << std::endl;
+
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("World", "Xform");
+
+    // P selects TWO sets in the crate-reader form: `selected` on both sets, the
+    // legacy string on only the FIRST, no variantSelections map.
+    rb.begin_prim("P", "");
+    {
+      VariantSetData lod;
+      lod.name = "lod";
+      lod.selected = "high";
+      {
+        VariantData v; v.name = "high";
+        v.properties.push_back({"L", Value::MakeFloat3(9, 9, 9)});
+        lod.variants.push_back(std::move(v));
+      }
+      {
+        VariantData v; v.name = "low";
+        v.properties.push_back({"L", Value::MakeFloat3(1, 1, 1)});
+        lod.variants.push_back(std::move(v));
+      }
+      VariantSetData shade;
+      shade.name = "shade";
+      shade.selected = "red";
+      {
+        VariantData v; v.name = "red";
+        v.properties.push_back({"S", Value::MakeFloat3(1, 0, 0)});
+        shade.variants.push_back(std::move(v));
+      }
+      rb.current()->meta().variantSets().push_back(std::move(lod));
+      rb.current()->meta().variantSets().push_back(std::move(shade));
+      rb.current()->meta().variantSelection = "lod=high";  // FIRST set only
+    }
+    rb.end_prim();
+
+    // Q selects a single set via `selected` ONLY (no string, no map).
+    rb.begin_prim("Q", "");
+    {
+      VariantSetData s;
+      s.name = "geo";
+      s.selected = "hi";
+      VariantData v; v.name = "hi";
+      v.properties.push_back({"G", Value::MakeFloat3(2, 2, 2)});
+      s.variants.push_back(std::move(v));
+      rb.current()->meta().variantSets().push_back(std::move(s));
+    }
+    rb.end_prim();
+
+    rb.end_prim();  // World
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid());
+  assert(p.GetPropertyValue("L") != nullptr &&
+         "multi-set: first set 'lod' applied");
+  assert(p.GetPropertyValue("S") != nullptr &&
+         "multi-set: SECOND set 'shade' applied (dropped if vs.selected ignored)");
+
+  UsdPrim q = stage.GetPrimAtPath("/World/Q");
+  assert(q.IsValid());
+  assert(q.GetPropertyValue("G") != nullptr &&
+         "vs.selected-only selection applied");
+
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
   test_prototype_order_independent();
   test_compose_prim_lazy();
+  test_child_order_weak_to_strong();
+  test_crate_style_variant_holder();
+  test_usda_connection_and_custom_rel();
+  test_variant_option_payload_arc();
+  test_value_block_roundtrip();
+  test_extracted_prototypes();
+  test_connection_namespace_remap();
+  test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();
+  test_compose_prim_invalidate_layer_without_index();
   test_eval_attribute_lazy();
   test_specialize_chain();
   test_cross_layer_arc_dedup();
@@ -2114,19 +2875,24 @@ int main() {
   test_payload_in_instance();
   test_inherits_specializes();
   test_variants();
+  test_variant_inline_property_flags();
   test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();
+  test_flatten_instances();
   test_relocates();
   test_implied_inherit();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();
+  test_variant_selected_field();
   test_implied_intermediate();
   test_cross_layer_listops();
   test_listop_edit_does_not_clear_other_arc_fields();
   test_writer_listop_fidelity();
   test_compose_from_file();
+  test_nested_relative_reference();
+  test_sublayer_authored_reference_anchor();
   test_sublayer_stack_composition();
   test_sublayer_cycle_and_depth();
   test_node_overflow_fails_cleanly();

@@ -3328,6 +3328,21 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                   &textures, &openpbr_shader, &err,
                   /*emit_extract_debug_trace*/ false);
 
+              std::string nodegraph_json;
+              std::string conv_err;
+              if (ConvertShaderWithNodeGraphToJson(
+                      *mtlxShaderPrim, mtlxSurfacePath, env.stage,
+                      &nodegraph_json, &conv_err)) {
+                if (!nodegraph_json.empty()) {
+                  openpbr_shader.nodeGraphJson = nodegraph_json;
+                }
+              } else {
+                DCOUT("No MaterialX NodeGraph found for explicit MaterialX "
+                      "surface shader: "
+                      << mtlxSurfacePath.prim_part() << " (" << conv_err
+                      << ")");
+              }
+
               rmat.openPBRShader = openpbr_shader;
               DCOUT("Successfully attached MaterialX OpenPBR shader to "
                     "RenderMaterial: "

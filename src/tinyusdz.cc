@@ -127,9 +127,7 @@ static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, s
   size_t bytes_to_show = std::min(length, max_bytes);
   
   for (size_t i = 0; i < bytes_to_show; i++) {
-    char hex[3];
-    snprintf(hex, sizeof(hex), "%02x", addr[i]);
-    result += hex;
+    result += fmt::hex(addr[i], 2);
     if (i < bytes_to_show - 1) {
       result += " ";
     }
@@ -464,6 +462,18 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     }
 
     if (uncompr_bytes > (length - offset)) {
+      if (!assets) {
+        // Detection mode (IsUSDZ / IsUSD): only a prefix of the file was read
+        // (IsUSDZ reads ~256 bytes), so the first entry's data legitimately
+        // extends past `length`. The local header has already been validated
+        // (PK signature, uncompressed, 64-byte aligned) — that is sufficient
+        // to classify the file as USDZ. Full validation (which needs every
+        // entry's bytes present) runs when the whole file is parsed with a
+        // non-null `assets`. Without this, IsUSDZ(filename) wrongly returns
+        // false for any USDZ whose root layer exceeds the prefix size — i.e.
+        // essentially all real packages.
+        return true;
+      }
       if (err) {
         (*err) += "Invalid uncompressed size in ZIP data\n";
       }

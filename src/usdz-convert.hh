@@ -96,6 +96,10 @@ struct UsdzConvertOptions {
   // unmodified textures are copied through byte-for-byte.
   bool reencode{true};
 
+  // Worker threads for texture decode/resize/encode. 0 = auto
+  // (hardware_concurrency), 1 = sequential.
+  int num_threads{0};
+
   // Output container format (USDZ, USDC, or USDA).
   OutputFormat output_format{OutputFormat::USDZ};
 
@@ -133,6 +137,17 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 ///
 size_t RemapTextureAssetPaths(Stage &stage,
                               const std::map<std::string, std::string> &remap);
+
+///
+/// Layer-level equivalent of RemapTextureAssetPaths: rewrite texture asset
+/// paths authored in a (composed) Layer's PrimSpecs. Used by streaming USDZ
+/// packers that export the flattened Layer directly and need renamed texture
+/// references (e.g. transcoded PNG -> JPG) to follow.
+///
+/// @return number of asset references rewritten.
+///
+size_t RemapLayerTextureAssetPaths(
+    Layer &layer, const std::map<std::string, std::string> &remap);
 
 // ---------------------------------------------------------------------------
 // Standalone generic channel repacking.

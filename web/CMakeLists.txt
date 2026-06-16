@@ -130,6 +130,9 @@ list(
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
@@ -255,7 +258,14 @@ endif()
 
 if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
-  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=8GB")
+  # MAXIMUM_MEMORY=16GB: only reserves address space (ALLOW_MEMORY_GROWTH grows
+  # on demand); the in-heap folder flatten of a multi-GB UE-export scene (e.g.
+  # SceneB, 2.5 GB source) needs ~10 GB.
+  # MALLOC=dlmalloc: emmalloc asserts (debug_region_is_consistent in
+  # emmalloc_free) once the wasm64 heap grows past ~8 GB; dlmalloc handles the
+  # large-heap case. (The later -sMALLOC overrides the emmalloc set in the
+  # common flags above.)
+  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
 else()
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()

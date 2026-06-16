@@ -5,11 +5,18 @@
 
 #include "value-parser.hh"
 #include "lexer.hh"
+#include "../crate/crate-format.hh"
 #include "../types/type-info.hh"
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
+#include <cerrno>
+#include <limits>
+#include <system_error>
 #include <unordered_map>
+#include <vector>
 
 namespace tinyusdz {
 namespace next {
@@ -123,6 +130,29 @@ const std::unordered_map<std::string, TypeId>& GetTypeNameMap() {
 // Value parsing functions
 // ============================================================
 
+// Freestanding float/double parse via the vendored fast_float (no libc
+// strtof/strtod). Bit-identical to strtod for everything the lexer emits,
+// including inf / -inf / infinity / nan (verified). fast_float is the only thing
+// that rejects a leading '+', so retry once past it. *out is left untouched on
+// failure (callers default it to 0, matching strtod's no-digit result).
+template <class T>
+static inline bool FfParse(const char* b, const char* e, T* out) {
+  auto r = fast_float::from_chars(b, e, *out);
+  if (r.ec == std::errc{} && r.ptr == e) return true;
+  if (b < e && *b == '+') {
+    r = fast_float::from_chars(b + 1, e, *out);
+    if (r.ec == std::errc{} && r.ptr == e) return true;
+  }
+  return false;
+}
+// Convenience for callers holding a clean number token.
+template <class T>
+static inline T FfParseTok(const std::string& s) {
+  T v = T(0);
+  FfParse(s.data(), s.data() + s.size(), &v);
+  return v;
+}
+
 ParseResult ParseBool(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type == TokenType::True) {
@@ -131,8 +161,44 @@ ParseResult ParseBool(Lexer& lexer) {
   } else if (tok.type == TokenType::False) {
     lexer.next();
     return ParseResult::Ok(Value(false));
+  } else if (tok.type == TokenType::Number) {
+    lexer.next();
+    return ParseResult::Ok(Value(FfParseTok<double>(tok.value) != 0.0));
   }
   return ParseResult::Error("Expected boolean value");
+}
+
+// Our own decimal string->int (no libc strtol, no octal/hex; USD integers are
+// decimal). Lenient like the strtol-family it replaces: optional sign + decimal
+// digits, ignore trailing chars, saturate on overflow (matching strtol's
+// ERANGE clamp after the int32/int64 cast). Callers pass clean lexer Number
+// tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
+static inline int64_t DecToI64(const char* s) {
+  if (!s) return 0;
+  bool neg = false;
+  if (*s == '+' || *s == '-') { neg = (*s == '-'); ++s; }
+  const uint64_t lim =
+      neg ? (static_cast<uint64_t>(INT64_MAX) + 1u) : static_cast<uint64_t>(INT64_MAX);
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (lim - d) / 10u) { v = lim; break; }  // saturate
+    v = v * 10u + d;
+    ++s;
+  }
+  return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
+}
+static inline uint64_t DecToU64(const char* s) {
+  if (!s) return 0;
+  if (*s == '+') ++s;
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (UINT64_MAX - d) / 10u) { v = UINT64_MAX; break; }  // saturate
+    v = v * 10u + d;
+    ++s;
+  }
+  return v;
 }
 
 ParseResult ParseInt(Lexer& lexer) {
@@ -141,7 +207,7 @@ ParseResult ParseInt(Lexer& lexer) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = static_cast<int32_t>(std::strtol(tok.value.c_str(), nullptr, 0));
+  int32_t value = static_cast<int32_t>(DecToI64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -151,7 +217,7 @@ ParseResult ParseUInt(Lexer& lexer) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = static_cast<uint32_t>(std::strtoul(tok.value.c_str(), nullptr, 0));
+  uint32_t value = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -161,7 +227,7 @@ ParseResult ParseInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
-  int64_t value = std::strtoll(tok.value.c_str(), nullptr, 0);
+  int64_t value = DecToI64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
@@ -171,28 +237,43 @@ ParseResult ParseUInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
-  uint64_t value = std::strtoull(tok.value.c_str(), nullptr, 0);
+  uint64_t value = DecToU64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
+}
+
+// Accept the USD special float literals inf / -inf / +inf / infinity / nan.
+// The lexer emits the signed forms as a Number token (via scan_number) and the
+// bare forms (inf / infinity / nan) as an Identifier token, so a numeric-value
+// context accepts both while an attribute literally named `inf` (always read in
+// identifier context) is never misclassified. strtof/strtod parse all of these.
+bool IsFloatSpecialWord(const std::string& v) {
+  std::string s = v;
+  if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.erase(s.begin());
+  for (auto& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  return s == "inf" || s == "infinity" || s == "nan";
+}
+
+bool IsNumberToken(const Token& tok) {
+  return tok.type == TokenType::Number ||
+         (tok.type == TokenType::Identifier && IsFloatSpecialWord(tok.value));
 }
 
 ParseResult ParseFloat(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected float value");
   }
   lexer.next();
-  float value = std::strtof(tok.value.c_str(), nullptr);
-  return ParseResult::Ok(Value(value));
+  return ParseResult::Ok(Value(FfParseTok<float>(tok.value)));
 }
 
 ParseResult ParseDouble(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected double value");
   }
   lexer.next();
-  double value = std::strtod(tok.value.c_str(), nullptr);
-  return ParseResult::Ok(Value(value));
+  return ParseResult::Ok(Value(FfParseTok<double>(tok.value)));
 }
 
 ParseResult ParseString(Lexer& lexer) {
@@ -228,11 +309,11 @@ bool ParseFloatTuple(Lexer& lexer, float* out, size_t count) {
 
   for (size_t i = 0; i < count; i++) {
     const Token& tok = lexer.peek();
-    if (tok.type != TokenType::Number) {
+    if (!IsNumberToken(tok)) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = std::strtof(tok.value.c_str(), nullptr);
+    out[i] = FfParseTok<float>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -250,11 +331,11 @@ bool ParseDoubleTuple(Lexer& lexer, double* out, size_t count) {
 
   for (size_t i = 0; i < count; i++) {
     const Token& tok = lexer.peek();
-    if (tok.type != TokenType::Number) {
+    if (!IsNumberToken(tok)) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = std::strtod(tok.value.c_str(), nullptr);
+    out[i] = FfParseTok<double>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -276,7 +357,32 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = static_cast<int32_t>(std::strtol(tok.value.c_str(), nullptr, 0));
+    out[i] = static_cast<int32_t>(DecToI64(tok.value.c_str()));
+    lexer.next();
+
+    if (i < count - 1) {
+      if (!lexer.expect(TokenType::Comma)) return false;
+    }
+  }
+
+  if (!lexer.expect(TokenType::CloseParen)) return false;
+  return true;
+}
+
+bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
+  if (!lexer.expect(TokenType::OpenParen)) return false;
+
+  for (size_t i = 0; i < count; i++) {
+    const Token& tok = lexer.peek();
+    if (tok.type != TokenType::Number) {
+      lexer.set_error("Expected unsigned integer in tuple");
+      return false;
+    }
+    if (!tok.value.empty() && tok.value[0] == '-') {
+      lexer.set_error("Expected non-negative unsigned integer in tuple");
+      return false;
+    }
+    out[i] = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
     lexer.next();
 
     if (i < count - 1) {
@@ -310,6 +416,45 @@ ParseResult ParseFloat4(Lexer& lexer) {
     return ParseResult::Error(lexer.error());
   }
   return ParseResult::Ok(Value::MakeFloat4(data[0], data[1], data[2], data[3]));
+}
+
+ParseResult ParseHalf(Lexer& lexer) {
+  const Token& tok = lexer.peek();
+  if (!IsNumberToken(tok)) {
+    return ParseResult::Error("Expected half value");
+  }
+  lexer.next();
+  uint16_t bits = FloatToHalf(FfParseTok<float>(tok.value));
+  return ParseResult::Ok(Value::MakeFromRaw(TypeId::Half, &bits));
+}
+
+ParseResult ParseHalfTuple(Lexer& lexer, TypeId type_id, size_t count) {
+  float data[4] = {};
+  if (!ParseFloatTuple(lexer, data, count)) {
+    return ParseResult::Error(lexer.error());
+  }
+
+  uint16_t bits[4] = {};
+  for (size_t i = 0; i < count; i++) {
+    bits[i] = FloatToHalf(data[i]);
+  }
+  return ParseResult::Ok(Value::MakeFromRaw(type_id, bits));
+}
+
+ParseResult ParseHalf2(Lexer& lexer) {
+  return ParseHalfTuple(lexer, TypeId::Half2, 2);
+}
+
+ParseResult ParseHalf3(Lexer& lexer) {
+  return ParseHalfTuple(lexer, TypeId::Half3, 3);
+}
+
+ParseResult ParseHalf4(Lexer& lexer) {
+  return ParseHalfTuple(lexer, TypeId::Half4, 4);
+}
+
+ParseResult ParseQuath(Lexer& lexer) {
+  return ParseHalfTuple(lexer, TypeId::Quath, 4);
 }
 
 ParseResult ParseDouble2(Lexer& lexer) {
@@ -360,6 +505,26 @@ ParseResult ParseInt4(Lexer& lexer) {
   return ParseResult::Ok(Value::MakeInt4(data[0], data[1], data[2], data[3]));
 }
 
+ParseResult ParseUIntN(Lexer& lexer, TypeId type_id, size_t count) {
+  uint32_t data[4] = {};
+  if (!ParseUIntTuple(lexer, data, count)) {
+    return ParseResult::Error(lexer.error());
+  }
+  return ParseResult::Ok(Value::MakeFromRaw(type_id, data));
+}
+
+ParseResult ParseUInt2(Lexer& lexer) {
+  return ParseUIntN(lexer, TypeId::UInt2, 2);
+}
+
+ParseResult ParseUInt3(Lexer& lexer) {
+  return ParseUIntN(lexer, TypeId::UInt3, 3);
+}
+
+ParseResult ParseUInt4(Lexer& lexer) {
+  return ParseUIntN(lexer, TypeId::UInt4, 4);
+}
+
 ParseResult ParseQuatf(Lexer& lexer) {
   float data[4];
   if (!ParseFloatTuple(lexer, data, 4)) {
@@ -377,25 +542,24 @@ ParseResult ParseQuatd(Lexer& lexer) {
 }
 
 // Parse matrix as nested tuples: ((r0c0, r0c1, ...), (r1c0, r1c1, ...), ...)
-ParseResult ParseMatrix4d(Lexer& lexer) {
-  double data[16];
+template <size_t N>
+ParseResult ParseMatrixFloatN(Lexer& lexer, TypeId type_id) {
+  float data[N * N];
 
   if (!lexer.expect(TokenType::OpenParen)) {
     return ParseResult::Error(lexer.error());
   }
 
-  for (int row = 0; row < 4; row++) {
-    double row_data[4];
-    if (!ParseDoubleTuple(lexer, row_data, 4)) {
+  for (size_t row = 0; row < N; row++) {
+    float row_data[N];
+    if (!ParseFloatTuple(lexer, row_data, N)) {
       return ParseResult::Error(lexer.error());
     }
-    for (int col = 0; col < 4; col++) {
-      data[row * 4 + col] = row_data[col];
+    for (size_t col = 0; col < N; col++) {
+      data[row * N + col] = row_data[col];
     }
-    if (row < 3) {
-      if (!lexer.expect(TokenType::Comma)) {
-        return ParseResult::Error(lexer.error());
-      }
+    if (row + 1 < N && !lexer.expect(TokenType::Comma)) {
+      return ParseResult::Error(lexer.error());
     }
   }
 
@@ -403,36 +567,63 @@ ParseResult ParseMatrix4d(Lexer& lexer) {
     return ParseResult::Error(lexer.error());
   }
 
+  if (type_id == TypeId::Matrix2f) return ParseResult::Ok(Value::MakeMatrix2f(data));
+  if (type_id == TypeId::Matrix3f) return ParseResult::Ok(Value::MakeMatrix3f(data));
+  return ParseResult::Ok(Value::MakeMatrix4f(data));
+}
+
+template <size_t N>
+ParseResult ParseMatrixDoubleN(Lexer& lexer, TypeId type_id) {
+  double data[N * N];
+
+  if (!lexer.expect(TokenType::OpenParen)) {
+    return ParseResult::Error(lexer.error());
+  }
+
+  for (size_t row = 0; row < N; row++) {
+    double row_data[N];
+    if (!ParseDoubleTuple(lexer, row_data, N)) {
+      return ParseResult::Error(lexer.error());
+    }
+    for (size_t col = 0; col < N; col++) {
+      data[row * N + col] = row_data[col];
+    }
+    if (row + 1 < N && !lexer.expect(TokenType::Comma)) {
+      return ParseResult::Error(lexer.error());
+    }
+  }
+
+  if (!lexer.expect(TokenType::CloseParen)) {
+    return ParseResult::Error(lexer.error());
+  }
+
+  if (type_id == TypeId::Matrix2d) return ParseResult::Ok(Value::MakeMatrix2d(data));
+  if (type_id == TypeId::Matrix3d) return ParseResult::Ok(Value::MakeMatrix3d(data));
   return ParseResult::Ok(Value::MakeMatrix4d(data));
 }
 
+ParseResult ParseMatrix2f(Lexer& lexer) {
+  return ParseMatrixFloatN<2>(lexer, TypeId::Matrix2f);
+}
+
+ParseResult ParseMatrix3f(Lexer& lexer) {
+  return ParseMatrixFloatN<3>(lexer, TypeId::Matrix3f);
+}
+
+ParseResult ParseMatrix4f(Lexer& lexer) {
+  return ParseMatrixFloatN<4>(lexer, TypeId::Matrix4f);
+}
+
+ParseResult ParseMatrix2d(Lexer& lexer) {
+  return ParseMatrixDoubleN<2>(lexer, TypeId::Matrix2d);
+}
+
+ParseResult ParseMatrix4d(Lexer& lexer) {
+  return ParseMatrixDoubleN<4>(lexer, TypeId::Matrix4d);
+}
+
 ParseResult ParseMatrix3d(Lexer& lexer) {
-  double data[9];
-
-  if (!lexer.expect(TokenType::OpenParen)) {
-    return ParseResult::Error(lexer.error());
-  }
-
-  for (int row = 0; row < 3; row++) {
-    double row_data[3];
-    if (!ParseDoubleTuple(lexer, row_data, 3)) {
-      return ParseResult::Error(lexer.error());
-    }
-    for (int col = 0; col < 3; col++) {
-      data[row * 3 + col] = row_data[col];
-    }
-    if (row < 2) {
-      if (!lexer.expect(TokenType::Comma)) {
-        return ParseResult::Error(lexer.error());
-      }
-    }
-  }
-
-  if (!lexer.expect(TokenType::CloseParen)) {
-    return ParseResult::Error(lexer.error());
-  }
-
-  return ParseResult::Ok(Value::MakeMatrix3d(data));
+  return ParseMatrixDoubleN<3>(lexer, TypeId::Matrix3d);
 }
 
 // ============================================================
@@ -448,6 +639,7 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::UInt: return &ParseUInt;
     case TypeId::Int64: return &ParseInt64;
     case TypeId::UInt64: return &ParseUInt64;
+    case TypeId::Half: return &ParseHalf;
     case TypeId::Float: return &ParseFloat;
     case TypeId::Double: return &ParseDouble;
     case TypeId::String: return &ParseString;
@@ -456,30 +648,48 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Int2: return &ParseInt2;
     case TypeId::Int3: return &ParseInt3;
     case TypeId::Int4: return &ParseInt4;
+    case TypeId::UInt2: return &ParseUInt2;
+    case TypeId::UInt3: return &ParseUInt3;
+    case TypeId::UInt4: return &ParseUInt4;
+    case TypeId::Half2: return &ParseHalf2;
+    case TypeId::Half3: return &ParseHalf3;
+    case TypeId::Half4: return &ParseHalf4;
     case TypeId::Float2: return &ParseFloat2;
     case TypeId::Float3: return &ParseFloat3;
     case TypeId::Float4: return &ParseFloat4;
     case TypeId::Double2: return &ParseDouble2;
     case TypeId::Double3: return &ParseDouble3;
     case TypeId::Double4: return &ParseDouble4;
+    case TypeId::Quath: return &ParseQuath;
     case TypeId::Quatf: return &ParseQuatf;
     case TypeId::Quatd: return &ParseQuatd;
+    case TypeId::Matrix2f: return &ParseMatrix2f;
+    case TypeId::Matrix3f: return &ParseMatrix3f;
+    case TypeId::Matrix4f: return &ParseMatrix4f;
+    case TypeId::Matrix2d: return &ParseMatrix2d;
     case TypeId::Matrix3d: return &ParseMatrix3d;
     case TypeId::Matrix4d: return &ParseMatrix4d;
 
     // Semantic types that share storage with vectors
+    case TypeId::Point3h: return &ParseHalf3;
     case TypeId::Point3f: return &ParseFloat3;
     case TypeId::Point3d: return &ParseDouble3;
+    case TypeId::Vector3h: return &ParseHalf3;
     case TypeId::Vector3f: return &ParseFloat3;
     case TypeId::Vector3d: return &ParseDouble3;
+    case TypeId::Normal3h: return &ParseHalf3;
     case TypeId::Normal3f: return &ParseFloat3;
     case TypeId::Normal3d: return &ParseDouble3;
+    case TypeId::Color3h: return &ParseHalf3;
     case TypeId::Color3f: return &ParseFloat3;
     case TypeId::Color3d: return &ParseDouble3;
+    case TypeId::Color4h: return &ParseHalf4;
     case TypeId::Color4f: return &ParseFloat4;
     case TypeId::Color4d: return &ParseDouble4;
+    case TypeId::Texcoord2h: return &ParseHalf2;
     case TypeId::Texcoord2f: return &ParseFloat2;
     case TypeId::Texcoord2d: return &ParseDouble2;
+    case TypeId::Texcoord3h: return &ParseHalf3;
     case TypeId::Texcoord3f: return &ParseFloat3;
     case TypeId::Texcoord3d: return &ParseDouble3;
 
@@ -497,10 +707,17 @@ ParseFn GetParseFunction(TypeId type_id) {
 // ============================================================
 
 ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
-  // Handle None
+  // Handle None: an authored value block, not "no value". Preserve it as a block
+  // so the writer re-emits `= None` (round-trips USDC ValueBlock + USDA `= None`).
   if (lexer.peek().type == TokenType::None) {
     lexer.next();
-    return ParseResult::Ok(Value());
+    return ParseResult::Ok(Value::MakeBlock());
+  }
+
+  // Dictionaries have a dedicated recursive parser (no flat ParseFn entry).
+  if (expected_type == TypeId::Dictionary ||
+      lexer.peek().type == TokenType::OpenBrace) {
+    return ParseDict(lexer);
   }
 
   ParseFn fn = GetParseFunction(expected_type);
@@ -521,18 +738,25 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
     // We need to update to the actual requested type
     switch (expected_type) {
       case TypeId::Point3f:
+      case TypeId::Point3h:
       case TypeId::Vector3f:
+      case TypeId::Vector3h:
       case TypeId::Normal3f:
+      case TypeId::Normal3h:
       case TypeId::Color3f:
+      case TypeId::Color3h:
       case TypeId::Point3d:
       case TypeId::Vector3d:
       case TypeId::Normal3d:
       case TypeId::Color3d:
       case TypeId::Color4f:
+      case TypeId::Color4h:
       case TypeId::Color4d:
       case TypeId::Texcoord2f:
+      case TypeId::Texcoord2h:
       case TypeId::Texcoord2d:
       case TypeId::Texcoord3f:
+      case TypeId::Texcoord3h:
       case TypeId::Texcoord3d:
         result.value = Value::MakeFromRaw(expected_type, result.value.raw_data());
         break;
@@ -546,23 +770,553 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
 
 // Helper to check if type stores float3-like data
 bool IsFloat3Like(TypeId type) {
-  return type == TypeId::Float3 || type == TypeId::Point3f ||
-         type == TypeId::Vector3f || type == TypeId::Normal3f ||
-         type == TypeId::Color3f;
+  return type == TypeId::Float3 || type == TypeId::Half3 ||
+         type == TypeId::Point3h || type == TypeId::Point3f ||
+         type == TypeId::Vector3h || type == TypeId::Vector3f ||
+         type == TypeId::Normal3h || type == TypeId::Normal3f ||
+         type == TypeId::Color3h || type == TypeId::Color3f ||
+         type == TypeId::Texcoord3h || type == TypeId::Texcoord3f;
 }
 
 // Helper to check if type stores float2-like data
 bool IsFloat2Like(TypeId type) {
-  return type == TypeId::Float2 || type == TypeId::Texcoord2f;
+  return type == TypeId::Float2 || type == TypeId::Half2 ||
+         type == TypeId::Texcoord2h || type == TypeId::Texcoord2f;
 }
 
 // Helper to check if type stores float4-like data
 bool IsFloat4Like(TypeId type) {
-  return type == TypeId::Float4 || type == TypeId::Quatf ||
-         type == TypeId::Color4f;
+  return type == TypeId::Float4 || type == TypeId::Half4 ||
+         type == TypeId::Quath || type == TypeId::Quatf ||
+         type == TypeId::Color4h || type == TypeId::Color4f;
+}
+
+bool IsDouble2Like(TypeId type) {
+  return type == TypeId::Double2 || type == TypeId::Texcoord2d;
+}
+
+bool IsDouble3Like(TypeId type) {
+  return type == TypeId::Double3 || type == TypeId::Point3d ||
+         type == TypeId::Vector3d || type == TypeId::Normal3d ||
+         type == TypeId::Color3d || type == TypeId::Texcoord3d;
+}
+
+bool IsDouble4Like(TypeId type) {
+  return type == TypeId::Double4 || type == TypeId::Quatd ||
+         type == TypeId::Color4d;
+}
+
+bool SliceIsIdentifierStart(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+bool SliceIsIdentifierContinue(char c) {
+  return SliceIsIdentifierStart(c) || (c >= '0' && c <= '9');
+}
+
+struct SliceParser {
+  const char* p{nullptr};
+  const char* end{nullptr};
+
+  void skip_ws() {
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+        ++p;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') ++p;
+      } else {
+        break;
+      }
+    }
+  }
+
+  bool consume(char c) {
+    skip_ws();
+    if (p >= end || *p != c) return false;
+    ++p;
+    return true;
+  }
+
+  bool maybe_consume(char c) {
+    skip_ws();
+    if (p < end && *p == c) {
+      ++p;
+      return true;
+    }
+    return false;
+  }
+
+  bool at_array_end() {
+    skip_ws();
+    return p < end && *p == ']';
+  }
+
+  bool finish_array() {
+    if (!consume(']')) return false;
+    skip_ws();
+    return p == end;
+  }
+
+  bool parse_float(float* out) {
+    skip_ws();
+    auto r = fast_float::from_chars(p, end, *out);
+    if (r.ec != std::errc{} || r.ptr == p) return false;
+    p = r.ptr;
+    return true;
+  }
+
+  bool parse_double(double* out) {
+    skip_ws();
+    auto r = fast_float::from_chars(p, end, *out);
+    if (r.ec != std::errc{} || r.ptr == p) return false;
+    p = r.ptr;
+    return true;
+  }
+
+  // Decimal `[+-]?digits` integer parse with in-loop overflow detection. USD
+  // integer literals are decimal; this is our own atoi (modeled on
+  // src/tiny-string.cc str::parse_int64) so the parser depends on neither libc
+  // strtoll (locale-aware, base-0 octal/hex, and the hottest symbol on mesh
+  // scenes) nor std stdio — important for WASM/WASI. Overflow returns false,
+  // matching strtoll's ERANGE rejection.
+  bool parse_i64(int64_t* out) {
+    skip_ws();
+    const char* q = p;
+    if (q >= end) return false;
+    bool neg = false;
+    if (*q == '+' || *q == '-') { neg = (*q == '-'); ++q; }
+    if (q >= end || *q < '0' || *q > '9') return false;
+    // Largest magnitude: INT64_MAX, or INT64_MAX+1 for a negative value.
+    const uint64_t limit = neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
+                               : static_cast<uint64_t>(INT64_MAX);
+    uint64_t val = 0;
+    while (q < end && *q >= '0' && *q <= '9') {
+      const uint64_t d = static_cast<uint64_t>(*q - '0');
+      if (val > (limit - d) / 10u) return false;  // would overflow
+      val = val * 10u + d;
+      ++q;
+    }
+    // 0u - val gives the two's-complement negation, correct even at INT64_MIN.
+    *out = neg ? static_cast<int64_t>(0u - val) : static_cast<int64_t>(val);
+    p = q;
+    return true;
+  }
+
+  bool parse_u64(uint64_t* out) {
+    skip_ws();
+    const char* q = p;
+    if (q >= end || *q == '-') return false;
+    if (*q == '+') ++q;
+    if (q >= end || *q < '0' || *q > '9') return false;
+    uint64_t val = 0;
+    while (q < end && *q >= '0' && *q <= '9') {
+      const uint64_t d = static_cast<uint64_t>(*q - '0');
+      if (val > (UINT64_MAX - d) / 10u) return false;  // would overflow
+      val = val * 10u + d;
+      ++q;
+    }
+    *out = val;
+    p = q;
+    return true;
+  }
+
+  bool parse_bool(bool* out) {
+    skip_ws();
+    if (p + 4 <= end && std::memcmp(p, "true", 4) == 0 &&
+        (p + 4 == end || !SliceIsIdentifierContinue(*(p + 4)))) {
+      p += 4;
+      *out = true;
+      return true;
+    }
+    if (p + 5 <= end && std::memcmp(p, "false", 5) == 0 &&
+        (p + 5 == end || !SliceIsIdentifierContinue(*(p + 5)))) {
+      p += 5;
+      *out = false;
+      return true;
+    }
+    double v = 0.0;
+    if (!parse_double(&v)) return false;
+    *out = (v != 0.0);
+    return true;
+  }
+
+  bool parse_string(std::string* out) {
+    skip_ws();
+    if (p >= end || (*p != '"' && *p != '\'')) return false;
+    const char quote = *p;
+    ++p;
+    bool triple = false;
+    if (p + 1 < end && p[0] == quote && p[1] == quote) {
+      triple = true;
+      p += 2;
+    }
+    out->clear();
+    while (p < end) {
+      char c = *p++;
+      if (triple) {
+        if (c == quote && p + 1 < end && p[0] == quote && p[1] == quote) {
+          p += 2;
+          return true;
+        }
+      } else if (c == quote) {
+        return true;
+      }
+      if (c == '\\' && p < end) {
+        char esc = *p++;
+        switch (esc) {
+          case 'n': out->push_back('\n'); break;
+          case 'r': out->push_back('\r'); break;
+          case 't': out->push_back('\t'); break;
+          case '"': out->push_back('"'); break;
+          case '\'': out->push_back('\''); break;
+          case '\\': out->push_back('\\'); break;
+          default: out->push_back(esc); break;
+        }
+      } else {
+        out->push_back(c);
+      }
+    }
+    return false;
+  }
+
+  bool parse_identifier(std::string* out) {
+    skip_ws();
+    if (p >= end || !SliceIsIdentifierStart(*p)) return false;
+    const char* start = p;
+    ++p;
+    while (p < end && SliceIsIdentifierContinue(*p)) ++p;
+    out->assign(start, size_t(p - start));
+    return true;
+  }
+
+  bool parse_token(std::string* out) {
+    return parse_string(out) || parse_identifier(out);
+  }
+};
+
+// Defense-in-depth ceiling on the number of scalars accumulated for one array
+// (parity with the mature ASCII parser's kMaxArrayElements). USDA arrays are
+// otherwise only input-length-bounded; this caps a single pathological array so
+// it can't drive a multi-GB vector even from a large/streamed input.
+constexpr size_t kMaxArrayScalars = size_t(1) << 30;  // ~1.07e9 scalars
+
+template <class T, class ParseOne>
+bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
+  if (!sp->consume('[')) return false;
+  out->clear();
+  if (sp->at_array_end()) return sp->finish_array();
+  while (true) {
+    T v{};
+    if (!parse_one(sp, &v)) return false;
+    out->push_back(v);
+    if (out->size() > kMaxArrayScalars) return false;
+    if (sp->maybe_consume(',')) continue;
+    return sp->finish_array();
+  }
+}
+
+template <class ScalarT, uint32_t N, class ParseOne>
+bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
+                     ParseOne parse_one) {
+  if (!sp->consume('[')) return false;
+  out->clear();
+  if (sp->at_array_end()) return sp->finish_array();
+  while (true) {
+    if (!sp->consume('(')) return false;
+    for (uint32_t i = 0; i < N; i++) {
+      ScalarT v{};
+      if (!parse_one(sp, &v)) return false;
+      out->push_back(v);
+      if (i + 1 < N && !sp->consume(',')) return false;
+    }
+    if (!sp->consume(')')) return false;
+    if (out->size() > kMaxArrayScalars) return false;
+    if (sp->maybe_consume(',')) continue;
+    return sp->finish_array();
+  }
+}
+
+template <class ScalarT, uint32_t N, class ParseOne>
+bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
+                      ParseOne parse_one) {
+  if (!sp->consume('[')) return false;
+  out->clear();
+  if (sp->at_array_end()) return sp->finish_array();
+  while (true) {
+    if (!sp->consume('(')) return false;
+    for (uint32_t r = 0; r < N; r++) {
+      if (!sp->consume('(')) return false;
+      for (uint32_t c = 0; c < N; c++) {
+        ScalarT v{};
+        if (!parse_one(sp, &v)) return false;
+        out->push_back(v);
+        if (c + 1 < N && !sp->consume(',')) return false;
+      }
+      if (!sp->consume(')')) return false;
+      if (r + 1 < N && !sp->consume(',')) return false;
+    }
+    if (!sp->consume(')')) return false;
+    if (out->size() > kMaxArrayScalars) return false;
+    if (sp->maybe_consume(',')) continue;
+    return sp->finish_array();
+  }
+}
+
+ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
+  const char* data = nullptr;
+  size_t len = 0;
+  if (!lexer.capture_bracketed_literal(&data, &len)) {
+    return ParseResult::Error(lexer.error());
+  }
+  SliceParser sp{data, data + len};
+
+  auto parse_float = [](SliceParser* s, float* v) { return s->parse_float(v); };
+  auto parse_double = [](SliceParser* s, double* v) { return s->parse_double(v); };
+
+  if (element_type == TypeId::Float) {
+    std::vector<float> values;
+    if (!ParseScalarArray<float>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse float array");
+    }
+    return ParseResult::Ok(Value::MakeFloatArray(std::move(values)));
+  }
+  if (element_type == TypeId::Double) {
+    std::vector<double> values;
+    if (!ParseScalarArray<double>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse double array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleArray(std::move(values)));
+  }
+  if (element_type == TypeId::Half) {
+    std::vector<float> values;
+    if (!ParseScalarArray<float>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse half array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
+  }
+  if (element_type == TypeId::Bool) {
+    std::vector<bool> values;
+    auto parse_bool = [](SliceParser* s, bool* v) { return s->parse_bool(v); };
+    if (!ParseScalarArray<bool>(&sp, &values, parse_bool)) {
+      return ParseResult::Error("Failed to parse bool array");
+    }
+    return ParseResult::Ok(Value::MakeBoolArray(values));
+  }
+  if (element_type == TypeId::Int) {
+    std::vector<int32_t> values;
+    auto parse_i32 = [](SliceParser* s, int32_t* v) {
+      int64_t tmp = 0;
+      if (!s->parse_i64(&tmp) || tmp < std::numeric_limits<int32_t>::min() ||
+          tmp > std::numeric_limits<int32_t>::max()) return false;
+      *v = static_cast<int32_t>(tmp);
+      return true;
+    };
+    if (!ParseScalarArray<int32_t>(&sp, &values, parse_i32)) {
+      return ParseResult::Error("Failed to parse int array");
+    }
+    return ParseResult::Ok(Value::MakeIntArray(std::move(values)));
+  }
+  if (element_type == TypeId::UInt) {
+    std::vector<uint32_t> values;
+    auto parse_u32 = [](SliceParser* s, uint32_t* v) {
+      uint64_t tmp = 0;
+      if (!s->parse_u64(&tmp) || tmp > std::numeric_limits<uint32_t>::max()) return false;
+      *v = static_cast<uint32_t>(tmp);
+      return true;
+    };
+    if (!ParseScalarArray<uint32_t>(&sp, &values, parse_u32)) {
+      return ParseResult::Error("Failed to parse uint array");
+    }
+    return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
+  }
+  if (element_type == TypeId::Int64) {
+    std::vector<int64_t> values;
+    auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
+    if (!ParseScalarArray<int64_t>(&sp, &values, parse_i64)) {
+      return ParseResult::Error("Failed to parse int64 array");
+    }
+    return ParseResult::Ok(Value::MakeInt64Array(std::move(values)));
+  }
+  if (element_type == TypeId::UInt64) {
+    std::vector<uint64_t> values;
+    auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
+    if (!ParseScalarArray<uint64_t>(&sp, &values, parse_u64)) {
+      return ParseResult::Error("Failed to parse uint64 array");
+    }
+    return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
+  }
+  if (element_type == TypeId::Token || element_type == TypeId::String) {
+    std::vector<std::string> values;
+    auto parse_stringish = [](SliceParser* s, std::string* v) {
+      return s->parse_token(v);
+    };
+    auto parse_string = [](SliceParser* s, std::string* v) {
+      return s->parse_string(v);
+    };
+    if (!ParseScalarArray<std::string>(&sp, &values,
+                                       element_type == TypeId::Token
+                                           ? parse_stringish
+                                           : parse_string)) {
+      return ParseResult::Error("Failed to parse string/token array");
+    }
+    return ParseResult::Ok(Value::MakeTokenArray(std::move(values)));
+  }
+
+  if (IsFloat2Like(element_type)) {
+    std::vector<float> values;
+    if (!ParseTupleArray<float, 2>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse float2 array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 2));
+  }
+  if (IsFloat3Like(element_type)) {
+    std::vector<float> values;
+    if (!ParseTupleArray<float, 3>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse float3 array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 3));
+  }
+  if (IsFloat4Like(element_type)) {
+    std::vector<float> values;
+    if (!ParseTupleArray<float, 4>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse float4 array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
+  }
+  if (IsDouble2Like(element_type)) {
+    std::vector<double> values;
+    if (!ParseTupleArray<double, 2>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse double2 array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 2));
+  }
+  if (IsDouble3Like(element_type)) {
+    std::vector<double> values;
+    if (!ParseTupleArray<double, 3>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse double3 array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 3));
+  }
+  if (IsDouble4Like(element_type)) {
+    std::vector<double> values;
+    if (!ParseTupleArray<double, 4>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse double4 array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
+  }
+  if (element_type == TypeId::Matrix2f) {
+    std::vector<float> values;
+    if (!ParseMatrixArray<float, 2>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse matrix2f array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
+  }
+  if (element_type == TypeId::Matrix3f) {
+    std::vector<float> values;
+    if (!ParseMatrixArray<float, 3>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse matrix3f array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 9));
+  }
+  if (element_type == TypeId::Matrix4f) {
+    std::vector<float> values;
+    if (!ParseMatrixArray<float, 4>(&sp, &values, parse_float)) {
+      return ParseResult::Error("Failed to parse matrix4f array");
+    }
+    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 16));
+  }
+  if (element_type == TypeId::Matrix2d) {
+    std::vector<double> values;
+    if (!ParseMatrixArray<double, 2>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse matrix2d array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
+  }
+  if (element_type == TypeId::Matrix3d) {
+    std::vector<double> values;
+    if (!ParseMatrixArray<double, 3>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse matrix3d array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 9));
+  }
+  if (element_type == TypeId::Matrix4d) {
+    std::vector<double> values;
+    if (!ParseMatrixArray<double, 4>(&sp, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse matrix4d array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 16));
+  }
+
+  return ParseResult::Error("No optimized array parser for type");
 }
 
 ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
+  // USD allows array-valued attributes to author `None` as a blocked value.
+  // Preserve it as a block (not an empty placeholder) so the writer re-emits
+  // `= None` rather than collapsing it to a declared-only attribute.
+  if (lexer.peek().type == TokenType::None) {
+    lexer.next();
+    return ParseResult::Ok(Value::MakeBlock());
+  }
+
+  switch (element_type) {
+    case TypeId::Float:
+    case TypeId::Double:
+    case TypeId::Int:
+    case TypeId::UInt:
+    case TypeId::Int64:
+    case TypeId::UInt64:
+    case TypeId::Bool:
+    case TypeId::Half:
+    case TypeId::Half2:
+    case TypeId::Half3:
+    case TypeId::Half4:
+    case TypeId::Float2:
+    case TypeId::Float3:
+    case TypeId::Float4:
+    case TypeId::Point3h:
+    case TypeId::Point3f:
+    case TypeId::Vector3h:
+    case TypeId::Vector3f:
+    case TypeId::Normal3h:
+    case TypeId::Normal3f:
+    case TypeId::Color3h:
+    case TypeId::Color3f:
+    case TypeId::Color4h:
+    case TypeId::Color4f:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord2f:
+    case TypeId::Texcoord3h:
+    case TypeId::Texcoord3f:
+    case TypeId::Quath:
+    case TypeId::Quatf:
+    case TypeId::Double2:
+    case TypeId::Double3:
+    case TypeId::Double4:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Color4d:
+    case TypeId::Texcoord2d:
+    case TypeId::Texcoord3d:
+    case TypeId::Quatd:
+    case TypeId::Matrix2f:
+    case TypeId::Matrix3f:
+    case TypeId::Matrix4f:
+    case TypeId::Matrix2d:
+    case TypeId::Matrix3d:
+    case TypeId::Matrix4d:
+    // Token/String arrays use the same bracket-literal fast path; the slice
+    // parser handles quotes, triple-quotes and escapes and returns a real
+    // token array (see ParseArrayValueOptimized).
+    case TypeId::Token:
+    case TypeId::String:
+      return ParseArrayValueOptimized(lexer, element_type);
+    default:
+      break;
+  }
+
   if (!lexer.expect(TokenType::OpenBracket)) {
     return ParseResult::Error(lexer.error());
   }
@@ -577,8 +1331,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     } else if (element_type == TypeId::Int) {
       return ParseResult::Ok(Value::MakeIntArray(std::vector<int32_t>{}));
     } else if (element_type == TypeId::Token || element_type == TypeId::String) {
-      // For token/string arrays, just return empty float array as placeholder
-      return ParseResult::Ok(Value::MakeFloatArray(std::vector<float>{}));
+      return ParseResult::Ok(Value::MakeTokenArray(std::vector<std::string>{}));
     }
     return ParseResult::Ok(Value::MakeFloatArray(std::vector<float>{}));
   }
@@ -631,6 +1384,13 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
       }
     }
 
+    // Defense-in-depth: cap a single pathological array's accumulated scalars.
+    if (float_data.size() > kMaxArrayScalars ||
+        int_data.size() > kMaxArrayScalars ||
+        string_data.size() > kMaxArrayScalars) {
+      return ParseResult::Error("Array element count exceeds limit");
+    }
+
     // Check for comma or end
     if (lexer.peek().type == TokenType::Comma) {
       lexer.next();
@@ -652,9 +1412,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
   } else if (IsFloat2Like(element_type) || IsFloat4Like(element_type)) {
     return ParseResult::Ok(Value::MakeFloatArray(std::move(float_data)));
   } else if (element_type == TypeId::Token || element_type == TypeId::String) {
-    // For now, we store string arrays as float arrays (placeholder)
-    // TODO: Add proper string array support
-    return ParseResult::Ok(Value::MakeFloatArray(std::vector<float>{}));
+    return ParseResult::Ok(Value::MakeTokenArray(std::move(string_data)));
   }
 
   // Default: try to return float array
@@ -703,6 +1461,93 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
   out_type = TypeId::Invalid;
   return ParseResult::Error("Cannot infer type from token");
 }
+
+// Recursive dictionary body parser. Grammar (USD):
+//   { [<typeName>] <key> = <value>   ... }
+// where <key> is an identifier or quoted string, <value> is a scalar/array
+// literal or a nested `{ ... }`. The type name is optional (inferred if absent).
+static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
+  if (depth > 64) return ParseResult::Error("dictionary nesting too deep");
+  if (!lexer.expect(TokenType::OpenBrace)) {
+    return ParseResult::Error("Expected '{' to start dictionary");
+  }
+
+  Value v = Value::MakeDictionary();
+  Dict* d = v.as_dictionary();
+
+  while (lexer.peek().type != TokenType::CloseBrace &&
+         lexer.peek().type != TokenType::Eof) {
+    std::string type_name, key;
+    bool have_type = false;
+
+    const Token& t = lexer.peek();
+    if (t.type == TokenType::String) {
+      key = t.value;
+      lexer.next();
+    } else if (t.type == TokenType::Identifier) {
+      std::string first = t.value;
+      lexer.next();
+      const Token& t2 = lexer.peek();
+      if (t2.type == TokenType::Identifier || t2.type == TokenType::String ||
+          t2.type == TokenType::OpenBracket) {
+        // `first` was the type name; the key (after an optional []) follows.
+        type_name = first;
+        have_type = true;
+        if (lexer.peek().type == TokenType::OpenBracket) {
+          lexer.next();
+          lexer.expect(TokenType::CloseBracket);
+          type_name += "[]";
+        }
+        const Token& kt = lexer.peek();
+        if (kt.type == TokenType::String || kt.type == TokenType::Identifier) {
+          key = kt.value;
+          lexer.next();
+        } else {
+          return ParseResult::Error("Expected dictionary key after type name");
+        }
+      } else {
+        key = first;  // bare key, no type name
+      }
+    } else {
+      lexer.next();  // unexpected token: skip to avoid an infinite loop
+      continue;
+    }
+
+    if (!lexer.expect(TokenType::Equals)) {
+      return ParseResult::Error("Expected '=' in dictionary entry");
+    }
+
+    ParseResult val;
+    if (lexer.peek().type == TokenType::OpenBrace) {
+      val = ParseDictDepth(lexer, depth + 1);
+    } else if (have_type) {
+      bool is_array = false;
+      TypeId tid = ParseTypeName(type_name, is_array);
+      if (tid == TypeId::Invalid) {
+        TypeId inferred;
+        val = ParseGenericValue(lexer, inferred);
+      } else if (is_array) {
+        val = ParseArrayValue(lexer, tid);
+      } else {
+        val = ParseValue(lexer, tid);
+      }
+    } else {
+      TypeId inferred;
+      val = ParseGenericValue(lexer, inferred);
+    }
+    if (!val.success) return val;
+    d->set(std::move(key), std::move(val.value));
+
+    if (lexer.peek().type == TokenType::Comma) lexer.next();
+  }
+
+  if (!lexer.expect(TokenType::CloseBrace)) {
+    return ParseResult::Error("Expected '}' to close dictionary");
+  }
+  return ParseResult::Ok(std::move(v));
+}
+
+ParseResult ParseDict(Lexer& lexer) { return ParseDictDepth(lexer, 0); }
 
 TypeId ParseTypeName(const std::string& type_name, bool& is_array) {
   std::string base_name = type_name;

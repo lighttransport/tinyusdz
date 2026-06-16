@@ -42,6 +42,15 @@ bool EnsureJSEngineReady(Context &ctx, std::string &err) {
     }
   }
 
+  // Expose tinyusdz.diff.* when a diff is cached in the session. Done after
+  // RegisterUSDModule so it augments (rather than is clobbered by) the
+  // tinyusdz global; works standalone too (no stage required).
+  if (ctx.diff) {
+    if (!RegisterDiffModule(*ctx.js_engine, ctx.diff.get(), err)) {
+      return false;
+    }
+  }
+
   return true;
 }
 

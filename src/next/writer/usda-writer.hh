@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "stream-writer.hh"
 #include <string>
 #include <ostream>
 
@@ -24,8 +25,15 @@ struct USDAWriteOptions {
   /// Double precision (digits after decimal)
   int double_precision = 15;
 
-  /// Maximum array elements per line (0 = unlimited)
-  size_t max_elements_per_line = 16;
+  /// Maximum array elements emitted before truncating with `, ...`
+  /// (0 = unlimited / faithful, round-trippable output). A non-zero value
+  /// produces a non-parseable *preview* and should only be used for debugging.
+  size_t max_elements_per_line = 0;
+
+  /// Emit the legacy `custom` qualifier on attributes that carry it. OFF by
+  /// default: `custom` is a deprecated USD qualifier, so tinyusdz omits it.
+  /// Enable (e.g. under `--openusd-compat`) to byte-match pxr/usdcat output.
+  bool emit_custom = false;
 
   /// Write compact format (less whitespace)
   bool compact = false;
@@ -38,6 +46,12 @@ struct USDAWriteOptions {
 
   /// Export time samples as separate lines
   bool expand_time_samples = true;
+
+  /// Number of threads for subtree serialization (only effective when the next
+  /// module is built with TINYUSDZ_ENABLE_THREAD). 1 = serial (default, so all
+  /// existing callers are unchanged); <= 0 = auto (hardware_concurrency); > 1 =
+  /// that many. Output is byte-for-byte identical regardless of thread count.
+  int num_threads = 1;
 };
 
 /// Result of write operation
@@ -51,7 +65,12 @@ struct USDAWriteResult {
 std::string WriteUSDAToString(const Stage& stage,
                                const USDAWriteOptions& options = {});
 
-/// Write Stage to stream
+/// Write Stage to a StreamWriter (stdio-independent core; supply any backend —
+/// stdio, file, std::string, or a host-provided WASM/WASI block sink).
+USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
+                          const USDAWriteOptions& options = {});
+
+/// Write Stage to a std::ostream (compatibility wrapper over the StreamWriter core).
 USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
                            const USDAWriteOptions& options = {});
 
@@ -65,7 +84,11 @@ USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
 std::string WriteLayerToString(const Layer& layer,
                                 const USDAWriteOptions& options = {});
 
-/// Write Layer to stream
+/// Write Layer to a StreamWriter (stdio-independent core).
+USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
+                           const USDAWriteOptions& options = {});
+
+/// Write Layer to a std::ostream (compatibility wrapper).
 USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
                             const USDAWriteOptions& options = {});
 

@@ -160,6 +160,18 @@ static std::string sIndentString = "    ";
 static thread_local uint32_t sColumnLimit = 0;
 static thread_local uint32_t sPrefixColumns = 0;
 
+// Opt-in: emit prim children and properties in their AUTHORED order, recovered
+// from the crate's `primChildren`/`properties` token-vector fields (what
+// OpenUSD's usdcat does), instead of the default lexicographical order. Plain
+// (not thread_local) so parallel-print worker threads observe the setting.
+// Read by the USDC Layer reader (whether to record the order metadata) and by
+// the USDA writers (whether to order by it). See SetPreserveAuthoredOrder().
+static bool sPreserveAuthoredOrder = false;
+
+// Opt-in: usdcat-style USDA layout (metadata paren on the `def` line, plain blank
+// separators). See SetUSDTextFormat(). Plain (not thread_local) for parallel print.
+static bool sUSDTextFormat = false;
+
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
@@ -174,6 +186,12 @@ void SetIndentString(const std::string &s) { sIndentString = s; }
 
 void SetColumnLimit(uint32_t limit) { sColumnLimit = limit; }
 uint32_t GetColumnLimit() { return sColumnLimit; }
+
+void SetPreserveAuthoredOrder(bool enable) { sPreserveAuthoredOrder = enable; }
+bool GetPreserveAuthoredOrder() { return sPreserveAuthoredOrder; }
+
+void SetUSDTextFormat(bool enable) { sUSDTextFormat = enable; }
+bool GetUSDTextFormat() { return sUSDTextFormat; }
 uint32_t GetPrefixColumns() { return sPrefixColumns; }
 
 ScopedPrefixColumns::ScopedPrefixColumns(uint32_t cols) : prev_(sPrefixColumns) {
@@ -266,8 +284,101 @@ static std::string print_payload(const prim::PayloadList &payload,
   return ss.str();
 }
 
+// Emit the `apiSchemas` metadatum (handles `= None`, authored list-ops, and the
+// resolved name view). Factored out so the USD-text-format path can emit it
+// FIRST in the metadata block (where usdcat places it) while the default keeps
+// it in tinyusdz's historical position.
+static void print_apiSchemas_block(std::stringstream &ss,
+                                   const APISchemas &schemas, uint32_t indent) {
+  if (schemas.explicitlyEmpty) {
+    // Authored as `apiSchemas = None` (explicit empty list). pxrUSD preserves
+    // this; reproduce it verbatim.
+    ss << pprint::Indent(indent) << "apiSchemas = None\n";
+  } else if (!schemas.authoredOps.empty()) {
+    // Emit the authored SdfTokenListOp verbatim. A single prim may carry
+    // multiple ops (e.g. `delete` + `prepend`); pxrUSD prints them in a
+    // canonical qualifier order, so match that for a stable round-trip.
+    const ListEditQual kOrder[] = {
+        ListEditQual::ResetToExplicit,  // explicit (unqualified) first
+        ListEditQual::Delete, ListEditQual::Add,
+        ListEditQual::Prepend, ListEditQual::Append, ListEditQual::Order};
+    for (ListEditQual qual : kOrder) {
+      for (const auto &op : schemas.authoredOps) {
+        if (op.first != qual) continue;
+        const std::string qualStr = to_string(qual);
+        ss << pprint::Indent(indent);
+        if (!qualStr.empty()) {
+          ss << qualStr << " ";
+        }
+        ss << "apiSchemas = [";
+        bool first = true;
+        for (const auto &item : op.second) {
+          if (!first) ss << ", ";
+          first = false;
+          ss << "\"" << item.first;  // schema name (raw)
+          if (!item.second.empty()) {
+            ss << ":" << item.second;  // instance name
+          }
+          ss << "\"";
+        }
+        ss << "]\n";
+      }
+    }
+  } else if (schemas.names.size() || schemas.unknownSchemas.size()) {
+    ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
+       << " apiSchemas = [";
+
+    bool first = true;
+
+    // Print unknown schemas first (they typically appear first in USD files)
+    for (size_t i = 0; i < schemas.unknownSchemas.size(); i++) {
+      if (!first) {
+        ss << ", ";
+      }
+      first = false;
+
+      auto schemaName = std::get<0>(schemas.unknownSchemas[i]);
+      ss << "\"" << schemaName;
+
+      auto instanceName = std::get<1>(schemas.unknownSchemas[i]);
+      if (!instanceName.empty()) {
+        ss << ":" << instanceName;
+      }
+
+      ss << "\"";
+    }
+
+    // Print known schemas
+    for (size_t i = 0; i < schemas.names.size(); i++) {
+      if (!first) {
+        ss << ", ";
+      }
+      first = false;
+
+      auto name = std::get<0>(schemas.names[i]);
+      ss << "\"" << to_string(name);
+
+      auto instanceName = std::get<1>(schemas.names[i]);
+
+      if (!instanceName.empty()) {
+        ss << ":" << instanceName;
+      }
+
+      ss << "\"";
+    }
+    ss << "]\n";
+  }
+}
+
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   std::stringstream ss;
+
+  // usdcat places `apiSchemas` FIRST in the prim-metadata block; tinyusdz's
+  // default emits it later. Under the USD-text-format opt-in, emit it up front.
+  const bool usd_text_meta = pprint::GetUSDTextFormat();
+  if (usd_text_meta && meta.has_apiSchemas()) {
+    print_apiSchemas_block(ss, meta.get_apiSchemas(), indent);
+  }
 
   if (meta.has_active()) {
     ss << pprint::Indent(indent)
@@ -391,87 +502,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     }
   }
 
-  if (meta.has_apiSchemas()) {
-    auto schemas = meta.get_apiSchemas();
-
-    if (schemas.explicitlyEmpty) {
-      // Authored as `apiSchemas = None` (explicit empty list). pxrUSD preserves
-      // this; reproduce it verbatim.
-      ss << pprint::Indent(indent) << "apiSchemas = None\n";
-    } else if (!schemas.authoredOps.empty()) {
-      // Emit the authored SdfTokenListOp verbatim. A single prim may carry
-      // multiple ops (e.g. `delete` + `prepend`); pxrUSD prints them in a
-      // canonical qualifier order, so match that for a stable round-trip.
-      const ListEditQual kOrder[] = {
-          ListEditQual::ResetToExplicit,  // explicit (unqualified) first
-          ListEditQual::Delete, ListEditQual::Add,
-          ListEditQual::Prepend, ListEditQual::Append, ListEditQual::Order};
-      for (ListEditQual qual : kOrder) {
-        for (const auto &op : schemas.authoredOps) {
-          if (op.first != qual) continue;
-          const std::string qualStr = to_string(qual);
-          ss << pprint::Indent(indent);
-          if (!qualStr.empty()) {
-            ss << qualStr << " ";
-          }
-          ss << "apiSchemas = [";
-          bool first = true;
-          for (const auto &item : op.second) {
-            if (!first) ss << ", ";
-            first = false;
-            ss << "\"" << item.first;  // schema name (raw)
-            if (!item.second.empty()) {
-              ss << ":" << item.second;  // instance name
-            }
-            ss << "\"";
-          }
-          ss << "]\n";
-        }
-      }
-    } else if (schemas.names.size() || schemas.unknownSchemas.size()) {
-      ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
-         << " apiSchemas = [";
-
-      bool first = true;
-
-      // Print unknown schemas first (they typically appear first in USD files)
-      for (size_t i = 0; i < schemas.unknownSchemas.size(); i++) {
-        if (!first) {
-          ss << ", ";
-        }
-        first = false;
-
-        auto schemaName = std::get<0>(schemas.unknownSchemas[i]);
-        ss << "\"" << schemaName;
-
-        auto instanceName = std::get<1>(schemas.unknownSchemas[i]);
-        if (!instanceName.empty()) {
-          ss << ":" << instanceName;
-        }
-
-        ss << "\"";
-      }
-
-      // Print known schemas
-      for (size_t i = 0; i < schemas.names.size(); i++) {
-        if (!first) {
-          ss << ", ";
-        }
-        first = false;
-
-        auto name = std::get<0>(schemas.names[i]);
-        ss << "\"" << to_string(name);
-
-        auto instanceName = std::get<1>(schemas.names[i]);
-
-        if (!instanceName.empty()) {
-          ss << ":" << instanceName;
-        }
-
-        ss << "\"";
-      }
-      ss << "]\n";
-    }
+  if (!usd_text_meta && meta.has_apiSchemas()) {
+    print_apiSchemas_block(ss, meta.get_apiSchemas(), indent);
   }
 
   if (meta.has_doc()) {

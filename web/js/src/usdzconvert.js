@@ -341,6 +341,7 @@ export class ZipStreamWriter {
     this._enc = new TextEncoder();
   }
   _emit(bytes) { this._write(bytes); this.offset += bytes.length; }
+  canStream() { return !!this._patch; }  // addEntryStreaming needs a seekable sink
   addEntry(name, data) {
     const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
     assertZip32Size(name, u8.length);
@@ -532,6 +533,10 @@ function repackUSDZEntries(native, rootName, rootData, archiveEntries, rootEntry
           pngEncoder: opts.pngEncoder || 'auto',
           jpegQuality: opts.jpegQuality || 90,
           resizeColorspace: resizeCsFor(e.name),
+          // This is the single-usdz low-heap repack path: keep the
+          // scanline-streamed PNG transcoder (slower, but the whole image
+          // never lands in the wasm heap).
+          lowMemory: 1,
         });
         if (res && res.success) {
           reencoded++;
@@ -1062,6 +1067,9 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
 
   log(`next low-mem flatten: root.usdc ${stats.inputBytes} -> ${stats.outputBytes} bytes ` +
       `(passthrough=${stats.arraysPassedThrough}, reencoded=${stats.arraysReencoded})` +
+      ` read=${Number(stats.readMs || 0).toFixed(3)}ms` +
+      ` compose=${Number(stats.composeMs || 0).toFixed(3)}ms` +
+      ` write=${Number(stats.writeMs || 0).toFixed(3)}ms` +
       `${canStreamWrite ? ' [stream-write]' : ''}; ` +
       `repacked ${r.textures} texture(s), re-encoded ${r.reencoded}${r.streamedToSink ? ' [streamed to sink]' : ''}`);
   return {
@@ -1076,6 +1084,9 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       pipeline: 'next',
       arraysPassedThrough: stats.arraysPassedThrough,
       arraysReencoded: stats.arraysReencoded,
+      readMs: stats.readMs,
+      composeMs: stats.composeMs,
+      writeMs: stats.writeMs,
     },
   };
 }
@@ -1405,33 +1416,56 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     // the requested output format changes the extension).
     const textureRemap = {};
     const pickResizeCs = makeResizeCsPicker(native, assetMap.get(rootPath), opts);
+
+    // Stage A: when a textureProcessor hook is installed, run it over all
+    // textures with bounded concurrency (opts.textureConcurrency) — JS/worker
+    // processors parallelize across textures. The WASM fallback below stays
+    // sequential (single instance), as do the setAsset calls.
+    const processedByPath = new Map();
+    if (typeof opts.textureProcessor === 'function' && images.length) {
+      const limit = Math.max(1, Math.min(opts.textureConcurrency || 1, images.length));
+      let nextImage = 0;
+      const runOne = async () => {
+        while (nextImage < images.length) {
+          const path = images[nextImage++];
+          const bytes = assetMap.get(path);
+          const assetName = (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
+          try {
+            const processed = await opts.textureProcessor({
+              path,
+              name: assetName,
+              data: bytes,
+              maxTextureSize: opts.maxTextureSize || 0,
+              reencode: opts.reencode,
+              textureFormat,
+              jpegQuality: opts.jpegQuality || 90,
+              resizeColorspace: pickResizeCs(assetName),
+              log,
+            });
+            if (processed && processed.data) processedByPath.set(path, processed);
+          } catch (err) {
+            log(`  ${assetName}: texture processor failed (${err && err.message ? err.message : err}); will try WASM`);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: limit }, runOne));
+    }
+
     for (const path of images) {
       const bytes = assetMap.get(path);
       // Name as the USD most likely references it (relative to the USD's dir).
       let assetName = (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
 
       stats.textures++;
+      // The WASM convertImage fallback below is synchronous; yield to the
+      // event loop periodically so a driving page/CLI can surface progress
+      // during multi-minute texture phases.
+      if ((stats.textures & 7) === 0) await new Promise((r) => setTimeout(r, 0));
       let outBytes = bytes;
 
       const fmtInfo = outputFormatForImage(path, textureFormat);
       const wantResize = (opts.maxTextureSize || 0) > 0;
-      let processed = null;
-      if (typeof opts.textureProcessor === 'function') {
-        try {
-          processed = await opts.textureProcessor({
-            path,
-            name: assetName,
-            data: bytes,
-            maxTextureSize: opts.maxTextureSize || 0,
-            reencode: opts.reencode,
-            textureFormat,
-            jpegQuality: opts.jpegQuality || 90,
-            log,
-          });
-        } catch (err) {
-          log(`  ${assetName}: browser texture processing failed (${err && err.message ? err.message : err}); trying WASM`);
-        }
-      }
+      const processed = processedByPath.get(path) || null;
 
       if (processed && processed.data) {
         outBytes = new Uint8Array(processed.data);
@@ -1483,6 +1517,459 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     const usdz = new Uint8Array(data); // copy out of wasm heap
 
     return { usdz, stats };
+  } finally {
+    usd.delete();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming folder/URL-list -> USDZ conversion.
+//
+// Unlike convertFolderToUSDZ (which takes the whole file set as an in-memory
+// Map: scene bytes + every texture + every processed output live concurrently
+// in JS and in the wasm asset cache), this path fetches lazily from a `source`:
+//
+//   source = { keys: string[],                    // relative asset paths
+//              fetch: async (key) => Uint8Array } // file / HTTP fetch
+//
+// Only the USD layers (small) enter the wasm resolver cache for composition;
+// textures are fetched -> processed -> appended to the USDZ zip sink ->
+// released one at a time (bounded prefetch), so peak RSS is roughly the
+// composition heap plus a handful of textures instead of the entire scene.
+//
+// Requires flatten (the streamed root inlines dependency layers). Texture
+// renames (e.g. --texture-format jpeg on .png inputs) are precomputed from the
+// name/format alone and applied to the composed layer via
+// usd.remapLayerAssetPaths() BEFORE the root is written (the root must be the
+// first zip entry, so the remap cannot wait for texture processing).
+// ---------------------------------------------------------------------------
+export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
+  const log = opts.log || (() => {});
+  const keys = source.keys;
+  if (!keys || !keys.length) throw new Error('streaming source has no files');
+  if (opts.flatten === false) {
+    throw new Error('streaming conversion requires flatten (composition arcs cannot reference streamed entries)');
+  }
+
+  // Root selection: reuse rootUsdFromMap over a keys-only Map.
+  const keyMap = new Map(keys.map((k) => [k, null]));
+  const rootPath = opts.rootPath || rootUsdFromMap(keyMap);
+  if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc) found in the input.');
+  if (/\.usdz$/i.test(rootPath)) {
+    throw new Error('streaming conversion takes a scene folder/url-list, not a packed .usdz root');
+  }
+
+  const textureFormat = normalizedTextureFormat(opts.textureFormat);
+  const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
+  const assetNameFor = (p) => (rootDir && p.startsWith(rootDir)) ? p.slice(rootDir.length) : p;
+  const normalizeArchiveAssetName = (p) => assetNameFor(String(p || '').replace(/\\/g, '/'))
+    .replace(/^\.\/+/, '').replace(/^\/+/, '');
+
+  const stats = {
+    textures: 0, resized: 0, reencoded: 0, audio: 0, otherAssets: 0,
+    rootPath, rootLayerFormat: 'usdc', flatten: true,
+    arkitCompatible: false, streaming: true,
+  };
+
+  const usd = new native.TinyUSDZLoaderNative();
+  try {
+    if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
+        typeof usd.setUSDCExportLimitMB === 'function') {
+      usd.setUSDCExportLimitMB(opts.maxUsdcMb || 0, opts.maxMemMb || 0);
+    }
+
+    // 1. USD layers only into the wasm resolver cache (composition needs them;
+    //    they are small relative to textures). Node/folder sources may provide a
+    //    synchronous fetch hook; in that case the next path can load dependency
+    //    layers on demand and only preloads the root here.
+    const usdKeys = keys.filter((k) => isUsdName(k) && !/\.usdz$/i.test(k));
+    const usdKeyByAssetName = new Map();
+    for (const key of usdKeys) {
+      usdKeyByAssetName.set(normalizeArchiveAssetName(key), key);
+    }
+    const canFetchUsdLayerSync =
+      opts.pipeline === 'next' &&
+      typeof source.fetchSync === 'function' &&
+      typeof usd.nextFlattenMultiBufferToSinkFetch === 'function';
+    const canFetchUsdLayerAsync =
+      opts.pipeline === 'next' &&
+      !canFetchUsdLayerSync &&
+      typeof usd.nextFlattenAsyncBegin === 'function' &&
+      typeof usd.nextFlattenAsyncProvideLayer === 'function' &&
+      typeof usd.nextFlattenAsyncStep === 'function' &&
+      typeof usd.nextFlattenAsyncEnd === 'function';
+    const resolveUsdKey = (name) => {
+      const norm = normalizeArchiveAssetName(name);
+      if (usdKeyByAssetName.has(norm)) return usdKeyByAssetName.get(norm);
+      for (const [assetName, key] of usdKeyByAssetName) {
+        if (assetName.endsWith('/' + norm) || norm.endsWith('/' + assetName)) {
+          return key;
+        }
+      }
+      return null;
+    };
+    let usdBytesTotal = 0;
+    let usdLayersPreloaded = 0;
+    let rootBytes = null;
+    const preloadUsdDependencies = async () => {
+      for (const key of usdKeys) {
+        if (key === rootPath) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const bytes = await source.fetch(key);
+        usdBytesTotal += bytes.length;
+        usdLayersPreloaded++;
+        usd.setAsset(assetNameFor(key), bytes);
+      }
+    };
+    for (const key of usdKeys) {
+      if ((canFetchUsdLayerSync || canFetchUsdLayerAsync) && key !== rootPath) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const bytes = await source.fetch(key);
+      usdBytesTotal += bytes.length;
+      usdLayersPreloaded++;
+      if (key === rootPath) rootBytes = bytes;
+      else usd.setAsset(assetNameFor(key), bytes);
+    }
+    if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);
+    if (canFetchUsdLayerSync || canFetchUsdLayerAsync) {
+      log(`streaming: ${usdKeys.length} USD layer(s), ${usdLayersPreloaded} preloaded ` +
+          `(${(usdBytesTotal / 1e6).toFixed(1)} MB); dependency layers load on demand; textures stream on demand`);
+    } else {
+      log(`streaming: ${usdKeys.length} USD layer(s), ${(usdBytesTotal / 1e6).toFixed(1)} MB in cache; textures stream on demand`);
+    }
+
+    // 1.5 Opt-in next multi-asset pipeline: compose/flatten/write happen inside
+    // one wasm call (nextFlattenMultiBufferToSink) with external arcs resolved
+    // against the asset cache the loop above just fed. Dependency layers are
+    // consumed from the cache as they load and arrays pass through verbatim,
+    // so the heap stays near the input bytes instead of the legacy composed +
+    // re-encoded copies. Requires a USDC root and textureFormat 'keep' (the
+    // next-composed layer never surfaces to JS, so texture-rename remapping
+    // can't be applied); declines back to the legacy path otherwise.
+    let nextRoot = null;  // { uuid, anchor } when the next pipeline is armed
+    if (opts.pipeline === 'next') {
+      const rootIsUSDC = rootBytes.length >= 8 &&
+        rootBytes[0] === 0x50 && rootBytes[1] === 0x58 && rootBytes[2] === 0x52 &&
+        rootBytes[3] === 0x2d && rootBytes[4] === 0x55 && rootBytes[5] === 0x53 &&
+        rootBytes[6] === 0x44 && rootBytes[7] === 0x43;  // "PXR-USDC"
+      if (rootIsUSDC && textureFormat === 'keep' &&
+          typeof usd.nextFlattenMultiBufferToSink === 'function') {
+        const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
+          ? Number(opts.maxMemMb) * 1024 * 1024 : 0;
+        const uuid = nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
+        if (uuid !== null) {
+          nextRoot = {
+            uuid,
+            anchor: assetNameFor(rootPath),
+            syncLayers: canFetchUsdLayerSync,
+            asyncLayers: canFetchUsdLayerAsync,
+          };
+        }
+        else log('next: zero-copy alloc declined; using the legacy streaming path.');
+      } else {
+        log('next pipeline unavailable for this input (non-USDC root, texture ' +
+            'format change, or old wasm); using the legacy streaming path.');
+      }
+    }
+
+    // 2. Compose/flatten (legacy path; skipped when the next pipeline is armed —
+    //    it composes inside the flatten call at step 4/5).
+    if (!nextRoot) {
+      if (canFetchUsdLayerSync) {
+        await preloadUsdDependencies();
+      }
+      if (!usd.loadAsLayerFromBinary(rootBytes, rootPath.split('/').pop())) {
+        throw new Error('Failed to load USD: ' + usd.error());
+      }
+      composeToFixedPoint(usd);
+      // Composition is done: drop the previous-iteration source layer (a full
+      // copy of the composed scene) and the USD-layer bytes in the wasm asset
+      // cache — only the composed layer is used from here on.
+      if (typeof usd.releaseSourceLayer === 'function') usd.releaseSourceLayer();
+      if (typeof usd.clearAssets === 'function') usd.clearAssets();
+    }
+
+    // 3. Precompute texture output names; remap renamed references in the
+    //    composed layer before the root is written.
+    const images = keys.filter(isImageName);
+    const plans = images.map((path) => {
+      const name = assetNameFor(path);
+      const fmtInfo = outputFormatForImage(path, textureFormat);
+      let outName = name;
+      if (fmtInfo.format && fmtInfo.ext) {
+        const renamed = replaceExt(name, fmtInfo.ext);
+        if (renamed !== name) outName = renamed;
+      }
+      return { path, name, outName, format: fmtInfo.format };
+    });
+    const remap = {};
+    for (const p of plans) if (p.outName !== p.name) remap[p.name] = p.outName;
+    if (Object.keys(remap).length) {
+      if (typeof usd.remapLayerAssetPaths !== 'function') {
+        throw new Error('texture format change requires remapLayerAssetPaths (rebuild the wasm module), or use --texture-format keep');
+      }
+      const n = usd.remapLayerAssetPaths(remap);
+      log(`streaming: remapped ${n} texture reference(s) for format change`);
+    }
+
+    let referencedAssetNames = null;
+    let referencedAssetList = [];
+    const isReferencedArchiveName = (name) => {
+      if (!referencedAssetNames) return true;
+      const norm = normalizeArchiveAssetName(name);
+      if (referencedAssetNames.has(norm)) return true;
+      return referencedAssetList.some((ref) =>
+        ref.endsWith('/' + norm) || norm.endsWith('/' + ref));
+    };
+
+    // 4. Export the flattened root as a bare USDC buffer (JS-side zip). The
+    //    flattened root inlines every dependency layer, so size it from the
+    //    total USD bytes, not the root file alone. (The next pipeline instead
+    //    flattens+writes inside one wasm call at step 5, streamed when the
+    //    sink is patch-capable.)
+    const rootOut = nextRoot
+      ? null : exportUSDCOutsideWasmHeap(usd, usdBytesTotal, opts, log, 'layer');
+    if (!nextRoot) {
+      log(`streaming: composed root exported; wasm heap ` +
+          `${Math.round((native.HEAPU8 ? native.HEAPU8.length : 0) / 1048576)} MiB`);
+    }
+    const rootName = rootPath.split('/').pop().replace(/\.(usda|usd)$/i, '.usdc');
+
+    // 5. Stream the zip: root first, then textures one at a time.
+    const chunks = [];
+    const sink = opts.zipSink || ((bytes) => { chunks.push(bytes.slice ? bytes.slice() : new Uint8Array(bytes)); });
+    const zw = new ZipStreamWriter(sink);
+    if (nextRoot) {
+      const lazy = opts.nextEager !== true;
+      const canStreamWrite = opts.streamWrite !== false && zw.canStream();
+      let s = null;
+      let asyncSession = null;
+      if (nextRoot.asyncLayers) {
+        const begin = usd.nextFlattenAsyncBegin(nextRoot.uuid, nextRoot.anchor, lazy);
+        if (!begin || !begin.success) {
+          throw new Error('next async flatten begin failed: ' + (begin && begin.error));
+        }
+        asyncSession = begin.session;
+        for (;;) {
+          const r = usd.nextFlattenAsyncStep(asyncSession, () => false);
+          if (!r || !r.success) {
+            throw new Error('next async flatten preflight failed: ' + (r && r.error));
+          }
+          if (r.status === 'need-layer') {
+            const key = resolveUsdKey(r.key);
+            if (!key) throw new Error(`next async flatten requested unknown layer: ${r.key}`);
+            // eslint-disable-next-line no-await-in-loop
+            const bytes = await source.fetch(key);
+            const pr = usd.nextFlattenAsyncProvideLayer(asyncSession, r.key, bytes);
+            if (!pr || !pr.success) {
+              throw new Error('next async flatten provide failed: ' + (pr && pr.error));
+            }
+            continue;
+          }
+          if (r.status === 'ready' || r.status === 'done') break;
+          throw new Error(`next async flatten unexpected status: ${r.status}`);
+        }
+      }
+      if (canStreamWrite) {
+        // Once streaming starts a failure corrupts the archive, so errors
+        // throw rather than fall back (same contract as the single-usdz path).
+        zw.addEntryStreaming(rootName, (emit) => {
+          const emitCb = (view) => { emit(view); return true; };
+          if (asyncSession) {
+            s = usd.nextFlattenAsyncStep(asyncSession, emitCb);
+            usd.nextFlattenAsyncEnd(asyncSession);
+          } else if (nextRoot.syncLayers &&
+              typeof usd.nextFlattenMultiBufferToSinkFetch === 'function') {
+            const hasLayer = (name) =>
+              resolveUsdKey(name) !== null;
+            const fetchLayer = (name) => {
+              const key = resolveUsdKey(name);
+              return key ? source.fetchSync(key) : null;
+            };
+            s = usd.nextFlattenMultiBufferToSinkFetch(
+              nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer);
+          } else {
+            s = usd.nextFlattenMultiBufferToSink(
+              nextRoot.uuid, nextRoot.anchor, lazy, emitCb);
+          }
+          if (!s || !s.success || (s.status && s.status !== 'done')) {
+            throw new Error('next multi flatten failed: ' + (s && s.error));
+          }
+        });
+      } else {
+        if (asyncSession) {
+          s = usd.nextFlattenAsyncStep(asyncSession, null);
+          usd.nextFlattenAsyncEnd(asyncSession);
+        } else if (nextRoot.syncLayers &&
+            typeof usd.nextFlattenMultiBufferToSinkFetch === 'function') {
+          const hasLayer = (name) =>
+            resolveUsdKey(name) !== null;
+          const fetchLayer = (name) => {
+            const key = resolveUsdKey(name);
+            return key ? source.fetchSync(key) : null;
+          };
+          s = usd.nextFlattenMultiBufferToSinkFetch(
+            nextRoot.uuid, nextRoot.anchor, lazy, null, hasLayer, fetchLayer);
+        } else {
+          s = usd.nextFlattenMultiBufferToSink(nextRoot.uuid, nextRoot.anchor, lazy, null);
+        }
+        if (!s || !s.success || (s.status && s.status !== 'done')) {
+          throw new Error('next multi flatten failed: ' + (s && s.error));
+        }
+        zw.addEntry(rootName, new Uint8Array(s.data));
+      }
+      if (typeof usd.clearAssets === 'function') usd.clearAssets();
+      stats.pipeline = 'next';
+      stats.arraysPassedThrough = s.arraysPassedThrough;
+      stats.arraysReencoded = s.arraysReencoded;
+      stats.readMs = s.readMs;
+      stats.composeMs = s.composeMs;
+      stats.writeMs = s.writeMs;
+      if (Array.isArray(s.assetPaths) && s.assetPaths.length > 0) {
+        referencedAssetList = s.assetPaths
+          .map((p) => normalizeArchiveAssetName(p))
+          .filter((p) => p.length > 0);
+        referencedAssetNames = new Set(referencedAssetList);
+        stats.referencedAssets = referencedAssetList.length;
+      }
+      log(`next multi flatten: ${rootName} ${s.inputBytes} -> ${s.outputBytes} bytes, ` +
+          `${s.primCount} prims (passthrough=${s.arraysPassedThrough}, ` +
+          `reencoded=${s.arraysReencoded}) ` +
+          `read=${Number(s.readMs || 0).toFixed(3)}ms ` +
+          `compose=${Number(s.composeMs || 0).toFixed(3)}ms ` +
+          `write=${Number(s.writeMs || 0).toFixed(3)}ms` +
+          `${canStreamWrite ? ' [stream-write]' : ''}; ` +
+          `wasm heap ${Math.round((native.HEAPU8 ? native.HEAPU8.length : 0) / 1048576)} MiB`);
+      if (s.compositionErrorCount > 0) {
+        log(`next multi flatten: ${s.compositionErrorCount} composition error(s) ` +
+            '(arcs skipped):');
+        for (const e of s.compositionErrors || []) log(`  ${e}`);
+      }
+    } else {
+      zw.addEntry(rootName, rootOut);
+    }
+
+    const pickResizeCs = makeResizeCsPicker(native, rootBytes, opts);
+    const wantResize = (opts.maxTextureSize || 0) > 0;
+    const wantWork = (fmt) => fmt && (wantResize || opts.reencode !== false || textureFormat !== 'keep');
+
+    // Bounded prefetch pipeline: fetch/process up to `width` textures ahead,
+    // append to the zip in order so at most `width` outputs are in memory.
+    const width = Math.max(1, opts.textureConcurrency || 4);
+    const texturePlans = referencedAssetNames
+      ? plans.filter((plan) => isReferencedArchiveName(plan.name))
+      : plans;
+    if (referencedAssetNames && texturePlans.length !== plans.length) {
+      log(`streaming: skipped ${plans.length - texturePlans.length} unreferenced texture asset(s)`);
+    }
+    const processOne = async (plan) => {
+      let bytes;
+      try {
+        bytes = await source.fetch(plan.path);
+      } catch (err) {
+        // Resolve to a sentinel — never reject. This promise is pre-launched by
+        // the bounded-prefetch pump but awaited FIFO, so a non-head rejection
+        // would sit unhandled until the loop reaches it, tripping Node's default
+        // unhandledRejection policy and killing the process. The consume loop
+        // turns this sentinel into a clean error instead.
+        return { error: err };
+      }
+      let outBytes = bytes;
+      let resized = false, reencoded = false;
+      if (typeof opts.textureProcessor === 'function') {
+        try {
+          const processed = await opts.textureProcessor({
+            path: plan.path, name: plan.name, data: bytes,
+            maxTextureSize: opts.maxTextureSize || 0,
+            reencode: opts.reencode, textureFormat,
+            jpegQuality: opts.jpegQuality || 90,
+            resizeColorspace: pickResizeCs(plan.name), log,
+          });
+          if (processed && processed.data) {
+            outBytes = new Uint8Array(processed.data);
+            resized = !!processed.resized;
+            reencoded = true;
+          }
+        } catch (err) {
+          log(`  ${plan.name}: texture processor failed (${err && err.message ? err.message : err}); trying WASM`);
+        }
+      }
+      if (outBytes === bytes && wantWork(plan.format)) {
+        let res = null;
+        try {
+          res = native.convertImage(bytes, {
+            maxSize: opts.maxTextureSize || 0,
+            format: plan.format,
+            pngEncoder: opts.pngEncoder || 'auto',
+            jpegQuality: opts.jpegQuality || 90,
+            resizeColorspace: pickResizeCs(plan.name),
+          });
+        } catch (err) {
+          // A synchronous throw here would reject this pre-launched promise the
+          // same way a failed fetch does; treat it like a convertImage failure
+          // and pass the original through.
+          log(`  ${plan.name}: convertImage threw (${err && err.message ? err.message : err}); passing original through`);
+        }
+        if (res && res.success) {
+          outBytes = new Uint8Array(res.data);
+          resized = !!res.resized;
+          reencoded = true;
+        } else if (res) {
+          log(`  ${plan.name}: convertImage failed (${res.error}); passing original through`);
+        }
+      }
+      return { outBytes, resized, reencoded };
+    };
+
+    const inflight = [];
+    let planIdx = 0;
+    const pump = () => {
+      while (planIdx < texturePlans.length && inflight.length < width) {
+        const plan = texturePlans[planIdx++];
+        inflight.push({ plan, promise: processOne(plan) });
+      }
+    };
+    pump();
+    while (inflight.length) {
+      const { plan, promise } = inflight.shift();
+      // eslint-disable-next-line no-await-in-loop
+      const r = await promise;
+      if (r.error) {
+        // A referenced texture could not be fetched — fail cleanly rather than
+        // emit an archive missing the asset. Any remaining in-flight jobs resolve
+        // to sentinels (they never reject), so abandoning them here is safe.
+        throw new Error(`streaming: failed to fetch texture '${plan.path}': ${r.error && r.error.message ? r.error.message : r.error}`);
+      }
+      const { outBytes, resized, reencoded } = r;
+      zw.addEntry(plan.outName, outBytes);
+      stats.textures++;
+      if (resized) stats.resized++;
+      if (reencoded) stats.reencoded++;
+      log(`  ${plan.outName}: ${outBytes.length} bytes${resized ? ' [resized]' : reencoded ? ' [reencoded]' : ' [passthrough]'}`);
+      pump();
+    }
+
+    // 6. Non-USD, non-image assets (audio etc.) pass through, also streamed.
+    for (const key of keys) {
+      if (key === rootPath || isUsdName(key) || isImageName(key)) continue;
+      if (referencedAssetNames && !isReferencedArchiveName(assetNameFor(key))) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const bytes = await source.fetch(key);
+      zw.addEntry(assetNameFor(key), bytes);
+      if (isAudioName(key)) stats.audio++; else stats.otherAssets++;
+    }
+
+    zw.finalize();
+
+    if (opts.zipSink) {
+      return { usdz: null, streamedToSink: true, stats };
+    }
+    let total = 0;
+    for (const c of chunks) total += c.length;
+    const usdz = new Uint8Array(total);
+    let pos = 0;
+    for (const c of chunks) { usdz.set(c, pos); pos += c.length; }
+    return { usdz, streamedToSink: false, stats };
   } finally {
     usd.delete();
   }

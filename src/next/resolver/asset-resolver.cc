@@ -28,7 +28,13 @@ namespace {
 std::unique_ptr<AssetResolver> g_default_resolver;
 
 bool FileExistsImpl(const std::string& path) {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+  // wasm builds may have no filesystem at all (-sFILESYSTEM=0), where even a
+  // stat syscall aborts. Resolution there goes through the custom resolver
+  // (asset-cache backed); plain file paths never exist.
+  (void)path;
+  return false;
+#elif defined(_WIN32)
   std::ifstream f(path);
   return f.good();
 #else
@@ -40,7 +46,10 @@ bool FileExistsImpl(const std::string& path) {
 }
 
 bool DirectoryExistsImpl(const std::string& path) {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+  (void)path;
+  return false;
+#elif defined(_WIN32)
   std::ifstream f(path);
   return f.good();
 #else
@@ -50,7 +59,10 @@ bool DirectoryExistsImpl(const std::string& path) {
 }
 
 std::string GetCurrentWorkingDirectory() {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+  // No filesystem (and the getcwd syscall ABORTS under -sFILESYSTEM=0).
+  return ".";
+#elif defined(_WIN32)
   char buffer[4096];
   if (_getcwd(buffer, sizeof(buffer))) {
     return std::string(buffer);
@@ -153,7 +165,10 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string custom_result = custom_resolver_(asset_path, anchor_path);
     if (!custom_result.empty()) {
       result.resolved_path = NormalizePath(custom_result);
-      result.exists = FileExists(result.resolved_path);
+      // A custom resolver returning a path asserts the asset resolved; its
+      // result need not be a filesystem path (e.g. a wasm asset-cache key),
+      // so don't second-guess it with a file probe.
+      result.exists = true;
       return result;
     }
   }

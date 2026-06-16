@@ -49,6 +49,11 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type);
 /// Returns the value and sets type_id to the inferred type
 ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type);
 
+/// Parse a USD dictionary `{ [type] key = value ... }` into a Dictionary Value.
+/// The lexer should be positioned at the opening brace. Nested dictionaries and
+/// array-valued entries are supported.
+ParseResult ParseDict(Lexer& lexer);
+
 /// Get TypeId from a USD type name string
 /// Handles both simple types ("float") and array types ("float[]")
 TypeId ParseTypeName(const std::string& type_name, bool& is_array);

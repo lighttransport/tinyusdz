@@ -205,6 +205,16 @@ uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
 }
 
 uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value value) {
+  // Lazy (crate-backed) arrays: skip content dedup. find_or_store() hashes the
+  // value, and Value::hash() forces an in-place materialize — decoding every
+  // array-valued time sample into the heap at parse time, which is the dominant
+  // peak-RSS cost on animation-heavy scenes (e.g. Caldera). Store the lazy ref
+  // as-is via the no-dedup path so it stays a cheap byte-range reference until
+  // the writer decodes it transiently. (Scalar samples are never lazy, so they
+  // keep deduping through the path below.)
+  if (value.is_lazy()) {
+    return add(name_id, time, std::move(value));
+  }
   // Store with deduplication (good for repeated array values)
   uint32_t offset = find_or_store(std::move(value));
   samples_[name_id.id].emplace_back(time, offset);
@@ -357,6 +367,11 @@ PrimSpec PrimSpec::Clone() const {
   c.connections_ = connections_;
   c.prop_type_names_ = prop_type_names_;
 
+  // Deep copy per-property metadata (unique_ptr side table).
+  for (const auto& kv : prop_metas_) {
+    if (kv.second) c.prop_metas_[kv.first] = std::make_unique<PropMeta>(*kv.second);
+  }
+
   // Deep copy children
   c.child_indices_ = child_indices_;
 
@@ -431,12 +446,35 @@ void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t fl
   props_.add(slot);
 }
 
+bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot) return false;
+  if (slot->value_offset != UINT32_MAX) return false;  // already has a value
+  if (!values_) values_ = std::make_unique<ValueStorage>();
+  uint32_t offset = values_->store(std::move(value));
+  const Value* stored = values_->get(offset);
+  slot->value_offset = offset;
+  // Bind the concrete stored type (and array flag); keep the declared slot type
+  // if the incoming value is Invalid.
+  if (stored && stored->type_id() != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(stored->type_id());
+    if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
+  }
+  return true;
+}
+
 void PrimSpec::reserve_properties(size_t count) {
   props_.reserve(count);
 }
 
 void PrimSpec::finalize_properties() {
   props_.sort();
+}
+
+void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->flags |= PropSlot::kFlagTimeSampled;
+  }
 }
 
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
@@ -522,6 +560,24 @@ const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) cons
   return &it->second;
 }
 
+void PrimSpec::remap_target_prefix(const std::string& old_prefix,
+                                   const std::string& new_prefix) {
+  auto remap = [&](std::vector<Path>& targets) {
+    for (Path& t : targets) {
+      const std::string s = t.str();
+      if (s == old_prefix) {
+        t = Path(new_prefix);
+      } else if (s.size() > old_prefix.size() &&
+                 s.compare(0, old_prefix.size(), old_prefix) == 0 &&
+                 s[old_prefix.size()] == '/') {
+        t = Path(new_prefix + s.substr(old_prefix.size()));
+      }
+    }
+  };
+  for (auto& kv : relationships_) remap(kv.second);
+  for (auto& kv : connections_) remap(kv.second);
+}
+
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
   // Intern both name and typeName; typeNames are few and highly shared.
@@ -537,6 +593,27 @@ const std::string* PrimSpec::property_type_name(const std::string& prop_name) co
   PropNameId tn_id;
   tn_id.id = it->second;
   return &GetPropNameTable().get(tn_id);
+}
+
+const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = prop_metas_.find(name_id.id);
+  if (it == prop_metas_.end()) return nullptr;
+  return it->second.get();
+}
+
+const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
+  return property_meta(GetPropNameTable().find(prop_name));
+}
+
+PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
+  std::unique_ptr<PropMeta>& slot = prop_metas_[name_id.id];
+  if (!slot) slot = std::make_unique<PropMeta>();
+  return *slot;
+}
+
+PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
+  return ensure_property_meta(GetPropNameTable().intern(prop_name));
 }
 
 void PrimSpec::add_child_index(uint32_t index) {

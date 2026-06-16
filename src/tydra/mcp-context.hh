@@ -9,6 +9,7 @@
 #include "../layer.hh"
 #include "../stage.hh"
 #include "../tiny-hashmap.hh"
+#include "diff-and-compare.hh"
 
 namespace tinyusdz {
 
@@ -69,11 +70,30 @@ struct Screenshot
   std::string data; // base64 encoded image data.
 };
 
+// A computed diff between two layers, cached in the session so the LLM can
+// query narrow slices (summary / paths / one prim) instead of re-diffing or
+// ingesting the whole diff. `left`/`right` are retained (possibly flattened)
+// so per-prim detail and JS drill-down can re-render values.
+struct DiffSession
+{
+  std::string left_name{"left"};
+  std::string right_name{"right"};
+  Layer left;
+  Layer right;
+  tydra::DiffOptions opts;
+  tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
+  tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
+  tydra::LayerMetaDiff layerMetaDiff;
+};
+
 struct Context
 {
   // ---- Composed Stage (for scene graph queries) ----
   std::unique_ptr<Stage> stage;
   bool stage_loaded{false};
+
+  // ---- Cached layer diff (for the diff_* tools + tinyusdz.diff.* in JS) ----
+  std::unique_ptr<DiffSession> diff;
 
   // ---- Uncomposed Layers (for editing) ----
   // key = UUID
