@@ -711,7 +711,7 @@ function exportUSDZ(usd, remap, opts) {
   return usd.exportAsUSDZ();
 }
 
-function composeToFixedPoint(usd) {
+export function composeToFixedPoint(usd) {
   const steps = [
     { has: 'hasSublayers', compose: 'composeSublayers', name: 'sublayers' },
     { has: 'hasReferences', compose: 'composeReferences', name: 'references' },
