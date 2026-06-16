@@ -40,6 +40,17 @@
 // same one tinyusdz::io uses internally) so this example does not depend on
 // std::filesystem. This file relies on the fs::path value type pervasively, so
 // it keeps the filesystem API rather than the string-based io-util helpers.
+// ghc/filesystem.hpp pulls in <windows.h> on Windows; keep it from defining the
+// min/max macros (which would break std::numeric_limits<>::max() below) and trim
+// the surface area.
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
