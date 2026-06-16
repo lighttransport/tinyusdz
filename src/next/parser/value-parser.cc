@@ -1386,10 +1386,14 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
     auto parse_string = [](SliceParser* s, std::string* v) {
       return s->parse_string(v);
     };
+    // Decay both captureless lambdas to the same function-pointer type before
+    // the conditional operator. GCC/Clang form this common type implicitly, but
+    // MSVC does not (C2446: "no conversion from <lambda> to <lambda>").
+    using ParseStringFn = bool (*)(SliceParser*, std::string*);
     if (!ParseScalarArray<std::string>(&sp, &values,
                                        element_type == TypeId::Token
-                                           ? parse_stringish
-                                           : parse_string)) {
+                                           ? static_cast<ParseStringFn>(parse_stringish)
+                                           : static_cast<ParseStringFn>(parse_string))) {
       return ParseResult::Error("Failed to parse string/token array");
     }
     return ParseResult::Ok(Value::MakeTokenArray(std::move(values)));
