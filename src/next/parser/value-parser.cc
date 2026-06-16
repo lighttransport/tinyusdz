@@ -130,6 +130,29 @@ const std::unordered_map<std::string, TypeId>& GetTypeNameMap() {
 // Value parsing functions
 // ============================================================
 
+// Freestanding float/double parse via the vendored fast_float (no libc
+// strtof/strtod). Bit-identical to strtod for everything the lexer emits,
+// including inf / -inf / infinity / nan (verified). fast_float is the only thing
+// that rejects a leading '+', so retry once past it. *out is left untouched on
+// failure (callers default it to 0, matching strtod's no-digit result).
+template <class T>
+static inline bool FfParse(const char* b, const char* e, T* out) {
+  auto r = fast_float::from_chars(b, e, *out);
+  if (r.ec == std::errc{} && r.ptr == e) return true;
+  if (b < e && *b == '+') {
+    r = fast_float::from_chars(b + 1, e, *out);
+    if (r.ec == std::errc{} && r.ptr == e) return true;
+  }
+  return false;
+}
+// Convenience for callers holding a clean number token.
+template <class T>
+static inline T FfParseTok(const std::string& s) {
+  T v = T(0);
+  FfParse(s.data(), s.data() + s.size(), &v);
+  return v;
+}
+
 ParseResult ParseBool(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type == TokenType::True) {
@@ -140,7 +163,7 @@ ParseResult ParseBool(Lexer& lexer) {
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
     lexer.next();
-    return ParseResult::Ok(Value(std::strtod(tok.value.c_str(), nullptr) != 0.0));
+    return ParseResult::Ok(Value(FfParseTok<double>(tok.value) != 0.0));
   }
   return ParseResult::Error("Expected boolean value");
 }
@@ -241,17 +264,7 @@ ParseResult ParseFloat(Lexer& lexer) {
     return ParseResult::Error("Expected float value");
   }
   lexer.next();
-  // fast_float matches strtof's correctly-rounded result for ordinary decimals
-  // (same fast path the array parser uses). Fall back to strtof for tokens it
-  // won't fully consume: inf/nan/infinity words and a leading '+'.
-  const char* b = tok.value.c_str();
-  const char* e = b + tok.value.size();
-  float value;
-  auto r = fast_float::from_chars(b, e, value);
-  if (r.ec != std::errc{} || r.ptr != e) {
-    value = std::strtof(b, nullptr);
-  }
-  return ParseResult::Ok(Value(value));
+  return ParseResult::Ok(Value(FfParseTok<float>(tok.value)));
 }
 
 ParseResult ParseDouble(Lexer& lexer) {
@@ -260,14 +273,7 @@ ParseResult ParseDouble(Lexer& lexer) {
     return ParseResult::Error("Expected double value");
   }
   lexer.next();
-  const char* b = tok.value.c_str();
-  const char* e = b + tok.value.size();
-  double value;
-  auto r = fast_float::from_chars(b, e, value);
-  if (r.ec != std::errc{} || r.ptr != e) {
-    value = std::strtod(b, nullptr);
-  }
-  return ParseResult::Ok(Value(value));
+  return ParseResult::Ok(Value(FfParseTok<double>(tok.value)));
 }
 
 ParseResult ParseString(Lexer& lexer) {
@@ -307,7 +313,7 @@ bool ParseFloatTuple(Lexer& lexer, float* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = std::strtof(tok.value.c_str(), nullptr);
+    out[i] = FfParseTok<float>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -329,7 +335,7 @@ bool ParseDoubleTuple(Lexer& lexer, double* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = std::strtod(tok.value.c_str(), nullptr);
+    out[i] = FfParseTok<double>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -418,7 +424,7 @@ ParseResult ParseHalf(Lexer& lexer) {
     return ParseResult::Error("Expected half value");
   }
   lexer.next();
-  uint16_t bits = FloatToHalf(std::strtof(tok.value.c_str(), nullptr));
+  uint16_t bits = FloatToHalf(FfParseTok<float>(tok.value));
   return ParseResult::Ok(Value::MakeFromRaw(TypeId::Half, &bits));
 }
 
