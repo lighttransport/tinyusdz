@@ -46,6 +46,17 @@ namespace usdz {
 
 namespace {
 
+// Sanity backstop for the recursive asset/texture collectors below. This is NOT
+// a normal scene limit: it only exists to bound memory on pathological/corrupt
+// input. It must clear realistic large scenes by a wide margin — a single large
+// engine/city export can carry tens of thousands of UsdUVTexture prims (observed
+// up to ~45k texture inputs) — because a collector that stops early silently
+// drops textures/dependencies from the rename remap, leaving dangling references
+// (e.g. an EXR transcoded to PNG whose inputs:file past the cutoff is never
+// rewritten). 1e6 is ~20x the largest observed real scene yet still cheap
+// (pointer/string per entry) and wasm32-heap-safe.
+constexpr size_t kMaxAssetCollectCount = 1000000;
+
 void Log(bool verbose, const std::string &msg) {
   if (verbose) {
     std::printf("[tusdzconvert] %s\n", msg.c_str());
@@ -397,7 +408,7 @@ void CollectTextures(Prim &prim,
                      std::vector<std::pair<UsdUVTexture *, std::string>> *out,
                      int depth = 0) {
   if (depth > 512) return;  // guard against stack overflow
-  constexpr size_t kMaxTextureCount = 10000;
+  constexpr size_t kMaxTextureCount = kMaxAssetCollectCount;
   if (out->size() >= kMaxTextureCount) return;  // guard against memory exhaustion
   Shader *shd = prim.get_data().as<Shader>();
   if (shd && shd->info_id == "UsdUVTexture") {
@@ -418,7 +429,7 @@ void CollectLayerTextureAssetPaths(const PrimSpec &primspec,
                                    std::vector<std::string> *out,
                                    int depth = 0) {
   if (depth > 512) return;
-  constexpr size_t kMaxTextureCount = 10000;
+  constexpr size_t kMaxTextureCount = kMaxAssetCollectCount;
   if (out->size() >= kMaxTextureCount) return;
 
   for (const auto &item : primspec.props()) {
@@ -496,7 +507,7 @@ void CollectCompositionAssetPaths(const PrimSpec &primspec,
                                   std::vector<std::string> *out,
                                   int depth = 0) {
   if (depth > 512) return;
-  constexpr size_t kMaxLayerDependencyCount = 10000;
+  constexpr size_t kMaxLayerDependencyCount = kMaxAssetCollectCount;
   if (out->size() >= kMaxLayerDependencyCount) return;
 
   const PrimMeta &metas = primspec.metas();
@@ -538,7 +549,7 @@ void CollectCompositionAssetPaths(const PrimSpec &primspec,
 
 void CollectCompositionAssetPaths(const Layer &layer,
                                   std::vector<std::string> *out) {
-  constexpr size_t kMaxLayerDependencyCount = 10000;
+  constexpr size_t kMaxLayerDependencyCount = kMaxAssetCollectCount;
   for (const SubLayer &sublayer : layer.metas().subLayers) {
     const std::string path = sublayer.assetPath.GetAssetPath();
     if (!path.empty()) {
