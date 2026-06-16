@@ -199,6 +199,13 @@ int main(int argc, char **argv) {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
+    // Parallel compose (pre-warm sources_cache) is OPT-IN and byte-identical:
+    // default serial; TINYUSDZ_NEXT_NUM_THREADS > 1 enables it (it wins on small
+    // compose-bound scenes but currently regresses huge instanced scenes -- see
+    // cache.cc ParallelWarmSources). Left at the default (1 = serial) otherwise.
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      opts.num_threads = std::atoi(nt);
+    }
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);

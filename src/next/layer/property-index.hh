@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -46,7 +49,12 @@ public:
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
-  size_t size() const { return names_.size(); }
+  size_t size() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
+    return names_.size();
+  }
 
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
@@ -71,6 +79,13 @@ public:
 private:
   std::vector<std::string> names_;
   std::unordered_map<std::string, uint32_t> name_to_id_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // The global table is interned into concurrently when referenced layers are
+  // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
+  // lookup takes a shared lock, the rare new-name insert an exclusive one.
+  // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
+  mutable std::shared_mutex mu_;
+#endif
 };
 
 /// Global property name table (singleton)
