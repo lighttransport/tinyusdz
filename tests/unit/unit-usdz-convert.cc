@@ -13,7 +13,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <filesystem>
 #include <limits>
 #include <string>
 #include <vector>
@@ -69,11 +68,10 @@ std::vector<uint8_t> EncodePNG(const tinyusdz::Image &img) {
 }
 
 std::string TempDir() {
-  namespace fs = std::filesystem;
-  fs::path base = fs::temp_directory_path() / "tusdzconvert_test";
-  std::error_code ec;
-  fs::create_directories(base, ec);
-  return base.string();
+  const std::string base =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tusdzconvert_test");
+  tinyusdz::io::CreateDirectories(base);
+  return base;
 }
 
 bool WriteTexturedUSDA(const std::string &path, const std::string &texture_path) {
@@ -352,18 +350,16 @@ void usdz_convert_orm_scalar_nonfinite_test(void) {
 
 void usdz_convert_archive_collision_name_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const fs::path a_dir = fs::path(dir) / "collision_a";
-  const fs::path b_dir = fs::path(dir) / "collision_b";
-  std::error_code ec;
-  fs::create_directories(a_dir, ec);
-  fs::create_directories(b_dir, ec);
-  const std::string tex_a = (a_dir / "same.png").string();
-  const std::string tex_b = (b_dir / "same.png").string();
-  const std::string usda_path = (fs::path(dir) / "scene_collision.usda").string();
-  const std::string usdz_path = (fs::path(dir) / "out_collision.usdz").string();
+  const std::string a_dir = tinyusdz::io::JoinPath(dir, "collision_a");
+  const std::string b_dir = tinyusdz::io::JoinPath(dir, "collision_b");
+  tinyusdz::io::CreateDirectories(a_dir);
+  tinyusdz::io::CreateDirectories(b_dir);
+  const std::string tex_a = tinyusdz::io::JoinPath(a_dir, "same.png");
+  const std::string tex_b = tinyusdz::io::JoinPath(b_dir, "same.png");
+  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene_collision.usda");
+  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out_collision.usdz");
 
   auto write_png = [](const std::string &path, const Image &img) -> bool {
     image::WriteOption wopt;
@@ -471,12 +467,11 @@ void usdz_convert_fit_budget_test(void) {
 // End-to-end: USDA + on-disk PNG -> resized/re-encoded -> USDZ (validated).
 void usdz_convert_pipeline_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const std::string png_path = (fs::path(dir) / "tex.png").string();
-  const std::string usda_path = (fs::path(dir) / "scene.usda").string();
-  const std::string usdz_path = (fs::path(dir) / "out.usdz").string();
+  const std::string png_path = tinyusdz::io::JoinPath(dir, "tex.png");
+  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene.usda");
+  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out.usdz");
 
   // 1) Write a 64x64 PNG texture on disk.
   Image tex = MakeSolidImage(64, 64, 4, 200, 150, 100, 255);
@@ -578,14 +573,13 @@ void usdz_convert_pipeline_test(void) {
 
 void usdz_convert_usdz_root_layer_format_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const std::string png_path = (fs::path(dir) / "root_format_tex.png").string();
+  const std::string png_path = tinyusdz::io::JoinPath(dir, "root_format_tex.png");
   const std::string usda_path =
-      (fs::path(dir) / "root_format_scene.usda").string();
+      tinyusdz::io::JoinPath(dir, "root_format_scene.usda");
   const std::string usdz_path =
-      (fs::path(dir) / "root_format_out.usdz").string();
+      tinyusdz::io::JoinPath(dir, "root_format_out.usdz");
 
   {
     Image tex = MakeSolidImage(4, 4, 4, 20, 40, 60, 255);
@@ -638,14 +632,13 @@ void usdz_convert_usdz_root_layer_format_test(void) {
 
 void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const std::string png_path = (fs::path(dir) / "arkit_tex.png").string();
+  const std::string png_path = tinyusdz::io::JoinPath(dir, "arkit_tex.png");
   const std::string usda_path =
-      (fs::path(dir) / "arkit_scene.usda").string();
+      tinyusdz::io::JoinPath(dir, "arkit_scene.usda");
   const std::string usdz_path =
-      (fs::path(dir) / "arkit_out.usdz").string();
+      tinyusdz::io::JoinPath(dir, "arkit_out.usdz");
 
   {
     Image tex = MakeSolidImage(4, 4, 4, 80, 90, 100, 255);
@@ -697,12 +690,11 @@ void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
 // Standalone RepackTextureFiles: two grayscale PNGs -> packed RG image.
 void usdz_convert_repack_files_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const std::string a_path = (fs::path(dir) / "gloss.png").string();
-  const std::string b_path = (fs::path(dir) / "rough.png").string();
-  const std::string out_path = (fs::path(dir) / "packed.png").string();
+  const std::string a_path = tinyusdz::io::JoinPath(dir, "gloss.png");
+  const std::string b_path = tinyusdz::io::JoinPath(dir, "rough.png");
+  const std::string out_path = tinyusdz::io::JoinPath(dir, "packed.png");
 
   auto write_png = [](const std::string &path, const Image &img) -> bool {
     image::WriteOption wopt;
@@ -1127,7 +1119,6 @@ void usdz_convert_fit_budget_error_test(void) {
 
 void usdz_convert_missing_texture_reference_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
 
@@ -1135,9 +1126,9 @@ void usdz_convert_missing_texture_reference_test(void) {
   // to a sanitized archive path that is not actually present.
   {
     const std::string usda_path =
-        (fs::path(dir) / "scene_missing_safe.usda").string();
+        tinyusdz::io::JoinPath(dir, "scene_missing_safe.usda");
     const std::string usdz_path =
-        (fs::path(dir) / "out_missing_safe.usdz").string();
+        tinyusdz::io::JoinPath(dir, "out_missing_safe.usdz");
     TEST_CHECK(WriteTexturedUSDA(usda_path, "missing.png"));
 
     usdz::UsdzConvertOptions opts;
@@ -1171,9 +1162,9 @@ void usdz_convert_missing_texture_reference_test(void) {
   // preserved or rewritten to a broken internal reference.
   {
     const std::string usda_path =
-        (fs::path(dir) / "scene_missing_unsafe.usda").string();
+        tinyusdz::io::JoinPath(dir, "scene_missing_unsafe.usda");
     const std::string usdz_path =
-        (fs::path(dir) / "out_missing_unsafe.usdz").string();
+        tinyusdz::io::JoinPath(dir, "out_missing_unsafe.usdz");
     TEST_CHECK(WriteTexturedUSDA(usda_path, "../missing.png"));
 
     usdz::UsdzConvertOptions opts;
@@ -1192,12 +1183,11 @@ void usdz_convert_missing_texture_reference_test(void) {
 // Pipeline test with JPEG output format.
 void usdz_convert_pipeline_jpeg_test(void) {
   using namespace tinyusdz;
-  namespace fs = std::filesystem;
 
   const std::string dir = TempDir();
-  const std::string png_path = (fs::path(dir) / "tex_jpg.png").string();
-  const std::string usda_path = (fs::path(dir) / "scene_jpg.usda").string();
-  const std::string usdz_path = (fs::path(dir) / "out_jpg.usdz").string();
+  const std::string png_path = tinyusdz::io::JoinPath(dir, "tex_jpg.png");
+  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene_jpg.usda");
+  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out_jpg.usdz");
 
   Image tex = MakeSolidImage(64, 64, 4, 200, 150, 100, 255);
   {
@@ -1283,11 +1273,10 @@ void usdz_convert_pipeline_jpeg_test(void) {
 
 // Cleanup: remove temp files created by earlier tests.
 void usdz_convert_cleanup_test(void) {
-  namespace fs = std::filesystem;
-  std::error_code ec;
-  fs::path base = fs::temp_directory_path() / "tusdzconvert_test";
-  if (fs::exists(base, ec)) {
-    fs::remove_all(base, ec);
+  const std::string base =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tusdzconvert_test");
+  if (tinyusdz::io::IsDirectory(base)) {
+    tinyusdz::io::RemoveAll(base);
     // Not a test failure if cleanup fails (e.g. file in use).
   }
   TEST_CHECK(true);  // Always passes; this is a bookkeeping test.
