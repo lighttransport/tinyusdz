@@ -222,6 +222,90 @@ char* dtoa_impl(const double f, char* buf) {
   return dtoa_impl_t(f, buf, /*max_digits=*/17);
 }
 
+// printf %g-style exponent: 'e', a sign always, at least two digits.
+char* write_exponent_g(int exp, char* out) {
+  *out++ = (exp < 0) ? '-' : '+';
+  if (exp < 0) exp = -exp;
+  auto uexp = static_cast<uint32_t>(exp);
+  char tmp[8];
+  int n = 0;
+  while (uexp) { tmp[n++] = static_cast<char>('0' + (uexp % 10u)); uexp /= 10u; }
+  while (n < 2) tmp[n++] = '0';
+  for (int i = n - 1; i >= 0; --i) *out++ = tmp[i];
+  return out;
+}
+
+// Freestanding C `printf("%.*g", precision, f)` formatter: round to `precision`
+// significant digits, choose fixed vs scientific by the %g rule (fixed iff
+// -4 <= decimal-exponent < precision), strip trailing zeros, scientific uses
+// e±dd. Built on the same dragonbox shortest digits + round-to-N-digits the
+// shortest dtoa uses. No libc / no locale.
+char* dtoa_g_impl(double f, char* buf, int precision) {
+  if (precision < 1) precision = 1;
+  if (std::isnan(f)) { std::memcpy(buf, "nan", 3); return buf + 3; }
+  if (std::isinf(f)) {
+    if (std::signbit(f)) { std::memcpy(buf, "-inf", 4); return buf + 4; }
+    std::memcpy(buf, "inf", 3); return buf + 3;
+  }
+  const bool is_negative = std::signbit(f);
+  if (std::fpclassify(f) == FP_ZERO) {
+    if (is_negative) *buf++ = '-';
+    *buf++ = '0';
+    return buf;
+  }
+
+  auto ret = jkj::dragonbox::to_decimal(f);
+  uint64_t significand = ret.significand;
+  int significand_size = count_digits(significand);
+  int exponent = ret.exponent;
+
+  // Round the shortest significand to `precision` significant digits.
+  if (significand_size > precision) {
+    int rm = significand_size - precision;
+    uint64_t divisor = 1;
+    for (int i = 0; i < rm; i++) divisor *= 10;
+    uint64_t remainder = significand % divisor;
+    significand /= divisor;
+    exponent += rm;
+    uint64_t half = divisor / 2;
+    if (remainder > half || (remainder == half && (significand & 1))) {
+      significand++;
+      if (count_digits(significand) > precision) { significand /= 10; exponent++; }
+    }
+    significand_size = count_digits(significand);
+  }
+  // %g strips trailing zeros (rounding up can introduce them, e.g. 999..->1000..).
+  while (significand_size > 1 && (significand % 10u) == 0) {
+    significand /= 10u; ++exponent; --significand_size;
+  }
+
+  const int output_exp = exponent + significand_size - 1;
+  const bool use_exp = (output_exp < -4) || (output_exp >= precision);
+
+  char decimal_point = '.';
+  if (use_exp) {
+    if (significand_size == 1) decimal_point = '\0';
+    if (is_negative) *buf++ = '-';
+    buf = write_significand(buf, significand, significand_size, 1, decimal_point);
+    *buf++ = 'e';
+    return write_exponent_g(output_exp, buf);
+  }
+  const int exp = exponent + significand_size;
+  if (exponent >= 0) {
+    if (is_negative) *buf++ = '-';
+    return write_significand_e(buf, significand, significand_size, exponent);
+  } else if (exp > 0) {
+    if (is_negative) *buf++ = '-';
+    return write_significand(buf, significand, significand_size, exp, decimal_point);
+  }
+  const int num_zeros = -exp;
+  if (is_negative) *buf++ = '-';
+  *buf++ = '0';
+  *buf++ = decimal_point;
+  buf = fill_n(buf, num_zeros, '0');
+  return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
+}
+
 char* dtoa_impl(const float f, char* buf) {
   uint32_t bits;
   std::memcpy(&bits, &f, sizeof(float));
@@ -255,6 +339,18 @@ void dtos_append(std::string& out, float v) {
 void dtos_append(std::string& out, double v) {
   char buffer[32];
   char* end = dtoa_impl(v, buffer);
+  out.append(buffer, static_cast<size_t>(end - buffer));
+}
+
+std::string format_g(double v, int precision) {
+  char buffer[40];
+  char* end = dtoa_g_impl(v, buffer, precision);
+  return std::string(buffer, end);
+}
+
+void format_g_append(std::string& out, double v, int precision) {
+  char buffer[40];
+  char* end = dtoa_g_impl(v, buffer, precision);
   out.append(buffer, static_cast<size_t>(end - buffer));
 }
 

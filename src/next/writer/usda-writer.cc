@@ -6,6 +6,7 @@
 #include "usda-writer.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"
+#include "dtoa.hh"
 #include "../layer/property-index.hh"
 #include <sstream>
 #include <fstream>
@@ -134,27 +135,19 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.metersPerUnit != 0.01) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.metersPerUnit;
-    lines.push_back(opts.indent + "metersPerUnit = " + ss.str());
+    lines.push_back(opts.indent + "metersPerUnit = " + format_g(meta.metersPerUnit, opts.double_precision));
   }
 
   if (meta.startTimeCode != 0.0) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.startTimeCode;
-    lines.push_back(opts.indent + "startTimeCode = " + ss.str());
+    lines.push_back(opts.indent + "startTimeCode = " + format_g(meta.startTimeCode, opts.double_precision));
   }
 
   if (meta.endTimeCode != 0.0) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.endTimeCode;
-    lines.push_back(opts.indent + "endTimeCode = " + ss.str());
+    lines.push_back(opts.indent + "endTimeCode = " + format_g(meta.endTimeCode, opts.double_precision));
   }
 
   if (meta.timeCodesPerSecond != 24.0) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.timeCodesPerSecond;
-    lines.push_back(opts.indent + "timeCodesPerSecond = " + ss.str());
+    lines.push_back(opts.indent + "timeCodesPerSecond = " + format_g(meta.timeCodesPerSecond, opts.double_precision));
   }
 
   if (meta.upAxis != "Y") {
@@ -162,15 +155,11 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.framesPerSecond_set) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.framesPerSecond;
-    lines.push_back(opts.indent + "framesPerSecond = " + ss.str());
+    lines.push_back(opts.indent + "framesPerSecond = " + format_g(meta.framesPerSecond, opts.double_precision));
   }
 
   if (meta.kilogramsPerUnit_set) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << meta.kilogramsPerUnit;
-    lines.push_back(opts.indent + "kilogramsPerUnit = " + ss.str());
+    lines.push_back(opts.indent + "kilogramsPerUnit = " + format_g(meta.kilogramsPerUnit, opts.double_precision));
   }
 
   if (!meta.colorConfiguration.empty()) {
@@ -250,9 +239,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kKind)
     kv("kind = " + EscapeString(m->kind));
   if (m->authored & PropMeta::kWeight) {
-    std::ostringstream ss;
-    ss << std::setprecision(opts.double_precision) << m->weight;
-    kv("weight = " + ss.str());
+    kv("weight = " + format_g(m->weight, opts.double_precision));
   }
   if (m->authored & PropMeta::kUnauthoredIdx)
     kv("unauthoredValuesIndex = " + IntToStr(static_cast<long long>(m->unauthoredValuesIndex)));
@@ -305,13 +292,7 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    {
-      // Time codes keep the ostream %.*g formatting (byte-identical); format to
-      // a small string, then write to the StreamWriter sink.
-      std::ostringstream ts;
-      ts << std::setprecision(opts.double_precision) << sample.first;
-      os << ts.str() << ": ";
-    }
+    os << format_g(sample.first, opts.double_precision) << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
