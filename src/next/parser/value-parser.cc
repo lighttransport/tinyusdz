@@ -865,17 +865,26 @@ struct SliceParser {
   bool parse_float(float* out) {
     skip_ws();
     auto r = fast_float::from_chars(p, end, *out);
-    if (r.ec != std::errc{} || r.ptr == p) return false;
-    p = r.ptr;
-    return true;
+    if (r.ec == std::errc{} && r.ptr != p) { p = r.ptr; return true; }
+    // Accept a leading '+' (fast_float's `general` format rejects it), to match
+    // the scalar FfParse path. The writer never emits one, so this only widens
+    // accepted hand-authored input -- byte-identical on all oracles.
+    if (p < end && *p == '+') {
+      r = fast_float::from_chars(p + 1, end, *out);
+      if (r.ec == std::errc{} && r.ptr != p + 1) { p = r.ptr; return true; }
+    }
+    return false;
   }
 
   bool parse_double(double* out) {
     skip_ws();
     auto r = fast_float::from_chars(p, end, *out);
-    if (r.ec != std::errc{} || r.ptr == p) return false;
-    p = r.ptr;
-    return true;
+    if (r.ec == std::errc{} && r.ptr != p) { p = r.ptr; return true; }
+    if (p < end && *p == '+') {
+      r = fast_float::from_chars(p + 1, end, *out);
+      if (r.ec == std::errc{} && r.ptr != p + 1) { p = r.ptr; return true; }
+    }
+    return false;
   }
 
   // Decimal `[+-]?digits` integer parse with in-loop overflow detection. USD
