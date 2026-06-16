@@ -28,6 +28,7 @@
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "tydra/texture-util.hh"
+#include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
 
 // Emscripten's <stdio.h> defines `stdout` as a self-referential macro
@@ -1738,8 +1739,11 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   const bool material_optimization_enabled =
       options.material_optimization != MaterialOptimizationMode::Off;
+  const bool geometry_optimization_enabled =
+      options.geometry_optimization != GeometryOptimizationMode::Off;
   const bool use_flattened_output =
-      options.flatten || options.arkit_compatible || material_optimization_enabled;
+      options.flatten || options.arkit_compatible ||
+      material_optimization_enabled || geometry_optimization_enabled;
 
   if (!options.flatten && options.arkit_compatible && warn) {
     *warn += "ARKit-compatible USDZ requires a flattened package; ignoring "
@@ -1747,6 +1751,10 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   if (!options.flatten && material_optimization_enabled && warn) {
     *warn += "Material optimization requires a flattened package; ignoring "
+             "-noFlatten.\n";
+  }
+  if (!options.flatten && geometry_optimization_enabled && warn) {
+    *warn += "Geometry optimization requires a flattened package; ignoring "
              "-noFlatten.\n";
   }
 
@@ -1901,6 +1909,47 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
           *warn += rwarn;
         }
       }
+    }
+  }
+
+  // --- Optional geometry optimization ---
+  if (options.geometry_optimization != GeometryOptimizationMode::Off) {
+    if (!has_layer_for_write) {
+      if (warn) {
+        *warn += "Geometry optimization requires Layer-based conversion; "
+                 "skipping.\n";
+      }
+    } else {
+      Log(options.verbose, "Optimizing geometry.");
+      timer.begin("optimize-geometry");
+      GeometryOptimizationStats opt_stats;
+      std::string owarn, oerr;
+      if (!OptimizeGeometryInLayer(options, &layer_for_write, &opt_stats,
+                                   &owarn, &oerr)) {
+        if (err) {
+          *err = "Geometry optimization failed: " + oerr;
+        }
+        return false;
+      }
+      if (warn) {
+        *warn += owarn;
+      }
+      if (stats) {
+        stats->num_meshes_before = opt_stats.num_meshes_before;
+        stats->num_meshes_after = opt_stats.num_meshes_after;
+        stats->num_meshes_eligible = opt_stats.num_meshes_eligible;
+        stats->num_meshes_merged = opt_stats.num_meshes_merged;
+        stats->num_meshes_skipped = opt_stats.num_meshes_skipped;
+        stats->num_mesh_aggregates = opt_stats.num_mesh_aggregates;
+        stats->num_faces_merged = opt_stats.num_faces_merged;
+        stats->num_points_merged = opt_stats.num_points_merged;
+      }
+      Log(options.verbose,
+          "Meshes: " + std::to_string(opt_stats.num_meshes_before) + " -> " +
+              std::to_string(opt_stats.num_meshes_after) + ", merged " +
+              std::to_string(opt_stats.num_meshes_merged) + " into " +
+              std::to_string(opt_stats.num_mesh_aggregates) +
+              " aggregate(s).");
     }
   }
 

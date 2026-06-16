@@ -153,6 +153,11 @@ function parseArgs() {
     materialAtlasTileSize: 512,
     materialAtlasPadding: 2,
     materialAtlasMinGroupSize: 2,
+    optimizeGeometry: 'off',
+    meshMergeMaxInputFaces: 2048,
+    meshMergeMaxInputPoints: 4096,
+    meshMergeMaxAggregateFaces: 65536,
+    meshMergeMinGroupSize: 2,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -186,6 +191,11 @@ function parseArgs() {
     else if (a === '--material-atlas-tile-size') o.materialAtlasTileSize = parseInt(args[++i], 10) || 512;
     else if (a === '--material-atlas-padding') o.materialAtlasPadding = parseInt(args[++i], 10) || 0;
     else if (a === '--material-atlas-min-group-size') o.materialAtlasMinGroupSize = parseInt(args[++i], 10) || 2;
+    else if (a === '--optimize-geometry' || a === '--optimize-meshes') o.optimizeGeometry = args[++i];
+    else if (a === '--mesh-merge-max-input-faces') o.meshMergeMaxInputFaces = parseInt(args[++i], 10) || 2048;
+    else if (a === '--mesh-merge-max-input-points') o.meshMergeMaxInputPoints = parseInt(args[++i], 10) || 4096;
+    else if (a === '--mesh-merge-max-aggregate-faces') o.meshMergeMaxAggregateFaces = parseInt(args[++i], 10) || 65536;
+    else if (a === '--mesh-merge-min-group-size') o.meshMergeMinGroupSize = parseInt(args[++i], 10) || 2;
     else if (a === '--url-list') o.urlList = args[++i];
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
@@ -299,6 +309,11 @@ async function runStreamingConvert(native, o) {
       materialAtlasTileSize: o.materialAtlasTileSize,
       materialAtlasPadding: o.materialAtlasPadding,
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
+      optimizeGeometry: o.optimizeGeometry,
+      meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
+      meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
+      meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
+      meshMergeMinGroupSize: o.meshMergeMinGroupSize,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 4,
       zipSink,
@@ -400,6 +415,33 @@ async function main() {
   }
   if (o.optimizeMaterials !== 'off' && o.flatten === false) {
     console.warn('WARN: material optimization requires flattened output; ignoring --no-flatten.');
+    o.flatten = true;
+  }
+  o.optimizeGeometry = String(o.optimizeGeometry || 'off').toLowerCase();
+  if (!['off', 'none', 'mergemeshes', 'merge', 'meshmerge'].includes(o.optimizeGeometry)) {
+    console.error('Invalid --optimize-geometry. Expected off or mergeMeshes.');
+    process.exit(1);
+  }
+  if (o.optimizeGeometry === 'none') o.optimizeGeometry = 'off';
+  if (o.optimizeGeometry === 'merge' || o.optimizeGeometry === 'meshmerge') o.optimizeGeometry = 'mergemeshes';
+  if (o.meshMergeMaxInputFaces < 1) {
+    console.error('--mesh-merge-max-input-faces must be positive.');
+    process.exit(1);
+  }
+  if (o.meshMergeMaxInputPoints < 1) {
+    console.error('--mesh-merge-max-input-points must be positive.');
+    process.exit(1);
+  }
+  if (o.meshMergeMaxAggregateFaces < 1) {
+    console.error('--mesh-merge-max-aggregate-faces must be positive.');
+    process.exit(1);
+  }
+  if (o.meshMergeMinGroupSize < 2) {
+    console.error('--mesh-merge-min-group-size must be >= 2.');
+    process.exit(1);
+  }
+  if (o.optimizeGeometry !== 'off' && o.flatten === false) {
+    console.warn('WARN: geometry optimization requires flattened output; ignoring --no-flatten.');
     o.flatten = true;
   }
 
@@ -506,6 +548,11 @@ async function main() {
       materialAtlasTileSize: o.materialAtlasTileSize,
       materialAtlasPadding: o.materialAtlasPadding,
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
+      optimizeGeometry: o.optimizeGeometry,
+      meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
+      meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
+      meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
+      meshMergeMinGroupSize: o.meshMergeMinGroupSize,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 0,
       zipSink,

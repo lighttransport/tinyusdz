@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    doc = "Minimal mesh merge fixture."
+)
+
+def Xform "Root"
+{
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.6, 0.9)
+            token outputs:surface
+        }
+    }
+
+    def Xform "A"
+    {
+        double3 xformOp:translate = (1, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            normal3f[] normals = [(0, 0, 1), (0, 1, 0), (1, 0, 0)] (
+                interpolation = "vertex"
+            )
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+                interpolation = "vertex"
+            )
+            int[] primvars:st:indices = [0, 1, 2]
+        }
+    }
+
+    def Xform "B"
+    {
+        double3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            normal3f[] normals = [(0, 0, 1), (0, 1, 0), (1, 0, 0)] (
+                interpolation = "vertex"
+            )
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+                interpolation = "vertex"
+            )
+            int[] primvars:st:indices = [0, 1, 2]
+        }
+    }
+}

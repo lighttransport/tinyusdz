@@ -687,20 +687,33 @@ function isMaterialOptimizationEnabled(opts) {
   return mode !== 'off' && mode !== 'none';
 }
 
+function isGeometryOptimizationEnabled(opts) {
+  const mode = String((opts && (opts.optimizeGeometry || opts.optimizeMeshes || opts.geometryOptimization)) || 'off').toLowerCase();
+  return mode !== 'off' && mode !== 'none';
+}
+
 function exportUSDZ(usd, remap, opts) {
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
   const optimizeMaterials = String(opts.optimizeMaterials || opts.materialOptimization || 'off').toLowerCase();
+  const optimizeGeometry = String(opts.optimizeGeometry || opts.optimizeMeshes || opts.geometryOptimization || 'off').toLowerCase();
   const materialOptimizationEnabled = isMaterialOptimizationEnabled(opts);
+  const geometryOptimizationEnabled = isGeometryOptimizationEnabled(opts);
   const exportOpts = {
     rootLayerFormat: opts.arkitCompatible ? 'usdc' : rootLayerFormat,
     arkitCompatible: !!opts.arkitCompatible,
     optimizeMaterials,
+    optimizeGeometry,
     materialAtlasSize: opts.materialAtlasSize || 4096,
     materialAtlasTileSize: opts.materialAtlasTileSize || 512,
     materialAtlasPadding: opts.materialAtlasPadding == null ? 2 : opts.materialAtlasPadding,
     materialAtlasMinGroupSize: opts.materialAtlasMinGroupSize || 2,
+    meshMergeMaxInputFaces: opts.meshMergeMaxInputFaces || 2048,
+    meshMergeMaxInputPoints: opts.meshMergeMaxInputPoints || 4096,
+    meshMergeMaxAggregateFaces: opts.meshMergeMaxAggregateFaces || 65536,
+    meshMergeMinGroupSize: opts.meshMergeMinGroupSize || 2,
   };
-  if (opts.flatten === false && !opts.arkitCompatible && !materialOptimizationEnabled &&
+  if (opts.flatten === false && !opts.arkitCompatible &&
+      !materialOptimizationEnabled && !geometryOptimizationEnabled &&
       typeof usd.exportLayerAsUSDZWithOptions === 'function') {
     return usd.exportLayerAsUSDZWithOptions({ ...exportOpts, rootLayerFormat: 'usda' });
   }
@@ -716,7 +729,8 @@ function exportUSDZ(usd, remap, opts) {
     return usd.exportLayerAsUSDZWithOptions(exportOpts);
   }
   const hasOptions = exportOpts.rootLayerFormat !== 'usdc' ||
-    exportOpts.arkitCompatible || materialOptimizationEnabled;
+    exportOpts.arkitCompatible || materialOptimizationEnabled ||
+    geometryOptimizationEnabled;
   if (typeof usd.exportAsUSDZWithOptions === 'function' && (hasRemap || hasOptions)) {
     return usd.exportAsUSDZWithOptions(remap || {}, exportOpts);
   }
@@ -767,6 +781,7 @@ function shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) 
     textureFormat === 'keep' &&
     rootLayerFormat === 'usdc' &&
     !isMaterialOptimizationEnabled(opts) &&
+    !isGeometryOptimizationEnabled(opts) &&
     (opts.maxTextureSize || 0) <= 0 &&
     (opts.targetTextureBytes || 0) <= 0 &&
     !opts.arkitCompatible &&
@@ -791,6 +806,7 @@ function shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFor
     opts.reencode === false &&
     textureFormat === 'keep' &&
     !isMaterialOptimizationEnabled(opts) &&
+    !isGeometryOptimizationEnabled(opts) &&
     (opts.maxTextureSize || 0) <= 0 &&
     (opts.targetTextureBytes || 0) <= 0 &&
     typeof opts.textureProcessor !== 'function' &&
@@ -1145,7 +1161,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
-      isMaterialOptimizationEnabled(opts);
+      isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts);
     if (flatten) {
       if (typeof usd.flattenLayer === 'function') {
         if (!usd.flattenLayer()) throw new Error('Layer flatten failed: ' + usd.error());
@@ -1296,7 +1312,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
   const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
-    isMaterialOptimizationEnabled(opts);
+    isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts);
 
   const images = [...assetMap.keys()].filter(isImageName);
   if (/\.usdz$/i.test(rootPath)) {
