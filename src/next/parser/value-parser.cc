@@ -834,9 +834,11 @@ struct SliceParser {
     return true;
   }
 
-  bool parse_i64(int64_t* out) {
-    skip_ws();
-    if (p >= end) return false;
+  // strtoll/strtoull are locale-aware, base-0 (octal/hex), and were the single
+  // hottest parse symbol on mesh-heavy scenes (huge index arrays). Fast-path a
+  // plain decimal `[+-]?digits` run with a tight loop; fall back to strtoll only
+  // for the ambiguous/overflowing forms it must still handle identically.
+  bool parse_i64_slow(int64_t* out) {
     errno = 0;
     char* next = nullptr;
     long long v = std::strtoll(p, &next, 0);
@@ -845,16 +847,62 @@ struct SliceParser {
     *out = static_cast<int64_t>(v);
     return true;
   }
-
-  bool parse_u64(uint64_t* out) {
-    skip_ws();
-    if (p >= end || *p == '-') return false;
+  bool parse_u64_slow(uint64_t* out) {
     errno = 0;
     char* next = nullptr;
     unsigned long long v = std::strtoull(p, &next, 0);
     if (next == p || errno == ERANGE) return false;
     p = next;
     *out = static_cast<uint64_t>(v);
+    return true;
+  }
+
+  bool parse_i64(int64_t* out) {
+    skip_ws();
+    if (p >= end) return false;
+    const char* q = p;
+    bool neg = false;
+    if (*q == '+' || *q == '-') { neg = (*q == '-'); ++q; }
+    // Not a digit, or a base-0 octal/hex prefix (leading 0 then digit/x): let
+    // strtoll(base 0) decide so results match exactly.
+    if (q >= end || *q < '0' || *q > '9') return parse_i64_slow(out);
+    if (*q == '0' && q + 1 < end &&
+        ((q[1] >= '0' && q[1] <= '9') || q[1] == 'x' || q[1] == 'X')) {
+      return parse_i64_slow(out);
+    }
+    uint64_t val = 0;
+    int ndig = 0;
+    while (q < end && *q >= '0' && *q <= '9') {
+      val = val * 10u + static_cast<uint64_t>(*q - '0');
+      ++q;
+      ++ndig;
+    }
+    if (ndig > 18) return parse_i64_slow(out);  // potential overflow -> strtoll
+    *out = neg ? -static_cast<int64_t>(val) : static_cast<int64_t>(val);
+    p = q;
+    return true;
+  }
+
+  bool parse_u64(uint64_t* out) {
+    skip_ws();
+    if (p >= end || *p == '-') return false;
+    const char* q = p;
+    if (*q == '+') ++q;
+    if (q >= end || *q < '0' || *q > '9') return parse_u64_slow(out);
+    if (*q == '0' && q + 1 < end &&
+        ((q[1] >= '0' && q[1] <= '9') || q[1] == 'x' || q[1] == 'X')) {
+      return parse_u64_slow(out);
+    }
+    uint64_t val = 0;
+    int ndig = 0;
+    while (q < end && *q >= '0' && *q <= '9') {
+      val = val * 10u + static_cast<uint64_t>(*q - '0');
+      ++q;
+      ++ndig;
+    }
+    if (ndig > 18) return parse_u64_slow(out);
+    *out = val;
+    p = q;
     return true;
   }
 
