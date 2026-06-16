@@ -14,6 +14,25 @@ on:
 
 jobs:
 
+  # Windows(x64) + Visual Studio 2026 build with the experimental `next`
+  # (pcp large-scene) backend enabled. src/next/ is gated behind
+  # TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE and is not built by the default Windows
+  # job, so this variant keeps it from bit-rotting on MSVC.
+  build-windows-next:
+
+    runs-on: windows-latest
+    name: Build for Windows(x64, MSVC, next backend)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Configure
+        run: cmake -G "Visual Studio 18 2026" -A x64 -DTINYUSDZ_WITH_OPENSUBDIV=On -DTINYUSDZ_WITH_TINYSUBDIV=Off -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On -Bbuild_next -H.
+      - name: Build
+        run: cmake --build build_next --config Release
+      - name: Test
+        run: ctest --test-dir build_next -C Release --output-on-failure
+
   # Windows(x64) + Visual Studio 2026 build
   build-windows-msvc:
 
