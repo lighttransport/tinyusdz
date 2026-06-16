@@ -5,6 +5,7 @@
 
 #include "usda-writer.hh"
 #include "value-printer.hh"
+#include "stream-writer.hh"
 #include "../layer/property-index.hh"
 #include <sstream>
 #include <fstream>
@@ -34,50 +35,7 @@ namespace {
 // byte output is independent of thread count.
 struct StitchCtx {
   const std::vector<int>* frontier_of = nullptr;
-  std::function<void(std::ostream&, int)> emit;
-};
-
-// A std::streambuf that appends straight into a caller-owned std::string, with a
-// small put-area so the writer's many tiny `os <<` tokens don't pay a virtual
-// call each. Lets the parallel workers serialize a subtree with no
-// std::ostringstream double-buffer and no `.str()` copy. Flush (os.flush() or
-// dtor) drains the put-area before the string is read.
-class StringAppendBuf : public std::streambuf {
- public:
-  explicit StringAppendBuf(std::string& s) : s_(s) {
-    setp(buf_, buf_ + sizeof(buf_));
-  }
-  ~StringAppendBuf() override { drain(); }
-
- protected:
-  int_type overflow(int_type c) override {
-    drain();
-    if (!traits_type::eq_int_type(c, traits_type::eof())) {
-      *pptr() = traits_type::to_char_type(c);
-      pbump(1);
-    }
-    return traits_type::not_eof(c);
-  }
-  std::streamsize xsputn(const char* p, std::streamsize n) override {
-    if (n >= 512) {  // big chunk (a PrintValue string): append directly
-      drain();
-      s_.append(p, static_cast<size_t>(n));
-      return n;
-    }
-    if (epptr() - pptr() < n) drain();
-    std::memcpy(pptr(), p, static_cast<size_t>(n));
-    pbump(static_cast<int>(n));
-    return n;
-  }
-  int sync() override { drain(); return 0; }
-
- private:
-  void drain() {
-    s_.append(pbase(), static_cast<size_t>(pptr() - pbase()));
-    setp(buf_, buf_ + sizeof(buf_));
-  }
-  std::string& s_;
-  char buf_[8192];
+  std::function<void(StreamWriter&, int)> emit;
 };
 
 // Get specifier keyword
@@ -91,7 +49,7 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
 }
 
 // Write indent
-void WriteIndent(std::ostream& os, int depth, const std::string& indent) {
+void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
   for (int i = 0; i < depth; ++i) {
     os << indent;
   }
@@ -144,7 +102,7 @@ std::string DictMetaLine(const std::string& key, const Value& v, int level,
 }
 
 // Write layer metadata block
-void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
+void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                     const USDAWriteOptions& opts) {
   os << "#usda 1.0\n";
   os << "(\n";
@@ -243,7 +201,7 @@ void WriteLayerMeta(std::ostream& os, const LayerMeta& meta,
 // Emit the property metadata `( ... )` block (interpolation, customData, ...)
 // when authored. Streams " (\n ... )" with NO trailing newline so the caller can
 // place it before the property's terminating newline. Returns true if emitted.
-bool WritePropMeta(std::ostream& os, const PrimSpec& spec, PropNameId name_id,
+bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
                    int depth, const USDAWriteOptions& opts) {
   const PropMeta* m = spec.property_meta(name_id);
   if (!m || m->empty()) return false;
@@ -305,7 +263,7 @@ bool WritePropMeta(std::ostream& os, const PrimSpec& spec, PropNameId name_id,
 }
 
 // Write time samples for a property
-void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name_id,
+void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name_id,
                       const PrimSpec& spec, int depth, const USDAWriteOptions& opts) {
   const auto* samples = spec.time_samples(name_id);
   if (!samples || samples->empty()) return;
@@ -335,7 +293,13 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    os << std::setprecision(opts.double_precision) << sample.first << ": ";
+    {
+      // Time codes keep the ostream %.*g formatting (byte-identical); format to
+      // a small string, then write to the StreamWriter sink.
+      std::ostringstream ts;
+      ts << std::setprecision(opts.double_precision) << sample.first;
+      os << ts.str() << ": ";
+    }
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
@@ -361,7 +325,7 @@ void WriteTimeSamples(std::ostream& os, const std::string& name, PropNameId name
 }
 
 // Write a property value
-void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
+void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
                    int depth, const USDAWriteOptions& opts) {
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
@@ -482,7 +446,7 @@ void WriteProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
 }
 
 // Write relationship
-void WriteRelationship(std::ostream& os, const std::string& name,
+void WriteRelationship(StreamWriter& os, const std::string& name,
                        const std::vector<Path>& targets, const PrimSpec& spec,
                        PropNameId name_id, int depth,
                        const USDAWriteOptions& opts) {
@@ -507,11 +471,11 @@ void WriteRelationship(std::ostream& os, const std::string& name,
 }
 
 // Forward declaration
-void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
+void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    const StitchCtx* sctx = nullptr);
 
-void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
+void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    const StitchCtx* sctx) {
   // Write prim definition line
@@ -699,7 +663,7 @@ void WritePrimSpec(std::ostream& os, const PrimSpec& spec, const Layer& layer,
 
 // Serialize the layer-stage header metadata + all root prims serially (the
 // classic streaming path). Shared by the serial entry and as a fallback.
-void WriteStageBodySerial(std::ostream& os, const Layer& layer,
+void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
                           const LayerMeta& meta, const USDAWriteOptions& opts) {
   WriteLayerMeta(os, meta, opts);
   for (uint32_t root_idx : layer.root_indices()) {
@@ -845,7 +809,7 @@ void BuildPreorderFrontier(const Layer& layer, const std::vector<char>& is_final
 // Parallel stage body: serialize frontier subtrees on a worker pool while the
 // main thread walks the tree and splices each subtree (in order) into `os`.
 // Bounded in-flight buffers (window W) keep peak memory near the serial path.
-void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
+void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
   std::vector<uint64_t> weight;
@@ -883,16 +847,13 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
         std::unique_lock<std::mutex> lk(mu);
         cv.wait(lk, [&] { return i < consumed + W; });
       }
-      // Serialize straight into a std::string (no std::ostringstream internal
-      // buffer + no .str() copy of the whole subtree). StringAppendBuf batches
-      // the writer's small `os <<` tokens so there is no per-char virtual call.
+      // Serialize straight into a std::string via a string-target StreamWriter
+      // (no ostringstream double-buffer, no .str() copy of the whole subtree).
       local.clear();
       {
-        StringAppendBuf sb(local);
-        std::ostream os(&sb);
-        WritePrimSpec(os, *layer.prim(flist[i].first), layer, flist[i].second,
+        StreamWriter sw(&local);
+        WritePrimSpec(sw, *layer.prim(flist[i].first), layer, flist[i].second,
                       opts, /*sctx=*/nullptr);
-        os.flush();  // drain sb's put-area into `local`
       }
       {
         std::lock_guard<std::mutex> lk(mu);
@@ -908,7 +869,7 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
   pool.reserve(nw);
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
-  auto emit = [&](std::ostream& o, int slot) {
+  auto emit = [&](StreamWriter& o, int slot) {
     const size_t s = static_cast<size_t>(slot);
     std::unique_lock<std::mutex> lk(mu);
     cv.wait(lk, [&] { return ready[s] != 0; });
@@ -916,7 +877,7 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
     results[s].clear();
     results[s].shrink_to_fit();
     lk.unlock();
-    o.write(str.data(), static_cast<std::streamsize>(str.size()));
+    o.write(str.data(), str.size());
     lk.lock();
     consumed = s + 1;
     lk.unlock();
@@ -951,14 +912,11 @@ void WriteStageBodyParallel(std::ostream& os, const Layer& layer,
 // Public API implementations
 // ============================================================
 
-std::string WriteUSDAToString(const Stage& stage, const USDAWriteOptions& options) {
-  std::ostringstream ss;
-  WriteUSDA(ss, stage, options);
-  return ss.str();
-}
-
-USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
-                           const USDAWriteOptions& options) {
+// Core writer: targets a StreamWriter (any backend — stdio, file, string, or a
+// host-supplied WASM/WASI sink). The std::ostream / file / string entry points
+// below all wrap this.
+USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
+                          const USDAWriteOptions& options) {
   USDAWriteResult result;
 
   const Layer* root_layer = stage.GetRootLayer();
@@ -966,8 +924,6 @@ USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
     result.error = "Stage has no root layer";
     return result;
   }
-
-  std::streampos start_pos = os.tellp();
 
   // Write layer header using stage metadata
   LayerMeta meta;
@@ -1002,17 +958,27 @@ USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
   WriteStageBodySerial(os, *root_layer, meta, options);
 #endif
 
+  os.flush();
   if (os.good()) {
     result.success = true;
-    std::streampos end_pos = os.tellp();
-    if (start_pos != std::streampos(-1) && end_pos != std::streampos(-1)) {
-      result.bytes_written = static_cast<size_t>(end_pos - start_pos);
-    }
+    result.bytes_written = static_cast<size_t>(os.bytes_written());
   } else {
     result.error = "Stream write error";
   }
-
   return result;
+}
+
+USDAWriteResult WriteUSDA(std::ostream& os, const Stage& stage,
+                           const USDAWriteOptions& options) {
+  StreamWriter w(OstreamSink(os));
+  return WriteUSDA(w, stage, options);
+}
+
+std::string WriteUSDAToString(const Stage& stage, const USDAWriteOptions& options) {
+  std::string out;
+  StreamWriter w(&out);
+  WriteUSDA(w, stage, options);
+  return out;
 }
 
 USDAWriteResult WriteUSDAToFile(const std::string& filename, const Stage& stage,
@@ -1029,34 +995,35 @@ USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
     return result;
   }
 
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) {
+  // Native default backend: C stdio with a large (StreamWriter) buffer + blocked
+  // writes, so library file output reaches disk at device speed.
+  std::FILE* fp = std::fopen(filename, "wb");
+  if (!fp) {
     result.error = "Failed to open file for writing: ";
     result.error += filename;
     return result;
   }
-
-  result = WriteUSDA(ofs, stage, options);
-
-  if (!ofs.good() && result.success) {
+  {
+    StreamWriter w(StdioSink(fp));
+    result = WriteUSDA(w, stage, options);  // flushes the buffer before returning
+  }
+  if (std::fclose(fp) != 0 && result.success) {
     result.success = false;
     result.error = "Error writing to file";
   }
-
   return result;
 }
 
 std::string WriteLayerToString(const Layer& layer, const USDAWriteOptions& options) {
-  std::ostringstream ss;
-  WriteLayer(ss, layer, options);
-  return ss.str();
+  std::string out;
+  StreamWriter w(&out);
+  WriteLayer(w, layer, options);
+  return out;
 }
 
-USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
+USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
                             const USDAWriteOptions& options) {
   USDAWriteResult result;
-
-  std::streampos start_pos = os.tellp();
 
   // Write layer header
   WriteLayerMeta(os, layer.meta(), options);
@@ -1070,36 +1037,39 @@ USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
     }
   }
 
+  os.flush();
   if (os.good()) {
     result.success = true;
-    std::streampos end_pos = os.tellp();
-    if (start_pos != std::streampos(-1) && end_pos != std::streampos(-1)) {
-      result.bytes_written = static_cast<size_t>(end_pos - start_pos);
-    }
+    result.bytes_written = static_cast<size_t>(os.bytes_written());
   } else {
     result.error = "Stream write error";
   }
-
   return result;
+}
+
+USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
+                           const USDAWriteOptions& options) {
+  StreamWriter w(OstreamSink(os));
+  return WriteLayer(w, layer, options);
 }
 
 USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer,
                                   const USDAWriteOptions& options) {
   USDAWriteResult result;
 
-  std::ofstream ofs(filename, std::ios::out | std::ios::binary);
-  if (!ofs) {
+  std::FILE* fp = std::fopen(filename.c_str(), "wb");
+  if (!fp) {
     result.error = "Failed to open file for writing: " + filename;
     return result;
   }
-
-  result = WriteLayer(ofs, layer, options);
-
-  if (!ofs.good() && result.success) {
+  {
+    StreamWriter w(StdioSink(fp));
+    result = WriteLayer(w, layer, options);
+  }
+  if (std::fclose(fp) != 0 && result.success) {
     result.success = false;
     result.error = "Error writing to file";
   }
-
   return result;
 }
 
