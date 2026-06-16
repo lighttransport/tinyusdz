@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <deque>
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <shared_mutex>
@@ -77,7 +78,11 @@ public:
   PropNameId id_size;         // "size"
 
 private:
-  std::vector<std::string> names_;
+  // deque, not vector: get() returns a `const std::string&` that a caller may use
+  // after the shared lock is released; a deque never relocates existing elements
+  // on push_back, so a concurrent intern() (parallel composition) cannot dangle
+  // that reference (a vector realloc would).
+  std::deque<std::string> names_;
   std::unordered_map<std::string, uint32_t> name_to_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
