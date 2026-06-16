@@ -28,8 +28,8 @@ SCENES=()
 # below (path + optional sha), so no private asset path lives in this file.
 declare -A SCENE_INPUT=(
   [house]="${HOUSE_USD:-}|${HOUSE_SHA:--}"
-  [island]="/mnt/nvme02/data/island/usd/island.usda|cd3649a91eb865967009be4ddc9a435df47886eb791d38c103cdce3e44dc959f"
-  [caldera]="/mnt/nvme02/data/caldera/caldera.usda|9338e63e82a14fc5568db1d6b24e2b83f55fdd887a20216c078aa30489829277"
+  [island]="/mnt/nvme02/data/island/usd/island.usda|d31e6728ff2e9923cf6f93456a9ec531e8c66092f638ae6e8e7b175eef6b9077"
+  [caldera]="/mnt/nvme02/data/caldera/caldera.usda|446d1f6b230c8281c5611ff9bd7c2967c0caf25308c6bdc4790f5ae0fa847ea2"
 )
 
 while [ $# -gt 0 ]; do
