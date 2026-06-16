@@ -242,6 +242,11 @@ char* write_exponent_g(int exp, char* out) {
 // shortest dtoa uses. No libc / no locale.
 char* dtoa_g_impl(double f, char* buf, int precision) {
   if (precision < 1) precision = 1;
+  // A double carries at most 17 significant decimal digits; clamp so neither the
+  // round-to-N loop nor the caller's fixed-size buffer can be driven past that
+  // (a large `precision` in fixed notation would otherwise print precision-plus
+  // digits and overflow the buffer).
+  if (precision > 17) precision = 17;
   if (std::isnan(f)) { std::memcpy(buf, "nan", 3); return buf + 3; }
   if (std::isinf(f)) {
     if (std::signbit(f)) { std::memcpy(buf, "-inf", 4); return buf + 4; }
@@ -343,13 +348,13 @@ void dtos_append(std::string& out, double v) {
 }
 
 std::string format_g(double v, int precision) {
-  char buffer[40];
+  char buffer[48];
   char* end = dtoa_g_impl(v, buffer, precision);
   return std::string(buffer, end);
 }
 
 void format_g_append(std::string& out, double v, int precision) {
-  char buffer[40];
+  char buffer[48];
   char* end = dtoa_g_impl(v, buffer, precision);
   out.append(buffer, static_cast<size_t>(end - buffer));
 }
