@@ -346,7 +346,7 @@ void App::startLoadAsync(const std::string& path) {
 
 void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   if (!loaded_.comp.composed || !loaded_.comp.rootLayer) return;
-  if (addPrimPaths.empty()) return;
+  if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
   cancelAndJoinLoad();
   loadCtrl_.resetProgress();
   loadingPath_ = loaded_.filepath;
@@ -839,6 +839,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     const SkinningMode requestedSkinningMode = gui_.requestedSkinningMode();
     animLoop_ = gui_.loopPlayback();
     animSpeed_ = gui_.playSpeed();
+    tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
 
     if (hasSkinningModeRequest) {
@@ -851,12 +852,23 @@ int App::run(const std::string& initialFile, int maxFrames,
       else if (hasAnimation_) requestReconvert(animTime_);
     }
 
-    // Timeline: play/pause, stop (reset to start), and scrub.
+    // Timeline: play/pause, stop (reset to start), step, and scrub.
     if (hasAnimation_) {
       if (togglePlay) animPlaying_ = !animPlaying_;
       if (stopPlay) {
         animPlaying_ = false;
         animTime_ = animStart_;
+        requestReconvert(animTime_);
+      }
+      const bool stepFwd = gui_.wantStepForward();
+      const bool stepBwd = gui_.wantStepBackward();
+      if (stepFwd || stepBwd) {
+        animPlaying_ = false;
+        double frameStep = 1.0 / animFps_;
+        if (stepFwd) animTime_ += frameStep;
+        if (stepBwd) animTime_ -= frameStep;
+        if (animTime_ < animStart_) animTime_ = animStart_;
+        if (animTime_ > animEnd_) animTime_ = animEnd_;
         requestReconvert(animTime_);
       }
       if (hasSeek) {
@@ -897,6 +909,13 @@ int App::run(const std::string& initialFile, int maxFrames,
         for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
       }
       startRecomposeAsync(add);
+    }
+
+    // Variant switch: recompose with the user's variant selections.
+    if (!loadActive_ && gui_.wantVariantSwitch() && loaded_.comp.composed &&
+        loaded_.comp.rootLayer) {
+      loadOpts_.variantOverrides = gui_.variantOverrides();
+      startRecomposeAsync(std::set<std::string>());
     }
 
     if (!headless_) {

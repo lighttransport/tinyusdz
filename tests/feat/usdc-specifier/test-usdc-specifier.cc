@@ -23,7 +23,7 @@
 
 #include "tinyusdz.hh"
 #include "usdc-writer.hh"
-#include "prim-types.hh"
+#include "core/prim-spec.hh"
 
 using namespace tinyusdz;
 

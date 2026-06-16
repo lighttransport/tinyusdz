@@ -54,6 +54,8 @@ set(TUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     mesh_build.cc
+    gizmo_build.cc
+    parametric_tess.cc
     skinning.cc
     camera_nav.cc
     gui.cc

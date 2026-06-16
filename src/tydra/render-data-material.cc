@@ -3967,6 +3967,102 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           << " (sphere): " << abs_path.full_path_name());
   }
 
+  // Helper lambda for parametric primitive conversion (Cylinder, Cone, Capsule, Plane)
+  auto convertParamPrim = [&](auto *pprim, const char *primTypeName, auto convertFunc) -> bool {
+    DCOUT(primTypeName << ": " << abs_path);
+
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+      bool ret{false};
+      if (!ResolveBoundMaterial(abs_path, "", &bound_material_path, &bound_material, &ret)) {
+        return false;
+      }
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+        if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+          }
+          return false;
+        }
+        material_path.material_path = bound_material_path.full_path_name();
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;
+
+    if (!(visitorEnv->converter->*convertFunc)(
+            *visitorEnv->env, abs_path, *pprim, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("{} conversion failed: {}", primTypeName, abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) { (*err) += "Mesh index too large.\n"; }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+
+    visitorEnv->meshes_processed++;
+    std::string msg = std::string("Converting ") + primTypeName + " " +
+        std::to_string(visitorEnv->meshes_processed) + "/" +
+        std::to_string(visitorEnv->meshes_total);
+    if (!visitorEnv->converter->ReportMeshProgress(
+            visitorEnv->meshes_processed, visitorEnv->meshes_total,
+            abs_path.full_path_name(), msg)) {
+      if (err) { (*err) += "Conversion cancelled by user.\n"; }
+      return false;
+    }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id), abs_path.full_path_name())) {
+      if (err) { (*err) += "Conversion cancelled by user.\n"; }
+      return false;
+    }
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (" << primTypeName << "): " << abs_path.full_path_name());
+    return true;
+  };
+
+  // Handle GeomCylinder primitives
+  if (const tinyusdz::GeomCylinder *pcyl = prim.as<tinyusdz::GeomCylinder>()) {
+    if (!convertParamPrim(pcyl, "cylinder", &RenderSceneConverter::ConvertCylinder)) {
+      return false;
+    }
+  }
+
+  // Handle GeomCone primitives
+  if (const tinyusdz::GeomCone *pcone = prim.as<tinyusdz::GeomCone>()) {
+    if (!convertParamPrim(pcone, "cone", &RenderSceneConverter::ConvertCone)) {
+      return false;
+    }
+  }
+
+  // Handle GeomCapsule primitives
+  if (const tinyusdz::GeomCapsule *pcap = prim.as<tinyusdz::GeomCapsule>()) {
+    if (!convertParamPrim(pcap, "capsule", &RenderSceneConverter::ConvertCapsule)) {
+      return false;
+    }
+  }
+
+  // Handle GeomPlane primitives
+  if (const tinyusdz::GeomPlane *pplane = prim.as<tinyusdz::GeomPlane>()) {
+    if (!convertParamPrim(pplane, "plane", &RenderSceneConverter::ConvertPlane)) {
+      return false;
+    }
+  }
+
   return true;  // continue traversal
 }
 
