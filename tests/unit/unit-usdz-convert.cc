@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@
 #include "io-util.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#include "usdz-material-optimize.hh"
 #include "usdShade.hh"
 
 namespace {
@@ -72,6 +74,45 @@ std::string TempDir() {
       tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tusdzconvert_test");
   tinyusdz::io::CreateDirectories(base);
   return base;
+}
+
+std::string TestFixturePath(const std::string &rel) {
+  if (tinyusdz::io::FileExists(rel)) {
+    return rel;
+  }
+  const std::string parent = tinyusdz::io::JoinPath("..", rel);
+  if (tinyusdz::io::FileExists(parent)) {
+    return parent;
+  }
+  return rel;
+}
+
+size_t TestFileSize(const std::string &path) {
+  std::ifstream ifs(path, std::ios::binary | std::ios::ate);
+  if (!ifs) {
+    return 0;
+  }
+  const std::streampos pos = ifs.tellg();
+  if (pos < 0) {
+    return 0;
+  }
+  return static_cast<size_t>(pos);
+}
+
+bool WriteMinimalUSDA(const std::string &path) {
+  const std::string usda =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"root\"\n"
+      ")\n"
+      "\n"
+      "def Xform \"root\"\n"
+      "{\n"
+      "}\n";
+  std::string werr;
+  return tinyusdz::io::WriteWholeFile(
+      path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
+      &werr);
 }
 
 bool WriteTexturedUSDA(const std::string &path, const std::string &texture_path) {
@@ -571,6 +612,43 @@ void usdz_convert_pipeline_test(void) {
   }
 }
 
+void usdz_convert_flat_output_size_stats_test(void) {
+  using namespace tinyusdz;
+
+  const std::string dir = TempDir();
+  const std::string usda_path = tinyusdz::io::JoinPath(dir, "flat_stats.usda");
+  TEST_CHECK(WriteMinimalUSDA(usda_path));
+
+  const struct {
+    usdz::OutputFormat format;
+    const char *filename;
+  } cases[] = {
+      {usdz::OutputFormat::USDC, "flat_stats.usdc"},
+      {usdz::OutputFormat::USDA, "flat_stats_out.usda"},
+  };
+
+  for (const auto &tc : cases) {
+    usdz::UsdzConvertOptions opts;
+    opts.inputs.push_back(usda_path);
+    opts.output = tinyusdz::io::JoinPath(dir, tc.filename);
+    opts.output_format = tc.format;
+    opts.flatten = true;
+
+    usdz::UsdzConvertStats stats;
+    std::string warn, err;
+    bool ok = usdz::Convert(opts, &stats, &warn, &err);
+    TEST_CHECK(ok);
+    if (!ok) {
+      TEST_MSG("convert error: %s", err.c_str());
+      continue;
+    }
+
+    const size_t actual_size = TestFileSize(opts.output);
+    TEST_CHECK(actual_size > 0);
+    TEST_CHECK(stats.output_size == actual_size);
+  }
+}
+
 void usdz_convert_usdz_root_layer_format_test(void) {
   using namespace tinyusdz;
 
@@ -797,6 +875,105 @@ void usdz_convert_remap_asset_paths_test(void) {
   // An empty stage has no textures, so count should be 0.
   size_t count = usdz::RemapTextureAssetPaths(stage, remap);
   TEST_CHECK(count == 0);
+}
+
+void usdz_convert_material_dedupe_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/material-optimize-dedupe-001.usda"), &layer,
+      &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.material_optimization = usdz::MaterialOptimizationMode::Dedupe;
+  usdz::MaterialOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_materials_before == 2);
+  TEST_CHECK(stats.num_materials_after == 1);
+  TEST_CHECK(stats.num_materials_deduped == 1);
+
+  const PrimSpec *mesh_b = nullptr;
+  ok = layer.find_primspec_at(Path("/Root/MeshB", ""), &mesh_b, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(mesh_b != nullptr);
+  if (mesh_b) {
+    TEST_CHECK(mesh_b->children().empty());
+    auto it = mesh_b->props().find("material:binding");
+    TEST_CHECK(it != mesh_b->props().end());
+    if (it != mesh_b->props().end()) {
+      auto target = it->second.get_relationTarget();
+      TEST_CHECK(target.has_value());
+      if (target) {
+        TEST_CHECK(target->prim_part() == "/Root/MeshA/Mat");
+      }
+    }
+  }
+}
+
+void usdz_convert_material_preview_atlas_fallback_test(void) {
+  using namespace tinyusdz;
+
+  const struct {
+    usdz::MaterialOptimizationMode mode;
+    const char *warning_substring;
+  } cases[] = {
+      {usdz::MaterialOptimizationMode::Preview, "preview mode"},
+      {usdz::MaterialOptimizationMode::Atlas, "atlas mode"},
+  };
+
+  for (const auto &tc : cases) {
+    Layer layer;
+    std::string warn, err;
+    bool loaded = LoadLayerFromFile(
+        TestFixturePath("tests/usda/material-optimize-dedupe-001.usda"),
+        &layer, &warn, &err);
+    TEST_CHECK(loaded);
+    if (!loaded) {
+      TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+      continue;
+    }
+
+    usdz::UsdzConvertOptions opts;
+    opts.material_optimization = tc.mode;
+    usdz::MaterialOptimizationStats stats;
+    bool ok =
+        usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(stats.num_materials_before == 2);
+    TEST_CHECK(stats.num_materials_after == 1);
+    TEST_CHECK(stats.num_materials_deduped == 1);
+    TEST_CHECK(warn.find(tc.warning_substring) != std::string::npos);
+
+    Layer unique_layer;
+    warn.clear();
+    err.clear();
+    loaded = LoadLayerFromFile(
+        TestFixturePath("tests/usda/material-optimize-unique-001.usda"),
+        &unique_layer, &warn, &err);
+    TEST_CHECK(loaded);
+    if (!loaded) {
+      TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+      continue;
+    }
+
+    stats = usdz::MaterialOptimizationStats{};
+    ok = usdz::OptimizeMaterialsInLayer(opts, &unique_layer, &stats, &warn,
+                                        &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(stats.num_materials_before == 2);
+    TEST_CHECK(stats.num_materials_after == 2);
+    TEST_CHECK(stats.num_materials_deduped == 0);
+    TEST_CHECK(warn.find(tc.warning_substring) != std::string::npos);
+  }
 }
 
 // Error-path: invalid inputs should return errors, not crash.

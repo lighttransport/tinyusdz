@@ -63,6 +63,7 @@
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "usdz-material-optimize.hh"
 #include "crate-writer.hh"
 #include "image-writer.hh"
 #include "imageio/png-stream.hh"  // streaming scanline PNG codec
@@ -7472,6 +7473,82 @@ class TinyUSDZLoaderNative {
         tinyusdz::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
   }
 
+  bool applyMaterialOptimizationToLayerOptions(emscripten::val options) {
+    if (options.isUndefined() || options.isNull()) {
+      return true;
+    }
+
+    tinyusdz::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Off;
+      } else if (m == "dedupe" || m == "dedup") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Dedupe;
+      } else if (m == "preview" || m == "previewsurface" ||
+                 m == "usdpreviewsurface") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Preview;
+      } else if (m == "atlas") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Atlas;
+      } else {
+        error_ = "Invalid material optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    emscripten::val mode_val = options["optimizeMaterials"];
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["materialOptimization"];
+    }
+    if (!mode_val.isUndefined() && !mode_val.isNull()) {
+      if (!parse_mode(mode_val.as<std::string>())) {
+        return false;
+      }
+    }
+    if (opt.material_optimization ==
+        tinyusdz::usdz::MaterialOptimizationMode::Off) {
+      return true;
+    }
+
+    auto set_int = [&](const char *name, int *dst) {
+      emscripten::val v = options[name];
+      if (!v.isUndefined() && !v.isNull()) {
+        *dst = v.as<int>();
+      }
+    };
+    set_int("materialAtlasSize", &opt.material_atlas_size);
+    set_int("materialAtlasTileSize", &opt.material_atlas_tile_size);
+    set_int("materialAtlasPadding", &opt.material_atlas_padding);
+    set_int("materialAtlasMinGroupSize", &opt.material_atlas_min_group_size);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Material optimization requires a loaded Layer.";
+      return false;
+    }
+
+    tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::usdz::MaterialOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!tinyusdz::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
+                                                  &owarn, &oerr)) {
+      error_ = "Material optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Material optimization: " +
+             std::to_string(opt_stats.num_materials_before) + " -> " +
+             std::to_string(opt_stats.num_materials_after) + ", deduped " +
+             std::to_string(opt_stats.num_materials_deduped) + ".\n";
+    return true;
+  }
+
   /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
   /// paths according to `remap` ({oldName: newName}). Use when textures are
   /// renamed (e.g. transcoded PNG -> JPG) so references follow.
@@ -7533,6 +7610,10 @@ class TinyUSDZLoaderNative {
   /// options: { rootLayerFormat?: "usdc"|"usda", arkitCompatible?: bool }
   emscripten::val exportAsUSDZWithOptions(emscripten::val remap,
                                           emscripten::val options) {
+    if (!applyMaterialOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
       return emscripten::val::null();
@@ -7613,6 +7694,9 @@ class TinyUSDZLoaderNative {
   emscripten::val exportLayerAsUSDZWithOptions(emscripten::val options) {
     if (!loaded_ || !loaded_as_layer_) {
       error_ = "No layer loaded";
+      return emscripten::val::null();
+    }
+    if (!applyMaterialOptimizationToLayerOptions(options)) {
       return emscripten::val::null();
     }
 
