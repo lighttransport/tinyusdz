@@ -108,6 +108,9 @@ option(TINYUSDZ_WITH_PCP
 option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
        "Use next::pcp::Cache backend for LargeSceneLoader (experimental; links tinyusdz_next)."
        OFF)
+option(TINYUSDZ_ENABLE_SIMD
+       "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
+       ON)
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
@@ -1806,6 +1809,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_PCP)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_PCP")
+  endif()
+
+  if(NOT TINYUSDZ_ENABLE_SIMD)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_SIMD")
   endif()
 
   if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
