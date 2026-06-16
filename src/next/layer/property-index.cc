@@ -18,10 +18,7 @@ namespace next {
 // PropNameTable
 // ============================================================
 
-PropNameTable::PropNameTable() {
-  // Reserve space for common names
-  names_.reserve(256);
-}
+PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
