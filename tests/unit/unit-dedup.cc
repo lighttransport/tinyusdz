@@ -22,7 +22,6 @@
 #include <functional>
 #include <fstream>
 #include <limits>
-#include <filesystem>
 
 using namespace tinyusdz;
 using namespace tinyusdz::experimental;
@@ -43,11 +42,10 @@ static size_t GetFileSize(const std::string& filename) {
 // Build a portable temp file path. A hardcoded "/tmp/..." does not exist on
 // Windows, where WriteStageUSDC would then fail to open the output file.
 static std::string TempPath(const std::string& name) {
-  namespace fs = std::filesystem;
-  fs::path base = fs::temp_directory_path() / "tinyusdz_dedup_test";
-  std::error_code ec;
-  fs::create_directories(base, ec);
-  return (base / name).string();
+  const std::string base =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_dedup_test");
+  tinyusdz::io::CreateDirectories(base);
+  return tinyusdz::io::JoinPath(base, name);
 }
 
 // Build a Stage with a single Xform prim carrying one custom timesampled

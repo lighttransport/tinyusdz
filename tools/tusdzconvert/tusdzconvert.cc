@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -260,33 +259,21 @@ bool ResolveInputPath(const std::string &arg, std::string *root_input,
     return false;
   }
 
-  namespace fs = std::filesystem;
-  std::error_code ec;
-  const fs::path input_path(arg);
-  if (!fs::is_directory(input_path, ec)) {
+  if (!io::IsDirectory(arg)) {
     *root_input = arg;
     *input_was_directory = false;
     return true;
   }
 
-  std::vector<fs::path> candidates;
-  for (const fs::directory_entry &entry : fs::directory_iterator(input_path, ec)) {
-    if (ec) {
-      if (err) (*err) = "failed to read input directory: " + arg;
-      return false;
-    }
-    if (!entry.is_regular_file(ec)) {
-      ec.clear();
+  std::vector<std::string> candidates;
+  for (const std::string &name : io::ListDir(arg, /*recursive*/ false)) {
+    const std::string path = io::JoinPath(arg, name);
+    if (io::IsDirectory(path)) {
       continue;
     }
-    const std::string path = entry.path().string();
     if (IsUSDFileExtension(path)) {
-      candidates.push_back(entry.path());
+      candidates.push_back(path);
     }
-  }
-  if (ec) {
-    if (err) (*err) = "failed to read input directory: " + arg;
-    return false;
   }
 
   if (candidates.empty()) {
@@ -299,14 +286,14 @@ bool ResolveInputPath(const std::string &arg, std::string *root_input,
   if (candidates.size() > 1) {
     if (err) {
       (*err) = "input directory has multiple top-level USD root candidates:";
-      for (const fs::path &candidate : candidates) {
-        (*err) += "\n  " + candidate.string();
+      for (const std::string &candidate : candidates) {
+        (*err) += "\n  " + candidate;
       }
     }
     return false;
   }
 
-  *root_input = candidates.front().string();
+  *root_input = candidates.front();
   *input_was_directory = true;
   return true;
 }
