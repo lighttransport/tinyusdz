@@ -118,6 +118,12 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
+  // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
+  // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
+  // read so the composition core takes no implicit process-environment input;
+  // the CLI sets this from its own flag/env.
+  bool enable_timing = false;
+
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)

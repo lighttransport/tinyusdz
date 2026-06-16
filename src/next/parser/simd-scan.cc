@@ -2,6 +2,15 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // TinyUSDZ Next - SIMD scanning helpers (implementation)
+//
+// Two build paths, selected at compile time:
+//   * SSE2  - the x86-64 baseline (and 32-bit x86 only when the compiler is
+//             actually targeting SSE2). All x86 toolchains (GCC/Clang/MSVC).
+//   * scalar - everything else: ARM/AArch64, WebAssembly (no-SIMD), other ISAs,
+//             and 32-bit x86 without SSE2. Byte-for-byte identical results, just
+//             without the bulk speedup.
+// The scalar routine is the SSE2 path's <16-byte tail handler too, so it is
+// always compiled.
 
 #include "simd-scan.hh"
 
@@ -24,6 +33,9 @@
 // NEON is mandatory (always available) on AArch64.
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86) && _M_IX86_FP >= 2)
 #include <emmintrin.h>  // SSE2 (baseline on x86-64)
+#if defined(_MSC_VER)
+#include <intrin.h>  // _BitScanForward (MSVC has no __builtin_ctz)
+#endif
 #define TINYUSDZ_SIMDSCAN_SSE2 1
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>  // NEON (baseline on AArch64)
@@ -42,7 +54,8 @@ inline bool IsStructural(char c) {
   return c == '[' || c == ']' || c == '"' || c == '\'' || c == '@' || c == '#';
 }
 
-// Scalar reference (also the tail handler and the non-x86 path).
+// Scalar reference (also the SSE2/NEON path's <16-byte tail handler and the
+// non-x86/non-AArch64 path, so it is always compiled).
 const char* ScanScalar(const char* p, const char* end, size_t* newlines) {
   size_t nl = 0;
   for (; p < end; ++p) {
@@ -61,15 +74,30 @@ const char* ScanScalar(const char* p, const char* end, size_t* newlines) {
 
 #if defined(TINYUSDZ_SIMDSCAN_SSE2)
 
+namespace {
+
 // popcount of a <=16-bit mask, inlined SWAR. __builtin_popcount emits a libgcc
 // call (__popcountdi2) under the SSE2 baseline (no POPCNT), which showed up hot;
-// this stays a few register ops.
-static inline unsigned PopCount16(unsigned x) {
+// this stays a few register ops and is compiler-portable.
+inline unsigned PopCount16(unsigned x) {
   x = x - ((x >> 1) & 0x5555u);
   x = (x & 0x3333u) + ((x >> 2) & 0x3333u);
   x = (x + (x >> 4)) & 0x0F0Fu;
   return (x + (x >> 8)) & 0x1Fu;
 }
+
+// Index of the lowest set bit. `x` is always non-zero at the call sites.
+inline unsigned LowestSetBit(unsigned x) {
+#if defined(_MSC_VER)
+  unsigned long idx;
+  _BitScanForward(&idx, x);
+  return static_cast<unsigned>(idx);
+#else
+  return static_cast<unsigned>(__builtin_ctz(x));
+#endif
+}
+
+}  // namespace
 
 const char* ScanArrayStructural(const char* p, const char* end,
                                 size_t* newlines) {
@@ -95,7 +123,7 @@ const char* ScanArrayStructural(const char* p, const char* end,
         static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(v, nlv))) &
         0xFFFFu;
     if (mask) {
-      const int idx = __builtin_ctz(mask);
+      const unsigned idx = LowestSetBit(mask);
       // newlines strictly before the structural byte
       nl += PopCount16(nlmask & ((1u << idx) - 1u));
       *newlines += nl;
@@ -167,7 +195,7 @@ const char* ScanArrayStructural(const char* p, const char* end,
 
 const char* Backend() { return "scalar"; }
 
-#endif
+#endif  // TINYUSDZ_SIMDSCAN_SSE2
 
 }  // namespace simdscan
 }  // namespace next
