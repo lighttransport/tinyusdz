@@ -155,13 +155,16 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
   size_t size = static_cast<size_t>(file.tellg());
   file.seekg(0, std::ios::beg);
 
-  std::string content(size, '\0');
-  if (!file.read(&content[0], static_cast<std::streamsize>(size))) {
+  // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
+  // uninitialized, so we skip zero-filling hundreds of MB we immediately
+  // overwrite with file.read (the zero-fill was ~8% of a big-file parse).
+  std::unique_ptr<char[]> content(new char[size ? size : 1]);
+  if (size && !file.read(content.get(), static_cast<std::streamsize>(size))) {
     AddError("Failed to read file contents");
     return false;
   }
 
-  return Parse(content.data(), content.size());
+  return Parse(content.get(), size);
 }
 
 bool AsciiParser::Impl::ParseStageMetadata() {

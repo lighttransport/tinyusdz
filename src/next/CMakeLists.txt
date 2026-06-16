@@ -31,6 +31,7 @@ set(TINYUSDZ_NEXT_SOURCES
     parser/lexer.cc
     parser/value-parser.cc
     parser/ascii-parser.cc
+    parser/simd-scan.cc
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
