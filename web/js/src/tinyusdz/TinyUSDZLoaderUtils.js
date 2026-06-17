@@ -28,6 +28,7 @@ import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 class TextureLoadingManager {
     constructor() {
         this.queue = [];           // Pending texture tasks
+        this.promiseCache = new Map(); // textureId -> in-flight/completed Promise
         this.loaded = 0;           // Number of loaded textures
         this.failed = 0;           // Number of failed textures
         this.total = 0;            // Total textures to load
@@ -82,6 +83,7 @@ class TextureLoadingManager {
      */
     reset() {
         this.queue = [];
+        this.promiseCache.clear();
         this.loaded = 0;
         this.failed = 0;
         this.total = 0;
@@ -139,7 +141,13 @@ class TextureLoadingManager {
             const { material, mapProperty, textureId, usdScene, options: taskOptions } = task;
 
             try {
-                const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
+                const cacheKey = String(textureId);
+                let promise = this.promiseCache.get(cacheKey);
+                if (!promise) {
+                    promise = TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
+                    this.promiseCache.set(cacheKey, promise);
+                }
+                const texture = await promise;
 
                 if (texture && !this.aborted) {
                     material[mapProperty] = texture;
@@ -228,7 +236,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static _tinyusdz = null;
 
     // Yield interval for UI updates (ms)
-    static YIELD_INTERVAL_MS = 16; // ~60fps
+    static YIELD_INTERVAL_MS = 250;
 
     constructor() {
         super();
@@ -239,11 +247,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
      * Uses requestAnimationFrame for optimal frame timing.
      * @returns {Promise<void>}
      */
-    static yieldToUI() {
+    static yieldToUI(mode = 'raf') {
         return new Promise(resolve => {
-            // Use requestAnimationFrame for smoother updates
-            // Falls back to setTimeout if RAF is not available
-            if (typeof requestAnimationFrame === 'function') {
+            if (mode === 'timeout') {
+                setTimeout(resolve, 0);
+            } else if (typeof requestAnimationFrame === 'function') {
                 requestAnimationFrame(() => resolve());
             } else {
                 setTimeout(resolve, 0);
@@ -256,11 +264,22 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
      * @param {Object} state - State object with lastYieldTime property
      * @returns {Promise<void>}
      */
-    static async maybeYieldToUI(state) {
+    static async maybeYieldToUI(state, options = null) {
+        const mode = options?.yieldMode || 'raf';
+        if (mode === 'none') {
+            return;
+        }
         const now = performance.now();
-        if (!state.lastYieldTime || (now - state.lastYieldTime) >= this.YIELD_INTERVAL_MS) {
+        const intervalMs = Number.isFinite(options?.yieldIntervalMs) ?
+            Math.max(0, options.yieldIntervalMs) : this.YIELD_INTERVAL_MS;
+        if (!state.lastYieldTime || (now - state.lastYieldTime) >= intervalMs) {
             state.lastYieldTime = now;
-            await this.yieldToUI();
+            const yieldStart = performance.now();
+            await this.yieldToUI(mode);
+            if (options?._debugState) {
+                options._debugState.yieldMs += performance.now() - yieldStart;
+                options._debugState.yieldCount++;
+            }
         }
     }
 
@@ -496,6 +515,128 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         });
     }
 
+    static textureSignature(textureId, usdScene, textureSignatureCache = null) {
+        if (textureId === undefined || textureId === null || textureId < 0 ||
+            !usdScene || typeof usdScene.getTexture !== 'function') {
+            return textureId;
+        }
+        if (textureSignatureCache && textureSignatureCache.has(textureId)) {
+            return textureSignatureCache.get(textureId);
+        }
+        let signature = textureId;
+        try {
+            const texture = usdScene.getTexture(textureId);
+            if (texture && texture.textureImageId !== undefined) {
+                signature = {
+                    imageId: texture.textureImageId,
+                    wrapS: texture.wrapS,
+                    wrapT: texture.wrapT,
+                    isUDIM: !!texture.isUDIM,
+                    udimTextureId: texture.udimTextureId,
+                    udimUvScaleU: texture.udimUvScaleU,
+                    udimUvScaleV: texture.udimUvScaleV,
+                    udimUvOffsetU: texture.udimUvOffsetU,
+                    udimUvOffsetV: texture.udimUvOffsetV
+                };
+            }
+        } catch (_) {
+            signature = textureId;
+        }
+        if (textureSignatureCache) {
+            textureSignatureCache.set(textureId, signature);
+        }
+        return signature;
+    }
+
+    static stableMaterialStringify(value, usdScene = null, textureSignatureCache = null) {
+        const skipKeys = new Set([
+            'name',
+            'abs_path',
+            'display_name',
+            'primName',
+            'absPath',
+            'displayName'
+        ]);
+        const visit = (v) => {
+            if (Array.isArray(v)) {
+                return v.map(visit);
+            }
+            if (v && typeof v === 'object') {
+                const out = {};
+                for (const key of Object.keys(v).sort()) {
+                    if (!skipKeys.has(key)) {
+                        out[key] = key.endsWith('TextureId') ?
+                            this.textureSignature(v[key], usdScene, textureSignatureCache) :
+                            visit(v[key]);
+                    }
+                }
+                return out;
+            }
+            return v;
+        };
+        return JSON.stringify(visit(value));
+    }
+
+    static makeMaterialSignature(materialData, preferredMaterialType = 'auto', usdScene = null, textureSignatureCache = null) {
+        let parsedMaterial = materialData;
+        if (typeof materialData === 'string') {
+            try {
+                parsedMaterial = JSON.parse(materialData);
+            } catch (_e) {
+                return null;
+            }
+        }
+        if (!parsedMaterial || typeof parsedMaterial !== 'object') {
+            return null;
+        }
+
+        const typeInfo = this.getMaterialType(parsedMaterial);
+        let shader = null;
+        const useFullSignature = preferredMaterialType === 'full' ||
+            preferredMaterialType === 'openpbr' ||
+            (preferredMaterialType === 'auto' && typeInfo.hasOpenPBR);
+        if (useFullSignature) {
+            if (typeInfo.hasOpenPBR && parsedMaterial.openPBR) {
+                return `openpbr:${this.stableMaterialStringify(parsedMaterial.openPBR, usdScene, textureSignatureCache)}`;
+            }
+            if (typeInfo.hasUsdPreviewSurface && parsedMaterial.surfaceShader) {
+                return `preview-full:${this.stableMaterialStringify(parsedMaterial.surfaceShader, usdScene, textureSignatureCache)}`;
+            }
+        } else if (preferredMaterialType === 'usdpreviewsurface' || preferredMaterialType === 'preview' ||
+            (preferredMaterialType === 'auto' && typeInfo.hasUsdPreviewSurface && !typeInfo.hasOpenPBR)) {
+            shader = parsedMaterial.surfaceShader || parsedMaterial;
+        } else if (typeInfo.hasUsdPreviewSurface && !typeInfo.hasOpenPBR) {
+            shader = parsedMaterial.surfaceShader || parsedMaterial;
+        } else {
+            return null;
+        }
+
+        const fields = [
+            'diffuseColor', 'diffuseColorTextureId',
+            'emissiveColor', 'emissiveColorTextureId',
+            'specularColor', 'specularColorTextureId',
+            'metallic', 'metallicTextureId',
+            'roughness', 'roughnessTextureId',
+            'clearcoat', 'clearcoatTextureId',
+            'clearcoatRoughness', 'clearcoatRoughnessTextureId',
+            'opacity', 'opacityTextureId',
+            'ior', 'iorTextureId',
+            'normalTextureId',
+            'occlusionTextureId',
+            'displacementTextureId',
+            'useSpecularWorkflow'
+        ];
+        const compact = {};
+        for (const field of fields) {
+            if (Object.prototype.hasOwnProperty.call(shader, field)) {
+                compact[field] = field.endsWith('TextureId') ?
+                    this.textureSignature(shader[field], usdScene, textureSignatureCache) :
+                    shader[field];
+            }
+        }
+        return JSON.stringify(compact);
+    }
+
     //
     // Convert UsdPreviewSureface to MeshPhysicalMaterial
     // - [x] diffuseColor -> color
@@ -521,6 +662,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Helper to load texture immediately or queue for later
         const loadOrQueueTexture = (mapProperty, textureId, textureOptions = {}) => {
+            // Opt-out for geometry/structure-focused viewers that don't need
+            // textures (avoids fetching — and 404-ing on — unresolved texture
+            // URIs).
+            if (options.skipTextures) {
+                return;
+            }
             if (textureManager) {
                 // Delayed mode: queue texture for later loading
                 textureManager.queueTexture(material, mapProperty, textureId, usdScene, textureOptions);
@@ -530,7 +677,17 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     material[mapProperty] = texture;
                     material.needsUpdate = true;
                 }).catch((err) => {
-                    console.error(`failed to load ${mapProperty} texture:`, err);
+                    // Deduplicate: scenes can reference the same missing/failing
+                    // texture thousands of times (and re-convert on every option
+                    // toggle), which floods the console. Log each unique failure
+                    // once.
+                    const key = `${mapProperty}:${err && err.message ? err.message : String(err)}`;
+                    const seen = (TinyUSDZLoaderUtils._textureErrorSeen ||
+                        (TinyUSDZLoaderUtils._textureErrorSeen = new Set()));
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        console.warn(`failed to load ${mapProperty} texture (further identical errors suppressed):`, err);
+                    }
                 });
             }
         };
@@ -865,7 +1022,98 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return this.createDefaultMaterial();
     }
 
-    static convertUsdMeshToThreeMesh(mesh) {
+    static _copyHeapAttribute(desc) {
+        const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
+        if (!tinyusdz || !desc || desc.ptr === undefined || desc.length === undefined) {
+            return null;
+        }
+
+        const ptr = Number(desc.ptr);
+        const length = Number(desc.length);
+        if (!Number.isFinite(ptr) || !Number.isFinite(length) || length <= 0) {
+            return null;
+        }
+
+        switch (desc.dtype) {
+            case 'f32':
+                return new Float32Array(tinyusdz.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + length));
+            case 'u32':
+                return new Uint32Array(tinyusdz.HEAPU32.subarray(ptr >> 2, (ptr >> 2) + length));
+            case 'snorm16':
+                return new Int16Array(tinyusdz.HEAP16.subarray(ptr >> 1, (ptr >> 1) + length));
+            case 'snorm8':
+            case 'u8':
+                return new Int8Array(tinyusdz.HEAP8.subarray(ptr, ptr + length));
+            default:
+                return null;
+        }
+    }
+
+    static _canUseMeshPtr() {
+        const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
+        return !!(tinyusdz &&
+            tinyusdz.HEAPF32 &&
+            tinyusdz.HEAPU32 &&
+            tinyusdz.HEAP16 &&
+            tinyusdz.HEAP8);
+    }
+
+    static convertUsdMeshPtrToThreeMesh(mesh, options = {}) {
+        if (!mesh || !mesh.points) {
+            return null;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+
+        const points = this._copyHeapAttribute(mesh.points);
+        if (!points) {
+            return null;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(points, 3));
+
+        if (mesh.indices) {
+            const indices = this._copyHeapAttribute(mesh.indices);
+            if (indices && indices.length > 0) {
+                geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+            }
+        }
+
+        if (mesh.uv0) {
+            const uv0 = this._copyHeapAttribute(mesh.uv0);
+            if (uv0) {
+                geometry.setAttribute('uv', new THREE.BufferAttribute(uv0, 2));
+            }
+        }
+
+        if (mesh.normals) {
+            const normals = this._copyHeapAttribute(mesh.normals);
+            if (normals) {
+                if (mesh.normals.dtype === 'snorm8' || mesh.normals.dtype === 'snorm16') {
+                    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3, true));
+                } else {
+                    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                }
+            }
+        } else {
+            geometry.computeVertexNormals();
+        }
+
+        if (options.computeMissingTangents &&
+            geometry.attributes.uv &&
+            geometry.attributes.normal) {
+            geometry.computeTangents();
+        }
+
+        geometry.userData['doubleSided'] = mesh.doubleSided;
+        if (Object.prototype.hasOwnProperty.call(mesh, 'submeshes') &&
+            mesh.submeshes.length > 0) {
+            geometry.userData['submeshes'] = mesh.submeshes;
+        }
+
+        return geometry;
+    }
+
+    static convertUsdMeshToThreeMesh(mesh, options = {}) {
         const geometry = new THREE.BufferGeometry();
         // IMPORTANT: Copy all typed arrays from WASM heap into JS-owned buffers.
         // The C++ TinyUSDZLoaderNative object is explicitly deleted via .delete()
@@ -940,7 +1188,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Only compute tangents if we have both UV coordinates and normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
             geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 4));
-        } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
+        } else if (options.computeMissingTangents && Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();
         }
@@ -964,55 +1212,133 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     static async setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
 
-        const geometry = this.convertUsdMeshToThreeMesh(mesh);
+        const geometryStart = performance.now();
+        const geometry = mesh && mesh._meshPtr ?
+            this.convertUsdMeshPtrToThreeMesh(mesh, options) :
+            this.convertUsdMeshToThreeMesh(mesh, options);
+        if (!geometry) {
+            throw new Error('Failed to build Three.js geometry');
+        }
+        if (options._debugState) {
+            options._debugState.geometryMs += performance.now() - geometryStart;
+        }
 
         const normalMtl = new THREE.MeshNormalMaterial();
+        const materialCache = options.materialCache || null;
+        const materialSignatureCache = options.materialSignatureCache || null;
+        const preferredMaterialType = options.preferredMaterialType || 'auto';
+
+        const getMaterialForId = async (matId) => {
+            if (matId === undefined || matId < 0) {
+                return null;
+            }
+
+            const doubleSided = geometry.userData['doubleSided'];
+            const cacheKey = `${matId}|${preferredMaterialType}|${doubleSided === true ? 'double' : 'front'}`;
+            if (materialCache && materialCache.has(cacheKey)) {
+                if (options._debugState) {
+                    options._debugState.materialCacheHits++;
+                }
+                return materialCache.get(cacheKey);
+            }
+
+            if (options._debugState) {
+                options._debugState.materialCacheMisses++;
+            }
+            const materialStart = performance.now();
+            const result = usdScene.getMaterialWithFormat ?
+                usdScene.getMaterialWithFormat(matId, 'json') :
+                { error: false, data: JSON.stringify(usdScene.getMaterial(matId)) };
+            if (result.error) {
+                console.warn(`Failed to get material ${matId} with format: ${result.error}`);
+                if (options._debugState) {
+                    options._debugState.materialMs += performance.now() - materialStart;
+                }
+                return null;
+            }
+
+            const materialData = typeof result.data === 'string' ?
+                JSON.parse(result.data) :
+                result.data;
+
+            const signatureStart = performance.now();
+            const signature = materialSignatureCache ?
+                this.makeMaterialSignature(
+                    materialData,
+                    options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType,
+                    usdScene,
+                    options.materialSignatureTextureCache || null) :
+                null;
+            if (options._debugState) {
+                options._debugState.materialSignatureMs += performance.now() - signatureStart;
+            }
+            if (signature && materialSignatureCache) {
+                const signatureKey = signature + `|${doubleSided === true ? 'double' : 'front'}`;
+                if (materialSignatureCache.has(signatureKey)) {
+                    if (options._debugState) {
+                        options._debugState.materialSignatureCacheHits++;
+                    }
+                    const cached = materialSignatureCache.get(signatureKey);
+                    if (materialCache) {
+                        materialCache.set(cacheKey, cached);
+                    }
+                    if (options._debugState) {
+                        options._debugState.materialMs += performance.now() - materialStart;
+                    }
+                    return cached;
+                }
+                if (options._debugState) {
+                    options._debugState.materialSignatureCacheMisses++;
+                }
+            }
+
+            const convertStart = performance.now();
+            const material = await this.convertMaterial(materialData, usdScene, {
+                preferredMaterialType: options.fastMaterialMode === 'preview' ? 'usdpreviewsurface' : preferredMaterialType,
+                envMap: options.envMap || null,
+                envMapIntensity: options.envMapIntensity || 1.0,
+                textureCache: options.textureCache || new Map(),
+                doubleSided,
+                textureLoadingManager: options.textureLoadingManager || null,
+                skipTextures: options.skipTextures || false
+            });
+            if (options._debugState) {
+                options._debugState.materialConvertMs += performance.now() - convertStart;
+            }
+
+            material.envMap = options.envMap || null;
+            material.envMapIntensity = options.envMapIntensity || 1.0;
+            material.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+            material.userData.rawData = materialData;
+            material.userData.typeInfo = this.getMaterialType(materialData);
+            material.userData.typeString = this.getMaterialTypeString(materialData);
+            if (options._debugState) {
+                options._debugState.materialMs += performance.now() - materialStart;
+            }
+
+            if (materialCache) {
+                materialCache.set(cacheKey, material);
+            }
+            if (materialSignatureCache) {
+                const signature = this.makeMaterialSignature(
+                    materialData,
+                    options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType,
+                    usdScene,
+                    options.materialSignatureTextureCache || null);
+                if (signature) {
+                    materialSignatureCache.set(signature + `|${doubleSided === true ? 'double' : 'front'}`, material);
+                }
+            }
+            return material;
+        };
 
         let mtl = null;
 
         if (options.overrideMaterial) {
             mtl = defaultMtl || normalMtl
         } else {
-
-            // Validate materialId before attempting to get material
-            // materialId can be undefined, -1 (no material), or out of range
-            const hasMaterial = mesh.materialId !== undefined && mesh.materialId >= 0;
-
-            // Get material data in JSON format to access OpenPBR/MaterialX data
-            // Using getMaterialWithFormat ensures we get the full material structure including OpenPBR
-            let usdMaterialData = null;
-            if (hasMaterial) {
-                if (typeof usdScene.getMaterialWithFormat === 'function') {
-                    const result = usdScene.getMaterialWithFormat(mesh.materialId, 'json');
-                    if (!result.error) {
-                        usdMaterialData = JSON.parse(result.data);
-                    } else {
-                        console.warn(`Failed to get material ${mesh.materialId} with format: ${result.error}`);
-                    }
-                } else {
-                    // Fallback to getMaterial if getMaterialWithFormat is not available
-                    usdMaterialData = usdScene.getMaterial(mesh.materialId);
-                }
-            }
-
-
-            let pbrMaterial;
-            if (usdMaterialData) {
-                // Use smart convertMaterial to handle both OpenPBR and UsdPreviewSurface
-                pbrMaterial = await this.convertMaterial(usdMaterialData, usdScene, {
-                    preferredMaterialType: options.preferredMaterialType || 'auto',
-                    envMap: options.envMap || null,
-                    envMapIntensity: options.envMapIntensity || 1.0,
-                    textureCache: options.textureCache || new Map(),
-                    doubleSided: geometry.userData['doubleSided'],
-                    textureLoadingManager: options.textureLoadingManager || null
-                });
-
-                // Store material metadata for UI and reloading
-                pbrMaterial.userData.rawData = usdMaterialData;
-                pbrMaterial.userData.typeInfo = this.getMaterialType(usdMaterialData);
-                pbrMaterial.userData.typeString = this.getMaterialTypeString(usdMaterialData);
-            } else {
+            let pbrMaterial = await getMaterialForId(mesh.materialId);
+            if (!pbrMaterial) {
                 // No valid material - create default material
                 pbrMaterial = defaultMtl || new THREE.MeshPhysicalMaterial({
                     color: 0x888888,
@@ -1043,6 +1369,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Handle GeomSubsets (per-face materials)
         if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
+            if (options._debugState) {
+                options._debugState.multiMaterialMeshes++;
+            }
             const submeshes = geometry.userData['submeshes'];
 
             // Build materials array indexed by materialId
@@ -1061,29 +1390,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Second pass: load materials
             for (const [matId, matIndex] of materialIdToIndex.entries()) {
                 if (matId >= 0) {
-                    const materialData = usdScene.getMaterialWithFormat ?
-                        JSON.parse(usdScene.getMaterialWithFormat(matId, 'json').data) :
-                        usdScene.getMaterial(matId);
-
-                    const material = await this.convertMaterial(materialData, usdScene, {
-                        preferredMaterialType: options.preferredMaterialType || 'auto',
-                        envMap: options.envMap || null,
-                        envMapIntensity: options.envMapIntensity || 1.0,
-                        textureCache: options.textureCache || new Map(),
-                        doubleSided: geometry.userData['doubleSided'],
-                        textureLoadingManager: options.textureLoadingManager || null
-                    });
-
-                    material.envMap = options.envMap || null;
-                    material.envMapIntensity = options.envMapIntensity || 1.0;
-                    material.side = geometry.userData['doubleSided'] ? THREE.DoubleSide : THREE.FrontSide;
-
-                    // Store material metadata for UI and reloading
-                    material.userData.rawData = materialData;
-                    material.userData.typeInfo = this.getMaterialType(materialData);
-                    material.userData.typeString = this.getMaterialTypeString(materialData);
-
-                    materials[matIndex] = material;
+                    if (options._debugState) {
+                        options._debugState.subsetMaterialRefs++;
+                    }
+                    materials[matIndex] = await getMaterialForId(matId) || mtl;
                 } else {
                     materials[matIndex] = mtl; // Use default material
                 }
@@ -1097,11 +1407,22 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
 
             // Create mesh with multi-material array
+            const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, materials);
+            if (options._debugState) {
+                options._debugState.meshCreateMs += performance.now() - meshCreateStart;
+            }
             return threeMesh;
         } else {
             // Single material mesh
+            if (options._debugState) {
+                options._debugState.singleMaterialMeshes++;
+            }
+            const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, mtl);
+            if (options._debugState) {
+                options._debugState.meshCreateMs += performance.now() - meshCreateStart;
+            }
             return threeMesh;
         }
     }
@@ -1151,10 +1472,311 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return count;
     }
 
+    static _initBuildDebug(options, totalNodes, totalMeshes) {
+        if (!options._debugState) {
+            options._debugState = {
+                startMs: performance.now(),
+                totalNodes,
+                totalMeshes,
+                meshCopyMs: 0,
+                geometryMs: 0,
+                materialMs: 0,
+                materialSignatureMs: 0,
+                materialConvertMs: 0,
+                meshCreateMs: 0,
+                transformMs: 0,
+                userDataMs: 0,
+                childAddMs: 0,
+                countMs: 0,
+                yieldMs: 0,
+                yieldCount: 0,
+                materialCacheHits: 0,
+                materialCacheMisses: 0,
+                materialSignatureCacheHits: 0,
+                materialSignatureCacheMisses: 0,
+                singleMaterialMeshes: 0,
+                multiMaterialMeshes: 0,
+                subsetMaterialRefs: 0,
+                aggregateMs: 0,
+                aggregateInputMeshes: 0,
+                aggregateOutputMeshes: 0,
+                aggregateSkippedMeshes: 0,
+                meshPtrHits: 0,
+                meshPtrFallbacks: 0,
+                lastProgressMesh: 0
+            };
+            this._debugBuild(options, 'build:init',
+                `nodes=${totalNodes} meshes=${totalMeshes}`);
+        }
+    }
+
+    static _debugBuild(options, stage, detail = '') {
+        const callback = options.onDebugLog || options.debugLog;
+        if (!callback && !options.debugBuild) {
+            return;
+        }
+
+        const state = options._debugState;
+        const elapsed = state ? performance.now() - state.startMs : 0;
+        const info = {
+            stage,
+            detail,
+            elapsedMs: elapsed,
+            state
+        };
+
+        if (callback) {
+            callback(info);
+        } else {
+            console.log(`[TinyUSDZLoaderUtils] ${elapsed.toFixed(1)} ms ${stage}${detail ? ` ${detail}` : ''}`);
+        }
+    }
+
+    static _debugBuildProgress(options) {
+        if (!options._debugState) {
+            return;
+        }
+        const interval = Math.max(1, options.debugLogEveryMeshes || 250);
+        const processed = options._progressState ? options._progressState.processedMeshes : 0;
+        if (processed === 0 || processed === options._debugState.lastProgressMesh ||
+            processed % interval !== 0) {
+            return;
+        }
+        options._debugState.lastProgressMesh = processed;
+        this._debugBuild(options, 'build:progress',
+            `meshes=${processed}/${options._debugState.totalMeshes}`);
+    }
+
+    static _finishBuildDebug(options) {
+        if (!options._debugState) {
+            return;
+        }
+        const state = options._debugState;
+        const totalMs = performance.now() - state.startMs;
+        this._debugBuild(options, 'build:summary',
+            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs}`);
+    }
+
+    static _geometryAttributeSignature(geometry) {
+        const names = Object.keys(geometry.attributes || {}).sort();
+        if (!names.includes('position')) {
+            return null;
+        }
+        const parts = [];
+        for (const name of names) {
+            const attr = geometry.attributes[name];
+            if (!attr || attr.isInterleavedBufferAttribute) {
+                return null;
+            }
+            parts.push([
+                name,
+                attr.itemSize,
+                attr.normalized ? 1 : 0,
+                attr.array && attr.array.constructor ? attr.array.constructor.name : ''
+            ].join(':'));
+        }
+        return parts.join('|');
+    }
+
+    static _tryAddAggregateGeometry(group, geometry) {
+        const attrs = geometry.attributes || {};
+        if (!attrs.position || attrs.skinIndex || attrs.skinWeight) {
+            return false;
+        }
+        const pending = [];
+        for (const name of Object.keys(attrs)) {
+            const attr = attrs[name];
+            if (!attr || attr.isInterleavedBufferAttribute) {
+                return false;
+            }
+            const prev = group.attrMeta.get(name);
+            if (prev && prev.itemSize !== attr.itemSize) {
+                return false;
+            }
+            if (!prev) {
+                pending.push([name, { itemSize: attr.itemSize }]);
+            }
+        }
+        for (const [name, meta] of pending) {
+            group.attrMeta.set(name, meta);
+        }
+        group.geometries.push(geometry);
+        return true;
+    }
+
+    static _mergeAggregateGeometries(group) {
+        const geometries = group.geometries;
+        if (!geometries.length || !group.attrMeta.has('position')) {
+            return null;
+        }
+
+        const attrNames = Array.from(group.attrMeta.keys()).sort();
+        const totalVertices = geometries.reduce((sum, geometry) => {
+            const position = geometry.attributes.position;
+            return sum + (position ? position.count : 0);
+        }, 0);
+        if (totalVertices === 0) {
+            return null;
+        }
+
+        const merged = new THREE.BufferGeometry();
+        for (const name of attrNames) {
+            const meta = group.attrMeta.get(name);
+            const itemSize = meta.itemSize;
+            const array = new Float32Array(totalVertices * itemSize);
+            let vertexOffset = 0;
+            for (const geometry of geometries) {
+                const attr = geometry.attributes[name];
+                const vertexCount = geometry.attributes.position.count;
+                if (attr) {
+                    array.set(attr.array, vertexOffset * itemSize);
+                }
+                vertexOffset += vertexCount;
+            }
+            merged.setAttribute(name, new THREE.BufferAttribute(array, itemSize, false));
+        }
+
+        return merged;
+    }
+
+    static _reparentChildrenToRoot(mesh, root, rootInverse) {
+        while (mesh.children.length > 0) {
+            const child = mesh.children[0];
+            child.updateMatrixWorld(true);
+            const localMatrix = new THREE.Matrix4().multiplyMatrices(rootInverse, child.matrixWorld);
+            mesh.remove(child);
+            child.matrix.copy(localMatrix);
+            child.matrix.decompose(child.position, child.quaternion, child.scale);
+            root.add(child);
+        }
+    }
+
+    static aggregateMeshesByMaterial(root, options = {}) {
+        const mode = options.meshAggregation;
+        if (!mode || mode === 'off' || mode === false) {
+            return { inputMeshes: 0, outputMeshes: 0, skippedMeshes: 0 };
+        }
+
+        const aggregateStart = performance.now();
+        root.updateMatrixWorld(true);
+        const rootInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
+        const groups = new Map();
+        let skippedMeshes = 0;
+
+        root.traverse((obj) => {
+            if (!obj.isMesh || obj.isSkinnedMesh ||
+                Array.isArray(obj.material) || !obj.material || !obj.geometry) {
+                if (obj.isMesh) skippedMeshes++;
+                return;
+            }
+            const geometry = obj.geometry;
+            if ((geometry.groups && geometry.groups.length > 0) || geometry.morphAttributes &&
+                Object.keys(geometry.morphAttributes).length > 0) {
+                skippedMeshes++;
+                return;
+            }
+
+            const sourceGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+            if (!this._geometryAttributeSignature(sourceGeometry)) {
+                sourceGeometry.dispose();
+                skippedMeshes++;
+                return;
+            }
+
+            const localMatrix = new THREE.Matrix4().multiplyMatrices(rootInverse, obj.matrixWorld);
+            sourceGeometry.applyMatrix4(localMatrix);
+
+            const key = obj.material.uuid;
+            let group = groups.get(key);
+            if (!group) {
+                group = {
+                    material: obj.material,
+                    geometries: [],
+                    meshes: [],
+                    attrMeta: new Map()
+                };
+                groups.set(key, group);
+            }
+            if (!this._tryAddAggregateGeometry(group, sourceGeometry)) {
+                sourceGeometry.dispose();
+                skippedMeshes++;
+                return;
+            }
+            group.meshes.push(obj);
+        });
+
+        const minMeshes = Math.max(2, options.meshAggregationMinMeshes || 2);
+        const aggregateRoot = new THREE.Group();
+        aggregateRoot.name = 'AggregatedMeshes';
+        aggregateRoot.userData.nodeType = 'mesh-aggregate-root';
+        let inputMeshes = 0;
+        let outputMeshes = 0;
+
+        for (const group of groups.values()) {
+            if (group.meshes.length < minMeshes) {
+                for (const geometry of group.geometries) {
+                    geometry.dispose();
+                }
+                skippedMeshes += group.meshes.length;
+                continue;
+            }
+
+            const mergedGeometry = this._mergeAggregateGeometries(group);
+            for (const geometry of group.geometries) {
+                geometry.dispose();
+            }
+            if (!mergedGeometry) {
+                skippedMeshes += group.meshes.length;
+                continue;
+            }
+
+            const aggregateMesh = new THREE.Mesh(mergedGeometry, group.material);
+            aggregateMesh.name = `Aggregate_${outputMeshes}`;
+            aggregateMesh.userData.nodeType = 'mesh-aggregate';
+            aggregateMesh.userData.sourceMeshCount = group.meshes.length;
+            aggregateMesh.frustumCulled = false;
+            aggregateRoot.add(aggregateMesh);
+
+            for (const mesh of group.meshes) {
+                this._reparentChildrenToRoot(mesh, root, rootInverse);
+                if (mesh.parent) {
+                    mesh.parent.remove(mesh);
+                }
+                if (mesh.geometry && mesh.geometry.dispose) {
+                    mesh.geometry.dispose();
+                }
+            }
+            inputMeshes += group.meshes.length;
+            outputMeshes++;
+        }
+
+        if (outputMeshes > 0) {
+            root.add(aggregateRoot);
+        }
+        if (options._debugState) {
+            options._debugState.aggregateMs += performance.now() - aggregateStart;
+            options._debugState.aggregateInputMeshes += inputMeshes;
+            options._debugState.aggregateOutputMeshes += outputMeshes;
+            options._debugState.aggregateSkippedMeshes += skippedMeshes;
+        }
+        this._debugBuild(options, 'build:aggregate',
+            `mode=${mode} meshes=${inputMeshes}->${outputMeshes} skipped=${skippedMeshes}`);
+        return { inputMeshes, outputMeshes, skippedMeshes };
+    }
+
     // Supported options:
     // - 'overrideMaterial' : Override usd material with defaultMtl.
     // - 'onProgress' : Progress callback (info) => void
     //     info: { stage: 'building'|'textures', percentage: number, message: string }
+    // - 'debugBuild' : Print aggregated scene-build timing to console.
+    // - 'onDebugLog'/'debugLog' : Callback for build timing events.
+    //     info: { stage, detail, elapsedMs, state }
+    // - 'debugLogEveryMeshes' : Mesh progress interval for debugLog/debugBuild.
+    // - 'yieldMode' : 'raf' (default), 'timeout', or 'none'.
+    // - 'yieldIntervalMs' : Minimum milliseconds between build yields.
+    // - 'meshAggregation' : false/'off' (default) or 'material' to merge static
+    //     leaf meshes by shared material and compatible vertex attributes.
+    // - 'meshAggregationMinMeshes' : Minimum compatible meshes per aggregate.
     // - '_progressState' : Internal state for progress tracking (auto-created)
 
     /**
@@ -1171,10 +1793,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static async buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
    /* => THREE.Object3D */ {
 
+        const isRootCall = !options._progressState;
+
         // Initialize progress tracking on first call (root node)
-        if (!options._progressState) {
+        if (isRootCall) {
+            const countStart = performance.now();
             const totalNodes = this._countNodes(usdNode);
             const totalMeshes = this._countMeshes(usdNode);
+            this._initBuildDebug(options, totalNodes, totalMeshes);
+            options._debugState.countMs += performance.now() - countStart;
             options._progressState = {
                 processedNodes: 0,
                 processedMeshes: 0,
@@ -1191,7 +1818,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 });
             }
             // Initial yield to show progress UI
-            await this.yieldToUI();
+            if ((options.yieldMode || 'raf') !== 'none') {
+                const yieldStart = performance.now();
+                await this.yieldToUI(options.yieldMode || 'raf');
+                if (options._debugState) {
+                    options._debugState.yieldMs += performance.now() - yieldStart;
+                    options._debugState.yieldCount++;
+                }
+            }
         }
 
         var node = new THREE.Group();
@@ -1200,11 +1834,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             // intermediate xform node
             // Apply the USD local transform matrix to the Three.js node
+            const transformStart = performance.now();
             const matrix = this.toMatrix4(usdNode.localMatrix);
 
             // Decompose the matrix into position, rotation, and scale
             // This is necessary for Three.js to properly handle the transform
             node.applyMatrix4(matrix);
+            if (options._debugState) {
+                options._debugState.transformMs += performance.now() - transformStart;
+            }
 
         } else if (usdNode.nodeType == 'skelroot') {
 
@@ -1212,8 +1850,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Its world transform (skelLocalToWorld) positions skinned results in world space.
             // Treated as a group node with transform in Three.js.
             if (usdNode.localMatrix) {
+                const transformStart = performance.now();
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
+                if (options._debugState) {
+                    options._debugState.transformMs += performance.now() - transformStart;
+                }
             }
 
         } else if (usdNode.nodeType == 'skeleton') {
@@ -1222,14 +1864,44 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Its transform contributes to skelLocalToWorld.
             // Treated as a group node with transform in Three.js.
             if (usdNode.localMatrix) {
+                const transformStart = performance.now();
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
+                if (options._debugState) {
+                    options._debugState.transformMs += performance.now() - transformStart;
+                }
             }
 
         } else if (usdNode.nodeType == 'mesh') {
 
             // contentId is the mesh ID in the USD scene.
-            const mesh = usdScene.getMeshCopy(usdNode.contentId);
+            const meshCopyStart = performance.now();
+            let mesh = null;
+            const useMeshPtr = options.useMeshPtr !== false &&
+                TinyUSDZLoaderUtils._canUseMeshPtr() &&
+                usdScene && typeof usdScene.getMeshPtr === 'function';
+            if (useMeshPtr) {
+                const ptrMesh = usdScene.getMeshPtr(usdNode.contentId);
+                if (ptrMesh && ptrMesh.points &&
+                    (!ptrMesh.hasSubmeshes || ptrMesh.submeshes)) {
+                    mesh = ptrMesh;
+                    mesh._meshPtr = true;
+                    if (options._debugState) {
+                        options._debugState.meshPtrHits++;
+                    }
+                } else if (options._debugState) {
+                    options._debugState.meshPtrFallbacks++;
+                }
+            }
+            if (!mesh) {
+                mesh = usdScene.getMeshCopy(usdNode.contentId);
+            }
+            if (mesh && mesh.materialId === undefined && usdNode.materialId !== undefined) {
+                mesh.materialId = usdNode.materialId;
+            }
+            if (options._debugState) {
+                options._debugState.meshCopyMs += performance.now() - meshCopyStart;
+            }
 
             // Update progress before building mesh
             if (options._progressState && options.onProgress) {
@@ -1243,7 +1915,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
             // Yield to browser before heavy mesh setup
-            await this.maybeYieldToUI(options._progressState);
+            await this.maybeYieldToUI(options._progressState, options);
 
             const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
             node = threeMesh;
@@ -1251,36 +1923,49 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Increment mesh counter after building
             if (options._progressState) {
                 options._progressState.processedMeshes++;
+                this._debugBuildProgress(options);
             }
 
             // Apply transform to mesh nodes as well
             // Mesh nodes can also have transforms in USD
             if (usdNode.localMatrix) {
+                const transformStart = performance.now();
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
+                if (options._debugState) {
+                    options._debugState.transformMs += performance.now() - transformStart;
+                }
             }
 
         } else {
             // Unknown node type - still try to apply transform if available
             if (usdNode.localMatrix) {
+                const transformStart = performance.now();
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
+                if (options._debugState) {
+                    options._debugState.transformMs += performance.now() - transformStart;
+                }
             }
         }
 
+        const userDataStart = performance.now();
         node.name = usdNode.primName;
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
         if (usdNode.nodeCategory) node.userData['nodeCategory'] = usdNode.nodeCategory;
         if (usdNode.nodeType) node.userData['nodeType'] = usdNode.nodeType;
         if (usdNode.contentId !== undefined) node.userData['contentId'] = usdNode.contentId;
+        if (options._debugState) {
+            options._debugState.userDataMs += performance.now() - userDataStart;
+        }
 
         // Update progress after processing this node
         if (options._progressState) {
             options._progressState.processedNodes++;
 
             // Yield periodically to allow UI updates
-            await this.maybeYieldToUI(options._progressState);
+            await this.maybeYieldToUI(options._progressState, options);
         }
 
         if (Object.prototype.hasOwnProperty.call(usdNode, 'children')) {
@@ -1288,8 +1973,17 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // traverse children
             for (const child of usdNode.children) {
                 const childNode = await this.buildThreeNode(child, defaultMtl, usdScene, options);
+                const addStart = performance.now();
                 node.add(childNode);
+                if (options._debugState) {
+                    options._debugState.childAddMs += performance.now() - addStart;
+                }
             }
+        }
+
+        if (isRootCall) {
+            this.aggregateMeshesByMaterial(node, options);
+            this._finishBuildDebug(options);
         }
 
         return node;

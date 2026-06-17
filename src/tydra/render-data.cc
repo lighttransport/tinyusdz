@@ -17,8 +17,14 @@
 //     indices/weights, BlendShape points, ...) as much as possible.
 //     - Implement spatial hash
 //
+#include <chrono>
+#include <cstdint>
+#include <iomanip>
+#include <limits>
 #include <numeric>
 #include <set>
+#include <sstream>
+#include <unordered_map>
 
 #include "common-utils.hh"
 #include "common-types.hh"
@@ -57,10 +63,338 @@
 #include "tydra/render-data-internal.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
+#include "value-types.hh"  // value::Mult
+#include "xform.hh"        // tinyusdz::inverse
 
 namespace tinyusdz {
 
 namespace tydra {
+
+namespace {
+
+using TydraPerfClock = std::chrono::steady_clock;
+
+static double ElapsedMs(const TydraPerfClock::time_point &start) {
+  return double(std::chrono::duration_cast<std::chrono::microseconds>(
+                    TydraPerfClock::now() - start)
+                    .count()) *
+         0.001;
+}
+
+static double NsToMs(const uint64_t ns) {
+  return double(ns) * 0.000001;
+}
+
+static void AppendFloat(std::ostringstream &ss, const float v) {
+  ss << std::setprecision(std::numeric_limits<float>::max_digits10) << v;
+}
+
+static void AppendVec2(std::ostringstream &ss, const vec2 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+}
+
+static void AppendVec3(std::ostringstream &ss, const vec3 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+  ss << ",";
+  AppendFloat(ss, v[2]);
+}
+
+static void AppendVec4(std::ostringstream &ss, const vec4 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+  ss << ",";
+  AppendFloat(ss, v[2]);
+  ss << ",";
+  AppendFloat(ss, v[3]);
+}
+
+static void AppendMat3(std::ostringstream &ss, const mat3 &m) {
+  for (int r = 0; r < 3; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (r || c) {
+        ss << ",";
+      }
+      AppendFloat(ss, m.m[r][c]);
+    }
+  }
+}
+
+static void AppendValue(std::ostringstream &ss, const float v) {
+  AppendFloat(ss, v);
+}
+
+static void AppendValue(std::ostringstream &ss, const vec3 &v) {
+  AppendVec3(ss, v);
+}
+
+static void AppendTextureSignature(
+    std::ostringstream &ss, const int32_t texture_id,
+    const std::vector<UVTexture> &textures) {
+  if (texture_id < 0 || size_t(texture_id) >= textures.size()) {
+    ss << "tex:-1";
+    return;
+  }
+
+  const UVTexture &t = textures[size_t(texture_id)];
+  ss << "tex:image=" << t.texture_image_id
+     << ",wrap=" << to_string(t.wrapS) << "/" << to_string(t.wrapT)
+     << ",udim=" << (t.is_udim ? 1 : 0)
+     << ",udimId=" << t.udim_texture_id
+     << ",udimScale=";
+  AppendVec2(ss, t.udim_uv_scale);
+  ss << ",udimOffset=";
+  AppendVec2(ss, t.udim_uv_offset);
+  ss << ",scale=";
+  AppendVec4(ss, t.scale);
+  ss << ",bias=";
+  AppendVec4(ss, t.bias);
+  ss << ",channel=" << to_string(t.connectedOutputChannel)
+     << ",varname=" << t.varname_uv
+     << ",hasXform=" << (t.has_transform2d ? 1 : 0)
+     << ",xform=";
+  AppendMat3(ss, t.transform);
+}
+
+static std::string TextureSignature(const UVTexture &texture) {
+  std::ostringstream ss;
+  ss << "tex:image=" << texture.texture_image_id
+     << ",wrap=" << to_string(texture.wrapS) << "/" << to_string(texture.wrapT)
+     << ",udim=" << (texture.is_udim ? 1 : 0)
+     << ",udimId=" << texture.udim_texture_id
+     << ",udimScale=";
+  AppendVec2(ss, texture.udim_uv_scale);
+  ss << ",udimOffset=";
+  AppendVec2(ss, texture.udim_uv_offset);
+  ss << ",scale=";
+  AppendVec4(ss, texture.scale);
+  ss << ",bias=";
+  AppendVec4(ss, texture.bias);
+  ss << ",channel=" << to_string(texture.connectedOutputChannel)
+     << ",varname=" << texture.varname_uv
+     << ",hasXform=" << (texture.has_transform2d ? 1 : 0)
+     << ",xform=";
+  AppendMat3(ss, texture.transform);
+  return ss.str();
+}
+
+template <typename T>
+static void AppendShaderParam(std::ostringstream &ss, const char *name,
+                              const ShaderParam<T> &param,
+                              const std::vector<UVTexture> &textures) {
+  ss << name << "=";
+  AppendValue(ss, param.value);
+  ss << ";";
+  ss << name << "Texture=";
+  AppendTextureSignature(ss, param.texture_id, textures);
+  ss << ";";
+}
+
+static std::string MaterialSignature(
+    const RenderMaterial &mat, const std::vector<UVTexture> &textures) {
+  std::ostringstream ss;
+  ss << "tag=" << int(mat.materialTag) << ";";
+  ss << "disp=" << (mat.has_displacement ? 1 : 0) << ";";
+  ss << "volume=" << (mat.has_volume ? 1 : 0) << ";";
+  if (mat.surfaceShader.has_value()) {
+    const PreviewSurfaceShader &s = *mat.surfaceShader;
+    ss << "preview{";
+    ss << "useSpecularWorkflow=" << (s.useSpecularWorkflow ? 1 : 0) << ";";
+    AppendShaderParam(ss, "diffuseColor", s.diffuseColor, textures);
+    AppendShaderParam(ss, "emissiveColor", s.emissiveColor, textures);
+    AppendShaderParam(ss, "specularColor", s.specularColor, textures);
+    AppendShaderParam(ss, "metallic", s.metallic, textures);
+    AppendShaderParam(ss, "roughness", s.roughness, textures);
+    AppendShaderParam(ss, "clearcoat", s.clearcoat, textures);
+    AppendShaderParam(ss, "clearcoatRoughness", s.clearcoatRoughness,
+                      textures);
+    AppendShaderParam(ss, "opacity", s.opacity, textures);
+    AppendShaderParam(ss, "opacityThreshold", s.opacityThreshold, textures);
+    AppendShaderParam(ss, "ior", s.ior, textures);
+    AppendShaderParam(ss, "normal", s.normal, textures);
+    AppendShaderParam(ss, "displacement", s.displacement, textures);
+    AppendShaderParam(ss, "occlusion", s.occlusion, textures);
+    ss << "}";
+  }
+  if (mat.openPBRShader.has_value()) {
+    const OpenPBRSurfaceShader &s = *mat.openPBRShader;
+    ss << "openpbr{";
+#define TINYUSDZ_APPEND_OPENPBR_PARAM(name) \
+    AppendShaderParam(ss, #name, s.name, textures)
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_metalness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_diffuse_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior_level);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_rotation);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_depth);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_thickness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_rotation);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_darkening);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_luminance);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(opacity);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(normal);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(tangent);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_normal);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_tangent);
+#undef TINYUSDZ_APPEND_OPENPBR_PARAM
+    ss << "tangentRotation=";
+    AppendFloat(ss, s.tangent_rotation);
+    ss << ";normalMapScale=";
+    AppendFloat(ss, s.normal_map_scale);
+    ss << ";coatTangentRotation=";
+    AppendFloat(ss, s.coat_tangent_rotation);
+    ss << ";coatNormalMapScale=";
+    AppendFloat(ss, s.coat_normal_map_scale);
+    ss << ";nodeGraph=" << s.nodeGraphJson;
+    ss << "}";
+  }
+  return ss.str();
+}
+
+static void RemapMaterialId(int &id, const std::vector<int> &remap) {
+  if (id >= 0 && size_t(id) < remap.size()) {
+    id = remap[size_t(id)];
+  }
+}
+
+static void RemapMaterialSubsetIds(MaterialSubset &subset,
+                                   const std::vector<int> &remap) {
+  RemapMaterialId(subset.material_id, remap);
+  RemapMaterialId(subset.backface_material_id, remap);
+}
+
+template <typename T>
+static void RemapShaderParamTexture(ShaderParam<T> &param,
+                                    const std::vector<int> &remap) {
+  if (param.texture_id >= 0 && size_t(param.texture_id) < remap.size()) {
+    param.texture_id = remap[size_t(param.texture_id)];
+  }
+}
+
+static void RemapMaterialTextureIds(RenderMaterial &mat,
+                                    const std::vector<int> &remap) {
+  if (mat.surfaceShader.has_value()) {
+    PreviewSurfaceShader &s = *mat.surfaceShader;
+    RemapShaderParamTexture(s.diffuseColor, remap);
+    RemapShaderParamTexture(s.emissiveColor, remap);
+    RemapShaderParamTexture(s.specularColor, remap);
+    RemapShaderParamTexture(s.metallic, remap);
+    RemapShaderParamTexture(s.roughness, remap);
+    RemapShaderParamTexture(s.clearcoat, remap);
+    RemapShaderParamTexture(s.clearcoatRoughness, remap);
+    RemapShaderParamTexture(s.opacity, remap);
+    RemapShaderParamTexture(s.opacityThreshold, remap);
+    RemapShaderParamTexture(s.ior, remap);
+    RemapShaderParamTexture(s.normal, remap);
+    RemapShaderParamTexture(s.displacement, remap);
+    RemapShaderParamTexture(s.occlusion, remap);
+  }
+
+  if (mat.openPBRShader.has_value()) {
+    OpenPBRSurfaceShader &s = *mat.openPBRShader;
+#define TINYUSDZ_REMAP_OPENPBR_PARAM(name) RemapShaderParamTexture(s.name, remap)
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_metalness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_diffuse_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior_level);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_rotation);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_depth);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_thickness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_rotation);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_darkening);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_luminance);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(opacity);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(normal);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(tangent);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_normal);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_tangent);
+#undef TINYUSDZ_REMAP_OPENPBR_PARAM
+  }
+}
+
+}  // namespace
 
 //
 // Convert GeomCube to RenderMesh by generating tessellated geometry
@@ -671,8 +1005,22 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
+  const auto total_start = TydraPerfClock::now();
+  double count_ms = 0.0;
+  double skel_map_ms = 0.0;
+  double xform_ms = 0.0;
+  double visit_prims_ms = 0.0;
+  double standalone_skel_ms = 0.0;
+  double skel_anim_ms = 0.0;
+  double hierarchy_ms = 0.0;
+  double xform_anim_ms = 0.0;
+  double merge_ms = 0.0;
+  double instance_map_ms = 0.0;
+  double stage_meta_ms = 0.0;
+
   // Reset progress state
   _progress_info = DetailedProgressInfo{};
+  _timing_info.clear();
 
   // Clear lookup caches from previous conversion
   _skelPathToIndex.clear();
@@ -681,6 +1029,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _skelRootToSkeleton.clear();
   _uvNameCache.clear();
   _materialBindingCache.clear();
+  _materialSourceSignatureCache.clear();
   _value_clip_layer_cache.clear();
   _value_clip_stage_cache.clear();
   ResetConnectionResolveCache(env.stage);
@@ -704,6 +1053,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   PathPrimMap<GeomPointInstancer> pointInstancerPrimMap;
 
   {
+    const auto phase_start = TydraPerfClock::now();
     // Iterative stack-based traversal visiting each prim exactly once
     struct StackEntry {
       const Prim *parent;
@@ -784,12 +1134,17 @@ bool RenderSceneConverter::ConvertToRenderScene(
         }
       }
     }
+    count_ms = ElapsedMs(phase_start);
   }
   DCOUT("[Tydra] Pre-discovered " << allSkeletons.size() << " skeletons, "
         << allSkelRoots.size() << " skelroots, " << allAnimations.size() << " animations");
 
-  SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
-                                     &_skelRootToSkeleton);
+  {
+    const auto phase_start = TydraPerfClock::now();
+    SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
+                                       &_skelRootToSkeleton);
+    skel_map_ms = ElapsedMs(phase_start);
+  }
   DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
 
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
@@ -829,8 +1184,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
 
   XformNode xform_node;
-  if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
-    PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
+      PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
+    }
+    xform_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after xform building (20%)
@@ -870,47 +1229,59 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _allSkelRoots = &allSkelRoots;
   _allAnimations = &allAnimations;
 
-  bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+  {
+    const auto phase_start = TydraPerfClock::now();
+    bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
-  if (!ret) {
-    PUSH_ERROR_AND_RETURN(err);
+    visit_prims_ms = ElapsedMs(phase_start);
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN(err);
+    }
   }
 
   // Add standalone skeletons (not referenced by any mesh) to the render scene.
   // This ensures skeletons with SkelAnimations but no bound meshes are still
   // available for visualization (e.g. bone hierarchy display).
-  for (const auto &skelEntry : allSkeletons) {
-    const std::string &skelPathStr = skelEntry.first;
-    if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
-      continue;  // Already added by a mesh binding
-    }
-    const Skeleton *skelPtr = skelEntry.second;
-    if (!skelPtr) continue;
+  {
+    const auto phase_start = TydraPerfClock::now();
+    for (const auto &skelEntry : allSkeletons) {
+      const std::string &skelPathStr = skelEntry.first;
+      if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
+        continue;  // Already added by a mesh binding
+      }
+      const Skeleton *skelPtr = skelEntry.second;
+      if (!skelPtr) continue;
 
-    int32_t skel_id = int32_t(skeletons.size());
-    SkelHierarchy skel;
+      int32_t skel_id = int32_t(skeletons.size());
+      SkelHierarchy skel;
 
-    std::string primName = skelPathStr;
-    size_t lastSlash = primName.rfind('/');
-    if (lastSlash != std::string::npos) {
-      primName = primName.substr(lastSlash + 1);
-    }
-    if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
-      PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
-                            skelPathStr));
-      return false;
-    }
+      std::string primName = skelPathStr;
+      size_t lastSlash = primName.rfind('/');
+      if (lastSlash != std::string::npos) {
+        primName = primName.substr(lastSlash + 1);
+      }
+      if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
+        PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
+                              skelPathStr));
+        return false;
+      }
 
-    _skelPathToIndex[skelPathStr] = skel_id;
-    skeletons.emplace_back(std::move(skel));
-    DCOUT("Added standalone skeleton: " << skelPathStr);
+      _skelPathToIndex[skelPathStr] = skel_id;
+      skeletons.emplace_back(std::move(skel));
+      DCOUT("Added standalone skeleton: " << skelPathStr);
+    }
+    standalone_skel_ms = ElapsedMs(phase_start);
   }
 
   // Convert all SkelAnimation prims now that all skeletons have been discovered.
   // This supports multiple animations per skeleton (when animationSource is a pathvector).
   DCOUT("Converting all SkelAnimation prims...");
-  if (!ConvertAllSkelAnimations(env)) {
-    PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!ConvertAllSkelAnimations(env)) {
+      PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+    }
+    skel_anim_ms = ElapsedMs(phase_start);
   }
   DCOUT("SkelAnimation conversion complete");
 
@@ -920,6 +1291,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _allAnimations = nullptr;
   _skelRootToSkeleton.clear();
   _materialBindingCache.clear();
+  _materialSourceSignatureCache.clear();
 
   // Report progress after mesh/material conversion (70%)
   _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
@@ -947,8 +1319,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
     return false;
   }
 
-  if (!BuildNodeHierarchy(env, xform_node)) {
-    return false;
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!BuildNodeHierarchy(env, xform_node)) {
+      return false;
+    }
+    hierarchy_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after node hierarchy building (85%)
@@ -969,6 +1345,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 6. Extract xformOp animations from nodes with time-sampled transforms
   //
   {
+    const auto phase_start = TydraPerfClock::now();
     // Single-pass depth-first traversal with stable node indices.
     // This avoids repeatedly counting subtree sizes.
     std::function<void(const XformNode&, int32_t&, int32_t)> extractAnimationsFromNode;
@@ -1022,6 +1399,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
     for (const auto& root : xform_node.children) {
       extractAnimationsFromNode(root, current_node_index, 0);
     }
+    xform_anim_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after animation extraction (90%)
@@ -1033,10 +1411,30 @@ bool RenderSceneConverter::ConvertToRenderScene(
   //
   // 7. Merge meshes with same material (optional optimization)
   //
+  if (env.scene_config.dedup_materials_by_texture_identity) {
+    const size_t before_textures = textures.size();
+    const size_t removed_textures = DeduplicateTexturesByIdentityImpl();
+    if (removed_textures > 0) {
+      PushInfo("Texture deduplication before material deduplication: " +
+               std::to_string(before_textures) + " -> " +
+               std::to_string(textures.size()) + ".");
+    }
+
+    const size_t before_materials = materials.size();
+    const size_t removed = DeduplicateMaterialsByTextureIdentityImpl();
+    if (removed > 0) {
+      PushInfo("Material deduplication before merge: " +
+               std::to_string(before_materials) + " -> " +
+               std::to_string(materials.size()) + ".");
+    }
+  }
+
   if (env.scene_config.merge_meshes) {
+    const auto phase_start = TydraPerfClock::now();
     if (!MergeMeshesImpl(env)) {
       PushWarn("Mesh merging encountered issues, but conversion continues.\n");
     }
+    merge_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after mesh merging (95%)
@@ -1050,6 +1448,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // (scenegraph instances in 7b, PointInstancer instances in 7c).
   std::unordered_map<std::string, value::matrix4d> path_to_global;
   {
+    const auto phase_start = TydraPerfClock::now();
     std::function<void(const Node &)> collect = [&](const Node &n) {
       if (!n.abs_path.empty()) {
         path_to_global[n.abs_path] = n.global_matrix;
@@ -1061,6 +1460,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
     for (const auto &n : root_nodes) {
       collect(n);
     }
+    instance_map_ms = ElapsedMs(phase_start);
   }
 
   //
@@ -1149,6 +1549,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
           << instances.size());
   }
 
+  if (env.scene_config.flatten_optimized_render_tree) {
+    const size_t before_nodes = root_nodes.size();
+    const size_t kept_nodes = FlattenOptimizedRenderTreeImpl();
+    PushInfo("Flattened optimized render tree: roots " +
+             std::to_string(before_nodes) + " -> 1, render nodes " +
+             std::to_string(kept_nodes) + ".");
+  }
+
   // render_scene.meshMap = std::move(meshMap);
   // render_scene.materialMap = std::move(materialMap);
   // render_scene.textureMap = std::move(textureMap);
@@ -1181,6 +1589,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   // Populate scene metadata from Stage
   {
+    const auto phase_start = TydraPerfClock::now();
     const auto &stage_metas = env.stage.metas();
 
     // upAxis
@@ -1232,9 +1641,40 @@ bool RenderSceneConverter::ConvertToRenderScene(
         render_scene.meta.copyright = copyright_val.value();
       }
     }
+    stage_meta_ms = ElapsedMs(phase_start);
   }
 
   (*scene) = std::move(render_scene);
+
+  {
+    std::ostringstream ss;
+    ss << "total=" << ElapsedMs(total_start)
+       << " count=" << count_ms
+       << " skelMap=" << skel_map_ms
+       << " xform=" << xform_ms
+       << " visitPrims=" << visit_prims_ms
+       << " materialResolve=" << NsToMs(menv.resolve_material_ns)
+       << "/" << menv.material_resolve_calls
+       << " materialFound=" << menv.material_resolve_found
+       << " materialConvert=" << NsToMs(menv.convert_material_ns)
+       << " materialCache=" << menv.material_cache_hits << "/"
+       << menv.material_cache_misses
+       << " meshConvert=" << NsToMs(menv.convert_mesh_ns)
+       << " meshProgress=" << NsToMs(menv.progress_ns)
+       << " standaloneSkel=" << standalone_skel_ms
+       << " skelAnim=" << skel_anim_ms
+       << " hierarchy=" << hierarchy_ms
+       << " xformAnim=" << xform_anim_ms
+       << " merge=" << merge_ms
+       << " instanceMap=" << instance_map_ms
+       << " metadata=" << stage_meta_ms
+       << " meshes=" << scene->meshes.size()
+       << " materials=" << scene->materials.size()
+       << " textures=" << scene->textures.size()
+       << " images=" << scene->images.size()
+       << " instances=" << scene->instances.size();
+    _timing_info = ss.str();
+  }
 
   // Report completion (100%)
   _progress_info.stage = DetailedProgressInfo::Stage::Complete;
@@ -2027,15 +2467,14 @@ static vec3 TransformPoint(const value::matrix4d &m, const vec3 &p) {
   return vec3{float(x), float(y), float(z)};
 }
 
-// Helper function to transform a vec3 direction (normal) by a matrix4d
-// Uses the upper-left 3x3 of the inverse-transpose for correct normal transformation
-static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
-  // For normals, we need the inverse transpose of the upper-left 3x3
-  // For now, we use the upper-left 3x3 directly (correct for uniform scale and rotation only)
-  // TODO: Proper inverse-transpose for non-uniform scale
-  double x = m.m[0][0] * double(n[0]) + m.m[1][0] * double(n[1]) + m.m[2][0] * double(n[2]);
-  double y = m.m[0][1] * double(n[0]) + m.m[1][1] * double(n[1]) + m.m[2][1] * double(n[2]);
-  double z = m.m[0][2] * double(n[0]) + m.m[1][2] * double(n[1]) + m.m[2][2] * double(n[2]);
+// Helper function to transform a vec3 direction by a precomputed inverse
+// matrix. The upper-left 3x3 of the inverse-transpose gives the correct normal
+// transform under non-uniform scale.
+static vec3 TransformNormalWithInverse(const value::matrix4d &inv,
+                                       const vec3 &n) {
+  double x = inv.m[0][0] * double(n[0]) + inv.m[0][1] * double(n[1]) + inv.m[0][2] * double(n[2]);
+  double y = inv.m[1][0] * double(n[0]) + inv.m[1][1] * double(n[1]) + inv.m[1][2] * double(n[2]);
+  double z = inv.m[2][0] * double(n[0]) + inv.m[2][1] * double(n[1]) + inv.m[2][2] * double(n[2]);
 
   // Normalize the result
   double len = std::sqrt(x*x + y*y + z*z);
@@ -2046,6 +2485,76 @@ static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
   }
 
   return vec3{float(x), float(y), float(z)};
+}
+
+static bool CanBakeDirectionAttribute(const VertexAttribute &attr) {
+  return attr.empty() ||
+         (attr.format == VertexAttributeFormat::Vec3 &&
+          attr.stride_bytes() == sizeof(vec3));
+}
+
+// Whether `src` can be appended onto `dst`. Two conditions:
+//   - if both sides carry data, format and stride must match;
+//   - once `dst` already holds vertices (`dst_has_vertices`), the attribute must
+//     be present on both or neither. An attribute present on exactly one side
+//     would leave the merged array shorter than (or misaligned with) the point
+//     count, corrupting the mesh, so such a merge is refused.
+static bool CompatibleVertexAttributeForAppend(const VertexAttribute &dst,
+                                               const VertexAttribute &src,
+                                               bool dst_has_vertices) {
+  if (dst_has_vertices && (dst.empty() != src.empty())) {
+    return false;
+  }
+  return dst.empty() || src.empty() ||
+         (dst.format == src.format &&
+          dst.stride_bytes() == src.stride_bytes());
+}
+
+static bool ValidateIndexedTopology(const std::vector<uint32_t> &counts,
+                                    const std::vector<uint32_t> &indices,
+                                    size_t point_count,
+                                    const std::string &label,
+                                    std::string *err) {
+  if (counts.empty() && indices.empty()) {
+    return true;
+  }
+  if (counts.empty() || indices.empty()) {
+    if (err) {
+      *err = "Cannot merge " + label +
+             ": face counts and indices must both be present.";
+    }
+    return false;
+  }
+
+  size_t total = 0;
+  for (uint32_t count : counts) {
+    if (size_t(count) > indices.size() - total) {
+      if (err) {
+        *err = "Cannot merge " + label +
+               ": face counts exceed index array length.";
+      }
+      return false;
+    }
+    total += size_t(count);
+  }
+  if (total != indices.size()) {
+    if (err) {
+      *err = "Cannot merge " + label +
+             ": face counts do not match index array length.";
+    }
+    return false;
+  }
+
+  for (uint32_t idx : indices) {
+    if (size_t(idx) >= point_count) {
+      if (err) {
+        *err = "Cannot merge " + label +
+               ": face index is out of point range.";
+      }
+      return false;
+    }
+  }
+  return true;
 }
 
 bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
@@ -2060,8 +2569,116 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Check if transform is identity using tinyusdz::is_identity function
   bool transform_is_identity = tinyusdz::is_identity(src_transform);
+  value::matrix4d src_transform_inverse = value::matrix4d::identity();
+  const bool needs_direction_bake =
+      !transform_is_identity &&
+      (!src.normals.empty() || !src.tangents.empty() ||
+       !src.binormals.empty());
+  if (!transform_is_identity) {
+    if (!CanBakeDirectionAttribute(src.normals) ||
+        !CanBakeDirectionAttribute(src.tangents) ||
+        !CanBakeDirectionAttribute(src.binormals)) {
+      set_merge_error(
+          "Cannot bake transform for packed or non-float3 direction attributes.");
+      return false;
+    }
+    if (needs_direction_bake &&
+        !tinyusdz::inverse(src_transform, src_transform_inverse)) {
+      set_merge_error(
+          "Cannot bake direction attributes with a non-invertible transform.");
+      return false;
+    }
+  }
 
-  // Get the vertex offset for index adjustment
+  // All attribute compatibility is validated up front, before `dst` is
+  // mutated, so a refused merge leaves `dst` untouched and the caller can keep
+  // the source as a standalone mesh.
+  const bool dst_has_vertices = !dst.points.empty();
+  if (!CompatibleVertexAttributeForAppend(dst.normals, src.normals,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge normals: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.tangents, src.tangents,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge tangents: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.binormals, src.binormals,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge binormals: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.vertex_colors, src.vertex_colors,
+                                          dst_has_vertices)) {
+    set_merge_error(
+        "Cannot merge vertex_colors: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.vertex_opacities,
+                                          src.vertex_opacities,
+                                          dst_has_vertices)) {
+    set_merge_error(
+        "Cannot merge vertex_opacities: incompatible format or presence.");
+    return false;
+  }
+  // Texcoords are keyed by slot; a slot present on exactly one side (once dst
+  // has vertices) would leave a partially-filled UV set, so refuse it too.
+  if (dst_has_vertices && dst.texcoords.size() != src.texcoords.size()) {
+    set_merge_error("Cannot merge texcoords: mismatched UV slot sets.");
+    return false;
+  }
+  for (const auto &src_tc : src.texcoords) {
+    auto dst_tc_it = dst.texcoords.find(src_tc.first);
+    if (dst_tc_it == dst.texcoords.end()) {
+      if (dst_has_vertices) {
+        set_merge_error("Cannot merge texcoords slot " +
+                        std::to_string(src_tc.first) +
+                        ": UV slot missing on merge target.");
+        return false;
+      }
+      continue;
+    }
+    if (!CompatibleVertexAttributeForAppend(dst_tc_it->second, src_tc.second,
+                                            dst_has_vertices)) {
+      set_merge_error("Cannot merge texcoords slot " +
+                      std::to_string(src_tc.first) +
+                      ": incompatible format or presence.");
+      return false;
+    }
+  }
+
+  // Get the vertex offset for index adjustment.
+#if SIZE_MAX > 0xFFFFFFFFu
+  // Only meaningful where size_t is wider than uint32 (e.g. 64-bit). On a
+  // 32-bit size_t (wasm32) points.size() can never exceed UINT32_MAX, so this
+  // comparison is tautologically false and is compiled out.
+  if (dst.points.size() >
+      size_t((std::numeric_limits<uint32_t>::max)())) {
+    set_merge_error("Cannot merge mesh: vertex offset exceeds uint32 range.");
+    return false;
+  }
+#endif
+  if (src.points.size() >
+      size_t((std::numeric_limits<uint32_t>::max)()) - dst.points.size()) {
+    set_merge_error("Cannot merge mesh: vertex count exceeds uint32 range.");
+    return false;
+  }
+  if (!ValidateIndexedTopology(src.usdFaceVertexCounts,
+                               src.usdFaceVertexIndices,
+                               src.points.size(),
+                               "face topology", err)) {
+    return false;
+  }
+  if (!ValidateIndexedTopology(src.triangulatedFaceVertexCounts,
+                               src.triangulatedFaceVertexIndices,
+                               src.points.size(),
+                               "triangulated topology", err)) {
+    return false;
+  }
+  // With the vertex-count guard above, `vertex_offset + idx` cannot overflow
+  // uint32 for any in-range index (idx < src.points.size()). The per-element
+  // guards below therefore only catch malformed (out-of-range) source indices.
   uint32_t vertex_offset = static_cast<uint32_t>(dst.points.size());
 
   // Merge points (with transform if needed)
@@ -2075,6 +2692,10 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Merge face vertex indices (adjust by vertex offset)
   for (uint32_t idx : src.usdFaceVertexIndices) {
+    if (idx > (std::numeric_limits<uint32_t>::max)() - vertex_offset) {
+      set_merge_error("Cannot merge face indices: uint32 index overflow.");
+      return false;
+    }
     dst.usdFaceVertexIndices.push_back(idx + vertex_offset);
   }
 
@@ -2086,6 +2707,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   // Merge triangulated indices if present
   if (!src.triangulatedFaceVertexIndices.empty()) {
     for (uint32_t idx : src.triangulatedFaceVertexIndices) {
+      if (idx > (std::numeric_limits<uint32_t>::max)() - vertex_offset) {
+        set_merge_error(
+            "Cannot merge triangulated indices: uint32 index overflow.");
+        return false;
+      }
       dst.triangulatedFaceVertexIndices.push_back(idx + vertex_offset);
     }
     dst.triangulatedFaceVertexCounts.insert(dst.triangulatedFaceVertexCounts.end(),
@@ -2104,15 +2730,13 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         // Transform the normals we just copied
         vec3 *normals_data = reinterpret_cast<vec3*>(dst.normals.data.data());
         for (size_t i = 0; i < src_normal_count; i++) {
-          normals_data[i] = TransformNormal(src_transform, normals_data[i]);
+          normals_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         normals_data[i]);
         }
       }
     } else {
-      if (dst.normals.format != src.normals.format ||
-          dst.normals.stride_bytes() != src.normals.stride_bytes()) {
-        set_merge_error("Cannot merge normals: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       // Append normals
       size_t old_size = dst.normals.data.size();
       dst.normals.data.resize(old_size + src.normals.data.size());
@@ -2123,7 +2747,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_normals = reinterpret_cast<const vec3*>(src.normals.data.data());
         vec3 *dst_normals = reinterpret_cast<vec3*>(dst.normals.data.data() + old_size);
         for (size_t i = 0; i < src_normal_count; i++) {
-          dst_normals[i] = TransformNormal(src_transform, src_normals[i]);
+          dst_normals[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_normals[i]);
         }
       }
     }
@@ -2139,12 +2765,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       dst.texcoords.emplace(slot, src_attr);
     } else {
       auto &dst_attr = dst_tc_it->second;
-      if (dst_attr.format != src_attr.format ||
-          dst_attr.stride_bytes() != src_attr.stride_bytes()) {
-        set_merge_error("Cannot merge texcoords slot " + std::to_string(slot) +
-                        ": incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst_attr.data.size();
       dst_attr.data.resize(old_size + src_attr.data.size());
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
@@ -2159,16 +2780,13 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         vec3 *tangents_data = reinterpret_cast<vec3*>(dst.tangents.data.data());
         size_t count = dst.tangents.vertex_count();
         for (size_t i = 0; i < count; i++) {
-          tangents_data[i] = TransformNormal(src_transform, tangents_data[i]);
+          tangents_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         tangents_data[i]);
         }
       }
     } else {
-      if (dst.tangents.format != src.tangents.format ||
-          dst.tangents.stride_bytes() != src.tangents.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge tangents: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.tangents.data.size();
       size_t src_count = src.tangents.vertex_count();
       dst.tangents.data.resize(old_size + src.tangents.data.size());
@@ -2179,7 +2797,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_tangents = reinterpret_cast<const vec3*>(src.tangents.data.data());
         vec3 *dst_tangents = reinterpret_cast<vec3*>(dst.tangents.data.data() + old_size);
         for (size_t i = 0; i < src_count; i++) {
-          dst_tangents[i] = TransformNormal(src_transform, src_tangents[i]);
+          dst_tangents[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_tangents[i]);
         }
       }
     }
@@ -2193,16 +2813,13 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         vec3 *binormals_data = reinterpret_cast<vec3*>(dst.binormals.data.data());
         size_t count = dst.binormals.vertex_count();
         for (size_t i = 0; i < count; i++) {
-          binormals_data[i] = TransformNormal(src_transform, binormals_data[i]);
+          binormals_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         binormals_data[i]);
         }
       }
     } else {
-      if (dst.binormals.format != src.binormals.format ||
-          dst.binormals.stride_bytes() != src.binormals.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge binormals: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.binormals.data.size();
       size_t src_count = src.binormals.vertex_count();
       dst.binormals.data.resize(old_size + src.binormals.data.size());
@@ -2213,7 +2830,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_binormals = reinterpret_cast<const vec3*>(src.binormals.data.data());
         vec3 *dst_binormals = reinterpret_cast<vec3*>(dst.binormals.data.data() + old_size);
         for (size_t i = 0; i < src_count; i++) {
-          dst_binormals[i] = TransformNormal(src_transform, src_binormals[i]);
+          dst_binormals[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_binormals[i]);
         }
       }
     }
@@ -2224,12 +2843,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_colors.empty()) {
       dst.vertex_colors = src.vertex_colors;
     } else {
-      if (dst.vertex_colors.format != src.vertex_colors.format ||
-          dst.vertex_colors.stride_bytes() != src.vertex_colors.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge vertex_colors: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_colors.data.size();
       dst.vertex_colors.data.resize(old_size + src.vertex_colors.data.size());
       memcpy(dst.vertex_colors.data.data() + old_size, src.vertex_colors.data.data(), src.vertex_colors.data.size());
@@ -2241,12 +2855,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_opacities.empty()) {
       dst.vertex_opacities = src.vertex_opacities;
     } else {
-      if (dst.vertex_opacities.format != src.vertex_opacities.format ||
-          dst.vertex_opacities.stride_bytes() != src.vertex_opacities.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge vertex_opacities: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_opacities.data.size();
       dst.vertex_opacities.data.resize(old_size + src.vertex_opacities.data.size());
       memcpy(dst.vertex_opacities.data.data() + old_size, src.vertex_opacities.data.data(), src.vertex_opacities.data.size());
@@ -2254,6 +2863,172 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   }
 
   return true;
+}
+
+size_t RenderSceneConverter::DeduplicateMaterialsByTextureIdentityImpl() {
+  if (materials.empty()) {
+    return 0;
+  }
+
+  const size_t before = materials.size();
+  std::unordered_map<std::string, int> signature_to_new_id;
+  signature_to_new_id.reserve(before);
+  std::vector<int> old_to_new(before, -1);
+  std::vector<RenderMaterial> deduped;
+  deduped.reserve(before);
+
+  for (size_t i = 0; i < before; i++) {
+    const RenderMaterial &mat = materials[i];
+    const std::string signature = MaterialSignature(mat, textures);
+    auto it = signature_to_new_id.find(signature);
+    if (it != signature_to_new_id.end()) {
+      old_to_new[i] = it->second;
+      continue;
+    }
+
+    const int new_id = int(deduped.size());
+    signature_to_new_id.emplace(signature, new_id);
+    old_to_new[i] = new_id;
+    deduped.push_back(mat);
+  }
+
+  if (deduped.size() == before) {
+    return 0;
+  }
+
+  for (RenderMesh &mesh : meshes) {
+    RemapMaterialId(mesh.material_id, old_to_new);
+    RemapMaterialId(mesh.backface_material_id, old_to_new);
+    for (auto &subset : mesh.material_subsetMap) {
+      RemapMaterialSubsetIds(subset.second, old_to_new);
+    }
+  }
+
+  for (RenderInstance &inst : instances) {
+    RemapMaterialId(inst.material_id, old_to_new);
+  }
+
+  materials = std::move(deduped);
+  // Note: materialMap (path -> material index) is left stale after dedup. It is
+  // a converter-internal cache consulted only during material conversion (which
+  // completes before this pass) and is not exported into RenderScene, so the
+  // stale entries are never read. All live references (mesh/instance material
+  // ids, subsets) are remapped above.
+  return before - materials.size();
+}
+
+size_t RenderSceneConverter::DeduplicateTexturesByIdentityImpl() {
+  if (textures.empty()) {
+    return 0;
+  }
+
+  const size_t before = textures.size();
+  std::unordered_map<std::string, int> signature_to_new_id;
+  signature_to_new_id.reserve(before);
+  std::vector<int> old_to_new(before, -1);
+  std::vector<UVTexture> deduped;
+  deduped.reserve(before);
+
+  for (size_t i = 0; i < before; i++) {
+    const UVTexture &texture = textures[i];
+    const std::string signature = TextureSignature(texture);
+    auto it = signature_to_new_id.find(signature);
+    if (it != signature_to_new_id.end()) {
+      old_to_new[i] = it->second;
+      continue;
+    }
+
+    const int new_id = int(deduped.size());
+    signature_to_new_id.emplace(signature, new_id);
+    old_to_new[i] = new_id;
+    deduped.push_back(texture);
+  }
+
+  if (deduped.size() == before) {
+    return 0;
+  }
+
+  for (RenderMaterial &mat : materials) {
+    RemapMaterialTextureIds(mat, old_to_new);
+  }
+
+  textures = std::move(deduped);
+  return before - textures.size();
+}
+
+size_t RenderSceneConverter::FlattenOptimizedRenderTreeImpl() {
+  std::vector<Node> flat_nodes;
+  std::vector<int32_t> old_to_new_node_index;
+
+  auto shouldKeep = [](const Node &node) {
+    if (node.id < 0) {
+      return false;
+    }
+    if (node.nodeType == NodeType::Mesh) {
+      return true;
+    }
+    return node.category == NodeCategory::Camera ||
+           node.category == NodeCategory::Light ||
+           node.category == NodeCategory::Skeleton;
+  };
+
+  std::function<void(const Node &, int32_t)> collect =
+      [&](const Node &node, int32_t depth) {
+        if (size_t(depth) >= kMaxDefaultTraversalLimit) {
+          return;
+        }
+
+        const size_t old_index = old_to_new_node_index.size();
+        old_to_new_node_index.push_back(-1);
+        if (shouldKeep(node)) {
+          Node kept = node;
+          kept.local_matrix = node.global_matrix;
+          kept.children.clear();
+          old_to_new_node_index[old_index] = int32_t(flat_nodes.size() + 1);
+          flat_nodes.push_back(std::move(kept));
+        }
+
+        for (const Node &child : node.children) {
+          collect(child, depth + 1);
+        }
+      };
+
+  for (const Node &root : root_nodes) {
+    collect(root, 0);
+  }
+
+  Node optimized_root;
+  optimized_root.prim_name = "OptimizedRenderRoot";
+  optimized_root.display_name = "Optimized Render Root";
+  optimized_root.abs_path = "/OptimizedRenderRoot";
+  optimized_root.category = NodeCategory::Group;
+  optimized_root.nodeType = NodeType::Xform;
+  optimized_root.id = -1;
+  optimized_root.local_matrix = value::matrix4d::identity();
+  optimized_root.global_matrix = value::matrix4d::identity();
+  optimized_root.children = std::move(flat_nodes);
+
+  const size_t kept_count = optimized_root.children.size();
+  root_nodes.clear();
+  root_nodes.push_back(std::move(optimized_root));
+  root_nodeMap = StringAndIdMap{};
+  root_nodeMap.add("/OptimizedRenderRoot", uint64_t(0));
+  default_node = 0;
+
+  for (AnimationClip &clip : animations) {
+    for (AnimationChannel &channel : clip.channels) {
+      if (channel.target_type != ChannelTargetType::SceneNode ||
+          channel.target_node < 0) {
+        continue;
+      }
+      const size_t old_index = size_t(channel.target_node);
+      channel.target_node = old_index < old_to_new_node_index.size()
+                                ? old_to_new_node_index[old_index]
+                                : -1;
+    }
+  }
+
+  return kept_count;
 }
 
 bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
@@ -2383,6 +3158,24 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
     // If baking transforms, we transform all vertices to world space
     // The merged mesh will have identity transform
+    bool drop_normals = false;
+    bool drop_tangents = false;
+    bool drop_binormals = false;
+    if (env.scene_config.merge_meshes_bake_transform) {
+      for (size_t idx : mesh_indices) {
+        const auto &src_mesh = meshes[idx];
+        const auto &node_info = mesh_node_infos[idx];
+        if (tinyusdz::is_identity(node_info.global_matrix)) {
+          continue;
+        }
+        drop_normals = drop_normals ||
+                       !CanBakeDirectionAttribute(src_mesh.normals);
+        drop_tangents = drop_tangents ||
+                        !CanBakeDirectionAttribute(src_mesh.tangents);
+        drop_binormals = drop_binormals ||
+                         !CanBakeDirectionAttribute(src_mesh.binormals);
+      }
+    }
 
     std::vector<size_t> merged_sources;
     merged_sources.reserve(mesh_indices.size());
@@ -2401,7 +3194,23 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       }
 
       std::string merge_err;
-      if (!MergeMeshData(src_mesh, relative_transform, merged, &merge_err)) {
+      RenderMesh scratch;
+      const RenderMesh *merge_src = &src_mesh;
+      if (drop_normals || drop_tangents || drop_binormals) {
+        scratch = src_mesh;
+        if (drop_normals) {
+          scratch.normals = VertexAttribute{};
+        }
+        if (drop_tangents) {
+          scratch.tangents = VertexAttribute{};
+        }
+        if (drop_binormals) {
+          scratch.binormals = VertexAttribute{};
+        }
+        merge_src = &scratch;
+      }
+
+      if (!MergeMeshData(*merge_src, relative_transform, merged, &merge_err)) {
         PushInfo("Skipping mesh merge for " + src_mesh.abs_path +
                  (merge_err.empty() ? std::string()
                                     : std::string(": ") + merge_err));
@@ -2443,38 +3252,201 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     meshes.push_back(std::move(mm));
   }
 
-  // Update node references for merged sources only.
-  // Keep only one node per merged mesh and invalidate the rest.
+  // Update node references for merged sources.
+  //
+  // Baked merges: the merged vertices are in WORLD space, so they must render
+  // with a net-identity world transform. We attach the merged mesh to a fresh
+  // ROOT-level node (identity transform, no ancestors) and turn every source
+  // node into a plain group, leaving its local_matrix INTACT. Crucially we do
+  // NOT neutralize a source node's transform in place: source mesh nodes can be
+  // nested under one another (e.g. a window mesh under a wall mesh), and
+  // rewriting an ancestor's local would corrupt the world transform of any
+  // descendant mesh node that was neutralized assuming the original ancestor —
+  // the cause of the "floating mesh" artifact. Keeping every source node's
+  // local untouched means descendants stay correctly placed; the root-level
+  // merged node is independent of all of them.
+  //
+  // Non-baked merges: the vertices share the (identical) source-group local
+  // space, so we keep the first source node carrying that transform and
+  // invalidate the rest.
+  //
+  // The new baked-merge nodes must live INSIDE the subtree that consumers
+  // traverse from the default root (getDefaultRootNode), not as detached
+  // top-level siblings (which would never be rendered). Attach them as children
+  // of the default root node, with a local that cancels that root's own world
+  // transform so the world-space merged vertices end up net-identity.
+  const size_t default_root_index =
+      (default_node >= 0 && size_t(default_node) < root_nodes.size())
+          ? size_t(default_node)
+          : 0;
+  value::matrix4d default_root_local = value::matrix4d::identity();
+  if (env.scene_config.merge_meshes_bake_transform && !root_nodes.empty()) {
+    value::matrix4d inv_root;
+    if (tinyusdz::inverse(root_nodes[default_root_index].global_matrix,
+                          inv_root)) {
+      default_root_local = inv_root;
+    }
+  }
+
+  std::vector<Node> new_root_merged_nodes;
   for (const auto &group : merged_groups) {
     int32_t new_id = group.first;
     const auto &source_ids = group.second;
-    bool first_assigned = false;
 
-    for (size_t old_id : source_ids) {
-      if (old_id >= mesh_nodes_by_id.size()) {
-        continue;
-      }
+    if (env.scene_config.merge_meshes_bake_transform) {
+      const RenderMesh &mm = meshes[size_t(new_id)];
+      Node mnode;
+      mnode.prim_name = mm.prim_name;
+      mnode.display_name = mm.display_name;
+      mnode.abs_path = mm.abs_path;
+      mnode.category = NodeCategory::Geom;
+      mnode.nodeType = NodeType::Mesh;
+      mnode.id = new_id;
+      mnode.local_matrix = default_root_local;
+      mnode.global_matrix = value::matrix4d::identity();
+      new_root_merged_nodes.push_back(std::move(mnode));
 
-      for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
-        if (!node_ptr) {
+      for (size_t old_id : source_ids) {
+        if (old_id >= mesh_nodes_by_id.size()) {
           continue;
         }
-
-        if (!first_assigned) {
-          node_ptr->id = new_id;
-          first_assigned = true;
-
-          // If we baked transforms, reset the node's transform to identity
-          if (env.scene_config.merge_meshes_bake_transform) {
-            node_ptr->local_matrix = value::matrix4d::identity();
-            node_ptr->global_matrix = value::matrix4d::identity();
+        for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+          if (!node_ptr) {
+            continue;
           }
-        } else {
+          // Drop the mesh content; keep the transform for descendants.
+          node_ptr->category = NodeCategory::Group;
+          node_ptr->nodeType = NodeType::Xform;
           node_ptr->id = -1;
+        }
+      }
+    } else {
+      bool first_assigned = false;
+      for (size_t old_id : source_ids) {
+        if (old_id >= mesh_nodes_by_id.size()) {
+          continue;
+        }
+        for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+          if (!node_ptr) {
+            continue;
+          }
+          if (!first_assigned) {
+            node_ptr->id = new_id;
+            first_assigned = true;
+          } else {
+            node_ptr->category = NodeCategory::Group;
+            node_ptr->nodeType = NodeType::Xform;
+            node_ptr->id = -1;
+          }
         }
       }
     }
   }
+  // Attach under the default root so they are reachable from
+  // getDefaultRootNode(); falls back to top-level if there is no root node.
+  if (!new_root_merged_nodes.empty()) {
+    if (!root_nodes.empty()) {
+      Node &host = root_nodes[default_root_index];
+      for (Node &n : new_root_merged_nodes) {
+        host.children.push_back(std::move(n));
+      }
+    } else {
+      for (Node &n : new_root_merged_nodes) {
+        root_nodes.push_back(std::move(n));
+      }
+    }
+  }
+
+  // Drop mesh records that are no longer referenced by the node tree.
+  // This keeps the exported mesh IDs compact and makes numMeshes() reflect the
+  // effective renderable mesh count after native aggregation.
+  std::vector<uint8_t> mesh_used(meshes.size(), uint8_t{0});
+  std::function<void(const Node &)> markNodeMeshes = [&](const Node &node) {
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < mesh_used.size()) {
+      mesh_used[size_t(node.id)] = uint8_t{1};
+    }
+    for (const Node &child : node.children) {
+      markNodeMeshes(child);
+    }
+  };
+  for (const Node &root : root_nodes) {
+    markNodeMeshes(root);
+  }
+  for (const RenderInstance &inst : instances) {
+    if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < mesh_used.size()) {
+      mesh_used[size_t(inst.mesh_id)] = uint8_t{1};
+    }
+  }
+  for (const RenderLight &light : lights) {
+    if (light.geometry_mesh_id >= 0 &&
+        size_t(light.geometry_mesh_id) < mesh_used.size()) {
+      mesh_used[size_t(light.geometry_mesh_id)] = uint8_t{1};
+    }
+  }
+
+  std::vector<int32_t> mesh_remap(meshes.size(), -1);
+  std::vector<RenderMesh> compact_meshes;
+  compact_meshes.reserve(meshes.size());
+  for (size_t i = 0; i < meshes.size(); i++) {
+    if (!mesh_used[i]) {
+      continue;
+    }
+    mesh_remap[i] = int32_t(compact_meshes.size());
+    compact_meshes.push_back(std::move(meshes[i]));
+  }
+
+  std::function<void(Node &)> remapNodeMeshes = [&](Node &node) {
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < mesh_remap.size()) {
+      node.id = mesh_remap[size_t(node.id)];
+    }
+    for (Node &child : node.children) {
+      remapNodeMeshes(child);
+    }
+  };
+  for (Node &root : root_nodes) {
+    remapNodeMeshes(root);
+  }
+  for (RenderInstance &inst : instances) {
+    if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < mesh_remap.size()) {
+      inst.mesh_id = mesh_remap[size_t(inst.mesh_id)];
+    }
+  }
+  for (RenderLight &light : lights) {
+    if (light.geometry_mesh_id >= 0 &&
+        size_t(light.geometry_mesh_id) < mesh_remap.size()) {
+      light.geometry_mesh_id = mesh_remap[size_t(light.geometry_mesh_id)];
+    }
+  }
+
+  // Rebuild meshMap (abs_path -> mesh index) from the surviving node tree.
+  // Note: meshes referenced only by instances or lights (not by any Mesh node)
+  // are kept in `meshes` but intentionally omitted here. meshMap is a
+  // converter-internal lookup used during conversion (e.g. PointInstancer
+  // prototype resolution, which runs before this pass) and is not exported into
+  // RenderScene, so node-only coverage is sufficient.
+  StringAndIdMap remapped_mesh_map;
+  std::function<void(const Node &)> remapMeshMapFromNodes =
+      [&](const Node &node) {
+    if (!node.abs_path.empty() && node.nodeType == NodeType::Mesh &&
+        node.id >= 0 && size_t(node.id) < compact_meshes.size()) {
+      remapped_mesh_map.add(node.abs_path, uint64_t(node.id));
+    }
+    for (const Node &child : node.children) {
+      remapMeshMapFromNodes(child);
+    }
+  };
+  for (const Node &root : root_nodes) {
+    remapMeshMapFromNodes(root);
+  }
+  meshMap = std::move(remapped_mesh_map);
+
+  const size_t before_compact = meshes.size();
+  meshes = std::move(compact_meshes);
+  PushInfo("Mesh merge compacted mesh records: " +
+           std::to_string(before_compact) + " -> " +
+           std::to_string(meshes.size()) + ".");
 
   return true;
 }

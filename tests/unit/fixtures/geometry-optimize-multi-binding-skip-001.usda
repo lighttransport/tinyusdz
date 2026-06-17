@@ -1,0 +1,40 @@
+#usda 1.0
+(
+    doc = "Layer-level mesh merge fixture with multi-target material bindings; ambiguous bindings must not be merged."
+)
+
+def Xform "Root"
+{
+    def Material "MatA"
+    {
+    }
+
+    def Material "MatB"
+    {
+    }
+
+    def Xform "A"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = [</Root/MatA>, </Root/MatB>]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    }
+
+    def Xform "B"
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Mesh"
+        {
+            rel material:binding = [</Root/MatA>, </Root/MatB>]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    }
+}

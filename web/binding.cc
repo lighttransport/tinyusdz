@@ -63,6 +63,8 @@
 #include "json-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
+#include "usdz-geometry-optimize.hh"
+#include "usdz-material-optimize.hh"
 #include "crate-writer.hh"
 #include "image-writer.hh"
 #include "imageio/png-stream.hh"  // streaming scanline PNG codec
@@ -2296,26 +2298,48 @@ class TinyUSDZLoaderNative {
     tinyusdz::tydra::RenderSceneConverter converter;
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
+    struct TydraProgressCallbackState {
+      ParsingProgress *progress{nullptr};
+      size_t last_reported_mesh{0};
+      size_t last_reported_material{0};
+      std::string last_stage;
+    };
+    TydraProgressCallbackState progress_state{&parsing_progress_, 0, 0, ""};
     converter.SetDetailedProgressCallback(
         [input_size = binary.size(), is_usdz, debug_enabled = IsTinyUSDZDebugEnabled()](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
-          ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
-          if (pp) {
-            pp->meshes_processed = info.meshes_processed;
-            pp->meshes_total = info.meshes_total;
-            pp->current_mesh_name = info.current_mesh_name;
-            pp->materials_processed = info.materials_processed;
-            pp->materials_total = info.materials_total;
-            pp->tydra_stage = info.GetStageName();
-            pp->current_operation = info.message;
+          TydraProgressCallbackState *state =
+              static_cast<TydraProgressCallbackState *>(userptr);
+          if (state && state->progress) {
+            state->progress->meshes_processed = info.meshes_processed;
+            state->progress->meshes_total = info.meshes_total;
+            state->progress->current_mesh_name = info.current_mesh_name;
+            state->progress->materials_processed = info.materials_processed;
+            state->progress->materials_total = info.materials_total;
+            state->progress->tydra_stage = info.GetStageName();
+            state->progress->current_operation = info.message;
             // Update progress: parsing is 0-80%, conversion is 80-100%
-            pp->progress = 0.8f + (info.progress * 0.2f);
+            state->progress->progress = 0.8f + (info.progress * 0.2f);
+          }
+
+          const std::string stage_name = info.GetStageName();
+          bool should_report = true;
+          if (state && stage_name == state->last_stage &&
+              stage_name == "meshes" &&
+              info.meshes_processed < info.meshes_total) {
+            const size_t kMeshProgressReportInterval = 128;
+            const bool mesh_advanced =
+                info.meshes_processed >=
+                state->last_reported_mesh + kMeshProgressReportInterval;
+            const bool material_advanced =
+                info.materials_processed != state->last_reported_material;
+            should_report = mesh_advanced || material_advanced;
           }
 
           // Build the (per-tick) debug detail string only when a JS listener is
           // attached; otherwise this hot callback pays nothing for debugging.
-          if (debug_enabled) {
+          if (debug_enabled && should_report) {
             std::ostringstream detail;
-            detail << "stage=" << info.GetStageName()
+            detail << "stage=" << stage_name
                    << " message=" << info.message
                    << " mesh=" << info.meshes_processed << "/"
                    << info.meshes_total
@@ -2329,20 +2353,28 @@ class TinyUSDZLoaderNative {
           }
 
           // Call JavaScript synchronously via EM_JS
-          reportTydraProgress(
-            static_cast<int>(info.meshes_processed),
-            static_cast<int>(info.meshes_total),
-            info.GetStageName(),  // Already returns const char*
-            info.current_mesh_name.c_str(),
-            static_cast<int>(info.materials_processed),
-            static_cast<int>(info.materials_total),
-            info.current_material_name.c_str(),
-            info.progress
-          );
+          if (should_report) {
+            reportTydraProgress(
+              static_cast<int>(info.meshes_processed),
+              static_cast<int>(info.meshes_total),
+              stage_name.c_str(),
+              info.current_mesh_name.c_str(),
+              static_cast<int>(info.materials_processed),
+              static_cast<int>(info.materials_total),
+              info.current_material_name.c_str(),
+              info.progress
+            );
+
+            if (state) {
+              state->last_stage = stage_name;
+              state->last_reported_mesh = info.meshes_processed;
+              state->last_reported_material = info.materials_processed;
+            }
+          }
 
           return true;  // Continue conversion
         },
-        &parsing_progress_);
+        &progress_state);
 
     // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
     // are evaluated at the start time (initial pose) for static viewers
@@ -2355,17 +2387,35 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
     ReportTinyUSDZDebugEvent(
         "convertToRenderScene.begin",
         "loadTextureInNative=" + std::to_string(loadTextureInNative_ ? 1 : 0) +
             " combineUDIMTiles=" + std::to_string(combineUDIMTiles_ ? 1 : 0) +
             " deferTangents=" +
-            std::to_string(defer_tangent_computation_ ? 1 : 0),
+            std::to_string(defer_tangent_computation_ ? 1 : 0) +
+            " nativeMaterialDedup=" +
+            std::to_string(native_material_dedup_ ? 1 : 0) +
+            " nativeMeshMerge=" +
+            std::to_string(native_mesh_merge_ ? 1 : 0) +
+            " nativeFlattenRenderTree=" +
+            std::to_string(native_flatten_render_tree_ ? 1 : 0),
         binary.size(), is_usdz);
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
     ReportTinyUSDZDebugEvent(
         loaded_ ? "convertToRenderScene.end" : "convertToRenderScene.failed",
         loaded_ ? "success" : converter.GetError(), binary.size(), is_usdz);
+    if (!converter.GetTimingInfo().empty()) {
+      ReportTinyUSDZDebugEvent("convertToRenderScene.timing",
+                               converter.GetTimingInfo(), binary.size(),
+                               is_usdz);
+    }
 
     // Capture warnings from converter (available via warn() method)
     if (!converter.GetWarning().empty()) {
@@ -2540,6 +2590,13 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
 
     // Capture warnings from converter (available via warn() method)
@@ -2700,6 +2757,13 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
 
     // Yield before heavy conversion
     co_await yieldToEventLoop();
@@ -4047,6 +4111,10 @@ class TinyUSDZLoaderNative {
     out.set("materialId", rmesh.material_id);
     out.set("doubleSided", rmesh.doubleSided);
     out.set("primName", rmesh.prim_name);
+    out.set("displayName", rmesh.display_name);
+    out.set("absPath", rmesh.abs_path);
+    out.set("hasSubmeshes", !rmesh.material_subsetMap.empty());
+    out.set("singleIndexable", rmesh.is_single_indexable);
 
     out.set("points",
             heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
@@ -4065,6 +4133,42 @@ class TinyUSDZLoaderNative {
       out.set("faceVertexCounts", heapAttr_(cnt.data(), cnt.size(), 1, "u32"));
     }
     out.set("triangulated", triangulated);
+
+    if (!rmesh.material_subsetMap.empty() && triangulated &&
+        rmesh.is_single_indexable && !cnt.empty()) {
+      std::vector<int> face_materials(cnt.size(), rmesh.material_id);
+      for (const auto &subset_pair : rmesh.material_subsetMap) {
+        const tinyusdz::tydra::MaterialSubset &subset = subset_pair.second;
+        const int material_id = subset.material_id;
+        for (int face_index : subset.indices()) {
+          if (face_index >= 0 &&
+              static_cast<size_t>(face_index) < face_materials.size()) {
+            face_materials[size_t(face_index)] = material_id;
+          }
+        }
+      }
+
+      emscripten::val submeshes = emscripten::val::array();
+      size_t face_begin = 0;
+      int group_index = 0;
+      while (face_begin < face_materials.size()) {
+        const int material_id = face_materials[face_begin];
+        size_t face_end = face_begin + 1;
+        while (face_end < face_materials.size() &&
+               face_materials[face_end] == material_id) {
+          face_end++;
+        }
+
+        emscripten::val submesh = emscripten::val::object();
+        submesh.set("start", static_cast<int>(face_begin * 3));
+        submesh.set("count", static_cast<int>((face_end - face_begin) * 3));
+        submesh.set("materialId", material_id);
+        submeshes.set(group_index++, submesh);
+
+        face_begin = face_end;
+      }
+      out.set("submeshes", submeshes);
+    }
 
     // normals (snorm8 / snorm16 / f32; 1010102 unpacked to a stable f32 cache)
     if (!rmesh.normals.empty()) {
@@ -4125,8 +4229,64 @@ class TinyUSDZLoaderNative {
     return out;
   }
 
+  bool ensureImageBufferLoaded_(int img_id) {
+    if (!loaded_ || img_id < 0 ||
+        static_cast<size_t>(img_id) >= render_scene_.images.size()) {
+      return false;
+    }
+
+    auto &image = render_scene_.images[size_t(img_id)];
+    if (image.buffer_id >= 0) {
+      return true;
+    }
+
+    std::string asset_name = image.asset_identifier;
+    auto assetIt = usdz_asset_.asset_map.find(asset_name);
+    if (assetIt == usdz_asset_.asset_map.end() && asset_name.size() > 2 &&
+        asset_name[0] == '.' && asset_name[1] == '/') {
+      assetIt = usdz_asset_.asset_map.find(asset_name.substr(2));
+    }
+    if (assetIt == usdz_asset_.asset_map.end()) {
+      return false;
+    }
+
+    const size_t byte_begin = assetIt->second.first;
+    const size_t byte_end = assetIt->second.second;
+    if (byte_begin >= byte_end) {
+      return false;
+    }
+
+    const uint8_t *src = nullptr;
+    size_t src_size = 0;
+    if (!usdz_asset_.data.empty()) {
+      src = usdz_asset_.data.data();
+      src_size = usdz_asset_.data.size();
+    } else if (usdz_asset_.addr && usdz_asset_.size > 0) {
+      src = usdz_asset_.addr;
+      src_size = usdz_asset_.size;
+    } else {
+      return false;
+    }
+
+    if (byte_end > src_size) {
+      return false;
+    }
+
+    tinyusdz::tydra::BufferData buffer;
+    buffer.componentType = tinyusdz::tydra::ComponentType::UInt8;
+    buffer.data.resize(byte_end - byte_begin);
+    memcpy(buffer.data.data(), src + byte_begin, byte_end - byte_begin);
+
+    image.buffer_id = int64_t(render_scene_.buffers.size());
+    image.decoded = false;
+    render_scene_.buffers.emplace_back(std::move(buffer));
+
+    return true;
+  }
+
   // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
-  emscripten::val getImageCopy(int img_id) const {
+  emscripten::val getImageCopy(int img_id) {
+    ensureImageBufferLoaded_(img_id);
     emscripten::val m = buildImageVal_(img_id);
     deepCopyTypedArrays_(m);
     return m;
@@ -5437,6 +5597,38 @@ class TinyUSDZLoaderNative {
 
   bool getCombineUDIMTiles() const {
     return combineUDIMTiles_;
+  }
+
+  void setNativeMaterialDedup(bool enabled) {
+    native_material_dedup_ = enabled;
+  }
+
+  bool getNativeMaterialDedup() const {
+    return native_material_dedup_;
+  }
+
+  void setNativeMeshMerge(bool enabled) {
+    native_mesh_merge_ = enabled;
+  }
+
+  bool getNativeMeshMerge() const {
+    return native_mesh_merge_;
+  }
+
+  void setNativeMeshMergeBakeTransform(bool enabled) {
+    native_mesh_merge_bake_transform_ = enabled;
+  }
+
+  bool getNativeMeshMergeBakeTransform() const {
+    return native_mesh_merge_bake_transform_;
+  }
+
+  void setNativeFlattenRenderTree(bool enabled) {
+    native_flatten_render_tree_ = enabled;
+  }
+
+  bool getNativeFlattenRenderTree() const {
+    return native_flatten_render_tree_;
   }
 
   // Allow parent-directory ('..') segments in composition asset paths
@@ -7472,6 +7664,158 @@ class TinyUSDZLoaderNative {
         tinyusdz::usdz::RemapLayerTextureAssetPaths(layer, remap_map));
   }
 
+  bool applyMaterialOptimizationToLayerOptions(emscripten::val options) {
+    if (options.isUndefined() || options.isNull()) {
+      return true;
+    }
+
+    tinyusdz::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Off;
+      } else if (m == "dedupe" || m == "dedup") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Dedupe;
+      } else if (m == "preview" || m == "previewsurface" ||
+                 m == "usdpreviewsurface") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Preview;
+      } else if (m == "atlas") {
+        opt.material_optimization =
+            tinyusdz::usdz::MaterialOptimizationMode::Atlas;
+      } else {
+        error_ = "Invalid material optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    emscripten::val mode_val = options["optimizeMaterials"];
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["materialOptimization"];
+    }
+    if (!mode_val.isUndefined() && !mode_val.isNull()) {
+      if (!parse_mode(mode_val.as<std::string>())) {
+        return false;
+      }
+    }
+    if (opt.material_optimization ==
+        tinyusdz::usdz::MaterialOptimizationMode::Off) {
+      return true;
+    }
+
+    auto set_int = [&](const char *name, int *dst) {
+      emscripten::val v = options[name];
+      if (!v.isUndefined() && !v.isNull()) {
+        *dst = v.as<int>();
+      }
+    };
+    set_int("materialAtlasSize", &opt.material_atlas_size);
+    set_int("materialAtlasTileSize", &opt.material_atlas_tile_size);
+    set_int("materialAtlasPadding", &opt.material_atlas_padding);
+    set_int("materialAtlasMinGroupSize", &opt.material_atlas_min_group_size);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Material optimization requires a loaded Layer.";
+      return false;
+    }
+
+    tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::usdz::MaterialOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!tinyusdz::usdz::OptimizeMaterialsInLayer(opt, &curr, &opt_stats,
+                                                  &owarn, &oerr)) {
+      error_ = "Material optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Material optimization: " +
+             std::to_string(opt_stats.num_materials_before) + " -> " +
+             std::to_string(opt_stats.num_materials_after) + ", deduped " +
+             std::to_string(opt_stats.num_materials_deduped) + ".\n";
+    return true;
+  }
+
+  bool applyGeometryOptimizationToLayerOptions(emscripten::val options) {
+    if (options.isUndefined() || options.isNull()) {
+      return true;
+    }
+
+    tinyusdz::usdz::UsdzConvertOptions opt;
+    auto parse_mode = [&](const std::string &mode) {
+      std::string m = mode;
+      for (auto &c : m) c = static_cast<char>(std::tolower(c));
+      if (m == "off" || m == "none" || m.empty()) {
+        opt.geometry_optimization =
+            tinyusdz::usdz::GeometryOptimizationMode::Off;
+      } else if (m == "mergemeshes" || m == "merge" ||
+                 m == "meshmerge") {
+        opt.geometry_optimization =
+            tinyusdz::usdz::GeometryOptimizationMode::MergeMeshes;
+      } else {
+        error_ = "Invalid geometry optimization mode: " + mode;
+        return false;
+      }
+      return true;
+    };
+
+    emscripten::val mode_val = options["optimizeGeometry"];
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["optimizeMeshes"];
+    }
+    if (mode_val.isUndefined() || mode_val.isNull()) {
+      mode_val = options["geometryOptimization"];
+    }
+    if (!mode_val.isUndefined() && !mode_val.isNull()) {
+      if (!parse_mode(mode_val.as<std::string>())) {
+        return false;
+      }
+    }
+    if (opt.geometry_optimization ==
+        tinyusdz::usdz::GeometryOptimizationMode::Off) {
+      return true;
+    }
+
+    auto set_int = [&](const char *name, int *dst) {
+      emscripten::val v = options[name];
+      if (!v.isUndefined() && !v.isNull()) {
+        *dst = v.as<int>();
+      }
+    };
+    set_int("meshMergeMaxInputFaces", &opt.mesh_merge_max_input_faces);
+    set_int("meshMergeMaxInputPoints", &opt.mesh_merge_max_input_points);
+    set_int("meshMergeMaxAggregateFaces",
+            &opt.mesh_merge_max_aggregate_faces);
+    set_int("meshMergeMinGroupSize", &opt.mesh_merge_min_group_size);
+
+    if (!loaded_ || !loaded_as_layer_) {
+      error_ = "Geometry optimization requires a loaded Layer.";
+      return false;
+    }
+
+    tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    tinyusdz::usdz::GeometryOptimizationStats opt_stats;
+    std::string owarn, oerr;
+    if (!tinyusdz::usdz::OptimizeGeometryInLayer(opt, &curr, &opt_stats,
+                                                 &owarn, &oerr)) {
+      error_ = "Geometry optimization failed: " + oerr;
+      warn_ += owarn;
+      return false;
+    }
+    warn_ += owarn;
+    warn_ += "Geometry optimization: " +
+             std::to_string(opt_stats.num_meshes_before) + " -> " +
+             std::to_string(opt_stats.num_meshes_after) + ", merged " +
+             std::to_string(opt_stats.num_meshes_merged) + " into " +
+             std::to_string(opt_stats.num_mesh_aggregates) +
+             " aggregate(s).\n";
+    return true;
+  }
+
   /// Like exportAsUSDZ(), but first rewrites UsdUVTexture `inputs:file` asset
   /// paths according to `remap` ({oldName: newName}). Use when textures are
   /// renamed (e.g. transcoded PNG -> JPG) so references follow.
@@ -7533,6 +7877,13 @@ class TinyUSDZLoaderNative {
   /// options: { rootLayerFormat?: "usdc"|"usda", arkitCompatible?: bool }
   emscripten::val exportAsUSDZWithOptions(emscripten::val remap,
                                           emscripten::val options) {
+    if (!applyMaterialOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+    if (!applyGeometryOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+
     tinyusdz::Stage stage;
     if (!getStageFromLayer(stage)) {
       return emscripten::val::null();
@@ -7613,6 +7964,12 @@ class TinyUSDZLoaderNative {
   emscripten::val exportLayerAsUSDZWithOptions(emscripten::val options) {
     if (!loaded_ || !loaded_as_layer_) {
       error_ = "No layer loaded";
+      return emscripten::val::null();
+    }
+    if (!applyMaterialOptimizationToLayerOptions(options)) {
+      return emscripten::val::null();
+    }
+    if (!applyGeometryOptimizationToLayerOptions(options)) {
       return emscripten::val::null();
     }
 
@@ -8160,6 +8517,11 @@ class TinyUSDZLoaderNative {
   // for editing tiles in the web RenderScene. When true (default), combine
   // tiles into a single atlas texture.
   bool combineUDIMTiles_{true};
+
+  bool native_material_dedup_{false};
+  bool native_mesh_merge_{false};
+  bool native_mesh_merge_bake_transform_{true};
+  bool native_flatten_render_tree_{false};
 
   // Set appropriate default memory limits based on WASM architecture
 #ifdef TINYUSDZ_WASM_MEMORY64
@@ -9553,6 +9915,22 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setCombineUDIMTiles)
       .function("getCombineUDIMTiles",
                 &TinyUSDZLoaderNative::getCombineUDIMTiles)
+      .function("setNativeMaterialDedup",
+                &TinyUSDZLoaderNative::setNativeMaterialDedup)
+      .function("getNativeMaterialDedup",
+                &TinyUSDZLoaderNative::getNativeMaterialDedup)
+      .function("setNativeMeshMerge",
+                &TinyUSDZLoaderNative::setNativeMeshMerge)
+      .function("getNativeMeshMerge",
+                &TinyUSDZLoaderNative::getNativeMeshMerge)
+      .function("setNativeMeshMergeBakeTransform",
+                &TinyUSDZLoaderNative::setNativeMeshMergeBakeTransform)
+      .function("getNativeMeshMergeBakeTransform",
+                &TinyUSDZLoaderNative::getNativeMeshMergeBakeTransform)
+      .function("setNativeFlattenRenderTree",
+                &TinyUSDZLoaderNative::setNativeFlattenRenderTree)
+      .function("getNativeFlattenRenderTree",
+                &TinyUSDZLoaderNative::getNativeFlattenRenderTree)
       .function("setAllowParentRelativeAssetPaths",
                 &TinyUSDZLoaderNative::setAllowParentRelativeAssetPaths)
       .function("getAllowParentRelativeAssetPaths",

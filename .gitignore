@@ -375,6 +375,7 @@ CMakeUserPresets.json
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
+!tests/unit/fixtures/*.usda
 !tests/usda/validation/valid/*.usda
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).

@@ -5,7 +5,7 @@
 // even when the prim also pulls a reference/inherit/specialize whose base does
 // NOT contain that child.
 //
-// Bug (AbandonedFactory): UE StaticMesh assets author LODs as a `LOD`
+// Bug: a large UE-exported scene authored StaticMesh LODs as a `LOD`
 // variantSet; a scene actor references the asset AND authors a local prim-level
 // `def "LOD2"` (collides with the unselected LOD2 variant). InheritPrimSpecImpl
 // re-added dst-only *properties* but dropped dst-only *children*, so the local
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     if (geom) {
       CHECK(hasChild(*geom, "LODb"),
             "local prim-level def LODb survives flatten "
-            "(the AbandonedFactory LOD2 drop)");
+            "(large-scene LOD2 drop regression)");
       CHECK(hasChild(*geom, "LODa"),
             "variant-selected LODa present (reference resolved)");
       CHECK(hasChild(*geom, "Materials"),
