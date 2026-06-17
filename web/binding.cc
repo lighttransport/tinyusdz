@@ -8419,6 +8419,28 @@ void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer)
   heapView.call<void>("set", view);
 }
 
+/// Copy at most `maxBytes` from the front of a JS typed array / ArrayBufferView
+/// into `buffer`, without materializing the whole input on the wasm heap.
+/// Intended for streaming header sniffing of arbitrarily large files: only the
+/// minimal prefix needed for a magic-number check is transferred. `buffer` is
+/// resized to min(byteLength, maxBytes).
+void copyHeaderFromJSBuffer(const emscripten::val& data,
+                            std::vector<uint8_t>& buffer, size_t maxBytes) {
+  size_t size = data["byteLength"].as<size_t>();
+  size_t n = (size < maxBytes) ? size : maxBytes;
+  buffer.resize(n);
+  if (n == 0) {
+    return;
+  }
+  // Subarray view over just the prefix (byteOffset .. byteOffset + n).
+  emscripten::val view = emscripten::val::global("Uint8Array").new_(
+      data["buffer"], data["byteOffset"],
+      emscripten::val(static_cast<double>(n)));  // double: wasm64 BigInt-safe
+  emscripten::val heapView = emscripten::val(
+      emscripten::typed_memory_view(n, buffer.data()));
+  heapView.call<void>("set", view);
+}
+
 /// Validate decoded image dimensions and compute the total component count
 /// (width * height * channels) with overflow checking. Image dimensions come
 /// from decoded (untrusted) headers, so this guards against integer overflow
@@ -8540,6 +8562,81 @@ bool isEXR(const emscripten::val& data) {
   return IsEXRMagic(buffer.data(), buffer.size());
 }
 #endif
+
+/// Detect the USD container format of raw bytes by magic-number sniffing
+/// (extension-independent). Returns "usda", "usdc", "usdz", or "" if the
+/// bytes are not a recognized USD container.
+///
+/// Use this to classify a bare `.usd` file before packaging or loading.
+/// tinyusdz's USDZ entry-layer selection is extension-based (only `.usdc` /
+/// `.usda` members are recognized as the default layer), so a USDZ whose
+/// root layer is named `.usd` must be renamed first; this lets the caller
+/// pick the correct `.usdc`/`.usda` extension from the content.
+std::string detectUSDFormat(const emscripten::val& data) {
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+  std::string fmt;
+  if (tinyusdz::IsUSD(buffer.data(), buffer.size(), &fmt)) {
+    return fmt;
+  }
+  return "";
+}
+
+/// Returns true if the bytes are a recognized USD container
+/// (USDA / USDC / USDZ), detected via magic numbers.
+bool isUSD(const emscripten::val& data) {
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+  return tinyusdz::IsUSD(buffer.data(), buffer.size(), /* detected_format */ nullptr);
+}
+
+// Minimal prefix needed for streaming magic-number detection.
+//   USDA: 9  bytes  ("#usda 1.0")
+//   USDC: 88 bytes  ("PXR-USDC" + crate bootstrap header)
+//   USDZ: 4  bytes  (ZIP local file header signature "PK\x03\x04")
+// 88 covers all three; we copy at most this many bytes regardless of input size.
+static constexpr size_t kUSDHeaderSniffBytes = 88;
+
+/// Streaming USD container detection: inspects ONLY the minimal header prefix
+/// (<= 88 bytes) instead of copying the whole buffer onto the wasm heap, so it
+/// is cheap for arbitrarily large files (or for the head of a stream/Range
+/// request). Returns "usda", "usdc", "usdz", or "" if not recognized.
+///
+/// Note: USDZ is matched by the ZIP local-file-header magic only. A real USDZ
+/// archive always begins with this signature, but unlike detectUSDFormat()
+/// (which runs the full ParseUSDZHeader over the whole archive) this does not
+/// validate that the ZIP actually contains a USD entry layer. Use this for fast
+/// classification / root-layer extension sniffing; use detectUSDFormat() when
+/// you have the full bytes and want archive-level validation.
+std::string detectUSDFormatHeader(const emscripten::val& data) {
+  std::vector<uint8_t> buf;
+  copyHeaderFromJSBuffer(data, buf, kUSDHeaderSniffBytes);
+  const uint8_t* p = buf.data();
+  const size_t n = buf.size();
+
+  if (tinyusdz::IsUSDA(p, n)) {
+    return "usda";
+  }
+  if (tinyusdz::IsUSDC(p, n)) {
+    return "usdc";
+  }
+  // ZIP local file header signature: 0x50 0x4b 0x03 0x04 ("PK\x03\x04").
+  if (n >= 4 && p[0] == 0x50 && p[1] == 0x4b && p[2] == 0x03 && p[3] == 0x04) {
+    return "usdz";
+  }
+  return "";
+}
+
+/// Streaming variant of isUSD(): true if the header prefix matches a known USD
+/// container magic. See detectUSDFormatHeader() for the USDZ caveat.
+bool isUSDHeader(const emscripten::val& data) {
+  return !detectUSDFormatHeader(data).empty();
+}
+
+/// Number of leading bytes detectUSDFormatHeader()/isUSDHeader() may read.
+/// Callers doing their own streaming/Range fetch only need to supply this many
+/// bytes (fewer is fine — a short buffer just limits which formats can match).
+size_t usdHeaderSniffBytes() { return kUSDHeaderSniffBytes; }
 
 ///
 /// Decode HDR (Radiance RGBE) image with output format options
@@ -9729,6 +9826,20 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error)
       .function("warn", &TinyUSDZLoaderNative::warn);
+
+  // USD container format detection (magic-number based, extension-independent).
+  // detectUSDFormat(data) -> "usda" | "usdc" | "usdz" | "" (not USD)
+  // isUSD(data) -> bool
+  function("detectUSDFormat", &detectUSDFormat);
+  function("isUSD", &isUSD);
+  // Streaming/header-only detection: reads at most usdHeaderSniffBytes() bytes,
+  // never copies the whole buffer. Ideal for huge files or Range-fetched heads.
+  // detectUSDFormatHeader(data) -> "usda" | "usdc" | "usdz" | ""
+  // isUSDHeader(data) -> bool
+  // usdHeaderSniffBytes() -> number (max bytes inspected)
+  function("detectUSDFormatHeader", &detectUSDFormatHeader);
+  function("isUSDHeader", &isUSDHeader);
+  function("usdHeaderSniffBytes", &usdHeaderSniffBytes);
 
   class_<TinyUSDZComposerNative>("TinyUSDZComposerNative")
       .constructor<>()  // Default constructor for async loading
