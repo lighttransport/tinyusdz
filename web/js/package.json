@@ -51,6 +51,7 @@
     "test:progress": "node cli/test-progress-cli.js",
     "test:urdf-cli": "node tests/urdf-to-usd-cli.test.mjs",
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
+    "test:loader-fast-materials": "node tests/loader-utils-fast-materials.mjs",
     "usd-export": "vite-node cli/usd-export-cli.js",
     "usdzconvert": "node cli/usdzconvert.js",
     "usdcat": "node cli/usdcat.js",
