@@ -18,9 +18,12 @@
 //     - Implement spatial hash
 //
 #include <chrono>
+#include <iomanip>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 
 #include "common-utils.hh"
 #include "common-types.hh"
@@ -77,6 +80,315 @@ static double ElapsedMs(const TydraPerfClock::time_point &start) {
 
 static double NsToMs(const uint64_t ns) {
   return double(ns) * 0.000001;
+}
+
+static void AppendFloat(std::ostringstream &ss, const float v) {
+  ss << std::setprecision(std::numeric_limits<float>::max_digits10) << v;
+}
+
+static void AppendVec2(std::ostringstream &ss, const vec2 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+}
+
+static void AppendVec3(std::ostringstream &ss, const vec3 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+  ss << ",";
+  AppendFloat(ss, v[2]);
+}
+
+static void AppendVec4(std::ostringstream &ss, const vec4 &v) {
+  AppendFloat(ss, v[0]);
+  ss << ",";
+  AppendFloat(ss, v[1]);
+  ss << ",";
+  AppendFloat(ss, v[2]);
+  ss << ",";
+  AppendFloat(ss, v[3]);
+}
+
+static void AppendMat3(std::ostringstream &ss, const mat3 &m) {
+  for (int r = 0; r < 3; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (r || c) {
+        ss << ",";
+      }
+      AppendFloat(ss, m.m[r][c]);
+    }
+  }
+}
+
+static void AppendValue(std::ostringstream &ss, const float v) {
+  AppendFloat(ss, v);
+}
+
+static void AppendValue(std::ostringstream &ss, const vec3 &v) {
+  AppendVec3(ss, v);
+}
+
+static void AppendTextureSignature(
+    std::ostringstream &ss, const int32_t texture_id,
+    const std::vector<UVTexture> &textures) {
+  if (texture_id < 0 || size_t(texture_id) >= textures.size()) {
+    ss << "tex:-1";
+    return;
+  }
+
+  const UVTexture &t = textures[size_t(texture_id)];
+  ss << "tex:image=" << t.texture_image_id
+     << ",wrap=" << to_string(t.wrapS) << "/" << to_string(t.wrapT)
+     << ",udim=" << (t.is_udim ? 1 : 0)
+     << ",udimId=" << t.udim_texture_id
+     << ",udimScale=";
+  AppendVec2(ss, t.udim_uv_scale);
+  ss << ",udimOffset=";
+  AppendVec2(ss, t.udim_uv_offset);
+  ss << ",scale=";
+  AppendVec4(ss, t.scale);
+  ss << ",bias=";
+  AppendVec4(ss, t.bias);
+  ss << ",channel=" << to_string(t.connectedOutputChannel)
+     << ",varname=" << t.varname_uv
+     << ",hasXform=" << (t.has_transform2d ? 1 : 0)
+     << ",xform=";
+  AppendMat3(ss, t.transform);
+}
+
+static std::string TextureSignature(const UVTexture &texture) {
+  std::ostringstream ss;
+  ss << "tex:image=" << texture.texture_image_id
+     << ",wrap=" << to_string(texture.wrapS) << "/" << to_string(texture.wrapT)
+     << ",udim=" << (texture.is_udim ? 1 : 0)
+     << ",udimId=" << texture.udim_texture_id
+     << ",udimScale=";
+  AppendVec2(ss, texture.udim_uv_scale);
+  ss << ",udimOffset=";
+  AppendVec2(ss, texture.udim_uv_offset);
+  ss << ",scale=";
+  AppendVec4(ss, texture.scale);
+  ss << ",bias=";
+  AppendVec4(ss, texture.bias);
+  ss << ",channel=" << to_string(texture.connectedOutputChannel)
+     << ",varname=" << texture.varname_uv
+     << ",hasXform=" << (texture.has_transform2d ? 1 : 0)
+     << ",xform=";
+  AppendMat3(ss, texture.transform);
+  return ss.str();
+}
+
+template <typename T>
+static void AppendShaderParam(std::ostringstream &ss, const char *name,
+                              const ShaderParam<T> &param,
+                              const std::vector<UVTexture> &textures) {
+  ss << name << "=";
+  AppendValue(ss, param.value);
+  ss << ";";
+  ss << name << "Texture=";
+  AppendTextureSignature(ss, param.texture_id, textures);
+  ss << ";";
+}
+
+static std::string MaterialSignature(
+    const RenderMaterial &mat, const std::vector<UVTexture> &textures) {
+  std::ostringstream ss;
+  ss << "tag=" << int(mat.materialTag) << ";";
+  ss << "disp=" << (mat.has_displacement ? 1 : 0) << ";";
+  ss << "volume=" << (mat.has_volume ? 1 : 0) << ";";
+  if (mat.surfaceShader.has_value()) {
+    const PreviewSurfaceShader &s = *mat.surfaceShader;
+    ss << "preview{";
+    ss << "useSpecularWorkflow=" << (s.useSpecularWorkflow ? 1 : 0) << ";";
+    AppendShaderParam(ss, "diffuseColor", s.diffuseColor, textures);
+    AppendShaderParam(ss, "emissiveColor", s.emissiveColor, textures);
+    AppendShaderParam(ss, "specularColor", s.specularColor, textures);
+    AppendShaderParam(ss, "metallic", s.metallic, textures);
+    AppendShaderParam(ss, "roughness", s.roughness, textures);
+    AppendShaderParam(ss, "clearcoat", s.clearcoat, textures);
+    AppendShaderParam(ss, "clearcoatRoughness", s.clearcoatRoughness,
+                      textures);
+    AppendShaderParam(ss, "opacity", s.opacity, textures);
+    AppendShaderParam(ss, "opacityThreshold", s.opacityThreshold, textures);
+    AppendShaderParam(ss, "ior", s.ior, textures);
+    AppendShaderParam(ss, "normal", s.normal, textures);
+    AppendShaderParam(ss, "displacement", s.displacement, textures);
+    AppendShaderParam(ss, "occlusion", s.occlusion, textures);
+    ss << "}";
+  }
+  if (mat.openPBRShader.has_value()) {
+    const OpenPBRSurfaceShader &s = *mat.openPBRShader;
+    ss << "openpbr{";
+#define TINYUSDZ_APPEND_OPENPBR_PARAM(name) \
+    AppendShaderParam(ss, #name, s.name, textures)
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_metalness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(base_diffuse_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior_level);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_rotation);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_depth);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scale);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_thickness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_weight);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_rotation);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_ior);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_roughness);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness_anisotropy);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_darkening);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_luminance);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_color);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(opacity);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(normal);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(tangent);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_normal);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_tangent);
+#undef TINYUSDZ_APPEND_OPENPBR_PARAM
+    ss << "tangentRotation=";
+    AppendFloat(ss, s.tangent_rotation);
+    ss << ";normalMapScale=";
+    AppendFloat(ss, s.normal_map_scale);
+    ss << ";coatTangentRotation=";
+    AppendFloat(ss, s.coat_tangent_rotation);
+    ss << ";coatNormalMapScale=";
+    AppendFloat(ss, s.coat_normal_map_scale);
+    ss << ";nodeGraph=" << s.nodeGraphJson;
+    ss << "}";
+  }
+  return ss.str();
+}
+
+static void RemapMaterialId(int &id, const std::vector<int> &remap) {
+  if (id >= 0 && size_t(id) < remap.size()) {
+    id = remap[size_t(id)];
+  }
+}
+
+static void RemapMaterialSubsetIds(MaterialSubset &subset,
+                                   const std::vector<int> &remap) {
+  RemapMaterialId(subset.material_id, remap);
+  RemapMaterialId(subset.backface_material_id, remap);
+}
+
+template <typename T>
+static void RemapShaderParamTexture(ShaderParam<T> &param,
+                                    const std::vector<int> &remap) {
+  if (param.texture_id >= 0 && size_t(param.texture_id) < remap.size()) {
+    param.texture_id = remap[size_t(param.texture_id)];
+  }
+}
+
+static void RemapMaterialTextureIds(RenderMaterial &mat,
+                                    const std::vector<int> &remap) {
+  if (mat.surfaceShader.has_value()) {
+    PreviewSurfaceShader &s = *mat.surfaceShader;
+    RemapShaderParamTexture(s.diffuseColor, remap);
+    RemapShaderParamTexture(s.emissiveColor, remap);
+    RemapShaderParamTexture(s.specularColor, remap);
+    RemapShaderParamTexture(s.metallic, remap);
+    RemapShaderParamTexture(s.roughness, remap);
+    RemapShaderParamTexture(s.clearcoat, remap);
+    RemapShaderParamTexture(s.clearcoatRoughness, remap);
+    RemapShaderParamTexture(s.opacity, remap);
+    RemapShaderParamTexture(s.opacityThreshold, remap);
+    RemapShaderParamTexture(s.ior, remap);
+    RemapShaderParamTexture(s.normal, remap);
+    RemapShaderParamTexture(s.displacement, remap);
+    RemapShaderParamTexture(s.occlusion, remap);
+  }
+
+  if (mat.openPBRShader.has_value()) {
+    OpenPBRSurfaceShader &s = *mat.openPBRShader;
+#define TINYUSDZ_REMAP_OPENPBR_PARAM(name) RemapShaderParamTexture(s.name, remap)
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_metalness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(base_diffuse_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior_level);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_rotation);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_depth);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scale);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_thickness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_weight);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_rotation);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_ior);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_roughness);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness_anisotropy);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_darkening);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_luminance);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_color);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(opacity);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(normal);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(tangent);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_normal);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_tangent);
+#undef TINYUSDZ_REMAP_OPENPBR_PARAM
+  }
 }
 
 }  // namespace
@@ -714,6 +1026,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _skelRootToSkeleton.clear();
   _uvNameCache.clear();
   _materialBindingCache.clear();
+  _materialSourceSignatureCache.clear();
   _value_clip_layer_cache.clear();
   _value_clip_stage_cache.clear();
   ResetConnectionResolveCache(env.stage);
@@ -975,6 +1288,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _allAnimations = nullptr;
   _skelRootToSkeleton.clear();
   _materialBindingCache.clear();
+  _materialSourceSignatureCache.clear();
 
   // Report progress after mesh/material conversion (70%)
   _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
@@ -1094,12 +1408,38 @@ bool RenderSceneConverter::ConvertToRenderScene(
   //
   // 7. Merge meshes with same material (optional optimization)
   //
+  if (env.scene_config.dedup_materials_by_texture_identity) {
+    const size_t before_textures = textures.size();
+    const size_t removed_textures = DeduplicateTexturesByIdentityImpl();
+    if (removed_textures > 0) {
+      PushInfo("Texture deduplication before material deduplication: " +
+               std::to_string(before_textures) + " -> " +
+               std::to_string(textures.size()) + ".");
+    }
+
+    const size_t before_materials = materials.size();
+    const size_t removed = DeduplicateMaterialsByTextureIdentityImpl();
+    if (removed > 0) {
+      PushInfo("Material deduplication before merge: " +
+               std::to_string(before_materials) + " -> " +
+               std::to_string(materials.size()) + ".");
+    }
+  }
+
   if (env.scene_config.merge_meshes) {
     const auto phase_start = TydraPerfClock::now();
     if (!MergeMeshesImpl(env)) {
       PushWarn("Mesh merging encountered issues, but conversion continues.\n");
     }
     merge_ms = ElapsedMs(phase_start);
+  }
+
+  if (env.scene_config.flatten_optimized_render_tree) {
+    const size_t before_nodes = root_nodes.size();
+    const size_t kept_nodes = FlattenOptimizedRenderTreeImpl();
+    PushInfo("Flattened optimized render tree: roots " +
+             std::to_string(before_nodes) + " -> 1, render nodes " +
+             std::to_string(kept_nodes) + ".");
   }
 
   // Report progress after mesh merging (95%)
@@ -2145,6 +2485,12 @@ static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
   return vec3{float(x), float(y), float(z)};
 }
 
+static bool CanBakeDirectionAttribute(const VertexAttribute &attr) {
+  return attr.empty() ||
+         (attr.format == VertexAttributeFormat::Vec3 &&
+          attr.stride_bytes() == sizeof(vec3));
+}
+
 bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
                                          const value::matrix4d &src_transform,
                                          RenderMesh &dst,
@@ -2157,6 +2503,15 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Check if transform is identity using tinyusdz::is_identity function
   bool transform_is_identity = tinyusdz::is_identity(src_transform);
+  if (!transform_is_identity) {
+    if (!CanBakeDirectionAttribute(src.normals) ||
+        !CanBakeDirectionAttribute(src.tangents) ||
+        !CanBakeDirectionAttribute(src.binormals)) {
+      set_merge_error(
+          "Cannot bake transform for packed or non-float3 direction attributes.");
+      return false;
+    }
+  }
 
   // Get the vertex offset for index adjustment
   uint32_t vertex_offset = static_cast<uint32_t>(dst.points.size());
@@ -2353,6 +2708,150 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   return true;
 }
 
+size_t RenderSceneConverter::DeduplicateMaterialsByTextureIdentityImpl() {
+  if (materials.empty()) {
+    return 0;
+  }
+
+  const size_t before = materials.size();
+  std::unordered_map<std::string, int> signature_to_new_id;
+  signature_to_new_id.reserve(before);
+  std::vector<int> old_to_new(before, -1);
+  std::vector<RenderMaterial> deduped;
+  deduped.reserve(before);
+
+  for (size_t i = 0; i < before; i++) {
+    const RenderMaterial &mat = materials[i];
+    const std::string signature = MaterialSignature(mat, textures);
+    auto it = signature_to_new_id.find(signature);
+    if (it != signature_to_new_id.end()) {
+      old_to_new[i] = it->second;
+      continue;
+    }
+
+    const int new_id = int(deduped.size());
+    signature_to_new_id.emplace(signature, new_id);
+    old_to_new[i] = new_id;
+    deduped.push_back(mat);
+  }
+
+  if (deduped.size() == before) {
+    return 0;
+  }
+
+  for (RenderMesh &mesh : meshes) {
+    RemapMaterialId(mesh.material_id, old_to_new);
+    RemapMaterialId(mesh.backface_material_id, old_to_new);
+    for (auto &subset : mesh.material_subsetMap) {
+      RemapMaterialSubsetIds(subset.second, old_to_new);
+    }
+  }
+
+  for (RenderInstance &inst : instances) {
+    RemapMaterialId(inst.material_id, old_to_new);
+  }
+
+  materials = std::move(deduped);
+  return before - materials.size();
+}
+
+size_t RenderSceneConverter::DeduplicateTexturesByIdentityImpl() {
+  if (textures.empty()) {
+    return 0;
+  }
+
+  const size_t before = textures.size();
+  std::unordered_map<std::string, int> signature_to_new_id;
+  signature_to_new_id.reserve(before);
+  std::vector<int> old_to_new(before, -1);
+  std::vector<UVTexture> deduped;
+  deduped.reserve(before);
+
+  for (size_t i = 0; i < before; i++) {
+    const UVTexture &texture = textures[i];
+    const std::string signature = TextureSignature(texture);
+    auto it = signature_to_new_id.find(signature);
+    if (it != signature_to_new_id.end()) {
+      old_to_new[i] = it->second;
+      continue;
+    }
+
+    const int new_id = int(deduped.size());
+    signature_to_new_id.emplace(signature, new_id);
+    old_to_new[i] = new_id;
+    deduped.push_back(texture);
+  }
+
+  if (deduped.size() == before) {
+    return 0;
+  }
+
+  for (RenderMaterial &mat : materials) {
+    RemapMaterialTextureIds(mat, old_to_new);
+  }
+
+  textures = std::move(deduped);
+  return before - textures.size();
+}
+
+size_t RenderSceneConverter::FlattenOptimizedRenderTreeImpl() {
+  std::vector<Node> flat_nodes;
+
+  auto shouldKeep = [](const Node &node) {
+    if (node.id < 0) {
+      return false;
+    }
+    if (node.nodeType == NodeType::Mesh) {
+      return true;
+    }
+    return node.category == NodeCategory::Camera ||
+           node.category == NodeCategory::Light ||
+           node.category == NodeCategory::Skeleton;
+  };
+
+  std::function<void(const Node &, int32_t)> collect =
+      [&](const Node &node, int32_t depth) {
+        if (size_t(depth) >= kMaxDefaultTraversalLimit) {
+          return;
+        }
+
+        if (shouldKeep(node)) {
+          Node kept = node;
+          kept.local_matrix = node.global_matrix;
+          kept.children.clear();
+          flat_nodes.push_back(std::move(kept));
+        }
+
+        for (const Node &child : node.children) {
+          collect(child, depth + 1);
+        }
+      };
+
+  for (const Node &root : root_nodes) {
+    collect(root, 0);
+  }
+
+  Node optimized_root;
+  optimized_root.prim_name = "OptimizedRenderRoot";
+  optimized_root.display_name = "Optimized Render Root";
+  optimized_root.abs_path = "/OptimizedRenderRoot";
+  optimized_root.category = NodeCategory::Group;
+  optimized_root.nodeType = NodeType::Xform;
+  optimized_root.id = -1;
+  optimized_root.local_matrix = value::matrix4d::identity();
+  optimized_root.global_matrix = value::matrix4d::identity();
+  optimized_root.children = std::move(flat_nodes);
+
+  const size_t kept_count = optimized_root.children.size();
+  root_nodes.clear();
+  root_nodes.push_back(std::move(optimized_root));
+  root_nodeMap = StringAndIdMap{};
+  root_nodeMap.add("/OptimizedRenderRoot", uint64_t(0));
+  default_node = 0;
+
+  return kept_count;
+}
+
 bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   if (!env.scene_config.merge_meshes) {
     return true;  // Merging disabled, nothing to do
@@ -2480,6 +2979,24 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
     // If baking transforms, we transform all vertices to world space
     // The merged mesh will have identity transform
+    bool drop_normals = false;
+    bool drop_tangents = false;
+    bool drop_binormals = false;
+    if (env.scene_config.merge_meshes_bake_transform) {
+      for (size_t idx : mesh_indices) {
+        const auto &src_mesh = meshes[idx];
+        const auto &node_info = mesh_node_infos[idx];
+        if (tinyusdz::is_identity(node_info.global_matrix)) {
+          continue;
+        }
+        drop_normals = drop_normals ||
+                       !CanBakeDirectionAttribute(src_mesh.normals);
+        drop_tangents = drop_tangents ||
+                        !CanBakeDirectionAttribute(src_mesh.tangents);
+        drop_binormals = drop_binormals ||
+                         !CanBakeDirectionAttribute(src_mesh.binormals);
+      }
+    }
 
     std::vector<size_t> merged_sources;
     merged_sources.reserve(mesh_indices.size());
@@ -2498,7 +3015,23 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       }
 
       std::string merge_err;
-      if (!MergeMeshData(src_mesh, relative_transform, merged, &merge_err)) {
+      RenderMesh scratch;
+      const RenderMesh *merge_src = &src_mesh;
+      if (drop_normals || drop_tangents || drop_binormals) {
+        scratch = src_mesh;
+        if (drop_normals) {
+          scratch.normals = VertexAttribute{};
+        }
+        if (drop_tangents) {
+          scratch.tangents = VertexAttribute{};
+        }
+        if (drop_binormals) {
+          scratch.binormals = VertexAttribute{};
+        }
+        merge_src = &scratch;
+      }
+
+      if (!MergeMeshData(*merge_src, relative_transform, merged, &merge_err)) {
         PushInfo("Skipping mesh merge for " + src_mesh.abs_path +
                  (merge_err.empty() ? std::string()
                                     : std::string(": ") + merge_err));
@@ -2567,11 +3100,82 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
             node_ptr->global_matrix = value::matrix4d::identity();
           }
         } else {
+          node_ptr->category = NodeCategory::Group;
+          node_ptr->nodeType = NodeType::Xform;
           node_ptr->id = -1;
         }
       }
     }
   }
+
+  // Drop mesh records that are no longer referenced by the node tree.
+  // This keeps the exported mesh IDs compact and makes numMeshes() reflect the
+  // effective renderable mesh count after native aggregation.
+  std::vector<uint8_t> mesh_used(meshes.size(), uint8_t{0});
+  std::function<void(const Node &)> markNodeMeshes = [&](const Node &node) {
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < mesh_used.size()) {
+      mesh_used[size_t(node.id)] = uint8_t{1};
+    }
+    for (const Node &child : node.children) {
+      markNodeMeshes(child);
+    }
+  };
+  for (const Node &root : root_nodes) {
+    markNodeMeshes(root);
+  }
+  for (const RenderInstance &inst : instances) {
+    if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < mesh_used.size()) {
+      mesh_used[size_t(inst.mesh_id)] = uint8_t{1};
+    }
+  }
+  for (const RenderLight &light : lights) {
+    if (light.geometry_mesh_id >= 0 &&
+        size_t(light.geometry_mesh_id) < mesh_used.size()) {
+      mesh_used[size_t(light.geometry_mesh_id)] = uint8_t{1};
+    }
+  }
+
+  std::vector<int32_t> mesh_remap(meshes.size(), -1);
+  std::vector<RenderMesh> compact_meshes;
+  compact_meshes.reserve(meshes.size());
+  for (size_t i = 0; i < meshes.size(); i++) {
+    if (!mesh_used[i]) {
+      continue;
+    }
+    mesh_remap[i] = int32_t(compact_meshes.size());
+    compact_meshes.push_back(std::move(meshes[i]));
+  }
+
+  std::function<void(Node &)> remapNodeMeshes = [&](Node &node) {
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < mesh_remap.size()) {
+      node.id = mesh_remap[size_t(node.id)];
+    }
+    for (Node &child : node.children) {
+      remapNodeMeshes(child);
+    }
+  };
+  for (Node &root : root_nodes) {
+    remapNodeMeshes(root);
+  }
+  for (RenderInstance &inst : instances) {
+    if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < mesh_remap.size()) {
+      inst.mesh_id = mesh_remap[size_t(inst.mesh_id)];
+    }
+  }
+  for (RenderLight &light : lights) {
+    if (light.geometry_mesh_id >= 0 &&
+        size_t(light.geometry_mesh_id) < mesh_remap.size()) {
+      light.geometry_mesh_id = mesh_remap[size_t(light.geometry_mesh_id)];
+    }
+  }
+
+  const size_t before_compact = meshes.size();
+  meshes = std::move(compact_meshes);
+  PushInfo("Mesh merge compacted mesh records: " +
+           std::to_string(before_compact) + " -> " +
+           std::to_string(meshes.size()) + ".");
 
   return true;
 }
