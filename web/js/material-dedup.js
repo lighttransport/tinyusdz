@@ -79,6 +79,10 @@ const params = {
 	honorMetersPerUnit: true,
 	upAxisConversion: true,
 
+	// Render every material double-sided (debug aid for spotting inverted
+	// winding / missing backfaces).
+	doubleSided: false,
+
 	// Apply textures, decoded lazily on the JS side (raw bytes are pulled from
 	// the asset on demand by getImageCopy; the scene renders untextured first,
 	// then textures stream in). On by default.
@@ -307,6 +311,21 @@ function applySceneTransform() {
 		(params.upAxisConversion && sceneMeta.upAxis === 'Z') ? -Math.PI / 2 : 0;
 }
 
+// Debug: force every material in the scene to render front-only or double-sided.
+function applyDoubleSided() {
+	const side = params.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+	usdSceneRoot.traverse((o) => {
+		if (!o.isMesh || !o.material) return;
+		const mats = Array.isArray(o.material) ? o.material : [o.material];
+		for (const m of mats) {
+			if (m && m.side !== side) {
+				m.side = side;
+				m.needsUpdate = true;
+			}
+		}
+	});
+}
+
 // Fit the camera to the current USD scene bounds so loaded models (which may
 // be authored at any scale) are framed regardless of metersPerUnit.
 //
@@ -465,6 +484,7 @@ async function mountScene(usd,
 
 	usdSceneRoot.add(threeNode);
 	applySceneTransform();
+	applyDoubleSided();
 	textureManager = manager;
 }
 
@@ -698,6 +718,7 @@ function buildGui() {
 	// Textures decode lazily on the JS side, so toggling only needs a re-mount
 	// (no native re-conversion).
 	guiControllers.push(sceneFolder.add(params, 'loadTextures').name('Load Textures').onChange(reapplyThreePostProcess));
+	sceneFolder.add(params, 'doubleSided').name('Double-Sided (debug)').onChange(applyDoubleSided);
 	sceneFolder.open();
 
 	// three.js-side post-process: operates on the built scene graph, no native
