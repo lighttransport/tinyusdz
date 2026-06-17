@@ -2454,6 +2454,78 @@ def Xform "Root" {
   }
 
   {
+    // Regression: when baking transforms, the merged vertices are world-space,
+    // so the surviving node must contribute NO net world transform. Setting
+    // local_matrix to identity is wrong when the node sits under a transformed
+    // ancestor (the parent transform would be re-applied to already-world-space
+    // data). The merge must instead set local := inverse(global) * local so the
+    // node's world transform becomes identity.
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 5;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+
+    // local = translate(3), global = translate(10) -> implied parent world is
+    // translate(7). After merge, local must become inverse(global)*local =
+    // translate(-7) so that local * parent_world = identity.
+    auto translate_x = [](double tx) {
+      value::matrix4d m = value::matrix4d::identity();
+      m.m[3][0] = tx;
+      return m;
+    };
+
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = translate_x(3.0);
+    node_a.global_matrix = translate_x(10.0);
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/MeshB";
+    node_b.id = 1;
+    node_b.local_matrix = translate_x(5.0);
+    node_b.global_matrix = translate_x(20.0);
+
+    converter.root_nodes.push_back(node_a);
+    converter.root_nodes.push_back(node_b);
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.root_nodes.size() == 2);
+    if (converter.root_nodes.size() == 2) {
+      const tydra::Node &kept = converter.root_nodes[0];
+      TEST_CHECK(kept.nodeType == tydra::NodeType::Mesh);
+      // local := inverse(translate(10)) * translate(3) = translate(-7).
+      TEST_CHECK(std::abs(kept.local_matrix.m[3][0] - (-7.0)) < 1e-9);
+      // global transform neutralized to identity.
+      TEST_CHECK(tinyusdz::is_identity(kept.global_matrix));
+    }
+  }
+
+  {
     tydra::RenderSceneConverter converter;
 
     tydra::Node root;

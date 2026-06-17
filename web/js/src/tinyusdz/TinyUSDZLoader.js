@@ -614,6 +614,40 @@ class TinyUSDZLoader extends Loader {
         }
     }
 
+    /**
+     * Apply render-scene optimization options (material/texture dedup, mesh
+     * merging, render-tree flattening) to a native loader instance before
+     * loadFromBinary() runs the Tydra conversion. Each option is only forwarded
+     * when present in `options`, so existing callers are unaffected.
+     *
+     * @param {Object} usd - native TinyUSDZLoaderNative instance
+     * @param {Object} options - parse/load options
+     * @param {boolean} [options.materialDedup] - deduplicate materials/textures by identity
+     * @param {boolean} [options.mergeMeshes] - merge meshes sharing a material
+     * @param {boolean} [options.mergeMeshesBakeTransform] - bake transforms into merged vertices
+     * @param {boolean} [options.flattenRenderTree] - replace hierarchy with a flat render-only tree
+     * @private
+     */
+    _applyConversionLoadOptions(usd, options = {}) {
+        if (!usd) return;
+        if (options.materialDedup !== undefined &&
+            typeof usd.setNativeMaterialDedup === 'function') {
+            usd.setNativeMaterialDedup(!!options.materialDedup);
+        }
+        if (options.mergeMeshes !== undefined &&
+            typeof usd.setNativeMeshMerge === 'function') {
+            usd.setNativeMeshMerge(!!options.mergeMeshes);
+        }
+        if (options.mergeMeshesBakeTransform !== undefined &&
+            typeof usd.setNativeMeshMergeBakeTransform === 'function') {
+            usd.setNativeMeshMergeBakeTransform(!!options.mergeMeshesBakeTransform);
+        }
+        if (options.flattenRenderTree !== undefined &&
+            typeof usd.setNativeFlattenRenderTree === 'function') {
+            usd.setNativeFlattenRenderTree(!!options.flattenRenderTree);
+        }
+    }
+
     // TODO: remove
     // Set AssetResolver callback.
     // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
@@ -789,6 +823,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         this._applySkinningLoadOptions(usd);
+        this._applyConversionLoadOptions(usd, options);
 
         // Decode referenced texture images inside the native loader. For a USDZ
         // this pulls the bytes from the package and decodes them, so the
@@ -977,6 +1012,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         this._applySkinningLoadOptions(usd);
+        this._applyConversionLoadOptions(usd, options);
 
         // Set up async phase callback on Module if provided
         if (options.onPhaseStart) {

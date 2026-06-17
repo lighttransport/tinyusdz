@@ -119,13 +119,15 @@ bool IsShaderId(const PrimSpec &prim, const std::string &id) {
 
 std::string LocalNameForPath(const std::string &material_path,
                              const Path &path) {
+  // Single named-local return so NRVO elides the copy (multiple returns of
+  // distinct objects would defeat it; cf. -Wnrvo).
+  std::string rest;
   const std::string prim = ViewToString(path.prim_part());
-  if (!StartsWith(prim, material_path + "/")) {
-    return std::string();
-  }
-  std::string rest = prim.substr(material_path.size() + 1);
-  if (rest.find('/') != std::string::npos || rest.empty()) {
-    return std::string();
+  if (StartsWith(prim, material_path + "/")) {
+    std::string candidate = prim.substr(material_path.size() + 1);
+    if (candidate.find('/') == std::string::npos && !candidate.empty()) {
+      rest = std::move(candidate);
+    }
   }
   return rest;
 }
