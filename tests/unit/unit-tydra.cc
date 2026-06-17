@@ -2090,8 +2090,13 @@ void tydra_mesh_fallback_policy_test(void) {
         kTexcoordsVec3.size() * sizeof(value::float3));
     mesh_b.texcoords[0].variability = tydra::VertexVariability::Vertex;
 
+    tydra::RenderMesh mesh_c = mesh_a;
+    mesh_c.prim_name = "MeshC";
+    mesh_c.abs_path = "/MeshC";
+
     converter.meshes.push_back(mesh_a);
     converter.meshes.push_back(mesh_b);
+    converter.meshes.push_back(mesh_c);
 
     tydra::Node node_a;
     node_a.prim_name = "MeshA";
@@ -2107,8 +2112,17 @@ void tydra_mesh_fallback_policy_test(void) {
     node_b.abs_path = "/MeshB";
     node_b.id = 1;
 
+    tydra::Node node_c = node_a;
+    node_c.prim_name = "MeshC";
+    node_c.abs_path = "/MeshC";
+    node_c.id = 2;
+
     converter.root_nodes.push_back(node_a);
     converter.root_nodes.push_back(node_b);
+    converter.root_nodes.push_back(node_c);
+    converter.meshMap.add("/MeshA", uint64_t(0));
+    converter.meshMap.add("/MeshB", uint64_t(1));
+    converter.meshMap.add("/MeshC", uint64_t(2));
 
     TEST_CHECK(converter.MergeMeshesImpl(env));
     TEST_CHECK(converter.GetError().empty());
@@ -2116,6 +2130,231 @@ void tydra_mesh_fallback_policy_test(void) {
                std::string::npos);
     TEST_CHECK(converter.GetInfo().find("Cannot merge texcoords slot 0") !=
                std::string::npos);
+    TEST_CHECK(converter.meshes.size() == 2);
+    bool found_merged = false;
+    for (const tydra::RenderMesh &mesh : converter.meshes) {
+      if (mesh.abs_path == "/merged/merged_material_7") {
+        found_merged = true;
+        TEST_CHECK(mesh.points.size() == 6);
+      }
+    }
+    TEST_CHECK(found_merged);
+  }
+
+  {
+    // Heterogeneous vertex-attribute presence: meshes sharing a material but
+    // differing in whether they carry normals must not be merged into a single
+    // mesh whose normals array is shorter than its point count.
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 4;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+    mesh_a.normals.format = tydra::VertexAttributeFormat::Vec3;
+    mesh_a.normals.set_buffer(
+        reinterpret_cast<const uint8_t *>(kTexcoordsVec3.data()),
+        kTexcoordsVec3.size() * sizeof(value::float3));
+    mesh_a.normals.variability = tydra::VertexVariability::Vertex;
+
+    // mesh_b: same material, same topology, but NO normals.
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+    mesh_b.normals = tydra::VertexAttribute{};
+
+    // mesh_c: identical to mesh_a (has normals) -> mergeable with mesh_a.
+    tydra::RenderMesh mesh_c = mesh_a;
+    mesh_c.prim_name = "MeshC";
+    mesh_c.abs_path = "/MeshC";
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+    converter.meshes.push_back(mesh_c);
+
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = value::matrix4d::identity();
+    node_a.global_matrix = value::matrix4d::identity();
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/MeshB";
+    node_b.id = 1;
+
+    tydra::Node node_c = node_a;
+    node_c.prim_name = "MeshC";
+    node_c.abs_path = "/MeshC";
+    node_c.id = 2;
+
+    converter.root_nodes.push_back(node_a);
+    converter.root_nodes.push_back(node_b);
+    converter.root_nodes.push_back(node_c);
+    converter.meshMap.add("/MeshA", uint64_t(0));
+    converter.meshMap.add("/MeshB", uint64_t(1));
+    converter.meshMap.add("/MeshC", uint64_t(2));
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    // mesh_b (no normals) must be refused...
+    TEST_CHECK(converter.GetInfo().find("Skipping mesh merge for /MeshB") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetInfo().find("Cannot merge normals") !=
+               std::string::npos);
+    // ...while mesh_a and mesh_c merge cleanly.
+    bool found_merged = false;
+    for (const tydra::RenderMesh &mesh : converter.meshes) {
+      // No surviving mesh may have a normals array shorter than its points.
+      if (!mesh.normals.empty()) {
+        TEST_CHECK(mesh.normals.vertex_count() == mesh.points.size());
+      }
+      if (mesh.abs_path == "/merged/merged_material_4") {
+        found_merged = true;
+        TEST_CHECK(mesh.points.size() == 6);
+        TEST_CHECK(mesh.normals.vertex_count() == 6);
+      }
+    }
+    TEST_CHECK(found_merged);
+  }
+
+  {
+    // End-to-end regression for the heterogeneous-attribute mesh-merge bug,
+    // mirroring tests/usda/merge-meshes-heterogeneous-attrs.usda. Two meshes
+    // share a material (same merge group) and have identity (bakeable)
+    // transforms, but only one carries a texcoord (st) set. (Texcoords are
+    // used rather than normals because the converter fabricates normals when
+    // absent, which would erase the presence difference.) The merge must be
+    // refused so no mesh ends up with a UV set shorter than its point count.
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Material "Mat" {
+    token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+    def Shader "Preview" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+      token outputs:surface
+    }
+  }
+  def Mesh "MeshWithUV" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+  def Mesh "MeshNoUV" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "merge_meshes_heterogeneous_attrs.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+
+    // Heterogeneous attributes must prevent the merge: both meshes survive and
+    // no synthetic /merged mesh is produced. Any surviving UV set must cover
+    // every vertex of its mesh.
+    TEST_CHECK(scene.meshes.size() == 2);
+    for (const tydra::RenderMesh &mesh : scene.meshes) {
+      TEST_CHECK(mesh.abs_path.find("/merged") == std::string::npos);
+      for (const auto &tc : mesh.texcoords) {
+        TEST_CHECK(tc.second.vertex_count() >= mesh.points.size());
+      }
+    }
+  }
+
+  {
+    // Positive control: when both meshes carry the same attributes they DO
+    // merge, and the merged UV set stays consistent with the points.
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Material "Mat" {
+    token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+    def Shader "Preview" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+      token outputs:surface
+    }
+  }
+  def Mesh "MeshA" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+  def Mesh "MeshB" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "merge_meshes_homogeneous_attrs.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+
+    // The two homogeneous meshes collapse into a single merged mesh whose UV
+    // set covers every vertex.
+    TEST_CHECK(scene.meshes.size() == 1);
+    for (const tydra::RenderMesh &mesh : scene.meshes) {
+      for (const auto &tc : mesh.texcoords) {
+        TEST_CHECK(tc.second.vertex_count() >= mesh.points.size());
+      }
+    }
   }
 
   {
@@ -2203,6 +2442,12 @@ void tydra_mesh_fallback_policy_test(void) {
       TEST_CHECK(converter.root_nodes[1].nodeType == tydra::NodeType::Xform);
       TEST_CHECK(converter.root_nodes[1].id == -1);
     }
+    auto mesh_a_it = converter.meshMap.find("/MeshA");
+    TEST_CHECK(mesh_a_it != converter.meshMap.s_end());
+    if (mesh_a_it != converter.meshMap.s_end()) {
+      TEST_CHECK(mesh_a_it->second == 0);
+    }
+    TEST_CHECK(converter.meshMap.find("/MeshB") == converter.meshMap.s_end());
     TEST_CHECK(converter.GetInfo().find(
                    "Mesh merge compacted mesh records: 3 -> 1.") !=
                std::string::npos);
@@ -2252,6 +2497,134 @@ void tydra_mesh_fallback_policy_test(void) {
         TEST_CHECK(flat_mesh.id == 0);
         TEST_CHECK(flat_mesh.children.empty());
         TEST_CHECK(flat_mesh.local_matrix.m[3][0] == 2.0);
+      }
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Xform "Instancer" {
+    double3 xformOp:translate = (5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def PointInstancer "Points" {
+      rel prototypes = </Root/Proto/Mesh>
+      int[] protoIndices = [0]
+      point3f[] positions = [(1, 0, 0)]
+      quatf[] orientations = [(1, 0, 0, 0)]
+      float3[] scales = [(1, 1, 1)]
+    }
+  }
+  def Xform "Proto" {
+    def Mesh "Mesh" {
+      point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+    }
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "flatten_point_instancer.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.expand_point_instancers = true;
+    env.scene_config.flatten_optimized_render_tree = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(scene.instances.size() == 1);
+    if (scene.instances.size() == 1) {
+      TEST_CHECK(scene.instances[0].global_matrix.m[3][0] == 6.0);
+    }
+    TEST_CHECK(scene.nodes.size() == 1);
+    if (scene.nodes.size() == 1) {
+      TEST_CHECK(scene.nodes[0].abs_path == "/OptimizedRenderRoot");
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Xform "Group" {
+    def Mesh "Mesh" {
+      double3 xformOp:translate.timeSamples = {
+        1: (0, 0, 0),
+        2: (2, 0, 0),
+      }
+      uniform token[] xformOpOrder = ["xformOp:translate"]
+      point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+    }
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "flatten_animation_remap.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.flatten_optimized_render_tree = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.animations.size() == 1);
+    if (scene.animations.size() == 1 &&
+        !scene.animations[0].channels.empty()) {
+      TEST_CHECK(scene.animations[0].channels[0].target_node == 1);
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Material "Mat" {
+  token outputs:surface.connect = </Mat/Preview.outputs:surface>
+  def Shader "Preview" {
+    uniform token info:id = "UsdPreviewSurface"
+    color3f inputs:diffuseColor.timeSamples = {
+      1: (1, 0, 0),
+      2: (0, 1, 0),
+    }
+    token outputs:surface
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "timesampled_material.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    const Prim *prim{nullptr};
+    TEST_CHECK(stage.find_prim_at_path(Path("/Mat", ""), prim, &err));
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const Material *material = prim->as<Material>();
+      TEST_CHECK(material != nullptr);
+      if (material) {
+        tydra::RenderSceneConverterEnv env(stage);
+        tydra::RenderSceneConverter converter;
+        std::string signature;
+        TEST_CHECK(!converter.BuildMaterialSourceSignature(
+            env, Path("/Mat", ""), *material, &signature));
       }
     }
   }
