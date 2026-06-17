@@ -28,6 +28,8 @@
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "tydra/texture-util.hh"
+#include "usdz-geometry-optimize.hh"
+#include "usdz-material-optimize.hh"
 
 // Emscripten's <stdio.h> defines `stdout` as a self-referential macro
 // (`#define stdout (stdout)`) so the same identifier works both as a
@@ -56,6 +58,18 @@ namespace {
 // rewritten). 1e6 is ~20x the largest observed real scene yet still cheap
 // (pointer/string per entry) and wasm32-heap-safe.
 constexpr size_t kMaxAssetCollectCount = 1000000;
+
+size_t FileSizeOrZero(const std::string &filename) {
+  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
+  if (!ifs) {
+    return 0;
+  }
+  const std::streampos pos = ifs.tellg();
+  if (pos < 0) {
+    return 0;
+  }
+  return static_cast<size_t>(pos);
+}
 
 void Log(bool verbose, const std::string &msg) {
   if (verbose) {
@@ -1723,12 +1737,28 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   }
 
+  const bool material_optimization_enabled =
+      options.material_optimization != MaterialOptimizationMode::Off;
+  const bool geometry_optimization_enabled =
+      options.geometry_optimization != GeometryOptimizationMode::Off;
+  const bool use_flattened_output =
+      options.flatten || options.arkit_compatible ||
+      material_optimization_enabled || geometry_optimization_enabled;
+
   if (!options.flatten && options.arkit_compatible && warn) {
     *warn += "ARKit-compatible USDZ requires a flattened package; ignoring "
              "-noFlatten.\n";
   }
+  if (!options.flatten && material_optimization_enabled && warn) {
+    *warn += "Material optimization requires a flattened package; ignoring "
+             "-noFlatten.\n";
+  }
+  if (!options.flatten && geometry_optimization_enabled && warn) {
+    *warn += "Geometry optimization requires a flattened package; ignoring "
+             "-noFlatten.\n";
+  }
 
-  if (!options.flatten && !options.arkit_compatible &&
+  if (!use_flattened_output &&
       options.output_format == OutputFormat::USDZ) {
     return ConvertNonFlattenUSDZ(options, resolver, search_paths, stats, warn,
                                  err);
@@ -1740,7 +1770,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   bool has_layer_for_write = false;
   std::string lwarn, lerr;
 
-  if (options.flatten || options.arkit_compatible) {
+  if (use_flattened_output) {
     Log(options.verbose, "Loading + compositing (flatten): " + root_input);
     timer.begin("load-layer");
     Layer root_layer;
@@ -1826,6 +1856,100 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     stage.metas().doc = doc;
     if (has_layer_for_write) {
       layer_for_write.metas().doc = doc;
+    }
+  }
+
+  // --- Optional material/shader optimization ---
+  if (options.material_optimization != MaterialOptimizationMode::Off) {
+    if (!has_layer_for_write) {
+      if (warn) {
+        *warn += "Material optimization requires Layer-based conversion; "
+                 "skipping.\n";
+      }
+    } else {
+      Log(options.verbose, "Optimizing materials.");
+      timer.begin("optimize-materials");
+      MaterialOptimizationStats opt_stats;
+      std::string owarn, oerr;
+      if (!OptimizeMaterialsInLayer(options, &layer_for_write, &opt_stats,
+                                    &owarn, &oerr)) {
+        if (err) {
+          *err = "Material optimization failed: " + oerr;
+        }
+        return false;
+      }
+      if (warn) {
+        *warn += owarn;
+      }
+      if (stats) {
+        stats->num_materials_before = opt_stats.num_materials_before;
+        stats->num_materials_after = opt_stats.num_materials_after;
+        stats->num_materials_deduped = opt_stats.num_materials_deduped;
+        stats->num_materials_preview_converted =
+            opt_stats.num_materials_preview_converted;
+        stats->num_materials_skipped = opt_stats.num_materials_skipped;
+        stats->num_material_atlas_materials = opt_stats.num_atlas_materials;
+        stats->num_material_atlas_textures = opt_stats.num_atlas_textures;
+      }
+      Log(options.verbose,
+          "Materials: " + std::to_string(opt_stats.num_materials_before) +
+              " -> " + std::to_string(opt_stats.num_materials_after) +
+              ", deduped " +
+              std::to_string(opt_stats.num_materials_deduped) + ".");
+      if (options.arkit_compatible) {
+        std::string rwarn, rerr;
+        if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+                                    &rerr)) {
+          if (err) {
+            *err = "LayerToStage after material optimization failed: " + rerr;
+          }
+          return false;
+        }
+        if (warn) {
+          *warn += rwarn;
+        }
+      }
+    }
+  }
+
+  // --- Optional geometry optimization ---
+  if (options.geometry_optimization != GeometryOptimizationMode::Off) {
+    if (!has_layer_for_write) {
+      if (warn) {
+        *warn += "Geometry optimization requires Layer-based conversion; "
+                 "skipping.\n";
+      }
+    } else {
+      Log(options.verbose, "Optimizing geometry.");
+      timer.begin("optimize-geometry");
+      GeometryOptimizationStats opt_stats;
+      std::string owarn, oerr;
+      if (!OptimizeGeometryInLayer(options, &layer_for_write, &opt_stats,
+                                   &owarn, &oerr)) {
+        if (err) {
+          *err = "Geometry optimization failed: " + oerr;
+        }
+        return false;
+      }
+      if (warn) {
+        *warn += owarn;
+      }
+      if (stats) {
+        stats->num_meshes_before = opt_stats.num_meshes_before;
+        stats->num_meshes_after = opt_stats.num_meshes_after;
+        stats->num_meshes_eligible = opt_stats.num_meshes_eligible;
+        stats->num_meshes_merged = opt_stats.num_meshes_merged;
+        stats->num_meshes_skipped = opt_stats.num_meshes_skipped;
+        stats->num_mesh_aggregates = opt_stats.num_mesh_aggregates;
+        stats->num_faces_merged = opt_stats.num_faces_merged;
+        stats->num_points_merged = opt_stats.num_points_merged;
+      }
+      Log(options.verbose,
+          "Meshes: " + std::to_string(opt_stats.num_meshes_before) + " -> " +
+              std::to_string(opt_stats.num_meshes_after) + ", merged " +
+              std::to_string(opt_stats.num_meshes_merged) + " into " +
+              std::to_string(opt_stats.num_mesh_aggregates) +
+              " aggregate(s).");
     }
   }
 
@@ -2265,8 +2389,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     }
   } else {
     if (stats) {
-      // For flat files, report filesystem size when available.
-      stats->output_size = 0;
+      stats->output_size = FileSizeOrZero(options.output);
     }
   }
 

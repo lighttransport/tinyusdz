@@ -115,9 +115,9 @@ std::string FindFile(const std::string &filepath, const std::vector<std::string>
 /// '/', './' and '../' runs) and then dropping leading directory components
 /// one at a time (longest suffix first, down to the basename).
 ///
-/// e.g. "../../../../../USD_Exports/Scene/Assets/SM_Ppe3.usd" ->
-///   ["USD_Exports/Scene/Assets/SM_Ppe3.usd", "Scene/Assets/SM_Ppe3.usd",
-///    "Assets/SM_Ppe3.usd", "SM_Ppe3.usd"]
+/// e.g. "../../../../../USD_Exports/Scene/Assets/mesh.usd" ->
+///   ["USD_Exports/Scene/Assets/mesh.usd", "Scene/Assets/mesh.usd",
+///    "Assets/mesh.usd", "mesh.usd"]
 ///
 /// The input path itself is never included. Used to rebase composition arcs
 /// authored against another machine's directory layout (e.g. UnrealEngine USD

@@ -276,8 +276,9 @@ else()
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()
 
-# Export HEAPU8 for zero-copy streaming transfer from JS to WASM
-string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+# Export heap views for zero-copy streaming and typed pointer descriptors used
+# by the web loader fast path.
+string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
 
 message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
 
