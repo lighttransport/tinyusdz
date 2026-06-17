@@ -1,0 +1,54 @@
+#usda 1.0
+(
+    doc = "Mesh merge fixture with partial material subsets; uncovered faces inherit the mesh binding."
+)
+
+def Xform "Root"
+{
+    def Material "MatA"
+    {
+    }
+
+    def Material "MatB"
+    {
+    }
+
+    def Xform "A"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/MatB>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3, 3]
+            int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+
+            def GeomSubset "SubsetA"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatA>
+            }
+        }
+    }
+
+    def Xform "B"
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/MatB>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3, 3]
+            int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+
+            def GeomSubset "SubsetA"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatA>
+            }
+        }
+    }
+}

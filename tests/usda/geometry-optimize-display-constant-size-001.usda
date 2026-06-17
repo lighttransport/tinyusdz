@@ -1,0 +1,48 @@
+#usda 1.0
+(
+    doc = "Mesh merge fixture with multi-value constant display primvars; only one value is merge-safe."
+)
+
+def Xform "Root"
+{
+    def Material "Mat"
+    {
+    }
+
+    def Xform "A"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0)] (
+                interpolation = "constant"
+            )
+            float[] primvars:displayOpacity = [0.25, 0.75] (
+                interpolation = "constant"
+            )
+        }
+    }
+
+    def Xform "B"
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0)] (
+                interpolation = "constant"
+            )
+            float[] primvars:displayOpacity = [0.25, 0.75] (
+                interpolation = "constant"
+            )
+        }
+    }
+}

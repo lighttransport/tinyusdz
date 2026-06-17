@@ -600,6 +600,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
     ${PROJECT_SOURCE_DIR}/src/usdz-convert.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-geometry-optimize.cc
+    ${PROJECT_SOURCE_DIR}/src/usdz-material-optimize.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/value-eval-util.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc

@@ -682,15 +682,40 @@ export function rootUsdFromMap(assetMap, preferred) {
 
 // Convert an asset map (Map<path, Uint8Array>) into a USDZ Uint8Array.
 //
+function isMaterialOptimizationEnabled(opts) {
+  const mode = String((opts && (opts.optimizeMaterials || opts.materialOptimization)) || 'off').toLowerCase();
+  return mode !== 'off' && mode !== 'none';
+}
+
+function isGeometryOptimizationEnabled(opts) {
+  const mode = String((opts && (opts.optimizeGeometry || opts.optimizeMeshes || opts.geometryOptimization)) || 'off').toLowerCase();
+  return mode !== 'off' && mode !== 'none';
+}
+
 function exportUSDZ(usd, remap, opts) {
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
+  const optimizeMaterials = String(opts.optimizeMaterials || opts.materialOptimization || 'off').toLowerCase();
+  const optimizeGeometry = String(opts.optimizeGeometry || opts.optimizeMeshes || opts.geometryOptimization || 'off').toLowerCase();
+  const materialOptimizationEnabled = isMaterialOptimizationEnabled(opts);
+  const geometryOptimizationEnabled = isGeometryOptimizationEnabled(opts);
   const exportOpts = {
     rootLayerFormat: opts.arkitCompatible ? 'usdc' : rootLayerFormat,
     arkitCompatible: !!opts.arkitCompatible,
+    optimizeMaterials,
+    optimizeGeometry,
+    materialAtlasSize: opts.materialAtlasSize || 4096,
+    materialAtlasTileSize: opts.materialAtlasTileSize || 512,
+    materialAtlasPadding: opts.materialAtlasPadding == null ? 2 : opts.materialAtlasPadding,
+    materialAtlasMinGroupSize: opts.materialAtlasMinGroupSize || 2,
+    meshMergeMaxInputFaces: opts.meshMergeMaxInputFaces || 2048,
+    meshMergeMaxInputPoints: opts.meshMergeMaxInputPoints || 4096,
+    meshMergeMaxAggregateFaces: opts.meshMergeMaxAggregateFaces || 65536,
+    meshMergeMinGroupSize: opts.meshMergeMinGroupSize || 2,
   };
   if (opts.flatten === false && !opts.arkitCompatible &&
+      !materialOptimizationEnabled && !geometryOptimizationEnabled &&
       typeof usd.exportLayerAsUSDZWithOptions === 'function') {
-    return usd.exportLayerAsUSDZWithOptions({ rootLayerFormat: 'usda' });
+    return usd.exportLayerAsUSDZWithOptions({ ...exportOpts, rootLayerFormat: 'usda' });
   }
   const hasRemap = remap && Object.keys(remap).length > 0;
   // Faithful path: when no texture path remapping is needed (passthrough /
@@ -701,9 +726,11 @@ function exportUSDZ(usd, remap, opts) {
   // or ARKit metadata rewrite is required.
   if (!hasRemap && !opts.arkitCompatible &&
       typeof usd.exportLayerAsUSDZWithOptions === 'function') {
-    return usd.exportLayerAsUSDZWithOptions({ rootLayerFormat });
+    return usd.exportLayerAsUSDZWithOptions(exportOpts);
   }
-  const hasOptions = exportOpts.rootLayerFormat !== 'usdc' || exportOpts.arkitCompatible;
+  const hasOptions = exportOpts.rootLayerFormat !== 'usdc' ||
+    exportOpts.arkitCompatible || materialOptimizationEnabled ||
+    geometryOptimizationEnabled;
   if (typeof usd.exportAsUSDZWithOptions === 'function' && (hasRemap || hasOptions)) {
     return usd.exportAsUSDZWithOptions(remap || {}, exportOpts);
   }
@@ -753,6 +780,8 @@ function shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) 
     opts.reencode === false &&
     textureFormat === 'keep' &&
     rootLayerFormat === 'usdc' &&
+    !isMaterialOptimizationEnabled(opts) &&
+    !isGeometryOptimizationEnabled(opts) &&
     (opts.maxTextureSize || 0) <= 0 &&
     (opts.targetTextureBytes || 0) <= 0 &&
     !opts.arkitCompatible &&
@@ -776,6 +805,8 @@ function shouldUseLowHeapStageFlattenedUSDZ(rootPath, assetMap, opts, textureFor
     opts.flatten !== false &&
     opts.reencode === false &&
     textureFormat === 'keep' &&
+    !isMaterialOptimizationEnabled(opts) &&
+    !isGeometryOptimizationEnabled(opts) &&
     (opts.maxTextureSize || 0) <= 0 &&
     (opts.targetTextureBytes || 0) <= 0 &&
     typeof opts.textureProcessor !== 'function' &&
@@ -1129,7 +1160,8 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
     if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
-    const flatten = opts.flatten !== false || !!opts.arkitCompatible;
+    const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
+      isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts);
     if (flatten) {
       if (typeof usd.flattenLayer === 'function') {
         if (!usd.flattenLayer()) throw new Error('Layer flatten failed: ' + usd.error());
@@ -1279,7 +1311,8 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   }
 
   const rootLayerFormat = String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
-  const flatten = opts.flatten !== false || !!opts.arkitCompatible;
+  const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
+    isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts);
 
   const images = [...assetMap.keys()].filter(isImageName);
   if (/\.usdz$/i.test(rootPath)) {
