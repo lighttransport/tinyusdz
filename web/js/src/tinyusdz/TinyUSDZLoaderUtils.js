@@ -662,6 +662,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Helper to load texture immediately or queue for later
         const loadOrQueueTexture = (mapProperty, textureId, textureOptions = {}) => {
+            // Opt-out for geometry/structure-focused viewers that don't need
+            // textures (avoids fetching — and 404-ing on — unresolved texture
+            // URIs).
+            if (options.skipTextures) {
+                return;
+            }
             if (textureManager) {
                 // Delayed mode: queue texture for later loading
                 textureManager.queueTexture(material, mapProperty, textureId, usdScene, textureOptions);
@@ -671,7 +677,17 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     material[mapProperty] = texture;
                     material.needsUpdate = true;
                 }).catch((err) => {
-                    console.error(`failed to load ${mapProperty} texture:`, err);
+                    // Deduplicate: scenes can reference the same missing/failing
+                    // texture thousands of times (and re-convert on every option
+                    // toggle), which floods the console. Log each unique failure
+                    // once.
+                    const key = `${mapProperty}:${err && err.message ? err.message : String(err)}`;
+                    const seen = (TinyUSDZLoaderUtils._textureErrorSeen ||
+                        (TinyUSDZLoaderUtils._textureErrorSeen = new Set()));
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        console.warn(`failed to load ${mapProperty} texture (further identical errors suppressed):`, err);
+                    }
                 });
             }
         };
@@ -1283,7 +1299,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 envMapIntensity: options.envMapIntensity || 1.0,
                 textureCache: options.textureCache || new Map(),
                 doubleSided,
-                textureLoadingManager: options.textureLoadingManager || null
+                textureLoadingManager: options.textureLoadingManager || null,
+                skipTextures: options.skipTextures || false
             });
             if (options._debugState) {
                 options._debugState.materialConvertMs += performance.now() - convertStart;
