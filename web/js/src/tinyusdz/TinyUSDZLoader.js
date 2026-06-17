@@ -153,6 +153,7 @@ class TinyUSDZLoader extends Loader {
      * @param {Function} options.onTydraComplete - Callback for Tydra conversion completion ({meshCount, materialCount, textureCount}) => void
      * @param {Function} options.onTinyUSDZDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
      * @param {boolean} options.debugMemory - Print native heap debug events to console
+     * @param {boolean} options.suppressNativeInfoLogs - Drop native [INFO] stdout logs
      */
     constructor(manager, options = {}) {
         super(manager);
@@ -190,6 +191,7 @@ class TinyUSDZLoader extends Loader {
         this.onTydraComplete_ = options.onTydraComplete || null;
         this.onTinyUSDZDebug_ = options.onTinyUSDZDebug || null;
         this.debugMemory_ = !!options.debugMemory;
+        this.suppressNativeInfoLogs_ = !!options.suppressNativeInfoLogs;
     }
 
     _getBinarySize(binary) {
@@ -399,6 +401,21 @@ class TinyUSDZLoader extends Loader {
             const initOptions = {}
             if (wasmBinary) {
               initOptions.wasmBinary = wasmBinary;
+            }
+            if (this.suppressNativeInfoLogs_) {
+              const filterPrint = (message) => {
+                if (typeof message === 'string' && message.startsWith('[INFO] ')) {
+                  return;
+                }
+                console.log(message);
+              };
+              initOptions.print = filterPrint;
+              initOptions.printErr = (message) => {
+                if (typeof message === 'string' && message.startsWith('[INFO] ')) {
+                  return;
+                }
+                console.error(message);
+              };
             }
             //initOptions.locateFile = function(path, scriptDirectory) {
             //  // Redirect WASM file loading to your custom file

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -27,6 +28,7 @@ struct MaterialEntry {
   size_t sibling_index{0};
   std::string path;
   std::string key;
+  bool preview_key{false};
 };
 
 std::string ViewToString(tstring_view v) {
@@ -64,8 +66,184 @@ std::string MakeMaterialKey(const PrimSpec &material,
   return key;
 }
 
+const PrimSpec *FindChild(const PrimSpec &prim, const std::string &name) {
+  for (const PrimSpec &child : prim.children()) {
+    if (child.name() == name) {
+      return &child;
+    }
+  }
+  return nullptr;
+}
+
+bool GetAttrConnection(const PrimSpec &prim, const std::string &name,
+                       Path *path) {
+  auto it = prim.props().find(name);
+  if (it == prim.props().end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute *attr = it->second.get_attribute_or_null();
+  if (!attr || attr->connections().size() != 1) {
+    return false;
+  }
+  if (path) {
+    *path = attr->connections()[0];
+  }
+  return true;
+}
+
+bool GetTokenAttr(const PrimSpec &prim, const std::string &name,
+                  std::string *value) {
+  auto it = prim.props().find(name);
+  if (it == prim.props().end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute *attr = it->second.get_attribute_or_null();
+  if (!attr || attr->has_timesamples() || attr->has_connections()) {
+    return false;
+  }
+  auto tok = attr->get_value<value::token>();
+  if (!tok) {
+    return false;
+  }
+  if (value) {
+    *value = tok->str();
+  }
+  return true;
+}
+
+bool IsShaderId(const PrimSpec &prim, const std::string &id) {
+  std::string tok;
+  return prim.typeName() == "Shader" && GetTokenAttr(prim, "info:id", &tok) &&
+         tok == id;
+}
+
+std::string LocalNameForPath(const std::string &material_path,
+                             const Path &path) {
+  const std::string prim = ViewToString(path.prim_part());
+  if (!StartsWith(prim, material_path + "/")) {
+    return std::string();
+  }
+  std::string rest = prim.substr(material_path.size() + 1);
+  if (rest.find('/') != std::string::npos || rest.empty()) {
+    return std::string();
+  }
+  return rest;
+}
+
+std::string CanonicalProperty(const std::string &material_path,
+                              const std::string &surface_name,
+                              const PrimSpec &material,
+                              const std::string &prop_name,
+                              const Property &prop) {
+  std::string key = prop_name + "=" + prop.value_type_name() + ":";
+  if (prop.is_attribute()) {
+    const Attribute *attr = prop.get_attribute_or_null();
+    if (attr && attr->has_connections()) {
+      key += "conn(";
+      for (const Path &conn : attr->connections()) {
+        std::string local = LocalNameForPath(material_path, conn);
+        if (local.empty()) {
+          key += conn.full_path_name();
+        } else if (local == surface_name) {
+          key += "<surface>";
+        } else {
+          key += "<" + local + ">";
+        }
+        key += "." + ViewToString(conn.prop_part()) + ";";
+      }
+      key += ")";
+      return key;
+    }
+  }
+
+  PrimSpec tmp(Specifier::Def, "Shader", "_P");
+  tmp.props()[prop_name] = prop;
+  std::string printed = prim::print_primspec(tmp, 0);
+  ReplaceAll(&printed, material_path, "<MATERIAL>");
+  ReplaceAll(&printed, "/" + surface_name, "/<surface>");
+  for (const PrimSpec &child : material.children()) {
+    ReplaceAll(&printed, "/" + child.name(), "/<" + child.name() + ">");
+  }
+  key += printed;
+  return key;
+}
+
+bool MakePreviewMaterialKey(const PrimSpec &material,
+                            const std::string &material_path,
+                            std::string *key) {
+  if (!key || material.typeName() != "Material") {
+    return false;
+  }
+
+  Path surface_path;
+  if (!GetAttrConnection(material, "outputs:surface", &surface_path)) {
+    return false;
+  }
+  const std::string surface_name = LocalNameForPath(material_path, surface_path);
+  if (surface_name.empty()) {
+    return false;
+  }
+  const PrimSpec *surface = FindChild(material, surface_name);
+  if (!surface || !IsShaderId(*surface, "UsdPreviewSurface")) {
+    return false;
+  }
+
+  std::vector<std::string> parts;
+  parts.push_back("PreviewSurface");
+  std::set<std::string> referenced_children;
+  for (const auto &kv : surface->props()) {
+    if (kv.first == "info:id" || kv.first == "outputs:surface") {
+      continue;
+    }
+    if (kv.second.is_attribute()) {
+      const Attribute *attr = kv.second.get_attribute_or_null();
+      if (attr) {
+        for (const Path &conn : attr->connections()) {
+          std::string local = LocalNameForPath(material_path, conn);
+          if (!local.empty() && local != surface_name) {
+            referenced_children.insert(local);
+          }
+        }
+      }
+    }
+    parts.push_back(CanonicalProperty(material_path, surface_name, material,
+                                      kv.first, kv.second));
+  }
+
+  for (const PrimSpec &child : material.children()) {
+    if (child.name() == surface_name) {
+      continue;
+    }
+    if (!referenced_children.count(child.name())) {
+      continue;
+    }
+    std::string child_id;
+    if (!GetTokenAttr(child, "info:id", &child_id) ||
+        (child_id != "UsdUVTexture" && child_id != "UsdPrimvarReader_float2")) {
+      return false;
+    }
+    std::string child_key = child_id + ":";
+    for (const auto &kv : child.props()) {
+      child_key += CanonicalProperty(material_path, surface_name, material,
+                                     kv.first, kv.second);
+      child_key += "|";
+    }
+    parts.push_back(child_key);
+  }
+
+  std::sort(parts.begin() + 1, parts.end());
+  std::string out;
+  for (const std::string &part : parts) {
+    out += part;
+    out += "\n";
+  }
+  *key = std::move(out);
+  return true;
+}
+
 void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
                          std::vector<PrimSpec> *siblings, size_t sibling_index,
+                         MaterialOptimizationMode mode,
                          std::vector<MaterialEntry> *out) {
   if (!ps || !out) {
     return;
@@ -76,14 +254,20 @@ void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
     entry.siblings = siblings;
     entry.sibling_index = sibling_index;
     entry.path = path;
-    entry.key = MakeMaterialKey(*ps, path);
+    if ((mode == MaterialOptimizationMode::Preview ||
+         mode == MaterialOptimizationMode::Atlas) &&
+        MakePreviewMaterialKey(*ps, path, &entry.key)) {
+      entry.preview_key = true;
+    } else {
+      entry.key = MakeMaterialKey(*ps, path);
+    }
     out->push_back(std::move(entry));
   }
 
   std::vector<PrimSpec> &children = ps->children();
   for (size_t i = 0; i < children.size(); i++) {
     CollectMaterialsRec(&children[i], JoinPrimPath(path, children[i].name()),
-                        &children, i, out);
+                        &children, i, mode, out);
   }
 
   for (auto &vs : ps->variantSets()) {
@@ -91,18 +275,19 @@ void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
       PrimSpec &vps = variant.second;
       const std::string variant_path =
           path + "{" + vs.first + "=" + variant.first + "}";
-      CollectMaterialsRec(&vps, variant_path, nullptr, 0, out);
+      CollectMaterialsRec(&vps, variant_path, nullptr, 0, mode, out);
     }
   }
 }
 
-std::vector<MaterialEntry> CollectMaterials(Layer *layer) {
+std::vector<MaterialEntry> CollectMaterials(Layer *layer,
+                                            MaterialOptimizationMode mode) {
   std::vector<MaterialEntry> entries;
   if (!layer) {
     return entries;
   }
   for (auto &kv : layer->primspecs()) {
-    CollectMaterialsRec(&kv.second, "/" + kv.second.name(), nullptr, 0,
+    CollectMaterialsRec(&kv.second, "/" + kv.second.name(), nullptr, 0, mode,
                         &entries);
   }
   return entries;
@@ -277,7 +462,8 @@ bool OptimizeMaterialsInLayer(const UsdzConvertOptions &options, Layer *layer,
     *stats = MaterialOptimizationStats{};
   }
 
-  std::vector<MaterialEntry> materials = CollectMaterials(layer);
+  std::vector<MaterialEntry> materials =
+      CollectMaterials(layer, options.material_optimization);
   if (stats) {
     stats->num_materials_before = materials.size();
   }
@@ -289,14 +475,9 @@ bool OptimizeMaterialsInLayer(const UsdzConvertOptions &options, Layer *layer,
     return true;
   }
 
-  if (options.material_optimization == MaterialOptimizationMode::Preview &&
-      warn) {
-    *warn += "Material optimization preview mode: lossy shader conversion is "
-             "not enabled yet; applying exact material dedupe only.\n";
-  }
   if (options.material_optimization == MaterialOptimizationMode::Atlas && warn) {
     *warn += "Material optimization atlas mode: texture atlas generation is not "
-             "enabled yet; applying exact material dedupe only.\n";
+             "enabled yet; applying preview material dedupe only.\n";
   }
 
   std::map<std::string, std::string> material_remap;
@@ -311,7 +492,8 @@ bool OptimizeMaterialsInLayer(const UsdzConvertOptions &options, Layer *layer,
   (void)rewritten;
   const size_t erased = EraseDuplicateMaterials(&materials, material_remap);
 
-  std::vector<MaterialEntry> after = CollectMaterials(layer);
+  std::vector<MaterialEntry> after =
+      CollectMaterials(layer, options.material_optimization);
   size_t remaining_duplicates = 0;
   for (const MaterialEntry &entry : after) {
     if (material_remap.count(entry.path)) {
@@ -325,6 +507,14 @@ bool OptimizeMaterialsInLayer(const UsdzConvertOptions &options, Layer *layer,
             ? stats->num_materials_before - stats->num_materials_after
             : erased;
     stats->num_materials_skipped = remaining_duplicates;
+    if (options.material_optimization == MaterialOptimizationMode::Preview ||
+        options.material_optimization == MaterialOptimizationMode::Atlas) {
+      for (const MaterialEntry &entry : materials) {
+        if (entry.preview_key) {
+          stats->num_materials_preview_converted++;
+        }
+      }
+    }
   }
 
   if (remaining_duplicates > 0 && warn) {

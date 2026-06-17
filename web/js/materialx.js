@@ -3,11 +3,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
@@ -37,6 +37,17 @@ const TONE_MAPPINGS = {
     'agx': THREE.AgXToneMapping,
     'neutral': THREE.NeutralToneMapping
 };
+
+const TRACE_LOAD = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
+const TRACE_LOAD_T0 = performance.now();
+
+function traceLoadPhase(name, detail = '') {
+    if (!TRACE_LOAD) {
+        return;
+    }
+    const elapsed = (performance.now() - TRACE_LOAD_T0).toFixed(1);
+    console.log(`[materialx-load] ${elapsed} ms ${name}${detail ? ` ${detail}` : ''}`);
+}
 
 // ACES 2.0 Tonemapping Shader
 // Simplified real-time approximation based on ACES 2.0 Output Transform
@@ -240,6 +251,22 @@ def Xform "World"
 // Global State
 // ============================================================================
 
+function createTimer() {
+    if (typeof THREE.Timer === 'function') {
+        return new THREE.Timer();
+    }
+    const clock = new THREE.Clock();
+    return {
+        reset() {
+            clock.stop();
+            clock.start();
+        },
+        getDelta() {
+            return clock.getDelta();
+        }
+    };
+}
+
 // Three.js core objects
 const threeState = {
     scene: null,
@@ -248,7 +275,7 @@ const threeState = {
     controls: null,
     pmremGenerator: null,
     envMap: null,
-    timer: new THREE.Timer(),
+    timer: createTimer(),
     gridHelper: null,
     axesHelper: null
 };
@@ -311,6 +338,15 @@ const guiState = {
 const settings = {
     materialType: 'auto',
     materialImplementation: 'physical', // 'physical' | 'openpbr' | 'auto'
+    fastMaterials: false,
+    fastMaterialMode: 'preview',
+    deferTextures: false,
+    textureConcurrency: 4,
+    buildYieldMode: 'raf',
+    buildYieldIntervalMs: 250,
+    useMeshPtr: true,
+    computeMissingTangents: false,
+    suppressNativeInfoLogs: true,
     envMapPreset: 'goegap_1k',
     envMapIntensity: 1.0,
     envConstantColor: '#ffffff',
@@ -414,14 +450,48 @@ function linearToSRGB(color) {
 // ============================================================================
 
 async function init() {
+    traceLoadPhase('init:start');
     // URL parameter support for batch rendering (check early for autoRender mode)
     const urlParams = new URLSearchParams(window.location.search);
     const usdPath = urlParams.get('usd');
     const autoRender = urlParams.get('autoRender') === 'true';
+    settings.fastMaterials = urlParams.get('fastMaterials') === 'true';
+    if (urlParams.has('fastMaterialMode')) {
+        settings.fastMaterialMode = urlParams.get('fastMaterialMode') || settings.fastMaterialMode;
+    }
+    settings.deferTextures = urlParams.get('deferTextures') === 'true' || settings.fastMaterials;
+    if (urlParams.has('textureConcurrency')) {
+        const n = Number.parseInt(urlParams.get('textureConcurrency'), 10);
+        if (Number.isFinite(n) && n > 0) {
+            settings.textureConcurrency = n;
+        }
+    }
+    if (urlParams.has('buildYieldMode')) {
+        const mode = urlParams.get('buildYieldMode');
+        if (['raf', 'timeout', 'none'].includes(mode)) {
+            settings.buildYieldMode = mode;
+        }
+    }
+    if (urlParams.has('buildYieldIntervalMs')) {
+        const n = Number.parseFloat(urlParams.get('buildYieldIntervalMs'));
+        if (Number.isFinite(n) && n >= 0) {
+            settings.buildYieldIntervalMs = n;
+        }
+    }
+    if (urlParams.has('useMeshPtr')) {
+        settings.useMeshPtr = urlParams.get('useMeshPtr') !== 'false';
+    }
+    if (urlParams.has('computeMissingTangents')) {
+        settings.computeMissingTangents = urlParams.get('computeMissingTangents') === 'true';
+    }
+    if (urlParams.has('suppressNativeInfoLogs')) {
+        settings.suppressNativeInfoLogs = urlParams.get('suppressNativeInfoLogs') !== 'false';
+    }
     const renderTimeout = parseInt(urlParams.get('renderTimeout') || '60000', 10);
 
     try {
         initThreeJS();
+        traceLoadPhase('init:three-ready');
     } catch (error) {
         console.error('Initialization failed:', error);
         if (autoRender) {
@@ -433,10 +503,14 @@ async function init() {
     }
 
     initControls();
+    traceLoadPhase('init:controls-ready');
     await initLoader();
+    traceLoadPhase('init:loader-ready');
     setupGUI();
+    traceLoadPhase('init:gui-ready');
     setupEventListeners();
     await loadEnvironment(settings.envMapPreset);
+    traceLoadPhase('init:environment-ready');
 
     if (usdPath) {
         // Load USD file from URL parameter
@@ -447,6 +521,7 @@ async function init() {
                 throw new Error(`Failed to fetch ${usdPath}: ${response.statusText}`);
             }
             const arrayBuffer = await response.arrayBuffer();
+            traceLoadPhase('usd:fetch-done', `${arrayBuffer.byteLength} bytes`);
             const data = new Uint8Array(arrayBuffer);
             await loadUSDFromData(data, usdPath);
         } catch (error) {
@@ -463,6 +538,7 @@ async function init() {
     }
 
     animate();
+    traceLoadPhase('init:animate-started');
 
     if (autoRender) {
         // Signal completion after render stabilization (default 15 seconds)
@@ -529,8 +605,13 @@ function initControls() {
 
 async function initLoader() {
     updateStatus('Initializing TinyUSDZ WASM...');
-    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+    traceLoadPhase('wasm:init:start');
+    loaderState.loader = new TinyUSDZLoader(null, {
+        maxMemoryLimitMB: 512,
+        suppressNativeInfoLogs: settings.suppressNativeInfoLogs
+    });
     await loaderState.loader.init({ useMemory64: false });
+    traceLoadPhase('wasm:init:done');
 
     // Set TinyUSDZ WASM module reference for HDR/EXR texture decoding fallback
     const tinyusdzModule = loaderState.loader.native_;
@@ -709,6 +790,34 @@ function setupMaterialTypeFolder() {
 
     materialTypeFolder.add(settings, 'materialImplementation', ['physical', 'openpbr', 'auto'])
         .name('Implementation')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'fastMaterials')
+        .name('Fast Materials')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'fastMaterialMode', ['preview'])
+        .name('Fast Mode')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'deferTextures')
+        .name('Defer Textures')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'buildYieldMode', ['raf', 'timeout', 'none'])
+        .name('Build Yield')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'buildYieldIntervalMs', 0, 1000, 1)
+        .name('Yield Interval')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'useMeshPtr')
+        .name('Mesh Ptr')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'computeMissingTangents')
+        .name('Tangents')
         .onChange(reloadMaterials);
 
     // Show discrepancy report
@@ -1598,27 +1707,90 @@ async function loadUSDFromFile(file) {
 }
 
 async function loadUSDFromData(data, filename) {
+    traceLoadPhase('loadUSDFromData:start', `${filename} ${data.byteLength} bytes`);
     clearScene();
+    traceLoadPhase('loadUSDFromData:clearScene-done');
 
     loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
 
-    const success = loaderState.nativeLoader.loadFromBinary(data, filename);
+    traceLoadPhase('native:loadFromBinary:start');
+    const previousDebugCallback = loaderState.loader.native_.onTinyUSDZDebug;
+    if (TRACE_LOAD) {
+        loaderState.loader.native_.onTinyUSDZDebug = (event) => {
+            if (event && event.phase) {
+                traceLoadPhase(`native:${event.phase}`, event.detail || '');
+            }
+        };
+    }
+    let success = false;
+    try {
+        success = withNativeInfoLogFilter(() => loaderState.nativeLoader.loadFromBinary(data, filename));
+    } finally {
+        if (TRACE_LOAD) {
+            loaderState.loader.native_.onTinyUSDZDebug = previousDebugCallback;
+        }
+    }
+    traceLoadPhase('native:loadFromBinary:done', `success=${success}`);
     if (!success) {
         updateStatus(`Failed to parse USD file: ${filename}`);
         return;
     }
 
+    traceLoadPhase('metadata:start');
     loadSceneMetadata();
+    traceLoadPhase('metadata:done');
+    traceLoadPhase('buildSceneGraph:start');
     await buildSceneGraph();
+    traceLoadPhase('buildSceneGraph:done');
+    traceLoadPhase('loadDomeLight:start');
     await loadDomeLight();
+    traceLoadPhase('loadDomeLight:done');
     // Animation disabled for now - may revisit later
     // loadAnimations();
     initUpAxisConversion();
     applyUpAxisConversion();
     fitCameraToScene();
     updateHelpersSize();
+    traceLoadPhase('materialUI:start');
     updateMaterialUI();
+    traceLoadPhase('materialUI:done');
+    traceLoadPhase('modelInfo:start');
     updateModelInfo();
+    traceLoadPhase('modelInfo:done');
+}
+
+function isNativeInfoLog(args) {
+    if (!settings.suppressNativeInfoLogs) {
+        return false;
+    }
+    if (!args.length || typeof args[0] !== 'string') {
+        return false;
+    }
+    return args[0].startsWith('[INFO] ');
+}
+
+function withNativeInfoLogFilter(fn) {
+    if (!settings.suppressNativeInfoLogs) {
+        return fn();
+    }
+    const originalLog = console.log;
+    const originalInfo = console.info;
+    console.log = (...args) => {
+        if (!isNativeInfoLog(args)) {
+            originalLog.apply(console, args);
+        }
+    };
+    console.info = (...args) => {
+        if (!isNativeInfoLog(args)) {
+            originalInfo.apply(console, args);
+        }
+    };
+    try {
+        return fn();
+    } finally {
+        console.log = originalLog;
+        console.info = originalInfo;
+    }
 }
 
 function loadSceneMetadata() {
@@ -1639,6 +1811,7 @@ function loadSceneMetadata() {
  * This properly reflects USD Prim xformOps hierarchy
  */
 async function buildSceneGraph() {
+    traceLoadPhase('buildSceneGraph:reset-state');
     // Clear state
     sceneState.materialData = [];
     sceneState.materials = [];
@@ -1646,6 +1819,7 @@ async function buildSceneGraph() {
 
     // Get the USD root node for hierarchy traversal
     const usdRootNode = loaderState.nativeLoader.getDefaultRootNode();
+    traceLoadPhase('buildSceneGraph:root-node', usdRootNode ? 'found' : 'missing');
     if (!usdRootNode) {
         console.warn('No default root node found, falling back to flat mesh loading');
         await buildMeshesFallback();
@@ -1667,22 +1841,53 @@ async function buildSceneGraph() {
         envMap: threeState.envMap,
         envMapIntensity: settings.envMapIntensity,
         preferredMaterialType: settings.materialType,
-        textureCache: sceneState.textureCache
+        textureCache: sceneState.textureCache,
+        materialCache: new Map(),
+        materialSignatureCache: settings.fastMaterials ? new Map() : null,
+        fastMaterials: settings.fastMaterials,
+        fastMaterialMode: settings.fastMaterialMode,
+        textureLoadingManager: settings.deferTextures ? new TextureLoadingManager() : null,
+        useMeshPtr: settings.useMeshPtr,
+        computeMissingTangents: settings.computeMissingTangents,
+        yieldMode: settings.buildYieldMode,
+        yieldIntervalMs: settings.buildYieldIntervalMs,
+        debugLogEveryMeshes: 250,
+        debugLog: TRACE_LOAD ? (info) => {
+            traceLoadPhase(`loader:${info.stage}`, info.detail || '');
+        } : null
     };
 
     // Build Three.js scene graph from USD hierarchy
+    traceLoadPhase('buildSceneGraph:buildThreeNode:start');
     sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
         loaderState.nativeLoader,
         options
     );
+    traceLoadPhase('buildSceneGraph:buildThreeNode:done');
+    if (options.textureLoadingManager) {
+        traceLoadPhase('textureQueue:start', `${options.textureLoadingManager.total} textures`);
+        options.textureLoadingManager.startLoading({
+            concurrency: settings.textureConcurrency,
+            onProgress: (info) => {
+                if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
+                    traceLoadPhase('textureQueue:progress', `${info.loaded}/${info.total} failed=${info.failed || 0}`);
+                }
+            }
+        }).then((status) => {
+            traceLoadPhase('textureQueue:done', `${status.loaded}/${status.total} failed=${status.failed}`);
+        }).catch((err) => {
+            console.warn('Deferred texture loading failed:', err);
+        });
+    }
 
     // Add to scene
     threeState.scene.add(sceneState.root);
 
     // Collect materials and material data from the scene graph
     collectMaterialsFromScene();
+    traceLoadPhase('buildSceneGraph:collectMaterials:done', `${sceneState.materials.length} materials`);
 
     // Store USD scene reference on meshes for material reloading
     sceneState.root.traverse((child) => {
@@ -1690,6 +1895,7 @@ async function buildSceneGraph() {
             child.userData.usdScene = loaderState.nativeLoader;
         }
     });
+    traceLoadPhase('buildSceneGraph:mesh-userdata:done');
 
     const numMeshes = loaderState.nativeLoader.numMeshes();
     const numMaterials = sceneState.materials.length;

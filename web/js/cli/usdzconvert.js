@@ -95,7 +95,8 @@ Convert options:
   --no-reencode            Copy unmodified textures through unchanged
   --optimize-materials <mode>
                            Material optimization: off, dedupe, preview, atlas.
-                           preview/atlas currently fall back safely to exact dedupe.
+                           preview canonicalizes supported UsdPreviewSurface graphs;
+                           atlas applies preview dedupe without atlas images yet.
   --material-atlas-size <N>       Max generated atlas edge (default 4096)
   --material-atlas-tile-size <N>  Tile edge for atlas mode (default 512)
   --material-atlas-padding <N>    Gutter padding pixels for atlas mode (default 2)

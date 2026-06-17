@@ -63,7 +63,7 @@ omitted the output is `<input>.usdz`.
 
 | Option | Description |
 |--------|-------------|
-| `-optimizeMaterials <off\|dedupe\|preview\|atlas>` | Optimize flattened material/shader networks. `dedupe` merges exact duplicate material subtrees and rewrites material bindings. `preview` and `atlas` are accepted for staged rollout and currently fall back safely to exact dedupe with a warning. |
+| `-optimizeMaterials <off\|dedupe\|preview\|atlas>` | Optimize flattened material/shader networks. `dedupe` merges exact duplicate material subtrees and rewrites material bindings. `preview` canonicalizes supported `UsdPreviewSurface` graphs before dedupe. `atlas` currently applies preview dedupe and warns that atlas image generation is not enabled yet. |
 | `-materialAtlasSize <N>` | Max generated atlas edge for atlas mode (default `4096`). |
 | `-materialAtlasTileSize <N>` | Tile edge for atlas mode (default `512`). |
 | `-materialAtlasPadding <N>` | Atlas gutter padding in pixels (default `2`). |

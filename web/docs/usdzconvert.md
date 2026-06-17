@@ -167,7 +167,7 @@ const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
 | `jpegQuality` | `90` | JPEG quality (1–100). |
 | `pngEncoder` | `'fpng'` | PNG backend (WASM uses fpng). |
 | `maxUsdcMb` / `maxMemMb` | `0` | Raise the USDC write size / memory caps (MB). |
-| `optimizeMaterials` | `'off'` | `'off' \| 'dedupe' \| 'preview' \| 'atlas'`. `dedupe` merges exact duplicate material networks and rewrites bindings. `preview`/`atlas` currently fall back safely to exact dedupe with a warning. |
+| `optimizeMaterials` | `'off'` | `'off' \| 'dedupe' \| 'preview' \| 'atlas'`. `dedupe` merges exact duplicate material networks and rewrites bindings. `preview` canonicalizes supported `UsdPreviewSurface` graphs before dedupe. `atlas` currently applies preview dedupe and warns that atlas image generation is not enabled yet. |
 | `materialAtlasSize` / `materialAtlasTileSize` | `4096` / `512` | Atlas tuning knobs for staged atlas mode. |
 | `materialAtlasPadding` / `materialAtlasMinGroupSize` | `2` / `2` | Atlas gutter and minimum group size for staged atlas mode. |
 | `optimizeGeometry` | `'off'` | `'off' \| 'mergeMeshes'`. Merges eligible static same-material meshes into aggregate meshes for realtime delivery. This requires flattened output and breaks original mesh prim paths/hierarchy. |

@@ -20,6 +20,7 @@
 //
 // Material and texture conversion routines split from render-data.cc
 //
+#include <chrono>
 #include <numeric>
 #include <set>
 
@@ -70,6 +71,14 @@ namespace tinyusdz {
 namespace tydra {
 
 namespace {
+
+using TydraPerfClock = std::chrono::steady_clock;
+
+static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      TydraPerfClock::now() - start)
+                      .count());
+}
 
 template <typename T>
 bool ResolveTypedAnimatableValue(
@@ -1423,40 +1432,16 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       texImage.decoded = tex_loaded;
 
     } else {
-
-      Asset asset;
-      std::string resolvedPath;
-      if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
-
-        // store resolved asset path.
-        texImage.asset_identifier = resolvedPath;
-
-
-        BufferData imageBuffer;
-        imageBuffer.componentType = tydra::ComponentType::UInt8;
-
-        // Steal the asset's bytes (no copy); `asset` is not used afterward.
-        SetBufferDataBytes(imageBuffer, asset.release_buffer());
-
-        // Assign buffer id
-        texImage.buffer_id = int64_t(buffers.size());
-
-        // TODO: Share image data as much as possible.
-        // e.g. Texture A and B uses same image file, but texturing parameter is
-        // different.
-        buffers.emplace_back(std::move(imageBuffer));
-
-        texImage.decoded = false;
-        DCOUT("texture image is read, but not decoded.");
-
-      } else {
-        // store resolved asset path.
-        texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
-        texImage.decoded = false;
-
-        DCOUT("store asset path.");
+      // Metadata-only path. Keep the resolved asset identifier, but do not
+      // read or copy texture bytes during RenderScene conversion. Web/native
+      // clients can fetch the asset lazily when the texture is actually used.
+      std::string resolvedPath = env.asset_resolver.resolve(assetPath.GetAssetPath());
+      if (resolvedPath.empty()) {
+        resolvedPath = assetPath.GetAssetPath();
       }
-
+      texImage.asset_identifier = resolvedPath;
+      texImage.decoded = false;
+      DCOUT("store asset path.");
     }
 
     // colorSpace.
@@ -3442,6 +3427,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     } else {
       RenderMaterial rmat;
+      const auto material_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
                                                   bound_material_path,
                                                   *bound_material, &rmat)) {
@@ -3451,6 +3437,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->convert_material_ns += ElapsedNs(material_start);
+      visitorEnv->material_cache_misses++;
 
       // Assign new material ID
       uint64_t mat_id = rmaterials.size();
@@ -3472,8 +3460,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                                      << " ( " << rmat.name << " ) ");
 
       rmaterials.push_back(rmat);
+      return true;
     }
 
+    visitorEnv->material_cache_hits++;
     return true;
   };
 
@@ -3486,10 +3476,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       return false;
     }
 
+    visitorEnv->material_resolve_calls++;
     std::string local_err;
+    const auto resolve_start = TydraPerfClock::now();
     bool local_found = visitorEnv->converter->GetBoundMaterialCached(
         visitorEnv->env->stage, query_path, purpose, bound_material_path,
         bound_material, &local_err);
+    visitorEnv->resolve_material_ns += ElapsedNs(resolve_start);
 
     if (!local_err.empty()) {
       if (err) {
@@ -3499,6 +3492,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     (*found) = local_found;
+    if (local_found) {
+      visitorEnv->material_resolve_found++;
+    }
     return true;
   };
 
@@ -3699,6 +3695,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMesh rmesh;
 
+      const auto mesh_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ConvertMesh(
               *visitorEnv->env, abs_path, *pmesh, material_path,
               subset_material_path_map, visitorEnv->converter->materialMap,
@@ -3711,6 +3708,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->convert_mesh_ns += ElapsedNs(mesh_start);
 
       uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
       if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
@@ -3728,6 +3726,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       std::string msg = "Converting mesh " +
           std::to_string(visitorEnv->meshes_processed) + "/" +
           std::to_string(visitorEnv->meshes_total);
+      const auto progress_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ReportMeshProgress(
               visitorEnv->meshes_processed, visitorEnv->meshes_total,
               abs_path.full_path_name(), msg)) {
@@ -3736,6 +3735,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->progress_ns += ElapsedNs(progress_start);
       DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
             << ": " << abs_path.full_path_name());
     }
