@@ -212,6 +212,17 @@ struct MeshVisitorEnv {
   const PathPrimMap<Skeleton> *allSkeletons{nullptr};
   const PathPrimMap<SkelRoot> *allSkelRoots{nullptr};
   const PathPrimMap<SkelAnimation> *allAnimations{nullptr};
+
+  // Conversion timing/counters. Nanoseconds are accumulated here to keep
+  // timing code local to the visitor hot path and reported once by the caller.
+  uint64_t resolve_material_ns{0};
+  uint64_t convert_material_ns{0};
+  uint64_t convert_mesh_ns{0};
+  uint64_t progress_ns{0};
+  size_t material_resolve_calls{0};
+  size_t material_resolve_found{0};
+  size_t material_cache_hits{0};
+  size_t material_cache_misses{0};
 };
 
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,

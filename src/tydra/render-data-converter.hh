@@ -816,6 +816,7 @@ class RenderSceneConverter {
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
+  const std::string &GetTimingInfo() const { return _timing_info; }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
@@ -1361,6 +1362,8 @@ class RenderSceneConverter {
     std::string error;
   };
   std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
+  std::string _timing_info;
 
   // Cache frequently-referenced value clip assets/stages while converting.
   std::unordered_map<std::string, std::shared_ptr<Layer>> _value_clip_layer_cache;
