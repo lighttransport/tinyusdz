@@ -563,7 +563,10 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  TUSDZ_LOG_I("path: " << path);
+  // Per-texture trace: keep at debug level. At info level this floods the
+  // console for material-heavy scenes (one line per texture connection, on
+  // every conversion).
+  TUSDZ_LOG_D("path: " << path);
 
   // Check if prop_part is a standard UsdUVTexture output
   bool is_standard_output = (prop_part == kOutputsRGB) ||

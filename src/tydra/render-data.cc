@@ -18,6 +18,7 @@
 //     - Implement spatial hash
 //
 #include <chrono>
+#include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <numeric>
@@ -62,6 +63,8 @@
 #include "tydra/render-data-internal.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
+#include "value-types.hh"  // value::Mult
+#include "xform.hh"        // tinyusdz::inverse
 
 namespace tinyusdz {
 
@@ -2589,11 +2592,16 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   }
 
   // Get the vertex offset for index adjustment.
+#if SIZE_MAX > 0xFFFFFFFFu
+  // Only meaningful where size_t is wider than uint32 (e.g. 64-bit). On a
+  // 32-bit size_t (wasm32) points.size() can never exceed UINT32_MAX, so this
+  // comparison is tautologically false and is compiled out.
   if (dst.points.size() >
       size_t((std::numeric_limits<uint32_t>::max)())) {
     set_merge_error("Cannot merge mesh: vertex offset exceeds uint32 range.");
     return false;
   }
+#endif
   if (src.points.size() >
       size_t((std::numeric_limits<uint32_t>::max)()) - dst.points.size()) {
     set_merge_error("Cannot merge mesh: vertex count exceeds uint32 range.");
@@ -3184,9 +3192,30 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
           node_ptr->id = new_id;
           first_assigned = true;
 
-          // If we baked transforms, reset the node's transform to identity
+          // If we baked transforms, the merged vertices now live in world
+          // space. The node, however, stays in its original place in the scene
+          // graph, so any ancestor (parent) transform would be applied on top
+          // of the already-world-space data by consumers that accumulate local
+          // matrices down the hierarchy (e.g. the three.js exporter).
+          //
+          // Setting local_matrix to identity is NOT enough: world =
+          // local * parent_world, so the surviving parent_world would still be
+          // re-applied. Instead choose local' = inverse(global) * local, which
+          // gives local' * parent_world = inverse(global) * (local *
+          // parent_world) = inverse(global) * global = identity. The node then
+          // contributes no net world transform and the baked vertices render in
+          // place regardless of how deep the node sits.
           if (env.scene_config.merge_meshes_bake_transform) {
-            node_ptr->local_matrix = value::matrix4d::identity();
+            value::matrix4d inv_global;
+            if (tinyusdz::inverse(node_ptr->global_matrix, inv_global)) {
+              node_ptr->local_matrix =
+                  value::Mult(inv_global, node_ptr->local_matrix);
+            } else {
+              // Degenerate (non-invertible) global transform: fall back to
+              // identity local; the world-space vertices are still correct as
+              // long as no ancestor transform exists.
+              node_ptr->local_matrix = value::matrix4d::identity();
+            }
             node_ptr->global_matrix = value::matrix4d::identity();
           }
         } else {

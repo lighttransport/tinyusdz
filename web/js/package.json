@@ -20,6 +20,7 @@
     "dev:usdzconvert": "vite --open /usdzconvert.html",
     "dev:usddiff": "vite --open /usddiff.html",
     "dev:udim": "vite --open /udim.html",
+    "dev:dedup": "vite --open /material-dedup.html",
     "dev:urdf": "vite --open /urdf.html",
     "dev:http-resolver": "vite --open /http-asset-resolver.html",
     "dev:usd-assets": "vite --open /usd-assets-view.html",
