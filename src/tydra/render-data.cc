@@ -17,8 +17,10 @@
 //     indices/weights, BlendShape points, ...) as much as possible.
 //     - Implement spatial hash
 //
+#include <chrono>
 #include <numeric>
 #include <set>
+#include <sstream>
 
 #include "common-utils.hh"
 #include "common-types.hh"
@@ -61,6 +63,23 @@
 namespace tinyusdz {
 
 namespace tydra {
+
+namespace {
+
+using TydraPerfClock = std::chrono::steady_clock;
+
+static double ElapsedMs(const TydraPerfClock::time_point &start) {
+  return double(std::chrono::duration_cast<std::chrono::microseconds>(
+                    TydraPerfClock::now() - start)
+                    .count()) *
+         0.001;
+}
+
+static double NsToMs(const uint64_t ns) {
+  return double(ns) * 0.000001;
+}
+
+}  // namespace
 
 //
 // Convert GeomCube to RenderMesh by generating tessellated geometry
@@ -671,8 +690,22 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
+  const auto total_start = TydraPerfClock::now();
+  double count_ms = 0.0;
+  double skel_map_ms = 0.0;
+  double xform_ms = 0.0;
+  double visit_prims_ms = 0.0;
+  double standalone_skel_ms = 0.0;
+  double skel_anim_ms = 0.0;
+  double hierarchy_ms = 0.0;
+  double xform_anim_ms = 0.0;
+  double merge_ms = 0.0;
+  double instance_map_ms = 0.0;
+  double stage_meta_ms = 0.0;
+
   // Reset progress state
   _progress_info = DetailedProgressInfo{};
+  _timing_info.clear();
 
   // Clear lookup caches from previous conversion
   _skelPathToIndex.clear();
@@ -704,6 +737,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   PathPrimMap<GeomPointInstancer> pointInstancerPrimMap;
 
   {
+    const auto phase_start = TydraPerfClock::now();
     // Iterative stack-based traversal visiting each prim exactly once
     struct StackEntry {
       const Prim *parent;
@@ -784,12 +818,17 @@ bool RenderSceneConverter::ConvertToRenderScene(
         }
       }
     }
+    count_ms = ElapsedMs(phase_start);
   }
   DCOUT("[Tydra] Pre-discovered " << allSkeletons.size() << " skeletons, "
         << allSkelRoots.size() << " skelroots, " << allAnimations.size() << " animations");
 
-  SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
-                                     &_skelRootToSkeleton);
+  {
+    const auto phase_start = TydraPerfClock::now();
+    SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
+                                       &_skelRootToSkeleton);
+    skel_map_ms = ElapsedMs(phase_start);
+  }
   DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
 
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
@@ -829,8 +868,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
 
   XformNode xform_node;
-  if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
-    PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
+      PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
+    }
+    xform_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after xform building (20%)
@@ -870,47 +913,59 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _allSkelRoots = &allSkelRoots;
   _allAnimations = &allAnimations;
 
-  bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+  {
+    const auto phase_start = TydraPerfClock::now();
+    bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
-  if (!ret) {
-    PUSH_ERROR_AND_RETURN(err);
+    visit_prims_ms = ElapsedMs(phase_start);
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN(err);
+    }
   }
 
   // Add standalone skeletons (not referenced by any mesh) to the render scene.
   // This ensures skeletons with SkelAnimations but no bound meshes are still
   // available for visualization (e.g. bone hierarchy display).
-  for (const auto &skelEntry : allSkeletons) {
-    const std::string &skelPathStr = skelEntry.first;
-    if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
-      continue;  // Already added by a mesh binding
-    }
-    const Skeleton *skelPtr = skelEntry.second;
-    if (!skelPtr) continue;
+  {
+    const auto phase_start = TydraPerfClock::now();
+    for (const auto &skelEntry : allSkeletons) {
+      const std::string &skelPathStr = skelEntry.first;
+      if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
+        continue;  // Already added by a mesh binding
+      }
+      const Skeleton *skelPtr = skelEntry.second;
+      if (!skelPtr) continue;
 
-    int32_t skel_id = int32_t(skeletons.size());
-    SkelHierarchy skel;
+      int32_t skel_id = int32_t(skeletons.size());
+      SkelHierarchy skel;
 
-    std::string primName = skelPathStr;
-    size_t lastSlash = primName.rfind('/');
-    if (lastSlash != std::string::npos) {
-      primName = primName.substr(lastSlash + 1);
-    }
-    if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
-      PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
-                            skelPathStr));
-      return false;
-    }
+      std::string primName = skelPathStr;
+      size_t lastSlash = primName.rfind('/');
+      if (lastSlash != std::string::npos) {
+        primName = primName.substr(lastSlash + 1);
+      }
+      if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
+        PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
+                              skelPathStr));
+        return false;
+      }
 
-    _skelPathToIndex[skelPathStr] = skel_id;
-    skeletons.emplace_back(std::move(skel));
-    DCOUT("Added standalone skeleton: " << skelPathStr);
+      _skelPathToIndex[skelPathStr] = skel_id;
+      skeletons.emplace_back(std::move(skel));
+      DCOUT("Added standalone skeleton: " << skelPathStr);
+    }
+    standalone_skel_ms = ElapsedMs(phase_start);
   }
 
   // Convert all SkelAnimation prims now that all skeletons have been discovered.
   // This supports multiple animations per skeleton (when animationSource is a pathvector).
   DCOUT("Converting all SkelAnimation prims...");
-  if (!ConvertAllSkelAnimations(env)) {
-    PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!ConvertAllSkelAnimations(env)) {
+      PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+    }
+    skel_anim_ms = ElapsedMs(phase_start);
   }
   DCOUT("SkelAnimation conversion complete");
 
@@ -947,8 +1002,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
     return false;
   }
 
-  if (!BuildNodeHierarchy(env, xform_node)) {
-    return false;
+  {
+    const auto phase_start = TydraPerfClock::now();
+    if (!BuildNodeHierarchy(env, xform_node)) {
+      return false;
+    }
+    hierarchy_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after node hierarchy building (85%)
@@ -969,6 +1028,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 6. Extract xformOp animations from nodes with time-sampled transforms
   //
   {
+    const auto phase_start = TydraPerfClock::now();
     // Single-pass depth-first traversal with stable node indices.
     // This avoids repeatedly counting subtree sizes.
     std::function<void(const XformNode&, int32_t&, int32_t)> extractAnimationsFromNode;
@@ -1022,6 +1082,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
     for (const auto& root : xform_node.children) {
       extractAnimationsFromNode(root, current_node_index, 0);
     }
+    xform_anim_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after animation extraction (90%)
@@ -1034,9 +1095,11 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 7. Merge meshes with same material (optional optimization)
   //
   if (env.scene_config.merge_meshes) {
+    const auto phase_start = TydraPerfClock::now();
     if (!MergeMeshesImpl(env)) {
       PushWarn("Mesh merging encountered issues, but conversion continues.\n");
     }
+    merge_ms = ElapsedMs(phase_start);
   }
 
   // Report progress after mesh merging (95%)
@@ -1050,6 +1113,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // (scenegraph instances in 7b, PointInstancer instances in 7c).
   std::unordered_map<std::string, value::matrix4d> path_to_global;
   {
+    const auto phase_start = TydraPerfClock::now();
     std::function<void(const Node &)> collect = [&](const Node &n) {
       if (!n.abs_path.empty()) {
         path_to_global[n.abs_path] = n.global_matrix;
@@ -1061,6 +1125,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
     for (const auto &n : root_nodes) {
       collect(n);
     }
+    instance_map_ms = ElapsedMs(phase_start);
   }
 
   //
@@ -1181,6 +1246,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   // Populate scene metadata from Stage
   {
+    const auto phase_start = TydraPerfClock::now();
     const auto &stage_metas = env.stage.metas();
 
     // upAxis
@@ -1232,9 +1298,40 @@ bool RenderSceneConverter::ConvertToRenderScene(
         render_scene.meta.copyright = copyright_val.value();
       }
     }
+    stage_meta_ms = ElapsedMs(phase_start);
   }
 
   (*scene) = std::move(render_scene);
+
+  {
+    std::ostringstream ss;
+    ss << "total=" << ElapsedMs(total_start)
+       << " count=" << count_ms
+       << " skelMap=" << skel_map_ms
+       << " xform=" << xform_ms
+       << " visitPrims=" << visit_prims_ms
+       << " materialResolve=" << NsToMs(menv.resolve_material_ns)
+       << "/" << menv.material_resolve_calls
+       << " materialFound=" << menv.material_resolve_found
+       << " materialConvert=" << NsToMs(menv.convert_material_ns)
+       << " materialCache=" << menv.material_cache_hits << "/"
+       << menv.material_cache_misses
+       << " meshConvert=" << NsToMs(menv.convert_mesh_ns)
+       << " meshProgress=" << NsToMs(menv.progress_ns)
+       << " standaloneSkel=" << standalone_skel_ms
+       << " skelAnim=" << skel_anim_ms
+       << " hierarchy=" << hierarchy_ms
+       << " xformAnim=" << xform_anim_ms
+       << " merge=" << merge_ms
+       << " instanceMap=" << instance_map_ms
+       << " metadata=" << stage_meta_ms
+       << " meshes=" << scene->meshes.size()
+       << " materials=" << scene->materials.size()
+       << " textures=" << scene->textures.size()
+       << " images=" << scene->images.size()
+       << " instances=" << scene->instances.size();
+    _timing_info = ss.str();
+  }
 
   // Report completion (100%)
   _progress_info.stage = DetailedProgressInfo::Stage::Complete;

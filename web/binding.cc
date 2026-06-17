@@ -2298,26 +2298,48 @@ class TinyUSDZLoaderNative {
     tinyusdz::tydra::RenderSceneConverter converter;
 
     // Set up detailed progress callback to update parsing_progress_ and call JS
+    struct TydraProgressCallbackState {
+      ParsingProgress *progress{nullptr};
+      size_t last_reported_mesh{0};
+      size_t last_reported_material{0};
+      std::string last_stage;
+    };
+    TydraProgressCallbackState progress_state{&parsing_progress_, 0, 0, ""};
     converter.SetDetailedProgressCallback(
         [input_size = binary.size(), is_usdz, debug_enabled = IsTinyUSDZDebugEnabled()](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
-          ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
-          if (pp) {
-            pp->meshes_processed = info.meshes_processed;
-            pp->meshes_total = info.meshes_total;
-            pp->current_mesh_name = info.current_mesh_name;
-            pp->materials_processed = info.materials_processed;
-            pp->materials_total = info.materials_total;
-            pp->tydra_stage = info.GetStageName();
-            pp->current_operation = info.message;
+          TydraProgressCallbackState *state =
+              static_cast<TydraProgressCallbackState *>(userptr);
+          if (state && state->progress) {
+            state->progress->meshes_processed = info.meshes_processed;
+            state->progress->meshes_total = info.meshes_total;
+            state->progress->current_mesh_name = info.current_mesh_name;
+            state->progress->materials_processed = info.materials_processed;
+            state->progress->materials_total = info.materials_total;
+            state->progress->tydra_stage = info.GetStageName();
+            state->progress->current_operation = info.message;
             // Update progress: parsing is 0-80%, conversion is 80-100%
-            pp->progress = 0.8f + (info.progress * 0.2f);
+            state->progress->progress = 0.8f + (info.progress * 0.2f);
+          }
+
+          const std::string stage_name = info.GetStageName();
+          bool should_report = true;
+          if (state && stage_name == state->last_stage &&
+              stage_name == "meshes" &&
+              info.meshes_processed < info.meshes_total) {
+            const size_t kMeshProgressReportInterval = 128;
+            const bool mesh_advanced =
+                info.meshes_processed >=
+                state->last_reported_mesh + kMeshProgressReportInterval;
+            const bool material_advanced =
+                info.materials_processed != state->last_reported_material;
+            should_report = mesh_advanced || material_advanced;
           }
 
           // Build the (per-tick) debug detail string only when a JS listener is
           // attached; otherwise this hot callback pays nothing for debugging.
-          if (debug_enabled) {
+          if (debug_enabled && should_report) {
             std::ostringstream detail;
-            detail << "stage=" << info.GetStageName()
+            detail << "stage=" << stage_name
                    << " message=" << info.message
                    << " mesh=" << info.meshes_processed << "/"
                    << info.meshes_total
@@ -2331,20 +2353,28 @@ class TinyUSDZLoaderNative {
           }
 
           // Call JavaScript synchronously via EM_JS
-          reportTydraProgress(
-            static_cast<int>(info.meshes_processed),
-            static_cast<int>(info.meshes_total),
-            info.GetStageName(),  // Already returns const char*
-            info.current_mesh_name.c_str(),
-            static_cast<int>(info.materials_processed),
-            static_cast<int>(info.materials_total),
-            info.current_material_name.c_str(),
-            info.progress
-          );
+          if (should_report) {
+            reportTydraProgress(
+              static_cast<int>(info.meshes_processed),
+              static_cast<int>(info.meshes_total),
+              stage_name.c_str(),
+              info.current_mesh_name.c_str(),
+              static_cast<int>(info.materials_processed),
+              static_cast<int>(info.materials_total),
+              info.current_material_name.c_str(),
+              info.progress
+            );
+
+            if (state) {
+              state->last_stage = stage_name;
+              state->last_reported_mesh = info.meshes_processed;
+              state->last_reported_material = info.materials_processed;
+            }
+          }
 
           return true;  // Continue conversion
         },
-        &parsing_progress_);
+        &progress_state);
 
     // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
     // are evaluated at the start time (initial pose) for static viewers
@@ -2368,6 +2398,11 @@ class TinyUSDZLoaderNative {
     ReportTinyUSDZDebugEvent(
         loaded_ ? "convertToRenderScene.end" : "convertToRenderScene.failed",
         loaded_ ? "success" : converter.GetError(), binary.size(), is_usdz);
+    if (!converter.GetTimingInfo().empty()) {
+      ReportTinyUSDZDebugEvent("convertToRenderScene.timing",
+                               converter.GetTimingInfo(), binary.size(),
+                               is_usdz);
+    }
 
     // Capture warnings from converter (available via warn() method)
     if (!converter.GetWarning().empty()) {
@@ -4049,6 +4084,10 @@ class TinyUSDZLoaderNative {
     out.set("materialId", rmesh.material_id);
     out.set("doubleSided", rmesh.doubleSided);
     out.set("primName", rmesh.prim_name);
+    out.set("displayName", rmesh.display_name);
+    out.set("absPath", rmesh.abs_path);
+    out.set("hasSubmeshes", !rmesh.material_subsetMap.empty());
+    out.set("singleIndexable", rmesh.is_single_indexable);
 
     out.set("points",
             heapAttr_(reinterpret_cast<const float *>(rmesh.points.data()),
@@ -4067,6 +4106,42 @@ class TinyUSDZLoaderNative {
       out.set("faceVertexCounts", heapAttr_(cnt.data(), cnt.size(), 1, "u32"));
     }
     out.set("triangulated", triangulated);
+
+    if (!rmesh.material_subsetMap.empty() && triangulated &&
+        rmesh.is_single_indexable && !cnt.empty()) {
+      std::vector<int> face_materials(cnt.size(), rmesh.material_id);
+      for (const auto &subset_pair : rmesh.material_subsetMap) {
+        const tinyusdz::tydra::MaterialSubset &subset = subset_pair.second;
+        const int material_id = subset.material_id;
+        for (int face_index : subset.indices()) {
+          if (face_index >= 0 &&
+              static_cast<size_t>(face_index) < face_materials.size()) {
+            face_materials[size_t(face_index)] = material_id;
+          }
+        }
+      }
+
+      emscripten::val submeshes = emscripten::val::array();
+      size_t face_begin = 0;
+      int group_index = 0;
+      while (face_begin < face_materials.size()) {
+        const int material_id = face_materials[face_begin];
+        size_t face_end = face_begin + 1;
+        while (face_end < face_materials.size() &&
+               face_materials[face_end] == material_id) {
+          face_end++;
+        }
+
+        emscripten::val submesh = emscripten::val::object();
+        submesh.set("start", static_cast<int>(face_begin * 3));
+        submesh.set("count", static_cast<int>((face_end - face_begin) * 3));
+        submesh.set("materialId", material_id);
+        submeshes.set(group_index++, submesh);
+
+        face_begin = face_end;
+      }
+      out.set("submeshes", submeshes);
+    }
 
     // normals (snorm8 / snorm16 / f32; 1010102 unpacked to a stable f32 cache)
     if (!rmesh.normals.empty()) {
@@ -4127,8 +4202,64 @@ class TinyUSDZLoaderNative {
     return out;
   }
 
+  bool ensureImageBufferLoaded_(int img_id) {
+    if (!loaded_ || img_id < 0 ||
+        static_cast<size_t>(img_id) >= render_scene_.images.size()) {
+      return false;
+    }
+
+    auto &image = render_scene_.images[size_t(img_id)];
+    if (image.buffer_id >= 0) {
+      return true;
+    }
+
+    std::string asset_name = image.asset_identifier;
+    auto assetIt = usdz_asset_.asset_map.find(asset_name);
+    if (assetIt == usdz_asset_.asset_map.end() && asset_name.size() > 2 &&
+        asset_name[0] == '.' && asset_name[1] == '/') {
+      assetIt = usdz_asset_.asset_map.find(asset_name.substr(2));
+    }
+    if (assetIt == usdz_asset_.asset_map.end()) {
+      return false;
+    }
+
+    const size_t byte_begin = assetIt->second.first;
+    const size_t byte_end = assetIt->second.second;
+    if (byte_begin >= byte_end) {
+      return false;
+    }
+
+    const uint8_t *src = nullptr;
+    size_t src_size = 0;
+    if (!usdz_asset_.data.empty()) {
+      src = usdz_asset_.data.data();
+      src_size = usdz_asset_.data.size();
+    } else if (usdz_asset_.addr && usdz_asset_.size > 0) {
+      src = usdz_asset_.addr;
+      src_size = usdz_asset_.size;
+    } else {
+      return false;
+    }
+
+    if (byte_end > src_size) {
+      return false;
+    }
+
+    tinyusdz::tydra::BufferData buffer;
+    buffer.componentType = tinyusdz::tydra::ComponentType::UInt8;
+    buffer.data.resize(byte_end - byte_begin);
+    memcpy(buffer.data.data(), src + byte_begin, byte_end - byte_begin);
+
+    image.buffer_id = int64_t(render_scene_.buffers.size());
+    image.decoded = false;
+    render_scene_.buffers.emplace_back(std::move(buffer));
+
+    return true;
+  }
+
   // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
-  emscripten::val getImageCopy(int img_id) const {
+  emscripten::val getImageCopy(int img_id) {
+    ensureImageBufferLoaded_(img_id);
     emscripten::val m = buildImageVal_(img_id);
     deepCopyTypedArrays_(m);
     return m;

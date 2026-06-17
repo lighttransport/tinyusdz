@@ -923,15 +923,34 @@ void usdz_convert_material_dedupe_test(void) {
 void usdz_convert_material_preview_atlas_fallback_test(void) {
   using namespace tinyusdz;
 
-  const struct {
-    usdz::MaterialOptimizationMode mode;
-    const char *warning_substring;
-  } cases[] = {
-      {usdz::MaterialOptimizationMode::Preview, "preview mode"},
-      {usdz::MaterialOptimizationMode::Atlas, "atlas mode"},
-  };
+  {
+    Layer layer;
+    std::string warn, err;
+    bool loaded = LoadLayerFromFile(
+        TestFixturePath("tests/usda/material-optimize-preview-001.usda"),
+        &layer, &warn, &err);
+    TEST_CHECK(loaded);
+    if (!loaded) {
+      TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+      return;
+    }
 
-  for (const auto &tc : cases) {
+    usdz::UsdzConvertOptions opts;
+    opts.material_optimization = usdz::MaterialOptimizationMode::Preview;
+    usdz::MaterialOptimizationStats stats;
+    bool ok =
+        usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn, &err);
+    TEST_CHECK(ok);
+    TEST_CHECK(stats.num_materials_before == 2);
+    TEST_CHECK(stats.num_materials_after == 1);
+    TEST_CHECK(stats.num_materials_deduped == 1);
+    TEST_CHECK(stats.num_materials_preview_converted == 2);
+    TEST_CHECK(warn.find("preview mode") == std::string::npos);
+  }
+
+  for (usdz::MaterialOptimizationMode mode :
+       {usdz::MaterialOptimizationMode::Preview,
+        usdz::MaterialOptimizationMode::Atlas}) {
     Layer layer;
     std::string warn, err;
     bool loaded = LoadLayerFromFile(
@@ -944,7 +963,7 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
     }
 
     usdz::UsdzConvertOptions opts;
-    opts.material_optimization = tc.mode;
+    opts.material_optimization = mode;
     usdz::MaterialOptimizationStats stats;
     bool ok =
         usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn, &err);
@@ -952,7 +971,11 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
     TEST_CHECK(stats.num_materials_before == 2);
     TEST_CHECK(stats.num_materials_after == 1);
     TEST_CHECK(stats.num_materials_deduped == 1);
-    TEST_CHECK(warn.find(tc.warning_substring) != std::string::npos);
+    if (mode == usdz::MaterialOptimizationMode::Atlas) {
+      TEST_CHECK(warn.find("atlas mode") != std::string::npos);
+    } else {
+      TEST_CHECK(warn.find("preview mode") == std::string::npos);
+    }
 
     Layer unique_layer;
     warn.clear();
@@ -973,7 +996,11 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
     TEST_CHECK(stats.num_materials_before == 2);
     TEST_CHECK(stats.num_materials_after == 2);
     TEST_CHECK(stats.num_materials_deduped == 0);
-    TEST_CHECK(warn.find(tc.warning_substring) != std::string::npos);
+    if (mode == usdz::MaterialOptimizationMode::Atlas) {
+      TEST_CHECK(warn.find("atlas mode") != std::string::npos);
+    } else {
+      TEST_CHECK(warn.find("preview mode") == std::string::npos);
+    }
   }
 }
 
