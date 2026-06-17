@@ -170,6 +170,104 @@ std::string CanonicalProperty(const std::string &material_path,
   return key;
 }
 
+void CollectLocalChildConnections(const std::string &material_path,
+                                  const std::string &surface_name,
+                                  const Property &prop,
+                                  std::set<std::string> *children) {
+  if (!children || !prop.is_attribute()) {
+    return;
+  }
+  const Attribute *attr = prop.get_attribute_or_null();
+  if (!attr) {
+    return;
+  }
+  for (const Path &conn : attr->connections()) {
+    std::string local = LocalNameForPath(material_path, conn);
+    if (!local.empty() && local != surface_name) {
+      children->insert(local);
+    }
+  }
+}
+
+bool IsSupportedPreviewDependencyShader(const std::string &id) {
+  return id == "UsdUVTexture" || id == "UsdPrimvarReader_float2";
+}
+
+bool AppendPreviewShaderGraphKey(const std::string &material_path,
+                                 const std::string &surface_name,
+                                 const PrimSpec &material,
+                                 const std::string &child_name,
+                                 std::set<std::string> *visiting,
+                                 std::set<std::string> *emitted,
+                                 std::vector<std::string> *parts) {
+  if (!visiting || !emitted || !parts) {
+    return false;
+  }
+  if (emitted->count(child_name)) {
+    return true;
+  }
+  if (visiting->count(child_name)) {
+    return false;
+  }
+
+  const PrimSpec *child = FindChild(material, child_name);
+  if (!child) {
+    return false;
+  }
+
+  std::string child_id;
+  if (!GetTokenAttr(*child, "info:id", &child_id)) {
+    return false;
+  }
+  if (child_name == surface_name) {
+    if (child_id != "UsdPreviewSurface") {
+      return false;
+    }
+  } else if (!IsSupportedPreviewDependencyShader(child_id)) {
+    return false;
+  }
+
+  visiting->insert(child_name);
+
+  std::set<std::string> referenced_children;
+  std::vector<std::string> prop_parts;
+  for (const auto &kv : child->props()) {
+    if (kv.first == "info:id") {
+      continue;
+    }
+    if (child_name == surface_name && kv.first == "outputs:surface") {
+      continue;
+    }
+    CollectLocalChildConnections(material_path, surface_name, kv.second,
+                                 &referenced_children);
+    prop_parts.push_back(CanonicalProperty(material_path, surface_name,
+                                           material, kv.first, kv.second));
+  }
+  std::sort(prop_parts.begin(), prop_parts.end());
+
+  const std::string canonical_child_name =
+      child_name == surface_name ? std::string("<surface>") : child_name;
+  std::string child_key = child_id + ":" + canonical_child_name + "{";
+  for (const std::string &prop_part : prop_parts) {
+    child_key += prop_part;
+    child_key += "|";
+  }
+  child_key += "}";
+  parts->push_back(std::move(child_key));
+  emitted->insert(child_name);
+
+  for (const std::string &referenced_child : referenced_children) {
+    if (!AppendPreviewShaderGraphKey(material_path, surface_name, material,
+                                     referenced_child, visiting, emitted,
+                                     parts)) {
+      return false;
+    }
+  }
+
+  visiting->erase(child_name);
+  return true;
+}
+
 bool MakePreviewMaterialKey(const PrimSpec &material,
                             const std::string &material_path,
                             std::string *key) {
@@ -192,45 +290,12 @@ bool MakePreviewMaterialKey(const PrimSpec &material,
 
   std::vector<std::string> parts;
   parts.push_back("PreviewSurface");
-  std::set<std::string> referenced_children;
-  for (const auto &kv : surface->props()) {
-    if (kv.first == "info:id" || kv.first == "outputs:surface") {
-      continue;
-    }
-    if (kv.second.is_attribute()) {
-      const Attribute *attr = kv.second.get_attribute_or_null();
-      if (attr) {
-        for (const Path &conn : attr->connections()) {
-          std::string local = LocalNameForPath(material_path, conn);
-          if (!local.empty() && local != surface_name) {
-            referenced_children.insert(local);
-          }
-        }
-      }
-    }
-    parts.push_back(CanonicalProperty(material_path, surface_name, material,
-                                      kv.first, kv.second));
-  }
-
-  for (const PrimSpec &child : material.children()) {
-    if (child.name() == surface_name) {
-      continue;
-    }
-    if (!referenced_children.count(child.name())) {
-      continue;
-    }
-    std::string child_id;
-    if (!GetTokenAttr(child, "info:id", &child_id) ||
-        (child_id != "UsdUVTexture" && child_id != "UsdPrimvarReader_float2")) {
-      return false;
-    }
-    std::string child_key = child_id + ":";
-    for (const auto &kv : child.props()) {
-      child_key += CanonicalProperty(material_path, surface_name, material,
-                                     kv.first, kv.second);
-      child_key += "|";
-    }
-    parts.push_back(child_key);
+  std::set<std::string> visiting;
+  std::set<std::string> emitted;
+  if (!AppendPreviewShaderGraphKey(material_path, surface_name, material,
+                                   surface_name, &visiting, &emitted,
+                                   &parts)) {
+    return false;
   }
 
   std::sort(parts.begin() + 1, parts.end());
