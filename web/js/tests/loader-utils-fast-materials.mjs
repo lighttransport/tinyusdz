@@ -16,6 +16,17 @@ function makeMesh(materialId) {
   };
 }
 
+function makeNode(name, contentId, materialId) {
+  return {
+    nodeType: 'mesh',
+    primName: name,
+    displayName: name,
+    absPath: `/Root/${name}`,
+    contentId,
+    materialId,
+  };
+}
+
 function makeMaterial(color) {
   return {
     hasUsdPreviewSurface: true,
@@ -95,6 +106,76 @@ function makeMaterial(color) {
   } finally {
     TinyUSDZLoaderUtils.getTextureFromUSD = oldGetTextureFromUSD;
   }
+}
+
+{
+  const usdScene = {
+    getTexture(id) {
+      return { textureImageId: id < 10 ? 4 : 5, wrapS: 'repeat', wrapT: 'repeat' };
+    },
+  };
+  const a = makeMaterial([1, 1, 1]);
+  const b = makeMaterial([1, 1, 1]);
+  const c = makeMaterial([1, 1, 1]);
+  a.surfaceShader.diffuseColorTextureId = 1;
+  b.surfaceShader.diffuseColorTextureId = 2;
+  c.surfaceShader.diffuseColorTextureId = 11;
+
+  assert.equal(
+    TinyUSDZLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
+    TinyUSDZLoaderUtils.makeMaterialSignature(b, 'full', usdScene),
+    'full material signatures should canonicalize texture IDs to image identity'
+  );
+  assert.notEqual(
+    TinyUSDZLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
+    TinyUSDZLoaderUtils.makeMaterialSignature(c, 'full', usdScene),
+    'different image identities should not share full material signatures'
+  );
+}
+
+{
+  const usdScene = {
+    getMeshCopy(id) {
+      return makeMesh(id);
+    },
+    getMaterial(id) {
+      return makeMaterial(id === 2 ? [0, 0, 1] : [1, 0, 0]);
+    },
+    getMaterialWithFormat(id) {
+      return { error: false, data: JSON.stringify(this.getMaterial(id)) };
+    },
+  };
+  const root = {
+    nodeType: 'xform',
+    primName: 'Root',
+    displayName: 'Root',
+    absPath: '/Root',
+    localMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    children: [
+      makeNode('A', 0, 0),
+      makeNode('B', 1, 1),
+      makeNode('C', 2, 2),
+    ],
+  };
+  const options = {
+    fastMaterials: true,
+    fastMaterialMode: 'full',
+    materialCache: new Map(),
+    materialSignatureCache: new Map(),
+    preferredMaterialType: 'usdpreviewsurface',
+    meshAggregation: 'material',
+    yieldMode: 'none',
+  };
+
+  const threeRoot = await TinyUSDZLoaderUtils.buildThreeNode(root, null, usdScene, options);
+  const meshes = [];
+  threeRoot.traverse((obj) => {
+    if (obj.isMesh) meshes.push(obj);
+  });
+
+  assert.equal(meshes.length, 2, 'two equivalent-material meshes should aggregate into one mesh');
+  assert.equal(options._debugState.aggregateInputMeshes, 2);
+  assert.equal(options._debugState.aggregateOutputMeshes, 1);
 }
 
 console.log('OK loader-utils-fast-materials');

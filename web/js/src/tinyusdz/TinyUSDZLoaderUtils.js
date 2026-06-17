@@ -515,7 +515,69 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         });
     }
 
-    static makeMaterialSignature(materialData, preferredMaterialType = 'auto') {
+    static textureSignature(textureId, usdScene, textureSignatureCache = null) {
+        if (textureId === undefined || textureId === null || textureId < 0 ||
+            !usdScene || typeof usdScene.getTexture !== 'function') {
+            return textureId;
+        }
+        if (textureSignatureCache && textureSignatureCache.has(textureId)) {
+            return textureSignatureCache.get(textureId);
+        }
+        let signature = textureId;
+        try {
+            const texture = usdScene.getTexture(textureId);
+            if (texture && texture.textureImageId !== undefined) {
+                signature = {
+                    imageId: texture.textureImageId,
+                    wrapS: texture.wrapS,
+                    wrapT: texture.wrapT,
+                    isUDIM: !!texture.isUDIM,
+                    udimTextureId: texture.udimTextureId,
+                    udimUvScaleU: texture.udimUvScaleU,
+                    udimUvScaleV: texture.udimUvScaleV,
+                    udimUvOffsetU: texture.udimUvOffsetU,
+                    udimUvOffsetV: texture.udimUvOffsetV
+                };
+            }
+        } catch (_) {
+            signature = textureId;
+        }
+        if (textureSignatureCache) {
+            textureSignatureCache.set(textureId, signature);
+        }
+        return signature;
+    }
+
+    static stableMaterialStringify(value, usdScene = null, textureSignatureCache = null) {
+        const skipKeys = new Set([
+            'name',
+            'abs_path',
+            'display_name',
+            'primName',
+            'absPath',
+            'displayName'
+        ]);
+        const visit = (v) => {
+            if (Array.isArray(v)) {
+                return v.map(visit);
+            }
+            if (v && typeof v === 'object') {
+                const out = {};
+                for (const key of Object.keys(v).sort()) {
+                    if (!skipKeys.has(key)) {
+                        out[key] = key.endsWith('TextureId') ?
+                            this.textureSignature(v[key], usdScene, textureSignatureCache) :
+                            visit(v[key]);
+                    }
+                }
+                return out;
+            }
+            return v;
+        };
+        return JSON.stringify(visit(value));
+    }
+
+    static makeMaterialSignature(materialData, preferredMaterialType = 'auto', usdScene = null, textureSignatureCache = null) {
         let parsedMaterial = materialData;
         if (typeof materialData === 'string') {
             try {
@@ -530,7 +592,17 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         const typeInfo = this.getMaterialType(parsedMaterial);
         let shader = null;
-        if (preferredMaterialType === 'usdpreviewsurface' || preferredMaterialType === 'preview' ||
+        const useFullSignature = preferredMaterialType === 'full' ||
+            preferredMaterialType === 'openpbr' ||
+            (preferredMaterialType === 'auto' && typeInfo.hasOpenPBR);
+        if (useFullSignature) {
+            if (typeInfo.hasOpenPBR && parsedMaterial.openPBR) {
+                return `openpbr:${this.stableMaterialStringify(parsedMaterial.openPBR, usdScene, textureSignatureCache)}`;
+            }
+            if (typeInfo.hasUsdPreviewSurface && parsedMaterial.surfaceShader) {
+                return `preview-full:${this.stableMaterialStringify(parsedMaterial.surfaceShader, usdScene, textureSignatureCache)}`;
+            }
+        } else if (preferredMaterialType === 'usdpreviewsurface' || preferredMaterialType === 'preview' ||
             (preferredMaterialType === 'auto' && typeInfo.hasUsdPreviewSurface && !typeInfo.hasOpenPBR)) {
             shader = parsedMaterial.surfaceShader || parsedMaterial;
         } else if (typeInfo.hasUsdPreviewSurface && !typeInfo.hasOpenPBR) {
@@ -557,7 +629,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const compact = {};
         for (const field of fields) {
             if (Object.prototype.hasOwnProperty.call(shader, field)) {
-                compact[field] = shader[field];
+                compact[field] = field.endsWith('TextureId') ?
+                    this.textureSignature(shader[field], usdScene, textureSignatureCache) :
+                    shader[field];
             }
         }
         return JSON.stringify(compact);
@@ -1173,7 +1247,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             const signatureStart = performance.now();
             const signature = materialSignatureCache ?
-                this.makeMaterialSignature(materialData, options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType) :
+                this.makeMaterialSignature(
+                    materialData,
+                    options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType,
+                    usdScene,
+                    options.materialSignatureTextureCache || null) :
                 null;
             if (options._debugState) {
                 options._debugState.materialSignatureMs += performance.now() - signatureStart;
@@ -1225,7 +1303,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 materialCache.set(cacheKey, material);
             }
             if (materialSignatureCache) {
-                const signature = this.makeMaterialSignature(materialData, options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType);
+                const signature = this.makeMaterialSignature(
+                    materialData,
+                    options.fastMaterialMode === 'preview' ? 'preview' : preferredMaterialType,
+                    usdScene,
+                    options.materialSignatureTextureCache || null);
                 if (signature) {
                     materialSignatureCache.set(signature + `|${doubleSided === true ? 'double' : 'front'}`, material);
                 }
@@ -1398,6 +1480,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 singleMaterialMeshes: 0,
                 multiMaterialMeshes: 0,
                 subsetMaterialRefs: 0,
+                aggregateMs: 0,
+                aggregateInputMeshes: 0,
+                aggregateOutputMeshes: 0,
+                aggregateSkippedMeshes: 0,
                 meshPtrHits: 0,
                 meshPtrFallbacks: 0,
                 lastProgressMesh: 0
@@ -1451,7 +1537,214 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const state = options._debugState;
         const totalMs = performance.now() - state.startMs;
         this._debugBuild(options, 'build:summary',
-            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs}`);
+            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs}`);
+    }
+
+    static _geometryAttributeSignature(geometry) {
+        const names = Object.keys(geometry.attributes || {}).sort();
+        if (!names.includes('position')) {
+            return null;
+        }
+        const parts = [];
+        for (const name of names) {
+            const attr = geometry.attributes[name];
+            if (!attr || attr.isInterleavedBufferAttribute) {
+                return null;
+            }
+            parts.push([
+                name,
+                attr.itemSize,
+                attr.normalized ? 1 : 0,
+                attr.array && attr.array.constructor ? attr.array.constructor.name : ''
+            ].join(':'));
+        }
+        return parts.join('|');
+    }
+
+    static _tryAddAggregateGeometry(group, geometry) {
+        const attrs = geometry.attributes || {};
+        if (!attrs.position || attrs.skinIndex || attrs.skinWeight) {
+            return false;
+        }
+        const pending = [];
+        for (const name of Object.keys(attrs)) {
+            const attr = attrs[name];
+            if (!attr || attr.isInterleavedBufferAttribute) {
+                return false;
+            }
+            const prev = group.attrMeta.get(name);
+            if (prev && prev.itemSize !== attr.itemSize) {
+                return false;
+            }
+            if (!prev) {
+                pending.push([name, { itemSize: attr.itemSize }]);
+            }
+        }
+        for (const [name, meta] of pending) {
+            group.attrMeta.set(name, meta);
+        }
+        group.geometries.push(geometry);
+        return true;
+    }
+
+    static _mergeAggregateGeometries(group) {
+        const geometries = group.geometries;
+        if (!geometries.length || !group.attrMeta.has('position')) {
+            return null;
+        }
+
+        const attrNames = Array.from(group.attrMeta.keys()).sort();
+        const totalVertices = geometries.reduce((sum, geometry) => {
+            const position = geometry.attributes.position;
+            return sum + (position ? position.count : 0);
+        }, 0);
+        if (totalVertices === 0) {
+            return null;
+        }
+
+        const merged = new THREE.BufferGeometry();
+        for (const name of attrNames) {
+            const meta = group.attrMeta.get(name);
+            const itemSize = meta.itemSize;
+            const array = new Float32Array(totalVertices * itemSize);
+            let vertexOffset = 0;
+            for (const geometry of geometries) {
+                const attr = geometry.attributes[name];
+                const vertexCount = geometry.attributes.position.count;
+                if (attr) {
+                    array.set(attr.array, vertexOffset * itemSize);
+                }
+                vertexOffset += vertexCount;
+            }
+            merged.setAttribute(name, new THREE.BufferAttribute(array, itemSize, false));
+        }
+
+        return merged;
+    }
+
+    static _reparentChildrenToRoot(mesh, root, rootInverse) {
+        while (mesh.children.length > 0) {
+            const child = mesh.children[0];
+            child.updateMatrixWorld(true);
+            const localMatrix = new THREE.Matrix4().multiplyMatrices(rootInverse, child.matrixWorld);
+            mesh.remove(child);
+            child.matrix.copy(localMatrix);
+            child.matrix.decompose(child.position, child.quaternion, child.scale);
+            root.add(child);
+        }
+    }
+
+    static aggregateMeshesByMaterial(root, options = {}) {
+        const mode = options.meshAggregation;
+        if (!mode || mode === 'off' || mode === false) {
+            return { inputMeshes: 0, outputMeshes: 0, skippedMeshes: 0 };
+        }
+
+        const aggregateStart = performance.now();
+        root.updateMatrixWorld(true);
+        const rootInverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
+        const groups = new Map();
+        let skippedMeshes = 0;
+
+        root.traverse((obj) => {
+            if (!obj.isMesh || obj.isSkinnedMesh ||
+                Array.isArray(obj.material) || !obj.material || !obj.geometry) {
+                if (obj.isMesh) skippedMeshes++;
+                return;
+            }
+            const geometry = obj.geometry;
+            if ((geometry.groups && geometry.groups.length > 0) || geometry.morphAttributes &&
+                Object.keys(geometry.morphAttributes).length > 0) {
+                skippedMeshes++;
+                return;
+            }
+
+            const sourceGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+            if (!this._geometryAttributeSignature(sourceGeometry)) {
+                sourceGeometry.dispose();
+                skippedMeshes++;
+                return;
+            }
+
+            const localMatrix = new THREE.Matrix4().multiplyMatrices(rootInverse, obj.matrixWorld);
+            sourceGeometry.applyMatrix4(localMatrix);
+
+            const key = obj.material.uuid;
+            let group = groups.get(key);
+            if (!group) {
+                group = {
+                    material: obj.material,
+                    geometries: [],
+                    meshes: [],
+                    attrMeta: new Map()
+                };
+                groups.set(key, group);
+            }
+            if (!this._tryAddAggregateGeometry(group, sourceGeometry)) {
+                sourceGeometry.dispose();
+                skippedMeshes++;
+                return;
+            }
+            group.meshes.push(obj);
+        });
+
+        const minMeshes = Math.max(2, options.meshAggregationMinMeshes || 2);
+        const aggregateRoot = new THREE.Group();
+        aggregateRoot.name = 'AggregatedMeshes';
+        aggregateRoot.userData.nodeType = 'mesh-aggregate-root';
+        let inputMeshes = 0;
+        let outputMeshes = 0;
+
+        for (const group of groups.values()) {
+            if (group.meshes.length < minMeshes) {
+                for (const geometry of group.geometries) {
+                    geometry.dispose();
+                }
+                skippedMeshes += group.meshes.length;
+                continue;
+            }
+
+            const mergedGeometry = this._mergeAggregateGeometries(group);
+            for (const geometry of group.geometries) {
+                geometry.dispose();
+            }
+            if (!mergedGeometry) {
+                skippedMeshes += group.meshes.length;
+                continue;
+            }
+
+            const aggregateMesh = new THREE.Mesh(mergedGeometry, group.material);
+            aggregateMesh.name = `Aggregate_${outputMeshes}`;
+            aggregateMesh.userData.nodeType = 'mesh-aggregate';
+            aggregateMesh.userData.sourceMeshCount = group.meshes.length;
+            aggregateMesh.frustumCulled = false;
+            aggregateRoot.add(aggregateMesh);
+
+            for (const mesh of group.meshes) {
+                this._reparentChildrenToRoot(mesh, root, rootInverse);
+                if (mesh.parent) {
+                    mesh.parent.remove(mesh);
+                }
+                if (mesh.geometry && mesh.geometry.dispose) {
+                    mesh.geometry.dispose();
+                }
+            }
+            inputMeshes += group.meshes.length;
+            outputMeshes++;
+        }
+
+        if (outputMeshes > 0) {
+            root.add(aggregateRoot);
+        }
+        if (options._debugState) {
+            options._debugState.aggregateMs += performance.now() - aggregateStart;
+            options._debugState.aggregateInputMeshes += inputMeshes;
+            options._debugState.aggregateOutputMeshes += outputMeshes;
+            options._debugState.aggregateSkippedMeshes += skippedMeshes;
+        }
+        this._debugBuild(options, 'build:aggregate',
+            `mode=${mode} meshes=${inputMeshes}->${outputMeshes} skipped=${skippedMeshes}`);
+        return { inputMeshes, outputMeshes, skippedMeshes };
     }
 
     // Supported options:
@@ -1464,6 +1757,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // - 'debugLogEveryMeshes' : Mesh progress interval for debugLog/debugBuild.
     // - 'yieldMode' : 'raf' (default), 'timeout', or 'none'.
     // - 'yieldIntervalMs' : Minimum milliseconds between build yields.
+    // - 'meshAggregation' : false/'off' (default) or 'material' to merge static
+    //     leaf meshes by shared material and compatible vertex attributes.
+    // - 'meshAggregationMinMeshes' : Minimum compatible meshes per aggregate.
     // - '_progressState' : Internal state for progress tracking (auto-created)
 
     /**
@@ -1583,6 +1879,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (!mesh) {
                 mesh = usdScene.getMeshCopy(usdNode.contentId);
             }
+            if (mesh && mesh.materialId === undefined && usdNode.materialId !== undefined) {
+                mesh.materialId = usdNode.materialId;
+            }
             if (options._debugState) {
                 options._debugState.meshCopyMs += performance.now() - meshCopyStart;
             }
@@ -1666,6 +1965,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (isRootCall) {
+            this.aggregateMeshesByMaterial(node, options);
             this._finishBuildDebug(options);
         }
 
