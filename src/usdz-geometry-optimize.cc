@@ -4,7 +4,9 @@
 #include "usdz-geometry-optimize.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -73,17 +75,28 @@ bool HasTimesamples(const PrimSpec &ps) {
   return false;
 }
 
-std::string FirstRelationshipTarget(const PrimSpec &ps,
-                                    const std::string &name) {
+bool ReadSingleRelationshipTarget(const PrimSpec &ps, const std::string &name,
+                                  std::string *target_path) {
+  if (!target_path) {
+    return false;
+  }
+  target_path->clear();
   auto it = ps.props().find(name);
-  if (it == ps.props().end() || !it->second.is_relationship()) {
-    return std::string();
+  if (it == ps.props().end()) {
+    return true;
   }
-  auto target = it->second.get_relationTarget();
-  if (!target) {
-    return std::string();
+  if (!it->second.is_relationship()) {
+    return false;
   }
-  return ViewToString(target->prim_part());
+  std::vector<Path> targets = it->second.get_relationTargets();
+  if (targets.empty()) {
+    return true;
+  }
+  if (targets.size() != 1 || !targets[0].prop_part().empty()) {
+    return false;
+  }
+  *target_path = ViewToString(targets[0].prim_part());
+  return true;
 }
 
 bool IsSupportedMeshPropName(const std::string &name) {
@@ -92,8 +105,6 @@ bool IsSupportedMeshPropName(const std::string &name) {
       "faceVertexCounts",
       "faceVertexIndices",
       "material:binding",
-      "purpose",
-      "visibility",
       "xformOpOrder",
       "xformOp:translate",
       "xformOp:transform",
@@ -121,6 +132,22 @@ bool HasUnsupportedMeshProps(const PrimSpec &ps) {
     }
   }
   return false;
+}
+
+bool HasAuthoredInheritedVisualState(const PrimSpec &ps) {
+  return ps.props().find("visibility") != ps.props().end() ||
+         ps.props().find("purpose") != ps.props().end();
+}
+
+bool HasSupportedSubdivisionScheme(const PrimSpec &ps) {
+  auto it = ps.props().find("subdivisionScheme");
+  if (it == ps.props().end()) {
+    return true;
+  }
+  value::token scheme;
+  return IsAttrStaticValue(it->second) &&
+         it->second.get_attribute().get_value(&scheme) &&
+         scheme.str() == "none";
 }
 
 bool IsIdentity(const value::matrix4d &m) {
@@ -223,6 +250,8 @@ struct TraverseState {
   value::matrix4d world_matrix{value::matrix4d::identity()};
   std::string material_path;
   bool xform_valid{true};
+  bool inherited_visual_state_valid{true};
+  bool material_binding_valid{true};
 };
 
 bool IsPerVertexInterpolation(Interpolation interpolation) {
@@ -342,19 +371,44 @@ bool RemapAttributeValue(const RemappableAttribute<T> &attr, size_t fv,
   return true;
 }
 
+bool TransformNormalWithInverse(const value::matrix4d &inv,
+                                const value::normal3f &n,
+                                value::normal3f *out) {
+  if (!out) {
+    return false;
+  }
+  double x = inv.m[0][0] * double(n[0]) + inv.m[0][1] * double(n[1]) +
+             inv.m[0][2] * double(n[2]);
+  double y = inv.m[1][0] * double(n[0]) + inv.m[1][1] * double(n[1]) +
+             inv.m[1][2] * double(n[2]);
+  double z = inv.m[2][0] * double(n[0]) + inv.m[2][1] * double(n[1]) +
+             inv.m[2][2] * double(n[2]);
+  const double len = std::sqrt(x * x + y * y + z * z);
+  if (len > 1.0e-20) {
+    x /= len;
+    y /= len;
+    z /= len;
+  }
+  *out = value::normal3f{float(x), float(y), float(z)};
+  return true;
+}
+
 bool ExtractMeshCandidate(PrimSpec *ps, const std::string &path,
                           std::vector<PrimSpec> *siblings,
                           size_t sibling_index,
                           const TraverseState &state,
                           const UsdzConvertOptions &options,
                           std::vector<MeshFragment> *fragments) {
-  if (!ps || !fragments || !state.xform_valid || !siblings) {
+  if (!ps || !fragments || !state.xform_valid ||
+      !state.inherited_visual_state_valid || !state.material_binding_valid ||
+      !siblings) {
     return false;
   }
   if (ps->typeName() != "Mesh") {
     return false;
   }
-  if (HasTimesamples(*ps) || HasUnsupportedMeshProps(*ps)) {
+  if (HasTimesamples(*ps) || HasUnsupportedMeshProps(*ps) ||
+      !HasSupportedSubdivisionScheme(*ps)) {
     return false;
   }
 
@@ -418,7 +472,7 @@ bool ExtractMeshCandidate(PrimSpec *ps, const std::string &path,
         color_it->second.get_attribute().metas().get_interpolation_enum() !=
             Interpolation::Constant ||
         !color_it->second.get_attribute().get_value(&display_color) ||
-        display_color.empty()) {
+        display_color.size() != 1) {
       return false;
     }
   }
@@ -430,12 +484,13 @@ bool ExtractMeshCandidate(PrimSpec *ps, const std::string &path,
         opacity_it->second.get_attribute().metas().get_interpolation_enum() !=
             Interpolation::Constant ||
         !opacity_it->second.get_attribute().get_value(&display_opacity) ||
-        display_opacity.empty()) {
+        display_opacity.size() != 1) {
       return false;
     }
   }
 
   std::vector<std::pair<std::string, std::vector<int32_t>>> subsets;
+  std::vector<uint8_t> face_coverage(counts.size(), uint8_t{0});
   for (const PrimSpec &child : ps->children()) {
     if (child.typeName() != "GeomSubset") {
       continue;
@@ -454,9 +509,17 @@ bool ExtractMeshCandidate(PrimSpec *ps, const std::string &path,
       if (face < 0 || static_cast<size_t>(face) >= counts.size()) {
         return false;
       }
+      uint8_t &covered = face_coverage[static_cast<size_t>(face)];
+      if (covered != 0) {
+        return false;
+      }
+      covered = uint8_t{1};
     }
-    const std::string subset_binding =
-        FirstRelationshipTarget(child, "material:binding");
+    std::string subset_binding;
+    if (!ReadSingleRelationshipTarget(child, "material:binding",
+                                      &subset_binding)) {
+      return false;
+    }
     subsets.emplace_back(subset_binding.empty() ? state.material_path
                                                 : subset_binding,
                          std::move(subset_faces));
@@ -468,6 +531,22 @@ bool ExtractMeshCandidate(PrimSpec *ps, const std::string &path,
       all_faces.push_back(static_cast<int32_t>(i));
     }
     subsets.emplace_back(state.material_path, std::move(all_faces));
+  } else {
+    std::vector<int32_t> uncovered_faces;
+    for (size_t i = 0; i < face_coverage.size(); i++) {
+      if (face_coverage[i] == 0) {
+        uncovered_faces.push_back(static_cast<int32_t>(i));
+      }
+    }
+    if (!uncovered_faces.empty()) {
+      subsets.emplace_back(state.material_path, std::move(uncovered_faces));
+    }
+  }
+
+  for (const auto &subset : subsets) {
+    if (!subset.first.empty() && StartsWithPath(subset.first, path)) {
+      return false;
+    }
   }
 
   std::vector<size_t> face_offsets(counts.size(), 0);
@@ -535,10 +614,19 @@ void CollectMeshesRec(PrimSpec *ps, const std::string &path,
   if (!ps || !out) {
     return;
   }
+  const bool active = !ps->metas().has_active() || ps->metas().get_active();
+  if (!active) {
+    return;
+  }
 
-  const std::string binding = FirstRelationshipTarget(*ps, "material:binding");
-  if (!binding.empty()) {
+  std::string binding;
+  if (!ReadSingleRelationshipTarget(*ps, "material:binding", &binding)) {
+    state.material_binding_valid = false;
+  } else if (!binding.empty()) {
     state.material_path = binding;
+  }
+  if (HasAuthoredInheritedVisualState(*ps)) {
+    state.inherited_visual_state_valid = false;
   }
 
   value::matrix4d local = value::matrix4d::identity();
@@ -698,6 +786,9 @@ bool AppendAggregateMesh(const std::vector<const MeshFragment *> &group,
     face_count += fragment->face_counts.size();
     point_count += fragment->points.size();
   }
+  if (point_count > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+    return false;
+  }
   points.reserve(point_count);
   counts.reserve(face_count);
   indices.reserve(face_count * 3);
@@ -723,8 +814,16 @@ bool AppendAggregateMesh(const std::vector<const MeshFragment *> &group,
       indices.push_back(point_base + idx);
     }
     if (has_normals) {
+      value::matrix4d normal_matrix_inverse;
+      if (!inverse(fragment->world_matrix, normal_matrix_inverse)) {
+        return false;
+      }
       for (const value::normal3f &n : fragment->normals) {
-        normals.push_back(transform_dir(fragment->world_matrix, n));
+        value::normal3f normal{};
+        if (!TransformNormalWithInverse(normal_matrix_inverse, n, &normal)) {
+          return false;
+        }
+        normals.push_back(normal);
       }
     }
     for (const auto &uv_kv : fragment->texcoords) {

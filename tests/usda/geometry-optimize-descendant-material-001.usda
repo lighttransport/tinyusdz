@@ -1,0 +1,37 @@
+#usda 1.0
+(
+    doc = "Mesh merge fixture with material prims under mesh prims; optimizer must skip to avoid duplicate active geometry."
+)
+
+def Xform "Root"
+{
+    def Xform "A"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/A/Mesh/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+
+            def Material "Mat"
+            {
+            }
+        }
+    }
+
+    def Xform "B"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/B/Mesh/Mat>
+            point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+
+            def Material "Mat"
+            {
+            }
+        }
+    }
+}

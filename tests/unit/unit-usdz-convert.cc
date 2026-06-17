@@ -88,6 +88,41 @@ std::string TestFixturePath(const std::string &rel) {
   return rel;
 }
 
+size_t CountAggregateFaces(const tinyusdz::Layer &layer) {
+  using namespace tinyusdz;
+  const PrimSpec *root = nullptr;
+  std::string err;
+  if (!layer.find_primspec_at(Path("/__TinyUSDZ_MeshMerge", ""), &root,
+                              &err) ||
+      !root) {
+    return 0;
+  }
+  size_t total = 0;
+  for (const PrimSpec &child : root->children()) {
+    auto it = child.props().find("faceVertexCounts");
+    if (it == child.props().end() || !it->second.is_attribute()) {
+      continue;
+    }
+    auto counts = it->second.get_attribute().get_value<std::vector<int32_t>>();
+    if (counts) {
+      total += counts->size();
+    }
+  }
+  return total;
+}
+
+size_t CountAggregateMeshes(const tinyusdz::Layer &layer) {
+  using namespace tinyusdz;
+  const PrimSpec *root = nullptr;
+  std::string err;
+  if (!layer.find_primspec_at(Path("/__TinyUSDZ_MeshMerge", ""), &root,
+                              &err) ||
+      !root) {
+    return 0;
+  }
+  return root->children().size();
+}
+
 size_t TestFileSize(const std::string &path) {
   std::ifstream ifs(path, std::ios::binary | std::ios::ate);
   if (!ifs) {
@@ -1004,6 +1039,47 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
   }
 }
 
+void usdz_convert_material_preview_transitive_key_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/material-optimize-preview-transitive-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.material_optimization = usdz::MaterialOptimizationMode::Preview;
+  usdz::MaterialOptimizationStats stats;
+  bool ok = usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn,
+                                           &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_materials_before == 2);
+  TEST_CHECK(stats.num_materials_after == 2);
+  TEST_CHECK(stats.num_materials_deduped == 0);
+
+  const PrimSpec *mesh_b = nullptr;
+  ok = layer.find_primspec_at(Path("/Root/MeshB", ""), &mesh_b, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(mesh_b != nullptr);
+  if (mesh_b) {
+    auto binding_it = mesh_b->props().find("material:binding");
+    TEST_CHECK(binding_it != mesh_b->props().end());
+    if (binding_it != mesh_b->props().end()) {
+      auto target = binding_it->second.get_relationTarget();
+      TEST_CHECK(target.has_value());
+      if (target) {
+        TEST_CHECK(target->prim_part() == "/Root/MatB");
+      }
+    }
+  }
+}
+
 void usdz_convert_geometry_merge_test(void) {
   using namespace tinyusdz;
 
@@ -1144,6 +1220,219 @@ void usdz_convert_geometry_subset_merge_test(void) {
   TEST_CHECK(stats.num_meshes_merged == 2);
   TEST_CHECK(stats.num_mesh_aggregates == 1);
   TEST_CHECK(stats.num_meshes_after == 1);
+}
+
+void usdz_convert_geometry_subset_partition_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-subset-partial-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 2);
+  TEST_CHECK(stats.num_meshes_eligible == 2);
+  TEST_CHECK(stats.num_meshes_merged == 2);
+  TEST_CHECK(stats.num_mesh_aggregates == 2);
+  TEST_CHECK(stats.num_faces_merged == 4);
+  TEST_CHECK(stats.num_meshes_after == 2);
+  TEST_CHECK(CountAggregateMeshes(layer) == 2);
+  TEST_CHECK(CountAggregateFaces(layer) == 4);
+}
+
+void usdz_convert_geometry_subset_overlap_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-subset-overlap-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 2);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 2);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 2);
+  TEST_CHECK(CountAggregateMeshes(layer) == 0);
+}
+
+void usdz_convert_geometry_descendant_material_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-descendant-material-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 2);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 2);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 2);
+}
+
+void usdz_convert_geometry_authored_semantics_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-authored-semantics-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 6);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 6);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 6);
+}
+
+void usdz_convert_geometry_normal_inverse_transpose_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-nonuniform-normal-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_merged == 2);
+
+  const PrimSpec *merged = nullptr;
+  ok = layer.find_primspec_at(
+      Path("/__TinyUSDZ_MeshMerge/Merged_0", ""), &merged, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(merged != nullptr);
+  if (!merged) {
+    return;
+  }
+  auto normals_it = merged->props().find("normals");
+  TEST_CHECK(normals_it != merged->props().end());
+  if (normals_it != merged->props().end()) {
+    auto normals =
+        normals_it->second.get_attribute().get_value<std::vector<value::normal3f>>();
+    TEST_CHECK(normals.has_value());
+    if (normals && !normals->empty()) {
+      TEST_CHECK(std::fabs((*normals)[0].x - 0.4472136f) < 1.0e-5f);
+      TEST_CHECK(std::fabs((*normals)[0].y - 0.8944272f) < 1.0e-5f);
+      TEST_CHECK(std::fabs((*normals)[0].z) < 1.0e-5f);
+    }
+  }
+}
+
+void usdz_convert_geometry_multi_binding_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath(
+          "tests/unit/fixtures/geometry-optimize-multi-binding-skip-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 2);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 2);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 2);
+  TEST_CHECK(CountAggregateMeshes(layer) == 0);
+}
+
+void usdz_convert_geometry_display_constant_size_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath("tests/usda/geometry-optimize-display-constant-size-001.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 2);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 2);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 2);
+  TEST_CHECK(CountAggregateMeshes(layer) == 0);
 }
 
 // Error-path: invalid inputs should return errors, not crash.
