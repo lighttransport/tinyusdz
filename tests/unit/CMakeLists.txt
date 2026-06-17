@@ -17,7 +17,6 @@ set(TEST_SOURCES
 	unit-ioutil.cc
 	unit-timesamples.cc
 	unit-fp-parse-print.cc
-	unit-minijson.cc
 	unit-materialx.cc
 	unit-task-queue.cc
 	unit-png-stream.cc
@@ -76,6 +75,11 @@ set(TEST_SOURCES
 	unit-rb-collision.cc
 	unit-rb-dynamics.cc
     )
+
+# minijson is only compiled into the static lib when JSON support is enabled.
+if (TINYUSDZ_WITH_JSON)
+    list(APPEND TEST_SOURCES unit-minijson.cc)
+endif ()
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
     list(APPEND TEST_SOURCES unit-pxr-compat-api.cc)

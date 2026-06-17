@@ -336,6 +336,7 @@ void security_recursive_reference_test(void) {
   TEST_MSG("Self-referencing USDA should not cause infinite loop");
 }
 
+#if defined(TINYUSDZ_WITH_JSON)
 void security_json_oversized_base64_rejected_test(void) {
   Layer layer;
   std::string warn, err;
@@ -356,6 +357,7 @@ void security_json_oversized_base64_rejected_test(void) {
   TEST_CHECK(!ok);
   TEST_CHECK(err.find("exceeds limit") != std::string::npos);
 }
+#endif  // TINYUSDZ_WITH_JSON
 
 void security_unsafe_asset_path_rejected_test(void) {
   AssetResolutionResolver resolver;
@@ -371,6 +373,7 @@ void security_unsafe_asset_path_rejected_test(void) {
   TEST_CHECK(err.find("Unsafe asset path") != std::string::npos);
 }
 
+#if defined(TINYUSDZ_WITH_JSON)
 void security_json_array_count_mismatch_rejected_test(void) {
   GeomMesh mesh;
   std::string warn, err;
@@ -410,6 +413,7 @@ void security_json_point3f_count_overflow_rejected_test(void) {
   TEST_CHECK(!ok);
   TEST_CHECK(err.find("overflow") != std::string::npos);
 }
+#endif  // TINYUSDZ_WITH_JSON
 
 void security_resolver_oversized_custom_asset_rejected_test(void) {
   AssetResolutionResolver resolver;

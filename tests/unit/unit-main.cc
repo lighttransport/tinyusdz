@@ -689,10 +689,14 @@ TEST_LIST = {
   { "security_huge_array_test", security_huge_array_test },
   { "security_malformed_utf8_test", security_malformed_utf8_test },
   { "security_recursive_reference_test", security_recursive_reference_test },
+#if defined(TINYUSDZ_WITH_JSON)
   { "security_json_oversized_base64_rejected_test", security_json_oversized_base64_rejected_test },
+#endif
   { "security_unsafe_asset_path_rejected_test", security_unsafe_asset_path_rejected_test },
+#if defined(TINYUSDZ_WITH_JSON)
   { "security_json_array_count_mismatch_rejected_test", security_json_array_count_mismatch_rejected_test },
   { "security_json_point3f_count_overflow_rejected_test", security_json_point3f_count_overflow_rejected_test },
+#endif
   { "security_resolver_oversized_custom_asset_rejected_test", security_resolver_oversized_custom_asset_rejected_test },
   { "security_nested_zstd_depth_rejected_test", security_nested_zstd_depth_rejected_test },
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
