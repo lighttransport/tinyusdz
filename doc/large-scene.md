@@ -191,6 +191,69 @@ prims and the value-clip `GEO` behind the `alfro=render` variant — in a few Mi
 with the multi-GB binaries and the value-clip layer deferred. This needed the
 variant-content fix (§3.5).
 
+### 2.7 RenderScene optimization for realtime viewers
+
+Payload deferral solves structural loading, but realtime web/native viewers have
+a second pressure point after composition: authored scenes can expand to thousands
+of duplicate materials, many equivalent texture records, thousands of draw-call
+mesh nodes, and tens of thousands of transform-only prim nodes. TinyUSDZ now has
+opt-in `RenderSceneConverterConfig` switches for this viewer-oriented path:
+
+| Option | Default | Effect |
+|---|---:|---|
+| `dedup_materials_by_texture_identity` | `false` | Deduplicate equivalent render materials by full shader parameters and canonical texture identity. Also enables a source-graph signature cache so duplicate source materials can reuse an existing render material ID before full conversion. |
+| `merge_meshes` | `false` | Merge compatible meshes sharing a material to reduce draw calls. |
+| `merge_meshes_bake_transform` | `true` | Bake mesh node world transforms into vertex data while merging so meshes under different transforms can still aggregate. |
+| `flatten_optimized_render_tree` | `false` | Replace the authored prim hierarchy with a compact render-only root containing renderable meshes/lights/cameras in world space. This intentionally breaks prim-tree fidelity. |
+
+All destructive optimizations are disabled by default. Existing conversion paths
+therefore preserve the authored prim tree and one-render-material-per-converted
+source material unless an app explicitly opts into the viewer path.
+
+The material optimization has two stages:
+
+1. A conservative source-graph signature cache compares authored Material /
+   Shader / NodeGraph payloads with local material paths normalized. A cache hit
+   reuses the canonical render material ID and skips full material conversion.
+2. A post-conversion material/texture compaction pass remaps mesh material IDs,
+   material subset IDs, instance material IDs, and shader texture IDs to
+   canonical render objects. Texture identity uses resolved image ID, wrapping,
+   UDIM linkage/remap, scale/bias, output channel, UV primvar, and transform.
+
+Mesh merging is applied after material/texture compaction. It only merges meshes
+that are safe for render aggregation: no skeletal skinning, no blend-shape
+targets, no per-face material subset map, and compatible vertex attribute
+layouts. When transform baking is enabled, packed direction attributes that
+cannot be transformed as float3 are dropped from the merged mesh so consumers can
+recompute them rather than reading corrupted normals/tangents.
+
+Flattened render tree mode is separate from mesh merging. It keeps renderable
+nodes only and assigns each kept node its previous world matrix as its new local
+matrix under a synthetic root. This substantially reduces JS/renderer object
+construction overhead in viewer-only workflows, but it should not be used by
+tools that need authored prim paths, hierarchy editing, or exact selection
+round-tripping.
+
+The web MaterialX demo exposes the same switches as URL/query/UI settings:
+
+```
+nativeMaterialDedup=true
+nativeMeshMerge=true
+nativeMeshMergeBakeTransform=true
+nativeFlattenRenderTree=true
+meshAggregation=off|material
+```
+
+On a representative flattened large scene with resized PNG textures, the fully
+native viewer path reduced render mesh nodes from a few thousand to a few
+hundred, compacted the JS node tree from tens of thousands of nodes to hundreds,
+kept the final material count stable, and reduced Three.js construction from
+roughly a second to a few hundred milliseconds. Source-material signature caching
+also reduced native material conversion from roughly second-scale to
+double-digit milliseconds in that workload. Treat these as shape-of-improvement
+numbers rather than a portable benchmark; exact results depend on material
+duplication, mesh compatibility, and hierarchy depth.
+
 ---
 
 ## 3. Roadmap (remaining implementation)
