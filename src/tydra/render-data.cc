@@ -2467,15 +2467,14 @@ static vec3 TransformPoint(const value::matrix4d &m, const vec3 &p) {
   return vec3{float(x), float(y), float(z)};
 }
 
-// Helper function to transform a vec3 direction (normal) by a matrix4d
-// Uses the upper-left 3x3 of the inverse-transpose for correct normal transformation
-static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
-  // For normals, we need the inverse transpose of the upper-left 3x3
-  // For now, we use the upper-left 3x3 directly (correct for uniform scale and rotation only)
-  // TODO: Proper inverse-transpose for non-uniform scale
-  double x = m.m[0][0] * double(n[0]) + m.m[1][0] * double(n[1]) + m.m[2][0] * double(n[2]);
-  double y = m.m[0][1] * double(n[0]) + m.m[1][1] * double(n[1]) + m.m[2][1] * double(n[2]);
-  double z = m.m[0][2] * double(n[0]) + m.m[1][2] * double(n[1]) + m.m[2][2] * double(n[2]);
+// Helper function to transform a vec3 direction by a precomputed inverse
+// matrix. The upper-left 3x3 of the inverse-transpose gives the correct normal
+// transform under non-uniform scale.
+static vec3 TransformNormalWithInverse(const value::matrix4d &inv,
+                                       const vec3 &n) {
+  double x = inv.m[0][0] * double(n[0]) + inv.m[0][1] * double(n[1]) + inv.m[0][2] * double(n[2]);
+  double y = inv.m[1][0] * double(n[0]) + inv.m[1][1] * double(n[1]) + inv.m[1][2] * double(n[2]);
+  double z = inv.m[2][0] * double(n[0]) + inv.m[2][1] * double(n[1]) + inv.m[2][2] * double(n[2]);
 
   // Normalize the result
   double len = std::sqrt(x*x + y*y + z*z);
@@ -2511,6 +2510,53 @@ static bool CompatibleVertexAttributeForAppend(const VertexAttribute &dst,
           dst.stride_bytes() == src.stride_bytes());
 }
 
+static bool ValidateIndexedTopology(const std::vector<uint32_t> &counts,
+                                    const std::vector<uint32_t> &indices,
+                                    size_t point_count,
+                                    const std::string &label,
+                                    std::string *err) {
+  if (counts.empty() && indices.empty()) {
+    return true;
+  }
+  if (counts.empty() || indices.empty()) {
+    if (err) {
+      *err = "Cannot merge " + label +
+             ": face counts and indices must both be present.";
+    }
+    return false;
+  }
+
+  size_t total = 0;
+  for (uint32_t count : counts) {
+    if (size_t(count) > indices.size() - total) {
+      if (err) {
+        *err = "Cannot merge " + label +
+               ": face counts exceed index array length.";
+      }
+      return false;
+    }
+    total += size_t(count);
+  }
+  if (total != indices.size()) {
+    if (err) {
+      *err = "Cannot merge " + label +
+             ": face counts do not match index array length.";
+    }
+    return false;
+  }
+
+  for (uint32_t idx : indices) {
+    if (size_t(idx) >= point_count) {
+      if (err) {
+        *err = "Cannot merge " + label +
+               ": face index is out of point range.";
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
                                          const value::matrix4d &src_transform,
                                          RenderMesh &dst,
@@ -2523,12 +2569,23 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Check if transform is identity using tinyusdz::is_identity function
   bool transform_is_identity = tinyusdz::is_identity(src_transform);
+  value::matrix4d src_transform_inverse = value::matrix4d::identity();
+  const bool needs_direction_bake =
+      !transform_is_identity &&
+      (!src.normals.empty() || !src.tangents.empty() ||
+       !src.binormals.empty());
   if (!transform_is_identity) {
     if (!CanBakeDirectionAttribute(src.normals) ||
         !CanBakeDirectionAttribute(src.tangents) ||
         !CanBakeDirectionAttribute(src.binormals)) {
       set_merge_error(
           "Cannot bake transform for packed or non-float3 direction attributes.");
+      return false;
+    }
+    if (needs_direction_bake &&
+        !tinyusdz::inverse(src_transform, src_transform_inverse)) {
+      set_merge_error(
+          "Cannot bake direction attributes with a non-invertible transform.");
       return false;
     }
   }
@@ -2607,6 +2664,18 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     set_merge_error("Cannot merge mesh: vertex count exceeds uint32 range.");
     return false;
   }
+  if (!ValidateIndexedTopology(src.usdFaceVertexCounts,
+                               src.usdFaceVertexIndices,
+                               src.points.size(),
+                               "face topology", err)) {
+    return false;
+  }
+  if (!ValidateIndexedTopology(src.triangulatedFaceVertexCounts,
+                               src.triangulatedFaceVertexIndices,
+                               src.points.size(),
+                               "triangulated topology", err)) {
+    return false;
+  }
   // With the vertex-count guard above, `vertex_offset + idx` cannot overflow
   // uint32 for any in-range index (idx < src.points.size()). The per-element
   // guards below therefore only catch malformed (out-of-range) source indices.
@@ -2661,7 +2730,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         // Transform the normals we just copied
         vec3 *normals_data = reinterpret_cast<vec3*>(dst.normals.data.data());
         for (size_t i = 0; i < src_normal_count; i++) {
-          normals_data[i] = TransformNormal(src_transform, normals_data[i]);
+          normals_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         normals_data[i]);
         }
       }
     } else {
@@ -2676,7 +2747,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_normals = reinterpret_cast<const vec3*>(src.normals.data.data());
         vec3 *dst_normals = reinterpret_cast<vec3*>(dst.normals.data.data() + old_size);
         for (size_t i = 0; i < src_normal_count; i++) {
-          dst_normals[i] = TransformNormal(src_transform, src_normals[i]);
+          dst_normals[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_normals[i]);
         }
       }
     }
@@ -2707,7 +2780,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         vec3 *tangents_data = reinterpret_cast<vec3*>(dst.tangents.data.data());
         size_t count = dst.tangents.vertex_count();
         for (size_t i = 0; i < count; i++) {
-          tangents_data[i] = TransformNormal(src_transform, tangents_data[i]);
+          tangents_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         tangents_data[i]);
         }
       }
     } else {
@@ -2722,7 +2797,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_tangents = reinterpret_cast<const vec3*>(src.tangents.data.data());
         vec3 *dst_tangents = reinterpret_cast<vec3*>(dst.tangents.data.data() + old_size);
         for (size_t i = 0; i < src_count; i++) {
-          dst_tangents[i] = TransformNormal(src_transform, src_tangents[i]);
+          dst_tangents[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_tangents[i]);
         }
       }
     }
@@ -2736,7 +2813,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         vec3 *binormals_data = reinterpret_cast<vec3*>(dst.binormals.data.data());
         size_t count = dst.binormals.vertex_count();
         for (size_t i = 0; i < count; i++) {
-          binormals_data[i] = TransformNormal(src_transform, binormals_data[i]);
+          binormals_data[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         binormals_data[i]);
         }
       }
     } else {
@@ -2751,7 +2830,9 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         const vec3 *src_binormals = reinterpret_cast<const vec3*>(src.binormals.data.data());
         vec3 *dst_binormals = reinterpret_cast<vec3*>(dst.binormals.data.data() + old_size);
         for (size_t i = 0; i < src_count; i++) {
-          dst_binormals[i] = TransformNormal(src_transform, src_binormals[i]);
+          dst_binormals[i] =
+              TransformNormalWithInverse(src_transform_inverse,
+                                         src_binormals[i]);
         }
       }
     }
@@ -3171,58 +3252,107 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     meshes.push_back(std::move(mm));
   }
 
-  // Update node references for merged sources only.
-  // Keep only one node per merged mesh and invalidate the rest.
+  // Update node references for merged sources.
+  //
+  // Baked merges: the merged vertices are in WORLD space, so they must render
+  // with a net-identity world transform. We attach the merged mesh to a fresh
+  // ROOT-level node (identity transform, no ancestors) and turn every source
+  // node into a plain group, leaving its local_matrix INTACT. Crucially we do
+  // NOT neutralize a source node's transform in place: source mesh nodes can be
+  // nested under one another (e.g. a window mesh under a wall mesh), and
+  // rewriting an ancestor's local would corrupt the world transform of any
+  // descendant mesh node that was neutralized assuming the original ancestor —
+  // the cause of the "floating mesh" artifact. Keeping every source node's
+  // local untouched means descendants stay correctly placed; the root-level
+  // merged node is independent of all of them.
+  //
+  // Non-baked merges: the vertices share the (identical) source-group local
+  // space, so we keep the first source node carrying that transform and
+  // invalidate the rest.
+  //
+  // The new baked-merge nodes must live INSIDE the subtree that consumers
+  // traverse from the default root (getDefaultRootNode), not as detached
+  // top-level siblings (which would never be rendered). Attach them as children
+  // of the default root node, with a local that cancels that root's own world
+  // transform so the world-space merged vertices end up net-identity.
+  const size_t default_root_index =
+      (default_node >= 0 && size_t(default_node) < root_nodes.size())
+          ? size_t(default_node)
+          : 0;
+  value::matrix4d default_root_local = value::matrix4d::identity();
+  if (env.scene_config.merge_meshes_bake_transform && !root_nodes.empty()) {
+    value::matrix4d inv_root;
+    if (tinyusdz::inverse(root_nodes[default_root_index].global_matrix,
+                          inv_root)) {
+      default_root_local = inv_root;
+    }
+  }
+
+  std::vector<Node> new_root_merged_nodes;
   for (const auto &group : merged_groups) {
     int32_t new_id = group.first;
     const auto &source_ids = group.second;
-    bool first_assigned = false;
 
-    for (size_t old_id : source_ids) {
-      if (old_id >= mesh_nodes_by_id.size()) {
-        continue;
-      }
+    if (env.scene_config.merge_meshes_bake_transform) {
+      const RenderMesh &mm = meshes[size_t(new_id)];
+      Node mnode;
+      mnode.prim_name = mm.prim_name;
+      mnode.display_name = mm.display_name;
+      mnode.abs_path = mm.abs_path;
+      mnode.category = NodeCategory::Geom;
+      mnode.nodeType = NodeType::Mesh;
+      mnode.id = new_id;
+      mnode.local_matrix = default_root_local;
+      mnode.global_matrix = value::matrix4d::identity();
+      new_root_merged_nodes.push_back(std::move(mnode));
 
-      for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
-        if (!node_ptr) {
+      for (size_t old_id : source_ids) {
+        if (old_id >= mesh_nodes_by_id.size()) {
           continue;
         }
-
-        if (!first_assigned) {
-          node_ptr->id = new_id;
-          first_assigned = true;
-
-          // If we baked transforms, the merged vertices now live in world
-          // space. The node, however, stays in its original place in the scene
-          // graph, so any ancestor (parent) transform would be applied on top
-          // of the already-world-space data by consumers that accumulate local
-          // matrices down the hierarchy (e.g. the three.js exporter).
-          //
-          // Setting local_matrix to identity is NOT enough: world =
-          // local * parent_world, so the surviving parent_world would still be
-          // re-applied. Instead choose local' = inverse(global) * local, which
-          // gives local' * parent_world = inverse(global) * (local *
-          // parent_world) = inverse(global) * global = identity. The node then
-          // contributes no net world transform and the baked vertices render in
-          // place regardless of how deep the node sits.
-          if (env.scene_config.merge_meshes_bake_transform) {
-            value::matrix4d inv_global;
-            if (tinyusdz::inverse(node_ptr->global_matrix, inv_global)) {
-              node_ptr->local_matrix =
-                  value::Mult(inv_global, node_ptr->local_matrix);
-            } else {
-              // Degenerate (non-invertible) global transform: fall back to
-              // identity local; the world-space vertices are still correct as
-              // long as no ancestor transform exists.
-              node_ptr->local_matrix = value::matrix4d::identity();
-            }
-            node_ptr->global_matrix = value::matrix4d::identity();
+        for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+          if (!node_ptr) {
+            continue;
           }
-        } else {
+          // Drop the mesh content; keep the transform for descendants.
           node_ptr->category = NodeCategory::Group;
           node_ptr->nodeType = NodeType::Xform;
           node_ptr->id = -1;
         }
+      }
+    } else {
+      bool first_assigned = false;
+      for (size_t old_id : source_ids) {
+        if (old_id >= mesh_nodes_by_id.size()) {
+          continue;
+        }
+        for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+          if (!node_ptr) {
+            continue;
+          }
+          if (!first_assigned) {
+            node_ptr->id = new_id;
+            first_assigned = true;
+          } else {
+            node_ptr->category = NodeCategory::Group;
+            node_ptr->nodeType = NodeType::Xform;
+            node_ptr->id = -1;
+          }
+        }
+      }
+    }
+  }
+  // Attach under the default root so they are reachable from
+  // getDefaultRootNode(); falls back to top-level if there is no root node.
+  if (!new_root_merged_nodes.empty()) {
+    if (!root_nodes.empty()) {
+      Node &host = root_nodes[default_root_index];
+      for (Node &n : new_root_merged_nodes) {
+        host.children.push_back(std::move(n));
+      }
+    } else {
+      for (Node &n : new_root_merged_nodes) {
+        root_nodes.push_back(std::move(n));
       }
     }
   }
