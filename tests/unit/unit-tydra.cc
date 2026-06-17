@@ -2117,6 +2117,144 @@ void tydra_mesh_fallback_policy_test(void) {
     TEST_CHECK(converter.GetInfo().find("Cannot merge texcoords slot 0") !=
                std::string::npos);
   }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::UVTexture texture_a;
+    texture_a.texture_image_id = 5;
+    texture_a.wrapS = tydra::UVTexture::WrapMode::REPEAT;
+    texture_a.wrapT = tydra::UVTexture::WrapMode::REPEAT;
+    texture_a.varname_uv = "st";
+
+    tydra::UVTexture texture_b = texture_a;
+
+    converter.textures.push_back(texture_a);
+    converter.textures.push_back(texture_b);
+
+    tydra::RenderMaterial material;
+    material.surfaceShader = tydra::PreviewSurfaceShader{};
+    material.surfaceShader->diffuseColor.texture_id = 1;
+    converter.materials.push_back(material);
+
+    TEST_CHECK(converter.DeduplicateTexturesByIdentityImpl() == 1);
+    TEST_CHECK(converter.textures.size() == 1);
+    TEST_CHECK(converter.materials.size() == 1);
+    if (converter.materials.size() == 1 &&
+        converter.materials[0].surfaceShader.has_value()) {
+      TEST_CHECK(converter.materials[0]
+                     .surfaceShader->diffuseColor.texture_id == 0);
+    }
+  }
+
+  {
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 3;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = value::matrix4d::identity();
+    node_a.global_matrix = value::matrix4d::identity();
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/MeshB";
+    node_b.id = 1;
+
+    converter.root_nodes.push_back(node_a);
+    converter.root_nodes.push_back(node_b);
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.meshes.size() == 1);
+    if (converter.meshes.size() == 1) {
+      TEST_CHECK(converter.meshes[0].material_id == 3);
+      TEST_CHECK(converter.meshes[0].points.size() == 6);
+    }
+    TEST_CHECK(converter.root_nodes.size() == 2);
+    if (converter.root_nodes.size() == 2) {
+      TEST_CHECK(converter.root_nodes[0].nodeType == tydra::NodeType::Mesh);
+      TEST_CHECK(converter.root_nodes[0].id == 0);
+      TEST_CHECK(converter.root_nodes[1].nodeType == tydra::NodeType::Xform);
+      TEST_CHECK(converter.root_nodes[1].id == -1);
+    }
+    TEST_CHECK(converter.GetInfo().find(
+                   "Mesh merge compacted mesh records: 3 -> 1.") !=
+               std::string::npos);
+  }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::Node root;
+    root.prim_name = "Root";
+    root.abs_path = "/Root";
+    root.category = tydra::NodeCategory::Group;
+    root.nodeType = tydra::NodeType::Xform;
+    root.local_matrix = value::matrix4d::identity();
+    root.global_matrix = value::matrix4d::identity();
+
+    tydra::Node group;
+    group.prim_name = "Group";
+    group.abs_path = "/Root/Group";
+    group.category = tydra::NodeCategory::Group;
+    group.nodeType = tydra::NodeType::Xform;
+    group.local_matrix = value::matrix4d::identity();
+    group.global_matrix = value::matrix4d::identity();
+
+    tydra::Node mesh_node;
+    mesh_node.prim_name = "Mesh";
+    mesh_node.abs_path = "/Root/Group/Mesh";
+    mesh_node.category = tydra::NodeCategory::Geom;
+    mesh_node.nodeType = tydra::NodeType::Mesh;
+    mesh_node.id = 0;
+    mesh_node.local_matrix = value::matrix4d::identity();
+    mesh_node.global_matrix = value::matrix4d::identity();
+    mesh_node.global_matrix.m[3][0] = 2.0;
+
+    group.children.push_back(mesh_node);
+    root.children.push_back(group);
+    converter.root_nodes.push_back(root);
+
+    TEST_CHECK(converter.FlattenOptimizedRenderTreeImpl() == 1);
+    TEST_CHECK(converter.root_nodes.size() == 1);
+    if (converter.root_nodes.size() == 1) {
+      TEST_CHECK(converter.root_nodes[0].nodeType == tydra::NodeType::Xform);
+      TEST_CHECK(converter.root_nodes[0].children.size() == 1);
+      if (converter.root_nodes[0].children.size() == 1) {
+        const tydra::Node &flat_mesh = converter.root_nodes[0].children[0];
+        TEST_CHECK(flat_mesh.nodeType == tydra::NodeType::Mesh);
+        TEST_CHECK(flat_mesh.id == 0);
+        TEST_CHECK(flat_mesh.children.empty());
+        TEST_CHECK(flat_mesh.local_matrix.m[3][0] == 2.0);
+      }
+    }
+  }
 }
 
 void tydra_skel_animation_validation_test(void) {

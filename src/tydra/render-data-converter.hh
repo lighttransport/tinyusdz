@@ -448,6 +448,17 @@ struct RenderSceneConverterConfig {
   bool merge_meshes{false};
 
   //
+  // Deduplicate RenderScene materials by full shader parameters before mesh
+  // merging. Texture parameters are compared by their resolved image/wrap/UDIM
+  // identity rather than transient texture object ids.
+  //
+  // Only effective for RenderScene conversion. Intended to make raw converted
+  // scenes with many duplicated materials mergeable without changing the
+  // source USD layer.
+  //
+  bool dedup_materials_by_texture_identity{false};
+
+  //
   // When merging meshes, bake global transforms into vertex data.
   // This allows merging meshes with different transforms by transforming
   // their vertices into world space.
@@ -455,6 +466,11 @@ struct RenderSceneConverterConfig {
   // Only effective when merge_meshes is true.
   //
   bool merge_meshes_bake_transform{true};
+
+  // Replace the authored node hierarchy with a compact render-only tree after
+  // native optimization. This breaks prim-tree fidelity and is intended for
+  // realtime viewers that only need renderable objects, lights, and cameras.
+  bool flatten_optimized_render_tree{false};
 
   // Bake USD value clip animations into animation clips.
   bool enable_value_clips{true};
@@ -1203,6 +1219,38 @@ class RenderSceneConverter {
   ///
   bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
 
+  ///
+  /// Deduplicate RenderMaterial entries and remap mesh/subset/instance material
+  /// ids to the canonical material. Returns the number of removed materials.
+  ///
+  size_t DeduplicateMaterialsByTextureIdentityImpl();
+
+  ///
+  /// Deduplicate UVTexture entries by resolved image/wrap/UDIM identity and
+  /// remap all material shader texture references. Returns removed textures.
+  ///
+  size_t DeduplicateTexturesByIdentityImpl();
+
+  ///
+  /// Replace root_nodes with a synthetic render-only root containing renderable
+  /// nodes in world space. Intended for viewer optimization only.
+  ///
+  size_t FlattenOptimizedRenderTreeImpl();
+
+  ///
+  /// Build a cheap source-graph signature for duplicate material detection
+  /// before full RenderMaterial conversion.
+  ///
+  bool BuildMaterialSourceSignature(const RenderSceneConverterEnv &env,
+                                    const Path &mat_abs_path,
+                                    const Material &material,
+                                    std::string *signature);
+
+  bool FindMaterialSourceSignature(const std::string &signature,
+                                   int64_t *material_id) const;
+  void RememberMaterialSourceSignature(const std::string &signature,
+                                       int64_t material_id);
+
   // Wrapper around GetBoundMaterial with caching.
   // Avoids repeated ancestor walks for sibling prims.
   bool GetBoundMaterialCached(
@@ -1362,6 +1410,9 @@ class RenderSceneConverter {
     std::string error;
   };
   std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
+  std::unordered_map<std::string, int64_t, FNV1StringHash>
+      _materialSourceSignatureCache;
 
   std::string _timing_info;
 

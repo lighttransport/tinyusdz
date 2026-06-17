@@ -339,12 +339,18 @@ const settings = {
     materialType: 'auto',
     materialImplementation: 'physical', // 'physical' | 'openpbr' | 'auto'
     fastMaterials: false,
-    fastMaterialMode: 'preview',
+    fastMaterialMode: 'full',
     deferTextures: false,
     textureConcurrency: 4,
     buildYieldMode: 'raf',
     buildYieldIntervalMs: 250,
     useMeshPtr: true,
+    nativeMaterialDedup: false,
+    nativeMeshMerge: false,
+    nativeMeshMergeBakeTransform: true,
+    nativeFlattenRenderTree: false,
+    meshAggregation: 'off',
+    meshAggregationMinMeshes: 2,
     computeMissingTangents: false,
     suppressNativeInfoLogs: true,
     envMapPreset: 'goegap_1k',
@@ -480,6 +486,28 @@ async function init() {
     }
     if (urlParams.has('useMeshPtr')) {
         settings.useMeshPtr = urlParams.get('useMeshPtr') !== 'false';
+    }
+    if (urlParams.has('nativeMaterialDedup')) {
+        settings.nativeMaterialDedup = urlParams.get('nativeMaterialDedup') === 'true';
+    }
+    if (urlParams.has('nativeMeshMerge')) {
+        settings.nativeMeshMerge = urlParams.get('nativeMeshMerge') === 'true';
+    }
+    if (urlParams.has('nativeMeshMergeBakeTransform')) {
+        settings.nativeMeshMergeBakeTransform = urlParams.get('nativeMeshMergeBakeTransform') !== 'false';
+    }
+    if (urlParams.has('nativeFlattenRenderTree')) {
+        settings.nativeFlattenRenderTree = urlParams.get('nativeFlattenRenderTree') === 'true';
+    }
+    if (urlParams.has('meshAggregation')) {
+        const mode = urlParams.get('meshAggregation') || 'off';
+        settings.meshAggregation = mode === 'true' ? 'material' : mode;
+    }
+    if (urlParams.has('meshAggregationMinMeshes')) {
+        const n = Number.parseInt(urlParams.get('meshAggregationMinMeshes'), 10);
+        if (Number.isFinite(n) && n > 1) {
+            settings.meshAggregationMinMeshes = n;
+        }
     }
     if (urlParams.has('computeMissingTangents')) {
         settings.computeMissingTangents = urlParams.get('computeMissingTangents') === 'true';
@@ -796,7 +824,7 @@ function setupMaterialTypeFolder() {
         .name('Fast Materials')
         .onChange(reloadMaterials);
 
-    materialTypeFolder.add(settings, 'fastMaterialMode', ['preview'])
+    materialTypeFolder.add(settings, 'fastMaterialMode', ['full', 'preview'])
         .name('Fast Mode')
         .onChange(reloadMaterials);
 
@@ -814,6 +842,30 @@ function setupMaterialTypeFolder() {
 
     materialTypeFolder.add(settings, 'useMeshPtr')
         .name('Mesh Ptr')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'nativeMaterialDedup')
+        .name('Native Mat Dedup')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'nativeMeshMerge')
+        .name('Native Mesh Merge')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'nativeMeshMergeBakeTransform')
+        .name('Native Bake Xform')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'nativeFlattenRenderTree')
+        .name('Native Flat Tree')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'meshAggregation', ['off', 'material'])
+        .name('Mesh Aggregate')
+        .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'meshAggregationMinMeshes', 2, 64, 1)
+        .name('Aggregate Min')
         .onChange(reloadMaterials);
 
     materialTypeFolder.add(settings, 'computeMissingTangents')
@@ -1712,6 +1764,18 @@ async function loadUSDFromData(data, filename) {
     traceLoadPhase('loadUSDFromData:clearScene-done');
 
     loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
+    if (typeof loaderState.nativeLoader.setNativeMaterialDedup === 'function') {
+        loaderState.nativeLoader.setNativeMaterialDedup(settings.nativeMaterialDedup);
+    }
+    if (typeof loaderState.nativeLoader.setNativeMeshMerge === 'function') {
+        loaderState.nativeLoader.setNativeMeshMerge(settings.nativeMeshMerge);
+    }
+    if (typeof loaderState.nativeLoader.setNativeMeshMergeBakeTransform === 'function') {
+        loaderState.nativeLoader.setNativeMeshMergeBakeTransform(settings.nativeMeshMergeBakeTransform);
+    }
+    if (typeof loaderState.nativeLoader.setNativeFlattenRenderTree === 'function') {
+        loaderState.nativeLoader.setNativeFlattenRenderTree(settings.nativeFlattenRenderTree);
+    }
 
     traceLoadPhase('native:loadFromBinary:start');
     const previousDebugCallback = loaderState.loader.native_.onTinyUSDZDebug;
@@ -1844,10 +1908,13 @@ async function buildSceneGraph() {
         textureCache: sceneState.textureCache,
         materialCache: new Map(),
         materialSignatureCache: settings.fastMaterials ? new Map() : null,
+        materialSignatureTextureCache: settings.fastMaterials ? new Map() : null,
         fastMaterials: settings.fastMaterials,
         fastMaterialMode: settings.fastMaterialMode,
         textureLoadingManager: settings.deferTextures ? new TextureLoadingManager() : null,
         useMeshPtr: settings.useMeshPtr,
+        meshAggregation: settings.meshAggregation,
+        meshAggregationMinMeshes: settings.meshAggregationMinMeshes,
         computeMissingTangents: settings.computeMissingTangents,
         yieldMode: settings.buildYieldMode,
         yieldIntervalMs: settings.buildYieldIntervalMs,
@@ -1898,8 +1965,12 @@ async function buildSceneGraph() {
     traceLoadPhase('buildSceneGraph:mesh-userdata:done');
 
     const numMeshes = loaderState.nativeLoader.numMeshes();
+    const renderMeshes = countRenderMeshesFromScene();
     const numMaterials = sceneState.materials.length;
-    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${sceneState.upAxis})`);
+    const meshLabel = renderMeshes === numMeshes ?
+        `${numMeshes} meshes` :
+        `${renderMeshes} render meshes (${numMeshes} native)`;
+    updateStatus(`Loaded: ${meshLabel}, ${numMaterials} materials (upAxis: ${sceneState.upAxis})`);
 }
 
 /**
@@ -1925,6 +1996,19 @@ function collectMaterialsFromScene() {
     sceneState.materialData = sceneState.materials.map(mat => {
         return mat.userData?.rawData || null;
     });
+}
+
+function countRenderMeshesFromScene() {
+    let count = 0;
+    if (!sceneState.root) {
+        return count;
+    }
+    sceneState.root.traverse((obj) => {
+        if (obj.isMesh) {
+            count++;
+        }
+    });
+    return count;
 }
 
 /**
@@ -2166,9 +2250,12 @@ function resetAnimation() {
 function updateModelInfo() {
     const numMeshes = loaderState.nativeLoader.numMeshes();
     const numMaterials = loaderState.nativeLoader.numMaterials();
+    const renderMeshes = countRenderMeshesFromScene();
 
     document.getElementById('model-info').style.display = 'block';
-    document.getElementById('mesh-count').textContent = numMeshes;
+    document.getElementById('mesh-count').textContent = renderMeshes && renderMeshes !== numMeshes ?
+        `${renderMeshes} (${numMeshes} native)` :
+        numMeshes;
     document.getElementById('material-count').textContent = numMaterials;
 }
 

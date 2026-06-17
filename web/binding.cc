@@ -2387,12 +2387,25 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
     ReportTinyUSDZDebugEvent(
         "convertToRenderScene.begin",
         "loadTextureInNative=" + std::to_string(loadTextureInNative_ ? 1 : 0) +
             " combineUDIMTiles=" + std::to_string(combineUDIMTiles_ ? 1 : 0) +
             " deferTangents=" +
-            std::to_string(defer_tangent_computation_ ? 1 : 0),
+            std::to_string(defer_tangent_computation_ ? 1 : 0) +
+            " nativeMaterialDedup=" +
+            std::to_string(native_material_dedup_ ? 1 : 0) +
+            " nativeMeshMerge=" +
+            std::to_string(native_mesh_merge_ ? 1 : 0) +
+            " nativeFlattenRenderTree=" +
+            std::to_string(native_flatten_render_tree_ ? 1 : 0),
         binary.size(), is_usdz);
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
     ReportTinyUSDZDebugEvent(
@@ -2577,6 +2590,13 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
 
     // Capture warnings from converter (available via warn() method)
@@ -2737,6 +2757,13 @@ class TinyUSDZLoaderNative {
         value_clip_use_time_range_;
     env.scene_config.value_clip_start_time = value_clip_start_time_;
     env.scene_config.value_clip_end_time = value_clip_end_time_;
+    env.scene_config.dedup_materials_by_texture_identity =
+        native_material_dedup_;
+    env.scene_config.merge_meshes = native_mesh_merge_;
+    env.scene_config.merge_meshes_bake_transform =
+        native_mesh_merge_bake_transform_;
+    env.scene_config.flatten_optimized_render_tree =
+        native_flatten_render_tree_;
 
     // Yield before heavy conversion
     co_await yieldToEventLoop();
@@ -5570,6 +5597,38 @@ class TinyUSDZLoaderNative {
 
   bool getCombineUDIMTiles() const {
     return combineUDIMTiles_;
+  }
+
+  void setNativeMaterialDedup(bool enabled) {
+    native_material_dedup_ = enabled;
+  }
+
+  bool getNativeMaterialDedup() const {
+    return native_material_dedup_;
+  }
+
+  void setNativeMeshMerge(bool enabled) {
+    native_mesh_merge_ = enabled;
+  }
+
+  bool getNativeMeshMerge() const {
+    return native_mesh_merge_;
+  }
+
+  void setNativeMeshMergeBakeTransform(bool enabled) {
+    native_mesh_merge_bake_transform_ = enabled;
+  }
+
+  bool getNativeMeshMergeBakeTransform() const {
+    return native_mesh_merge_bake_transform_;
+  }
+
+  void setNativeFlattenRenderTree(bool enabled) {
+    native_flatten_render_tree_ = enabled;
+  }
+
+  bool getNativeFlattenRenderTree() const {
+    return native_flatten_render_tree_;
   }
 
   // Allow parent-directory ('..') segments in composition asset paths
@@ -8459,6 +8518,11 @@ class TinyUSDZLoaderNative {
   // tiles into a single atlas texture.
   bool combineUDIMTiles_{true};
 
+  bool native_material_dedup_{false};
+  bool native_mesh_merge_{false};
+  bool native_mesh_merge_bake_transform_{true};
+  bool native_flatten_render_tree_{false};
+
   // Set appropriate default memory limits based on WASM architecture
 #ifdef TINYUSDZ_WASM_MEMORY64
   int32_t max_memory_limit_mb_{8192}; // 8GB for MEMORY64
@@ -9754,6 +9818,22 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setCombineUDIMTiles)
       .function("getCombineUDIMTiles",
                 &TinyUSDZLoaderNative::getCombineUDIMTiles)
+      .function("setNativeMaterialDedup",
+                &TinyUSDZLoaderNative::setNativeMaterialDedup)
+      .function("getNativeMaterialDedup",
+                &TinyUSDZLoaderNative::getNativeMaterialDedup)
+      .function("setNativeMeshMerge",
+                &TinyUSDZLoaderNative::setNativeMeshMerge)
+      .function("getNativeMeshMerge",
+                &TinyUSDZLoaderNative::getNativeMeshMerge)
+      .function("setNativeMeshMergeBakeTransform",
+                &TinyUSDZLoaderNative::setNativeMeshMergeBakeTransform)
+      .function("getNativeMeshMergeBakeTransform",
+                &TinyUSDZLoaderNative::getNativeMeshMergeBakeTransform)
+      .function("setNativeFlattenRenderTree",
+                &TinyUSDZLoaderNative::setNativeFlattenRenderTree)
+      .function("getNativeFlattenRenderTree",
+                &TinyUSDZLoaderNative::getNativeFlattenRenderTree)
       .function("setAllowParentRelativeAssetPaths",
                 &TinyUSDZLoaderNative::setAllowParentRelativeAssetPaths)
       .function("getAllowParentRelativeAssetPaths",
