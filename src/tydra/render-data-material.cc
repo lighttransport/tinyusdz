@@ -1219,8 +1219,7 @@ static void AppendSourceSignatureProperty(std::ostringstream &ss,
       ss << "]";
     }
     if (attr.has_timesamples()) {
-      // Keep timesampled materials out of the early source cache by making the
-      // signature unique to this property shape.
+      // BuildMaterialSourceSignature rejects time-sampled material graphs.
       ss << ":timesamples=1";
     }
   } else if (prop.is_relationship()) {
@@ -1259,19 +1258,19 @@ static const std::map<std::string, Property> *GetUsdShadePrimProps(
   return nullptr;
 }
 
-static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
+static bool AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
                                          const Path &prim_path,
                                          const std::string &root_path,
                                          std::set<std::string> *visited,
                                          std::ostringstream &ss,
                                          int depth) {
-  if (!visited || depth > 64) {
-    return;
+  if (!visited || depth >= 64) {
+    return false;
   }
 
   const std::string path_key = prim_path.prim_part();
   if (!visited->insert(path_key).second) {
-    return;
+    return true;
   }
 
   ss << "prim:" << NormalizeSourceSignaturePath(prim_path, root_path)
@@ -1279,6 +1278,9 @@ static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
 
   std::string prim_payload = value::pprint_prim_value(
       prim.data(), 0, /* closing_brace */ false);
+  if (prim_payload.find("timeSamples") != std::string::npos) {
+    return false;
+  }
   ReplaceAll(prim_payload, root_path, "<M>");
   if (prim_path.prim_part() == root_path) {
     ReplaceAll(prim_payload, std::string(prim.element_name()), "<Material>");
@@ -1288,7 +1290,7 @@ static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
   const std::map<std::string, Property> *props = GetUsdShadePrimProps(prim);
   if (!props) {
     ss << "}";
-    return;
+    return true;
   }
 
   std::vector<std::string> prop_names;
@@ -1307,6 +1309,9 @@ static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
     AppendSourceSignatureProperty(ss, name, it->second, root_path);
     if (it->second.is_attribute()) {
       const Attribute &attr = it->second.get_attribute();
+      if (attr.has_timesamples()) {
+        return false;
+      }
       if (attr.has_connections()) {
         for (const Path &conn : attr.connections()) {
           const std::string conn_prim = conn.prim_part();
@@ -1334,8 +1339,10 @@ static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
     }
     Path child_path = prim_path;
     child_path = child_path.append_element(child->element_name());
-    AppendSourceSignaturePrimRec(
-        stage, *child, child_path, root_path, visited, ss, depth + 1);
+    if (!AppendSourceSignaturePrimRec(stage, *child, child_path, root_path,
+                                      visited, ss, depth + 1)) {
+      return false;
+    }
   }
 
   std::sort(local_connections.begin(), local_connections.end(),
@@ -1353,12 +1360,15 @@ static void AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
     std::string err;
     if (stage.find_prim_at_path(conn_prim_path, conn_prim, &err) &&
         conn_prim) {
-      AppendSourceSignaturePrimRec(stage, *conn_prim, conn_prim_path,
-                                   root_path, visited, ss, depth + 1);
+      if (!AppendSourceSignaturePrimRec(stage, *conn_prim, conn_prim_path,
+                                        root_path, visited, ss, depth + 1)) {
+        return false;
+      }
     }
   }
 
   ss << "}";
+  return true;
 }
 
 bool RenderSceneConverter::BuildMaterialSourceSignature(
@@ -1367,6 +1377,7 @@ bool RenderSceneConverter::BuildMaterialSourceSignature(
   if (!signature) {
     return false;
   }
+  signature->clear();
 
   const Prim *mat_prim{nullptr};
   std::string err;
@@ -1397,9 +1408,12 @@ bool RenderSceneConverter::BuildMaterialSourceSignature(
   ss << ";";
 
   std::set<std::string> visited;
-  AppendSourceSignaturePrimRec(env.stage, *mat_prim,
-                               Path(mat_abs_path.prim_part(), ""),
-                               mat_abs_path.prim_part(), &visited, ss, 0);
+  if (!AppendSourceSignaturePrimRec(env.stage, *mat_prim,
+                                    Path(mat_abs_path.prim_part(), ""),
+                                    mat_abs_path.prim_part(), &visited, ss,
+                                    0)) {
+    return false;
+  }
 
   *signature = ss.str();
   return true;

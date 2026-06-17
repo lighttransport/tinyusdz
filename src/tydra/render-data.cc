@@ -1434,14 +1434,6 @@ bool RenderSceneConverter::ConvertToRenderScene(
     merge_ms = ElapsedMs(phase_start);
   }
 
-  if (env.scene_config.flatten_optimized_render_tree) {
-    const size_t before_nodes = root_nodes.size();
-    const size_t kept_nodes = FlattenOptimizedRenderTreeImpl();
-    PushInfo("Flattened optimized render tree: roots " +
-             std::to_string(before_nodes) + " -> 1, render nodes " +
-             std::to_string(kept_nodes) + ".");
-  }
-
   // Report progress after mesh merging (95%)
   if (!CallProgressCallback(0.95f)) {
     PushError("Conversion cancelled by user.\n");
@@ -1552,6 +1544,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
     }
     DCOUT("[Tydra] Total render instances after PointInstancer expansion: "
           << instances.size());
+  }
+
+  if (env.scene_config.flatten_optimized_render_tree) {
+    const size_t before_nodes = root_nodes.size();
+    const size_t kept_nodes = FlattenOptimizedRenderTreeImpl();
+    PushInfo("Flattened optimized render tree: roots " +
+             std::to_string(before_nodes) + " -> 1, render nodes " +
+             std::to_string(kept_nodes) + ".");
   }
 
   // render_scene.meshMap = std::move(meshMap);
@@ -2491,6 +2491,23 @@ static bool CanBakeDirectionAttribute(const VertexAttribute &attr) {
           attr.stride_bytes() == sizeof(vec3));
 }
 
+// Whether `src` can be appended onto `dst`. Two conditions:
+//   - if both sides carry data, format and stride must match;
+//   - once `dst` already holds vertices (`dst_has_vertices`), the attribute must
+//     be present on both or neither. An attribute present on exactly one side
+//     would leave the merged array shorter than (or misaligned with) the point
+//     count, corrupting the mesh, so such a merge is refused.
+static bool CompatibleVertexAttributeForAppend(const VertexAttribute &dst,
+                                               const VertexAttribute &src,
+                                               bool dst_has_vertices) {
+  if (dst_has_vertices && (dst.empty() != src.empty())) {
+    return false;
+  }
+  return dst.empty() || src.empty() ||
+         (dst.format == src.format &&
+          dst.stride_bytes() == src.stride_bytes());
+}
+
 bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
                                          const value::matrix4d &src_transform,
                                          RenderMesh &dst,
@@ -2513,7 +2530,78 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     }
   }
 
-  // Get the vertex offset for index adjustment
+  // All attribute compatibility is validated up front, before `dst` is
+  // mutated, so a refused merge leaves `dst` untouched and the caller can keep
+  // the source as a standalone mesh.
+  const bool dst_has_vertices = !dst.points.empty();
+  if (!CompatibleVertexAttributeForAppend(dst.normals, src.normals,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge normals: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.tangents, src.tangents,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge tangents: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.binormals, src.binormals,
+                                          dst_has_vertices)) {
+    set_merge_error("Cannot merge binormals: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.vertex_colors, src.vertex_colors,
+                                          dst_has_vertices)) {
+    set_merge_error(
+        "Cannot merge vertex_colors: incompatible format or presence.");
+    return false;
+  }
+  if (!CompatibleVertexAttributeForAppend(dst.vertex_opacities,
+                                          src.vertex_opacities,
+                                          dst_has_vertices)) {
+    set_merge_error(
+        "Cannot merge vertex_opacities: incompatible format or presence.");
+    return false;
+  }
+  // Texcoords are keyed by slot; a slot present on exactly one side (once dst
+  // has vertices) would leave a partially-filled UV set, so refuse it too.
+  if (dst_has_vertices && dst.texcoords.size() != src.texcoords.size()) {
+    set_merge_error("Cannot merge texcoords: mismatched UV slot sets.");
+    return false;
+  }
+  for (const auto &src_tc : src.texcoords) {
+    auto dst_tc_it = dst.texcoords.find(src_tc.first);
+    if (dst_tc_it == dst.texcoords.end()) {
+      if (dst_has_vertices) {
+        set_merge_error("Cannot merge texcoords slot " +
+                        std::to_string(src_tc.first) +
+                        ": UV slot missing on merge target.");
+        return false;
+      }
+      continue;
+    }
+    if (!CompatibleVertexAttributeForAppend(dst_tc_it->second, src_tc.second,
+                                            dst_has_vertices)) {
+      set_merge_error("Cannot merge texcoords slot " +
+                      std::to_string(src_tc.first) +
+                      ": incompatible format or presence.");
+      return false;
+    }
+  }
+
+  // Get the vertex offset for index adjustment.
+  if (dst.points.size() >
+      size_t((std::numeric_limits<uint32_t>::max)())) {
+    set_merge_error("Cannot merge mesh: vertex offset exceeds uint32 range.");
+    return false;
+  }
+  if (src.points.size() >
+      size_t((std::numeric_limits<uint32_t>::max)()) - dst.points.size()) {
+    set_merge_error("Cannot merge mesh: vertex count exceeds uint32 range.");
+    return false;
+  }
+  // With the vertex-count guard above, `vertex_offset + idx` cannot overflow
+  // uint32 for any in-range index (idx < src.points.size()). The per-element
+  // guards below therefore only catch malformed (out-of-range) source indices.
   uint32_t vertex_offset = static_cast<uint32_t>(dst.points.size());
 
   // Merge points (with transform if needed)
@@ -2527,6 +2615,10 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Merge face vertex indices (adjust by vertex offset)
   for (uint32_t idx : src.usdFaceVertexIndices) {
+    if (idx > (std::numeric_limits<uint32_t>::max)() - vertex_offset) {
+      set_merge_error("Cannot merge face indices: uint32 index overflow.");
+      return false;
+    }
     dst.usdFaceVertexIndices.push_back(idx + vertex_offset);
   }
 
@@ -2538,6 +2630,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   // Merge triangulated indices if present
   if (!src.triangulatedFaceVertexIndices.empty()) {
     for (uint32_t idx : src.triangulatedFaceVertexIndices) {
+      if (idx > (std::numeric_limits<uint32_t>::max)() - vertex_offset) {
+        set_merge_error(
+            "Cannot merge triangulated indices: uint32 index overflow.");
+        return false;
+      }
       dst.triangulatedFaceVertexIndices.push_back(idx + vertex_offset);
     }
     dst.triangulatedFaceVertexCounts.insert(dst.triangulatedFaceVertexCounts.end(),
@@ -2560,11 +2657,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
-      if (dst.normals.format != src.normals.format ||
-          dst.normals.stride_bytes() != src.normals.stride_bytes()) {
-        set_merge_error("Cannot merge normals: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       // Append normals
       size_t old_size = dst.normals.data.size();
       dst.normals.data.resize(old_size + src.normals.data.size());
@@ -2591,12 +2684,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       dst.texcoords.emplace(slot, src_attr);
     } else {
       auto &dst_attr = dst_tc_it->second;
-      if (dst_attr.format != src_attr.format ||
-          dst_attr.stride_bytes() != src_attr.stride_bytes()) {
-        set_merge_error("Cannot merge texcoords slot " + std::to_string(slot) +
-                        ": incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst_attr.data.size();
       dst_attr.data.resize(old_size + src_attr.data.size());
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
@@ -2615,12 +2703,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
-      if (dst.tangents.format != src.tangents.format ||
-          dst.tangents.stride_bytes() != src.tangents.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge tangents: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.tangents.data.size();
       size_t src_count = src.tangents.vertex_count();
       dst.tangents.data.resize(old_size + src.tangents.data.size());
@@ -2649,12 +2732,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
-      if (dst.binormals.format != src.binormals.format ||
-          dst.binormals.stride_bytes() != src.binormals.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge binormals: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.binormals.data.size();
       size_t src_count = src.binormals.vertex_count();
       dst.binormals.data.resize(old_size + src.binormals.data.size());
@@ -2676,12 +2754,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_colors.empty()) {
       dst.vertex_colors = src.vertex_colors;
     } else {
-      if (dst.vertex_colors.format != src.vertex_colors.format ||
-          dst.vertex_colors.stride_bytes() != src.vertex_colors.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge vertex_colors: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_colors.data.size();
       dst.vertex_colors.data.resize(old_size + src.vertex_colors.data.size());
       memcpy(dst.vertex_colors.data.data() + old_size, src.vertex_colors.data.data(), src.vertex_colors.data.size());
@@ -2693,12 +2766,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_opacities.empty()) {
       dst.vertex_opacities = src.vertex_opacities;
     } else {
-      if (dst.vertex_opacities.format != src.vertex_opacities.format ||
-          dst.vertex_opacities.stride_bytes() != src.vertex_opacities.stride_bytes()) {
-        set_merge_error(
-            "Cannot merge vertex_opacities: incompatible format or stride.");
-        return false;
-      }
+      // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_opacities.data.size();
       dst.vertex_opacities.data.resize(old_size + src.vertex_opacities.data.size());
       memcpy(dst.vertex_opacities.data.data() + old_size, src.vertex_opacities.data.data(), src.vertex_opacities.data.size());
@@ -2752,6 +2820,11 @@ size_t RenderSceneConverter::DeduplicateMaterialsByTextureIdentityImpl() {
   }
 
   materials = std::move(deduped);
+  // Note: materialMap (path -> material index) is left stale after dedup. It is
+  // a converter-internal cache consulted only during material conversion (which
+  // completes before this pass) and is not exported into RenderScene, so the
+  // stale entries are never read. All live references (mesh/instance material
+  // ids, subsets) are remapped above.
   return before - materials.size();
 }
 
@@ -2796,6 +2869,7 @@ size_t RenderSceneConverter::DeduplicateTexturesByIdentityImpl() {
 
 size_t RenderSceneConverter::FlattenOptimizedRenderTreeImpl() {
   std::vector<Node> flat_nodes;
+  std::vector<int32_t> old_to_new_node_index;
 
   auto shouldKeep = [](const Node &node) {
     if (node.id < 0) {
@@ -2815,10 +2889,13 @@ size_t RenderSceneConverter::FlattenOptimizedRenderTreeImpl() {
           return;
         }
 
+        const size_t old_index = old_to_new_node_index.size();
+        old_to_new_node_index.push_back(-1);
         if (shouldKeep(node)) {
           Node kept = node;
           kept.local_matrix = node.global_matrix;
           kept.children.clear();
+          old_to_new_node_index[old_index] = int32_t(flat_nodes.size() + 1);
           flat_nodes.push_back(std::move(kept));
         }
 
@@ -2848,6 +2925,19 @@ size_t RenderSceneConverter::FlattenOptimizedRenderTreeImpl() {
   root_nodeMap = StringAndIdMap{};
   root_nodeMap.add("/OptimizedRenderRoot", uint64_t(0));
   default_node = 0;
+
+  for (AnimationClip &clip : animations) {
+    for (AnimationChannel &channel : clip.channels) {
+      if (channel.target_type != ChannelTargetType::SceneNode ||
+          channel.target_node < 0) {
+        continue;
+      }
+      const size_t old_index = size_t(channel.target_node);
+      channel.target_node = old_index < old_to_new_node_index.size()
+                                ? old_to_new_node_index[old_index]
+                                : -1;
+    }
+  }
 
   return kept_count;
 }
@@ -3170,6 +3260,28 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       light.geometry_mesh_id = mesh_remap[size_t(light.geometry_mesh_id)];
     }
   }
+
+  // Rebuild meshMap (abs_path -> mesh index) from the surviving node tree.
+  // Note: meshes referenced only by instances or lights (not by any Mesh node)
+  // are kept in `meshes` but intentionally omitted here. meshMap is a
+  // converter-internal lookup used during conversion (e.g. PointInstancer
+  // prototype resolution, which runs before this pass) and is not exported into
+  // RenderScene, so node-only coverage is sufficient.
+  StringAndIdMap remapped_mesh_map;
+  std::function<void(const Node &)> remapMeshMapFromNodes =
+      [&](const Node &node) {
+    if (!node.abs_path.empty() && node.nodeType == NodeType::Mesh &&
+        node.id >= 0 && size_t(node.id) < compact_meshes.size()) {
+      remapped_mesh_map.add(node.abs_path, uint64_t(node.id));
+    }
+    for (const Node &child : node.children) {
+      remapMeshMapFromNodes(child);
+    }
+  };
+  for (const Node &root : root_nodes) {
+    remapMeshMapFromNodes(root);
+  }
+  meshMap = std::move(remapped_mesh_map);
 
   const size_t before_compact = meshes.size();
   meshes = std::move(compact_meshes);
