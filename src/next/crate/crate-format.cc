@@ -881,5 +881,109 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
   return result;
 }
 
+bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size, uint64_t* dst,
+                    size_t count) {
+  if (count == 0) return true;
+  if (!buffer || buffer_size < sizeof(int64_t)) return false;
+
+  // Common delta is a full 64-bit value; code widths widen relative to the
+  // 32-bit variant: code 1 = int16, code 2 = int32, code 3 = int64.
+  int64_t common_delta;
+  std::memcpy(&common_delta, buffer, sizeof(int64_t));
+
+  const size_t codes_bytes = (count * 2 + 7) / 8;
+  const size_t codes_start = sizeof(int64_t);
+  const size_t vints_start = codes_start + codes_bytes;
+  if (buffer_size < vints_start) return false;
+
+  int64_t prev = 0;
+  size_t vints_pos = vints_start;
+
+  for (size_t i = 0; i < count; i++) {
+    const uint8_t code_byte = buffer[codes_start + i / 4];
+    const uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
+
+    int64_t delta = 0;
+    switch (code) {
+      case 0:
+        delta = common_delta;
+        break;
+      case 1: {
+        if (vints_pos + sizeof(int16_t) > buffer_size) return false;
+        int16_t v;
+        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
+        delta = static_cast<int64_t>(v);
+        vints_pos += sizeof(int16_t);
+        break;
+      }
+      case 2: {
+        if (vints_pos + sizeof(int32_t) > buffer_size) return false;
+        int32_t v;
+        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
+        delta = static_cast<int64_t>(v);
+        vints_pos += sizeof(int32_t);
+        break;
+      }
+      case 3: {
+        if (vints_pos + sizeof(int64_t) > buffer_size) return false;
+        std::memcpy(&delta, buffer + vints_pos, sizeof(int64_t));
+        vints_pos += sizeof(int64_t);
+        break;
+      }
+    }
+
+    // Unsigned wrapping arithmetic (signed values stored as their two's
+    // complement bit pattern).
+    const uint64_t prev_u = static_cast<uint64_t>(prev);
+    const uint64_t delta_u = static_cast<uint64_t>(delta);
+    dst[i] = prev_u + delta_u;
+    prev = static_cast<int64_t>(dst[i]);
+  }
+
+  return true;
+}
+
+DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
+                                         uint64_t* dst, size_t count) {
+  DecompressResult result;
+  if (!data || data_size == 0 || count == 0) {
+    result.success = true;
+    return result;
+  }
+
+  if (data_size < 8) {
+    result.error = "Compressed integer buffer too small for size prefix";
+    return result;
+  }
+
+  uint64_t comp_size;
+  std::memcpy(&comp_size, data, 8);
+
+  if (comp_size == 0 || comp_size > data_size - 8) {
+    result.error = "Invalid compressed size in integer data";
+    return result;
+  }
+
+  // Worst-case delta-coded size: int64 common value + 2-bit codes + up to one
+  // full int64 per element.
+  const size_t max_delta_size =
+      sizeof(int64_t) + (count * 2 + 7) / 8 + count * sizeof(int64_t);
+
+  DecompressResult dr = DecompressCrateBlob(
+      data + 8, static_cast<size_t>(comp_size), max_delta_size);
+  if (!dr.success) {
+    result.error = "Failed to decompress compressed integers: " + dr.error;
+    return result;
+  }
+
+  if (!DecodeDeltaU64(dr.data.data(), dr.data.size(), dst, count)) {
+    result.error = "Failed to delta-decode 64-bit integers";
+    return result;
+  }
+
+  result.success = true;
+  return result;
+}
+
 }  // namespace next
 }  // namespace tinyusdz
