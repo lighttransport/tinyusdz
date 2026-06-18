@@ -335,6 +335,19 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     return dr.success;
   };
 
+  auto read_compressed_u64 = [&](uint64_t* dst) -> bool {
+    uint64_t comp_size;
+    if (!r.read_u64(comp_size)) return false;
+    std::vector<uint8_t> blob;
+    if (!r.read(blob, static_cast<size_t>(comp_size))) return false;
+    std::vector<uint8_t> with_prefix(8 + blob.size());
+    std::memcpy(with_prefix.data(), &comp_size, 8);
+    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    DecompressResult dr = DecompressCompressedU64(
+        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+    return dr.success;
+  };
+
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
     if (count == 0) return true;
     if (!r.has_elements(count, elem_size)) return false;
@@ -381,9 +394,12 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return true;
     }
     case CrateTypeId::Int64: {
-      if (compressed) return false;
       std::vector<int64_t> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(int64_t))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u64(reinterpret_cast<uint64_t*>(data.data()))) return false;
+      } else if (!read_raw(data.data(), sizeof(int64_t))) {
+        return false;
+      }
       *out = Value::MakeInt64Array(std::move(data));
       return true;
     }
@@ -398,9 +414,12 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return true;
     }
     case CrateTypeId::UInt64: {
-      if (compressed) return false;
       std::vector<uint64_t> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(uint64_t))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u64(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(uint64_t))) {
+        return false;
+      }
       *out = Value::MakeUInt64Array(std::move(data));
       return true;
     }
