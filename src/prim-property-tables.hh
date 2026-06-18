@@ -52,7 +52,8 @@
   MULTI(kSkelBlendShapeTargets, blendShapeTargets)
 
 #define GEOM_MESH_UNIFORM_ENUMS(X) \
-  X("subdivisionScheme", GeomMesh::SubdivisionScheme, SubdivisionSchemeHandler, subdivisionScheme)
+  X("subdivisionScheme", GeomMesh::SubdivisionScheme, SubdivisionSchemeHandler, subdivisionScheme) \
+  X("triangleSubdivisionRule", GeomMesh::TriangleSubdivisionRule, TriangleSubdivisionRuleHandler, triangleSubdivisionRule)
 
 #define GEOM_MESH_TIMESAMPLED_ENUMS(X) \
   X("interpolateBoundary", GeomMesh::InterpolateBoundary, InterpolateBoundaryHandler, interpolateBoundary) \
