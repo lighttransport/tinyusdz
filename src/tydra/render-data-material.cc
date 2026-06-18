@@ -20,6 +20,7 @@
 //
 // Material and texture conversion routines split from render-data.cc
 //
+#include <chrono>
 #include <numeric>
 #include <set>
 
@@ -70,6 +71,14 @@ namespace tinyusdz {
 namespace tydra {
 
 namespace {
+
+using TydraPerfClock = std::chrono::steady_clock;
+
+static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      TydraPerfClock::now() - start)
+                      .count());
+}
 
 template <typename T>
 bool ResolveTypedAnimatableValue(
@@ -554,7 +563,10 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  TUSDZ_LOG_I("path: " << path);
+  // Per-texture trace: keep at debug level. At info level this floods the
+  // console for material-heavy scenes (one line per texture connection, on
+  // every conversion).
+  TUSDZ_LOG_D("path: " << path);
 
   // Check if prop_part is a standard UsdUVTexture output
   bool is_standard_output = (prop_part == kOutputsRGB) ||
@@ -1159,6 +1171,274 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
 
 }  // namespace
 
+static std::string NormalizeSourceSignaturePath(const Path &path,
+                                                const std::string &root_path) {
+  std::string prim = path.prim_part();
+  if (!root_path.empty() && prim.compare(0, root_path.size(), root_path) == 0) {
+    prim = std::string("<M>") + prim.substr(root_path.size());
+  }
+  std::string result = prim;
+  if (!path.prop_part().empty()) {
+    result += ".";
+    result += path.prop_part();
+  }
+  return result;
+}
+
+static void ReplaceAll(std::string &s, const std::string &from,
+                       const std::string &to) {
+  if (from.empty()) {
+    return;
+  }
+  size_t pos = 0;
+  while ((pos = s.find(from, pos)) != std::string::npos) {
+    s.replace(pos, from.size(), to);
+    pos += to.size();
+  }
+}
+
+static void AppendSourceSignatureProperty(std::ostringstream &ss,
+                                          const std::string &name,
+                                          const Property &prop,
+                                          const std::string &root_path) {
+  ss << "prop:" << name << ":custom=" << (prop.has_custom() ? 1 : 0) << ":";
+  if (prop.is_attribute()) {
+    const Attribute &attr = prop.get_attribute();
+    ss << "attr:type=" << attr.type_name()
+       << ":var=" << int(attr.variability())
+       << ":varying=" << (attr.is_varying_authored() ? 1 : 0);
+    if (attr.has_value()) {
+      ss << ":value=" << value::pprint_value(attr.get_var().value_raw());
+    }
+    if (attr.has_connections()) {
+      ss << ":connections=[";
+      const std::vector<Path> &conns = attr.connections();
+      for (size_t i = 0; i < conns.size(); i++) {
+        if (i) {
+          ss << ",";
+        }
+        ss << NormalizeSourceSignaturePath(conns[i], root_path);
+      }
+      ss << "]";
+    }
+    if (attr.has_timesamples()) {
+      // BuildMaterialSourceSignature rejects time-sampled material graphs.
+      ss << ":timesamples=1";
+    }
+  } else if (prop.is_relationship()) {
+    const Relationship &rel = prop.get_relationship();
+    ss << "rel:blocked=" << (rel.is_blocked() ? 1 : 0) << ":targets=[";
+    std::vector<Path> targets;
+    if (rel.is_path()) {
+      targets.push_back(rel.targetPath);
+    } else if (rel.is_pathvector()) {
+      targets = rel.targetPathVector;
+    }
+    for (size_t i = 0; i < targets.size(); i++) {
+      if (i) {
+        ss << ",";
+      }
+      ss << NormalizeSourceSignaturePath(targets[i], root_path);
+    }
+    ss << "]";
+  } else {
+    ss << "empty";
+  }
+  ss << ";";
+}
+
+static const std::map<std::string, Property> *GetUsdShadePrimProps(
+    const Prim &prim) {
+  if (const Material *p = prim.as<Material>()) {
+    return &p->props;
+  }
+  if (const Shader *p = prim.as<Shader>()) {
+    return &p->props;
+  }
+  if (const NodeGraph *p = prim.as<NodeGraph>()) {
+    return &p->props;
+  }
+  return nullptr;
+}
+
+static bool AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
+                                         const Path &prim_path,
+                                         const std::string &root_path,
+                                         std::set<std::string> *visited,
+                                         std::ostringstream &ss,
+                                         int depth) {
+  if (!visited || depth >= 64) {
+    return false;
+  }
+
+  const std::string path_key = prim_path.prim_part();
+  if (!visited->insert(path_key).second) {
+    return true;
+  }
+
+  ss << "prim:" << NormalizeSourceSignaturePath(prim_path, root_path)
+     << ":type=" << prim.prim_type_name() << "{";
+
+  std::string prim_payload = value::pprint_prim_value(
+      prim.data(), 0, /* closing_brace */ false);
+  if (prim_payload.find("timeSamples") != std::string::npos) {
+    return false;
+  }
+  ReplaceAll(prim_payload, root_path, "<M>");
+  if (prim_path.prim_part() == root_path) {
+    ReplaceAll(prim_payload, std::string(prim.element_name()), "<Material>");
+  }
+  ss << "payload=" << prim_payload << ";";
+
+  const std::map<std::string, Property> *props = GetUsdShadePrimProps(prim);
+  if (!props) {
+    ss << "}";
+    return true;
+  }
+
+  std::vector<std::string> prop_names;
+  prop_names.reserve(props->size());
+  for (const auto &kv : *props) {
+    prop_names.push_back(kv.first);
+  }
+  std::sort(prop_names.begin(), prop_names.end());
+
+  std::vector<Path> local_connections;
+  for (const std::string &name : prop_names) {
+    auto it = props->find(name);
+    if (it == props->end()) {
+      continue;
+    }
+    AppendSourceSignatureProperty(ss, name, it->second, root_path);
+    if (it->second.is_attribute()) {
+      const Attribute &attr = it->second.get_attribute();
+      if (attr.has_timesamples()) {
+        return false;
+      }
+      if (attr.has_connections()) {
+        for (const Path &conn : attr.connections()) {
+          const std::string conn_prim = conn.prim_part();
+          if (!root_path.empty() &&
+              conn_prim.compare(0, root_path.size(), root_path) == 0) {
+            local_connections.push_back(Path(conn_prim, ""));
+          }
+        }
+      }
+    }
+  }
+
+  std::vector<const Prim *> children;
+  children.reserve(prim.children().size());
+  for (const Prim &child : prim.children()) {
+    children.push_back(&child);
+  }
+  std::sort(children.begin(), children.end(),
+            [](const Prim *a, const Prim *b) {
+              return a->element_name() < b->element_name();
+            });
+  for (const Prim *child : children) {
+    if (!child) {
+      continue;
+    }
+    Path child_path = prim_path;
+    child_path = child_path.append_element(child->element_name());
+    if (!AppendSourceSignaturePrimRec(stage, *child, child_path, root_path,
+                                      visited, ss, depth + 1)) {
+      return false;
+    }
+  }
+
+  std::sort(local_connections.begin(), local_connections.end(),
+            [](const Path &a, const Path &b) {
+              return a.full_path_name() < b.full_path_name();
+            });
+  local_connections.erase(
+      std::unique(local_connections.begin(), local_connections.end(),
+                  [](const Path &a, const Path &b) {
+                    return a.full_path_name() == b.full_path_name();
+                  }),
+      local_connections.end());
+  for (const Path &conn_prim_path : local_connections) {
+    const Prim *conn_prim{nullptr};
+    std::string err;
+    if (stage.find_prim_at_path(conn_prim_path, conn_prim, &err) &&
+        conn_prim) {
+      if (!AppendSourceSignaturePrimRec(stage, *conn_prim, conn_prim_path,
+                                        root_path, visited, ss, depth + 1)) {
+        return false;
+      }
+    }
+  }
+
+  ss << "}";
+  return true;
+}
+
+bool RenderSceneConverter::BuildMaterialSourceSignature(
+    const RenderSceneConverterEnv &env, const Path &mat_abs_path,
+    const Material &material, std::string *signature) {
+  if (!signature) {
+    return false;
+  }
+  signature->clear();
+
+  const Prim *mat_prim{nullptr};
+  std::string err;
+  if (!env.stage.find_prim_at_path(Path(mat_abs_path.prim_part(), ""),
+                                   mat_prim, &err) ||
+      !mat_prim) {
+    return false;
+  }
+
+  std::ostringstream ss;
+  ss << "material-source-v1;";
+  ss << "surface=";
+  for (const Path &p : material.surface.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";mtlxSurface=";
+  for (const Path &p : material.mtlxSurface.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";displacement=";
+  for (const Path &p : material.displacement.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";volume=";
+  for (const Path &p : material.volume.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";";
+
+  std::set<std::string> visited;
+  if (!AppendSourceSignaturePrimRec(env.stage, *mat_prim,
+                                    Path(mat_abs_path.prim_part(), ""),
+                                    mat_abs_path.prim_part(), &visited, ss,
+                                    0)) {
+    return false;
+  }
+
+  *signature = ss.str();
+  return true;
+}
+
+bool RenderSceneConverter::FindMaterialSourceSignature(
+    const std::string &signature, int64_t *material_id) const {
+  auto it = _materialSourceSignatureCache.find(signature);
+  if (it == _materialSourceSignatureCache.end()) {
+    return false;
+  }
+  if (material_id) {
+    *material_id = it->second;
+  }
+  return true;
+}
+
+void RenderSceneConverter::RememberMaterialSourceSignature(
+    const std::string &signature, int64_t material_id) {
+  _materialSourceSignatureCache.emplace(signature, material_id);
+}
+
 // Convert UsdUVTexture shader node.
 // @return true upon conversion success(textures.back() contains the converted
 // UVTexture)
@@ -1423,40 +1703,16 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       texImage.decoded = tex_loaded;
 
     } else {
-
-      Asset asset;
-      std::string resolvedPath;
-      if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
-
-        // store resolved asset path.
-        texImage.asset_identifier = resolvedPath;
-
-
-        BufferData imageBuffer;
-        imageBuffer.componentType = tydra::ComponentType::UInt8;
-
-        // Steal the asset's bytes (no copy); `asset` is not used afterward.
-        SetBufferDataBytes(imageBuffer, asset.release_buffer());
-
-        // Assign buffer id
-        texImage.buffer_id = int64_t(buffers.size());
-
-        // TODO: Share image data as much as possible.
-        // e.g. Texture A and B uses same image file, but texturing parameter is
-        // different.
-        buffers.emplace_back(std::move(imageBuffer));
-
-        texImage.decoded = false;
-        DCOUT("texture image is read, but not decoded.");
-
-      } else {
-        // store resolved asset path.
-        texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
-        texImage.decoded = false;
-
-        DCOUT("store asset path.");
+      // Metadata-only path. Keep the resolved asset identifier, but do not
+      // read or copy texture bytes during RenderScene conversion. Web/native
+      // clients can fetch the asset lazily when the texture is actually used.
+      std::string resolvedPath = env.asset_resolver.resolve(assetPath.GetAssetPath());
+      if (resolvedPath.empty()) {
+        resolvedPath = assetPath.GetAssetPath();
       }
-
+      texImage.asset_identifier = resolvedPath;
+      texImage.decoded = false;
+      DCOUT("store asset path.");
     }
 
     // colorSpace.
@@ -3450,7 +3706,32 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const size_t tex_begin = conv->textures.size();
       const size_t udim_begin = conv->udim_textures.size();
 
+      std::string source_signature;
+      if (visitorEnv->env->scene_config.dedup_materials_by_texture_identity &&
+          conv->BuildMaterialSourceSignature(*visitorEnv->env,
+                                             bound_material_path,
+                                             *bound_material,
+                                             &source_signature)) {
+        int64_t cached_material_id = -1;
+        if (conv->FindMaterialSourceSignature(source_signature,
+                                              &cached_material_id)) {
+          if (cached_material_id < 0 ||
+              size_t(cached_material_id) >= rmaterials.size()) {
+            if (err) {
+              (*err) += "Material source signature cache index out-of-range.\n";
+            }
+            return false;
+          }
+          rmaterial_id = cached_material_id;
+          visitorEnv->converter->materialMap.add(
+              bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+          visitorEnv->material_cache_hits++;
+          return true;
+        }
+      }
+
       RenderMaterial rmat;
+      const auto material_start = TydraPerfClock::now();
       if (!conv->ConvertMaterial(*visitorEnv->env, bound_material_path,
                                  *bound_material, &rmat)) {
         if (err) {
@@ -3459,6 +3740,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->convert_material_ns += ElapsedNs(material_start);
+      visitorEnv->material_cache_misses++;
 
       // Assign new material ID
       uint64_t mat_id = rmaterials.size();
@@ -3473,6 +3756,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       visitorEnv->converter->materialMap.add(
           bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+      if (!source_signature.empty()) {
+        visitorEnv->converter->RememberMaterialSourceSignature(
+            source_signature, rmaterial_id);
+      }
       // Compute material tag for render pass sorting (opaque/translucent/masked)
       rmat.computeMaterialTag();
 
@@ -3515,8 +3802,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           return false;
         }
       }
+      return true;
     }
 
+    visitorEnv->material_cache_hits++;
     return true;
   };
 
@@ -3529,10 +3818,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       return false;
     }
 
+    visitorEnv->material_resolve_calls++;
     std::string local_err;
+    const auto resolve_start = TydraPerfClock::now();
     bool local_found = visitorEnv->converter->GetBoundMaterialCached(
         visitorEnv->env->stage, query_path, purpose, bound_material_path,
         bound_material, &local_err);
+    visitorEnv->resolve_material_ns += ElapsedNs(resolve_start);
 
     if (!local_err.empty()) {
       if (err) {
@@ -3542,6 +3834,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     (*found) = local_found;
+    if (local_found) {
+      visitorEnv->material_resolve_found++;
+    }
     return true;
   };
 
@@ -3742,6 +4037,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMesh rmesh;
 
+      const auto mesh_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ConvertMesh(
               *visitorEnv->env, abs_path, *pmesh, material_path,
               subset_material_path_map, visitorEnv->converter->materialMap,
@@ -3754,6 +4050,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->convert_mesh_ns += ElapsedNs(mesh_start);
 
       uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
       if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
@@ -3771,6 +4068,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       std::string msg = "Converting mesh " +
           std::to_string(visitorEnv->meshes_processed) + "/" +
           std::to_string(visitorEnv->meshes_total);
+      const auto progress_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ReportMeshProgress(
               visitorEnv->meshes_processed, visitorEnv->meshes_total,
               abs_path.full_path_name(), msg)) {
@@ -3779,6 +4077,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->progress_ns += ElapsedNs(progress_start);
+
       // Stream the just-converted mesh (LOCAL space; world placement arrives in
       // the Hierarchy phase). No-op without a streaming sink.
       if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),

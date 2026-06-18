@@ -215,6 +215,7 @@ The following demo pages are available:
 | **Animation Demo** | `animation.html` | USD animation playback demo |
 | **Animation Clips** | `anim-clips.html` | Per-object animation clip mixing |
 | **Skinning Demo** | `skin-anim.html` | Skeletal animation and skinning demo |
+| **Material/Mesh Dedup** | `material-dedup.html` | Toggle Tydra render-scene optimizations (material/texture dedup, mesh merge, render-tree flatten) live and watch mesh/material/draw-call counts collapse; plus three.js-side post-process (material dedup by content + `BatchedMesh` batching that cuts draw calls while preserving per-instance identity); global scene scale honoring `metersPerUnit` + Z-up→Y-up; `?url=<served-usd>&textures=1` to load assets directly |
 | **UsdLux Demo** | `usdlux.html` | USD Lighting demo |
 | **Subdivision Demo** | `subdiv.html` | Interactive Catmull-Clark, Loop, and Bilinear subdivision demo |
 | **OffscreenGL** | `offscreengl.html` | WebWorker + OffscreenCanvas rendering |
@@ -233,6 +234,7 @@ npm run dev        # or: bun run dev
 npm run dev:mtlx               # materialx.html
 npm run dev:anim               # animation.html
 npm run dev:skel               # skin-anim.html
+npm run dev:dedup              # material-dedup.html
 npm run dev:clips              # anim-clips.html
 npm run dev:lux                # usdlux.html
 npm run dev:subdiv             # subdiv.html

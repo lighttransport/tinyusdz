@@ -46,6 +46,11 @@ if (TINYUSDZ_WASM_SIMD)
     message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
     set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
   endif()
+else()
+  # No wasm SIMD: also force the next parser's scanner onto its scalar path so
+  # Backend() honestly reports "scalar" (the SSE2/NEON gates are inert on wasm
+  # anyway, but keep one SIMD knob coherent across the build).
+  add_compile_definitions(TINYUSDZ_DISABLE_SIMD)
 endif()
 
 set(TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "")
@@ -133,6 +138,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
@@ -270,8 +276,9 @@ else()
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()
 
-# Export HEAPU8 for zero-copy streaming transfer from JS to WASM
-string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+# Export heap views for zero-copy streaming and typed pointer descriptors used
+# by the web loader fast path.
+string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
 
 message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
 

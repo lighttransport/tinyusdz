@@ -62,6 +62,10 @@ async function main() {
   const wasm64 = params.get('wasm64') !== '0';
   const concurrency = Number(params.get('concurrency') || 8);
   const jpegQuality = Number(params.get('jpegQuality') || 90);
+  // Raise the conservative default USDC writer caps (0 = keep default). Needed
+  // for scenes whose flattened root crate exceeds ~100 MB on wasm32.
+  const maxUsdcMb = Number(params.get('maxUsdcMb') || 0);
+  const maxMemMb = Number(params.get('maxMemMb') || 0);
   // keep + no resize = passthrough (otherwise 'keep' would still re-encode).
   const reencode = params.get('reencode') === '0' ? false
       : !(textureFormat === 'keep' && resize <= 0);
@@ -102,6 +106,8 @@ async function main() {
     maxTextureSize: resize,
     textureFormat,
     jpegQuality,
+    maxUsdcMb,
+    maxMemMb,
     reencode,
     textureProcessor: tp ? tp.processor : undefined,
     textureConcurrency: tp ? tp.concurrency : (pipeline === 'stream' ? 4 : 0),

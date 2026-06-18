@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDA Reader implementation
 
 #include "usda-reader.hh"
+#include "../strfmt.hh"
 
 #include <fstream>
 #include <cstring>
@@ -46,8 +47,8 @@ LoadResult LoadUSDAFromFile(const char* filename, const LoadOptions& options) {
     result.errors = parser.GetErrors();
     if (!result.errors.empty()) {
       const auto& first_err = result.errors[0];
-      result.error_summary = "Line " + std::to_string(first_err.line) +
-                             ", column " + std::to_string(first_err.column) +
+      result.error_summary = "Line " + UIntToStr(first_err.line) +
+                             ", column " + UIntToStr(first_err.column) +
                              ": " + first_err.message;
     }
   }
@@ -77,8 +78,8 @@ LoadResult LoadUSDAFromString(const char* data, size_t length, const LoadOptions
     result.errors = parser.GetErrors();
     if (!result.errors.empty()) {
       const auto& first_err = result.errors[0];
-      result.error_summary = "Line " + std::to_string(first_err.line) +
-                             ", column " + std::to_string(first_err.column) +
+      result.error_summary = "Line " + UIntToStr(first_err.line) +
+                             ", column " + UIntToStr(first_err.column) +
                              ": " + first_err.message;
     }
   }

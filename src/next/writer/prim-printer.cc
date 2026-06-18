@@ -2,11 +2,17 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // TinyUSDZ Next - Prim Printer Implementation
+//
+// Debug pretty-printer. Writes through the freestanding StreamWriter sink (no
+// iostream / ostringstream): the string-returning entry points serialize into a
+// string-backed StreamWriter, so this whole printer is libc-stdio-free.
 
 #include "prim-printer.hh"
 #include "value-printer.hh"
+#include "stream-writer.hh"
+#include "dtoa.hh"
+#include "../strfmt.hh"
 #include "../layer/property-index.hh"
-#include <sstream>
 
 namespace tinyusdz {
 namespace next {
@@ -23,15 +29,19 @@ const char* GetSpecifierString(PrimSpecifier spec) {
   }
 }
 
+// ostream's default float formatting is "%.6g" (6 significant digits); match it
+// with the freestanding formatter so the debug output is unchanged.
+inline std::string G6(double v) { return format_g(v, 6); }
+
 // Print indent
-void PrintIndent(std::ostream& os, int depth, const std::string& indent) {
+void PrintIndent(StreamWriter& os, int depth, const std::string& indent) {
   for (int i = 0; i < depth; ++i) {
     os << indent;
   }
 }
 
 // Print a single property
-void PrintProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
+void PrintProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
                    int depth, const PrimPrintOptions& opts) {
   // Get property name
   PropNameTable& name_table = GetPropNameTable();
@@ -98,7 +108,7 @@ void PrintProperty(std::ostream& os, const PropSlot& slot, const PrimSpec& spec,
 }
 
 // Print relationships
-void PrintRelationships(std::ostream& os, const PrimSpec& spec,
+void PrintRelationships(StreamWriter& os, const PrimSpec& spec,
                         int depth, const PrimPrintOptions& opts) {
   // Note: PrimSpec stores relationships in a private map
   // We need to iterate through properties and check relationship flag
@@ -130,7 +140,7 @@ void PrintRelationships(std::ostream& os, const PrimSpec& spec,
 }
 
 // Print metadata block
-void PrintMetadata(std::ostream& os, const PrimSpecMeta& meta, int depth,
+void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
                    const PrimPrintOptions& opts) {
   bool has_meta = false;
 
@@ -207,10 +217,10 @@ void PrintMetadata(std::ostream& os, const PrimSpecMeta& meta, int depth,
 }
 
 // Forward declaration for recursion
-void PrintPrimSpecRecursive(std::ostream& os, const PrimSpec& spec, const Layer& layer,
+void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                             int depth, const PrimPrintOptions& opts);
 
-void PrintPrimSpecRecursive(std::ostream& os, const PrimSpec& spec, const Layer& layer,
+void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                             int depth, const PrimPrintOptions& opts) {
   // Check max depth
   if (opts.max_depth >= 0 && depth > opts.max_depth) {
@@ -251,7 +261,7 @@ void PrintPrimSpecRecursive(std::ostream& os, const PrimSpec& spec, const Layer&
       ++prop_count;
       if (opts.max_properties > 0 && prop_count >= opts.max_properties) {
         PrintIndent(os, content_depth, opts.indent);
-        os << "# ... " << (slots.size() - prop_count) << " more properties\n";
+        os << "# ... " << UIntToStr(slots.size() - prop_count) << " more properties\n";
         break;
       }
     }
@@ -277,7 +287,7 @@ void PrintPrimSpecRecursive(std::ostream& os, const PrimSpec& spec, const Layer&
 }
 
 // Print layer metadata
-void PrintLayerMeta(std::ostream& os, const LayerMeta& meta, const PrimPrintOptions& opts) {
+void PrintLayerMeta(StreamWriter& os, const LayerMeta& meta, const PrimPrintOptions& opts) {
   os << "#usda 1.0\n";
   os << "(\n";
 
@@ -293,18 +303,18 @@ void PrintLayerMeta(std::ostream& os, const LayerMeta& meta, const PrimPrintOpti
   }
   if (meta.metersPerUnit != 0.01) {
     if (!first) os << "\n";
-    os << opts.indent << "metersPerUnit = " << meta.metersPerUnit;
+    os << opts.indent << "metersPerUnit = " << G6(meta.metersPerUnit);
     first = false;
   }
   if (meta.timeCodesPerSecond != 24.0) {
     if (!first) os << "\n";
-    os << opts.indent << "timeCodesPerSecond = " << meta.timeCodesPerSecond;
+    os << opts.indent << "timeCodesPerSecond = " << G6(meta.timeCodesPerSecond);
     first = false;
   }
   if (meta.startTimeCode != 0.0 || meta.endTimeCode != 0.0) {
     if (!first) os << "\n";
-    os << opts.indent << "startTimeCode = " << meta.startTimeCode;
-    os << "\n" << opts.indent << "endTimeCode = " << meta.endTimeCode;
+    os << opts.indent << "startTimeCode = " << G6(meta.startTimeCode);
+    os << "\n" << opts.indent << "endTimeCode = " << G6(meta.endTimeCode);
     first = false;
   }
   if (!meta.doc.empty()) {
@@ -332,12 +342,13 @@ void PrintLayerMeta(std::ostream& os, const LayerMeta& meta, const PrimPrintOpti
 // ============================================================
 
 std::string PrintPrim(const UsdPrim& prim, const PrimPrintOptions& opts) {
-  std::ostringstream ss;
+  std::string out;
+  StreamWriter ss(&out);
   PrintPrim(ss, prim, opts);
-  return ss.str();
+  return out;
 }
 
-void PrintPrim(std::ostream& os, const UsdPrim& prim, const PrimPrintOptions& opts) {
+void PrintPrim(StreamWriter& os, const UsdPrim& prim, const PrimPrintOptions& opts) {
   if (!prim.IsValid()) {
     os << "# Invalid prim\n";
     return;
@@ -375,7 +386,7 @@ void PrintPrim(std::ostream& os, const UsdPrim& prim, const PrimPrintOptions& op
       ++prop_count;
       if (opts.max_properties > 0 && prop_count >= opts.max_properties) {
         PrintIndent(os, 1, opts.indent);
-        os << "# ... " << (slots.size() - prop_count) << " more properties\n";
+        os << "# ... " << UIntToStr(slots.size() - prop_count) << " more properties\n";
         break;
       }
     }
@@ -391,12 +402,13 @@ void PrintPrim(std::ostream& os, const UsdPrim& prim, const PrimPrintOptions& op
 }
 
 std::string PrintStage(const Stage& stage, const PrimPrintOptions& opts) {
-  std::ostringstream ss;
+  std::string out;
+  StreamWriter ss(&out);
   PrintStage(ss, stage, opts);
-  return ss.str();
+  return out;
 }
 
-void PrintStage(std::ostream& os, const Stage& stage, const PrimPrintOptions& opts) {
+void PrintStage(StreamWriter& os, const Stage& stage, const PrimPrintOptions& opts) {
   const Layer* root_layer = stage.GetRootLayer();
   if (!root_layer) {
     os << "# Empty stage\n";
@@ -408,7 +420,8 @@ void PrintStage(std::ostream& os, const Stage& stage, const PrimPrintOptions& op
 }
 
 std::string PrintPrimSpec(const PrimSpec& spec, const PrimPrintOptions& opts) {
-  std::ostringstream ss;
+  std::string out;
+  StreamWriter ss(&out);
   // For standalone PrimSpec, we don't have layer context
   // Print just this spec without children
   ss << GetSpecifierString(spec.specifier());
@@ -432,7 +445,7 @@ std::string PrintPrimSpec(const PrimSpec& spec, const PrimPrintOptions& opts) {
       ++prop_count;
       if (opts.max_properties > 0 && prop_count >= opts.max_properties) {
         PrintIndent(ss, 1, opts.indent);
-        ss << "# ... " << (slots.size() - prop_count) << " more properties\n";
+        ss << "# ... " << UIntToStr(slots.size() - prop_count) << " more properties\n";
         break;
       }
     }
@@ -443,10 +456,10 @@ std::string PrintPrimSpec(const PrimSpec& spec, const PrimPrintOptions& opts) {
   }
 
   ss << "}\n";
-  return ss.str();
+  return out;
 }
 
-void PrintPrimSpec(std::ostream& os, const PrimSpec& spec, int depth, const PrimPrintOptions& opts) {
+void PrintPrimSpec(StreamWriter& os, const PrimSpec& spec, int depth, const PrimPrintOptions& opts) {
   // This version needs Layer for children, but signature doesn't include it
   // Just print the spec without children
   PrintIndent(os, depth, opts.indent);
@@ -473,7 +486,7 @@ void PrintPrimSpec(std::ostream& os, const PrimSpec& spec, int depth, const Prim
       ++prop_count;
       if (opts.max_properties > 0 && prop_count >= opts.max_properties) {
         PrintIndent(os, depth + 1, opts.indent);
-        os << "# ... " << (slots.size() - prop_count) << " more properties\n";
+        os << "# ... " << UIntToStr(slots.size() - prop_count) << " more properties\n";
         break;
       }
     }
@@ -488,12 +501,13 @@ void PrintPrimSpec(std::ostream& os, const PrimSpec& spec, int depth, const Prim
 }
 
 std::string PrintLayer(const Layer& layer, const PrimPrintOptions& opts) {
-  std::ostringstream ss;
+  std::string out;
+  StreamWriter ss(&out);
   PrintLayer(ss, layer, opts);
-  return ss.str();
+  return out;
 }
 
-void PrintLayer(std::ostream& os, const Layer& layer, const PrimPrintOptions& opts) {
+void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& opts) {
   // Print layer header
   PrintLayerMeta(os, layer.meta(), opts);
 
