@@ -3346,6 +3346,57 @@ bool PathMatchesMask(const std::string &path,
   return false;
 }
 
+// True if any of the prim's authored xform ops are time-sampled (so its local
+// transform varies with time).
+bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
+  const tinyusdz::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
+  const std::vector<std::string> *order =
+      orderv ? orderv->as_token_array() : nullptr;
+  if (!order) return false;
+  for (const std::string &raw : *order) {
+    std::string op = raw;
+    if (op.rfind("!invert!", 0) == 0) op = op.substr(8);
+    if (op == "!resetXformStack!") continue;
+    if (prim.HasTimeSamples(op)) return true;
+  }
+  return false;
+}
+
+// True if the mesh's own geometry (points/topology) is time-sampled.
+bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
+  return prim.HasTimeSamples("points") ||
+         prim.HasTimeSamples("faceVertexIndices") ||
+         prim.HasTimeSamples("faceVertexCounts");
+}
+
+// True if the subtree contains a rendered (masked) Mesh whose world-space
+// geometry varies with time: either the mesh's own points/topology are
+// time-sampled, or some xform op on the path (this prim or an ancestor) is.
+// Cameras and non-rendered prims are ignored, so camera-only animation does not
+// flag the geometry as dynamic (the BVH can then be reused across frames).
+bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
+                             const std::vector<std::string> &mask,
+                             bool ancestor_xform_animated) {
+  const bool xform_anim =
+      ancestor_xform_animated || PrimHasAnimatedXform(prim);
+  if (prim.GetTypeName() == "Mesh" &&
+      PathMatchesMask(prim.GetPath().str(), mask)) {
+    if (xform_anim || MeshHasAnimatedGeom(prim)) return true;
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (SubtreeGeometryAnimated(child, mask, xform_anim)) return true;
+  }
+  return false;
+}
+
+bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
+                           const std::vector<std::string> &mask) {
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    if (SubtreeGeometryAnimated(root, mask, false)) return true;
+  }
+  return false;
+}
+
 // Serial walk: resolve parent-dependent world matrices (at `time`) + purpose and
 // flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
 // meshes at/under those prim paths (usdrecord --mask); the full tree is still
@@ -3849,8 +3900,23 @@ int RunRTPreviewNext(const Options &opt) {
                    "number, e.g. frame.####.png).\n";
       return EXIT_FAILURE;
     }
+    // If the rendered geometry is static across time (only the camera and/or
+    // nothing animates), the BVH built in BuildRenderContext is valid for every
+    // frame -- reuse it and only re-resolve the camera per frame. Otherwise
+    // re-stream + rebuild the BVH at each time.
+    const bool geom_animated = SceneGeometryAnimated(ctx.stage, opt.mask);
+    if (opt.stats) {
+      std::cerr << "rt frames: " << times.size()
+                << ", geometry animated: " << (geom_animated ? 1 : 0)
+                << " (BVH " << (geom_animated ? "rebuilt per frame" : "reused")
+                << ")\n";
+    }
     for (double t : times) {
-      if (!ExtractAndBuildBVH(ctx, t)) return EXIT_FAILURE;
+      if (geom_animated) {
+        if (!ExtractAndBuildBVH(ctx, t)) return EXIT_FAILURE;
+      } else {
+        ctx.frame_time = t;  // static geometry: keep BVH, animate camera only
+      }
       ResolveCameraNext(ctx);
       const std::string out = SubstituteFrame(opt.output, std::lround(t));
       const double secs = RenderFrameTo(ctx, out);
