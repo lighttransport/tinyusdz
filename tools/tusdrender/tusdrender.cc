@@ -46,6 +46,17 @@ extern "C" {
 #include "lightrt_c_tri.h"
 }
 
+#ifdef TINYUSDZ_WITH_QJS
+#include <fstream>
+#include <sstream>
+
+#include "external/jsonhpp/nlohmann/json.hpp"
+#include "tydra/js-script.hh"
+extern "C" {
+#include "external/quickjs-ng/quickjs.h"
+}
+#endif
+
 namespace {
 
 using tinyusdz::value::color3f;
@@ -174,6 +185,8 @@ struct Options {
   int threads{0};
   int subdivision_level{0};
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
+  std::string js_script;  // -js <file>: drive rendering from a JS script
+  bool mcp{false};        // -mcp: run an MCP stdio control server
 };
 
 float Dot(const Vec3 &a, const Vec3 &b) {
@@ -366,6 +379,21 @@ void PrintUsage(const char *prog) {
       << "  -threads <N>           LightRT build threads (0 = backend default).\n"
       << "  -subdiv <N>            Subdivision level for Mesh subdivisionScheme\n"
       << "                         catmullClark/loop/bilinear (default 0).\n"
+      << "  -complexity <low|medium|high|veryhigh>\n"
+      << "                         usdrecord refinement preset -> subdiv 0/1/2/3.\n"
+      << "  -autoframe             usdrecord-style auto camera framing.\n"
+      << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
+#ifdef TINYUSDZ_WITH_QJS
+      << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
+      << "                         Scene + BVH stay resident across renders\n"
+      << "                         (memory-persistent, e.g. camera animation).\n"
+      << "                         API: tusdrender.{setCamera,orbit,setResolution,\n"
+      << "                         setAmbient,setBackground,setShadows,setSamples,\n"
+      << "                         autoframe,bounds,stats,render}.\n"
+      << "  -mcp                   Run an MCP stdio control server over the\n"
+      << "                         resident scene (tools: eval,set_camera,orbit,\n"
+      << "                         set_resolution,render,bounds,stats).\n"
+#endif
       << "  -noDirectPrims         Tessellate USD shapes/curves/NURBS instead of\n"
       << "                         using tusdrender direct primitive paths.\n"
       << "  -stats                 Print scene/BVH stats.\n"
@@ -537,6 +565,19 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-autoframe" || a == "--autoframe") {
       opt->autoframe = true;
+    } else if (a == "-js" || a == "--js") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "-js requires a script file path.\n";
+        return false;
+      }
+      opt->js_script = v;
+      opt->rt_preview = true;
+      opt->direct_prims = false;
+    } else if (a == "-mcp" || a == "--mcp") {
+      opt->mcp = true;
+      opt->rt_preview = true;
+      opt->direct_prims = false;
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
     } else if (a == "-stats" || a == "--stats") {
@@ -550,12 +591,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       positional.push_back(a);
     }
   }
-  if (positional.size() != 2) {
+  // -js / -mcp drive output paths from the script / MCP calls, so only the
+  // input is required there; an output positional is optional.
+  const bool output_optional = opt->mcp || !opt->js_script.empty();
+  if (positional.empty() || positional.size() > 2 ||
+      (!output_optional && positional.size() != 2)) {
     PrintUsage(argv[0]);
     return false;
   }
   opt->input = positional[0];
-  opt->output = positional[1];
+  opt->output = positional.size() > 1 ? positional[1] : std::string();
   return true;
 }
 
@@ -3424,38 +3469,94 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
   return frame;
 }
 
-int RunRTPreviewNext(const Options &opt) {
+// Persistent render context: the loaded next stage, extracted geometry, and the
+// built BVH are kept alive so the camera/render parameters can be changed and
+// the scene re-rendered repeatedly without re-parsing or rebuilding the BVH
+// (memory-persistent rendering, e.g. animation with a moving camera).
+struct RenderContext {
+  tinyusdz::next::Stage stage;  // keeps the lazy point/index arrays alive
+  std::vector<float> vertices;  // packed triangle positions (BVH input)
+  std::vector<TriInfo> tris;
+  Bounds bounds;
+  RTPreviewStats stats;
+  lrt_tri_scene *scene{nullptr};  // owned BVH
+  DirectScene direct;             // empty for the next path
+  LightCache lights;              // empty -> camera-headlight fallback
+  tinyusdz::Axis up_axis{tinyusdz::Axis::Y};
+  CameraFrame camera;
+  Options opt;  // mutable render parameters (width/height/ambient/bg/...)
+  int width{960};
+  int height{540};
+  double load_seconds{0.0}, stream_seconds{0.0}, bvh_seconds{0.0};
+
+  ~RenderContext() {
+    if (scene) lrt_tri_scene_free(scene);
+  }
+  RenderContext() = default;
+  RenderContext(const RenderContext &) = delete;
+  RenderContext &operator=(const RenderContext &) = delete;
+};
+
+// Resolve the camera (named / autoframe / auto-fit) into ctx.camera and the
+// image height into ctx.height, from the current ctx.opt + ctx.bounds.
+void ResolveCameraNext(RenderContext &ctx) {
+  const Options &opt = ctx.opt;
+  RenderScene empty_render_scene;
+  int height = opt.height;
+  if (!opt.camera.empty()) {
+    float cam_aspect = 16.0f / 9.0f;
+    if (FindNextCameraFrame(ctx.stage, opt.camera, &ctx.camera, &cam_aspect)) {
+      if (height <= 0) {
+        height = std::max(1, int(std::lround(float(ctx.width) / cam_aspect)));
+      }
+    } else {
+      std::cerr << "WARN: camera not found: " << opt.camera
+                << ". Using auto-fit.\n";
+      if (height <= 0) height = 540;
+      Options auto_opt = opt;
+      auto_opt.camera.clear();
+      auto_opt.width = ctx.width;
+      ctx.camera = MakeCameraFrame(empty_render_scene, auto_opt, ctx.bounds,
+                                   height, ctx.up_axis);
+    }
+  } else if (opt.autoframe) {
+    ctx.camera = MakeUsdRecordCamera(ctx.bounds, ctx.up_axis, ctx.width, &height);
+  } else {
+    if (height <= 0) height = 540;
+    Options auto_opt = opt;
+    auto_opt.camera.clear();
+    auto_opt.width = ctx.width;
+    ctx.camera = MakeCameraFrame(empty_render_scene, auto_opt, ctx.bounds,
+                                 height, ctx.up_axis);
+  }
+  ctx.height = height;
+}
+
+// Load the scene via next, stream triangles, and build the BVH once. Leaves the
+// result in `ctx` for repeated rendering.
+bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
+  ctx.opt = opt;
+  ctx.width = opt.width > 0 ? opt.width : 960;
+
   const auto load_t0 = std::chrono::steady_clock::now();
-  tinyusdz::next::Stage stage;
-  std::string warn;
-  std::string err;
-  if (!tinyusdz::next::LoadUSD(opt.input, &stage, &warn, &err)) {
+  std::string warn, err;
+  if (!tinyusdz::next::LoadUSD(opt.input, &ctx.stage, &warn, &err)) {
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     std::cerr << "Failed to load USD (next): " << err << "\n";
-    return EXIT_FAILURE;
+    return false;
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
   const auto load_t1 = std::chrono::steady_clock::now();
-  const double load_seconds =
-      std::chrono::duration<double>(load_t1 - load_t0).count();
+  ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
 
-  std::vector<float> vertices;
-  std::vector<TriInfo> tris;
-  Bounds bounds;
-  RTPreviewStats rt_stats;
   const auto stream_t0 = std::chrono::steady_clock::now();
-
-  // Pass A (serial): flatten Mesh prims into jobs with resolved world matrices.
   std::vector<MeshJobNext> jobs;
-  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
-    CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
+    CollectRTPreviewMeshesNext(ctx.stage, root, matrix4d::identity(),
                                tinyusdz::Purpose::Default, &jobs);
   }
-  rt_stats.meshes = jobs.size();
+  ctx.stats.meshes = jobs.size();
 
-  // Pass B (parallel): read geometry + triangulate each mesh into its own
-  // result buffer (disjoint Mesh prims -> distinct lazy Values, no shared
-  // mutable state in DecodeCrateArray). Work-stealing via an atomic cursor.
   struct MeshResultNext {
     std::vector<float> vertices;
     std::vector<TriInfo> tris;
@@ -3486,30 +3587,28 @@ int RunRTPreviewNext(const Options &opt) {
     for (std::thread &th : pool) th.join();
   }
 
-  // Pass C (serial merge): concatenate in job order (deterministic output).
   size_t total_floats = 0, total_tris = 0;
   for (const MeshResultNext &r : results) {
     total_floats += r.vertices.size();
     total_tris += r.tris.size();
   }
-  vertices.reserve(total_floats);
-  tris.reserve(total_tris);
+  ctx.vertices.reserve(total_floats);
+  ctx.tris.reserve(total_tris);
   for (MeshResultNext &r : results) {
-    vertices.insert(vertices.end(), r.vertices.begin(), r.vertices.end());
-    tris.insert(tris.end(), r.tris.begin(), r.tris.end());
-    MergeBounds(&bounds, r.bounds);
-    MergeStats(&rt_stats, r.stats);
+    ctx.vertices.insert(ctx.vertices.end(), r.vertices.begin(), r.vertices.end());
+    ctx.tris.insert(ctx.tris.end(), r.tris.begin(), r.tris.end());
+    MergeBounds(&ctx.bounds, r.bounds);
+    MergeStats(&ctx.stats, r.stats);
     std::vector<float>().swap(r.vertices);
     std::vector<TriInfo>().swap(r.tris);
   }
-
   const auto stream_t1 = std::chrono::steady_clock::now();
-  rt_stats.build_seconds =
-      std::chrono::duration<double>(stream_t1 - stream_t0).count();
-  rt_stats.packed_triangle_bytes = uint64_t(vertices.size()) * sizeof(float);
-  if (tris.empty()) {
+  ctx.stream_seconds = std::chrono::duration<double>(stream_t1 - stream_t0).count();
+  ctx.stats.build_seconds = ctx.stream_seconds;
+  ctx.stats.packed_triangle_bytes = uint64_t(ctx.vertices.size()) * sizeof(float);
+  if (ctx.tris.empty()) {
     std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
-    return EXIT_FAILURE;
+    return false;
   }
 
   lrt_tri_build_options build_opts;
@@ -3518,105 +3617,510 @@ int RunRTPreviewNext(const Options &opt) {
   build_opts.layout = LRT_TRI_LAYOUT_AUTO;
   build_opts.max_leaf_size = 0;
   build_opts.num_threads = WorkerThreadCount(opt.threads);
-
   const auto bvh_t0 = std::chrono::steady_clock::now();
   lrt_result lrt_err = LRT_RESULT_OK;
-  lrt_tri_scene *lrt_scene =
-      lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
+  ctx.scene =
+      lrt_tri_scene_build(ctx.vertices.data(), ctx.tris.size(), &build_opts, &lrt_err);
   const auto bvh_t1 = std::chrono::steady_clock::now();
-  if (!lrt_scene) {
+  if (!ctx.scene) {
     std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-    return EXIT_FAILURE;
+    return false;
   }
+  ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
 
-  tinyusdz::Axis up_axis = tinyusdz::Axis::Y;
-  if (stage.GetUpAxis() == "X") up_axis = tinyusdz::Axis::X;
-  else if (stage.GetUpAxis() == "Z") up_axis = tinyusdz::Axis::Z;
+  ctx.up_axis = tinyusdz::Axis::Y;
+  if (ctx.stage.GetUpAxis() == "X") ctx.up_axis = tinyusdz::Axis::X;
+  else if (ctx.stage.GetUpAxis() == "Z") ctx.up_axis = tinyusdz::Axis::Z;
 
-  RenderScene empty_render_scene;
-  CameraFrame camera;
-  int height = opt.height;
-  if (!opt.camera.empty()) {
-    // Named UsdGeomCamera (now supported in the next path). Image height is
-    // derived from the camera's aperture aspect when -height is not given.
-    float cam_aspect = 16.0f / 9.0f;
-    if (FindNextCameraFrame(stage, opt.camera, &camera, &cam_aspect)) {
-      if (height <= 0) {
-        height = std::max(1, int(std::lround(float(opt.width) / cam_aspect)));
-      }
-    } else {
-      std::cerr << "WARN: camera not found: " << opt.camera
-                << ". Using auto-fit.\n";
-      if (height <= 0) height = 540;
-      Options auto_opt = opt;
-      auto_opt.camera.clear();
-      camera =
-          MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
-    }
-  } else if (opt.autoframe) {
-    // usdrecord-style framing; height derived from the aperture aspect.
-    camera = MakeUsdRecordCamera(bounds, up_axis, opt.width, &height);
-  } else {
-    if (height <= 0) height = 540;
-    Options auto_opt = opt;
-    auto_opt.camera.clear();
-    camera =
-        MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
-  }
+  ResolveCameraNext(ctx);
+  return true;
+}
 
-  DirectScene direct_scene;
-  LightCache light_cache;
-
-  if (opt.stats) {
-    lrt_tri_stats st;
-    std::memset(&st, 0, sizeof(st));
-    lrt_tri_scene_stats(lrt_scene, &st);
-    const double bvh_seconds =
-        std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
-    std::cerr << "rt preview: 1\n";
-    std::cerr << "rt loader: next\n";
-    std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
-    std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
-    std::cerr << "rt purpose default triangles: "
-              << rt_stats.purpose_default_triangles << "\n";
-    std::cerr << "rt purpose render triangles: "
-              << rt_stats.purpose_render_triangles << "\n";
-    std::cerr << "rt purpose proxy triangles: "
-              << rt_stats.purpose_proxy_triangles << "\n";
-    std::cerr << "rt purpose guide triangles: "
-              << rt_stats.purpose_guide_triangles << "\n";
-    std::cerr << "rt packed triangle bytes: " << rt_stats.packed_triangle_bytes
-              << "\n";
-    std::cerr << "load seconds: " << load_seconds << "\n";
-    std::cerr << "rt triangle stream seconds: " << rt_stats.build_seconds
-              << "\n";
-    std::cerr << "rt bvh build seconds: " << bvh_seconds << "\n";
-    std::cerr << "triangles: " << tris.size() << "\n";
-    std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
-    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
-              << ", memory: " << st.memory_bytes << " bytes\n";
-  }
-
-  const auto render_t0 = std::chrono::steady_clock::now();
-  tinyusdz::Image img = RenderImage(lrt_scene, &direct_scene, tris, light_cache,
-                                    nullptr, camera, opt, height);
-  const auto render_t1 = std::chrono::steady_clock::now();
-  if (opt.stats) {
-    std::cerr << "render seconds: "
-              << std::chrono::duration<double>(render_t1 - render_t0).count()
-              << "\n";
-  }
-  lrt_tri_scene_free(lrt_scene);
-
+// Render the current camera/parameters of `ctx` and write to `path`.
+// Reuses the persistent BVH (no rebuild). Returns the trace time in seconds
+// (or a negative value on write failure).
+double RenderFrameTo(RenderContext &ctx, const std::string &path) {
+  ctx.opt.width = ctx.width;
+  const auto t0 = std::chrono::steady_clock::now();
+  tinyusdz::Image img =
+      RenderImage(ctx.scene, &ctx.direct, ctx.tris, ctx.lights, nullptr,
+                  ctx.camera, ctx.opt, ctx.height);
+  const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  auto ret = tinyusdz::image::WriteImageToFile(path, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
-    return EXIT_FAILURE;
+    return -1.0;
   }
+  return std::chrono::duration<double>(t1 - t0).count();
+}
+
+void PrintRTStats(const RenderContext &ctx) {
+  lrt_tri_stats st;
+  std::memset(&st, 0, sizeof(st));
+  lrt_tri_scene_stats(ctx.scene, &st);
+  std::cerr << "rt preview: 1\n";
+  std::cerr << "rt loader: next\n";
+  std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
+  std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
+  std::cerr << "rt purpose default triangles: "
+            << ctx.stats.purpose_default_triangles << "\n";
+  std::cerr << "rt purpose guide triangles: "
+            << ctx.stats.purpose_guide_triangles << "\n";
+  std::cerr << "load seconds: " << ctx.load_seconds << "\n";
+  std::cerr << "rt triangle stream seconds: " << ctx.stream_seconds << "\n";
+  std::cerr << "rt bvh build seconds: " << ctx.bvh_seconds << "\n";
+  std::cerr << "triangles: " << ctx.tris.size() << "\n";
+  std::cerr << "lightrt: " << lrt_tri_kernel_name(ctx.scene) << "\n";
+  std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
+            << ", memory: " << st.memory_bytes << " bytes\n";
+}
+
+int RunRTPreviewNext(const Options &opt) {
+  RenderContext ctx;
+  if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  if (opt.stats) PrintRTStats(ctx);
+  const double secs = RenderFrameTo(ctx, opt.output);
+  if (secs < 0.0) return EXIT_FAILURE;
+  if (opt.stats) std::cerr << "render seconds: " << secs << "\n";
   return EXIT_SUCCESS;
 }
+
+#ifdef TINYUSDZ_WITH_QJS
+// ===========================================================================
+// JavaScript scripting + MCP control over a persistent RenderContext.
+//
+// The scene is loaded and the BVH built once; the `tusdrender.*` JS module then
+// changes the camera/parameters and re-renders repeatedly without reloading or
+// rebuilding (memory-persistent rendering -- e.g. animation with a moving
+// camera). Both the -js script mode and the -mcp stdio server drive the same
+// persistent QuickJS engine.
+// ===========================================================================
+
+namespace qjs {
+
+constexpr double kPiD = 3.14159265358979323846;
+RenderContext *g_render_ctx = nullptr;
+
+double ArgD(JSContext *ctx, int argc, JSValueConst *argv, int i, double def) {
+  if (i >= argc) return def;
+  double d = def;
+  if (JS_ToFloat64(ctx, &d, argv[i]) < 0) return def;
+  return d;
+}
+
+JSValue Vec3JS(JSContext *ctx, const Vec3 &v) {
+  JSValue a = JS_NewArray(ctx);
+  JS_SetPropertyUint32(ctx, a, 0, JS_NewFloat64(ctx, v.x));
+  JS_SetPropertyUint32(ctx, a, 1, JS_NewFloat64(ctx, v.y));
+  JS_SetPropertyUint32(ctx, a, 2, JS_NewFloat64(ctx, v.z));
+  return a;
+}
+
+void LookAt(CameraFrame &c, const Vec3 &eye, const Vec3 &target, const Vec3 &up,
+            float fov_deg) {
+  c.origin = eye;
+  c.forward = Normalize(Sub(target, eye));
+  c.right = Normalize(Cross(c.forward, up));
+  if (Length(c.right) < 1.0e-6f) c.right = Vec3{1.0f, 0.0f, 0.0f};
+  c.up = Normalize(Cross(c.right, c.forward));
+  c.yfov = fov_deg * float(kPiD) / 180.0f;
+  c.ortho = false;
+  const float dist = Length(Sub(target, eye));
+  c.znear = std::max(1.0e-4f, dist * 1.0e-4f);
+  c.zfar = std::max(1000.0f, dist * 100.0f);
+}
+
+// tusdrender.setCamera(ex,ey,ez, tx,ty,tz, [fovDeg], [ux,uy,uz])
+JSValue js_setCamera(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                     int, JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  Vec3 eye{float(ArgD(ctx, argc, argv, 0, 0)), float(ArgD(ctx, argc, argv, 1, 0)),
+           float(ArgD(ctx, argc, argv, 2, 0))};
+  Vec3 tgt{float(ArgD(ctx, argc, argv, 3, 0)), float(ArgD(ctx, argc, argv, 4, 0)),
+           float(ArgD(ctx, argc, argv, 5, 0))};
+  float fov = float(ArgD(ctx, argc, argv, 6,
+                         double(g_render_ctx->camera.yfov) * 180.0 / kPiD));
+  Vec3 up = AxisVec(g_render_ctx->up_axis);
+  if (argc >= 10) {
+    up = Vec3{float(ArgD(ctx, argc, argv, 7, up.x)),
+              float(ArgD(ctx, argc, argv, 8, up.y)),
+              float(ArgD(ctx, argc, argv, 9, up.z))};
+  }
+  LookAt(g_render_ctx->camera, eye, tgt, up, fov);
+  return JS_UNDEFINED;
+}
+
+// tusdrender.orbit(azimuthDeg, elevationDeg, distanceScale) -- position the
+// camera around the bounds center looking at it (animation-friendly).
+JSValue js_orbit(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv, int,
+                 JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  RenderContext &rc = *g_render_ctx;
+  const Vec3 center = Mul(Add(rc.bounds.lo, rc.bounds.hi), 0.5f);
+  const float radius =
+      std::max(1.0e-3f, Length(Sub(rc.bounds.hi, rc.bounds.lo)) * 0.5f);
+  const double az = ArgD(ctx, argc, argv, 0, 0.0) * kPiD / 180.0;
+  const double el = ArgD(ctx, argc, argv, 1, 20.0) * kPiD / 180.0;
+  const double dist = radius * ArgD(ctx, argc, argv, 2, 2.5);
+  const Vec3 up = AxisVec(rc.up_axis);
+  const Vec3 ref = (std::fabs(up.y) < 0.9f) ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+  const Vec3 e0 = Normalize(Cross(up, ref));   // azimuth 0
+  const Vec3 e1 = Normalize(Cross(up, e0));    // azimuth 90
+  const float ce = float(std::cos(el)), se = float(std::sin(el));
+  const Vec3 horiz = Add(Mul(e0, float(std::cos(az)) * ce),
+                         Mul(e1, float(std::sin(az)) * ce));
+  const Vec3 dir = Add(horiz, Mul(up, se));
+  const Vec3 eye = Add(center, Mul(dir, float(dist)));
+  LookAt(rc.camera, eye, center, up,
+         float(double(rc.camera.yfov) * 180.0 / kPiD));
+  rc.camera.znear = std::max(1.0e-4f, float(dist) * 1.0e-3f);
+  rc.camera.zfar = float(dist) + radius * 4.0f;
+  return JS_UNDEFINED;
+}
+
+JSValue js_setResolution(JSContext *ctx, JSValueConst, int argc,
+                         JSValueConst *argv, int, JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  g_render_ctx->width =
+      std::max(1, int(ArgD(ctx, argc, argv, 0, g_render_ctx->width)));
+  g_render_ctx->height =
+      std::max(1, int(ArgD(ctx, argc, argv, 1, g_render_ctx->height)));
+  return JS_UNDEFINED;
+}
+JSValue js_setAmbient(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                      int, JSValueConst *) {
+  if (g_render_ctx)
+    g_render_ctx->opt.ambient =
+        float(ArgD(ctx, argc, argv, 0, g_render_ctx->opt.ambient));
+  return JS_UNDEFINED;
+}
+JSValue js_setBackground(JSContext *ctx, JSValueConst, int argc,
+                         JSValueConst *argv, int, JSValueConst *) {
+  if (g_render_ctx)
+    g_render_ctx->opt.bg = Vec3{float(ArgD(ctx, argc, argv, 0, 0)),
+                                float(ArgD(ctx, argc, argv, 1, 0)),
+                                float(ArgD(ctx, argc, argv, 2, 0))};
+  return JS_UNDEFINED;
+}
+JSValue js_setShadows(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                      int, JSValueConst *) {
+  if (g_render_ctx && argc > 0)
+    g_render_ctx->opt.shadows = JS_ToBool(ctx, argv[0]) != 0;
+  return JS_UNDEFINED;
+}
+JSValue js_setSamples(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                      int, JSValueConst *) {
+  if (g_render_ctx)
+    g_render_ctx->opt.samples =
+        std::max(1, int(ArgD(ctx, argc, argv, 0, g_render_ctx->opt.samples)));
+  return JS_UNDEFINED;
+}
+JSValue js_autoframe(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
+                     JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  g_render_ctx->opt.autoframe = true;
+  g_render_ctx->opt.camera.clear();
+  ResolveCameraNext(*g_render_ctx);
+  return JS_UNDEFINED;
+}
+JSValue js_bounds(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
+                  JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  RenderContext &rc = *g_render_ctx;
+  const Vec3 center = Mul(Add(rc.bounds.lo, rc.bounds.hi), 0.5f);
+  const float radius = Length(Sub(rc.bounds.hi, rc.bounds.lo)) * 0.5f;
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "lo", Vec3JS(ctx, rc.bounds.lo));
+  JS_SetPropertyStr(ctx, o, "hi", Vec3JS(ctx, rc.bounds.hi));
+  JS_SetPropertyStr(ctx, o, "center", Vec3JS(ctx, center));
+  JS_SetPropertyStr(ctx, o, "radius", JS_NewFloat64(ctx, radius));
+  return o;
+}
+JSValue js_stats(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
+                 JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  RenderContext &rc = *g_render_ctx;
+  lrt_tri_stats st;
+  std::memset(&st, 0, sizeof(st));
+  lrt_tri_scene_stats(rc.scene, &st);
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "triangles", JS_NewInt64(ctx, int64_t(rc.tris.size())));
+  JS_SetPropertyStr(ctx, o, "meshes", JS_NewInt64(ctx, int64_t(rc.stats.meshes)));
+  JS_SetPropertyStr(ctx, o, "bvhNodes", JS_NewInt64(ctx, int64_t(st.node_count)));
+  JS_SetPropertyStr(ctx, o, "bvhBytes", JS_NewInt64(ctx, int64_t(st.memory_bytes)));
+  JS_SetPropertyStr(ctx, o, "width", JS_NewInt32(ctx, rc.width));
+  JS_SetPropertyStr(ctx, o, "height", JS_NewInt32(ctx, rc.height));
+  return o;
+}
+JSValue js_render(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                  int, JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  if (argc < 1 || !JS_IsString(argv[0]))
+    return JS_ThrowTypeError(ctx, "render(path) requires a path string");
+  const char *p = JS_ToCString(ctx, argv[0]);
+  const std::string path = p ? p : "";
+  if (p) JS_FreeCString(ctx, p);
+  const double secs = RenderFrameTo(*g_render_ctx, path);
+  if (secs < 0.0) return JS_ThrowInternalError(ctx, "failed to write image");
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "path", JS_NewString(ctx, path.c_str()));
+  JS_SetPropertyStr(ctx, o, "width", JS_NewInt32(ctx, g_render_ctx->width));
+  JS_SetPropertyStr(ctx, o, "height", JS_NewInt32(ctx, g_render_ctx->height));
+  JS_SetPropertyStr(ctx, o, "seconds", JS_NewFloat64(ctx, secs));
+  return o;
+}
+
+void RegFn(JSContext *ctx, JSValue obj, const char *name, JSCFunctionData *fn,
+           int len) {
+  JS_SetPropertyStr(ctx, obj, name,
+                    JS_NewCFunctionData(ctx, fn, len, 0, 0, nullptr));
+}
+
+void RegisterTusdrenderModule(tinyusdz::tydra::JSEngineState &engine,
+                              RenderContext *rc) {
+  JSContext *ctx = static_cast<JSContext *>(engine.context);
+  g_render_ctx = rc;
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue mod = JS_NewObject(ctx);
+  RegFn(ctx, mod, "setCamera", js_setCamera, 10);
+  RegFn(ctx, mod, "orbit", js_orbit, 3);
+  RegFn(ctx, mod, "setResolution", js_setResolution, 2);
+  RegFn(ctx, mod, "setAmbient", js_setAmbient, 1);
+  RegFn(ctx, mod, "setBackground", js_setBackground, 3);
+  RegFn(ctx, mod, "setShadows", js_setShadows, 1);
+  RegFn(ctx, mod, "setSamples", js_setSamples, 1);
+  RegFn(ctx, mod, "autoframe", js_autoframe, 0);
+  RegFn(ctx, mod, "bounds", js_bounds, 0);
+  RegFn(ctx, mod, "stats", js_stats, 0);
+  RegFn(ctx, mod, "render", js_render, 1);
+  JS_SetPropertyStr(ctx, global, "tusdrender", mod);
+  JS_FreeValue(ctx, global);
+}
+
+std::string ReadFile(const std::string &path, bool *ok) {
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs) { *ok = false; return {}; }
+  std::stringstream ss;
+  ss << ifs.rdbuf();
+  *ok = true;
+  return ss.str();
+}
+
+}  // namespace qjs
+
+int RunJSScriptMode(const Options &opt, const std::string &script_path) {
+  RenderContext ctx;
+  if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  if (opt.stats) PrintRTStats(ctx);
+
+  bool ok_read = false;
+  const std::string code = qjs::ReadFile(script_path, &ok_read);
+  if (!ok_read) {
+    std::cerr << "Cannot open script: " << script_path << "\n";
+    return EXIT_FAILURE;
+  }
+
+  tinyusdz::tydra::JSEngineState engine;
+  std::string err;
+  if (!tinyusdz::tydra::InitJSEngine(engine, err)) {
+    std::cerr << "JS engine init failed: " << err << "\n";
+    return EXIT_FAILURE;
+  }
+  qjs::RegisterTusdrenderModule(engine, &ctx);
+
+  nlohmann::json ret;
+  const bool ok = tinyusdz::tydra::RunJSScript(engine, code, ret, err);
+  if (!ok) {
+    std::cerr << "JS error: " << err << "\n";
+  } else if (!ret.is_null()) {
+    std::cerr << "JS result: " << ret.dump() << "\n";
+  }
+  tinyusdz::tydra::DestroyJSEngine(engine);
+  qjs::g_render_ctx = nullptr;
+  return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+// Build a tusdrender.* JS expression from an MCP tool call and evaluate it
+// against the persistent engine, returning the JSON result.
+bool McpCallTool(tinyusdz::tydra::JSEngineState &engine, const std::string &name,
+                 const nlohmann::json &args, nlohmann::json &out,
+                 std::string &err) {
+  auto num = [&](const char *k, double d) -> double {
+    return args.contains(k) && args[k].is_number() ? args[k].get<double>() : d;
+  };
+  auto arr3 = [&](const char *k, double a, double b, double c, double v[3]) {
+    v[0] = a; v[1] = b; v[2] = c;
+    if (args.contains(k) && args[k].is_array() && args[k].size() == 3) {
+      for (int i = 0; i < 3; ++i)
+        if (args[k][i].is_number()) v[i] = args[k][i].get<double>();
+    }
+  };
+  std::string code;
+  char buf[512];
+  if (name == "eval") {
+    if (!args.contains("script") || !args["script"].is_string()) {
+      err = "eval requires a 'script' string";
+      return false;
+    }
+    code = args["script"].get<std::string>();
+  } else if (name == "set_camera") {
+    double e[3], t[3];
+    arr3("eye", 0, 0, 0, e);
+    arr3("target", 0, 0, 0, t);
+    const double fov = num("fov", 0.0);
+    std::snprintf(buf, sizeof(buf),
+                  "tusdrender.setCamera(%.9g,%.9g,%.9g,%.9g,%.9g,%.9g%s)", e[0],
+                  e[1], e[2], t[0], t[1], t[2],
+                  fov > 0.0 ? (std::string(",") + std::to_string(fov)).c_str()
+                            : "");
+    code = buf;
+  } else if (name == "orbit") {
+    std::snprintf(buf, sizeof(buf), "tusdrender.orbit(%.9g,%.9g,%.9g)",
+                  num("azimuth", 0.0), num("elevation", 20.0),
+                  num("distance", 2.5));
+    code = buf;
+  } else if (name == "set_resolution") {
+    std::snprintf(buf, sizeof(buf), "tusdrender.setResolution(%d,%d)",
+                  int(num("width", 960)), int(num("height", 540)));
+    code = buf;
+  } else if (name == "render") {
+    const std::string path =
+        args.contains("path") && args["path"].is_string()
+            ? args["path"].get<std::string>()
+            : "out.png";
+    code = "tusdrender.render(" + nlohmann::json(path).dump() + ")";
+  } else if (name == "bounds") {
+    code = "tusdrender.bounds()";
+  } else if (name == "stats") {
+    code = "tusdrender.stats()";
+  } else {
+    err = "unknown tool: " + name;
+    return false;
+  }
+  if (!tinyusdz::tydra::RunJSScript(engine, code, out, err)) {
+    return false;  // err set
+  }
+  return true;
+}
+
+nlohmann::json McpToolList() {
+  auto tool = [](const char *n, const char *desc, nlohmann::json props,
+                 std::vector<std::string> req) {
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = props;
+    if (!req.empty()) schema["required"] = req;
+    return nlohmann::json{{"name", n}, {"description", desc},
+                          {"inputSchema", schema}};
+  };
+  auto vec3 = []() {
+    return nlohmann::json{{"type", "array"},
+                          {"items", {{"type", "number"}}},
+                          {"minItems", 3},
+                          {"maxItems", 3}};
+  };
+  auto num = []() { return nlohmann::json{{"type", "number"}}; };
+  nlohmann::json tools = nlohmann::json::array();
+  tools.push_back(tool("eval",
+                       "Run JavaScript against the persistent render context "
+                       "(tusdrender.* API). Returns the script value.",
+                       {{"script", {{"type", "string"}}}}, {"script"}));
+  tools.push_back(tool("set_camera",
+                       "Position the camera with eye+target (+optional fov deg).",
+                       {{"eye", vec3()}, {"target", vec3()}, {"fov", num()}},
+                       {"eye", "target"}));
+  tools.push_back(tool("orbit",
+                       "Orbit the camera around the scene center.",
+                       {{"azimuth", num()}, {"elevation", num()},
+                        {"distance", num()}},
+                       {}));
+  tools.push_back(tool("set_resolution", "Set output image resolution.",
+                       {{"width", num()}, {"height", num()}}, {}));
+  tools.push_back(tool("render",
+                       "Render the current camera to a PNG path (reuses the BVH).",
+                       {{"path", {{"type", "string"}}}}, {"path"}));
+  tools.push_back(tool("bounds", "Get the scene bounding box.",
+                       nlohmann::json::object(), {}));
+  tools.push_back(tool("stats", "Get triangle/BVH/resolution stats.",
+                       nlohmann::json::object(), {}));
+  return tools;
+}
+
+int RunMCPMode(const Options &opt) {
+  RenderContext ctx;
+  if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  if (opt.stats) PrintRTStats(ctx);
+
+  tinyusdz::tydra::JSEngineState engine;
+  std::string err;
+  if (!tinyusdz::tydra::InitJSEngine(engine, err)) {
+    std::cerr << "JS engine init failed: " << err << "\n";
+    return EXIT_FAILURE;
+  }
+  qjs::RegisterTusdrenderModule(engine, &ctx);
+  std::cerr << "tusdrender MCP server ready (stdio JSON-RPC). Tools: eval, "
+               "set_camera, orbit, set_resolution, render, bounds, stats.\n";
+
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    if (line.empty()) continue;
+    nlohmann::json req;
+    try {
+      req = nlohmann::json::parse(line);
+    } catch (...) {
+      continue;
+    }
+    const std::string method = req.value("method", std::string());
+    const bool has_id = req.contains("id");
+    nlohmann::json resp;
+    resp["jsonrpc"] = "2.0";
+    if (has_id) resp["id"] = req["id"];
+    auto send = [&]() {
+      std::cout << resp.dump() << "\n";
+      std::cout.flush();
+    };
+
+    if (method == "initialize") {
+      resp["result"] = {
+          {"protocolVersion", "2024-11-05"},
+          {"serverInfo", {{"name", "tusdrender"}, {"version", "1.0"}}},
+          {"capabilities", {{"tools", nlohmann::json::object()}}}};
+      send();
+    } else if (method == "tools/list") {
+      resp["result"] = {{"tools", McpToolList()}};
+      send();
+    } else if (method == "tools/call") {
+      const auto params = req.value("params", nlohmann::json::object());
+      const std::string tname = params.value("name", std::string());
+      const auto targs = params.value("arguments", nlohmann::json::object());
+      nlohmann::json out;
+      std::string e2;
+      const bool ok = McpCallTool(engine, tname, targs, out, e2);
+      if (!ok) {
+        resp["result"] = {
+            {"isError", true},
+            {"content", nlohmann::json::array(
+                            {{{"type", "text"}, {"text", e2}}})}};
+      } else {
+        resp["result"] = {
+            {"content", nlohmann::json::array(
+                            {{{"type", "text"}, {"text", out.dump()}}})}};
+      }
+      send();
+    } else if (has_id) {
+      resp["error"] = {{"code", -32601}, {"message", "method not found: " + method}};
+      send();
+    }
+    // notifications (no id) other than the above are ignored.
+  }
+
+  tinyusdz::tydra::DestroyJSEngine(engine);
+  qjs::g_render_ctx = nullptr;
+  return EXIT_SUCCESS;
+}
+#endif  // TINYUSDZ_WITH_QJS
 
 }  // namespace
 
@@ -3624,6 +4128,20 @@ int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+
+  // Interactive / scripted modes (memory-persistent rendering over the next
+  // loader): -js runs a JavaScript animation/control script, -mcp runs an MCP
+  // stdio control server. Both keep the scene + BVH resident for repeated
+  // re-rendering.
+  if (opt.mcp || !opt.js_script.empty()) {
+#ifdef TINYUSDZ_WITH_QJS
+    if (opt.mcp) return RunMCPMode(opt);
+    return RunJSScriptMode(opt, opt.js_script);
+#else
+    std::cerr << "-js/-mcp require building with -DTINYUSDZ_WITH_QJS=ON.\n";
+    return EXIT_FAILURE;
+#endif
   }
 
   // Default RT preview backend: the `next` lazy loader (fast, low-memory USDC
