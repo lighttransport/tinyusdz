@@ -47,8 +47,21 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     if (!val) {
       val = prim.GetPropertyValue("joints");
     }
-    // skip - token array not yet supported in Value
-    (void)val;
+    if (val) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->joints = *toks;
+      }
+    }
+  }
+
+  // jointNames (uniform token[]) - optional display names
+  {
+    const Value* val = prim.GetPropertyValue("jointNames");
+    if (val) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->jointNames = *toks;
+      }
+    }
   }
 
   // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double

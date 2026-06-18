@@ -367,5 +367,12 @@ struct Dict {
   bool empty() const { return entries.empty(); }
 };
 
+/// Linearly interpolate between two values for time-sample evaluation.
+/// `t` is the fraction in [0,1] from `a` to `b`. Interpolatable numeric scalar,
+/// vector, and matrix types are component-wise lerped; non-interpolatable types
+/// (int/bool/string/token/asset/quaternion) and type mismatches fall back to
+/// held interpolation (returns `a`).
+Value LerpValue(const Value& a, const Value& b, double t);
+
 }  // namespace next
 }  // namespace tinyusdz

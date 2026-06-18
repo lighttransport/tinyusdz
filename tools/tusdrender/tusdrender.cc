@@ -3103,16 +3103,46 @@ matrix4d Mat4FromArray(const double d[16]) {
   return m;
 }
 
+// Read an array attribute, decoding lazily-stored arrays into a throwaway temp
+// (materialized_copy) so the `next` stage's Value stays lazy. This keeps the
+// big geometry arrays (points/indices/normals) from being permanently
+// materialized into the stage as we stream the scene, bounding peak memory.
+std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name) {
+  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+  if (!v) return {};
+  if (v->is_lazy()) {
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    if (const std::vector<float> *a = tmp.as_float_array()) return *a;
+    return {};
+  }
+  if (const std::vector<float> *a = v->as_float_array()) return *a;
+  return {};
+}
+
+std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name) {
+  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+  if (!v) return {};
+  if (v->is_lazy()) {
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    if (const std::vector<int32_t> *a = tmp.as_int_array()) return *a;
+    return {};
+  }
+  if (const std::vector<int32_t> *a = v->as_int_array()) return *a;
+  return {};
+}
+
 void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const matrix4d &world, tinyusdz::Purpose purpose,
                           uint32_t purpose_mask, std::vector<float> *vertices,
                           std::vector<TriInfo> *tris, Bounds *bounds,
                           RTPreviewStats *stats) {
-  tinyusdz::next::UsdGeomMesh mesh(prim);
-  if (!mesh.IsValid()) return;
-  const std::vector<float> points = mesh.GetPoints();           // flat xyz
-  const std::vector<int> counts = mesh.GetFaceVertexCounts();
-  const std::vector<int> indices = mesh.GetFaceVertexIndices();
+  // Read geometry without permanently materializing it into the stage.
+  const std::vector<float> points = ReadFloatArrayLazy(prim, "points");
+  const std::vector<int32_t> counts = ReadIntArrayLazy(prim, "faceVertexCounts");
+  const std::vector<int32_t> indices =
+      ReadIntArrayLazy(prim, "faceVertexIndices");
   if (points.empty() || counts.empty() || indices.empty()) {
     stats->skipped_meshes++;
     return;
