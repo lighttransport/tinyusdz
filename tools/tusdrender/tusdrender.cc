@@ -173,6 +173,7 @@ struct Options {
   lrt_tri_quality quality{LRT_TRI_BUILD_DEFAULT};
   int threads{0};
   int subdivision_level{0};
+  bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
 };
 
 float Dot(const Vec3 &a, const Vec3 &b) {
@@ -517,6 +518,25 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
                   << tinyusdz::tsd::kMaxLevel << ".\n";
         return false;
       }
+    } else if (a == "-complexity" || a == "--complexity") {
+      // OpenUSD usdrecord refinement presets -> subdivision level
+      // (low=1.0, medium=1.1, high=1.2, veryhigh=1.3 -> refine 0/1/2/3).
+      const char *v = need_value(a.c_str());
+      const std::string s = v ? v : "";
+      if (s == "low") {
+        opt->subdivision_level = 0;
+      } else if (s == "medium") {
+        opt->subdivision_level = 1;
+      } else if (s == "high") {
+        opt->subdivision_level = 2;
+      } else if (s == "veryhigh") {
+        opt->subdivision_level = 3;
+      } else {
+        std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
+        return false;
+      }
+    } else if (a == "-autoframe" || a == "--autoframe") {
+      opt->autoframe = true;
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
     } else if (a == "-stats" || a == "--stats") {
@@ -3254,6 +3274,148 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
   }
 }
 
+// Read a UsdGeomCamera attribute (float, with double fallback).
+float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       float fallback) {
+  if (const tinyusdz::next::Value *v = prim.GetPropertyValue(name)) {
+    if (const float *f = v->as_float()) return *f;
+    if (const double *d = v->as_double()) return float(*d);
+  }
+  return fallback;
+}
+
+// Find a (named) UsdGeomCamera in the next stage and build a CameraFrame plus
+// its aperture aspect (horizontal/vertical). An empty query matches the first
+// camera. Mirrors CameraFrameFromGeomCamera but on the next stage with
+// bit-exact world transforms.
+bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
+                                  const tinyusdz::next::UsdPrim &prim,
+                                  const matrix4d &parent_world,
+                                  const std::string &query, CameraFrame *frame,
+                                  float *aspect) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, 0.0);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  if (prim.GetTypeName() == "Camera") {
+    const std::string path = prim.GetPath().str();
+    const std::string name = prim.GetName();
+    const bool match =
+        query.empty() || name == query || path == query ||
+        (path.size() > query.size() &&
+         path.compare(path.size() - query.size(), query.size(), query) == 0 &&
+         path[path.size() - query.size() - 1] == '/');
+    if (match) {
+      const float focal = ReadCamFloatNext(prim, "focalLength", 50.0f);
+      const float vap = ReadCamFloatNext(prim, "verticalAperture", 15.2908f);
+      const float hap = ReadCamFloatNext(prim, "horizontalAperture", 20.955f);
+      float znear = 0.1f, zfar = 1.0e6f;
+      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("clippingRange")) {
+        if (const float *f = v->as_float2()) { znear = f[0]; zfar = f[1]; }
+      }
+      std::string proj = "perspective";
+      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("projection")) {
+        if (const std::string *t = v->as_token()) proj = *t;
+      }
+      frame->origin = Vec3{float(world.m[3][0]), float(world.m[3][1]),
+                           float(world.m[3][2])};
+      frame->right = Normalize(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
+      frame->up = Normalize(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
+      frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
+      frame->yfov = 2.0f * std::atan(0.5f * vap / std::max(1.0e-6f, focal));
+      frame->xmag = hap;
+      frame->ymag = vap;
+      frame->znear = std::max(1.0e-5f, znear);
+      frame->zfar = std::max(frame->znear, zfar);
+      frame->ortho = (proj == "orthographic");
+      if (aspect) *aspect = hap / std::max(1.0e-6f, vap);
+      return true;
+    }
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (FindNextCameraFrameRecursive(stage, child, world, query, frame, aspect)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
+                         const std::string &query, CameraFrame *frame,
+                         float *aspect) {
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    if (FindNextCameraFrameRecursive(stage, root, matrix4d::identity(), query,
+                                     frame, aspect)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// OpenUSD usdrecord-style auto framing: replicates
+// UsdAppUtilsFrameRecorder's default-GfCamera framing (focal 50mm, aperture
+// 20.955 x 15.2908 -> horizontal FOV ~23.66 deg, aspect ~1.37). Positions a
+// perspective camera on the depth axis so the bbox fits the horizontal FOV,
+// front-on for Y-up and rotated for Z-up. Writes the aperture-derived image
+// height (width / aspect) to `out_height`.
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
+                                int width, int *out_height) {
+  constexpr float kPi = 3.14159265358979323846f;
+  const float focal = 50.0f, hap = 20.955f, vap = 15.2908f;
+  const float aspect = hap / vap;  // ~1.370
+  const float half_hfov = std::atan(0.5f * hap / focal);
+  if (out_height) {
+    *out_height = std::max(1, int(std::lround(float(width) / aspect)));
+  }
+
+  Vec3 center{0.0f, 0.0f, 0.0f};
+  Vec3 dim{2.0f, 2.0f, 2.0f};
+  if (bounds.valid) {
+    center = Mul(Add(bounds.lo, bounds.hi), 0.5f);
+    dim = Sub(bounds.hi, bounds.lo);
+  }
+
+  CameraFrame frame;
+  frame.yfov = 2.0f * std::atan(0.5f * vap / focal);
+  frame.ortho = false;
+
+  // Plane corner (half-extents in the focal plane) and the depth half-extent.
+  float plane_x, plane_y, depth;
+  Vec3 pos_dir, up_vec, fwd;
+  if (up_axis == tinyusdz::Axis::Z) {
+    plane_x = dim.x * 0.5f; plane_y = dim.z * 0.5f; depth = dim.y * 0.5f;
+    pos_dir = Vec3{0.0f, -1.0f, 0.0f};  // back up along -Y
+    fwd = Vec3{0.0f, 1.0f, 0.0f};
+    up_vec = Vec3{0.0f, 0.0f, 1.0f};
+  } else if (up_axis == tinyusdz::Axis::X) {
+    plane_x = dim.y * 0.5f; plane_y = dim.z * 0.5f; depth = dim.x * 0.5f;
+    pos_dir = Vec3{-1.0f, 0.0f, 0.0f};
+    fwd = Vec3{1.0f, 0.0f, 0.0f};
+    up_vec = Vec3{0.0f, 0.0f, 1.0f};
+  } else {  // Y-up
+    plane_x = dim.x * 0.5f; plane_y = dim.y * 0.5f; depth = dim.z * 0.5f;
+    pos_dir = Vec3{0.0f, 0.0f, 1.0f};  // back up along +Z (look down -Z)
+    fwd = Vec3{0.0f, 0.0f, -1.0f};
+    up_vec = Vec3{0.0f, 1.0f, 0.0f};
+  }
+  const float plane_radius =
+      std::sqrt(plane_x * plane_x + plane_y * plane_y);
+  float distance = plane_radius / std::max(1.0e-6f, std::tan(half_hfov)) + depth;
+  (void)kPi;
+
+  frame.origin = Add(center, Mul(pos_dir, distance));
+  frame.forward = Normalize(fwd);
+  frame.right = Normalize(Cross(frame.forward, up_vec));
+  if (Length(frame.right) < 1.0e-6f) frame.right = Vec3{1.0f, 0.0f, 0.0f};
+  frame.up = Normalize(Cross(frame.right, frame.forward));
+  const float diag = Length(dim);
+  frame.znear = std::max(1.0e-4f, distance - diag);
+  frame.zfar = distance + diag * 2.0f;
+  return frame;
+}
+
 int RunRTPreviewNext(const Options &opt) {
   const auto load_t0 = std::chrono::steady_clock::now();
   tinyusdz::next::Stage stage;
@@ -3359,20 +3521,40 @@ int RunRTPreviewNext(const Options &opt) {
     return EXIT_FAILURE;
   }
 
-  const int height = opt.height > 0 ? opt.height : 540;
   tinyusdz::Axis up_axis = tinyusdz::Axis::Y;
   if (stage.GetUpAxis() == "X") up_axis = tinyusdz::Axis::X;
   else if (stage.GetUpAxis() == "Z") up_axis = tinyusdz::Axis::Z;
-  if (!opt.camera.empty()) {
-    std::cerr << "WARN: named camera (" << opt.camera
-              << ") is not supported with the next loader; using auto-fit. "
-              << "Use -legacyLoad for named cameras.\n";
-  }
+
   RenderScene empty_render_scene;
-  Options auto_opt = opt;
-  auto_opt.camera.clear();
-  CameraFrame camera =
-      MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
+  CameraFrame camera;
+  int height = opt.height;
+  if (!opt.camera.empty()) {
+    // Named UsdGeomCamera (now supported in the next path). Image height is
+    // derived from the camera's aperture aspect when -height is not given.
+    float cam_aspect = 16.0f / 9.0f;
+    if (FindNextCameraFrame(stage, opt.camera, &camera, &cam_aspect)) {
+      if (height <= 0) {
+        height = std::max(1, int(std::lround(float(opt.width) / cam_aspect)));
+      }
+    } else {
+      std::cerr << "WARN: camera not found: " << opt.camera
+                << ". Using auto-fit.\n";
+      if (height <= 0) height = 540;
+      Options auto_opt = opt;
+      auto_opt.camera.clear();
+      camera =
+          MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
+    }
+  } else if (opt.autoframe) {
+    // usdrecord-style framing; height derived from the aperture aspect.
+    camera = MakeUsdRecordCamera(bounds, up_axis, opt.width, &height);
+  } else {
+    if (height <= 0) height = 540;
+    Options auto_opt = opt;
+    auto_opt.camera.clear();
+    camera =
+        MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
+  }
 
   DirectScene direct_scene;
   LightCache light_cache;
