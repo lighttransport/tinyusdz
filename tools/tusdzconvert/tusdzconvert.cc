@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -92,6 +91,29 @@ void PrintUsage(const char *prog) {
       "  -jpegQuality <1-100>      JPEG quality when (re-)encoding (default: 90).\n"
       "  -numThreads <N>           Texture worker threads (default 0 = all cores; 1 = sequential).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
+      "\n"
+      "Material optimization:\n"
+      "  -optimizeMaterials <off|dedupe|preview|atlas>\n"
+      "                            Optimize flattened material/shader networks for realtime delivery.\n"
+      "                            preview canonicalizes supported UsdPreviewSurface graphs;\n"
+      "                            atlas applies preview dedupe without atlas images yet.\n"
+      "  -materialAtlasSize <N>    Max generated atlas edge (default 4096).\n"
+      "  -materialAtlasTileSize <N> Tile edge for atlas mode (default 512).\n"
+      "  -materialAtlasPadding <N> Gutter padding pixels for atlas mode (default 2).\n"
+      "  -materialAtlasMinGroupSize <N>\n"
+      "                            Minimum compatible materials before atlas generation (default 2).\n"
+      "\n"
+      "Geometry optimization:\n"
+      "  -optimizeGeometry <off|mergeMeshes>\n"
+      "                            Merge eligible static meshes for realtime delivery.\n"
+      "                            This breaks original mesh prim paths/hierarchy.\n"
+      "  -optimizeMeshes <off|mergeMeshes>\n"
+      "                            Alias for -optimizeGeometry.\n"
+      "  -meshMergeMaxInputFaces <N>  Max faces per source mesh (default 2048).\n"
+      "  -meshMergeMaxInputPoints <N> Max points per source mesh (default 4096).\n"
+      "  -meshMergeMaxAggregateFaces <N>\n"
+      "                            Max faces per aggregate mesh (default 65536).\n"
+      "  -meshMergeMinGroupSize <N> Minimum meshes per aggregate (default 2).\n"
       "\n"
       "Fit textures to a total size budget:\n"
       "  -targetTextureSize <size> Shrink all textures so their total fits <size>\n"
@@ -190,6 +212,45 @@ bool ParseTextureFormat(const std::string &s, usdz::OutputTextureFormat *out) {
   return false;
 }
 
+bool ParseMaterialOptimizationMode(
+    const std::string &s, usdz::MaterialOptimizationMode *out) {
+  if (out == nullptr) return false;
+  std::string v = to_lower(s);
+  if (v == "off" || v == "none") {
+    *out = usdz::MaterialOptimizationMode::Off;
+    return true;
+  }
+  if (v == "dedupe" || v == "dedup") {
+    *out = usdz::MaterialOptimizationMode::Dedupe;
+    return true;
+  }
+  if (v == "preview" || v == "previewsurface" ||
+      v == "usdpreviewsurface") {
+    *out = usdz::MaterialOptimizationMode::Preview;
+    return true;
+  }
+  if (v == "atlas") {
+    *out = usdz::MaterialOptimizationMode::Atlas;
+    return true;
+  }
+  return false;
+}
+
+bool ParseGeometryOptimizationMode(
+    const std::string &s, usdz::GeometryOptimizationMode *out) {
+  if (out == nullptr) return false;
+  std::string v = to_lower(s);
+  if (v == "off" || v == "none") {
+    *out = usdz::GeometryOptimizationMode::Off;
+    return true;
+  }
+  if (v == "mergemeshes" || v == "merge" || v == "meshmerge") {
+    *out = usdz::GeometryOptimizationMode::MergeMeshes;
+    return true;
+  }
+  return false;
+}
+
 bool ParseUSDZRootLayerFormat(const std::string &s,
                               usdz::USDZRootLayerFormat *out) {
   if (out == nullptr) return false;
@@ -260,33 +321,21 @@ bool ResolveInputPath(const std::string &arg, std::string *root_input,
     return false;
   }
 
-  namespace fs = std::filesystem;
-  std::error_code ec;
-  const fs::path input_path(arg);
-  if (!fs::is_directory(input_path, ec)) {
+  if (!io::IsDirectory(arg)) {
     *root_input = arg;
     *input_was_directory = false;
     return true;
   }
 
-  std::vector<fs::path> candidates;
-  for (const fs::directory_entry &entry : fs::directory_iterator(input_path, ec)) {
-    if (ec) {
-      if (err) (*err) = "failed to read input directory: " + arg;
-      return false;
-    }
-    if (!entry.is_regular_file(ec)) {
-      ec.clear();
+  std::vector<std::string> candidates;
+  for (const std::string &name : io::ListDir(arg, /*recursive*/ false)) {
+    const std::string path = io::JoinPath(arg, name);
+    if (io::IsDirectory(path)) {
       continue;
     }
-    const std::string path = entry.path().string();
     if (IsUSDFileExtension(path)) {
-      candidates.push_back(entry.path());
+      candidates.push_back(path);
     }
-  }
-  if (ec) {
-    if (err) (*err) = "failed to read input directory: " + arg;
-    return false;
   }
 
   if (candidates.empty()) {
@@ -299,14 +348,14 @@ bool ResolveInputPath(const std::string &arg, std::string *root_input,
   if (candidates.size() > 1) {
     if (err) {
       (*err) = "input directory has multiple top-level USD root candidates:";
-      for (const fs::path &candidate : candidates) {
-        (*err) += "\n  " + candidate.string();
+      for (const std::string &candidate : candidates) {
+        (*err) += "\n  " + candidate;
       }
     }
     return false;
   }
 
-  *root_input = candidates.front().string();
+  *root_input = candidates.front();
   *input_was_directory = true;
   return true;
 }
@@ -467,6 +516,22 @@ int main(int argc, char **argv) {
   parser.add_option("-jpegQuality", true, "1-100");
   parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
+  parser.add_option("-optimizeMaterials", true, "off|dedupe|preview|atlas");
+  parser.add_option("-materialAtlasSize", true, "Material atlas max edge");
+  parser.add_option("-materialAtlasTileSize", true, "Material atlas tile edge");
+  parser.add_option("-materialAtlasPadding", true, "Material atlas padding");
+  parser.add_option("-materialAtlasMinGroupSize", true,
+                    "Material atlas min group size");
+  parser.add_option("-optimizeGeometry", true, "off|mergeMeshes");
+  parser.add_option("-optimizeMeshes", true, "off|mergeMeshes");
+  parser.add_option("-meshMergeMaxInputFaces", true,
+                    "Mesh merge source face limit");
+  parser.add_option("-meshMergeMaxInputPoints", true,
+                    "Mesh merge source point limit");
+  parser.add_option("-meshMergeMaxAggregateFaces", true,
+                    "Mesh merge aggregate face limit");
+  parser.add_option("-meshMergeMinGroupSize", true,
+                    "Mesh merge minimum group size");
   parser.add_option("-targetTextureSize", true, "Total texture budget (e.g. 100MB)");
   parser.add_option("-fitStrategy", true, "size|quality");
   parser.add_option("-fitMinTextureSize", true, "Min longest edge for size fit");
@@ -631,6 +696,125 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
+  if (parser.is_set("-optimizeMaterials")) {
+    std::string mode;
+    parser.get("-optimizeMaterials", mode);
+    if (!ParseMaterialOptimizationMode(mode, &opts.material_optimization)) {
+      std::cerr << "ERROR: -optimizeMaterials must be off, dedupe, preview, "
+                   "or atlas (got '"
+                << mode << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasSize")) {
+    std::string n;
+    parser.get("-materialAtlasSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_size) ||
+        opts.material_atlas_size < 1 ||
+        opts.material_atlas_size > 32768) {
+      std::cerr << "ERROR: -materialAtlasSize must be 1-32768 (got '" << n
+                << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasTileSize")) {
+    std::string n;
+    parser.get("-materialAtlasTileSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_tile_size) ||
+        opts.material_atlas_tile_size < 1 ||
+        opts.material_atlas_tile_size > opts.material_atlas_size) {
+      std::cerr << "ERROR: -materialAtlasTileSize must be positive and <= "
+                   "-materialAtlasSize (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasPadding")) {
+    std::string n;
+    parser.get("-materialAtlasPadding", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_padding) ||
+        opts.material_atlas_padding < 0 ||
+        opts.material_atlas_padding > 1024) {
+      std::cerr << "ERROR: -materialAtlasPadding must be 0-1024 (got '" << n
+                << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-materialAtlasMinGroupSize")) {
+    std::string n;
+    parser.get("-materialAtlasMinGroupSize", n);
+    if (!ParseIntStrict(n, &opts.material_atlas_min_group_size) ||
+        opts.material_atlas_min_group_size < 1) {
+      std::cerr << "ERROR: -materialAtlasMinGroupSize must be positive (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-optimizeGeometry") || parser.is_set("-optimizeMeshes")) {
+    std::string mode;
+    if (parser.is_set("-optimizeGeometry")) {
+      parser.get("-optimizeGeometry", mode);
+    } else {
+      parser.get("-optimizeMeshes", mode);
+    }
+    if (!ParseGeometryOptimizationMode(mode, &opts.geometry_optimization)) {
+      std::cerr << "ERROR: -optimizeGeometry must be off or mergeMeshes (got '"
+                << mode << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-meshMergeMaxInputFaces")) {
+    std::string n;
+    parser.get("-meshMergeMaxInputFaces", n);
+    if (!ParseIntStrict(n, &opts.mesh_merge_max_input_faces) ||
+        opts.mesh_merge_max_input_faces < 1) {
+      std::cerr << "ERROR: -meshMergeMaxInputFaces must be positive (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-meshMergeMaxInputPoints")) {
+    std::string n;
+    parser.get("-meshMergeMaxInputPoints", n);
+    if (!ParseIntStrict(n, &opts.mesh_merge_max_input_points) ||
+        opts.mesh_merge_max_input_points < 1) {
+      std::cerr << "ERROR: -meshMergeMaxInputPoints must be positive (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-meshMergeMaxAggregateFaces")) {
+    std::string n;
+    parser.get("-meshMergeMaxAggregateFaces", n);
+    if (!ParseIntStrict(n, &opts.mesh_merge_max_aggregate_faces) ||
+        opts.mesh_merge_max_aggregate_faces < 1) {
+      std::cerr << "ERROR: -meshMergeMaxAggregateFaces must be positive (got '"
+                << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("-meshMergeMinGroupSize")) {
+    std::string n;
+    parser.get("-meshMergeMinGroupSize", n);
+    if (!ParseIntStrict(n, &opts.mesh_merge_min_group_size) ||
+        opts.mesh_merge_min_group_size < 2) {
+      std::cerr << "ERROR: -meshMergeMinGroupSize must be >= 2 (got '" << n
+                << "').\n";
+      return 1;
+    }
+  }
+  if (opts.material_optimization != usdz::MaterialOptimizationMode::Off &&
+      !opts.flatten) {
+    std::cerr << "WARN: material optimization requires flattened output; "
+                 "ignoring -noFlatten.\n";
+    opts.flatten = true;
+  }
+  if (opts.geometry_optimization != usdz::GeometryOptimizationMode::Off &&
+      !opts.flatten) {
+    std::cerr << "WARN: geometry optimization requires flattened output; "
+                 "ignoring -noFlatten.\n";
+    opts.flatten = true;
+  }
   if (parser.is_set("-targetTextureSize")) {
     std::string s;
     parser.get("-targetTextureSize", s);
@@ -694,6 +878,28 @@ int main(int argc, char **argv) {
             << ", resized: " << stats.num_textures_resized
             << ", reencoded: " << stats.num_textures_reencoded
             << ", passthrough: " << stats.num_textures_passthrough << "\n";
+  if (opts.material_optimization != usdz::MaterialOptimizationMode::Off) {
+    std::cout << "  materials: " << stats.num_materials_before << " -> "
+              << stats.num_materials_after
+              << ", deduped: " << stats.num_materials_deduped
+              << ", preview-converted: "
+              << stats.num_materials_preview_converted
+              << ", skipped: " << stats.num_materials_skipped
+              << ", atlas materials: "
+              << stats.num_material_atlas_materials
+              << ", atlas textures: "
+              << stats.num_material_atlas_textures << "\n";
+  }
+  if (opts.geometry_optimization != usdz::GeometryOptimizationMode::Off) {
+    std::cout << "  meshes: " << stats.num_meshes_before << " -> "
+              << stats.num_meshes_after
+              << ", eligible: " << stats.num_meshes_eligible
+              << ", merged: " << stats.num_meshes_merged
+              << ", aggregates: " << stats.num_mesh_aggregates
+              << ", skipped: " << stats.num_meshes_skipped
+              << ", faces merged: " << stats.num_faces_merged
+              << ", points merged: " << stats.num_points_merged << "\n";
+  }
 
   // Optionally run pxrUSD usdcat to produce a reference file for comparison.
   // usdcat's --usdFormat flag requires a .usd extension on the output file.

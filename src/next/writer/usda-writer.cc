@@ -7,10 +7,9 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "../strfmt.hh"
 #include "../layer/property-index.hh"
-#include <sstream>
-#include <fstream>
-#include <iomanip>
+#include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -39,17 +38,8 @@ struct StitchCtx {
   std::function<void(StreamWriter&, int)> emit;
 };
 
-// Freestanding integer -> decimal string (no libc itoa / std::to_string).
-inline std::string UIntToStr(uint64_t v) {
-  char buf[20];
-  char* p = buf + sizeof(buf);
-  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
-  return std::string(p, static_cast<size_t>(buf + sizeof(buf) - p));
-}
-inline std::string IntToStr(long long v) {
-  if (v < 0) return "-" + UIntToStr(~static_cast<uint64_t>(v) + 1u);
-  return UIntToStr(static_cast<uint64_t>(v));
-}
+// Freestanding integer -> decimal string: IntToStr/UIntToStr live in ../strfmt.hh
+// (shared with the value printer).
 
 // Get specifier keyword
 const char* SpecifierKeyword(PrimSpecifier spec) {
@@ -180,13 +170,12 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (!meta.subLayers.empty()) {
-    std::ostringstream ss;
-    ss << opts.indent << "subLayers = [\n";
+    std::string s = opts.indent + "subLayers = [\n";
     for (const auto& layer : meta.subLayers) {
-      ss << opts.indent << opts.indent << "@" << layer << "@,\n";
+      s += opts.indent + opts.indent + "@" + layer + "@,\n";
     }
-    ss << opts.indent << "]";
-    lines.push_back(ss.str());
+    s += opts.indent + "]";
+    lines.push_back(std::move(s));
   }
 
   for (size_t i = 0; i < lines.size(); ++i) {
@@ -1018,17 +1007,21 @@ USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
                             const USDAWriteOptions& options) {
   USDAWriteResult result;
 
-  // Write layer header
-  WriteLayerMeta(os, layer.meta(), options);
-
-  // Write root prims
-  for (uint32_t root_idx : layer.root_indices()) {
-    const PrimSpec* root = layer.prim(root_idx);
-    if (root) {
-      WritePrimSpec(os, *root, layer, 0, options);
-      os << "\n";
-    }
+  // Serialize the layer (header meta + root prims) using the same dispatch as
+  // WriteUSDA(Stage): parallel subtree serialization when threads are enabled
+  // and >1 worker is requested, else the serial streaming path. The Layer's own
+  // metadata is used directly (no Stage->LayerMeta synthesis). Output is
+  // byte-identical regardless of thread count.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  const int nthreads = ResolveWriteThreads(options.num_threads);
+  if (nthreads > 1) {
+    WriteStageBodyParallel(os, layer, layer.meta(), options, nthreads);
+  } else {
+    WriteStageBodySerial(os, layer, layer.meta(), options);
   }
+#else
+  WriteStageBodySerial(os, layer, layer.meta(), options);
+#endif
 
   os.flush();
   if (os.good()) {

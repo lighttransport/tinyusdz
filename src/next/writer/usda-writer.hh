@@ -41,8 +41,13 @@ struct USDAWriteOptions {
   /// Include comments (doc metadata)
   bool include_comments = true;
 
-  /// Sort properties alphabetically
-  bool sort_properties = false;
+  /// Emit a prim's properties sorted by NAME (alphabetical, like pxr usdcat),
+  /// rather than in internal name_id (interning/parse) order. Default ON so the
+  /// serialized output never depends on the order layers were parsed -- a
+  /// prerequisite for parallel composition to be byte-identical to a serial
+  /// build (composition interns property names from referenced layers in a
+  /// parse-order-dependent way). Set false to keep raw internal order.
+  bool sort_properties = true;
 
   /// Export time samples as separate lines
   bool expand_time_samples = true;

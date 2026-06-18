@@ -445,6 +445,52 @@ static void test_variant_option_payload_arc() {
   std::cout << "  OK" << std::endl;
 }
 
+// Parallel composition (CompositionOptions::num_threads > 1 -> the BuildStage
+// sources pre-warm) must be BYTE-IDENTICAL to a serial build. Use several sibling
+// prims referencing a shared asset so the warming's subtree frontier actually
+// fans out and the parallel path (workers + merge) runs.
+static void test_parallel_compose_byte_identical() {
+  std::cout << "test_parallel_compose_byte_identical..." << std::endl;
+  const std::string asset = "/tmp/next_pc_asset.usda";
+  const std::string root = "/tmp/next_pc_root.usda";
+  {
+    std::ofstream o(asset);
+    o << "#usda 1.0\n"
+         "def \"A\"\n{\n"
+         "    float inputs:roughness = 0.5\n"
+         "    float inputs:metallic = 1\n"
+         "    def Mesh \"m\"\n    {\n"
+         "        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n"
+         "        int[] faceVertexIndices = [0, 1, 2]\n"
+         "    }\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n";
+    for (int i = 0; i < 16; ++i) {
+      o << "def \"P" << i << "\" ( prepend references = @./next_pc_asset.usda@</A> )\n"
+        << "{\n    float order = " << i << "\n    token tag = \"p" << i << "\"\n}\n";
+    }
+  }
+  auto compose = [&](int nthreads) -> std::string {
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions opts;
+    opts.num_threads = nthreads;
+    Stage stage;
+    std::string warn, err;
+    assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+    return WriteUSDAToString(stage);
+  };
+  const std::string serial = compose(1);
+  const std::string parallel = compose(4);
+  assert(serial == parallel &&
+         "parallel compose (--compose-threads) must be byte-identical to serial");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // An authored value block (`= None`) is a real opinion that blocks weaker values
 // and must round-trip as `= None`, NOT collapse to a declared-only attribute
 // (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
@@ -2856,6 +2902,7 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_parallel_compose_byte_identical();
   test_value_block_roundtrip();
   test_extracted_prototypes();
   test_connection_namespace_remap();

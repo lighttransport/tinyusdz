@@ -30,7 +30,8 @@ std::string ToLowerExt(const std::string &path) {
 }  // namespace
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
-                                         std::string *warn, std::string *err) {
+                                         std::string *warn, std::string *err,
+                                         int parse_num_threads) {
   std::string ext = ToLowerExt(resolved_path);
 
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
@@ -47,7 +48,9 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   }
 
   if (ext == "usda") {
-    LoadResult r = LoadUSDAFromFile(resolved_path);
+    LoadOptions lopts;
+    lopts.parse_options.num_threads = parse_num_threads;
+    LoadResult r = LoadUSDAFromFile(resolved_path, lopts);
     if (!r.success) {
       if (err) *err += "Failed to load USDA layer: " + resolved_path + " : " +
                        r.error_summary + "\n";

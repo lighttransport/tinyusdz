@@ -6,6 +6,10 @@
 #include "property-index.hh"
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -14,23 +18,39 @@ namespace next {
 // PropNameTable
 // ============================================================
 
-PropNameTable::PropNameTable() {
-  // Reserve space for common names
-  names_.reserve(256);
-}
+PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
 PropNameId PropNameTable::intern(const std::string& name) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto it = name_to_id_.find(name);
+    if (it != name_to_id_.end()) {
+      return PropNameId{it->second};
+    }
+  }
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+  // Re-check: another thread may have inserted between the locks.
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return PropNameId{it->second};
   }
-
   uint32_t id = static_cast<uint32_t>(names_.size());
   names_.push_back(name);
   name_to_id_[name] = id;
   return PropNameId{id};
+#else
+  auto it = name_to_id_.find(name);
+  if (it != name_to_id_.end()) {
+    return PropNameId{it->second};
+  }
+  uint32_t id = static_cast<uint32_t>(names_.size());
+  names_.push_back(name);
+  name_to_id_[name] = id;
+  return PropNameId{id};
+#endif
 }
 
 PropNameId PropNameTable::intern(const char* name) {
@@ -40,11 +60,20 @@ PropNameId PropNameTable::intern(const char* name) {
 
 const std::string& PropNameTable::get(PropNameId id) const {
   static const std::string empty;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Shared lock: a concurrent intern() on another thread may push_back/realloc
+  // names_ (parallel composition warms referenced layers on workers).
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   if (id.id >= names_.size()) return empty;
   return names_[id.id];
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Shared lock vs. a concurrent intern() rehash of name_to_id_.
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return PropNameId{it->second};

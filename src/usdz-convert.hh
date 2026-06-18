@@ -52,6 +52,16 @@ enum class OutputTextureFormat { KeepOriginal, PNG, JPEG };
 ///
 enum class FitStrategy { Size, Quality };
 
+/// Stage/layer-level shader material optimization for realtime delivery.
+/// Dedupe : merge exact duplicate material/shader networks.
+/// Preview: convert supported networks to UsdPreviewSurface, then dedupe.
+/// Atlas  : build texture atlases for supported materials, then dedupe.
+enum class MaterialOptimizationMode { Off, Dedupe, Preview, Atlas };
+
+/// Stage/layer-level geometry optimization for realtime delivery.
+/// MergeMeshes: merge eligible static Mesh prims by material binding.
+enum class GeometryOptimizationMode { Off, MergeMeshes };
+
 struct UsdzConvertOptions {
   // Input USD file(s). The first entry is the root layer; additional entries
   // are composed in as sublayers (weaker) when `flatten` is enabled.
@@ -100,6 +110,25 @@ struct UsdzConvertOptions {
   // (hardware_concurrency), 1 = sequential.
   int num_threads{0};
 
+  // Optional material/shader optimization. Disabled by default to preserve
+  // authored materials exactly.
+  MaterialOptimizationMode material_optimization{
+      MaterialOptimizationMode::Off};
+  int material_atlas_size{4096};
+  int material_atlas_tile_size{512};
+  int material_atlas_padding{2};
+  int material_atlas_min_group_size{2};
+
+  // Optional geometry optimization. Disabled by default because it intentionally
+  // breaks authored mesh prim paths and hierarchy.
+  GeometryOptimizationMode geometry_optimization{
+      GeometryOptimizationMode::Off};
+  int mesh_merge_max_input_faces{2048};
+  int mesh_merge_max_input_points{4096};
+  int mesh_merge_max_aggregate_faces{65536};
+  int mesh_merge_min_group_size{2};
+  bool mesh_merge_prune_empty_xforms{true};
+
   // Output container format (USDZ, USDC, or USDA).
   OutputFormat output_format{OutputFormat::USDZ};
 
@@ -119,6 +148,21 @@ struct UsdzConvertStats {
   size_t num_textures_resized{0};
   size_t num_textures_reencoded{0};
   size_t num_textures_passthrough{0};
+  size_t num_materials_before{0};
+  size_t num_materials_after{0};
+  size_t num_materials_deduped{0};
+  size_t num_materials_preview_converted{0};
+  size_t num_materials_skipped{0};
+  size_t num_material_atlas_materials{0};
+  size_t num_material_atlas_textures{0};
+  size_t num_meshes_before{0};
+  size_t num_meshes_after{0};
+  size_t num_meshes_eligible{0};
+  size_t num_meshes_merged{0};
+  size_t num_meshes_skipped{0};
+  size_t num_mesh_aggregates{0};
+  size_t num_faces_merged{0};
+  size_t num_points_merged{0};
   size_t output_size{0};
 };
 

@@ -7,6 +7,8 @@
 #include "cache.hh"
 
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
+#include "../strfmt.hh"                    // AppendUInt / IntToStr / UIntToStr
+#include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
 
 #include <algorithm>
 #include <deque>
@@ -28,6 +30,18 @@
 namespace tinyusdz {
 namespace next {
 namespace pcp {
+
+// One-decimal fixed formatting (locale-free, no printf/iostream) for the
+// diagnostic timing readouts emitted through the logger.
+static std::string FmtMs(double ms) {
+  std::string s;
+  if (ms < 0) { s += '-'; ms = -ms; }
+  uint64_t tenths = static_cast<uint64_t>(ms * 10.0 + 0.5);  // rounded
+  AppendUInt(s, tenths / 10);
+  s += '.';
+  AppendUInt(s, tenths % 10);
+  return s;
+}
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 // Serializes the Cache's shared mutable state so it is safe to use
@@ -1155,9 +1169,16 @@ struct Cache::Impl {
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
 
-    // Pass 2 (weak->strong): compose child-name ORDER. Iterate sources and their
-    // layer-stack specs in reverse (weakest first); within a single layer the
-    // primChildren are in authored (forward) order. Append unseen names.
+    // Pass 2 (weak->strong): compose child-name ORDER.
+    return ComposeChildNames(srcs);
+  }
+
+  // Composed child-name ORDER for a prim's sources (weak->strong): iterate sources
+  // and their layer-stack specs in reverse (weakest first); within a single layer
+  // the primChildren are in authored (forward) order. Append unseen names. This is
+  // ComposeInto's Pass 2, factored out so the parallel source-warming pre-pass
+  // discovers exactly the same child namespace the serial compose walks.
+  std::vector<std::string> ComposeChildNames(const std::vector<Src> &srcs) {
     std::vector<std::string> child_names;
     std::set<std::string> seen_child;
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
@@ -1315,7 +1336,7 @@ struct Cache::Impl {
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) {
     using ProfClock = std::chrono::steady_clock;
-    const bool prof = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+    const bool prof = options.enable_timing;
     std::vector<BuildStageWork> stack;
     stack.push_back(root_work);
 
@@ -1418,16 +1439,29 @@ struct Cache::Impl {
         if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
       }
     }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    // Pre-warm sources_cache in parallel (LIVRPS arc resolution dominates
+    // build_stage). The serial walk below then runs against an already-warm
+    // cache; output is byte-identical (warming only fills a cache, and property
+    // emission is name-ordered so it does not depend on intern/parse order).
+    // OPT-IN: only when num_threads is explicitly > 1 (not auto), because the
+    // pre-warm currently wins on small compose-bound scenes but regresses huge
+    // instanced scenes (the worker layer-parse is serialized by the global
+    // PropNameTable lock, plus merge + name-id-bloat overhead). Perf tuning
+    // (serial layer pre-load, instancing-aware warming, parallel merge) is TODO.
+    if (options.num_threads > 1 && !root_names.empty()) {
+      ParallelWarmSources(root_names, options.num_threads, warn, err);
+    }
+#endif
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     for (const std::string &nm : root_names) {
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
     }
-    if (std::getenv("TINYUSDZ_NEXT_TIMING")) {
-      std::fprintf(stderr,
-                   "[next_build] sources=%.1fms compose=%.1fms register=%.1fms\n",
-                   prof_sources_ns_ / 1e6, prof_compose_ns_ / 1e6,
-                   prof_reg_ns_ / 1e6);
+    if (options.enable_timing) {
+      TUSDZ_LOG_I("[next_build] sources=" + FmtMs(prof_sources_ns_ / 1e6) +
+                  "ms compose=" + FmtMs(prof_compose_ns_ / 1e6) +
+                  "ms register=" + FmtMs(prof_reg_ns_ / 1e6) + "ms");
     }
 
     switch (options.instance_flatten_mode) {
@@ -1525,7 +1559,7 @@ struct Cache::Impl {
         std::vector<std::pair<std::string, std::string>> labelled;
         labelled.reserve(protos.size());
         for (size_t i = 0; i < protos.size(); ++i)
-          labelled.emplace_back("__Prototype_" + std::to_string(i + 1), protos[i]);
+          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), protos[i]);
         std::sort(labelled.begin(), labelled.end(),
                   [](const auto &a, const auto &b) { return a.first < b.first; });
         ordered.reserve(labelled.size());
@@ -1539,7 +1573,7 @@ struct Cache::Impl {
       size_t n = 1;
       for (const std::string &proto : ordered) {
         std::string p;
-        do { p = "/Flattened_Prototype_" + std::to_string(n++); }
+        do { p = "/Flattened_Prototype_" + UIntToStr(n++); }
         while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
         fpath[proto] = p;
       }
@@ -1711,6 +1745,189 @@ struct Cache::Impl {
         // parallel merge and a serial ComputePrimIndex agree (F5).
         AssignPrototype(key, piit->second.second, /*prefer_min=*/true);
       }
+    }
+  }
+
+  // Worker-side: warm this (private, SEEDED) Impl's sources_cache for the whole
+  // subtree rooted at `root`, following the same child namespace the serial
+  // compose walks (ComposeChildNames). The Impl was seeded with a snapshot of the
+  // main's layer-stack table + ancestor sources_cache, so the root->frontier
+  // ancestors are already cached (no re-resolution) and any new reference resolves
+  // against the SAME anchors the serial build sees -> identical layer-stack
+  // identifiers. Fills a cache only; missed paths still resolve identically in the
+  // serial BuildStage.
+  void WarmSubtree(const Path &root, uint32_t root_depth, std::string *warn,
+                   std::string *err) {
+    struct WItem {
+      Path p;
+      uint32_t depth;
+    };
+    std::vector<WItem> stack;
+    stack.push_back({root, root_depth});
+    while (!stack.empty()) {
+      WItem it = stack.back();
+      stack.pop_back();
+      if (it.depth > options.max_namespace_depth) continue;
+      const std::vector<Src> &srcs = SourcesForPath(it.p, warn, err);
+      // Instancing-aware: the serial BuildStage composes only the prototype
+      // member of an instance group and stops at every instance (is_instance ->
+      // continue) -- it never descends an instance's subtree. Mirror that here so
+      // warming does not resolve the (redundant) subtrees of every instance. On
+      // heavily-instanced scenes the instances vastly outnumber the prototypes,
+      // so these subtree resolutions dominate the worker + merge cost while the
+      // serial build discards all but one per group. Stopping is byte-neutral:
+      // warming only fills a cache; an unwarmed prototype subtree simply resolves
+      // (identically) in the serial walk.
+      if (options.detect_instances && IsInstanceableSources(srcs)) continue;
+      const std::vector<std::string> children = ComposeChildNames(srcs);
+      for (auto cit = children.rbegin(); cit != children.rend(); ++cit) {
+        stack.push_back({it.p.append_child(*cit), it.depth + 1});
+      }
+    }
+  }
+
+  // Fold a seeded worker's warmed sources_cache into this (main) Impl. Layer-stack
+  // indices below `seed_stack_count` are identical to main (the worker started
+  // from main's snapshot) and pass through unremapped; only worker-NEW stacks
+  // (>= seed_stack_count) are AdoptStack'd onto the shared table (dedup by
+  // identifier). Sites are identifier strings and the variant pointer is into a
+  // shared layer -> neither needs remap. Entries already present are skipped.
+  void MergeSources(Impl &w, size_t seed_stack_count) {
+    std::unordered_map<uint32_t, uint32_t> stack_remap;
+    auto remap = [&](uint32_t ws) -> uint32_t {
+      if (ws < seed_stack_count) return ws;  // identical to main (seeded)
+      auto it = stack_remap.find(ws);
+      if (it != stack_remap.end()) return it->second;
+      uint32_t m = AdoptStack(w.layer_stacks[ws]);
+      stack_remap.emplace(ws, m);
+      return m;
+    };
+    for (auto &kv : w.sources_cache) {
+      if (sources_cache.count(kv.first)) continue;
+      std::vector<Src> srcs = kv.second;
+      for (Src &s : srcs) s.stack_idx = remap(s.stack_idx);
+      sources_cache.emplace(kv.first, std::move(srcs));
+    }
+  }
+
+  // Parallel pre-warm of sources_cache (the LIVRPS arc resolution that dominates
+  // build_stage). Serially BFS the namespace to discover a wide-enough frontier of
+  // subtree roots (warming the shallow top levels into the main cache + table),
+  // SNAPSHOT the main's layer-stack table + ancestor sources_cache, then have
+  // worker threads (private Impls seeded from that snapshot, borrowing the
+  // thread-safe shared registry) warm each frontier subtree's sources in parallel,
+  // and merge the results back. The serial BuildStage then finds SourcesForPath a
+  // cache hit. Byte-identical: composed values/instancing key off layer-stack
+  // identifier strings, the seed gives workers the same identities the serial
+  // build sees, property emission is name-ordered (parse-order-independent), and
+  // any un-warmed path resolves serially.
+  void ParallelWarmSources(const std::vector<std::string> &root_names, int nt,
+                           std::string *warn, std::string *err) {
+    using PWClock = std::chrono::steady_clock;
+    const bool prof = options.enable_timing;
+    auto t_start = prof ? PWClock::now() : PWClock::time_point{};
+    const size_t want = static_cast<size_t>(nt) * 4;
+    const uint32_t kMaxFrontierDepth = 8;
+    std::vector<std::pair<Path, uint32_t>> level;  // (src_path, depth)
+    for (const std::string &nm : root_names) {
+      level.push_back({Path("/" + nm), 1});
+    }
+    for (uint32_t d = 0; d < kMaxFrontierDepth && level.size() < want; ++d) {
+      std::vector<std::pair<Path, uint32_t>> next;
+      bool grew = false;
+      for (auto &pr : level) {
+        if (pr.second > options.max_namespace_depth) {
+          next.push_back(pr);
+          continue;
+        }
+        const std::vector<Src> &srcs = SourcesForPath(pr.first, warn, err);
+        // Instancing-aware (see WarmSubtree): an instanceable prim's subtree is
+        // composed at most once (its prototype), so do not expand the frontier
+        // into it -- treat it as a leaf root the worker will stop at immediately.
+        if (options.detect_instances && IsInstanceableSources(srcs)) {
+          next.push_back(pr);
+          continue;
+        }
+        const std::vector<std::string> children = ComposeChildNames(srcs);
+        if (children.empty()) {
+          next.push_back(pr);  // leaf: nothing below to parallelize
+        } else {
+          grew = true;
+          for (const std::string &cn : children) {
+            next.push_back({pr.first.append_child(cn), pr.second + 1});
+          }
+        }
+      }
+      level = std::move(next);
+      if (!grew) break;
+    }
+    if (level.size() < 2) return;  // not enough fan-out to parallelize
+    auto t_discover = prof ? PWClock::now() : PWClock::time_point{};
+
+    // Snapshot the main resolution context built by the serial discovery above.
+    const size_t seed_stack_count = layer_stacks.size();
+
+    const int W = std::min<int>(nt, static_cast<int>(level.size()));
+    std::vector<std::unique_ptr<Impl>> workers;
+    workers.reserve(static_cast<size_t>(W));
+    std::vector<std::string> wwarn(static_cast<size_t>(W));
+    std::vector<std::string> werr(static_cast<size_t>(W));
+    for (int t = 0; t < W; ++t) {
+      std::unique_ptr<Impl> wp(new Impl());
+      wp->resolver = resolver;
+      wp->options = options;
+      wp->load_rules_ = load_rules_;
+      wp->reg_ = reg_;  // borrow the shared, parse-once registry
+      wp->root_layer = root_layer;
+      wp->root_identifier = root_identifier;
+      // Seed the worker with the main's resolution context so its reference
+      // resolution produces identical layer-stack identities (the crux of
+      // byte-identity), and ancestors are already cached (no re-resolution).
+      wp->layer_stacks = layer_stacks;
+      wp->stack_by_id = stack_by_id;
+      wp->sources_cache = sources_cache;
+      workers.push_back(std::move(wp));
+    }
+
+    // Workers operate on private (seeded) Impls + the thread-safe registry only;
+    // the main thread holds api_mu_ throughout. Dynamic work-stealing -- frontier
+    // subtrees are very uneven, so static chunks leave workers idle behind one
+    // heavy subtree.
+    std::atomic<size_t> next_node{0};
+    std::vector<std::thread> ts;
+    ts.reserve(static_cast<size_t>(W));
+    for (int t = 0; t < W; ++t) {
+      Impl *wk = workers[static_cast<size_t>(t)].get();
+      std::string *pw = &wwarn[static_cast<size_t>(t)];
+      std::string *pe = &werr[static_cast<size_t>(t)];
+      ts.emplace_back([wk, &next_node, &level, pw, pe]() {
+        for (;;) {
+          size_t i = next_node.fetch_add(1);
+          if (i >= level.size()) break;
+          wk->WarmSubtree(level[i].first, level[i].second, pw, pe);
+        }
+      });
+    }
+    for (auto &t : ts) t.join();
+    auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
+
+    for (int t = 0; t < W; ++t) {
+      MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count);
+      if (warn) *warn += wwarn[static_cast<size_t>(t)];
+      if (err) *err += werr[static_cast<size_t>(t)];
+    }
+    if (prof) {
+      auto ms = [](PWClock::time_point a, PWClock::time_point b) {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(b - a)
+                   .count() / 1e6;
+      };
+      auto t_merge = PWClock::now();
+      TUSDZ_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
+                  " W=" + IntToStr(W) +
+                  " discover=" + FmtMs(ms(t_start, t_discover)) +
+                  "ms workers=" + FmtMs(ms(t_discover, t_workers)) +
+                  "ms merge=" + FmtMs(ms(t_workers, t_merge)) +
+                  "ms cache=" + UIntToStr(sources_cache.size()));
     }
   }
 #endif  // TINYUSDZ_ENABLE_THREAD
@@ -2171,7 +2388,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
                            const CompositionOptions &options, std::string *warn,
                            std::string *err) {
   if (!root_layer || !out_stage) return false;
-  const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  const bool timing = options.enable_timing;
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
     return std::chrono::duration<double, std::milli>(d).count();
@@ -2188,8 +2405,8 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   bool ok = cache.BuildStage(out_stage, warn, err);
   const auto t2 = Clock::now();
   if (timing) {
-    std::fprintf(stderr, "[next_compose] open=%.1fms build_stage=%.1fms\n",
-                 ms(t1 - t0), ms(t2 - t1));
+    TUSDZ_LOG_I("[next_compose] open=" + FmtMs(ms(t1 - t0)) +
+                "ms build_stage=" + FmtMs(ms(t2 - t1)) + "ms");
   }
   return ok;
 }

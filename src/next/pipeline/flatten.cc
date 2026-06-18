@@ -8,16 +8,18 @@
 #include <cstring>
 #include <chrono>
 #include <fstream>
+#include <iterator>  // std::istreambuf_iterator (not guaranteed via <fstream> on MSVC)
 #include <set>
 
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
 
-#include <cstdio>
 #include <memory>
 
 #if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
 #include <emscripten/heap.h>
+#include "../strfmt.hh"     // AppendUInt
+#include "../../logger.hh"  // TUSDZ_LOG_I (only pulled in for this opt-in diag)
 #endif
 
 namespace tinyusdz {
@@ -40,8 +42,13 @@ double ElapsedMs(const Clock::time_point& a, const Clock::time_point& b) {
 void FlattenMemLog(const char* stage) {
   (void)stage;
 #if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
-  std::fprintf(stderr, "[flatten-mem] %-13s heap=%zu MiB\n", stage,
-               static_cast<size_t>(emscripten_get_heap_size()) / (1024 * 1024));
+  std::string msg = "[flatten-mem] ";
+  msg += stage;
+  msg += " heap=";
+  AppendUInt(msg,
+             static_cast<size_t>(emscripten_get_heap_size()) / (1024 * 1024));
+  msg += " MiB";
+  TUSDZ_LOG_I(msg);
 #endif
 }
 

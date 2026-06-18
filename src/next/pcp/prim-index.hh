@@ -17,6 +17,7 @@
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
+#include "../strfmt.hh"
 
 #include <deque>
 #include <functional>
@@ -118,6 +119,12 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
+  // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
+  // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
+  // read so the composition core takes no implicit process-environment input;
+  // the CLI sets this from its own flag/env.
+  bool enable_timing = false;
+
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
@@ -163,11 +170,11 @@ class PrimIndex {
 
   std::string DumpToString() const {
     std::string s = "PrimIndex<" + prim_path_.str() + "> nodes=" +
-                    std::to_string(nodes_.size()) + "\n";
+                    UIntToStr(nodes_.size()) + "\n";
     for (uint16_t oi : strength_order_) {
       const CompNode &n = nodes_[oi];
-      s += "  [" + std::to_string(oi) + "] " + ArcTypeName(n.arc_type) +
-           " stack=" + std::to_string(n.layer_stack_idx) + " site=" +
+      s += "  [" + UIntToStr(oi) + "] " + ArcTypeName(n.arc_type) +
+           " stack=" + UIntToStr(n.layer_stack_idx) + " site=" +
            SitePath(n) + (n.has_specs() ? " (specs)" : "") + "\n";
     }
     return s;

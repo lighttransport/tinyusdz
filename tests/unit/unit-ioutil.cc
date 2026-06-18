@@ -21,13 +21,13 @@ void ioutil_asset_path_suffix_candidates_test(void) {
   // time (longest suffix first, down to the basename).
   {
     auto c = io::AssetPathSuffixCandidates(
-        "../../../../../USD_Exports/Scene/Assets/SM_Ppe3.usd");
+        "../../../../../USD_Exports/Scene/Assets/mesh.usd");
     TEST_CHECK(c.size() == 4);
     if (c.size() == 4) {
-      TEST_CHECK(c[0] == "USD_Exports/Scene/Assets/SM_Ppe3.usd");
-      TEST_CHECK(c[1] == "Scene/Assets/SM_Ppe3.usd");
-      TEST_CHECK(c[2] == "Assets/SM_Ppe3.usd");
-      TEST_CHECK(c[3] == "SM_Ppe3.usd");
+      TEST_CHECK(c[0] == "USD_Exports/Scene/Assets/mesh.usd");
+      TEST_CHECK(c[1] == "Scene/Assets/mesh.usd");
+      TEST_CHECK(c[2] == "Assets/mesh.usd");
+      TEST_CHECK(c[3] == "mesh.usd");
     }
   }
 

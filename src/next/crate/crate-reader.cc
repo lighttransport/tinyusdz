@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader Implementation
 
 #include "crate-reader.hh"
+#include "../strfmt.hh"
 #include "crate-data-source.hh"
 #include "lazy-array.hh"
 #include "stream-reader.hh"
@@ -2034,7 +2035,7 @@ bool CrateReader::Impl::ReadPaths() {
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
     if (token_idx < tokens_.size()) return tokens_.str(token_idx);
-    return "__unknown_token_" + std::to_string(token_idx);
+    return "__unknown_token_" + UIntToStr(token_idx);
   };
 
   // Recurse over a sibling chain that all share `parent` (the parent prim path,
