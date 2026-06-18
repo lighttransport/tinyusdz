@@ -57,6 +57,15 @@ target_link_libraries(tusdrender
   lightrt_c
 )
 
+# tusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
+# parse) as the default for the RT preview path, plus tydra_next for bit-exact
+# world transforms. Build those targets on demand and link them.
+if(NOT TARGET tinyusdz_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+                   ${CMAKE_BINARY_DIR}/tusdrender_next_build)
+endif()
+target_link_libraries(tusdrender tinyusdz_next tydra_next)
+
 # tusdrender itself spawns std::thread workers for the mesh-stream and render
 # passes, so link the threading runtime explicitly (not just transitively via
 # lightrt_c).
