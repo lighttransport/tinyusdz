@@ -78,3 +78,11 @@ target_include_directories(tusdrender PRIVATE
   ${PROJECT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/src/external/lightrt
 )
+
+# When the project is built with QuickJS, enable tusdrender's -js (scripting)
+# and -mcp (MCP stdio control) modes for memory-persistent / interactive
+# rendering. The library defines TINYUSDZ_WITH_QJS PRIVATEly, so re-declare it
+# for the tool. The JS engine + MCP plumbing come from tinyusdz_static.
+if(TINYUSDZ_WITH_QJS)
+  target_compile_definitions(tusdrender PRIVATE TINYUSDZ_WITH_QJS)
+endif()
