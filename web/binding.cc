@@ -27,6 +27,7 @@
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
+#include "tsd/tinysubdiv.hh"
 #include "typed-array-core.hh"
 #include "value-types.hh"
 
@@ -11079,4 +11080,165 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // usddiff({left:{data,name?}, right:{data,name?}, format?:"text"|"json"|"both"})
   //   -> { success, hasDiffs, text?, json?, error?, warn? }
   function("usddiff", &usddiff);
+}
+
+// ===========================================================================
+// tinysubdiv (src/tsd) streaming subdivision binding.
+//
+// SubdivStreamer.refineStream(...) refines a control mesh and delivers the
+// refined surface to a JS callback in bounded batches (zero-copy heap views),
+// so the full level-N output never resides in the wasm heap at once. The JS
+// side concatenates batches into renderable buffers; the wasm heap high-water
+// mark (heapBytes) stays bounded by `batchFaces`.
+// ===========================================================================
+
+namespace {
+
+class SubdivStreamer {
+ public:
+  // points: Float32Array (xyz interleaved). fvc/fvi: Uint32Array.
+  // scheme: 0=catmullClark, 1=loop, 2=bilinear.
+  // boundary: 0=edgeAndCorner, 1=edgeOnly, 2=none.
+  // uvValues: Float32Array (stride 2) or null/empty for no texturing.
+  // uvIndices: Uint32Array (per face-corner) or null for identity.
+  // uvInterp: 0 = linear ("all"); 1 = smooth seam-split ("cornersPlus1").
+  // batchFaces: parent faces per output batch (0 => default).
+  // blockFaces: >0 bounds the WORKING set -- refine in blocks of this many base
+  //             faces plus a halo, so peak heap is independent of mesh size and
+  //             level (for huge meshes). 0 => whole-mesh streaming.
+  // haloRings: block halo radius (0 => library default); ignored if blockFaces=0.
+  // onBatch(positions, normals|null, indices, faceSource, uv|null,
+  //         numVertices, numFaces, batchIndex): typed-array views valid only
+  //         for the call. `uv` is per-corner (parallel to indices) when present.
+  //         In block mode, vertex_source/indices are block-local (border verts
+  //         are duplicated); the JS side concatenates batches as usual.
+  // Returns "" on success, else an error message.
+  std::string refineStream(const emscripten::val &points,
+                           const emscripten::val &fvc,
+                           const emscripten::val &fvi,
+                           const emscripten::val &uvValues,
+                           const emscripten::val &uvIndices, int uvInterp,
+                           int scheme, int boundary, int level, int batchFaces,
+                           int blockFaces, int haloRings, bool wantNormals,
+                           emscripten::val onBatch) {
+    namespace tsd = tinyusdz::tsd;
+
+    std::vector<float> pts;
+    std::vector<uint32_t> counts;
+    std::vector<uint32_t> indices;
+    detail::copyTypedArray(points, pts, "Float32Array");
+    detail::copyTypedArray(fvc, counts, "Uint32Array");
+    detail::copyTypedArray(fvi, indices, "Uint32Array");
+    if ((pts.size() % 3) != 0) {
+      return "points length must be a multiple of 3";
+    }
+    if (counts.empty() || indices.empty()) {
+      return "empty mesh";
+    }
+
+    // Optional UV faceVarying channel. uvInterp selects how it interpolates:
+    // 0 = linear ("all" mode, bilinear per corner); 1 = smooth seam-split
+    // ("cornersPlus1", the USD default -- UVs follow the limit surface, less
+    // distortion on curved regions, seams preserved at island boundaries).
+    std::vector<float> uvs;
+    std::vector<uint32_t> uvidx;
+    detail::copyTypedArray(uvValues, uvs, "Float32Array");
+    detail::copyTypedArray(uvIndices, uvidx, "Uint32Array");
+    const bool has_uv = (uvs.size() >= 2) && ((uvs.size() % 2) == 0);
+
+    tsd::MeshView mesh;
+    mesh.points = pts.data();
+    mesh.num_points = uint32_t(pts.size() / 3);
+    mesh.face_vertex_counts = counts.data();
+    mesh.num_faces = uint32_t(counts.size());
+    mesh.face_vertex_indices = indices.data();
+    mesh.num_face_vertex_indices = uint32_t(indices.size());
+
+    tsd::FVarChannelView uvchan;
+    if (has_uv) {
+      uvchan.values = uvs.data();
+      uvchan.num_values = uint32_t(uvs.size() / 2);
+      uvchan.indices = uvidx.empty() ? nullptr : uvidx.data();
+      uvchan.stride = 2;
+      uvchan.interpolation = (uvInterp == 1)
+                                 ? tsd::FVarLinearInterpolation::CornersPlus1
+                                 : tsd::FVarLinearInterpolation::All;
+    }
+
+    tsd::Options opts;
+    opts.scheme = (scheme == 1)   ? tsd::Scheme::Loop
+                  : (scheme == 2) ? tsd::Scheme::Bilinear
+                                  : tsd::Scheme::CatmullClark;
+    opts.boundary = (boundary == 1)   ? tsd::BoundaryInterpolation::EdgeOnly
+                    : (boundary == 2) ? tsd::BoundaryInterpolation::None
+                                      : tsd::BoundaryInterpolation::EdgeAndCorner;
+    opts.level = level;
+    opts.remove_holes = true;
+
+    tsd::StreamOptions so;
+    so.batch_faces = (batchFaces > 0) ? uint32_t(batchFaces) : 4096u;
+    so.emit_triangles = true;
+    so.want_normals = wantNormals;
+    so.dedup_within_batch = true;
+    // Block mode: bound the WORKING set (not just the output) for very large
+    // meshes -- refine in blocks of `blockFaces` base faces with a `haloRings`
+    // halo (0 => the library's level-independent default). 0 => whole-mesh
+    // streaming. Streams geometry, normals, and faceVarying (UVs) alike.
+    so.block_faces = (blockFaces > 0) ? uint32_t(blockFaces) : 0u;
+    so.halo_rings = (haloRings > 0) ? uint32_t(haloRings) : 0u;
+
+    struct SinkCtx {
+      emscripten::val *cb;
+      bool want_normals;
+    } ctx{&onBatch, wantNormals};
+
+    auto sink = [](void *user, const tsd::StreamBatch *b) -> bool {
+      SinkCtx *c = static_cast<SinkCtx *>(user);
+      emscripten::val pos(emscripten::typed_memory_view(
+          size_t(b->num_vertices) * 3, const_cast<float *>(b->positions)));
+      emscripten::val nrm =
+          (c->want_normals && b->normals)
+              ? emscripten::val(emscripten::typed_memory_view(
+                    size_t(b->num_vertices) * 3, const_cast<float *>(b->normals)))
+              : emscripten::val::null();
+      emscripten::val idx(emscripten::typed_memory_view(
+          size_t(b->num_indices), const_cast<uint32_t *>(b->indices)));
+      emscripten::val fsrc(emscripten::typed_memory_view(
+          size_t(b->num_faces), const_cast<uint32_t *>(b->face_source)));
+      emscripten::val uv =
+          (b->num_fvar == 1)
+              ? emscripten::val(emscripten::typed_memory_view(
+                    size_t(b->num_indices) * 2,
+                    const_cast<float *>(b->fvar[0].values)))
+              : emscripten::val::null();
+      (*c->cb)(pos, nrm, idx, fsrc, uv, b->num_vertices, b->num_faces,
+               b->batch_index);
+      return true;
+    };
+
+    std::string err;
+    const tsd::Result r = tsd::RefineStream(
+        mesh, has_uv ? &uvchan : nullptr, has_uv ? 1u : 0u, nullptr, 0, opts, so,
+        sink, &ctx, &err);
+    if (r != tsd::Result::Success) {
+      return std::string("RefineStream failed (") + tsd::to_string(r) +
+             "): " + err;
+    }
+    return "";
+  }
+
+  // Total wasm linear-memory bytes. Under ALLOW_MEMORY_GROWTH this is grow-only,
+  // so it is the heap high-water mark.
+  double heapBytes() const {
+    return emscripten::val::module_property("HEAPU8")["length"].as<double>();
+  }
+};
+
+}  // namespace
+
+EMSCRIPTEN_BINDINGS(tsd_subdiv_module) {
+  emscripten::class_<SubdivStreamer>("SubdivStreamer")
+      .constructor<>()
+      .function("refineStream", &SubdivStreamer::refineStream)
+      .function("heapBytes", &SubdivStreamer::heapBytes);
 }

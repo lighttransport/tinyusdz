@@ -1504,6 +1504,7 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   }
 
   // Phase 2: bounded producer/consumer — the main thread reads asset bytes
+  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
   // (the resolver is not thread-safe), workers decode/resize/encode; at most
   // 2*num_threads source buffers are in flight.
   {

@@ -45,9 +45,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-#include "subdiv.hh"
-#endif
 #include "safe-arithmetic.hh"
 
 #ifdef __clang__

@@ -376,6 +376,7 @@ static void test_roundtrip() {
     <input name="base_color" type="color3" value="0.3, 0.6, 0.9" />
     <input name="metalness" type="float" value="0.5" />
     <input name="specular_roughness" type="float" value="0.4" />
+    <input name="subsurface_radius" type="color3" value="1.0, 0.5, 0.25" />
   </standard_surface>
   <surfacematerial name="RT_Material" type="material">
     <input name="surfaceshader" type="surfaceshader" nodename="RT_Shader" />

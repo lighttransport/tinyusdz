@@ -57,6 +57,16 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   return s;
 }
 
+std::string to_string(tinyusdz::GeomMesh::TriangleSubdivisionRule v) {
+  switch (v) {
+    case tinyusdz::GeomMesh::TriangleSubdivisionRule::CatmullClark:
+      return "catmullClark";
+    case tinyusdz::GeomMesh::TriangleSubdivisionRule::Smooth:
+      return "smooth";
+  }
+  return "catmullClark";
+}
+
 std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   std::string s;
 
@@ -439,6 +449,8 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                                indent + 1);
   ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation,
                                "faceVaryingLinearInterpolation", indent + 1);
+  ss << print_typed_token_attr(mesh.triangleSubdivisionRule,
+                               "triangleSubdivisionRule", indent + 1);
 
   ss << print_gprim_predefined(mesh, indent + 1);
 
