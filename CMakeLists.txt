@@ -1979,6 +1979,7 @@ if(TINYUSDZ_BUILD_TOOLS)
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
+    add_subdirectory(tools/tusdrender)
   endif()
 endif()
 
@@ -2057,6 +2058,17 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # TODO: Add feature to specify Python interpreter at ctest run
   #
+  find_program(TUSDR_PYTHON NAMES python3 python)
+  if(TARGET tusdrender AND TUSDR_PYTHON)
+    add_test(
+      NAME tool-tusdrender-smoke
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_tusdrender_smoke.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+  endif()
 
   #
   # USDA parser tester
