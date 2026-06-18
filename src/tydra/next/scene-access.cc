@@ -522,10 +522,20 @@ void MatMulD(double* dst, const double* a, const double* b) {
   MatrixMultiply(dst, a, b);
 }
 
+// Read a property either at the default value (NaN time) or held at a specific
+// time sample. A NaN time keeps the exact default-value path (byte-identical to
+// the previous, time-unaware behaviour).
+const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
+                        double time) {
+  if (std::isnan(time)) return prim.GetPropertyValue(name);
+  return prim.GetValueAtTime(name, time);
+}
+
 // Read a 3-component op value (translate/scale/rotate) as double, trying
 // float3 then double3 (matches the legacy evaluator's exact-type promotion).
-bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3]) {
-  const Value* val = prim.GetPropertyValue(name);
+bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
+               double time) {
+  const Value* val = PropAtTime(prim, name, time);
   if (!val) return false;
   if (const float* f = val->as_float3()) {
     v[0] = double(f[0]); v[1] = double(f[1]); v[2] = double(f[2]);
@@ -538,8 +548,9 @@ bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3]) {
   return false;
 }
 
-bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out) {
-  const Value* val = prim.GetPropertyValue(name);
+bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out,
+                 double time) {
+  const Value* val = PropAtTime(prim, name, time);
   if (!val) return false;
   if (const float* f = val->as_float()) { *out = double(*f); return true; }
   if (const double* d = val->as_double()) { *out = *d; return true; }
@@ -613,11 +624,12 @@ std::string XformOpName(const std::string& tok) {
 // Bit-exact local matrix from authored xformOpOrder, replicating
 // tinyusdz::Xformable::EvaluateXformOps (row-vector, cm = op * cm). Sets
 // *reset when the op list begins with "!resetXformStack!".
-bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset) {
+bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time) {
   if (reset) *reset = false;
   SetIdentity(out);
   if (!prim.IsValid()) return false;
 
+  // xformOpOrder is uniform (not time-sampled) -> default value.
   const Value* orderv = prim.GetPropertyValue("xformOpOrder");
   const std::vector<std::string>* order =
       orderv ? orderv->as_token_array() : nullptr;
@@ -642,22 +654,32 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset) {
 
     if (op == "transform") {
       double mm[16];
-      if (GetMatrix4d(prim, tok, mm)) {
+      bool got = false;
+      if (const Value* val = PropAtTime(prim, tok, time)) {
+        if (const double* md = val->as_matrix4d()) {
+          std::memcpy(mm, md, 16 * sizeof(double));
+          got = true;
+        } else if (const float* mf = val->as_matrix4f()) {
+          for (int e = 0; e < 16; ++e) mm[e] = double(mf[e]);
+          got = true;
+        }
+      }
+      if (got) {
         if (inverted) Invert4x4D(mm, m);
         else std::memcpy(m, mm, 16 * sizeof(double));
       }
     } else if (op == "translate") {
       double v[3] = {0, 0, 0};
-      ReadVec3D(prim, tok, v);
+      ReadVec3D(prim, tok, v, time);
       if (inverted) { v[0] = -v[0]; v[1] = -v[1]; v[2] = -v[2]; }
       MakeTranslationD(m, v[0], v[1], v[2]);
     } else if (op == "scale") {
       double v[3] = {1, 1, 1};
-      ReadVec3D(prim, tok, v);
+      ReadVec3D(prim, tok, v, time);
       if (inverted) { v[0] = 1.0 / v[0]; v[1] = 1.0 / v[1]; v[2] = 1.0 / v[2]; }
       MakeScaleD(m, v[0], v[1], v[2]);
     } else if (op == "orient") {
-      const Value* val = prim.GetPropertyValue(tok);
+      const Value* val = PropAtTime(prim, tok, time);
       double q[4] = {1, 0, 0, 0};  // w,x,y,z
       if (val) {
         if (const float* f = val->as_float4()) {
@@ -670,14 +692,14 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset) {
       MakeOrientD(m, q[0], q[1], q[2], q[3]);
     } else if (op == "rotateX" || op == "rotateY" || op == "rotateZ") {
       double a = 0;
-      ReadFloat1D(prim, tok, &a);
+      ReadFloat1D(prim, tok, &a, time);
       if (inverted) a = -a;
       MakeRotAxisD(m, op[6], a);  // 'X'/'Y'/'Z'
     } else if (op.size() == 9 && op.rfind("rotate", 0) == 0) {
       // rotateXYZ / rotateZYX / ... : product of single-axis rotations in the
       // letter order (m = m * R_axis), exactly as XformEvaluator does.
       double v[3] = {0, 0, 0};
-      ReadVec3D(prim, tok, v);
+      ReadVec3D(prim, tok, v, time);
       const char ax[3] = {op[6], op[7], op[8]};
       // map axis letter -> angle component (X->v[0], Y->v[1], Z->v[2]).
       auto angleFor = [&](char c) -> double {
@@ -714,10 +736,9 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset) {
 }  // namespace
 
 bool ComputeLocalTransform(const UsdPrim& prim, double* matrix16, double time) {
-  (void)time;
   if (!prim.IsValid() || !matrix16) return false;
   bool reset = false;
-  return EvalLocalXformD(prim, matrix16, &reset);
+  return EvalLocalXformD(prim, matrix16, &reset, time);
 }
 
 bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time) {
@@ -729,7 +750,6 @@ bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time) {
 }
 
 bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matrix16, double time) {
-  (void)time;
   if (!prim.IsValid() || !matrix16) return false;
   SetIdentity(matrix16);
 
@@ -750,7 +770,7 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matr
   for (auto it = chain.begin(); it != chain.end(); ++it) {
     double local[16];
     bool reset = false;
-    EvalLocalXformD(*it, local, &reset);
+    EvalLocalXformD(*it, local, &reset, time);
     double tmp[16];
     MatMulD(tmp, matrix16, local);
     std::memcpy(matrix16, tmp, 16 * sizeof(double));
