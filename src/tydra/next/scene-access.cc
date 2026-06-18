@@ -4,12 +4,18 @@
 // Tydra Next - Scene Access Implementation
 
 #include "scene-access.hh"
+#include "next/layer/prim-spec.hh"
+#include "next/prim/path.hh"
 #include <cstring>
 #include <cmath>
 
 namespace tinyusdz {
 namespace tydra {
 namespace next {
+
+using ::tinyusdz::next::Path;
+using ::tinyusdz::next::PrimSpec;
+using ::tinyusdz::next::PropMeta;
 
 //
 // Prim type checking
@@ -354,10 +360,12 @@ std::vector<std::string> GetRelationshipTargets(const UsdPrim& prim, const std::
   std::vector<std::string> result;
   if (!prim.IsValid()) return result;
 
-  // Check for relationship in prim spec
-  // Relationships are stored in the prim spec directly
-  // TODO: Implement proper relationship access in next::UsdPrim
-
+  if (const std::vector<Path>* targets = prim.GetRelationship(rel_name)) {
+    result.reserve(targets->size());
+    for (const Path& p : *targets) {
+      result.push_back(p.str());
+    }
+  }
   return result;
 }
 
@@ -916,9 +924,55 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
 // Blend shape access
 //
 
+namespace {
+
+std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
+                                        const std::string& name) {
+  std::vector<std::string> out;
+  if (const Value* v = prim.GetPropertyValue(name)) {
+    if (const std::vector<std::string>* toks = v->as_token_array()) out = *toks;
+  }
+  return out;
+}
+
+// Read a matrix4d[] / double[] array as flat doubles (16 per matrix).
+std::vector<double> ReadDoubleArray(const UsdPrim& prim,
+                                    const std::string& name) {
+  const Value* v = prim.GetPropertyValue(name);
+  if (!v) return {};
+  if (const std::vector<double>* a = v->as_double_array()) return *a;
+  // Fall back to a float-backed array (some encoders store as float).
+  if (const std::vector<float>* f = v->as_float_array()) {
+    return std::vector<double>(f->begin(), f->end());
+  }
+  return {};
+}
+
+void FillIdentity(float* m16) {
+  for (int i = 0; i < 16; ++i) m16[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+}
+
+}  // namespace
+
 std::vector<BlendShapeInfo> GetBlendShapes(const UsdPrim& mesh_prim) {
   std::vector<BlendShapeInfo> result;
-  // TODO: Implement blend shape extraction from SkelBindingAPI
+  if (!mesh_prim.IsValid()) return result;
+
+  // skel:blendShapes (token[]) names paired with skel:blendShapeTargets
+  // (relationship) paths. The per-shape point/normal offsets live in the
+  // referenced BlendShape prims; resolving those requires a Stage, so callers
+  // fetch them via the core GetBlendShapeData(stage, prim) using `path`.
+  const std::vector<std::string> names =
+      ReadTokenArray(mesh_prim, "skel:blendShapes");
+  const std::vector<std::string> targets =
+      GetRelationshipTargets(mesh_prim, "skel:blendShapeTargets");
+
+  const size_t n = std::max(names.size(), targets.size());
+  result.resize(n);
+  for (size_t i = 0; i < n; ++i) {
+    if (i < names.size()) result[i].name = names[i];
+    if (i < targets.size()) result[i].path = targets[i];
+  }
   return result;
 }
 
@@ -934,8 +988,43 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
   out->name = skel_prim.GetName();
   out->path = skel_prim.GetPath().str();
 
-  // TODO: Implement full skeleton extraction
-  // joints, jointOrder, bindTransforms, restTransforms
+  const std::vector<std::string> joints = ReadTokenArray(skel_prim, "joints");
+  out->joint_order = joints;
+
+  const std::vector<double> bind = ReadDoubleArray(skel_prim, "bindTransforms");
+  const std::vector<double> rest = ReadDoubleArray(skel_prim, "restTransforms");
+
+  out->joints.resize(joints.size());
+  for (size_t i = 0; i < joints.size(); ++i) {
+    JointInfo& j = out->joints[i];
+    j.path = joints[i];
+
+    // Joint paths are slash-separated (e.g. "Shoulder/Elbow/Hand"); the leaf
+    // token is the name and the prefix identifies the parent joint.
+    const size_t slash = joints[i].rfind('/');
+    j.name = (slash == std::string::npos) ? joints[i] : joints[i].substr(slash + 1);
+    j.parent_index = -1;
+    if (slash != std::string::npos) {
+      const std::string parent_path = joints[i].substr(0, slash);
+      for (size_t k = 0; k < joints.size(); ++k) {
+        if (joints[k] == parent_path) {
+          j.parent_index = static_cast<int32_t>(k);
+          break;
+        }
+      }
+    }
+
+    if (i * 16 + 16 <= bind.size()) {
+      for (int e = 0; e < 16; ++e) j.bind_transform[e] = float(bind[i * 16 + e]);
+    } else {
+      FillIdentity(j.bind_transform);
+    }
+    if (i * 16 + 16 <= rest.size()) {
+      for (int e = 0; e < 16; ++e) j.rest_transform[e] = float(rest[i * 16 + e]);
+    } else {
+      FillIdentity(j.rest_transform);
+    }
+  }
 
   return true;
 }
@@ -947,11 +1036,37 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
 bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
   if (!out || !mesh_prim.IsValid()) return false;
 
-  // TODO: Implement skin binding extraction
-  // primvars:skel:jointIndices, primvars:skel:jointWeights
-  // skel:skeleton relationship
+  bool any = false;
 
-  return false;
+  const std::vector<std::string> skels =
+      GetRelationshipTargets(mesh_prim, "skel:skeleton");
+  if (!skels.empty()) {
+    out->skeleton_path = skels[0];
+    any = true;
+  }
+
+  out->joint_indices = GetIntArray(mesh_prim, "primvars:skel:jointIndices");
+  out->joint_weights = GetFloatArray(mesh_prim, "primvars:skel:jointWeights");
+  if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;
+
+  // Influences per vertex = the jointIndices primvar's elementSize.
+  out->influences_per_vertex = 0;
+  if (const PrimSpec* spec = mesh_prim.GetPrimSpec()) {
+    if (const PropMeta* pm =
+            spec->property_meta("primvars:skel:jointIndices")) {
+      out->influences_per_vertex = pm->elementSize;
+    }
+  }
+
+  double gm[16];
+  if (GetMatrix4d(mesh_prim, "primvars:skel:geomBindTransform", gm)) {
+    for (int i = 0; i < 16; ++i) out->geom_bind_transform[i] = float(gm[i]);
+    any = true;
+  } else {
+    FillIdentity(out->geom_bind_transform);
+  }
+
+  return any;
 }
 
 //
@@ -961,30 +1076,46 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
 const Value* ResolveConnection(const Stage& stage, const UsdPrim& prim, const std::string& attr_name) {
   if (!prim.IsValid()) return nullptr;
 
-  // First check if there's a direct value
-  const Value* val = GetAttribute(prim, attr_name);
-  if (val) {
+  // A directly-authored value wins over a connection.
+  if (const Value* val = GetAttribute(prim, attr_name)) {
     return val;
   }
 
-  // TODO: Follow connection chain
-  // This requires parsing the connection target path and resolving it
+  // Follow the connection chain: attr.connect -> target attribute, which may
+  // itself hold a value or connect onward (e.g. shader input -> shader output
+  // -> ...). Bounded depth guards against cycles.
+  UsdPrim cur = prim;
+  std::string attr = attr_name;
+  for (int depth = 0; depth < 64; ++depth) {
+    const PrimSpec* spec = cur.GetPrimSpec();
+    if (!spec) break;
+    const std::vector<Path>* conns = spec->connection(attr);
+    if (!conns || conns->empty()) break;
 
-  (void)stage;  // Suppress unused warning
+    const Path& target = (*conns)[0];
+    const std::string prop = target.property_name();
+    if (prop.empty()) break;
+    UsdPrim next = stage.GetPrimAtPath(target.prim_path());
+    if (!next.IsValid()) break;
+
+    // A value on the target ends the chain.
+    if (const Value* v = next.GetPropertyValue(prop)) {
+      return v;
+    }
+    cur = next;
+    attr = prop;
+  }
   return nullptr;
 }
 
 std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name) {
   if (!prim.IsValid()) return "";
 
-  // Check for connection attribute (name.connect)
-  std::string connect_name = attr_name + ".connect";
-  const Value* val = GetAttribute(prim, connect_name);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return "";
+  if (const std::vector<Path>* conns = spec->connection(attr_name)) {
+    if (!conns->empty()) return (*conns)[0].str();
   }
-
   return "";
 }
 
