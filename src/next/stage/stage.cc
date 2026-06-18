@@ -139,11 +139,42 @@ const Value* UsdPrim::GetValueAtTime(const std::string& name, double time) const
 }
 
 Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const {
-  // For now, just return the held value (no interpolation)
-  // TODO: Implement linear interpolation for numeric types
-  const Value* val = GetValueAtTime(name, time);
-  if (val) return *val;
-  return Value();
+  if (!spec_) return Value();
+
+  PropNameId name_id = GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return Value();
+
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples || samples->empty()) {
+    const Value* v = spec_->property_value(name_id);
+    return v ? *v : Value();
+  }
+
+  auto it = std::lower_bound(samples->begin(), samples->end(), time,
+                             [](const std::pair<double, uint32_t>& p, double t) {
+                               return p.first < t;
+                             });
+
+  if (it == samples->end()) {
+    const Value* v = spec_->time_sample_value(samples->back().second);
+    return v ? *v : Value();
+  }
+  if (it == samples->begin() || it->first == time) {
+    const Value* v = spec_->time_sample_value(it->second);
+    return v ? *v : Value();
+  }
+
+  // Linearly interpolate between the bracketing samples (held for
+  // non-interpolatable types, handled by LerpValue).
+  auto prev = it;
+  --prev;
+  const Value* va = spec_->time_sample_value(prev->second);
+  const Value* vb = spec_->time_sample_value(it->second);
+  if (!va || !vb) return va ? *va : Value();
+  const double t0 = prev->first;
+  const double t1 = it->first;
+  const double frac = (t1 > t0) ? (time - t0) / (t1 - t0) : 0.0;
+  return LerpValue(*va, *vb, frac);
 }
 
 const std::vector<Path>* UsdPrim::GetRelationship(const std::string& name) const {
