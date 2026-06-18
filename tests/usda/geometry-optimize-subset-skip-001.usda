@@ -1,0 +1,41 @@
+#usda 1.0
+(
+    doc = "Minimal mesh merge skip fixture with GeomSubset."
+)
+
+def Xform "Root"
+{
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.6, 0.9)
+            token outputs:surface
+        }
+    }
+
+    def Mesh "MeshA"
+    {
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+
+        def GeomSubset "Subset"
+        {
+            uniform token elementType = "face"
+            int[] indices = [0]
+        }
+    }
+
+    def Mesh "MeshB"
+    {
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+}

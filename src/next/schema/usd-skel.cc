@@ -4,6 +4,7 @@
 // TinyUSDZ Next - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
+#include "../strfmt.hh"
 #include <cstring>
 #include <algorithm>
 
@@ -371,7 +372,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
 
   if (rootCount != 1) {
     if (err) {
-      *err = "Expected 1 root joint, found " + std::to_string(rootCount);
+      *err = "Expected 1 root joint, found " + IntToStr(rootCount);
     }
     return false;
   }
@@ -381,8 +382,8 @@ bool SkelValidateTopology(const std::vector<int>& topology,
     int parent = topology[i];
     if (parent >= static_cast<int>(topology.size())) {
       if (err) {
-        *err = "Invalid parent index " + std::to_string(parent) +
-               " at joint " + std::to_string(i);
+        *err = "Invalid parent index " + IntToStr(parent) +
+               " at joint " + UIntToStr(i);
       }
       return false;
     }
@@ -404,7 +405,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
 
         if (inStack[idx]) {
           if (err) {
-            *err = "Cycle detected at joint " + std::to_string(idx);
+            *err = "Cycle detected at joint " + UIntToStr(idx);
           }
           return false;
         }
@@ -429,7 +430,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
   for (size_t i = 0; i < topology.size(); ++i) {
     if (!visited[i]) {
       if (err) {
-        *err = "Unreachable joint " + std::to_string(i);
+        *err = "Unreachable joint " + UIntToStr(i);
       }
       return false;
     }

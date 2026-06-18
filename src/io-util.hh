@@ -115,9 +115,9 @@ std::string FindFile(const std::string &filepath, const std::vector<std::string>
 /// '/', './' and '../' runs) and then dropping leading directory components
 /// one at a time (longest suffix first, down to the basename).
 ///
-/// e.g. "../../../../../USD_Exports/Scene/Assets/SM_Ppe3.usd" ->
-///   ["USD_Exports/Scene/Assets/SM_Ppe3.usd", "Scene/Assets/SM_Ppe3.usd",
-///    "Assets/SM_Ppe3.usd", "SM_Ppe3.usd"]
+/// e.g. "../../../../../USD_Exports/Scene/Assets/mesh.usd" ->
+///   ["USD_Exports/Scene/Assets/mesh.usd", "Scene/Assets/mesh.usd",
+///    "Assets/mesh.usd", "mesh.usd"]
 ///
 /// The input path itself is never included. Used to rebase composition arcs
 /// authored against another machine's directory layout (e.g. UnrealEngine USD
@@ -209,6 +209,40 @@ bool IsAbsPath(const std::string &filepath);
 std::string NormalizePath(const std::string &path);
 
 bool IsUDIMPath(const std::string &filepath);
+
+// --- Directory / temp-path utilities (no <filesystem> at call sites) ----------
+// GetTempDir uses the Win32 GetTempPath API on Windows and $TMPDIR/$TMP/$TEMP
+// (falling back to "/tmp") on POSIX. The remaining helpers wrap the vendored
+// ghc::filesystem internally so callers stay free of std::filesystem.
+
+// System temporary directory, without a trailing separator (e.g. "/tmp" or
+// "C:\\Users\\me\\AppData\\Local\\Temp"). Returns "." if none is usable.
+std::string GetTempDir();
+
+// Current working directory ("." on failure).
+std::string GetCurrentDir();
+
+// True if `path` exists and is a directory.
+bool IsDirectory(const std::string &path);
+
+// Create `path` and any missing parents. True on success or if it already exists.
+bool CreateDirectories(const std::string &path);
+
+// Remove a single file. True on success or if it does not exist.
+bool RemoveFile(const std::string &path);
+
+// Recursively remove a file or directory tree. True on success or if absent.
+bool RemoveAll(const std::string &path);
+
+// Lexically-normalized absolute path (prepends the cwd if `path` is relative).
+std::string AbsPath(const std::string &path);
+
+// `path` made relative to `base` (lexical; "" if not expressible).
+std::string RelativePath(const std::string &path, const std::string &base);
+
+// Entry names directly under `dir` (excluding "." and ".."). With `recursive`,
+// returns '/'-joined paths relative to `dir` for the whole subtree. Empty on error.
+std::vector<std::string> ListDir(const std::string &dir, bool recursive = false);
 
 
 bool USDFileExists(const std::string &filepath);

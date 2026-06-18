@@ -36,6 +36,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     wasm64: true,
     concurrency: 8,
     jpegQuality: 90,
+    maxUsdcMb: 0,
+    maxMemMb: 0,
   };
   let pendingDir = null;
   for (let i = 0; i < argv.length; i++) {
@@ -66,6 +68,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--wasm32') opts.wasm64 = false;
     else if (a === '--concurrency') opts.concurrency = Number(argv[++i]);
     else if (a === '--jpeg-quality') opts.jpegQuality = Number(argv[++i]);
+    else if (a === '--max-usdc-mb') opts.maxUsdcMb = Number(argv[++i]);
+    else if (a === '--max-mem-mb') opts.maxMemMb = Number(argv[++i]);
     else throw new Error(`Unknown option: ${a}`);
   }
   if (pendingDir) throw new Error('--scene without --root');
@@ -95,6 +99,9 @@ Options:
   --headful                    Visible browser
   --wasm32                     Use the wasm32 module (default: wasm64)
   --concurrency <n>            Browser texture-processor concurrency (default 8)
+  --max-usdc-mb <n>            Raise USDC writer size cap (0 = conservative default;
+                               2048 = cross-browser-safe 2 GB ceiling)
+  --max-mem-mb <n>             Raise USDC writer memory cap (0 = default)
   --timeout <ms>               Per-case timeout (default 1800000)
   --out <dir>                  Output dir (default tests/bench-usdzconvert)
   --port <n>                   vite port (default 5191)
@@ -207,6 +214,8 @@ async function runCase(browser, baseUrl, manifestUrl, scene, kase, opts) {
       wasm64: opts.wasm64 ? '1' : '0',
       concurrency: String(opts.concurrency),
       jpegQuality: String(opts.jpegQuality),
+      maxUsdcMb: String(opts.maxUsdcMb),
+      maxMemMb: String(opts.maxMemMb),
     });
     await page.goto(`${baseUrl}/bench-usdzconvert.html?${params.toString()}`,
                     { waitUntil: 'load', timeout: opts.timeout });

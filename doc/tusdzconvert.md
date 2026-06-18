@@ -59,6 +59,16 @@ omitted the output is `<input>.usdz`.
 | `-jpegQuality <1-100>` | JPEG quality when (re-)encoding (default `90`). |
 | `-noReencode` | Copy unmodified textures through byte-for-byte. |
 
+## Material optimization
+
+| Option | Description |
+|--------|-------------|
+| `-optimizeMaterials <off\|dedupe\|preview\|atlas>` | Optimize flattened material/shader networks. `dedupe` merges exact duplicate material subtrees and rewrites material bindings. `preview` canonicalizes supported `UsdPreviewSurface` graphs before dedupe. `atlas` currently applies preview dedupe and warns that atlas image generation is not enabled yet. |
+| `-materialAtlasSize <N>` | Max generated atlas edge for atlas mode (default `4096`). |
+| `-materialAtlasTileSize <N>` | Tile edge for atlas mode (default `512`). |
+| `-materialAtlasPadding <N>` | Atlas gutter padding in pixels (default `2`). |
+| `-materialAtlasMinGroupSize <N>` | Minimum compatible materials before atlas generation (default `2`). |
+
 ### Fit textures to a total size budget
 
 | Option | Description |

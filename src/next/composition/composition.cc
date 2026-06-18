@@ -5,9 +5,10 @@
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
-#include <sstream>
 #include <cstring>
+#include <system_error>
 
 namespace tinyusdz {
 namespace next {
@@ -972,18 +973,33 @@ VariantSelection Compositor::ParseVariantSelection(const std::string& str) {
   return sel;
 }
 
+// Locale-independent double parse (replaces std::atof, which honors the C locale
+// and could mis-parse under a comma-decimal locale). fast_float is correctly
+// rounded and already the parser's value producer. Returns 0.0 on a malformed
+// field, matching atof. Tolerates leading whitespace / a single '+' the way atof
+// did, since these query fields are not pre-trimmed.
+static double ParseOffsetField(const char* first, const char* last) {
+  while (first < last && (*first == ' ' || *first == '\t')) ++first;
+  const char* p = (first < last && *first == '+') ? first + 1 : first;
+  double v = 0.0;
+  auto r = fast_float::from_chars(p, last, v);
+  return (r.ec == std::errc{}) ? v : 0.0;
+}
+
 void Compositor::ParseLayerOffset(const std::string& offset_str,
                                    double& offset, double& scale) {
   offset = 0.0;
   scale = 1.0;
 
   // Format: "offset:scale" or just "offset"
+  const char* b = offset_str.data();
+  const char* e = b + offset_str.size();
   size_t colon = offset_str.find(':');
   if (colon == std::string::npos) {
-    offset = std::atof(offset_str.c_str());
+    offset = ParseOffsetField(b, e);
   } else {
-    offset = std::atof(offset_str.substr(0, colon).c_str());
-    scale = std::atof(offset_str.substr(colon + 1).c_str());
+    offset = ParseOffsetField(b, b + colon);
+    scale = ParseOffsetField(b + colon + 1, e);
     if (scale == 0.0) scale = 1.0;
   }
 }

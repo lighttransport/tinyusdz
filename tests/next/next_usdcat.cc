@@ -18,7 +18,9 @@
 #include <iostream>
 #include <string>
 
+#include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
+#include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
@@ -40,16 +42,27 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
 
 int main(int argc, char **argv) {
   bool flatten = false;
+  // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
+  // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
+  // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
+  bool rewrite_layer = false;
   bool openusd_compat = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
+  // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
+  // no threading). It is byte-identical to serial; it helps small compose-bound
+  // scenes and currently regresses huge instanced ones, so it stays off by
+  // default. (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
+  int compose_threads = 1;
   const char *filename = nullptr;
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
+    } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
+      rewrite_layer = true;
     } else if (std::strcmp(argv[i], "-l") == 0) {
       flatten = false;
     } else if ((std::strcmp(argv[i], "-o") == 0 ||
@@ -81,15 +94,24 @@ int main(int argc, char **argv) {
                              "(deterministic|usdcat)\n", m);
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
+      compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
+      if (compose_threads < 1) compose_threads = 1;
     } else {
       filename = argv[i];
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: next_usdcat [-l|-f] [-o out.usda] "
+    std::fprintf(stderr, "Usage: next_usdcat [-l|-f|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
+                         "[--compose-threads N] "
                          "file.usd[acz]\n");
+    return 2;
+  }
+  if (rewrite_layer && flatten) {
+    std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
+                         "(rewrite-layer is a compose-free parse->write).\n");
     return 2;
   }
 
@@ -97,11 +119,93 @@ int main(int argc, char **argv) {
   // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
   // TINYUSDZ_NEXT_TIMING is set. Used to prioritize/measure perf work.
   const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  if (timing) {
+    // The next library emits its [next_build]/[next_warm]/[next_compose] timing
+    // through tinyusdz::logging now (not a hardcoded stderr fprintf). Point the
+    // logger at stderr and enable Info so those lines appear like before.
+    tinyusdz::logging::Logger::getInstance().setStream(&std::cerr);
+    tinyusdz::logging::Logger::getInstance().setLogLevel(
+        tinyusdz::logging::LogLevel::Info);
+  }
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
     return std::chrono::duration<double, std::milli>(d).count();
   };
   const auto t_start = Clock::now();
+
+  // Compose-free RAW parse->write path (measure parser/writer in isolation).
+  if (rewrite_layer) {
+    std::string warn, err;
+    // Parse-thread hint (large-array parallel parse): explicit arg to the library
+    // (which no longer reads the environment itself). 0 = auto, 1 = serial.
+    int parse_threads = 0;
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      parse_threads = std::atoi(nt);
+    }
+    auto layer =
+        pcp::LoadLayerFromFile(filename, &warn, &err, parse_threads);  // PARSE only
+    const auto t_parsed = Clock::now();
+    emit_lines(warn, "WARN : ");
+    if (!layer) {
+      emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
+      return 1;
+    }
+    if (!err.empty()) emit_lines(err, "WARN : ");
+
+    USDAWriteOptions wopts;
+    wopts.emit_custom = openusd_compat;
+    wopts.num_threads = 0;  // auto; TINYUSDZ_NEXT_NUM_THREADS overrides (1 = serial)
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      wopts.num_threads = std::atoi(nt);
+    }
+    std::FILE* fp = stdout;
+    if (out_path) {
+      fp = std::fopen(out_path, "wb");
+      if (!fp) {
+        std::fprintf(stderr, "ERR : cannot open output file: %s\n", out_path);
+        return 1;
+      }
+    }
+    USDAWriteResult res;
+    {
+      StreamWriter w(StdioSink(fp));
+      res = WriteLayer(w, *layer, wopts);  // flushes before returning
+    }
+    const bool flush_ok = (std::fflush(fp) == 0);
+    const bool close_ok = out_path ? (std::fclose(fp) == 0) : true;
+    if (!res.success || !flush_ok || !close_ok) {
+      std::fprintf(stderr, "ERR : %s\n",
+                   res.error.empty() ? "write/flush failed (disk full?)"
+                                     : res.error.c_str());
+      return 1;
+    }
+    const auto t_written = Clock::now();
+    if (timing) {
+      const double pms = ms(t_parsed - t_start);
+      const double wms = ms(t_written - t_parsed);
+      std::fprintf(stderr,
+                   "[next_usdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
+                   pms, wms, ms(t_written - t_start));
+      // RAW parse throughput is relative to the input file size.
+      long insz = 0;
+      if (std::FILE* inf = std::fopen(filename, "rb")) {
+        std::fseek(inf, 0, SEEK_END);
+        insz = std::ftell(inf);
+        std::fclose(inf);
+      }
+      if (insz > 0 && pms > 0.0) {
+        std::fprintf(stderr, "[next_usdcat] parsed %ld bytes = %.0f MB/s\n",
+                     insz, double(insz) / 1048576.0 / (pms / 1000.0));
+      }
+      if (res.bytes_written > 0 && wms > 0.0) {
+        std::fprintf(stderr, "[next_usdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
+                     res.bytes_written,
+                     double(res.bytes_written) / 1048576.0 / (wms / 1000.0),
+                     out_path ? " -> " : "", out_path ? out_path : "");
+      }
+    }
+    return 0;
+  }
 
   std::string warn, err;
   Stage stage;
@@ -120,6 +224,12 @@ int main(int argc, char **argv) {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
+    // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
+    // and byte-identical to serial. Default 1 = serial (no threading).
+    opts.num_threads = compose_threads;
+    // Forward the CLI timing flag to the library (which no longer reads the env):
+    // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
+    opts.enable_timing = timing;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     ok = LoadUSD(filename, &stage, &warn, &err);
@@ -162,8 +272,14 @@ int main(int argc, char **argv) {
       StreamWriter w(StdioSink(fp));
       res = WriteUSDA(w, stage, wopts);  // flushes the buffer before returning
     }
-    std::fflush(fp);
-    if (out_path) std::fclose(fp);
+    const bool flush_ok = (std::fflush(fp) == 0);
+    const bool close_ok = out_path ? (std::fclose(fp) == 0) : true;
+    if (!res.success || !flush_ok || !close_ok) {
+      std::fprintf(stderr, "ERR : %s\n",
+                   res.error.empty() ? "write/flush failed (disk full?)"
+                                     : res.error.c_str());
+      return 1;
+    }
     size_t bytes_written = res.bytes_written;
     const auto t_written = Clock::now();
     if (timing) {
