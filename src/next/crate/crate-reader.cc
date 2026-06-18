@@ -1101,6 +1101,41 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     return false;
   };
 
+  // Decode a pxrUSD compressed scalar half array into raw half (uint16) values.
+  // Same [i8 code] framing as the floating decoder, but code 'i' reconstructs
+  // each value as GfHalf(int) and the 't' lookup table holds 2-byte halfs.
+  auto read_compressed_half = [&](uint16_t* dst) -> bool {
+    int8_t code = 0;
+    if (!reader_->read_i8(code)) return false;
+    if (code == 'i') {
+      std::vector<uint32_t> ints(static_cast<size_t>(count));
+      if (!read_compressed_u32(ints.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        dst[i] = FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i])));
+      }
+      return true;
+    }
+    if (code == 't') {
+      uint32_t lut_size = 0;
+      if (!reader_->read_u32(lut_size)) return false;
+      if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
+      if (!reader_->has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
+      std::vector<uint16_t> lut(lut_size);
+      size_t lut_bytes;
+      if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
+      if (!reader_->read(lut.data(), lut_bytes)) return false;
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (!read_compressed_u32(idxs.data())) return false;
+      for (size_t i = 0; i < count; ++i) {
+        if (idxs[i] >= lut_size) return false;
+        dst[i] = lut[idxs[i]];
+      }
+      return true;
+    }
+    AddWarning("Unknown compressed half-precision array code");
+    return false;
+  };
+
   switch (type_id) {
     case CrateTypeId::Float: {
       std::vector<float> data(static_cast<size_t>(count));
@@ -1244,12 +1279,20 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     case CrateTypeId::Vec3h:
     case CrateTypeId::Vec4h:
     case CrateTypeId::Quath: {
-      if (compressed) { AddWarning("Compressed half arrays not supported"); return false; }
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<uint16_t> halfs(scalars);
-      if (!read_raw(halfs.data(), comps * 2)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        // pxrUSD only compresses scalar half arrays (not Vec*h / Quath).
+        if (comps != 1) {
+          AddWarning("Compressed half-vector arrays not supported");
+          return false;
+        }
+        if (!read_compressed_half(halfs.data())) return false;
+      } else if (!read_raw(halfs.data(), comps * 2)) {
+        return false;
+      }
       std::vector<float> data(scalars);
       for (size_t i = 0; i < scalars; ++i) data[i] = HalfToFloat(halfs[i]);
       out = Value::MakeFloatCompArray(std::move(data),
