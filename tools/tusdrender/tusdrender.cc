@@ -33,6 +33,15 @@
 #include "value-types.hh"
 #include "xform.hh"
 
+// Experimental `next` lazy loader: fast, low-memory USDC parse used as the
+// default backend for the RT preview path. tydra_next provides bit-exact
+// world transforms (see src/tydra/next/scene-access.cc).
+#include "next/schema/geom-mesh.hh"
+#include "next/stage/stage.hh"
+#include "next/tinyusdz-next.hh"
+#include "next/types/value.hh"
+#include "tydra/next/scene-access.hh"
+
 extern "C" {
 #include "lightrt_c_tri.h"
 }
@@ -159,6 +168,7 @@ struct Options {
   bool stats{false};
   bool direct_prims{true};
   bool rt_preview{false};
+  bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool progress{false};
   lrt_tri_quality quality{LRT_TRI_BUILD_DEFAULT};
   int threads{0};
@@ -472,6 +482,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
                a == "-mmapRt" || a == "--mmapRt") {
       opt->rt_preview = true;
       opt->direct_prims = false;
+    } else if (a == "-legacyLoad" || a == "--legacyLoad") {
+      opt->legacy_load = true;
     } else if (a == "-progress" || a == "--progress") {
       opt->progress = true;
     } else if (a == "-quality" || a == "--quality") {
@@ -3074,12 +3086,331 @@ bool LoadProgress(float progress, void *) {
   return true;
 }
 
+// ===========================================================================
+// `next` lazy-loader RT preview backend (default for USDC inputs).
+//
+// Loads the USDC with the experimental `next` reader (fast, low-memory, lazy
+// arrays) and streams triangles using tydra_next's bit-exact world transforms.
+// Produces the byte-identical triangle stream of the legacy path (validated:
+// matching per-purpose triangle counts on large scenes). Falls back to the
+// legacy eager loader for non-USDC inputs or when -legacyLoad is given.
+// ===========================================================================
+
+matrix4d Mat4FromArray(const double d[16]) {
+  matrix4d m;
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j) m.m[i][j] = d[i * 4 + j];
+  return m;
+}
+
+void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
+                          const matrix4d &world, tinyusdz::Purpose purpose,
+                          uint32_t purpose_mask, std::vector<float> *vertices,
+                          std::vector<TriInfo> *tris, Bounds *bounds,
+                          RTPreviewStats *stats) {
+  tinyusdz::next::UsdGeomMesh mesh(prim);
+  if (!mesh.IsValid()) return;
+  const std::vector<float> points = mesh.GetPoints();           // flat xyz
+  const std::vector<int> counts = mesh.GetFaceVertexCounts();
+  const std::vector<int> indices = mesh.GetFaceVertexIndices();
+  if (points.empty() || counts.empty() || indices.empty()) {
+    stats->skipped_meshes++;
+    return;
+  }
+  const size_t npts = points.size() / 3;
+
+  // Note: no per-mesh reserve() here. `vertices`/`tris` are the shared output
+  // buffers accumulated across all meshes; reserving size()+delta per mesh
+  // would defeat amortized growth and reallocate the (multi-GB) buffer on every
+  // mesh. Plain append relies on the vector's geometric growth.
+  size_t cursor = 0;
+  for (int32_t c : counts) {
+    if (c < 3 || cursor + size_t(c) > indices.size()) {
+      cursor += size_t(std::max<int32_t>(0, c));
+      continue;
+    }
+    for (int32_t k = 1; k + 1 < c; k++) {
+      int32_t i0 = indices[cursor + 0];
+      int32_t i1 = indices[cursor + size_t(k)];
+      int32_t i2 = indices[cursor + size_t(k + 1)];
+      if (i0 < 0 || i1 < 0 || i2 < 0 || size_t(i0) >= npts ||
+          size_t(i1) >= npts || size_t(i2) >= npts) {
+        continue;
+      }
+      Vec3 p0 = TransformPoint(
+          world, Vec3{points[3 * i0], points[3 * i0 + 1], points[3 * i0 + 2]});
+      Vec3 p1 = TransformPoint(
+          world, Vec3{points[3 * i1], points[3 * i1 + 1], points[3 * i1 + 2]});
+      Vec3 p2 = TransformPoint(
+          world, Vec3{points[3 * i2], points[3 * i2 + 1], points[3 * i2 + 2]});
+      Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
+      if (Length(n) < 1.0e-12f) continue;
+
+      TriInfo tri;
+      tri.p0 = p0;
+      tri.p1 = p1;
+      tri.p2 = p2;
+      tri.n = n;
+      tri.base_color = Vec3{0.55f, 0.55f, 0.55f};
+      tri.purpose_bit = PurposeBit(purpose);
+      if (tri.purpose_bit == kPurposeRenderBit) {
+        stats->purpose_render_triangles++;
+      } else if (tri.purpose_bit == kPurposeProxyBit) {
+        stats->purpose_proxy_triangles++;
+      } else if (tri.purpose_bit == kPurposeGuideBit) {
+        stats->purpose_guide_triangles++;
+      } else {
+        stats->purpose_default_triangles++;
+      }
+      const bool visible_for_fit = PurposeVisible(tri.purpose_bit, purpose_mask);
+      vertices->insert(vertices->end(),
+                       {p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z});
+      tris->push_back(tri);
+      stats->triangles++;
+      if (visible_for_fit) {
+        Expand(bounds, p0);
+        Expand(bounds, p1);
+        Expand(bounds, p2);
+      }
+    }
+    cursor += size_t(c);
+  }
+}
+
+struct MeshJobNext {
+  tinyusdz::next::UsdPrim prim;
+  matrix4d world{matrix4d::identity()};
+  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+};
+
+// Serial walk: resolve parent-dependent world matrices + purpose and flatten
+// Mesh prims into jobs. Transform evaluation (which materializes xformOp Values
+// in place) stays serial; the per-mesh geometry read + triangulation runs in
+// parallel afterwards on disjoint Mesh prims.
+void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
+                                const tinyusdz::next::UsdPrim &prim,
+                                const matrix4d &parent_world,
+                                tinyusdz::Purpose inherited_purpose,
+                                std::vector<MeshJobNext> *jobs) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, 0.0);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") {
+        purpose = tinyusdz::Purpose::Render;
+      } else if (*t == "proxy") {
+        purpose = tinyusdz::Purpose::Proxy;
+      } else if (*t == "guide") {
+        purpose = tinyusdz::Purpose::Guide;
+      }
+      // "default"/unknown: keep the inherited purpose.
+    }
+  }
+
+  if (prim.GetTypeName() == "Mesh") {
+    MeshJobNext job;
+    job.prim = prim;
+    job.world = world;
+    job.purpose = purpose;
+    jobs->push_back(std::move(job));
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    CollectRTPreviewMeshesNext(stage, child, world, purpose, jobs);
+  }
+}
+
+int RunRTPreviewNext(const Options &opt) {
+  const auto load_t0 = std::chrono::steady_clock::now();
+  tinyusdz::next::Stage stage;
+  std::string warn;
+  std::string err;
+  if (!tinyusdz::next::LoadUSD(opt.input, &stage, &warn, &err)) {
+    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+    std::cerr << "Failed to load USD (next): " << err << "\n";
+    return EXIT_FAILURE;
+  }
+  if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+  const auto load_t1 = std::chrono::steady_clock::now();
+  const double load_seconds =
+      std::chrono::duration<double>(load_t1 - load_t0).count();
+
+  std::vector<float> vertices;
+  std::vector<TriInfo> tris;
+  Bounds bounds;
+  RTPreviewStats rt_stats;
+  const auto stream_t0 = std::chrono::steady_clock::now();
+
+  // Pass A (serial): flatten Mesh prims into jobs with resolved world matrices.
+  std::vector<MeshJobNext> jobs;
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+                               tinyusdz::Purpose::Default, &jobs);
+  }
+  rt_stats.meshes = jobs.size();
+
+  // Pass B (parallel): read geometry + triangulate each mesh into its own
+  // result buffer (disjoint Mesh prims -> distinct lazy Values, no shared
+  // mutable state in DecodeCrateArray). Work-stealing via an atomic cursor.
+  struct MeshResultNext {
+    std::vector<float> vertices;
+    std::vector<TriInfo> tris;
+    Bounds bounds;
+    RTPreviewStats stats;
+  };
+  std::vector<MeshResultNext> results(jobs.size());
+  const unsigned nthreads =
+      std::min<unsigned>(WorkerThreadCount(opt.threads),
+                         jobs.empty() ? 1u : unsigned(jobs.size()));
+  std::atomic<size_t> cursor{0};
+  auto worker = [&]() {
+    for (;;) {
+      const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
+      if (i >= jobs.size()) break;
+      MeshJobNext &job = jobs[i];
+      MeshResultNext &r = results[i];
+      AddRTPreviewMeshNext(job.prim, job.world, job.purpose, opt.purpose_mask,
+                           &r.vertices, &r.tris, &r.bounds, &r.stats);
+    }
+  };
+  if (nthreads <= 1) {
+    worker();
+  } else {
+    std::vector<std::thread> pool;
+    pool.reserve(nthreads);
+    for (unsigned t = 0; t < nthreads; ++t) pool.emplace_back(worker);
+    for (std::thread &th : pool) th.join();
+  }
+
+  // Pass C (serial merge): concatenate in job order (deterministic output).
+  size_t total_floats = 0, total_tris = 0;
+  for (const MeshResultNext &r : results) {
+    total_floats += r.vertices.size();
+    total_tris += r.tris.size();
+  }
+  vertices.reserve(total_floats);
+  tris.reserve(total_tris);
+  for (MeshResultNext &r : results) {
+    vertices.insert(vertices.end(), r.vertices.begin(), r.vertices.end());
+    tris.insert(tris.end(), r.tris.begin(), r.tris.end());
+    MergeBounds(&bounds, r.bounds);
+    MergeStats(&rt_stats, r.stats);
+    std::vector<float>().swap(r.vertices);
+    std::vector<TriInfo>().swap(r.tris);
+  }
+
+  const auto stream_t1 = std::chrono::steady_clock::now();
+  rt_stats.build_seconds =
+      std::chrono::duration<double>(stream_t1 - stream_t0).count();
+  rt_stats.packed_triangle_bytes = uint64_t(vertices.size()) * sizeof(float);
+  if (tris.empty()) {
+    std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
+    return EXIT_FAILURE;
+  }
+
+  lrt_tri_build_options build_opts;
+  std::memset(&build_opts, 0, sizeof(build_opts));
+  build_opts.quality = opt.quality;
+  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
+  build_opts.max_leaf_size = 0;
+  build_opts.num_threads = WorkerThreadCount(opt.threads);
+
+  const auto bvh_t0 = std::chrono::steady_clock::now();
+  lrt_result lrt_err = LRT_RESULT_OK;
+  lrt_tri_scene *lrt_scene =
+      lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
+  const auto bvh_t1 = std::chrono::steady_clock::now();
+  if (!lrt_scene) {
+    std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
+    return EXIT_FAILURE;
+  }
+
+  const int height = opt.height > 0 ? opt.height : 540;
+  tinyusdz::Axis up_axis = tinyusdz::Axis::Y;
+  if (stage.GetUpAxis() == "X") up_axis = tinyusdz::Axis::X;
+  else if (stage.GetUpAxis() == "Z") up_axis = tinyusdz::Axis::Z;
+  if (!opt.camera.empty()) {
+    std::cerr << "WARN: named camera (" << opt.camera
+              << ") is not supported with the next loader; using auto-fit. "
+              << "Use -legacyLoad for named cameras.\n";
+  }
+  RenderScene empty_render_scene;
+  Options auto_opt = opt;
+  auto_opt.camera.clear();
+  CameraFrame camera =
+      MakeCameraFrame(empty_render_scene, auto_opt, bounds, height, up_axis);
+
+  DirectScene direct_scene;
+  LightCache light_cache;
+
+  if (opt.stats) {
+    lrt_tri_stats st;
+    std::memset(&st, 0, sizeof(st));
+    lrt_tri_scene_stats(lrt_scene, &st);
+    const double bvh_seconds =
+        std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
+    std::cerr << "rt preview: 1\n";
+    std::cerr << "rt loader: next\n";
+    std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
+    std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
+    std::cerr << "rt purpose default triangles: "
+              << rt_stats.purpose_default_triangles << "\n";
+    std::cerr << "rt purpose render triangles: "
+              << rt_stats.purpose_render_triangles << "\n";
+    std::cerr << "rt purpose proxy triangles: "
+              << rt_stats.purpose_proxy_triangles << "\n";
+    std::cerr << "rt purpose guide triangles: "
+              << rt_stats.purpose_guide_triangles << "\n";
+    std::cerr << "rt packed triangle bytes: " << rt_stats.packed_triangle_bytes
+              << "\n";
+    std::cerr << "load seconds: " << load_seconds << "\n";
+    std::cerr << "rt triangle stream seconds: " << rt_stats.build_seconds
+              << "\n";
+    std::cerr << "rt bvh build seconds: " << bvh_seconds << "\n";
+    std::cerr << "triangles: " << tris.size() << "\n";
+    std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
+    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
+              << ", memory: " << st.memory_bytes << " bytes\n";
+  }
+
+  const auto render_t0 = std::chrono::steady_clock::now();
+  tinyusdz::Image img = RenderImage(lrt_scene, &direct_scene, tris, light_cache,
+                                    nullptr, camera, opt, height);
+  const auto render_t1 = std::chrono::steady_clock::now();
+  if (opt.stats) {
+    std::cerr << "render seconds: "
+              << std::chrono::duration<double>(render_t1 - render_t0).count()
+              << "\n";
+  }
+  lrt_tri_scene_free(lrt_scene);
+
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+
+  // Default RT preview backend: the `next` lazy loader (fast, low-memory USDC
+  // parse). Falls back to the legacy eager loader for non-USDC inputs or when
+  // -legacyLoad is requested.
+  if (opt.rt_preview && !opt.legacy_load && tinyusdz::IsUSDC(opt.input)) {
+    return RunRTPreviewNext(opt);
   }
 
   tinyusdz::Stage stage;
