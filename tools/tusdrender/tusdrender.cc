@@ -15,6 +15,7 @@
 #include <limits>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -187,6 +188,9 @@ struct Options {
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
+  std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
+  std::string frames;             // -frames FRAMESPEC: render an animation
+  bool default_time{false};       // -defaultTime: evaluate at the default time
 };
 
 float Dot(const Vec3 &a, const Vec3 &b) {
@@ -382,6 +386,13 @@ void PrintUsage(const char *prog) {
       << "  -complexity <low|medium|high|veryhigh>\n"
       << "                         usdrecord refinement preset -> subdiv 0/1/2/3.\n"
       << "  -autoframe             usdrecord-style auto camera framing.\n"
+      << "  -timecode <t>          Evaluate animation at time code t.\n"
+      << "  -defaultTime           Evaluate at the default (non-animated) time.\n"
+      << "  -frames <FRAMESPEC>    Render an animation; one image per time code.\n"
+      << "                         FRAMESPEC: t | start:end | start:end x stride,\n"
+      << "                         comma-separated. Output path uses # for the\n"
+      << "                         frame number (e.g. frame.####.png).\n"
+      << "  -mask <PATH[,PATH...]> Restrict rendering to these prim subtrees.\n"
       << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
 #ifdef TINYUSDZ_WITH_QJS
       << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
@@ -565,6 +576,31 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-autoframe" || a == "--autoframe") {
       opt->autoframe = true;
+    } else if (a == "-mask" || a == "--mask") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "-mask requires PRIMPATH[,PRIMPATH...].\n";
+        return false;
+      }
+      // Comma- and/or space-separated absolute prim paths.
+      std::string s = v;
+      for (char &ch : s) {
+        if (ch == ',') ch = ' ';
+      }
+      std::istringstream iss(s);
+      std::string p;
+      while (iss >> p) {
+        if (!p.empty()) opt->mask.push_back(p);
+      }
+    } else if (a == "-frames" || a == "--frames" || a == "-f") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "-frames requires a FRAMESPEC.\n";
+        return false;
+      }
+      opt->frames = v;
+    } else if (a == "-defaultTime" || a == "--defaultTime") {
+      opt->default_time = true;
     } else if (a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {
@@ -3180,9 +3216,14 @@ matrix4d Mat4FromArray(const double d[16]) {
 // (materialized_copy) so the `next` stage's Value stays lazy. This keeps the
 // big geometry arrays (points/indices/normals) from being permanently
 // materialized into the stage as we stream the scene, bounding peak memory.
+// `time` is NaN for the default value, or a frame time for animated (time-
+// sampled) arrays (held to the nearest authored sample). Decoding goes through
+// materialized_copy so the stage's Value stays lazy.
 std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
-                                      const char *name) {
-  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+                                      const char *name, double time) {
+  const tinyusdz::next::Value *v = std::isnan(time)
+                                       ? prim.GetPropertyValue(name)
+                                       : prim.GetValueAtTime(name, time);
   if (!v) return {};
   if (v->is_lazy()) {
     tinyusdz::next::Value tmp = v->materialized_copy();
@@ -3194,8 +3235,10 @@ std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
 }
 
 std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
-                                      const char *name) {
-  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+                                      const char *name, double time) {
+  const tinyusdz::next::Value *v = std::isnan(time)
+                                       ? prim.GetPropertyValue(name)
+                                       : prim.GetValueAtTime(name, time);
   if (!v) return {};
   if (v->is_lazy()) {
     tinyusdz::next::Value tmp = v->materialized_copy();
@@ -3208,14 +3251,16 @@ std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
 
 void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const matrix4d &world, tinyusdz::Purpose purpose,
-                          uint32_t purpose_mask, std::vector<float> *vertices,
+                          uint32_t purpose_mask, double time,
+                          std::vector<float> *vertices,
                           std::vector<TriInfo> *tris, Bounds *bounds,
                           RTPreviewStats *stats) {
   // Read geometry without permanently materializing it into the stage.
-  const std::vector<float> points = ReadFloatArrayLazy(prim, "points");
-  const std::vector<int32_t> counts = ReadIntArrayLazy(prim, "faceVertexCounts");
+  const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
+  const std::vector<int32_t> counts =
+      ReadIntArrayLazy(prim, "faceVertexCounts", time);
   const std::vector<int32_t> indices =
-      ReadIntArrayLazy(prim, "faceVertexIndices");
+      ReadIntArrayLazy(prim, "faceVertexIndices", time);
   if (points.empty() || counts.empty() || indices.empty()) {
     stats->skipped_meshes++;
     return;
@@ -3286,17 +3331,33 @@ struct MeshJobNext {
   tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
 };
 
-// Serial walk: resolve parent-dependent world matrices + purpose and flatten
-// Mesh prims into jobs. Transform evaluation (which materializes xformOp Values
-// in place) stays serial; the per-mesh geometry read + triangulation runs in
-// parallel afterwards on disjoint Mesh prims.
+// True when `path` is one of the mask paths or a descendant of one. An empty
+// mask matches everything.
+bool PathMatchesMask(const std::string &path,
+                     const std::vector<std::string> &mask) {
+  if (mask.empty()) return true;
+  for (const std::string &m : mask) {
+    if (path == m) return true;
+    if (path.size() > m.size() && path.compare(0, m.size(), m) == 0 &&
+        path[m.size()] == '/') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Serial walk: resolve parent-dependent world matrices (at `time`) + purpose and
+// flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
+// meshes at/under those prim paths (usdrecord --mask); the full tree is still
+// walked so transform chains remain correct.
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
-                                tinyusdz::Purpose inherited_purpose,
+                                tinyusdz::Purpose inherited_purpose, double time,
+                                const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs) {
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, 0.0);
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
@@ -3315,7 +3376,8 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     }
   }
 
-  if (prim.GetTypeName() == "Mesh") {
+  if (prim.GetTypeName() == "Mesh" &&
+      PathMatchesMask(prim.GetPath().str(), mask)) {
     MeshJobNext job;
     job.prim = prim;
     job.world = world;
@@ -3323,7 +3385,7 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     jobs->push_back(std::move(job));
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    CollectRTPreviewMeshesNext(stage, child, world, purpose, jobs);
+    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs);
   }
 }
 
@@ -3344,10 +3406,10 @@ float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
 bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
                                   const tinyusdz::next::UsdPrim &prim,
                                   const matrix4d &parent_world,
-                                  const std::string &query, CameraFrame *frame,
-                                  float *aspect) {
+                                  const std::string &query, double time,
+                                  CameraFrame *frame, float *aspect) {
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, 0.0);
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
@@ -3388,7 +3450,8 @@ bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
     }
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    if (FindNextCameraFrameRecursive(stage, child, world, query, frame, aspect)) {
+    if (FindNextCameraFrameRecursive(stage, child, world, query, time, frame,
+                                     aspect)) {
       return true;
     }
   }
@@ -3396,11 +3459,11 @@ bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
 }
 
 bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
-                         const std::string &query, CameraFrame *frame,
-                         float *aspect) {
+                         const std::string &query, double time,
+                         CameraFrame *frame, float *aspect) {
   for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
     if (FindNextCameraFrameRecursive(stage, root, matrix4d::identity(), query,
-                                     frame, aspect)) {
+                                     time, frame, aspect)) {
       return true;
     }
   }
@@ -3487,6 +3550,8 @@ struct RenderContext {
   Options opt;  // mutable render parameters (width/height/ambient/bg/...)
   int width{960};
   int height{540};
+  // Time at which geometry + transforms are evaluated (NaN = default value).
+  double frame_time{std::numeric_limits<double>::quiet_NaN()};
   double load_seconds{0.0}, stream_seconds{0.0}, bvh_seconds{0.0};
 
   ~RenderContext() {
@@ -3505,7 +3570,8 @@ void ResolveCameraNext(RenderContext &ctx) {
   int height = opt.height;
   if (!opt.camera.empty()) {
     float cam_aspect = 16.0f / 9.0f;
-    if (FindNextCameraFrame(ctx.stage, opt.camera, &ctx.camera, &cam_aspect)) {
+    if (FindNextCameraFrame(ctx.stage, opt.camera, ctx.frame_time, &ctx.camera,
+                            &cam_aspect)) {
       if (height <= 0) {
         height = std::max(1, int(std::lround(float(ctx.width) / cam_aspect)));
       }
@@ -3532,28 +3598,27 @@ void ResolveCameraNext(RenderContext &ctx) {
   ctx.height = height;
 }
 
-// Load the scene via next, stream triangles, and build the BVH once. Leaves the
-// result in `ctx` for repeated rendering.
-bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
-  ctx.opt = opt;
-  ctx.width = opt.width > 0 ? opt.width : 960;
-
-  const auto load_t0 = std::chrono::steady_clock::now();
-  std::string warn, err;
-  if (!tinyusdz::next::LoadUSD(opt.input, &ctx.stage, &warn, &err)) {
-    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
-    std::cerr << "Failed to load USD (next): " << err << "\n";
-    return false;
+// (Re)stream triangles at `time` and (re)build the BVH. Safe to call repeatedly
+// (e.g. once per animation frame): frees the previous BVH and clears the
+// previous geometry first. Honors ctx.opt.mask. Geometry/transforms are
+// evaluated at `time` (NaN = default value).
+bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
+  const Options &opt = ctx.opt;
+  ctx.frame_time = time;
+  if (ctx.scene) {
+    lrt_tri_scene_free(ctx.scene);
+    ctx.scene = nullptr;
   }
-  if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
-  const auto load_t1 = std::chrono::steady_clock::now();
-  ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
+  ctx.vertices.clear();
+  ctx.tris.clear();
+  ctx.bounds = Bounds();
+  ctx.stats = RTPreviewStats();
 
   const auto stream_t0 = std::chrono::steady_clock::now();
   std::vector<MeshJobNext> jobs;
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectRTPreviewMeshesNext(ctx.stage, root, matrix4d::identity(),
-                               tinyusdz::Purpose::Default, &jobs);
+                               tinyusdz::Purpose::Default, time, opt.mask, &jobs);
   }
   ctx.stats.meshes = jobs.size();
 
@@ -3575,7 +3640,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
       MeshJobNext &job = jobs[i];
       MeshResultNext &r = results[i];
       AddRTPreviewMeshNext(job.prim, job.world, job.purpose, opt.purpose_mask,
-                           &r.vertices, &r.tris, &r.bounds, &r.stats);
+                           time, &r.vertices, &r.tris, &r.bounds, &r.stats);
     }
   };
   if (nthreads <= 1) {
@@ -3619,19 +3684,43 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   build_opts.num_threads = WorkerThreadCount(opt.threads);
   const auto bvh_t0 = std::chrono::steady_clock::now();
   lrt_result lrt_err = LRT_RESULT_OK;
-  ctx.scene =
-      lrt_tri_scene_build(ctx.vertices.data(), ctx.tris.size(), &build_opts, &lrt_err);
+  ctx.scene = lrt_tri_scene_build(ctx.vertices.data(), ctx.tris.size(),
+                                  &build_opts, &lrt_err);
   const auto bvh_t1 = std::chrono::steady_clock::now();
   if (!ctx.scene) {
     std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
     return false;
   }
   ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
+  return true;
+}
+
+// Load the scene via next, then stream + build the BVH at the initial time.
+bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
+  ctx.opt = opt;
+  ctx.width = opt.width > 0 ? opt.width : 960;
+
+  const auto load_t0 = std::chrono::steady_clock::now();
+  std::string warn, err;
+  if (!tinyusdz::next::LoadUSD(opt.input, &ctx.stage, &warn, &err)) {
+    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+    std::cerr << "Failed to load USD (next): " << err << "\n";
+    return false;
+  }
+  if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+  const auto load_t1 = std::chrono::steady_clock::now();
+  ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
 
   ctx.up_axis = tinyusdz::Axis::Y;
   if (ctx.stage.GetUpAxis() == "X") ctx.up_axis = tinyusdz::Axis::X;
   else if (ctx.stage.GetUpAxis() == "Z") ctx.up_axis = tinyusdz::Axis::Z;
 
+  // Initial time: default value unless -timecode was given. -defaultTime forces
+  // the default (NaN) explicitly.
+  const double init_time = opt.default_time
+                               ? std::numeric_limits<double>::quiet_NaN()
+                               : opt.timecode;
+  if (!ExtractAndBuildBVH(ctx, init_time)) return false;
   ResolveCameraNext(ctx);
   return true;
 }
@@ -3677,10 +3766,100 @@ void PrintRTStats(const RenderContext &ctx) {
             << ", memory: " << st.memory_bytes << " bytes\n";
 }
 
+// Parse an OpenUSD usdrecord FRAMESPEC list into time codes. Each comma-
+// separated spec is "t", "start:end", or "start:end x stride" (stride defaults
+// to 1, sign inferred from start/end). Examples: "1", "1:10", "1:10x2",
+// "10:1", "1:5,8,12:20x4".
+bool ParseFrameSpec(const std::string &spec, std::vector<double> *times) {
+  std::string s = spec;
+  for (char &c : s) {
+    if (c == ',') c = ' ';
+  }
+  std::istringstream iss(s);
+  std::string tok;
+  while (iss >> tok) {
+    double start = 0, end = 0, stride = 1;
+    const size_t colon = tok.find(':');
+    if (colon == std::string::npos) {
+      try {
+        start = end = std::stod(tok);
+      } catch (...) {
+        return false;
+      }
+    } else {
+      std::string a = tok.substr(0, colon);
+      std::string rest = tok.substr(colon + 1);
+      const size_t xpos = rest.find('x');
+      std::string b = (xpos == std::string::npos) ? rest : rest.substr(0, xpos);
+      try {
+        start = std::stod(a);
+        end = std::stod(b);
+        if (xpos != std::string::npos) stride = std::stod(rest.substr(xpos + 1));
+      } catch (...) {
+        return false;
+      }
+    }
+    if (stride == 0) stride = 1;
+    stride = std::fabs(stride);
+    if (start <= end) {
+      for (double t = start; t <= end + 1e-9; t += stride) times->push_back(t);
+    } else {
+      for (double t = start; t >= end - 1e-9; t -= stride) times->push_back(t);
+    }
+  }
+  return !times->empty();
+}
+
+// Substitute a frame number into an output path. Runs of '#' are replaced by the
+// zero-padded frame number (width = number of '#'). If there is no '#', the
+// frame number is inserted before the extension (.NNNN).
+std::string SubstituteFrame(const std::string &path, long frame) {
+  const size_t hpos = path.find('#');
+  if (hpos != std::string::npos) {
+    size_t hend = hpos;
+    while (hend < path.size() && path[hend] == '#') ++hend;
+    const int width = int(hend - hpos);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%0*ld", width, frame);
+    return path.substr(0, hpos) + buf + path.substr(hend);
+  }
+  const size_t dot = path.find_last_of('.');
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), ".%04ld", frame);
+  if (dot == std::string::npos) return path + buf;
+  return path.substr(0, dot) + buf + path.substr(dot);
+}
+
 int RunRTPreviewNext(const Options &opt) {
   RenderContext ctx;
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
   if (opt.stats) PrintRTStats(ctx);
+
+  // Animation: -frames renders one image per time code, re-evaluating geometry,
+  // transforms and any animated camera at that time. The scene is parsed once;
+  // each frame re-streams + rebuilds the BVH (geometry may deform).
+  if (!opt.frames.empty()) {
+    std::vector<double> times;
+    if (!ParseFrameSpec(opt.frames, &times)) {
+      std::cerr << "Invalid -frames FRAMESPEC: " << opt.frames << "\n";
+      return EXIT_FAILURE;
+    }
+    if (opt.output.empty()) {
+      std::cerr << "-frames requires an output path (use # for the frame "
+                   "number, e.g. frame.####.png).\n";
+      return EXIT_FAILURE;
+    }
+    for (double t : times) {
+      if (!ExtractAndBuildBVH(ctx, t)) return EXIT_FAILURE;
+      ResolveCameraNext(ctx);
+      const std::string out = SubstituteFrame(opt.output, std::lround(t));
+      const double secs = RenderFrameTo(ctx, out);
+      if (secs < 0.0) return EXIT_FAILURE;
+      std::cerr << "frame " << t << " -> " << out << "  (" << secs << "s)\n";
+    }
+    return EXIT_SUCCESS;
+  }
+
   const double secs = RenderFrameTo(ctx, opt.output);
   if (secs < 0.0) return EXIT_FAILURE;
   if (opt.stats) std::cerr << "render seconds: " << secs << "\n";
@@ -3825,6 +4004,23 @@ JSValue js_autoframe(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
   ResolveCameraNext(*g_render_ctx);
   return JS_UNDEFINED;
 }
+// tusdrender.setTime(t) -- re-evaluate geometry/transforms at time t and rebuild
+// the BVH. Call with no/NaN arg for the default time. Returns {triangles}.
+JSValue js_setTime(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
+                   int, JSValueConst *) {
+  if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
+  const double t =
+      ArgD(ctx, argc, argv, 0, std::numeric_limits<double>::quiet_NaN());
+  if (!ExtractAndBuildBVH(*g_render_ctx, t)) {
+    return JS_ThrowInternalError(ctx, "failed to rebuild geometry at time");
+  }
+  ResolveCameraNext(*g_render_ctx);
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "time", std::isnan(t) ? JS_NULL : JS_NewFloat64(ctx, t));
+  JS_SetPropertyStr(ctx, o, "triangles",
+                    JS_NewInt64(ctx, int64_t(g_render_ctx->tris.size())));
+  return o;
+}
 JSValue js_bounds(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
                   JSValueConst *) {
   if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
@@ -3892,6 +4088,7 @@ void RegisterTusdrenderModule(tinyusdz::tydra::JSEngineState &engine,
   RegFn(ctx, mod, "setShadows", js_setShadows, 1);
   RegFn(ctx, mod, "setSamples", js_setSamples, 1);
   RegFn(ctx, mod, "autoframe", js_autoframe, 0);
+  RegFn(ctx, mod, "setTime", js_setTime, 1);
   RegFn(ctx, mod, "bounds", js_bounds, 0);
   RegFn(ctx, mod, "stats", js_stats, 0);
   RegFn(ctx, mod, "render", js_render, 1);
@@ -3981,6 +4178,14 @@ bool McpCallTool(tinyusdz::tydra::JSEngineState &engine, const std::string &name
                   num("azimuth", 0.0), num("elevation", 20.0),
                   num("distance", 2.5));
     code = buf;
+  } else if (name == "set_time") {
+    if (args.contains("time") && args["time"].is_number()) {
+      std::snprintf(buf, sizeof(buf), "tusdrender.setTime(%.9g)",
+                    args["time"].get<double>());
+      code = buf;
+    } else {
+      code = "tusdrender.setTime()";  // default time
+    }
   } else if (name == "set_resolution") {
     std::snprintf(buf, sizeof(buf), "tusdrender.setResolution(%d,%d)",
                   int(num("width", 960)), int(num("height", 540)));
@@ -4036,6 +4241,10 @@ nlohmann::json McpToolList() {
                        {{"azimuth", num()}, {"elevation", num()},
                         {"distance", num()}},
                        {}));
+  tools.push_back(tool("set_time",
+                       "Re-evaluate geometry/transforms at a time code (omit "
+                       "for the default time) and rebuild the BVH.",
+                       {{"time", num()}}, {}));
   tools.push_back(tool("set_resolution", "Set output image resolution.",
                        {{"width", num()}, {"height", num()}}, {}));
   tools.push_back(tool("render",
