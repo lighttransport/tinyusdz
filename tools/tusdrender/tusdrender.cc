@@ -2788,12 +2788,20 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
 bool Occluded(lrt_tri_scene *scene, const std::vector<TriInfo> &tris,
               const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
               const DirectScene *direct, uint32_t purpose_mask) {
-  Vec3 o = Add(p, Mul(n, 1.0e-4f));
+  // Self-intersection offset must scale with the surface point's magnitude: at
+  // large world coordinates a fixed 1e-4 offset is below a float32 ULP (e.g.
+  // ULP(40000) ~ 0.005), so `p + n*1e-4 == p` and the shadow ray would start
+  // exactly on the surface -> self-shadowing (shadow acne). Use a relative
+  // epsilon (~25 ULPs) so the origin clears the surface at any scale.
+  const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                             std::fabs(p.z));
+  const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+  Vec3 o = Add(p, Mul(n, eps));
   lrt_ray ray;
   ray.org[0] = o.x;
   ray.org[1] = o.y;
   ray.org[2] = o.z;
-  ray.tmin = 1.0e-4f;
+  ray.tmin = eps;
   ray.dir[0] = l.x;
   ray.dir[1] = l.y;
   ray.dir[2] = l.z;
