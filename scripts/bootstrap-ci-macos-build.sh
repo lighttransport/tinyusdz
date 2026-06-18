@@ -11,7 +11,6 @@ mkdir ${builddir}
 #  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DTINYUSDZ_WITH_OPENSUBDIV=1 \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DTINYUSDZ_WITH_EXR=1 \
   -DTINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION=1 \

@@ -88,6 +88,7 @@ std::string to_string(const GeomPointInstancer &instancer,
 std::string to_string(const GeomMesh::InterpolateBoundary interp_boundary);
 std::string to_string(const GeomMesh::SubdivisionScheme subd_scheme);
 std::string to_string(const GeomMesh::FaceVaryingLinearInterpolation fv);
+std::string to_string(const GeomMesh::TriangleSubdivisionRule tri_subdiv_rule);
 
 std::string to_string(const GeomCamera::Projection &proj);
 std::string to_string(const GeomCamera::StereoRole &role);

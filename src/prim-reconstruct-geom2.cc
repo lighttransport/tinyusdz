@@ -110,6 +110,7 @@ bool ReconstructPrim<GeomMesh>(
   auto SubdivisionSchemeHandler = enum_handler::SubdivisionScheme;
   auto InterpolateBoundaryHandler = enum_handler::InterpolateBoundary;
   auto FaceVaryingLinearInterpolationHandler = enum_handler::FaceVaryingLinearInterpolation;
+  auto TriangleSubdivisionRuleHandler = enum_handler::TriangleSubdivisionRule;
   auto FamilyTypeHandler = enum_handler::FamilyType;
 
   std::set<std::string> table;
