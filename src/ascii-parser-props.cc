@@ -192,6 +192,8 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<Path>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<value::AssetPath>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::PathExpression>> *result);
 
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
@@ -317,11 +319,14 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<Path> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::AssetPath> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::PathExpression> *result);
 
 
 constexpr auto kRel = "rel";
 constexpr auto kTimeSamplesSuffix = ".timeSamples";
 constexpr auto kConnectSuffix = ".connect";
+constexpr auto kSplineSuffix = ".spline";
 
 constexpr auto kAscii = "[ASCII]";
 
@@ -933,6 +938,261 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
+bool AsciiParser::ParseSplineValue(const std::string &type_name,
+                                   primvar::PrimVar::SplineData *out) {
+  if (!out) {
+    return false;
+  }
+  if (type_name != value::kDouble && type_name != value::kFloat &&
+      type_name != value::kHalf) {
+    PUSH_ERROR_AND_RETURN(
+        "Spline value type must be double, float or half, but got: " +
+        type_name);
+  }
+
+  // Wrap a parsed numeric literal in a value::Value of the attribute type.
+  auto makeVal = [&](double d) -> value::Value {
+    if (type_name == value::kFloat) {
+      return value::Value(static_cast<float>(d));
+    }
+    if (type_name == value::kHalf) {
+      return value::Value(value::float_to_half_full(static_cast<float>(d)));
+    }
+    return value::Value(d);
+  };
+
+  if (!SkipWhitespace()) return false;
+  if (!Expect('{')) {
+    PUSH_ERROR_AND_RETURN("Expected `{` for spline value.");
+  }
+
+  // `( <width>, <slope> )` (bezier) or `( <slope> )` (hermite). Detected by
+  // the presence of a comma, so the tangent form is curveType-agnostic here.
+  auto parseTangent = [&](double *width, double *slope) -> bool {
+    if (!SkipWhitespace()) return false;
+    if (!Expect('(')) return false;
+    if (!SkipWhitespace()) return false;
+    double a;
+    if (!ReadBasicType(&a)) return false;
+    if (!SkipWhitespace()) return false;
+    char c;
+    if (LookChar1(&c) && c == ',') {
+      Char1(&c);
+      if (!SkipWhitespace()) return false;
+      double b;
+      if (!ReadBasicType(&b)) return false;
+      *width = a;
+      *slope = b;
+    } else {
+      *width = 1.0;  // hermite: width is implied
+      *slope = a;
+    }
+    if (!SkipWhitespace()) return false;
+    if (!Expect(')')) return false;
+    return true;
+  };
+
+  // none|held|linear|sloped(x)|loop [repeat|reset|oscillate]
+  auto parseExtrap = [&](int *mode, double *slope) -> bool {
+    if (!SkipWhitespace()) return false;
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    *slope = 0.0;
+    if (kw == "none") {
+      *mode = 0;
+    } else if (kw == "held") {
+      *mode = 1;
+    } else if (kw == "linear") {
+      *mode = 2;
+    } else if (kw == "sloped") {
+      *mode = 3;
+      if (!SkipWhitespace()) return false;
+      if (!Expect('(')) return false;
+      if (!SkipWhitespace()) return false;
+      if (!ReadBasicType(slope)) return false;
+      if (!SkipWhitespace()) return false;
+      if (!Expect(')')) return false;
+    } else if (kw == "loop") {
+      *mode = 4;  // LoopRepeat
+      if (!SkipWhitespace()) return false;
+      char c;
+      if (LookChar1(&c) && (std::isalpha(static_cast<unsigned char>(c)))) {
+        std::string sub;
+        if (!ReadIdentifier(&sub)) return false;
+        if (sub == "repeat") {
+          *mode = 4;
+        } else if (sub == "reset") {
+          *mode = 5;
+        } else if (sub == "oscillate") {
+          *mode = 6;
+        }
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown spline extrapolation mode: " + kw);
+    }
+    return true;
+  };
+
+  while (true) {
+    if (!SkipCommentAndWhitespaceAndNewline()) return false;
+    char c;
+    if (!LookChar1(&c)) {
+      PUSH_ERROR_AND_RETURN("Unexpected EOF in spline value.");
+    }
+    if (c == '}') {
+      Char1(&c);
+      break;
+    }
+
+    if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+      std::string ident;
+      if (!ReadIdentifier(&ident)) return false;
+      if (ident == "bezier") {
+        out->curveType = 0;
+      } else if (ident == "hermite") {
+        out->curveType = 1;
+      } else if (ident == "pre" || ident == "post") {
+        if (!SkipWhitespace()) return false;
+        if (!Expect(':')) {
+          PUSH_ERROR_AND_RETURN("Expected `:` after spline `" + ident + "`.");
+        }
+        int mode = 1;
+        double slope = 0.0;
+        if (!parseExtrap(&mode, &slope)) return false;
+        if (ident == "pre") {
+          out->preExtrapolation = mode;
+          out->preExtrapolationSlope = slope;
+        } else {
+          out->postExtrapolation = mode;
+          out->postExtrapolationSlope = slope;
+        }
+      } else if (ident == "loop") {
+        if (!SkipWhitespace()) return false;
+        if (!Expect(':')) {
+          PUSH_ERROR_AND_RETURN("Expected `:` after spline `loop`.");
+        }
+        if (!SkipWhitespace()) return false;
+        if (!Expect('(')) {
+          PUSH_ERROR_AND_RETURN("Expected `(` for spline loop params.");
+        }
+        // (protoStart, protoEnd, numPreLoops, numPostLoops, valueOffset)
+        double vals[5] = {0, 0, 0, 0, 0};
+        for (int i = 0; i < 5; i++) {
+          if (!SkipWhitespace()) return false;
+          if (!ReadBasicType(&vals[i])) return false;
+          if (!SkipWhitespace()) return false;
+          char sc;
+          if (i < 4) {
+            if (!Expect(',')) {
+              PUSH_ERROR_AND_RETURN("Expected `,` in spline loop params.");
+            }
+          } else if (LookChar1(&sc) && sc == ')') {
+            Char1(&sc);
+          }
+        }
+        out->hasLoop = true;
+        out->loopProtoStart = vals[0];
+        out->loopProtoEnd = vals[1];
+        out->loopNumPreLoops = static_cast<int>(vals[2]);
+        out->loopNumPostLoops = static_cast<int>(vals[3]);
+        out->loopValueOffset = vals[4];
+      } else {
+        PUSH_ERROR_AND_RETURN("Unknown spline keyword: " + ident);
+      }
+    } else {
+      // Knot: <time> : <value> [& <postValue>] [; <specs>] [{ customData }]
+      primvar::PrimVar::SplineKnotData kd;
+      double time;
+      if (!ReadBasicType(&time)) return false;
+      kd.time = time;
+      if (!SkipWhitespace()) return false;
+      if (!Expect(':')) {
+        PUSH_ERROR_AND_RETURN("Expected `:` in spline knot.");
+      }
+      if (!SkipWhitespace()) return false;
+      double v0;
+      if (!ReadBasicType(&v0)) return false;
+      if (!SkipWhitespace()) return false;
+      char amp;
+      if (LookChar1(&amp) && amp == '&') {
+        // Dual-valued knot: `<preValue> & <value>`.
+        Char1(&amp);
+        if (!SkipWhitespace()) return false;
+        double v1;
+        if (!ReadBasicType(&v1)) return false;
+        kd.preValue = makeVal(v0);
+        kd.val = makeVal(v1);
+        kd.hasDualValue = true;
+      } else {
+        kd.val = makeVal(v0);
+        kd.preValue = kd.val;
+      }
+
+      // Optional `;`-separated tangent / interpolation specs on the same line.
+      while (true) {
+        if (!SkipWhitespace()) return false;
+        char pc;
+        if (!LookChar1(&pc) || pc != ';') {
+          break;
+        }
+        Char1(&pc);  // consume ';'
+        if (!SkipWhitespace()) return false;
+        if (LookChar1(&pc) && pc == '{') {
+          // Per-knot customData dictionary: consume (not retained).
+          int depth = 0;
+          do {
+            char cc;
+            if (!Char1(&cc)) {
+              PUSH_ERROR_AND_RETURN("Unterminated spline knot customData.");
+            }
+            if (cc == '{') depth++;
+            else if (cc == '}') depth--;
+          } while (depth > 0);
+          continue;
+        }
+        std::string spec;
+        if (!ReadIdentifier(&spec)) return false;
+        if (spec == "pre") {
+          if (!parseTangent(&kd.preTangentWidth, &kd.preTangentSlope)) {
+            return false;
+          }
+        } else if (spec == "post") {
+          if (!SkipWhitespace()) return false;
+          std::string interp;
+          if (!ReadIdentifier(&interp)) return false;
+          if (interp == "none") {
+            kd.interpolationMode = 0;
+          } else if (interp == "held") {
+            kd.interpolationMode = 1;
+          } else if (interp == "linear") {
+            kd.interpolationMode = 2;
+          } else if (interp == "curve") {
+            kd.interpolationMode = 3;
+            if (!parseTangent(&kd.postTangentWidth, &kd.postTangentSlope)) {
+              return false;
+            }
+          } else {
+            PUSH_ERROR_AND_RETURN("Unknown spline interpolation: " + interp);
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN("Unknown spline knot spec: " + spec);
+        }
+      }
+
+      out->knots.push_back(kd);
+    }
+
+    // Optional `,` entry separator.
+    if (!SkipWhitespace()) return false;
+    char sep;
+    if (LookChar1(&sep) && sep == ',') {
+      Char1(&sep);
+    }
+  }
+
+  return true;
+}
+
 bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
                                  std::vector<value::token> *propNames) {
   (void)propNames;
@@ -1247,6 +1507,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);
+  bool isSpline = endsWith(primattr_name, kSplineSuffix);
 
   // Remove suffix
   std::string attr_name = primattr_name;
@@ -1255,6 +1516,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
   }
   if (isConnection) {
     attr_name = removeSuffix(primattr_name, kConnectSuffix);
+  }
+  if (isSpline) {
+    attr_name = removeSuffix(primattr_name, kSplineSuffix);
   }
 
   bool define_only = false;
@@ -1513,6 +1777,50 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       //  pattr->set_varying_authored();
       //}
 
+      pattr->name() = attr_name;
+
+      Property p(attr, custom_qual);
+      p.set_property_type(Property::Type::Attrib);
+      (*props)[attr_name] = p;
+    }
+
+    record_prim_attr_and_property(attr_name);
+
+    return true;
+
+  } else if (isSpline) {
+    // `<type> <attr>.spline = { ... }` (AOUSD Core Spec 7.4.2.4).
+    if (value_blocked) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Syntax error. ValueBlock to .spline is invalid: {}", attr_name));
+    }
+    if (array_qual) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Spline value cannot be an array type: {}", attr_name));
+    }
+
+    primvar::PrimVar::SplineData sd;
+    if (!ParseSplineValue(type_name, &sd)) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii, fmt::format("Failed to parse spline value of type {} for {}",
+                              type_name, attr_name));
+    }
+
+    Attribute attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists =
+        props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+      pattr = &(props->at(attr_name).attribute());
+      pattr->get_var().set_spline(std::move(sd));
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
+    } else {
+      pattr = &attr;
+      primvar::PrimVar var;
+      var.set_spline(std::move(sd));
+      pattr->set_type_name(type_name);
+      pattr->set_var(std::move(var));
+      pattr->variability() = variability;
       pattr->name() = attr_name;
 
       Property p(attr, custom_qual);
@@ -1855,6 +2163,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       } else if (type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
                                                   pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kPathExpression) {
+        if (!ParseBasicPrimAttr<value::PathExpression>(array_qual,
+                                                       primattr_name, pattr)) {
           return false;
         }
       } else {

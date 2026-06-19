@@ -689,6 +689,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::token> *value);
   bool ReadBasicType(nonstd::optional<Path> *value);
   bool ReadBasicType(nonstd::optional<value::AssetPath> *value);
+  bool ReadBasicType(nonstd::optional<value::PathExpression> *value);
   bool ReadBasicType(nonstd::optional<Reference> *value);
   bool ReadBasicType(nonstd::optional<Payload> *value);
   bool ReadBasicType(nonstd::optional<Identifier> *value);
@@ -776,6 +777,7 @@ class AsciiParser {
   bool ReadBasicType(value::token *value);
   bool ReadBasicType(Path *value);
   bool ReadBasicType(value::AssetPath *value);
+  bool ReadBasicType(value::PathExpression *value);
   bool ReadBasicType(Reference *value);
   bool ReadBasicType(Payload *value);
   bool ReadBasicType(Identifier *value);
@@ -950,6 +952,15 @@ class AsciiParser {
   ///
   bool ParseTimeSamplesOfArray(const std::string &type_name,
                                value::TimeSamples *ts);
+
+  ///
+  /// Parse a `.spline` value block (AOUSD Core Spec 7.4.2.4) and store it to the
+  /// type-erased primvar::PrimVar::SplineData. `type_name` is the (scalar)
+  /// attribute value type ("double"/"float"/"half"); knot values are stored as
+  /// value::Value of that type.
+  ///
+  bool ParseSplineValue(const std::string &type_name,
+                        primvar::PrimVar::SplineData *out);
 
   ///
   /// `variants` in Prim meta.

@@ -183,6 +183,12 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
+  // NOTE: SdfPathExpression is intentionally NOT inlined. OpenUSD has no
+  // GetUninlinedValue<SdfPathExpression> specialization, so it cannot decode an
+  // inlined PathExpression (it would read the payload bits as a struct -> empty
+  // expression). OpenUSD always stores it non-inlined as a StringIndex at an
+  // offset; we match that in PackValue/PackValueData.
+
   // Basic scalar types
 
   // Try to get as int32

@@ -2983,6 +2983,36 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::AssetPath> *value) {
   return false;
 }
 
+bool AsciiParser::ReadBasicType(value::PathExpression *value) {
+  if (!value) {
+    return false;
+  }
+
+  // A `pathExpression` value is authored as a (double-quoted) string holding
+  // the canonical expression text, e.g. "/World/Geom//C*".
+  std::string s;
+  if (!ReadBasicType(&s)) {
+    return false;
+  }
+  (*value) = value::PathExpression(s);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::PathExpression> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::PathExpression v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(Reference *value) {
   bool triple_deliminated;
   if (ParseReference(value, &triple_deliminated)) {

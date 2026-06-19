@@ -205,6 +205,25 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
 
+    case TypeTraits<value::PathExpression>::type_id(): {
+      auto p = v.as<value::PathExpression>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: pathExpression type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<std::vector<value::PathExpression>>::type_id(): {
+      auto p = v.as<std::vector<value::PathExpression>>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: pathExpression[] type TypeId mismatch.]";
+      }
+      break;
+    }
+
     case TypeTraits<value::token>::type_id(): {
       auto p = v.as<value::token>();
       if (p) {

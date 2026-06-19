@@ -640,6 +640,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   return ss.str();
 }
 
+// Forward declaration (defined later in this file).
+std::string print_spline(const primvar::PrimVar::SplineData &sd,
+                         const uint32_t indent);
+
 std::string print_timesamples(const value::TimeSamples &v,
                               const uint32_t indent) {
   // Use the new pprint_timesamples function from timesamples-pprint,
@@ -788,6 +792,16 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
 
       ss << print_timesamples(attr.get_var().ts_raw(), indent);
 
+      ss << "\n";
+    }
+
+    if (attr.get_var().has_spline()) {
+      ss << pprint::Indent(indent);
+      if (prop.has_custom()) {
+        ss << "custom ";
+      }
+      ss << attr.type_name() << " " << prop_name << ".spline = ";
+      ss << print_spline(attr.get_var().spline_data(), indent);
       ss << "\n";
     }
 
@@ -1059,6 +1073,88 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
   return ss.str();
 }
 
+// Emit a `.spline = { ... }` value block (AOUSD Core Spec 7.4.2.4).
+std::string print_spline(const primvar::PrimVar::SplineData &sd,
+                         const uint32_t indent) {
+  std::stringstream ss;
+
+  auto num = [](const value::Value &v) -> double {
+    if (auto d = v.get_value<double>()) return d.value();
+    if (auto f = v.get_value<float>()) return double(f.value());
+    if (auto h = v.get_value<value::half>())
+      return double(value::half_to_float(h.value()));
+    return 0.0;
+  };
+  auto extrapStr = [](int mode, double slope) -> std::string {
+    switch (mode) {
+      case 0: return "none";
+      case 1: return "held";
+      case 2: return "linear";
+      case 3: return "sloped(" + tinyusdz::dtos(slope) + ")";
+      case 4: return "loop repeat";
+      case 5: return "loop reset";
+      case 6: return "loop oscillate";
+      default: return "held";
+    }
+  };
+
+  const bool hermite = (sd.curveType == 1);
+  const uint32_t ki = indent + 1;
+
+  ss << "{\n";
+  ss << pprint::Indent(ki) << (hermite ? "hermite" : "bezier") << ",\n";
+
+  // Only emit extrapolation when it differs from the default (Held).
+  if (sd.preExtrapolation != 1) {
+    ss << pprint::Indent(ki) << "pre: "
+       << extrapStr(sd.preExtrapolation, sd.preExtrapolationSlope) << ",\n";
+  }
+  if (sd.postExtrapolation != 1) {
+    ss << pprint::Indent(ki) << "post: "
+       << extrapStr(sd.postExtrapolation, sd.postExtrapolationSlope) << ",\n";
+  }
+  if (sd.hasLoop) {
+    ss << pprint::Indent(ki) << "loop: (" << tinyusdz::dtos(sd.loopProtoStart)
+       << ", " << tinyusdz::dtos(sd.loopProtoEnd) << ", " << sd.loopNumPreLoops
+       << ", " << sd.loopNumPostLoops << ", "
+       << tinyusdz::dtos(sd.loopValueOffset) << "),\n";
+  }
+
+  auto tangent = [&](double width, double slope) -> std::string {
+    if (hermite) {
+      return "(" + tinyusdz::dtos(slope) + ")";
+    }
+    return "(" + tinyusdz::dtos(width) + ", " + tinyusdz::dtos(slope) + ")";
+  };
+
+  for (const auto &k : sd.knots) {
+    ss << pprint::Indent(ki) << tinyusdz::dtos(k.time) << ": ";
+    if (k.hasDualValue) {
+      ss << tinyusdz::dtos(num(k.preValue)) << " & " << tinyusdz::dtos(num(k.val));
+    } else {
+      ss << tinyusdz::dtos(num(k.val));
+    }
+    // pre-tangent (only when authored)
+    if (k.preTangentWidth != 0.0 || k.preTangentSlope != 0.0) {
+      ss << "; pre " << tangent(k.preTangentWidth, k.preTangentSlope);
+    }
+    // next-segment interpolation
+    switch (k.interpolationMode) {
+      case 0: ss << "; post none"; break;
+      case 1: ss << "; post held"; break;
+      case 2: ss << "; post linear"; break;
+      case 3:
+        ss << "; post curve " << tangent(k.postTangentWidth, k.postTangentSlope);
+        break;
+      default: break;
+    }
+    ss << ",\n";
+  }
+
+  ss << pprint::Indent(indent) << "}";
+  return ss.str();
+}
+
 std::string print_collection(const Collection *coll, const uint32_t indent) {
   std::stringstream ss;
 
@@ -1105,6 +1201,14 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
           instance.excludes.relationship().get_listedit_qual(),
           /* custom */ false, prefix + ":excludes", indent);
 
+    }
+
+    if (instance.membershipExpression.authored()) {
+      value::PathExpression expr;
+      if (instance.membershipExpression.get_value(&expr)) {
+        ss << pprint::Indent(indent) << "uniform pathExpression " << prefix
+           << ":membershipExpression = " << expr << "\n";
+      }
     }
   }
 

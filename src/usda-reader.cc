@@ -803,6 +803,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
 
   Prim prim(node.prim);
   prim.prim_type_name() = node.typeName;
+  prim.specifier() = node.specifier;  // def / over / class
 
   DCOUT("prim[" << primIdx << "].name = " << prim.element_name());
   DCOUT("prim[" << primIdx << "].type = " << node.prim.type_name());

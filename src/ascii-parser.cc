@@ -1872,15 +1872,17 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   std::string tok = std::move(buf);
 
   if (contains(tok, '.')) {
-    if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
+    if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples") ||
+        endsWith(tok, ".spline")) {
       // OK
     } else {
       // Restore cursor to start position for accurate error reporting
       _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for "
-                              "attrbute name: `{}`",
-                              tok));
+          kAscii,
+          fmt::format("Must ends with `.connect`, `.timeSamples` or `.spline` "
+                      "for attrbute name: `{}`",
+                      tok));
     }
 
     // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)

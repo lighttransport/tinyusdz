@@ -640,6 +640,14 @@ std::ostream &operator<<(std::ostream &ofs,
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::PathExpression &expr) {
+  // SdfPathExpression is authored in USDA as a double-quoted string holding the
+  // canonical expression text (e.g. `"/World/Geom//C*"`).
+  ofs << tinyusdz::quote(tinyusdz::escapeControlSequence(expr.GetText()));
+  return ofs;
+}
+
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
   uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
