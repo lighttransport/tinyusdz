@@ -354,8 +354,12 @@ struct TriInfo {
   int32_t normal_tex_id{-1};  // tangent-space normal map, or -1
   int32_t rough_tex_id{-1};   // roughness texture, or -1
   int32_t metal_tex_id{-1};   // metallic texture, or -1
-  uint8_t rough_ch{0};        // source channel (0=r,1=g,2=b,3=a)
+  int32_t emission_tex_id{-1};  // emissive color texture (sRGB), or -1
+  int32_t occ_tex_id{-1};       // occlusion (AO) texture, or -1
+  float occlusion{1.0f};        // ambient-occlusion scalar
+  uint8_t rough_ch{0};          // source channel (0=r,1=g,2=b,3=a)
   uint8_t metal_ch{0};
+  uint8_t occ_ch{0};
 };
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
@@ -3740,7 +3744,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   out->p2 = wp2;
   out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
-                        lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0);
+                        lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
+                        lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0);
   if (has_tex && textures && !b.tri_uvs.empty()) {
     const size_t base = size_t(th.prim_id) * 6;
     if (base + 5 < b.tri_uvs.size()) {
@@ -3776,6 +3781,19 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         float m = SampleScalarTex(*textures, lt.metal_tex_id, lt.metal_ch, u, v,
                                   scalar_lod((*textures)[size_t(lt.metal_tex_id)]));
         if (m >= 0.0f) out->metallic = m;
+      }
+      if (lt.emission_tex_id >= 0 &&
+          size_t(lt.emission_tex_id) < textures->size()) {
+        const Texture &et = (*textures)[size_t(lt.emission_tex_id)];
+        Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
+                         : et.sample(u, v, 0.0f);
+        out->emission = Vec3{lt.emission.x * e.x, lt.emission.y * e.y,
+                             lt.emission.z * e.z};
+      }
+      if (lt.occ_tex_id >= 0) {
+        float o = SampleScalarTex(*textures, lt.occ_tex_id, lt.occ_ch, u, v,
+                                  scalar_lod((*textures)[size_t(lt.occ_tex_id)]));
+        if (o >= 0.0f) out->occlusion = o;
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
@@ -3830,7 +3848,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
-           hit_tri.rough_tex_id >= 0 || hit_tri.metal_tex_id >= 0) &&
+           hit_tri.rough_tex_id >= 0 || hit_tri.metal_tex_id >= 0 ||
+           hit_tri.emission_tex_id >= 0 || hit_tri.occ_tex_id >= 0) &&
           textures && tri_uvs) {
         const size_t base = size_t(hit.prim_id) * 6;
         if (base + 5 < tri_uvs->size()) {
@@ -3870,6 +3889,22 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v,
                 scalar_lod((*textures)[size_t(hit_tri.metal_tex_id)]));
             if (m >= 0.0f) hit_tri.metallic = m;
+          }
+          if (hit_tri.emission_tex_id >= 0 &&
+              size_t(hit_tri.emission_tex_id) < textures->size()) {
+            const Texture &et = (*textures)[size_t(hit_tri.emission_tex_id)];
+            Vec3 e = have_fp ? et.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                               kMaxAniso)
+                             : et.sample(u, v, 0.0f);
+            hit_tri.emission = Vec3{hit_tri.emission.x * e.x,
+                                    hit_tri.emission.y * e.y,
+                                    hit_tri.emission.z * e.z};
+          }
+          if (hit_tri.occ_tex_id >= 0) {
+            float o = SampleScalarTex(
+                *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v,
+                scalar_lod((*textures)[size_t(hit_tri.occ_tex_id)]));
+            if (o >= 0.0f) hit_tri.occlusion = o;
           }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
@@ -3916,7 +3951,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (Dot(n, ray_dir) > 0.0f) {
     n = Mul(n, -1.0f);
   }
-  Vec3 c = Add(Mul(tri.base_color, opt.ambient), tri.emission);
+  // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
+  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), tri.emission);
   if (ibl && ibl->valid) {
     Vec3 view = Normalize(Mul(ray_dir, -1.0f));
     Vec3 diffuse = SampleEnv(ibl->diffuse, n);
@@ -3930,7 +3966,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     Vec3 spec = Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - tri.metallic);
-    c = Add(c, Add(Mul(Mul(tri.base_color, diffuse), kd), spec));
+    Vec3 diff = Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
+    c = Add(c, Add(diff, spec));
   } else if (lights.has_dome) {
     c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
   }
@@ -4165,6 +4202,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const Vec3 &base_color, int32_t tex_id,
                           int32_t normal_tex_id, float roughness, float metallic,
                           const ScalarTex &rough_tex, const ScalarTex &metal_tex,
+                          const Vec3 &emission, int32_t emission_tex_id,
+                          float occlusion, const ScalarTex &occ_tex,
                           const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
@@ -4190,7 +4229,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   bool st_facevarying = false;
   bool have_st = false;
   if (want_uvs && (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
-                   metal_tex.id >= 0)) {
+                   metal_tex.id >= 0 || emission_tex_id >= 0 ||
+                   occ_tex.id >= 0)) {
     st = ReadFloatArrayLazy(prim, "primvars:st", time);
     if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
     if (!st.empty()) {
@@ -4275,6 +4315,11 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       tri.rough_ch = rough_tex.ch;
       tri.metal_tex_id = metal_tex.id;
       tri.metal_ch = metal_tex.ch;
+      tri.emission = emission;
+      tri.emission_tex_id = emission_tex_id;
+      tri.occlusion = occlusion;
+      tri.occ_tex_id = occ_tex.id;
+      tri.occ_ch = occ_tex.ch;
       tri.purpose_bit = PurposeBit(purpose);
       if (tri.purpose_bit == kPurposeRenderBit) {
         stats->purpose_render_triangles++;
@@ -4327,6 +4372,10 @@ struct MeshJobNext {
   int32_t normal_tex_id{-1};             // resolved tangent-space normal map
   ScalarTex rough_tex;                   // roughness texture + channel
   ScalarTex metal_tex;                   // metallic texture + channel
+  Vec3 emission{0.0f, 0.0f, 0.0f};       // resolved inputs:emissiveColor
+  int32_t emission_tex_id{-1};           // emissive color texture
+  float occlusion{1.0f};                 // resolved inputs:occlusion
+  ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
 };
 
@@ -4521,7 +4570,9 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
                              int32_t *normal_tex_id, UvXform *uv_xform,
-                             ScalarTex *rough_tex, ScalarTex *metal_tex) {
+                             ScalarTex *rough_tex, ScalarTex *metal_tex,
+                             Vec3 *emission, int32_t *emission_tex_id,
+                             float *occlusion, ScalarTex *occ_tex) {
   const std::vector<tinyusdz::next::Path> *bind =
       mesh.GetRelationship("material:binding");
   if (!bind || bind->empty()) return;
@@ -4545,6 +4596,42 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
     ResolveScalarTextureNext(stage, surf, "inputs:roughness", tc, rough_tex);
   if (metal_tex)
     ResolveScalarTextureNext(stage, surf, "inputs:metallic", tc, metal_tex);
+
+  // Occlusion (AO) scalar + optional texture.
+  if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:occlusion"))
+    if (const float *f = o->as_float())
+      if (occlusion) *occlusion = std::min(1.0f, std::max(0.0f, *f));
+  if (occ_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:occlusion", tc, occ_tex);
+
+  // Emissive color: constant + optional UsdUVTexture (sRGB color).
+  if (const tinyusdz::next::Value *e =
+          surf.GetPropertyValue("inputs:emissiveColor"))
+    if (const float *f = e->as_float3())
+      if (emission) *emission = Vec3{f[0], f[1], f[2]};
+  if (emission_tex_id) {
+    tinyusdz::next::UsdPrim etex =
+        ConnectedPrimNext(stage, surf, "inputs:emissiveColor");
+    if (etex.IsValid()) {
+      if (const tinyusdz::next::Value *fv =
+              etex.GetPropertyValue("inputs:file")) {
+        const std::string *ap = fv->as_asset_path();
+        if (!ap) ap = fv->as_string();
+        if (ap && !ap->empty()) {
+          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
+            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
+            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          int32_t id = LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/true);
+          if (id >= 0) {
+            *emission_tex_id = id;
+            if (emission) *emission = Vec3{1.0f, 1.0f, 1.0f};  // texture is the tint
+          }
+        }
+      }
+    }
+  }
 
   // Constant diffuse color (also the texture's fallback tint).
   if (const tinyusdz::next::Value *dc =
@@ -5090,7 +5177,9 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         AddRTPreviewMeshNext(job.prim, job.world, job.purpose, purpose_mask, time,
                              job.base_color, job.tex_id, job.normal_tex_id,
                              job.roughness, job.metallic, job.rough_tex,
-                             job.metal_tex, job.uv_xform, want_uvs, &r.v, &r.t,
+                             job.metal_tex, job.emission, job.emission_tex_id,
+                             job.occlusion, job.occ_tex, job.uv_xform, want_uvs,
+                             &r.v, &r.t,
                              &r.uv, &r.b, &r.s, purpose_cull);
       }
     } catch (const std::bad_alloc &) {
@@ -5220,7 +5309,9 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                                 &job.tex_id, &job.roughness, &job.metallic,
                                 &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex);
+                                &job.rough_tex, &job.metal_tex,
+                                &job.emission, &job.emission_tex_id,
+                                &job.occlusion, &job.occ_tex);
       }
     }
     const bool want_uvs = !ctx.textures.empty();
@@ -5284,14 +5375,18 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                               &job.tex_id, &job.roughness, &job.metallic,
                                 &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex);
+                                &job.rough_tex, &job.metal_tex,
+                                &job.emission, &job.emission_tex_id,
+                                &job.occlusion, &job.occ_tex);
     }
     for (std::vector<MeshJobNext> &pj : proto_jobs) {
       for (MeshJobNext &job : pj) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                                 &job.tex_id, &job.roughness, &job.metallic,
                                 &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex);
+                                &job.rough_tex, &job.metal_tex,
+                                &job.emission, &job.emission_tex_id,
+                                &job.occlusion, &job.occ_tex);
       }
     }
   }
