@@ -474,6 +474,7 @@ enum TypeId {
 
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_SPLINE_DATA,  // primvar::PrimVar::SplineData carrier (Crate type 59)
+  TYPE_ID_ARRAY_EDIT,  // value::ArrayEdit carrier (VtArrayEdit, crate >= 0.14.0)
   TYPE_ID_VARIANT_SELECION_MAP,
 
 

@@ -24,6 +24,7 @@
 #include "safe-arithmetic.hh"
 #include "primvar.hh"
 #include "spline-binary.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -954,6 +955,58 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // then call PackValue for each value. Otherwise, nested PackValue calls for
   // out-of-line values would write to value_data_end_offset_ which still points
   // to the start of the dictionary, corrupting the data.
+  else if (auto* ae = value.as<value::ArrayEdit>()) {
+    // VtArrayEdit struct (crate >= 0.14.0): [valuesRep:8][indexesRep:8][isDense:1].
+    // Only reached for non-identity edits (identity is handled in PackValue).
+    // Reserve the struct first, then pack the literals array and op stream as
+    // their own out-of-line values (which append after the struct), then fill
+    // the struct in -- the same choreography as the dictionary case below.
+    const int64_t array_edit_struct_size = 8 + 8 + 1;
+    int64_t struct_start = Tell();
+    {
+      std::vector<char> zeros(static_cast<size_t>(array_edit_struct_size), 0);
+      if (!WriteBytes(zeros.data(), zeros.size())) {
+        if (err) *err = "Failed to reserve array edit struct";
+        return -1;
+      }
+    }
+    value_data_end_offset_ = Tell();
+
+    // Literals: the typed VtArray<T>. Packed verbatim as a normal array value.
+    crate::CrateValue litCv;
+    litCv.get_raw() = ae->literals;
+    crate::ValueRep valuesRep = PackValue(litCv, err);
+    if (err && !err->empty()) return -1;
+
+    // Op stream: a VtInt64Array (Vt_ArrayEditOps `_ins`).
+    crate::CrateValue idxCv;
+    idxCv.Set(ae->ops);
+    crate::ValueRep indexesRep = PackValue(idxCv, err);
+    if (err && !err->empty()) return -1;
+
+    if (!Seek(struct_start)) {
+      if (err) *err = "Failed to seek to array edit struct start";
+      return -1;
+    }
+    if (!Write(valuesRep.GetData())) {
+      if (err) *err = "Failed to write array edit valuesRep";
+      return -1;
+    }
+    if (!Write(indexesRep.GetData())) {
+      if (err) *err = "Failed to write array edit indexesRep";
+      return -1;
+    }
+    uint8_t isDense = 0;  // legacy field
+    if (!WriteBytes(reinterpret_cast<const char*>(&isDense), 1)) {
+      if (err) *err = "Failed to write array edit isDense flag";
+      return -1;
+    }
+
+    if (!Seek(value_data_end_offset_)) {
+      if (err) *err = "Failed to seek to end of value data after array edit";
+      return -1;
+    }
+  }
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
 

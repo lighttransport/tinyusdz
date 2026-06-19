@@ -9,6 +9,7 @@
 
 #include "crate-writer.hh"
 #include "sconv-detail.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 #include <iostream>
 #include <set>
 #include <unordered_set>
@@ -1594,6 +1595,15 @@ bool CrateWriter::ConvertValue(
   if (type_name == "AnimationBlock") {
     out.Set(value::AnimationBlock());
     return true;
+  }
+
+  // VtArrayEdit (crate >= 0.14.0): carried as a default value; the packer emits
+  // a ValueRep with the IsArrayEdit bit set.
+  if (type_name == "ArrayEdit") {
+    if (auto* ae = val.as<value::ArrayEdit>()) {
+      out.Set(*ae);
+      return true;
+    }
   }
 
   // Scalar types
