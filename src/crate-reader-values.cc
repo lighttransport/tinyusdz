@@ -680,6 +680,9 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    // SdfRelocates is a list of path pairs stored on the heap; it is never
+    // inlined.
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Data type `{}` cannot be inlined.",
           crate::GetCrateDataTypeName(dty.dtype_id)));
@@ -3316,6 +3319,54 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // Crate type 58 (SdfRelocates, crate >= 0.11.0):
+      //   Write<uint64_t>             : number of (source, target) pairs
+      //   for each pair: Write<SdfPath> source, Write<SdfPath> target
+      // SdfPath is stored as a PathIndex into the crate's path table. A target
+      // of `<>` (the empty path) marks a deletion relocate.
+      uint64_t n{0};
+      if (!_sr->read8(&n)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of relocates.");
+      }
+
+      if (n > _config.maxArrayElements) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of relocates too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+      }
+
+      std::vector<std::pair<Path, Path>> relocates;
+      relocates.reserve(static_cast<size_t>(n));
+      for (uint64_t i = 0; i < n; i++) {
+        crate::Index src_idx;
+        if (!ReadIndex(&src_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read relocate source PathIndex.");
+        }
+        crate::Index tgt_idx;
+        if (!ReadIndex(&tgt_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read relocate target PathIndex.");
+        }
+
+        auto src = GetPath(src_idx);
+        if (!src) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid relocate source PathIndex.");
+        }
+        // The target may be the empty path (relocate-to-delete); GetPath
+        // returns a valid (empty) Path for path index 0.
+        auto tgt = GetPath(tgt_idx);
+        if (!tgt) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid relocate target PathIndex.");
+        }
+
+        relocates.emplace_back(src.value(), tgt.value());
+      }
+
+      DCOUT("Relocates: " << relocates.size() << " pair(s)");
+
+      value->Set(std::move(relocates));
+      return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
       COMPRESS_UNSUPPORTED_CHECK(dty)

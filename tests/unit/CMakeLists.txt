@@ -11,6 +11,8 @@ set(TEST_SOURCES
 	unit-pathutil.cc
 	unit-path-expression.cc
 	unit-spline.cc
+	unit-relocates.cc
+	unit-value-clips.cc
 	unit-pprint.cc
 	unit-strutil.cc
 	unit-value-types.cc

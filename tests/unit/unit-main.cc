@@ -10,6 +10,8 @@
 #include "unit-pathutil.h"
 #include "unit-path-expression.h"
 #include "unit-spline.h"
+#include "unit-relocates.h"
+#include "unit-value-clips.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
 #include "unit-customdata.h"
@@ -138,6 +140,11 @@ TEST_LIST = {
   { "spline_extrapolation_modes_test", spline_extrapolation_modes_test },
   { "spline_binary_types_test", spline_binary_types_test },
   { "spline_openusd_crate_read_test", spline_openusd_crate_read_test },
+  { "relocates_usda_parse_test", relocates_usda_parse_test },
+  { "relocates_usda_roundtrip_test", relocates_usda_roundtrip_test },
+  { "relocates_crate_roundtrip_test", relocates_crate_roundtrip_test },
+  { "value_clips_multiple_sets_parse_test", value_clips_multiple_sets_parse_test },
+  { "value_clips_template_set_parse_test", value_clips_template_set_parse_test },
   { "ioutil_test", ioutil_test },
   { "ioutil_asset_path_suffix_candidates_test", ioutil_asset_path_suffix_candidates_test },
   { "strutil_test", strutil_test },

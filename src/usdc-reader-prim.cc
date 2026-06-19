@@ -213,6 +213,18 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
+    } else if (fv.first == "relocates") {
+      // AOUSD Core Spec 10.3.2.6: layer-level relocates (Crate type 58).
+      if (auto vr =
+              fv.second.get_value<std::vector<std::pair<Path, Path>>>()) {
+        metas->layerRelocates = vr.value();
+        DCOUT("relocates = " << metas->layerRelocates.size() << " pair(s)");
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`relocates` value must be SdfRelocates "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());

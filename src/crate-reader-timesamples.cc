@@ -1556,6 +1556,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
     case crate::CrateDataTypeId::NumDataTypes:
       PUSH_ERROR_AND_RETURN(

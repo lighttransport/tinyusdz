@@ -1446,6 +1446,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   if (value.as<std::vector<Path>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR));
   }
+  // SdfRelocates (Crate type 58): a list of (source, target) path pairs. Not an
+  // array type (the vector itself is the value). crate >= 0.11.0.
+  else if (value.as<std::vector<std::pair<Path, Path>>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES));
+    RequestCrateVersionUpgrade(0, 11, 0);  // SdfRelocates requires crate 0.11.0
+  }
   // Dictionary type
   else if (value.as<value::dict>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));

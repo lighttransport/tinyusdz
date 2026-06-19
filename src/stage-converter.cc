@@ -369,6 +369,14 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     }
   }
 
+  // Add layer-level relocates (AOUSD Core Spec 10.3.2.6). Stored as the crate
+  // SdfRelocates value type (58); the writer bumps the crate version to 0.11.0.
+  if (!metas.layerRelocates.empty()) {
+    crate::CrateValue relocates_value;
+    relocates_value.Set(metas.layerRelocates);
+    root_fields.push_back({"relocates", relocates_value});
+  }
+
   // Add primChildren listing root prim names
   {
     std::vector<value::token> root_children;
