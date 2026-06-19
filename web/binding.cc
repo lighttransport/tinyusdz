@@ -1642,6 +1642,17 @@ json Vec3Json(const tinyusdz::value::vector3f &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
+// Generic vec3 -> JSON for the double-precision / role-typed variants
+// (double3, vector3d, point3d, normal3f/d) that the explicit overloads above
+// don't cover. All expose operator[](0..2). Needed because Blender's USD
+// exporter authors `physics:diagonalInertia` (and other vec3 physics attrs)
+// as `double3`, which previously serialized as {"unsupportedType":"double3"}
+// and dropped body inertia (MuJoCo then rejects moving bodies: mjMINVAL).
+template <typename T>
+json Vec3JsonG(const T &v) {
+  return json::array({v[0], v[1], v[2]});
+}
+
 json QuatJson(const tinyusdz::value::quatf &v) {
   return json::array({v.real, v.imag[0], v.imag[1], v.imag[2]});
 }
@@ -1779,6 +1790,13 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<tinyusdz::value::point3f>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::float3>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::vector3f>()) return Vec3Json(v.value());
+  // Double-precision / role-typed vec3 variants (Blender authors physics
+  // attrs like diagonalInertia / centerOfMass as double3).
+  if (auto v = attr.get_value<tinyusdz::value::double3>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::vector3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::point3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::normal3f>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::normal3d>()) return Vec3JsonG(v.value());
   if (auto v = attr.get_value<tinyusdz::value::quatf>()) return QuatJson(v.value());
   if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
   if (auto v = attr.get_value<std::vector<float>>()) return v.value();
