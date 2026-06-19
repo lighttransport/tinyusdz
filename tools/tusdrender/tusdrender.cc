@@ -358,7 +358,14 @@ enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
 struct Texture {
   int width{0}, height{0}, channels{0};
-  std::vector<uint8_t> pixels;  // width*height*channels, row-major, top-left
+  std::vector<uint8_t> pixels;  // mip 0: width*height*channels, top-left
+  // Box-filtered mip chain (levels 1..N); level k halves the previous. Built on
+  // load so ray-differential LOD can avoid texture minification aliasing.
+  struct Mip {
+    int w, h;
+    std::vector<uint8_t> data;
+  };
+  std::vector<Mip> mips;
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
@@ -391,9 +398,74 @@ struct Texture {
                          : std::pow((c + 0.055f) / 1.055f, 2.4f);
   }
 
-  // Bilinear sample honoring wrap modes; returns RGB in [0,1] (linearized when
-  // srgb). (USD UV origin is bottom-left, so v is flipped.)
-  Vec3 sample(float u, float v) const {
+  // Box-filter mip 0 down to 1x1 (filtered in the stored space).
+  void build_mips() {
+    mips.clear();
+    int sw = width, sh = height;
+    const uint8_t *src = pixels.data();
+    while (sw > 1 || sh > 1) {
+      int dw = std::max(1, sw / 2), dh = std::max(1, sh / 2);
+      Mip m;
+      m.w = dw;
+      m.h = dh;
+      m.data.resize(size_t(dw) * size_t(dh) * size_t(channels));
+      for (int y = 0; y < dh; ++y) {
+        int y0 = std::min(2 * y, sh - 1), y1 = std::min(2 * y + 1, sh - 1);
+        for (int x = 0; x < dw; ++x) {
+          int x0 = std::min(2 * x, sw - 1), x1 = std::min(2 * x + 1, sw - 1);
+          for (int c = 0; c < channels; ++c) {
+            int s = src[(size_t(y0) * sw + x0) * channels + c] +
+                    src[(size_t(y0) * sw + x1) * channels + c] +
+                    src[(size_t(y1) * sw + x0) * channels + c] +
+                    src[(size_t(y1) * sw + x1) * channels + c];
+            m.data[(size_t(y) * dw + x) * channels + c] = uint8_t((s + 2) / 4);
+          }
+        }
+      }
+      mips.push_back(std::move(m));
+      sw = dw;
+      sh = dh;
+      src = mips.back().data.data();
+    }
+  }
+
+  // Bilinear lookup in a single level (raw, no sRGB), at pre-wrapped (wu,wv).
+  Vec3 bilinear_level(int lvl, float wu, float wv) const {
+    int w, h;
+    const uint8_t *d;
+    if (lvl <= 0 || mips.empty()) {
+      w = width;
+      h = height;
+      d = pixels.data();
+    } else {
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      w = m.w;
+      h = m.h;
+      d = m.data.data();
+    }
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> Vec3 {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(channels)];
+      return Vec3{float(p[0]) / 255.0f,
+                  float(channels > 1 ? p[1] : p[0]) / 255.0f,
+                  float(channels > 2 ? p[2] : p[0]) / 255.0f};
+    };
+    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
+      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t};
+    };
+    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+  }
+
+  // Trilinear sample at mip level `lod` (lod<=0 = full res); wrap + sRGB applied.
+  // (USD UV origin is bottom-left, so v is flipped.)
+  Vec3 sample(float u, float v, float lod = 0.0f) const {
     if (width <= 0 || height <= 0 || pixels.empty()) {
       return Vec3{0.5f, 0.5f, 0.5f};
     }
@@ -401,26 +473,16 @@ struct Texture {
     float wu = ApplyWrap(u, wrap_s, &su);
     float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
     if (!su || !sv) return Vec3{0.0f, 0.0f, 0.0f};  // Black wrap, out of bounds
-    float fu = wu * float(width) - 0.5f;
-    float fv = wv * float(height) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> Vec3 {
-      x = ((x % width) + width) % width;
-      y = ((y % height) + height) % height;
-      const uint8_t *p = &pixels[(size_t(y) * size_t(width) + size_t(x)) *
-                                 size_t(channels)];
-      return Vec3{float(p[0]) / 255.0f,
-                  float(channels > 1 ? p[1] : p[0]) / 255.0f,
-                  float(channels > 2 ? p[2] : p[0]) / 255.0f};
-    };
-    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
-      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t};
-    };
-    Vec3 c = lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    Vec3 c = bilinear_level(l0, wu, wv);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      Vec3 c1 = bilinear_level(l0 + 1, wu, wv);
+      c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
+               c.z + (c1.z - c.z) * f};
+    }
     if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
     return c;
   }
@@ -3412,17 +3474,88 @@ Vec3 PerturbNormalStorm(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
   return l > 1.0e-12f ? Mul(pert, 1.0f / l) : N;
 }
 
-// Sample a normal map at (u,v) and unpack to a tangent-space normal via the
+// Sample a normal map at (u,v,lod) and unpack to a tangent-space normal via the
 // texture's scale/bias (UsdUVTexture convention).
-Vec3 SampleTangentNormal(const Texture &nm, float u, float v) {
-  Vec3 s = nm.sample(u, v);  // raw [0,1] (normal maps are sourceColorSpace=raw)
+Vec3 SampleTangentNormal(const Texture &nm, float u, float v, float lod) {
+  Vec3 s = nm.sample(u, v, lod);  // raw [0,1] (normal maps are sourceColorSpace=raw)
   return Vec3{s.x * nm.scale.x + nm.bias.x, s.y * nm.scale.y + nm.bias.y,
               s.z * nm.scale.z + nm.bias.z};
 }
 
+// Per-pixel ray differential: the camera rays for the +1 pixel neighbors in
+// screen x and y (origin + direction each, to cover both pinhole and ortho).
+struct RayDiff {
+  Vec3 ox, dx;  // ray for pixel (x+1, y)
+  Vec3 oy, dy;  // ray for pixel (x, y+1)
+  bool valid{false};
+};
+
+// Barycentric (e1,e2 coords) of point Q on triangle p0,p1,p2 -> interpolated UV.
+inline void TriPointUV(const Vec3 &Q, const Vec3 &p0, const Vec3 &e1,
+                       const Vec3 &e2, float d00, float d01, float d11,
+                       float invden, float u0, float v0, float du1, float dv1,
+                       float du2, float dv2, float *u, float *v) {
+  Vec3 q = Sub(Q, p0);
+  float d20 = Dot(q, e1), d21 = Dot(q, e2);
+  float a = (d11 * d20 - d01 * d21) * invden;
+  float b = (d00 * d21 - d01 * d20) * invden;
+  *u = u0 + a * du1 + b * du2;
+  *v = v0 + a * dv1 + b * dv2;
+}
+
+// Mip LOD from the UV footprint (OpenGL isotropic formula): the larger of the
+// two screen-axis texel spans. Returns 0 (full res) when textures aren't
+// minified or differentials are unavailable.
+float TextureLod(float dudx, float dvdx, float dudy, float dvdy, int w, int h) {
+  float px = dudx * float(w), py = dvdx * float(h);
+  float qx = dudy * float(w), qy = dvdy * float(h);
+  float rho2 = std::max(px * px + py * py, qx * qx + qy * qy);
+  if (!(rho2 > 1.0e-20f)) return 0.0f;
+  return 0.5f * std::log2(rho2);
+}
+
+// Per-hit UV footprint via ray differentials: intersect the primary + neighbor
+// rays with the hit triangle's plane and difference their UVs. Outputs the UV
+// gradients per screen pixel. Returns false if the parameterization/plane is
+// degenerate (caller then uses lod 0).
+bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
+                        const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
+                        const Vec3 &N, float u0, float v0, float u1, float v1,
+                        float u2, float v2, float *dudx, float *dvdx,
+                        float *dudy, float *dvdy) {
+  if (!rd.valid) return false;
+  Vec3 e1 = Sub(p1, p0), e2 = Sub(p2, p0);
+  float d00 = Dot(e1, e1), d01 = Dot(e1, e2), d11 = Dot(e2, e2);
+  float den = d00 * d11 - d01 * d01;
+  if (std::fabs(den) < 1.0e-20f) return false;
+  float invden = 1.0f / den;
+  float du1 = u1 - u0, dv1 = v1 - v0, du2 = u2 - u0, dv2 = v2 - v0;
+  float pd = Dot(p0, N);
+  auto hit_uv = [&](const Vec3 &o, const Vec3 &d, float *u, float *v) -> bool {
+    float denom = Dot(d, N);
+    if (std::fabs(denom) < 1.0e-12f) return false;
+    float t = (pd - Dot(o, N)) / denom;
+    if (t <= 0.0f) return false;
+    TriPointUV(Add(o, Mul(d, t)), p0, e1, e2, d00, d01, d11, invden, u0, v0, du1,
+               dv1, du2, dv2, u, v);
+    return true;
+  };
+  float u, v, ux, vx, uy, vy;
+  if (!hit_uv(org, dir, &u, &v) || !hit_uv(rd.ox, rd.dx, &ux, &vx) ||
+      !hit_uv(rd.oy, rd.dy, &uy, &vy)) {
+    return false;
+  }
+  *dudx = ux - u;
+  *dvdx = vx - v;
+  *dudy = uy - u;
+  *dvdy = vy - v;
+  return true;
+}
+
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
-                    const std::vector<Texture> *textures, TriInfo *out) {
+                    const std::vector<Texture> *textures, const Vec3 &ray_org,
+                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out) {
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
   if (size_t(inst.blas_id) >= blas.size()) return false;
@@ -3445,15 +3578,28 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
       const float *uv = &b.tri_uvs[base];
       float u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
       float v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
+      // Ray-differential UV footprint (shared by diffuse + normal samples).
+      float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+      const bool have_fp =
+          ComputeUVFootprint(ray_org, ray_dir, rd, wp0, wp1, wp2, out->n, uv[0],
+                             uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
+                             &dudy, &dvdy);
       if (lt.tex_id >= 0 && size_t(lt.tex_id) < textures->size()) {
-        Vec3 t = (*textures)[size_t(lt.tex_id)].sample(u, v);
+        const Texture &dt = (*textures)[size_t(lt.tex_id)];
+        float lod = have_fp ? TextureLod(dudx, dvdx, dudy, dvdy, dt.width,
+                                         dt.height)
+                            : 0.0f;
+        Vec3 t = dt.sample(u, v, lod);
         out->base_color = Vec3{lt.base_color.x * t.x, lt.base_color.y * t.y,
                                lt.base_color.z * t.z};
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
-        Vec3 Nt =
-            SampleTangentNormal((*textures)[size_t(lt.normal_tex_id)], u, v);
+        const Texture &nt = (*textures)[size_t(lt.normal_tex_id)];
+        float lod = have_fp ? TextureLod(dudx, dvdx, dudy, dvdy, nt.width,
+                                         nt.height)
+                            : 0.0f;
+        Vec3 Nt = SampleTangentNormal(nt, u, v, lod);
         out->n = PerturbNormalStorm(wp0, wp1, wp2, out->n, uv[0], uv[1], uv[2],
                                     uv[3], uv[4], uv[5], Nt);
       }
@@ -3471,7 +3617,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<float> *tri_uvs = nullptr,
            const lrt_tlas *tlas = nullptr,
            const std::vector<Blas> *blas = nullptr,
-           const std::vector<InstanceRT> *instances = nullptr) {
+           const std::vector<InstanceRT> *instances = nullptr,
+           const RayDiff &rd = RayDiff{}) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -3489,7 +3636,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
-        ResolveTLASHit(th, *blas, *instances, textures, &hit_tri)) {
+        ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
+                       &hit_tri)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -3508,16 +3656,28 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           const float *uv = &(*tri_uvs)[base];
           float u = w0 * uv[0] + w1 * uv[2] + w2 * uv[4];
           float v = w0 * uv[1] + w1 * uv[3] + w2 * uv[5];
+          float dudx = 0, dvdx = 0, dudy = 0, dvdy = 0;
+          const bool have_fp = ComputeUVFootprint(
+              ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
+              hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
+              &dudy, &dvdy);
           if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
-            Vec3 t = (*textures)[size_t(hit_tri.tex_id)].sample(u, v);
+            const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
+            float lod = have_fp
+                            ? TextureLod(dudx, dvdx, dudy, dvdy, dt.width, dt.height)
+                            : 0.0f;
+            Vec3 t = dt.sample(u, v, lod);
             hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
                                       hit_tri.base_color.y * t.y,
                                       hit_tri.base_color.z * t.z};
           }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
-            Vec3 Nt = SampleTangentNormal(
-                (*textures)[size_t(hit_tri.normal_tex_id)], u, v);
+            const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
+            float lod = have_fp
+                            ? TextureLod(dudx, dvdx, dudy, dvdy, nt.width, nt.height)
+                            : 0.0f;
+            Vec3 Nt = SampleTangentNormal(nt, u, v, lod);
             hit_tri.n = PerturbNormalStorm(hit_tri.p0, hit_tri.p1, hit_tri.p2,
                                            hit_tri.n, uv[0], uv[1], uv[2], uv[3],
                                            uv[4], uv[5], Nt);
@@ -3695,9 +3855,17 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             Vec3 org;
             Vec3 dir;
             MakeRay(camera, aspect, fx, fy, &org, &dir);
+            // One-pixel ray differentials for texture footprint / mip LOD
+            // (origin + dir cover both pinhole and ortho cameras).
+            RayDiff rd;
+            MakeRay(camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
+                    &rd.dx);
+            MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
+                    &rd.dy);
+            rd.valid = true;
             color = Add(color, Shade(scene, direct, tris, lights, ibl, camera,
                                      opt, org, dir, textures, tri_uvs, tlas,
-                                     blas, instances));
+                                     blas, instances, rd));
           }
         }
         color = Mul(color, 1.0f / float(spp));
@@ -4021,6 +4189,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     t.srgb = srgb;
     t.scale = scale;
     t.bias = bias;
+    t.build_mips();
     int32_t id = int32_t(tc.textures->size());
     tc.textures->push_back(std::move(t));
     return id;
