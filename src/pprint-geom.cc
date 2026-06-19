@@ -264,6 +264,36 @@ std::string to_string(const Scope &scope, const uint32_t indent,
   return ss.str();
 }
 
+// UsdVol / UsdRender placeholder prim types: emit `<spec> <TypeName> "name"`
+// with generic props (no typed schema fields yet).
+#define DEFINE_PLACEHOLDER_PRIM_TO_STRING(__cls, __tyname)                 \
+  std::string to_string(const __cls &p, const uint32_t indent,            \
+                        bool closing_brace) {                             \
+    std::stringstream ss;                                                 \
+    ss << pprint::Indent(indent) << to_string(p.spec) << " " __tyname     \
+       << " \"" << p.name << "\"\n";                                      \
+    if (p.meta.authored()) {                                              \
+      ss << pprint::Indent(indent) << "(\n";                              \
+      ss << print_prim_metas(p.meta, indent + 1);                         \
+      ss << pprint::Indent(indent) << ")\n";                              \
+    }                                                                     \
+    ss << pprint::Indent(indent) << "{\n";                                \
+    std::set<std::string> tokset;                                         \
+    ss << print_props(p.props, tokset, p.propertyNames(), indent + 1);    \
+    if (closing_brace) {                                                  \
+      ss << pprint::Indent(indent) << "}\n";                              \
+    }                                                                     \
+    return ss.str();                                                     \
+  }
+
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(Volume, "Volume")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(OpenVDBAsset, "OpenVDBAsset")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(Field3DAsset, "Field3DAsset")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderSettings, "RenderSettings")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderProduct, "RenderProduct")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderVar, "RenderVar")
+#undef DEFINE_PLACEHOLDER_PRIM_TO_STRING
+
 std::string to_string(const GPrim &gprim, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;

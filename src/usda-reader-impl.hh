@@ -265,6 +265,14 @@ DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY
 DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
+// UsdVol / UsdRender placeholder prim types.
+DEFINE_PRIM_TYPE(Volume, "Volume", value::TYPE_ID_VOLUME);
+DEFINE_PRIM_TYPE(OpenVDBAsset, "OpenVDBAsset", value::TYPE_ID_OPENVDB_ASSET);
+DEFINE_PRIM_TYPE(Field3DAsset, "Field3DAsset", value::TYPE_ID_FIELD3D_ASSET);
+DEFINE_PRIM_TYPE(RenderSettings, "RenderSettings", value::TYPE_ID_RENDER_SETTINGS);
+DEFINE_PRIM_TYPE(RenderProduct, "RenderProduct", value::TYPE_ID_RENDER_PRODUCT);
+DEFINE_PRIM_TYPE(RenderVar, "RenderVar", value::TYPE_ID_RENDER_VAR);
+
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
 
 #ifdef __clang__
