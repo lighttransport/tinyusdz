@@ -35,4 +35,11 @@ bool DecodeSplineFromBinary(const uint8_t *data, size_t size,
                             primvar::PrimVar::SplineData *out,
                             std::string *err = nullptr);
 
+// The ts-binary format version required to encode `sd`:
+//   1 : initial spline format (no tangent algorithms).
+//   2 : at least one knot has a non-None tangent algorithm (AutoEase/Custom).
+// Version 2 adds a per-knot algorithmByte and requires Crate version 0.13.0.
+// Mirrors pxr Ts_BinaryDataAccess::GetBinaryFormatVersion.
+uint8_t SplineBinaryFormatVersion(const primvar::PrimVar::SplineData &sd);
+
 }  // namespace tinyusdz

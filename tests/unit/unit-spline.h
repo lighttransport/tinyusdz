@@ -8,3 +8,4 @@ void spline_interpolation_modes_test(void);
 void spline_extrapolation_modes_test(void);
 void spline_binary_types_test(void);
 void spline_openusd_crate_read_test(void);
+void spline_tangent_algorithm_crate_013_test(void);

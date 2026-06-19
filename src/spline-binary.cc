@@ -104,6 +104,17 @@ value::Value MakeTyped(int desc, double v) {
 
 }  // namespace
 
+uint8_t SplineBinaryFormatVersion(const SplineData &sd) {
+  // Version 2 is required as soon as any knot carries a non-None tangent
+  // algorithm (mirrors pxr Ts_BinaryDataAccess::GetBinaryFormatVersion).
+  for (const SplineKnotData &k : sd.knots) {
+    if (k.preTangentAlgorithm != 0 || k.postTangentAlgorithm != 0) {
+      return 2;
+    }
+  }
+  return 1;
+}
+
 bool EncodeSplineToBinary(const SplineData &sd, std::vector<uint8_t> *out,
                           std::string *err) {
   if (!out) return false;
@@ -111,7 +122,7 @@ bool EncodeSplineToBinary(const SplineData &sd, std::vector<uint8_t> *out,
 
   const int desc = DescriptorForKnots(sd);
   const bool hermite = (sd.curveType == 1);
-  const uint8_t version = 1;  // tinyusdz does not author tangent algorithms
+  const uint8_t version = SplineBinaryFormatVersion(sd);
 
   // Header byte 1.
   uint8_t h1 = static_cast<uint8_t>(
@@ -167,6 +178,15 @@ bool EncodeSplineToBinary(const SplineData &sd, std::vector<uint8_t> *out,
     }
     WrTyped(out, desc, k.preTangentSlope);
     WrTyped(out, desc, k.postTangentSlope);
+
+    if (version > 1) {
+      // algorithmByte: low nibble = pre, high nibble = post (matches
+      // pxr/base/ts/binary.cpp). Only present in spline binary version 2.
+      uint8_t algo = static_cast<uint8_t>(
+          (k.preTangentAlgorithm & 0x0f) |
+          ((k.postTangentAlgorithm & 0x0f) << 4));
+      Wr<uint8_t>(out, algo);
+    }
   }
 
   return true;
@@ -257,7 +277,8 @@ bool DecodeSplineFromBinary(const uint8_t *data, size_t size, SplineData *out,
     if (version > 1) {
       uint8_t algo = 0;
       if (!Rd<uint8_t>(&p, &remain, &algo)) return false;
-      // Tangent algorithms are not retained by tinyusdz' SplineData.
+      k.preTangentAlgorithm = algo & 0x0f;
+      k.postTangentAlgorithm = (algo >> 4) & 0x0f;
     }
 
     out->knots.push_back(k);

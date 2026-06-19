@@ -502,3 +502,88 @@ void spline_openusd_crate_read_test(void) {
     }
   }
 }
+
+void spline_tangent_algorithm_crate_013_test(void) {
+  // Direct codec check: a knot with a non-None tangent algorithm forces spline
+  // binary version 2 (extra per-knot algorithmByte), which is the sole trigger
+  // for crate version 0.13.0.
+  using SD = primvar::PrimVar::SplineData;
+  {
+    SD sd;
+    sd.curveType = 0;  // bezier
+    primvar::PrimVar::SplineKnotData k0;
+    k0.time = 0.0;
+    k0.val = value::Value(0.0f);
+    k0.postTangentAlgorithm = 2;  // AutoEase
+    sd.knots.push_back(k0);
+    primvar::PrimVar::SplineKnotData k1;
+    k1.time = 10.0;
+    k1.val = value::Value(10.0f);
+    k1.preTangentAlgorithm = 2;  // AutoEase
+    sd.knots.push_back(k1);
+
+    TEST_CHECK(SplineBinaryFormatVersion(sd) == 2);
+
+    std::vector<uint8_t> blob;
+    std::string e;
+    TEST_CHECK_(EncodeSplineToBinary(sd, &blob, &e), "encode failed: %s",
+                e.c_str());
+    // Header byte 1 low nibble = binary format version.
+    TEST_CHECK(!blob.empty());
+    TEST_CHECK_((blob[0] & 0x0f) == 2, "spline binary version = %d, want 2",
+                blob[0] & 0x0f);
+
+    SD decoded;
+    TEST_CHECK(DecodeSplineFromBinary(blob.data(), blob.size(), &decoded, &e));
+    TEST_CHECK(decoded.knots.size() == 2);
+    if (decoded.knots.size() == 2) {
+      TEST_CHECK(decoded.knots[0].postTangentAlgorithm == 2);
+      TEST_CHECK(decoded.knots[1].preTangentAlgorithm == 2);
+    }
+
+    // A plain spline (no algorithms) must stay version 1.
+    SD plain;
+    plain.knots.push_back(k0);
+    plain.knots[0].postTangentAlgorithm = 0;
+    TEST_CHECK(SplineBinaryFormatVersion(plain) == 1);
+  }
+
+  // End-to-end: USDA with an autoEase tangent must write a crate 0.13.0 file
+  // and round-trip the algorithm back through USDA.
+  const std::string usda =
+      "#usda 1.0\n"
+      "\n"
+      "def Xform \"W\"\n"
+      "{\n"
+      "    float bez.spline = {\n"
+      "        bezier,\n"
+      "        0: 0; post curve (3.333, 1, autoEase),\n"
+      "        10: 10; pre (3.333, 1, autoEase),\n"
+      "    }\n"
+      "}\n";
+
+  Stage stage;
+  TEST_CHECK(LoadStage(usda, &stage));
+
+  std::vector<uint8_t> usdc;
+  std::string w, e;
+  bool sret = tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
+  if (!sret) return;
+
+  // A spline tangent algorithm must bump the emitted crate version to >= 0.13.0.
+  TEST_CHECK(usdc.size() > 10);
+  TEST_CHECK_(usdc[9] >= 13, "crate version minor = %d, expected >= 13",
+              usdc[9]);
+
+  Stage stage2;
+  std::string w2, e2;
+  bool lret = tinyusdz::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+                                           &stage2, &w2, &e2);
+  TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
+  if (!lret) return;
+
+  // The decoded spline must retain the autoEase algorithm.
+  std::string exported = stage2.ExportToString();
+  TEST_CHECK(exported.find("autoEase") != std::string::npos);
+}
