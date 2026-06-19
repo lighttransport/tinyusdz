@@ -112,6 +112,9 @@ TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
 TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
 TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderVar);
 
+// UsdProc
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
+
 #undef TINYUSDZ_DEFINE_PLACEHOLDER_PRIM
 
 // `Scope` is uncommon in graphics community, its something like `Group`.
@@ -164,6 +167,7 @@ DEFINE_TYPE_TRAIT(Field3DAsset, "Field3DAsset", TYPE_ID_FIELD3D_ASSET, 1);
 DEFINE_TYPE_TRAIT(RenderSettings, "RenderSettings", TYPE_ID_RENDER_SETTINGS, 1);
 DEFINE_TYPE_TRAIT(RenderProduct, "RenderProduct", TYPE_ID_RENDER_PRODUCT, 1);
 DEFINE_TYPE_TRAIT(RenderVar, "RenderVar", TYPE_ID_RENDER_VAR, 1);
+DEFINE_TYPE_TRAIT(GenerativeProcedural, "GenerativeProcedural", TYPE_ID_GENERATIVE_PROCEDURAL, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

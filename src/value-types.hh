@@ -579,6 +579,11 @@ enum TypeId {
   TYPE_ID_RENDER_VAR,
   TYPE_ID_RENDER_END,
 
+  // Types for usdProc
+  TYPE_ID_PROC_BEGIN = (1 << 12) + 32,
+  TYPE_ID_GENERATIVE_PROCEDURAL,
+  TYPE_ID_PROC_END,
+
   // Types for usdSkel
   TYPE_ID_SKEL_BEGIN = 1 << 13,
   TYPE_ID_SKEL_ROOT,

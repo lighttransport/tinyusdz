@@ -1020,6 +1020,7 @@ static size_t EstimatePrimPropsMemory(const Prim &prim) {
   TRY_PROPS(RenderSettings)
   TRY_PROPS(RenderProduct)
   TRY_PROPS(RenderVar)
+  TRY_PROPS(GenerativeProcedural)
 
 #undef TRY_PROPS
 

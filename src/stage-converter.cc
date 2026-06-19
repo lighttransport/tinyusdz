@@ -87,6 +87,7 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(RenderSettings)
   GET_PRIM_PROPS(RenderProduct)
   GET_PRIM_PROPS(RenderVar)
+  GET_PRIM_PROPS(GenerativeProcedural)
   GET_PRIM_PROPS(Xform)
   GET_PRIM_PROPS(GPrim)
   GET_PRIM_PROPS(GeomMesh)

@@ -568,6 +568,7 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("RenderSettings");
   d.insert("RenderProduct");
   d.insert("RenderVar");
+  d.insert("GenerativeProcedural");
   d.insert("Material");
   d.insert("NodeGraph");
   d.insert("Shader");

@@ -30,3 +30,8 @@ def OpenVDBAsset "density"
     asset filePath = @density.vdb@
     token fieldName = "density"
 }
+
+def GenerativeProcedural "proc"
+{
+    token primvars:displayColor = "foo"
+}

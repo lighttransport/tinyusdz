@@ -46,6 +46,11 @@ static const char *kRenderVolUSDA =
     "\n"
     "def Field3DAsset \"f3d\"\n"
     "{\n"
+    "}\n"
+    "\n"
+    "def GenerativeProcedural \"proc\"\n"
+    "{\n"
+    "    token primvars:displayColor = \"foo\"\n"
     "}\n";
 
 static bool LoadUSDA(const std::string &usda, Stage *stage) {
@@ -69,10 +74,12 @@ static const Prim *FindRoot(const Stage &stage, const std::string &name) {
 // The 6 root prims are recognized as their concrete placeholder types (NOT the
 // generic Model fallback), and an authored property is retained.
 static void CheckTypes(const Stage &stage) {
-  TEST_CHECK_(stage.root_prims().size() == 6, "expected 6 root prims, got %zu",
+  TEST_CHECK_(stage.root_prims().size() == 7, "expected 7 root prims, got %zu",
               stage.root_prims().size());
 
   const Prim *settings = FindRoot(stage, "settings");
+  const Prim *proc = FindRoot(stage, "proc");
+  TEST_CHECK(proc && proc->as<GenerativeProcedural>() != nullptr);
   const Prim *product = FindRoot(stage, "product");
   const Prim *var = FindRoot(stage, "var");
   const Prim *vol = FindRoot(stage, "vol");
@@ -109,6 +116,7 @@ void render_vol_usda_roundtrip_test(void) {
   TEST_CHECK(exported.find("def Volume \"vol\"") != std::string::npos);
   TEST_CHECK(exported.find("def OpenVDBAsset \"density\"") != std::string::npos);
   TEST_CHECK(exported.find("def Field3DAsset \"f3d\"") != std::string::npos);
+  TEST_CHECK(exported.find("def GenerativeProcedural \"proc\"") != std::string::npos);
 
   Stage stage2;
   TEST_CHECK(LoadUSDA(exported, &stage2));
