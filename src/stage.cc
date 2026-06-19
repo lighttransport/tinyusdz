@@ -1013,6 +1013,14 @@ static size_t EstimatePrimPropsMemory(const Prim &prim) {
   TRY_PROPS(Model)
   TRY_PROPS(Scope)
 
+  // UsdVol / UsdRender placeholder prim types.
+  TRY_PROPS(Volume)
+  TRY_PROPS(OpenVDBAsset)
+  TRY_PROPS(Field3DAsset)
+  TRY_PROPS(RenderSettings)
+  TRY_PROPS(RenderProduct)
+  TRY_PROPS(RenderVar)
+
 #undef TRY_PROPS
 
   return 0;

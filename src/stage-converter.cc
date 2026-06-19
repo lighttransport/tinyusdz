@@ -81,6 +81,12 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
 
   GET_PRIM_PROPS(Model)
   GET_PRIM_PROPS(Scope)
+  GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(OpenVDBAsset)
+  GET_PRIM_PROPS(Field3DAsset)
+  GET_PRIM_PROPS(RenderSettings)
+  GET_PRIM_PROPS(RenderProduct)
+  GET_PRIM_PROPS(RenderVar)
   GET_PRIM_PROPS(Xform)
   GET_PRIM_PROPS(GPrim)
   GET_PRIM_PROPS(GeomMesh)
