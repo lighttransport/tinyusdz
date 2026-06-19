@@ -633,6 +633,7 @@ struct Options {
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  std::string env_file;            // --env <hdr>: IBL environment map override
 };
 
 float Dot(const Vec3 &a, const Vec3 &b) {
@@ -1001,6 +1002,13 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_mem_gib = g;
+    } else if (a == "-env" || a == "--env") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "Invalid -env (expected an environment-map path).\n";
+        return false;
+      }
+      opt->env_file = v;
     } else if (a == "-subdiv" || a == "--subdiv" ||
                a == "-subdivLevel" || a == "--subdivLevel" ||
                a == "-subdivisionLevel" || a == "--subdivisionLevel") {
@@ -3151,11 +3159,11 @@ void BuildBrdfLut(int size, IblCache *ibl) {
   }
 }
 
-bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
-                   IblCache *ibl) {
-  if (!ibl || !lights.has_dome) return false;
-  EnvImage env;
-  if (!DecodeTextureToEnvImage(scene, lights.dome.texture_id, &env)) {
+// Build the IBL pyramids (diffuse irradiance + prefiltered specular mips + BRDF
+// LUT) from a ready environment map. Shared by the legacy (tydra texture) and
+// next (file / dome light) paths.
+bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl) {
+  if (!ibl || env.width <= 0 || env.height <= 0 || env.pixels.empty()) {
     return false;
   }
   ibl->env = std::move(env);
@@ -3170,6 +3178,62 @@ bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
   }
   BuildBrdfLut(64, ibl);
   ibl->valid = true;
+  return true;
+}
+
+bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
+                   IblCache *ibl) {
+  if (!ibl || !lights.has_dome) return false;
+  EnvImage env;
+  if (!DecodeTextureToEnvImage(scene, lights.dome.texture_id, &env)) {
+    return false;
+  }
+  return BuildIblFromEnv(std::move(env), ibl);
+}
+
+// Load a lat-long environment map (HDR float, or 8-bit) from a file into an
+// EnvImage, scaled by `scale` (dome intensity * color). 8-bit is treated as
+// already-linear (matching DecodeTextureToEnvImage).
+bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
+                          EnvImage *out) {
+  auto res = tinyusdz::image::LoadImageFromFile(path);
+  if (!res) {
+    std::cerr << "WARN: failed to load environment map: " << path << "\n";
+    return false;
+  }
+  const tinyusdz::Image &img = res.value().image;
+  if (img.width <= 0 || img.height <= 0 || img.channels <= 0 ||
+      img.data.empty()) {
+    return false;
+  }
+  const size_t n = size_t(img.width) * size_t(img.height);
+  const size_t ch = size_t(img.channels);
+  EnvImage e;
+  e.width = img.width;
+  e.height = img.height;
+  e.pixels.resize(n);
+  if (img.format == tinyusdz::Image::PixelFormat::Float && img.bpp == 32) {
+    if (img.data.size() < n * ch * sizeof(float)) return false;
+    const float *src = reinterpret_cast<const float *>(img.data.data());
+    for (size_t i = 0; i < n; i++) {
+      const float *p = src + i * ch;
+      e.pixels[i] = Vec3{p[0] * scale.x, p[std::min<size_t>(1, ch - 1)] * scale.y,
+                         p[std::min<size_t>(2, ch - 1)] * scale.z};
+    }
+  } else if (img.bpp == 8) {
+    if (img.data.size() < n * ch) return false;
+    for (size_t i = 0; i < n; i++) {
+      const uint8_t *p = img.data.data() + i * ch;
+      e.pixels[i] =
+          Vec3{float(p[0]) / 255.0f * scale.x,
+               float(p[std::min<size_t>(1, ch - 1)]) / 255.0f * scale.y,
+               float(p[std::min<size_t>(2, ch - 1)]) / 255.0f * scale.z};
+    }
+  } else {
+    std::cerr << "WARN: unsupported environment-map format: " << path << "\n";
+    return false;
+  }
+  *out = std::move(e);
   return true;
 }
 
@@ -4733,6 +4797,7 @@ struct RenderContext {
   bool use_tlas{false};
   DirectScene direct;             // empty for the next path
   LightCache lights;              // empty -> camera-headlight fallback
+  IblCache ibl;                   // image-based lighting (--env / DomeLight)
   tinyusdz::Axis up_axis{tinyusdz::Axis::Y};
   CameraFrame camera;
   Options opt;  // mutable render parameters (width/height/ambient/bg/...)
@@ -5273,6 +5338,51 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
 }
 
 // Load the scene via next, then stream + build the BVH at the initial time.
+// First UsdLuxDomeLight in the composed stage (depth-first), or an invalid prim.
+tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim) {
+  if (prim.GetTypeName() == "DomeLight") return prim;
+  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren()) {
+    tinyusdz::next::UsdPrim r = FindDomeLightRec(c);
+    if (r.IsValid()) return r;
+  }
+  return tinyusdz::next::UsdPrim();
+}
+
+// Build the IBL cache from the --env override or a DomeLight; returns false (and
+// leaves ibl invalid) if there is no env, so the renderer falls back to the
+// headlight.
+bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
+                  const std::string &base_dir, IblCache *ibl) {
+  std::string env_path = opt.env_file;
+  Vec3 scale{1.0f, 1.0f, 1.0f};
+  if (env_path.empty()) {
+    for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+      tinyusdz::next::UsdPrim dome = FindDomeLightRec(root);
+      if (!dome.IsValid()) continue;
+      if (const tinyusdz::next::Value *v =
+              dome.GetPropertyValue("inputs:texture:file")) {
+        const std::string *ap = v->as_asset_path();
+        if (!ap) ap = v->as_string();
+        if (ap) env_path = *ap;
+      }
+      float intensity = 1.0f;
+      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
+        if (const float *f = v->as_float()) intensity = *f;
+      Vec3 color{1.0f, 1.0f, 1.0f};
+      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:color"))
+        if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+      scale = Vec3{color.x * intensity, color.y * intensity, color.z * intensity};
+      break;
+    }
+  }
+  if (env_path.empty()) return false;
+  std::string path = env_path;
+  if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
+  EnvImage env;
+  if (!LoadEnvImageFromFile(path, scale, &env)) return false;
+  return BuildIblFromEnv(std::move(env), ibl);
+}
+
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.opt = opt;
   ctx.width = opt.width > 0 ? opt.width : 960;
@@ -5318,6 +5428,15 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
                                : opt.timecode;
   if (!ExtractAndBuildBVH(ctx, init_time)) return false;
   ResolveCameraNext(ctx);
+
+  // Image-based lighting: an explicit --env override wins, else the first
+  // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
+  // BRDF (roughness/metallic) + env background; absent -> camera headlight.
+  BuildNextIbl(ctx.stage, opt, DirName(opt.input), &ctx.ibl);
+  if (opt.stats && ctx.ibl.valid) {
+    std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
+              << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
+  }
   return true;
 }
 
@@ -5328,8 +5447,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   ctx.opt.width = ctx.width;
   const auto t0 = std::chrono::steady_clock::now();
   tinyusdz::Image img = RenderImage(
-      ctx.scene, &ctx.direct, ctx.tris, ctx.lights, nullptr, ctx.camera,
-      ctx.opt, ctx.height,
+      ctx.scene, &ctx.direct, ctx.tris, ctx.lights,
+      ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
       ctx.use_tlas ? ctx.tlas : nullptr,
