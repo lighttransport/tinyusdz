@@ -465,6 +465,7 @@ enum TypeId {
 
   TYPE_ID_PATH,
   TYPE_ID_PATH_VECTOR,
+  TYPE_ID_RELOCATES,  // SdfRelocates: std::vector<std::pair<Path, Path>> (Crate type 58)
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
 

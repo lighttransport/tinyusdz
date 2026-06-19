@@ -891,6 +891,29 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
   }
+  // SdfRelocates (crate type 58) - uint64 count followed by (source, target)
+  // PathIndex pairs, matching OpenUSD's Write<vector<SdfRelocate>>. crate 0.11.0.
+  else if (auto* relocates_val =
+               value.as<std::vector<std::pair<Path, Path>>>()) {
+    RequestCrateVersionUpgrade(0, 11, 0);  // SdfRelocates requires crate 0.11.0
+    uint64_t count = relocates_val->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write relocates count";
+      return -1;
+    }
+    for (const auto& reloc : *relocates_val) {
+      crate::PathIndex src_idx = GetOrCreatePath(reloc.first);
+      crate::PathIndex tgt_idx = GetOrCreatePath(reloc.second);
+      if (!Write(src_idx.value)) {
+        if (err) *err = "Failed to write relocate source PathIndex";
+        return -1;
+      }
+      if (!Write(tgt_idx.value)) {
+        if (err) *err = "Failed to write relocate target PathIndex";
+        return -1;
+      }
+    }
+  }
   // Token array - special handling (tokens are stored as indices)
   else if (auto* token_array = value.as<std::vector<value::token>>()) {
     uint64_t count = token_array->size();

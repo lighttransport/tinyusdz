@@ -104,6 +104,7 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
           {CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP, "PayloadListOp"},
           {CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE, "TimeCode"},
           {CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION, "PathExpression"},
+          {CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES, "Relocates"},
           {CrateDataTypeId::CRATE_DATA_TYPE_SPLINE, "Spline"},
       });
 

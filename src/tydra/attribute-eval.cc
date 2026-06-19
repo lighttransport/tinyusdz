@@ -426,6 +426,17 @@ static bool QueryClipAttribute(
   return false;
 }
 
+// Forward declaration: resolve one attribute from a single clip set (defined
+// after EvaluateAttributeFromClipsImpl, which iterates over all clip sets).
+static bool ResolveAttrFromClipSet(
+    const Prim &prim,
+    const ClipSetMetadata &clipMeta,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp);
+
 bool EvaluateAttributeFromClipsImpl(
     const Prim &prim,
     const std::string &attr_name,
@@ -443,15 +454,39 @@ bool EvaluateAttributeFromClipsImpl(
     return false;
   }
 
-  // Parse full clip set metadata
-  ClipSetMetadata clipMeta;
-  if (!ParseClipSetMetadataFull(clips_dict, &clipMeta, err)) {
+  // AOUSD Core Spec 12.3.4.1.1: a prim may author multiple named clip sets.
+  // Parse every set, then consult them in order; the first set that resolves a
+  // value for this attribute at time `t` wins. This lets different sets supply
+  // different attributes (or cover different time ranges).
+  std::vector<ClipSetMetadata> clipSets;
+  if (!ParseAllClipSetMetadata(clips_dict, &clipSets, err)) {
     return false;
   }
 
-  if (clipMeta.assetPaths.empty()) {
-    return false;
+  for (const ClipSetMetadata &clipMeta : clipSets) {
+    if (clipMeta.assetPaths.empty()) {
+      continue;
+    }
+    if (ResolveAttrFromClipSet(prim, clipMeta, attr_name, value, err, t,
+                               tinterp)) {
+      return true;
+    }
   }
+
+  return false;
+}
+
+// Resolve `attr_name` at stage time `t` from a single clip set. Returns true if
+// a value was produced. Factored out of EvaluateAttributeFromClipsImpl so that
+// multiple clip sets can be tried in order.
+static bool ResolveAttrFromClipSet(
+    const Prim &prim,
+    const ClipSetMetadata &clipMeta,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp) {
 
   // AOUSD Core Spec 12.3.4.2: Manifest-based attribute discovery.
   // If a manifest is provided, verify the attribute exists before loading clips.
