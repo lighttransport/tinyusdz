@@ -152,6 +152,8 @@ TEST_LIST = {
   { "animation_block_crate_roundtrip_test", animation_block_crate_roundtrip_test },
   { "array_edit_crate_roundtrip_test", array_edit_crate_roundtrip_test },
   { "array_edit_identity_test", array_edit_identity_test },
+  { "array_edit_usda_roundtrip_test", array_edit_usda_roundtrip_test },
+  { "array_edit_usda_crate_roundtrip_test", array_edit_usda_crate_roundtrip_test },
   { "ioutil_test", ioutil_test },
   { "ioutil_asset_path_suffix_candidates_test", ioutil_asset_path_suffix_candidates_test },
   { "strutil_test", strutil_test },

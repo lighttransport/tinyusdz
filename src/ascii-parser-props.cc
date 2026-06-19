@@ -67,6 +67,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "array-edit.hh"  // value::ArrayEdit + op helpers
 
 namespace tinyusdz {
 
@@ -869,6 +870,182 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
 }
 
 template <typename T>
+bool AsciiParser::ParseArrayEditValue(std::vector<T> *literals,
+                                     std::vector<int64_t> *ops) {
+  if (!literals || !ops) return false;
+
+  // The `edit` keyword has already been consumed. Parse `[ <op>; ... ]`.
+  if (!SkipWhitespace()) return false;
+  if (!Expect('[')) {
+    PUSH_ERROR_AND_RETURN("Expected `[` after `edit`.");
+  }
+
+  // `[ <int64> ]`
+  auto parseIndex = [&](int64_t *idx) -> bool {
+    if (!SkipWhitespace()) return false;
+    if (!Expect('[')) return false;
+    if (!SkipWhitespace()) return false;
+    if (!ReadBasicType(idx)) return false;
+    if (!SkipWhitespace()) return false;
+    if (!Expect(']')) return false;
+    return true;
+  };
+
+  // Read a literal element of type T, append it, return its literal index.
+  auto addLiteral = [&](int64_t *out_idx) -> bool {
+    if (!SkipWhitespace()) return false;
+    T v;
+    if (!ReadBasicType(&v)) return false;
+    literals->push_back(v);
+    *out_idx = static_cast<int64_t>(literals->size()) - 1;
+    return true;
+  };
+
+  // Expect a bare keyword (`to` / `at`).
+  auto expectWord = [&](const char *w) -> bool {
+    if (!SkipWhitespace()) return false;
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    return kw == std::string(w);
+  };
+
+  // True iff the next non-whitespace char starts an index ref `[`.
+  auto nextIsIndex = [&]() -> bool {
+    if (!SkipWhitespace()) return false;
+    char c;
+    return LookChar1(&c) && (c == '[');
+  };
+
+  auto emit = [&](value::ArrayEditOp op, int64_t a1, bool hasA2, int64_t a2) {
+    ops->push_back(value::ArrayEditPackOpWord(op, 1));
+    ops->push_back(a1);
+    if (hasA2) ops->push_back(a2);
+  };
+
+  while (true) {
+    // Ops may span multiple lines and be separated by `;` and/or newlines.
+    if (!SkipCommentAndWhitespaceAndNewline(/* allow_semicolon */ true)) {
+      return false;
+    }
+    char c;
+    if (!LookChar1(&c)) {
+      PUSH_ERROR_AND_RETURN("Unexpected EOF in array edit value.");
+    }
+    if (c == ']') {
+      Char1(&c);
+      break;
+    }
+    if (c == ',') {  // optional comma separator
+      Char1(&c);
+      continue;
+    }
+
+    std::string kw;
+    if (!ReadIdentifier(&kw)) {
+      PUSH_ERROR_AND_RETURN("Expected array edit op keyword.");
+    }
+
+    if (kw == "write") {
+      if (nextIsIndex()) {
+        int64_t a1, a2;
+        if (!parseIndex(&a1)) return false;
+        if (!expectWord("to"))
+          PUSH_ERROR_AND_RETURN("Expected `to` in array edit `write`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::WriteRef, a1, true, a2);
+      } else {
+        int64_t li, a2;
+        if (!addLiteral(&li)) return false;
+        if (!expectWord("to"))
+          PUSH_ERROR_AND_RETURN("Expected `to` in array edit `write`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::WriteLiteral, li, true, a2);
+      }
+    } else if (kw == "insert") {
+      if (nextIsIndex()) {
+        int64_t a1, a2;
+        if (!parseIndex(&a1)) return false;
+        if (!expectWord("at"))
+          PUSH_ERROR_AND_RETURN("Expected `at` in array edit `insert`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, a2);
+      } else {
+        int64_t li, a2;
+        if (!addLiteral(&li)) return false;
+        if (!expectWord("at"))
+          PUSH_ERROR_AND_RETURN("Expected `at` in array edit `insert`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true, a2);
+      }
+    } else if (kw == "prepend") {
+      if (nextIsIndex()) {
+        int64_t a1;
+        if (!parseIndex(&a1)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, 0);
+      } else {
+        int64_t li;
+        if (!addLiteral(&li)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true, 0);
+      }
+    } else if (kw == "append") {
+      if (nextIsIndex()) {
+        int64_t a1;
+        if (!parseIndex(&a1)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, value::kArrayEditEndIndex);
+      } else {
+        int64_t li;
+        if (!addLiteral(&li)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true,
+             value::kArrayEditEndIndex);
+      }
+    } else if (kw == "erase") {
+      int64_t a1;
+      if (!parseIndex(&a1)) return false;
+      emit(value::ArrayEditOp::EraseRef, a1, false, 0);
+    } else if (kw == "minsize" || kw == "resize") {
+      if (!SkipWhitespace()) return false;
+      int64_t n;
+      if (!ReadBasicType(&n)) return false;
+      // Optional `fill <literal>`.
+      bool hasFill = false;
+      int64_t li = 0;
+      {
+        auto loc = CurrLoc();
+        char fc;
+        if (SkipWhitespace() && LookChar1(&fc) &&
+            std::isalpha(static_cast<unsigned char>(fc))) {
+          std::string fkw;
+          if (ReadIdentifier(&fkw) && (fkw == "fill")) {
+            if (!addLiteral(&li)) return false;
+            hasFill = true;
+          } else {
+            SeekTo(loc);
+          }
+        } else {
+          SeekTo(loc);
+        }
+      }
+      value::ArrayEditOp op =
+          (kw == "minsize")
+              ? (hasFill ? value::ArrayEditOp::MinSizeFill
+                         : value::ArrayEditOp::MinSize)
+              : (hasFill ? value::ArrayEditOp::SetSizeFill
+                         : value::ArrayEditOp::SetSize);
+      emit(op, n, hasFill, li);
+    } else if (kw == "maxsize") {
+      if (!SkipWhitespace()) return false;
+      int64_t n;
+      if (!ReadBasicType(&n)) return false;
+      emit(value::ArrayEditOp::MaxSize, n, false, 0);
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown array edit op: " + kw);
+    }
+  }
+
+  return true;
+}
+
+template <typename T>
 bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
                                      Attribute *out_attr) {
@@ -876,6 +1053,9 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   primvar::PrimVar var;
   bool blocked{false};
   bool anim_blocked{false};
+  bool array_edit{false};
+  std::vector<T> ae_literals;
+  std::vector<int64_t> ae_ops;
 
   // `AnimationBlock` is a sentinel keyword (like `None`) that may appear in
   // place of a typed value; it blocks animation while letting the default
@@ -884,6 +1064,14 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     anim_blocked = true;
   } else if (array_qual) {
     if (MaybeNone()) {
+    } else if (MaybeArrayEdit()) {
+      // VtArrayEdit value: `edit [ <op>; ... ]` (only for array-typed attrs).
+      if (!ParseArrayEditValue<T>(&ae_literals, &ae_ops)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to parse array edit value for `{}` (type {}[])",
+            primattr_name, std::string(value::TypeTraits<T>::type_name())));
+      }
+      array_edit = true;
     } else {
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
@@ -925,7 +1113,16 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   }
   attr.metas() = meta;
 
-  if (anim_blocked) {
+  if (array_edit) {
+    // VtArrayEdit value. The declared attribute type is the array element type
+    // (`int[]` etc.); the element crate type is derived from the literals at
+    // write time, so element_type_id is left unset here.
+    value::ArrayEdit aedit;
+    aedit.literals = value::Value(std::move(ae_literals));
+    aedit.ops = std::move(ae_ops);
+    attr.set_type_name(value::TypeTraits<T>::type_name() + std::string("[]"));
+    attr.set_value(std::move(aedit));
+  } else if (anim_blocked) {
     // AnimationBlock sentinel: carried as a normal default value (not a full
     // ValueBlock), so the declared type is retained.
     value::AnimationBlock animval;
