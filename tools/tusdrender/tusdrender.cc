@@ -525,6 +525,20 @@ struct Texture {
   }
 };
 
+// 2D UV transform (UsdTransform2d): out = Rotate(rotation) * (st * scale) +
+// translation. Baked into tri_uvs at build time (no per-hit cost).
+struct UvXform {
+  bool identity{true};
+  float rc{1.0f}, rs{0.0f};  // cos/sin(rotation)
+  float sx{1.0f}, sy{1.0f}, tx{0.0f}, ty{0.0f};
+  void apply(float *u, float *v) const {
+    if (identity) return;
+    float a = *u * sx, b = *v * sy;
+    *u = a * rc - b * rs + tx;
+    *v = a * rs + b * rc + ty;
+  }
+};
+
 struct PreviewLight {
   enum class Kind { Point, Distant, Sphere, Rect, Disk, Cylinder, Mesh, Dome };
   Kind kind{Kind::Point};
@@ -3625,6 +3639,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         const Texture &dt = (*textures)[size_t(lt.tex_id)];
         Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
                          : dt.sample(u, v, 0.0f);
+        t = Vec3{t.x * dt.scale.x + dt.bias.x, t.y * dt.scale.y + dt.bias.y,
+                 t.z * dt.scale.z + dt.bias.z};
         out->base_color = Vec3{lt.base_color.x * t.x, lt.base_color.y * t.y,
                                lt.base_color.z * t.z};
       }
@@ -3701,6 +3717,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
             Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
                                                kMaxAniso)
                              : dt.sample(u, v, 0.0f);
+            t = Vec3{t.x * dt.scale.x + dt.bias.x, t.y * dt.scale.y + dt.bias.y,
+                     t.z * dt.scale.z + dt.bias.z};
             hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
                                       hit_tri.base_color.y * t.y,
                                       hit_tri.base_color.z * t.z};
@@ -4001,7 +4019,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           uint32_t purpose_mask, double time,
                           const Vec3 &base_color, int32_t tex_id,
                           int32_t normal_tex_id, float roughness, float metallic,
-                          bool want_uvs,
+                          const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
                           bool purpose_cull = false) {
@@ -4129,6 +4147,10 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         auto uv0 = uv_at(cursor + 0, i0);
         auto uv1 = uv_at(cursor + size_t(k), i1);
         auto uv2 = uv_at(cursor + size_t(k + 1), i2);
+        // Bake the UsdTransform2d (if any) into the stored UVs.
+        uv_xform.apply(&uv0.first, &uv0.second);
+        uv_xform.apply(&uv1.first, &uv1.second);
+        uv_xform.apply(&uv2.first, &uv2.second);
         tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
                                          uv1.second, uv2.first, uv2.second});
       }
@@ -4152,6 +4174,7 @@ struct MeshJobNext {
   float roughness{0.55f};                // resolved inputs:roughness
   float metallic{0.0f};                  // resolved inputs:metallic
   int32_t normal_tex_id{-1};             // resolved tangent-space normal map
+  UvXform uv_xform;                      // UsdTransform2d on the st chain
 };
 
 // ---------------------------------------------------------------------------
@@ -4271,11 +4294,42 @@ WrapMode ParseWrapMode(const std::string &s) {
   return WrapMode::Repeat;  // "repeat"/"useMetadata"/default
 }
 
+// If a UsdUVTexture's inputs:st chain runs through a UsdTransform2d, read its
+// rotation (deg, CCW) / scale / translation. Otherwise returns identity.
+UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &uvtex) {
+  UvXform x;
+  tinyusdz::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
+  if (!st.IsValid()) return x;
+  const tinyusdz::next::Value *idv = st.GetPropertyValue("info:id");
+  const std::string *id = idv ? idv->as_token() : nullptr;
+  if (!id || *id != "UsdTransform2d") return x;
+  float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:rotation"))
+    if (const float *f = v->as_float()) rot = *f;
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:scale"))
+    if (const float *f = v->as_float2()) { sx = f[0]; sy = f[1]; }
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:translation"))
+    if (const float *f = v->as_float2()) { tx = f[0]; ty = f[1]; }
+  if (rot == 0.0f && sx == 1.0f && sy == 1.0f && tx == 0.0f && ty == 0.0f) {
+    return x;  // identity
+  }
+  float rad = rot * 3.14159265358979f / 180.0f;
+  x.rc = std::cos(rad);
+  x.rs = std::sin(rad);
+  x.sx = sx;
+  x.sy = sy;
+  x.tx = tx;
+  x.ty = ty;
+  x.identity = false;
+  return x;
+}
+
 void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              const tinyusdz::next::UsdPrim &mesh,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
-                             int32_t *normal_tex_id) {
+                             int32_t *normal_tex_id, UvXform *uv_xform) {
   const std::vector<tinyusdz::next::Path> *bind =
       mesh.GetRelationship("material:binding");
   if (!bind || bind->empty()) return;
@@ -4321,12 +4375,19 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                 tex.GetPropertyValue("inputs:sourceColorSpace")) {
           if (const std::string *t = v->as_token()) srgb = (*t != "raw");
         }
-        int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb);
+        // inputs:scale/bias tint the sampled color (default identity).
+        Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale"))
+          if (const float *f = v->as_float3()) sc = Vec3{f[0], f[1], f[2]};
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias"))
+          if (const float *f = v->as_float3()) bi = Vec3{f[0], f[1], f[2]};
+        int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb, sc, bi);
         if (id >= 0) {
           *tex_id = id;
           // A textured surface tints by the texture, not the (often unauthored)
           // diffuseColor constant. Use white so sampling shows true texels.
           *base_color = Vec3{1.0f, 1.0f, 1.0f};
+          if (uv_xform) *uv_xform = ResolveUvXform(stage, tex);
         }
       }
     }
@@ -4353,7 +4414,11 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
           if (const float *f = v->as_float3()) bias = Vec3{f[0], f[1], f[2]};
         int32_t id =
             LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false, scale, bias);
-        if (id >= 0) *normal_tex_id = id;
+        if (id >= 0) {
+          *normal_tex_id = id;
+          if (uv_xform && uv_xform->identity)
+            *uv_xform = ResolveUvXform(stage, ntex);
+        }
       }
     }
   }
@@ -4826,7 +4891,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         R &r = results[i];
         AddRTPreviewMeshNext(job.prim, job.world, job.purpose, purpose_mask, time,
                              job.base_color, job.tex_id, job.normal_tex_id,
-                             job.roughness, job.metallic, want_uvs, &r.v, &r.t,
+                             job.roughness, job.metallic, job.uv_xform, want_uvs,
+                             &r.v, &r.t,
                              &r.uv, &r.b, &r.s, purpose_cull);
       }
     } catch (const std::bad_alloc &) {
@@ -4955,7 +5021,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                                 &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id);
+                                &job.normal_tex_id, &job.uv_xform);
       }
     }
     const bool want_uvs = !ctx.textures.empty();
@@ -5018,13 +5084,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                               &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id);
+                                &job.normal_tex_id, &job.uv_xform);
     }
     for (std::vector<MeshJobNext> &pj : proto_jobs) {
       for (MeshJobNext &job : pj) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
                                 &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id);
+                                &job.normal_tex_id, &job.uv_xform);
       }
     }
   }
