@@ -15,6 +15,7 @@
 #include "unit-animation-block.h"
 #include "unit-array-edit.h"
 #include "unit-render-vol.h"
+#include "unit-namespace-edit.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
 #include "unit-customdata.h"
@@ -157,6 +158,10 @@ TEST_LIST = {
   { "array_edit_usda_crate_roundtrip_test", array_edit_usda_crate_roundtrip_test },
   { "render_vol_usda_roundtrip_test", render_vol_usda_roundtrip_test },
   { "render_vol_crate_roundtrip_test", render_vol_crate_roundtrip_test },
+  { "namespace_edit_rename_test", namespace_edit_rename_test },
+  { "namespace_edit_remove_test", namespace_edit_remove_test },
+  { "namespace_edit_reparent_test", namespace_edit_reparent_test },
+  { "namespace_edit_errors_test", namespace_edit_errors_test },
   { "ioutil_test", ioutil_test },
   { "ioutil_asset_path_suffix_candidates_test", ioutil_asset_path_suffix_candidates_test },
   { "strutil_test", strutil_test },
