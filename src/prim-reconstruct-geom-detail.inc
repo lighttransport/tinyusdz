@@ -186,6 +186,16 @@ namespace {
         coll_instance.excludes = prop.second.get_relationship();
         table.insert(prop.first);
 
+      } else if (names[1] == "membershipExpression") {
+
+        TypedAttribute<value::PathExpression> membershipExpression;
+        PARSE_TYPED_ATTRIBUTE_NOCONTINUE(table, prop, prop.first, CollectionInstance, membershipExpression)
+
+        if (table.count(prop.first)) {
+          CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+          coll_instance.membershipExpression = membershipExpression;
+        }
+
       }
     }
   }

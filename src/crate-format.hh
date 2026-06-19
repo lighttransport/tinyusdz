@@ -116,6 +116,12 @@ enum class CrateDataTypeId {
   CRATE_DATA_TYPE_PAYLOAD_LIST_OP = 55,
   CRATE_DATA_TYPE_TIME_CODE = 56,
 
+  // Added in newer crate versions. See <pxrUSD>/pxr/usd/sdf/crateDataTypes.h
+  CRATE_DATA_TYPE_PATH_EXPRESSION = 57, // SdfPathExpression (crate >= 0.10.0)
+  // 58 = Relocates (SdfRelocates) -- reserved, not yet implemented
+  CRATE_DATA_TYPE_SPLINE = 59, // TsSpline (crate >= 0.12.0)
+  // 60 = AnimationBlock (SdfAnimationBlock) -- reserved, not yet implemented
+
   NumDataTypes // terminator
 };
 

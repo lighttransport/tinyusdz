@@ -22,6 +22,8 @@
 
 #include "common-macros.inc"
 #include "safe-arithmetic.hh"
+#include "primvar.hh"
+#include "spline-binary.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -116,10 +118,12 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(value::token)
   CONVERT_CRATE_VALUE(std::string)
   CONVERT_CRATE_VALUE(value::AssetPath)
+  CONVERT_CRATE_VALUE(value::PathExpression)
   // Token/String/AssetPath arrays
   CONVERT_CRATE_VALUE(std::vector<value::token>)
   CONVERT_CRATE_VALUE(std::vector<std::string>)
   CONVERT_CRATE_VALUE(std::vector<value::AssetPath>)
+  CONVERT_CRATE_VALUE(std::vector<value::PathExpression>)
   // Half-vec / matrix / quaternion scalars
   CONVERT_CRATE_VALUE(value::half2)
   CONVERT_CRATE_VALUE(value::half3)
@@ -856,6 +860,33 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       crate::StringIndex idx = GetOrCreateString(ap.GetAssetPath());
       if (!Write(idx.value)) {
         if (err) *err = "Failed to write asset[] element index";
+        return -1;
+      }
+    }
+  }
+  // Scalar PathExpression - a single StringIndex at this offset (non-inlined),
+  // matching OpenUSD's Write(GetText()). The reader decodes via GetStringToken.
+  else if (auto* expr_scalar = value.as<value::PathExpression>()) {
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
+    crate::StringIndex idx = GetOrCreateString(expr_scalar->GetText());
+    if (!Write(idx.value)) {
+      if (err) *err = "Failed to write pathExpression StringIndex";
+      return -1;
+    }
+  }
+  // PathExpression array - StringIndex elements (same encoding as AssetPath
+  // arrays; the reader decodes via GetStringToken).
+  else if (auto* expr_array = value.as<std::vector<value::PathExpression>>()) {
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
+    uint64_t count = expr_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write pathExpression[] count";
+      return -1;
+    }
+    for (const auto& pe : *expr_array) {
+      crate::StringIndex idx = GetOrCreateString(pe.GetText());
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write pathExpression[] element index";
         return -1;
       }
     }
@@ -1767,6 +1798,34 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
 
     // Update value_data_end_offset_ to include all TimeSamples data
+    value_data_end_offset_ = Tell();
+  }
+  // Spline (TsSpline, Crate type 59): Write<vector<uint8_t>>(blob) followed by
+  // WriteMap(customData). Written sequentially at the current value offset.
+  else if (auto* spline_val = value.as<primvar::PrimVar::SplineData>()) {
+    std::vector<uint8_t> blob;
+    std::string serr;
+    if (!EncodeSplineToBinary(*spline_val, &blob, &serr)) {
+      if (err) *err = "Failed to encode spline: " + serr;
+      return -1;
+    }
+    const uint64_t blobSize = static_cast<uint64_t>(blob.size());
+    if (!Write(blobSize)) {
+      if (err) *err = "Failed to write spline blob size";
+      return -1;
+    }
+    if (blobSize > 0) {
+      if (!WriteBytes(blob.data(), blob.size())) {
+        if (err) *err = "Failed to write spline blob";
+        return -1;
+      }
+    }
+    // Empty per-knot customData map.
+    const uint64_t customDataCount = 0;
+    if (!Write(customDataCount)) {
+      if (err) *err = "Failed to write spline customData count";
+      return -1;
+    }
     value_data_end_offset_ = Tell();
   }
   // Integer ListOps are handled above (IntListOp, UIntListOp, Int64ListOp, UInt64ListOp)

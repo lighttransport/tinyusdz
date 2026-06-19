@@ -103,6 +103,8 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
            "UnregisteredValueListOp"},
           {CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP, "PayloadListOp"},
           {CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE, "TimeCode"},
+          {CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION, "PathExpression"},
+          {CrateDataTypeId::CRATE_DATA_TYPE_SPLINE, "Spline"},
       });
 
   // List up `supports array` type.
@@ -147,6 +149,8 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
           {CrateDataTypeId::CRATE_DATA_TYPE_VEC4H, true},
           {CrateDataTypeId::CRATE_DATA_TYPE_VEC4I, true},
           {CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE, true},
+          // SdfPathExpression supports arrays; TsSpline (59) does not.
+          {CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION, true},
       });
 
   if (type_id < 0) {
