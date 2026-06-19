@@ -106,6 +106,7 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
           {CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION, "PathExpression"},
           {CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES, "Relocates"},
           {CrateDataTypeId::CRATE_DATA_TYPE_SPLINE, "Spline"},
+          {CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK, "AnimationBlock"},
       });
 
   // List up `supports array` type.

@@ -120,7 +120,7 @@ enum class CrateDataTypeId {
   CRATE_DATA_TYPE_PATH_EXPRESSION = 57, // SdfPathExpression (crate >= 0.10.0)
   CRATE_DATA_TYPE_RELOCATES = 58, // SdfRelocates (crate >= 0.11.0)
   CRATE_DATA_TYPE_SPLINE = 59, // TsSpline (crate >= 0.12.0)
-  // 60 = AnimationBlock (SdfAnimationBlock) -- reserved, not yet implemented
+  CRATE_DATA_TYPE_ANIMATION_BLOCK = 60, // SdfAnimationBlock (no version bump)
 
   NumDataTypes // terminator
 };

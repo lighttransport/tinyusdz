@@ -317,6 +317,16 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
+  // Try to get as AnimationBlock (SdfAnimationBlock, Crate type 60). Like
+  // ValueBlock, it is an inline type tag with no payload and requires no crate
+  // version bump (OpenUSD does not bump for it).
+  if (value.as<value::AnimationBlock>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK));
+    rep->SetIsInlined();
+    rep->SetPayload(0);  // AnimationBlock has no payload data
+    return true;
+  }
+
   // Try to get as uchar
   if (auto* uchar_val = value.as<uint8_t>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR));

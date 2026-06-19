@@ -1589,6 +1589,13 @@ bool CrateWriter::ConvertValue(
 ) {
   std::string type_name = val.type_name();
 
+  // AnimationBlock (SdfAnimationBlock): an inline type tag carried as a normal
+  // default value. Emitted as Crate type 60 by the inline value packer.
+  if (type_name == "AnimationBlock") {
+    out.Set(value::AnimationBlock());
+    return true;
+  }
+
   // Scalar types
   if (type_name == "bool") {
     if (auto v = val.get_value<bool>()) {
