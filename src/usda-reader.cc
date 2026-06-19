@@ -1033,6 +1033,14 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Scope>();
 
+  // UsdVol / UsdRender placeholder prim types.
+  RegisterReconstructCallback<Volume>();
+  RegisterReconstructCallback<OpenVDBAsset>();
+  RegisterReconstructCallback<Field3DAsset>();
+  RegisterReconstructCallback<RenderSettings>();
+  RegisterReconstructCallback<RenderProduct>();
+  RegisterReconstructCallback<RenderVar>();
+
   RegisterReconstructCallback<SphereLight>();
   RegisterReconstructCallback<DomeLight>();
   RegisterReconstructCallback<DiskLight>();
