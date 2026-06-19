@@ -16,6 +16,7 @@ set(TEST_SOURCES
 	unit-animation-block.cc
 	unit-array-edit.cc
 	unit-render-vol.cc
+	unit-namespace-edit.cc
 	unit-pprint.cc
 	unit-strutil.cc
 	unit-value-types.cc
