@@ -7738,6 +7738,89 @@ lrt_tri_scene *lrt_tri_scene_build(const float *vertices, size_t ntris,
     return tri_scene_build_impl(vertices, ntris, opts, NULL, err);
 }
 
+/* Batch build: build many independent scenes, parallelizing ACROSS scenes. This
+ * is the efficient path for two-level (TLAS) builds with many small BLAS — the
+ * intra-build parallel path only engages at >=4096 tris, so a fleet of small
+ * prototype BLAS would otherwise build one-at-a-time. Each scene is built
+ * single-threaded; the workers steal scenes one at a time (nchunks == n) so an
+ * uneven mix of prototype sizes still balances. out_scenes[i] is the built
+ * scene or NULL (empty input, i.e. vertices[i]==NULL or ntris[i]==0, or a build
+ * failure); errs[i] (optional) receives the per-scene result. */
+typedef struct lrt_batch_build_job {
+    const float *const *verts;
+    const size_t *ntris;
+    const lrt_tri_build_options *opts;
+    lrt_tri_scene **out;
+    lrt_result *errs;
+} lrt_batch_build_job;
+
+static void lrt_batch_build_one(void *arg, unsigned chunk, uint32_t begin,
+                                uint32_t end) {
+    lrt_batch_build_job *j = (lrt_batch_build_job *)arg;
+    uint32_t i;
+    (void)chunk;
+    for (i = begin; i < end; i++) {
+        lrt_result e = LRT_RESULT_OK;
+        lrt_tri_scene *s = NULL;
+        if (j->verts[i] && j->ntris[i] > 0) {
+            lrt_tri_build_options o;
+            if (j->opts)
+                o = *j->opts;
+            else
+                memset(&o, 0, sizeof(o));
+            o.num_threads = 1u; /* parallelism is across scenes, not within */
+            s = lrt_tri_scene_build(j->verts[i], j->ntris[i], &o, &e);
+        }
+        j->out[i] = s;
+        if (j->errs) j->errs[i] = e;
+    }
+}
+
+void lrt_tri_scene_build_batch(const float *const *vertices,
+                               const size_t *ntris, size_t n,
+                               const lrt_tri_build_options *opts,
+                               lrt_tri_scene **out_scenes, lrt_result *errs) {
+    size_t i;
+    lrt_batch_build_job job;
+    unsigned threads;
+    if (!out_scenes) return;
+    for (i = 0; i < n; i++) out_scenes[i] = NULL;
+    if (!vertices || !ntris || n == 0) return;
+
+    job.verts = vertices;
+    job.ntris = ntris;
+    job.opts = opts;
+    job.out = out_scenes;
+    job.errs = errs;
+    threads = (opts && opts->num_threads) ? opts->num_threads : 1u;
+
+#if !defined(__STDC_NO_THREADS__)
+    if (threads > 1u && n > 1u && n <= 0xFFFFFFFFu) {
+        /* One chunk per scene -> the worker loop steals scenes atomically. */
+        tri_pfor_job pjob;
+        thrd_t tids[TRI_PAR_MAX_THREADS];
+        unsigned spawned = 0u, k, nw = threads;
+        if (nw > TRI_PAR_MAX_THREADS) nw = TRI_PAR_MAX_THREADS;
+        if ((size_t)nw > n) nw = (unsigned)n;
+        pjob.fn = lrt_batch_build_one;
+        pjob.arg = &job;
+        pjob.n = (uint32_t)n;
+        pjob.nchunks = (uint32_t)n;
+        atomic_init(&pjob.next, 0u);
+        for (k = 0; k + 1u < nw; k++) {
+            if (thrd_create(&tids[k], tri_pfor_worker, &pjob) != thrd_success)
+                break;
+            spawned++;
+        }
+        tri_pfor_worker(&pjob); /* the calling thread participates */
+        for (k = 0; k < spawned; k++) thrd_join(tids[k], NULL);
+        return;
+    }
+#endif
+    (void)threads;
+    lrt_batch_build_one(&job, 0u, 0u, (uint32_t)n);
+}
+
 /* GPU-assisted build hook used by lightrt_c_vk.c (declared extern there; not in
  * the public header). Build a FAST (LBVH) triangle scene from caller-supplied
  * 30-bit Morton codes (morton[i] in [0, 2^30)) instead of encoding them on the
@@ -10594,7 +10677,12 @@ static int tlas_fill_instances(lrt_tlas *t, const lrt_instance *insts,
                                size_t ninsts) {
     for (size_t i = 0; i < ninsts; i++) {
         lrt_instance_int *in = &t->insts[i];
-        if (insts[i].blas_id >= t->nblas) return 1;
+        /* Reject an instance that references a missing (out-of-range or NULL)
+         * BLAS. NULL entries that no instance references are allowed: the build
+         * and traversal only ever touch t->blas[in->blas_id] for live
+         * instances, so callers may pass a sparse blas[] array (e.g. with empty
+         * prototype slots) without compacting + remapping it first. */
+        if (insts[i].blas_id >= t->nblas || !t->blas[insts[i].blas_id]) return 1;
         memcpy(in->obj2world, insts[i].obj2world, sizeof(in->obj2world));
         in->blas_id = insts[i].blas_id;
         in->instance_id = insts[i].instance_id;
@@ -10612,16 +10700,9 @@ lrt_tlas *lrt_tlas_build(lrt_tri_scene *const *blas, size_t nblas,
         tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
         return NULL;
     }
-    /* Validate BLAS pointers are non-NULL. */
-    {
-        size_t i;
-        for (i = 0; i < nblas; i++) {
-            if (!blas[i]) {
-                tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
-                return NULL;
-            }
-        }
-    }
+    /* Individual blas[] entries may be NULL as long as no instance references
+     * them (validated per-instance in tlas_fill_instances). This lets callers
+     * pass a sparse BLAS array without compacting it. */
     unsigned num_threads = (opts && opts->num_threads) ? opts->num_threads : 1u;
     lrt_tlas *t = (lrt_tlas *)calloc(1, sizeof(lrt_tlas));
     if (!t) {

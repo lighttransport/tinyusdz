@@ -88,6 +88,20 @@ lrt_tri_scene *lrt_tri_scene_build(const float *vertices, size_t ntris,
                                    const lrt_tri_build_options *opts,
                                    lrt_result *err);
 
+/* Build `n` independent scenes at once, parallelizing ACROSS scenes (each scene
+ * is built single-threaded; workers steal scenes one at a time). This is the
+ * efficient path for two-level/TLAS builds with many small BLAS, where the
+ * per-scene intra-build threading (engaged only at >=4096 tris) would leave a
+ * fleet of small prototype scenes building serially. vertices[i]/ntris[i]
+ * describe scene i exactly as for lrt_tri_scene_build; a NULL vertices[i] or
+ * zero ntris[i] yields out_scenes[i]=NULL (a permitted empty slot — see
+ * lrt_tlas_build). opts->num_threads bounds the worker count. out_scenes must
+ * have room for n entries; errs (optional) receives the n per-scene results. */
+void lrt_tri_scene_build_batch(const float *const *vertices,
+                               const size_t *ntris, size_t n,
+                               const lrt_tri_build_options *opts,
+                               lrt_tri_scene **out_scenes, lrt_result *errs);
+
 void lrt_tri_scene_free(lrt_tri_scene *s);
 
 /* Closest hit. Returns 1 and fills *hit on a hit; returns 0 on miss (hit, if
@@ -523,7 +537,10 @@ typedef struct lrt_tlas_hit {
     uint32_t inst_id; /* instance_id of the hit instance */
 } lrt_tlas_hit;
 
-/* Build a TLAS. Instances with a (near-)singular transform are skipped. */
+/* Build a TLAS. Instances with a (near-)singular transform are skipped.
+ * Entries of blas[] may be NULL as long as no instance references that index,
+ * so a sparse BLAS array (e.g. with empty prototype slots) can be passed without
+ * compacting + remapping it. */
 lrt_tlas *lrt_tlas_build(lrt_tri_scene *const *blas, size_t nblas,
                          const lrt_instance *insts, size_t ninsts,
                          const lrt_tri_build_options *opts, lrt_result *err);
