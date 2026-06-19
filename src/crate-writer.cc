@@ -35,6 +35,7 @@
 #include "lz4/lz4.h"
 
 #include "safe-arithmetic.hh"
+#include "spline-binary.hh"  // SplineBinaryFormatVersion
 
 // math::is_close — used for exact (eps == 0) floating-point comparison without
 // tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
@@ -1497,9 +1498,15 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES));
   }
   // Phase 3b: Spline (TsSpline, Crate type 59)
-  else if (value.as<primvar::PrimVar::SplineData>()) {
+  else if (auto* spline_data = value.as<primvar::PrimVar::SplineData>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE));
-    RequestCrateVersionUpgrade(0, 12, 0);  // TsSpline requires crate 0.12.0
+    // A spline with tangent algorithms (binary version 2) requires crate
+    // 0.13.0; a plain spline (version 1) only requires 0.12.0.
+    if (SplineBinaryFormatVersion(*spline_data) >= 2) {
+      RequestCrateVersionUpgrade(0, 13, 0);
+    } else {
+      RequestCrateVersionUpgrade(0, 12, 0);
+    }
   }
   // Phase 3c: scalar SdfPathExpression (Crate type 57). Non-inlined: stored as
   // a StringIndex at an offset (OpenUSD cannot decode an inlined PathExpression).

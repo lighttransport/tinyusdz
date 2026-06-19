@@ -140,6 +140,7 @@ TEST_LIST = {
   { "spline_extrapolation_modes_test", spline_extrapolation_modes_test },
   { "spline_binary_types_test", spline_binary_types_test },
   { "spline_openusd_crate_read_test", spline_openusd_crate_read_test },
+  { "spline_tangent_algorithm_crate_013_test", spline_tangent_algorithm_crate_013_test },
   { "relocates_usda_parse_test", relocates_usda_parse_test },
   { "relocates_usda_roundtrip_test", relocates_usda_roundtrip_test },
   { "relocates_crate_roundtrip_test", relocates_crate_roundtrip_test },

@@ -1120,11 +1120,22 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
        << tinyusdz::dtos(sd.loopValueOffset) << "),\n";
   }
 
-  auto tangent = [&](double width, double slope) -> std::string {
-    if (hermite) {
-      return "(" + tinyusdz::dtos(slope) + ")";
+  // A non-None tangent algorithm is emitted as a trailing keyword inside the
+  // tangent parens, e.g. `(2, 0, autoEase)` (crate 0.13.0 feature).
+  auto algoSuffix = [](int algo) -> std::string {
+    switch (algo) {
+      case 1: return ", custom";
+      case 2: return ", autoEase";
+      default: return "";  // None
     }
-    return "(" + tinyusdz::dtos(width) + ", " + tinyusdz::dtos(slope) + ")";
+  };
+
+  auto tangent = [&](double width, double slope, int algo) -> std::string {
+    if (hermite) {
+      return "(" + tinyusdz::dtos(slope) + algoSuffix(algo) + ")";
+    }
+    return "(" + tinyusdz::dtos(width) + ", " + tinyusdz::dtos(slope) +
+           algoSuffix(algo) + ")";
   };
 
   for (const auto &k : sd.knots) {
@@ -1134,9 +1145,11 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
     } else {
       ss << tinyusdz::dtos(num(k.val));
     }
-    // pre-tangent (only when authored)
-    if (k.preTangentWidth != 0.0 || k.preTangentSlope != 0.0) {
-      ss << "; pre " << tangent(k.preTangentWidth, k.preTangentSlope);
+    // pre-tangent (only when authored, including a non-None algorithm)
+    if (k.preTangentWidth != 0.0 || k.preTangentSlope != 0.0 ||
+        k.preTangentAlgorithm != 0) {
+      ss << "; pre "
+         << tangent(k.preTangentWidth, k.preTangentSlope, k.preTangentAlgorithm);
     }
     // next-segment interpolation
     switch (k.interpolationMode) {
@@ -1144,7 +1157,9 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
       case 1: ss << "; post held"; break;
       case 2: ss << "; post linear"; break;
       case 3:
-        ss << "; post curve " << tangent(k.postTangentWidth, k.postTangentSlope);
+        ss << "; post curve "
+           << tangent(k.postTangentWidth, k.postTangentSlope,
+                      k.postTangentAlgorithm);
         break;
       default: break;
     }
