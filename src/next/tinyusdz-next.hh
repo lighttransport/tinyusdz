@@ -89,6 +89,15 @@ constexpr const char* version_string = "0.1.0-dev";
 bool LoadUSD(const std::string& filename, Stage* stage,
              std::string* warn = nullptr, std::string* err = nullptr);
 
+/// Load a USD file and resolve composition arcs (sublayers / references /
+/// payloads / inherits / specializes / variants) in place, so the returned
+/// stage exposes the fully composed scene. External USDC layers are loaded
+/// lazily and anchored to `filename`'s directory. Self-contained / pre-flattened
+/// inputs skip composition entirely (identical to LoadUSD). USDA/USDZ external
+/// dependencies are not yet supported by the next loader.
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     std::string* warn = nullptr, std::string* err = nullptr);
+
 /// Load USDA (ASCII) file
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn = nullptr, std::string* err = nullptr);

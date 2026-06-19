@@ -4,8 +4,12 @@
 // TinyUSDZ Next - High-level API Implementation
 
 #include "tinyusdz-next.hh"
+#include "composition/composition.hh"
+#include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
+#include "resolver/asset-resolver.hh"
 #include <fstream>
+#include <cstdlib>
 #include <cstring>
 
 namespace tinyusdz {
@@ -195,6 +199,86 @@ bool LoadUSD(const std::string& filename, Stage* stage,
       if (err) *err = "Unknown file format";
       return false;
   }
+}
+
+namespace {
+
+// True if the root layer carries any composition arc the compositor must
+// resolve: sublayers, or per-prim references/payloads/inherits/specializes/
+// variants. A self-contained layer flattens to itself, so composing it is pure
+// overhead (and must be skipped to preserve the lazy single-file fast path).
+bool RootNeedsComposition(const Layer& root) {
+  if (!root.meta().subLayers.empty()) return true;
+  for (const PrimSpec& prim : root.prims()) {
+    if (HasCompositionArcs(prim)) return true;
+  }
+  return false;
+}
+
+std::string DirOfPath(const std::string& path) {
+  size_t slash = path.find_last_of("/\\");
+  if (slash == std::string::npos) return ".";
+  return path.substr(0, slash);
+}
+
+}  // namespace
+
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     std::string* warn, std::string* err) {
+  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
+  if (!LoadUSD(filename, stage, warn, err)) {
+    return false;
+  }
+  Layer* root = stage->GetRootLayer();
+  if (!root || !RootNeedsComposition(*root)) {
+    // No external/internal arcs to resolve — keep the lazy stage as-is. This is
+    // the byte-identical fast path for pre-flattened / self-contained scenes.
+    return true;
+  }
+
+  // The root has composition arcs. Resolve them through the full PCP composition
+  // engine (sublayers + references + payloads + inherits/specializes + variants
+  // + relocates + instancing), anchored to the input file's directory. External
+  // USDC layers load lazily.
+  //
+  // Keep NATIVE instancing (detect_instances=true, the default): each prototype
+  // group's geometry is stored ONCE (the prototype member holds the subtree;
+  // sibling instances carry instance_prototype meta and emit empty). Consumers
+  // traverse instances transparently via UsdPrim::GetChildren(), which follows
+  // instance_prototype to the prototype's children — so tusdrender expands every
+  // instance into the flat triangle/BVH stream at its own world transform while
+  // the composed STAGE keeps just one copy per prototype. (Inline expansion via
+  // detect_instances=false instead duplicates every instance's geometry into the
+  // stage and OOMs on large scenes like Caldera beachhead/capital.)
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(DirOfPath(filename));
+
+  pcp::CompositionOptions copts;
+  copts.load_payloads = true;
+  // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
+  // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
+  if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
+  if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
+    int n = std::atoi(ct);
+    if (n > 1) copts.num_threads = n;
+  }
+
+  Stage composed;
+  std::string cwarn, cerr;
+  if (!pcp::ComposeStageFromFile(filename, resolver, &composed, copts, &cwarn,
+                                 &cerr)) {
+    if (err) {
+      *err = "composition failed for " + filename +
+             (cerr.empty() ? "" : ": " + cerr);
+    }
+    return false;
+  }
+  if (warn) {
+    if (!cwarn.empty()) *warn += cwarn + (cwarn.back() == '\n' ? "" : "\n");
+    if (!cerr.empty()) *warn += cerr + (cerr.back() == '\n' ? "" : "\n");
+  }
+  *stage = std::move(composed);
+  return true;
 }
 
 bool LoadUSDA(const std::string& filename, Stage* stage,
