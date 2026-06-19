@@ -22,6 +22,9 @@
 #include "types/value.hh"
 #include "types/interpolation.hh"
 
+// PCP composition options (for --variant support)
+#include "pcp/prim-index.hh"
+
 // Prim types
 #include "prim/path.hh"
 #include "prim/attribute.hh"
@@ -95,8 +98,12 @@ bool LoadUSD(const std::string& filename, Stage* stage,
 /// lazily and anchored to `filename`'s directory. Self-contained / pre-flattened
 /// inputs skip composition entirely (identical to LoadUSD). USDA/USDZ external
 /// dependencies are not yet supported by the next loader.
+/// @param comp_opts Optional composition options (populated with defaults if
+///                  null). variant_overrides in comp_opts are applied after
+///                  authored variant selections.
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
-                     std::string* warn = nullptr, std::string* err = nullptr);
+                     std::string* warn = nullptr, std::string* err = nullptr,
+                     const pcp::CompositionOptions* comp_opts = nullptr);
 
 /// Load USDA (ASCII) file
 bool LoadUSDA(const std::string& filename, Stage* stage,

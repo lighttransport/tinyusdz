@@ -86,3 +86,23 @@ target_include_directories(tusdrender PRIVATE
 if(TINYUSDZ_WITH_QJS)
   target_compile_definitions(tusdrender PRIVATE TINYUSDZ_WITH_QJS)
 endif()
+
+# --- LightRT Vulkan backend (optional, runtime-loaded via vkew) -------------
+option(TUSDRENDER_WITH_VULKAN "Build the Vulkan GPU-interop backend" ON)
+if(TUSDRENDER_WITH_VULKAN)
+  set(LIGHTRT_VK_SRC ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+  add_library(lightrt_c_vk STATIC
+    ${LIGHTRT_VK_SRC}/lightrt_c_vk.c
+    ${LIGHTRT_VK_SRC}/lightrt_c_vk.h
+    ${LIGHTRT_VK_SRC}/lightrt_vkew.c
+    ${LIGHTRT_VK_SRC}/lightrt_vkew.h)
+  target_include_directories(lightrt_c_vk PUBLIC ${LIGHTRT_VK_SRC})
+  target_compile_definitions(lightrt_c_vk PRIVATE VKEW_IMPLEMENTATION)
+  target_link_libraries(lightrt_c_vk ${CMAKE_DL_LIBS})
+  set_target_properties(lightrt_c_vk PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+
+  target_sources(tusdrender PRIVATE ${LIGHTRT_VK_SRC}/lightrt_c_vk.c
+                                    ${LIGHTRT_VK_SRC}/lightrt_vkew.c)
+  target_compile_definitions(tusdrender PRIVATE HAVE_VULKAN=1)
+  target_include_directories(tusdrender PRIVATE ${LIGHTRT_VK_SRC})
+endif()

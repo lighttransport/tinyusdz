@@ -21,6 +21,7 @@
 
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -130,6 +131,13 @@ struct CompositionOptions {
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
+
+  /// Variant selection overrides: map of variantSet -> variantName. Overrides
+  /// any authored variantSelection on the same set (stronger than authored).
+  /// Empty by default (use authored selections as-is). Example:
+  ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
+  ///   defines a "districtLod" variantSet.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the
