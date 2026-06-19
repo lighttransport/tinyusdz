@@ -977,6 +977,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     litCv.get_raw() = ae->literals;
     crate::ValueRep valuesRep = PackValue(litCv, err);
     if (err && !err->empty()) return -1;
+    // The literals array's ValueRep carries the element type (set even for an
+    // empty typed array), so the array-edit rep can adopt it.
+    last_array_edit_elem_type_ = valuesRep.GetType();
 
     // Op stream: a VtInt64Array (Vt_ArrayEditOps `_ins`).
     crate::CrateValue idxCv;

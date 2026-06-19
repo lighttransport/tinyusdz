@@ -147,3 +147,117 @@ void array_edit_identity_test(void) {
   TEST_CHECK(got.value().is_identity());
   TEST_CHECK(got.value().element_type_id == ae.element_type_id);
 }
+
+static const char* kArrayEditUSDA =
+    "#usda 1.0\n"
+    "\n"
+    "def Xform \"W\"\n"
+    "{\n"
+    "    custom int[] iattr = edit [\n"
+    "        write 123 to [0]\n"
+    "        append 234\n"
+    "        prepend 99\n"
+    "        erase [1]\n"
+    "        resize 8 fill 7\n"
+    "    ]\n"
+    "}\n";
+
+static bool LoadAE(const std::string& usda, Stage* stage) {
+  std::string warn, err;
+  bool ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
+                              usda.size(), "mem.usda", stage, &warn, &err);
+  if (!ok) TEST_MSG("USDA parse failed: %s", err.c_str());
+  return ok;
+}
+
+// Verify the parsed op stream for kArrayEditUSDA: write/append/prepend/erase/
+// resize-fill, with literals [123, 234, 99, 7].
+static void CheckParsedEdit(const Stage& stage) {
+  const Xform* xf = stage.root_prims().empty()
+                        ? nullptr
+                        : stage.root_prims()[0].as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (!xf) return;
+  auto it = xf->props.find("iattr");
+  TEST_CHECK(it != xf->props.end());
+  if (it == xf->props.end()) return;
+  auto got = it->second.get_attribute().get_value<value::ArrayEdit>();
+  TEST_CHECK_(bool(got), "iattr is not a value::ArrayEdit");
+  if (!got) return;
+
+  // Literals collected in encounter order: 123, 234, 99, 7.
+  auto lits = got.value().literals.as<std::vector<int32_t>>();
+  TEST_CHECK_(lits != nullptr, "literals not int[]");
+  if (lits) {
+    TEST_CHECK(lits->size() == 4);
+    if (lits->size() == 4) {
+      TEST_CHECK((*lits)[0] == 123 && (*lits)[1] == 234 && (*lits)[2] == 99 &&
+                 (*lits)[3] == 7);
+    }
+  }
+
+  // Decode the op stream and check the op sequence.
+  const auto& ins = got.value().ops;
+  std::vector<value::ArrayEditOp> ops_seq;
+  size_t i = 0;
+  while (i < ins.size()) {
+    value::ArrayEditOp op = value::ArrayEditWordOp(ins[i]);
+    int64_t cnt = value::ArrayEditWordCount(ins[i]);
+    ++i;
+    int arity = value::ArrayEditOpArity(op);
+    for (int64_t c = 0; c < cnt; c++) {
+      ops_seq.push_back(op);
+      i += static_cast<size_t>(arity);
+    }
+  }
+  TEST_CHECK(ops_seq.size() == 5);
+  if (ops_seq.size() == 5) {
+    TEST_CHECK(ops_seq[0] == value::ArrayEditOp::WriteLiteral);
+    TEST_CHECK(ops_seq[1] == value::ArrayEditOp::InsertLiteral);  // append
+    TEST_CHECK(ops_seq[2] == value::ArrayEditOp::InsertLiteral);  // prepend
+    TEST_CHECK(ops_seq[3] == value::ArrayEditOp::EraseRef);
+    TEST_CHECK(ops_seq[4] == value::ArrayEditOp::SetSizeFill);
+  }
+}
+
+void array_edit_usda_roundtrip_test(void) {
+  // Parse -> export USDA -> re-parse; the edit (and its op stream) must survive.
+  Stage stage;
+  TEST_CHECK(LoadAE(kArrayEditUSDA, &stage));
+  CheckParsedEdit(stage);
+
+  std::string exported = stage.ExportToString();
+  TEST_CHECK(exported.find("edit [") != std::string::npos);
+  TEST_CHECK(exported.find("write 123 to [0]") != std::string::npos);
+  TEST_CHECK(exported.find("append 234") != std::string::npos);
+  TEST_CHECK(exported.find("prepend 99") != std::string::npos);
+  TEST_CHECK(exported.find("erase [1]") != std::string::npos);
+  TEST_CHECK(exported.find("resize 8 fill 7") != std::string::npos);
+
+  Stage stage2;
+  TEST_CHECK(LoadAE(exported, &stage2));
+  CheckParsedEdit(stage2);
+}
+
+void array_edit_usda_crate_roundtrip_test(void) {
+  // Parse USDA -> save USDC (0.14.0) -> reload -> re-export; edit survives.
+  Stage stage;
+  TEST_CHECK(LoadAE(kArrayEditUSDA, &stage));
+
+  std::vector<uint8_t> usdc;
+  std::string w, e;
+  bool sret = usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
+  if (!sret) return;
+  TEST_CHECK(usdc.size() > 10);
+  TEST_CHECK_(usdc[9] >= 14, "crate version minor = %d, expected >= 14",
+              usdc[9]);
+
+  Stage stage2;
+  std::string w2, e2;
+  bool lret = LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc", &stage2,
+                                 &w2, &e2);
+  TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
+  if (!lret) return;
+  CheckParsedEdit(stage2);
+}

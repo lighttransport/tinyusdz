@@ -1,0 +1,17 @@
+#usda 1.0
+
+def Xform "W"
+{
+    custom int[] iattr = edit [
+        write 123 to [0]
+        append 234
+        prepend 99
+        erase [1]
+        resize 8 fill 7
+    ]
+    custom string[] sattr = edit [
+        minsize 4
+        append "hello"
+        write "world" to [2]
+    ]
+}

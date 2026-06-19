@@ -1341,6 +1341,25 @@ bool AsciiParser::MaybeAnimationBlock() {
   return false;
 }
 
+// Consume and return true iff the upcoming token is the `edit` keyword (the
+// start of a VtArrayEdit value: `edit [ ... ]`).
+bool AsciiParser::MaybeArrayEdit() {
+  auto loc = CurrLoc();
+
+  std::string tok;
+  if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (tok == "edit") {
+    return true;  // consumed
+  }
+
+  SeekTo(loc);
+  return false;
+}
+
 bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;
