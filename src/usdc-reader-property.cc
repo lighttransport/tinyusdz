@@ -161,6 +161,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   bool isValueBlock{false};
   bool hasDefault{false};
   bool hasTimeSamples{false};
+  bool hasSpline{false};
   bool hasConnectionPaths{false};
 
   // for relationship
@@ -300,6 +301,16 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
+      }
+    } else if (fv.first == "spline") {
+      // Crate type-59 spline, decoded to a SplineData carrier by the value
+      // reader (see crate-reader-values.cc).
+      if (const primvar::PrimVar::SplineData *sp =
+              fv.second.as<primvar::PrimVar::SplineData>()) {
+        var.set_spline(*sp);
+        hasSpline = true;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`spline` field is not SplineData.");
       }
     } else if (fv.first == "interpolation") {
 
@@ -674,7 +685,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
     rel.metas() = std::move(meta);
     (*prop) = Property(std::move(rel), custom);
-  } else if (hasDefault || hasTimeSamples || hasConnectionPaths) {
+  } else if (hasDefault || hasTimeSamples || hasSpline || hasConnectionPaths) {
 
     // Attribute
     if (hasTargetPaths) {

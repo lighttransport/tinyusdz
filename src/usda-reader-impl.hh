@@ -160,6 +160,7 @@ struct PrimNode {
   value::Value prim; // stores typed Prim value. Xform, GeomMesh, ...
   std::string elementName;
   std::string typeName; // Prim's typeName
+  Specifier specifier{Specifier::Def}; // `def`, `over` or `class`
 
   int64_t parent{-1};            // -1 = root node
   //bool parent_is_variant{false}; // True when this Prim is defined under variantSet stmt.
@@ -1310,6 +1311,7 @@ bool USDAReader::Impl::RegisterReconstructCallback() {
 
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
           _prim_nodes[size_t(primIdx)].typeName = primTypeName;
+          _prim_nodes[size_t(primIdx)].specifier = spec;
           _prim_nodes[size_t(primIdx)].variantNodeMap = variantSets;
 
 

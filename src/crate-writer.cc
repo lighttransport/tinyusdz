@@ -1286,9 +1286,28 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   memset(&boot, 0, sizeof(boot));
 
   memcpy(boot.ident, kMagicIdent, 8);
-  boot.version[0] = options_.version_major;
-  boot.version[1] = options_.version_minor;
-  boot.version[2] = options_.version_patch;
+  // Emit max(configured version, version required by written values). The
+  // latter is raised via RequestCrateVersionUpgrade() when e.g. an
+  // SdfPathExpression (>=0.10.0) or TsSpline (>=0.12.0) value is written, so
+  // the header truthfully declares the minimum reader version.
+  uint8_t ev_major = options_.version_major;
+  uint8_t ev_minor = options_.version_minor;
+  uint8_t ev_patch = options_.version_patch;
+  const bool req_higher =
+      (required_version_major_ > ev_major) ||
+      (required_version_major_ == ev_major &&
+       required_version_minor_ > ev_minor) ||
+      (required_version_major_ == ev_major &&
+       required_version_minor_ == ev_minor &&
+       required_version_patch_ > ev_patch);
+  if (req_higher) {
+    ev_major = required_version_major_;
+    ev_minor = required_version_minor_;
+    ev_patch = required_version_patch_;
+  }
+  boot.version[0] = ev_major;
+  boot.version[1] = ev_minor;
+  boot.version[2] = ev_patch;
   boot.toc_offset = saved_toc_offset;
 
   // Write bootstrap header
@@ -1416,6 +1435,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   PACK_ARRAY_TYPE(value::quatf, CRATE_DATA_TYPE_QUATF)
   PACK_ARRAY_TYPE(value::quatd, CRATE_DATA_TYPE_QUATD)
   PACK_ARRAY_TYPE(value::AssetPath, CRATE_DATA_TYPE_ASSET_PATH)
+  PACK_ARRAY_TYPE(value::PathExpression, CRATE_DATA_TYPE_PATH_EXPRESSION)
   PACK_ARRAY_TYPE(std::string, CRATE_DATA_TYPE_STRING)
   PACK_ARRAY_TYPE(value::token, CRATE_DATA_TYPE_TOKEN)
 
@@ -1469,6 +1489,17 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   // Phase 3: TimeSamples
   else if (value.as<value::TimeSamples>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES));
+  }
+  // Phase 3b: Spline (TsSpline, Crate type 59)
+  else if (value.as<primvar::PrimVar::SplineData>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE));
+    RequestCrateVersionUpgrade(0, 12, 0);  // TsSpline requires crate 0.12.0
+  }
+  // Phase 3c: scalar SdfPathExpression (Crate type 57). Non-inlined: stored as
+  // a StringIndex at an offset (OpenUSD cannot decode an inlined PathExpression).
+  else if (value.as<value::PathExpression>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION));
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
   }
   // Unknown/unsupported type
   else {

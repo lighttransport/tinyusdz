@@ -38,6 +38,8 @@
 #include "tiny-format.hh"
 #include "str-util.hh"
 #include "safe-arithmetic.hh"
+#include "primvar.hh"
+#include "spline-binary.hh"
 
 //
 #ifdef __clang__
@@ -253,6 +255,17 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
         return true;
       } else {
         PUSH_ERROR("Invalid Index for StringToken.");
+        return false;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION: {
+      // SdfPathExpression inlines like a string (StringIndex), since it is
+      // serialized via Write(GetText()).
+      if (auto v = GetStringToken(crate::Index(d))) {
+        value->Set(value::PathExpression(v.value().str()));
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for inlined PathExpression.");
         return false;
       }
     }
@@ -674,7 +687,10 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
+    // Spline is stored heap (non-inlined) in Crate, so an inlined
+    // representation is not expected.
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
           "Inlined value: " +
@@ -3219,6 +3235,131 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN(fmt::format("UNREGISTERD_VALUE type must be string or dictionary, but got other data type: {}(id {}).", GetCrateDataTypeName(local_dty.dtype_id), local_rep.GetType()));
       }
 
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // SdfPathExpression is serialized as its canonical text string
+      // (`SdfPathExpression::GetText()`), interned as a StringIndex -- same
+      // encoding as AssetPath. crate >= 0.10.0.
+
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {  // empty array
+          value->Set(std::vector<value::PathExpression>());
+          return true;
+        }
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;  // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+            return false;
+          }
+        }
+
+        if (n > _config.maxAssetPathElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of PathExpressions too large. TinyUSDZ limits it up to {}", _config.maxAssetPathElements));
+        }
+
+        size_t crate_Index_size;
+        if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+        }
+        CHECK_MEMORY_USAGE(crate_Index_size);
+
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                       size_t(n) * sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read StringIndex array.");
+          return false;
+        }
+
+        std::vector<value::PathExpression> exprs(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto tokv = GetStringToken(v[i])) {
+            exprs[i] = value::PathExpression(tokv.value().str());
+          } else {
+            return false;
+          }
+        }
+
+        value->Set(std::move(exprs));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(crate::Index));
+
+        crate::Index v;
+        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read StringIndex for PathExpression.");
+          return false;
+        }
+
+        if (auto tokv = GetStringToken(v)) {
+          value->Set(value::PathExpression(tokv.value().str()));
+        } else {
+          PUSH_ERROR_AND_RETURN("Invalid StringToken found for PathExpression.");
+          return false;
+        }
+
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // Crate type 59 (TsSpline, crate >= 0.12.0):
+      //   Read<vector<uint8_t>>  : ts-binary blob (uint64 count + bytes)
+      //   ReadMap<map<double, VtDictionary>> : per-knot customData
+      uint64_t blobSize{0};
+      if (!_sr->read8(&blobSize)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob size.");
+      }
+      if (blobSize > _sr->size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid spline blob size.");
+      }
+      CHECK_MEMORY_USAGE(blobSize);
+
+      std::vector<uint8_t> blob(static_cast<size_t>(blobSize));
+      if (blobSize > 0) {
+        if (!_sr->read(static_cast<size_t>(blobSize),
+                       static_cast<size_t>(blobSize), blob.data())) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob.");
+        }
+      }
+
+      primvar::PrimVar::SplineData sd;
+      std::string serr;
+      if (!DecodeSplineFromBinary(blob.data(), blob.size(), &sd, &serr)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to decode spline: " + serr);
+      }
+
+      // Per-knot customData map (count + entries). tinyusdz does not retain
+      // per-knot customData; only consume the count. The entries are not read
+      // back here -- this value lives at its own offset, so leaving them
+      // unconsumed does not affect other value reads.
+      uint64_t cdCount{0};
+      if (!_sr->read8(&cdCount)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline customData count.");
+      }
+      if (cdCount > 0) {
+        PUSH_WARN("Per-knot spline customData is not retained by TinyUSDZ.");
+      }
+
+      value->Set(std::move(sd));
+      return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {

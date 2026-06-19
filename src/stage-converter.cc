@@ -469,6 +469,8 @@ bool CrateWriter::ConvertSinglePrim(
     crate::CrateValue interpolation_val;
     bool has_interpolation{false};
     std::vector<std::pair<std::string, crate::CrateValue>> extra_metas;
+    crate::CrateValue spline_val;
+    bool has_spline{false};
   };
   std::vector<PropEntry> prop_entries;
 
@@ -501,14 +503,21 @@ bool CrateWriter::ConvertSinglePrim(
     std::string base_name = fv.first;
     bool is_ts = false;
     bool is_interp = false;
+    bool is_spline = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
+    const std::string spline_suffix = ".spline";
     if (base_name.size() > ts_suffix.size() &&
         base_name.compare(base_name.size() - ts_suffix.size(),
                           ts_suffix.size(), ts_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - ts_suffix.size());
       is_ts = true;
+    } else if (base_name.size() > spline_suffix.size() &&
+               base_name.compare(base_name.size() - spline_suffix.size(),
+                                 spline_suffix.size(), spline_suffix) == 0) {
+      base_name = base_name.substr(0, base_name.size() - spline_suffix.size());
+      is_spline = true;
     } else if (base_name.size() > interp_suffix.size() &&
                base_name.compare(base_name.size() - interp_suffix.size(),
                                  interp_suffix.size(), interp_suffix) == 0) {
@@ -552,6 +561,9 @@ bool CrateWriter::ConvertSinglePrim(
     if (is_ts) {
       entry->ts_val = std::move(fv.second);
       entry->has_ts = true;
+    } else if (is_spline) {
+      entry->spline_val = std::move(fv.second);
+      entry->has_spline = true;
     } else if (is_interp) {
       entry->interpolation_val = std::move(fv.second);
       entry->has_interpolation = true;
@@ -637,6 +649,10 @@ bool CrateWriter::ConvertSinglePrim(
 
     if (pe.has_ts) {
       attr_fields.push_back({"timeSamples", std::move(pe.ts_val)});
+    }
+
+    if (pe.has_spline) {
+      attr_fields.push_back({"spline", std::move(pe.spline_val)});
     }
 
     if (pe.has_interpolation) {
@@ -1636,6 +1652,16 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "pathExpression") {
+    if (auto v = val.get_value<value::PathExpression>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "pathExpression[]") {
+    if (auto v = val.get_value<std::vector<value::PathExpression>>()) {
+      out.Set(*v);
+      return true;
+    }
   }
 
   // Vector types - float2/3/4
@@ -2222,6 +2248,14 @@ bool CrateWriter::ConvertAttributeToFields(
 
     DCOUT("[ConvertAttributeToFields] Added TimeSamples for " << attr_name
               << " with " << ts.size() << " samples");
+  }
+
+  // 2d. Extract spline (AOUSD Core Spec 7.4.2.4; Crate type 59).
+  if (pvar.has_spline()) {
+    crate::CrateValue spline_crate_val;
+    spline_crate_val.Set(pvar.spline_data());
+    attr_fields.push_back({"spline", spline_crate_val});
+    DCOUT("[ConvertAttributeToFields] Added Spline for " << attr_name);
   }
 
   // 3. Add variability if not default - store as Variability enum, not token index

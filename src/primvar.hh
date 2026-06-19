@@ -357,6 +357,14 @@ struct PrimVar {
     int postExtrapolation{1};  // SplineExtrapolationMode::Held
     double preExtrapolationSlope{0.0};
     double postExtrapolationSlope{0.0};
+
+    // Inner-loop parameters (AOUSD Core Spec 7.4.2.4.5). Active when hasLoop.
+    bool hasLoop{false};
+    double loopProtoStart{0.0};
+    double loopProtoEnd{0.0};
+    int loopNumPreLoops{0};
+    int loopNumPostLoops{0};
+    double loopValueOffset{0.0};
   };
 
   bool has_spline() const { return _extras && !_extras->spline.knots.empty(); }
@@ -400,4 +408,18 @@ struct PrimVar {
 
 
 } // namespace primvar
+
+namespace value {
+
+// SplineData carrier so a spline can be stored in a value::Value (used to flow
+// a Crate type-59 value through to the attribute, like value::TimeSamples).
+// Defined here because it needs the complete primvar::PrimVar::SplineData type.
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(primvar::PrimVar::SplineData, "Spline", TYPE_ID_SPLINE_DATA, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+} // namespace value
 } // namespace tinyusdz

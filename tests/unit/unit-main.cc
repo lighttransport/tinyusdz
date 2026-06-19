@@ -8,6 +8,8 @@
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
 #include "unit-pathutil.h"
+#include "unit-path-expression.h"
+#include "unit-spline.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
 #include "unit-customdata.h"
@@ -115,6 +117,27 @@ TEST_LIST = {
   { "quat_operator_bracket_test", quat_operator_bracket_test },
   { "quat_decompose_roundtrip_test", quat_decompose_roundtrip_test },
   { "pathutil_test", pathutil_test },
+  { "path_expression_parse_test", path_expression_parse_test },
+  { "path_expression_roundtrip_test", path_expression_roundtrip_test },
+  { "path_expression_decompose_test", path_expression_decompose_test },
+  { "path_expression_match_test", path_expression_match_test },
+  { "path_expression_predicate_ref_test", path_expression_predicate_ref_test },
+  { "path_expression_collection_membership_test", path_expression_collection_membership_test },
+  { "path_expression_light_linking_test", path_expression_light_linking_test },
+  { "path_expression_crate_roundtrip_test", path_expression_crate_roundtrip_test },
+  { "path_expression_usda_roundtrip_test", path_expression_usda_roundtrip_test },
+  { "path_expression_grammar_extended_test", path_expression_grammar_extended_test },
+  { "path_expression_matcher_extended_test", path_expression_matcher_extended_test },
+  { "path_expression_predicate_library_test", path_expression_predicate_library_test },
+  { "path_expression_openusd_crate_read_test", path_expression_openusd_crate_read_test },
+  { "spline_usda_eval_test", spline_usda_eval_test },
+  { "spline_binary_roundtrip_test", spline_binary_roundtrip_test },
+  { "spline_crate_roundtrip_test", spline_crate_roundtrip_test },
+  { "spline_usda_roundtrip_test", spline_usda_roundtrip_test },
+  { "spline_interpolation_modes_test", spline_interpolation_modes_test },
+  { "spline_extrapolation_modes_test", spline_extrapolation_modes_test },
+  { "spline_binary_types_test", spline_binary_types_test },
+  { "spline_openusd_crate_read_test", spline_openusd_crate_read_test },
   { "ioutil_test", ioutil_test },
   { "ioutil_asset_path_suffix_candidates_test", ioutil_asset_path_suffix_candidates_test },
   { "strutil_test", strutil_test },

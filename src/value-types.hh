@@ -84,6 +84,7 @@ constexpr auto kPath =
 constexpr auto kAssetPath = "asset";  // `asset` in USDA
 constexpr auto kDictionary = "dictionary";
 constexpr auto kTimeCode = "timecode";
+constexpr auto kPathExpression = "pathExpression";  // `pathExpression` in USDA (SdfPathExpression)
 
 constexpr auto kBool = "bool";
 constexpr auto kChar = "char";
@@ -277,6 +278,32 @@ class TimeCode {
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 
+// SdfPathExpression value type.
+//
+// Stores the expression as its canonical text form (matching OpenUSD's
+// `SdfPathExpression::GetText()`), which is also how it is serialized in Crate
+// (a plain UTF-8 string). Parsing into a matchable representation and the
+// membership evaluation live in `core/path-expression.{hh,cc}` so that this
+// foundational header stays light. Storing the verbatim text gives loss-free
+// round-trip.
+class PathExpression {
+ public:
+  PathExpression() = default;
+  explicit PathExpression(const std::string &text) : text_(text) {}
+  explicit PathExpression(std::string &&text) : text_(std::move(text)) {}
+
+  const std::string &GetText() const { return text_; }
+  void SetText(const std::string &text) { text_ = text; }
+
+  bool empty() const { return text_.empty(); }
+
+  bool operator==(const PathExpression &rhs) const { return text_ == rhs.text_; }
+  bool operator!=(const PathExpression &rhs) const { return !(*this == rhs); }
+
+ private:
+  std::string text_;
+};
+
 //
 // Type ID for TypeTraits<T>::type_id.
 //
@@ -408,6 +435,8 @@ enum TypeId {
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
+  TYPE_ID_PATH_EXPRESSION,  // SdfPathExpression
+
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
@@ -442,6 +471,7 @@ enum TypeId {
   // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
+  TYPE_ID_SPLINE_DATA,  // primvar::PrimVar::SplineData carrier (Crate type 59)
   TYPE_ID_VARIANT_SELECION_MAP,
 
 
@@ -1362,6 +1392,7 @@ DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(PathExpression, kPathExpression, TYPE_ID_PATH_EXPRESSION, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
@@ -2886,6 +2917,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kRelationship);
   d.insert(kAssetPath);
+  d.insert(kPathExpression);
 
   d.insert(kDictionary);
 

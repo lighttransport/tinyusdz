@@ -501,6 +501,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
+    ${PROJECT_SOURCE_DIR}/src/spline-binary.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
@@ -531,6 +532,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
     ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
     ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
+    ${PROJECT_SOURCE_DIR}/src/core/path-expression.cc
+    ${PROJECT_SOURCE_DIR}/src/core/path-expression-eval.cc
     ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
