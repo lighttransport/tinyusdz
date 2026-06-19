@@ -71,6 +71,7 @@ namespace value {
   __FUNC(RenderSettings)        \
   __FUNC(RenderProduct)         \
   __FUNC(RenderVar)             \
+  __FUNC(GenerativeProcedural)  \
   __FUNC(PhysicsJoint)           \
   __FUNC(PhysicsScene)          \
   __FUNC(PhysicsRevoluteJoint)  \

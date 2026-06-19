@@ -52,6 +52,7 @@ RECONSTRUCT_PRIM_DECL(Field3DAsset);
 RECONSTRUCT_PRIM_DECL(RenderSettings);
 RECONSTRUCT_PRIM_DECL(RenderProduct);
 RECONSTRUCT_PRIM_DECL(RenderVar);
+RECONSTRUCT_PRIM_DECL(GenerativeProcedural);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
@@ -148,6 +149,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(RenderSettings)
   RECONSTRUCT_PRIM(RenderProduct)
   RECONSTRUCT_PRIM(RenderVar)
+  RECONSTRUCT_PRIM(GenerativeProcedural)
   RECONSTRUCT_PRIM(GeomMesh)
   RECONSTRUCT_PRIM(GeomPoints)
   RECONSTRUCT_PRIM(GeomCylinder)

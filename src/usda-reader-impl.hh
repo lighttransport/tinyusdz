@@ -272,6 +272,7 @@ DEFINE_PRIM_TYPE(Field3DAsset, "Field3DAsset", value::TYPE_ID_FIELD3D_ASSET);
 DEFINE_PRIM_TYPE(RenderSettings, "RenderSettings", value::TYPE_ID_RENDER_SETTINGS);
 DEFINE_PRIM_TYPE(RenderProduct, "RenderProduct", value::TYPE_ID_RENDER_PRODUCT);
 DEFINE_PRIM_TYPE(RenderVar, "RenderVar", value::TYPE_ID_RENDER_VAR);
+DEFINE_PRIM_TYPE(GenerativeProcedural, "GenerativeProcedural", value::TYPE_ID_GENERATIVE_PROCEDURAL);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
 
