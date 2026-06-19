@@ -36,6 +36,7 @@
 
 #include "safe-arithmetic.hh"
 #include "spline-binary.hh"  // SplineBinaryFormatVersion
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
 // math::is_close — used for exact (eps == 0) floating-point comparison without
 // tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
@@ -1334,6 +1335,28 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
   crate::ValueRep rep;
+
+  // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set, the
+  // array element type in the type byte, and a payload referencing the
+  // (valuesRep, indexesRep, isDense) tuple (payload 0 == identity edit).
+  if (auto* ae = value.as<value::ArrayEdit>()) {
+    RequestCrateVersionUpgrade(0, 14, 0);  // VtArrayEdit requires crate 0.14.0
+    crate::ValueRep aerep;
+    aerep.SetType(ae->element_type_id);
+    aerep.SetIsArrayEdit();
+    if (ae->ops.empty()) {
+      // Identity edit: no out-of-line data.
+      aerep.SetPayload(0);
+      return aerep;
+    }
+    bool is_compressed = false;
+    int64_t offset = WriteValueData(value, &is_compressed, err);
+    if (offset < 0 || (err && !err->empty())) {
+      return crate::ValueRep();
+    }
+    aerep.SetPayload(static_cast<uint64_t>(offset));
+    return aerep;
+  }
 
   // Try to inline the value
   if (TryInlineValue(value, &rep)) {

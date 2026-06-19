@@ -35,6 +35,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 #include "tiny-format.hh"
 #include "str-util.hh"
 #include "safe-arithmetic.hh"
@@ -891,11 +892,80 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
   return true;
 }
 
+bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
+                                     crate::CrateValue *value) {
+  // VtArrayEdit (crate >= 0.14.0). Layout at payload offset:
+  //   ValueRep valuesRep   (8 bytes)  -- packed VtArray<T> of literals
+  //   ValueRep indexesRep  (8 bytes)  -- packed VtInt64Array (op stream)
+  //   bool     isDense     (1 byte)   -- legacy, discarded
+  // payload == 0 is the identity (empty) edit.
+  value::ArrayEdit ae;
+  ae.element_type_id = rep.GetType();
+
+  if (rep.GetPayload() == 0) {
+    value->Set(ae);  // identity edit
+    return true;
+  }
+
+  if (!_sr->seek_set(rep.GetPayload())) {
+    PUSH_ERROR("Invalid offset for array edit value.");
+    return false;
+  }
+
+  crate::ValueRep valuesRep, indexesRep;
+  if (!ReadValueRep(&valuesRep)) {
+    PUSH_ERROR("Failed to read array edit valuesRep.");
+    return false;
+  }
+  if (!ReadValueRep(&indexesRep)) {
+    PUSH_ERROR("Failed to read array edit indexesRep.");
+    return false;
+  }
+  uint8_t isDense{0};
+  if (!_sr->read1(&isDense)) {
+    PUSH_ERROR("Failed to read array edit isDense flag.");
+    return false;
+  }
+  (void)isDense;  // legacy field, not retained
+
+  // Literals: a typed array value (std::vector<T>). Stored verbatim.
+  crate::CrateValue litVal;
+  if (!UnpackValueRep(valuesRep, &litVal)) {
+    PUSH_ERROR("Failed to unpack array edit literals.");
+    return false;
+  }
+  ae.literals = litVal.get_raw();
+
+  // Op instruction stream: a VtInt64Array.
+  crate::CrateValue idxVal;
+  if (!UnpackValueRep(indexesRep, &idxVal)) {
+    PUSH_ERROR("Failed to unpack array edit op stream.");
+    return false;
+  }
+  if (auto pv = idxVal.get_value<std::vector<int64_t>>()) {
+    ae.ops = pv.value();
+  } else {
+    // An empty op stream may decode as an empty array of another flavor; treat
+    // a non-int64 stream as empty rather than failing.
+    PUSH_WARN("Array edit op stream was not int64[]; treating as identity.");
+  }
+
+  value->Set(ae);
+  return true;
+}
+
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
 
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
+  }
+
+  // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set. The
+  // type byte holds the array element type; the payload references the
+  // (valuesRep, indexesRep, isDense) tuple (payload 0 == identity edit).
+  if (rep.IsArrayEdit()) {
+    return UnpackArrayEditRep(rep, value);
   }
 
   // mmap zero-copy V2: for eligible large arrays, store only the 24-byte
