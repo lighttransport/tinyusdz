@@ -1558,6 +1558,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK:
     case crate::CrateDataTypeId::NumDataTypes:
       PUSH_ERROR_AND_RETURN(
           fmt::format("Unsupported or unimplemented type for TimeSamples. ty = "

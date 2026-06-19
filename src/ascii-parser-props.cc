@@ -875,8 +875,14 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   Attribute attr;
   primvar::PrimVar var;
   bool blocked{false};
+  bool anim_blocked{false};
 
-  if (array_qual) {
+  // `AnimationBlock` is a sentinel keyword (like `None`) that may appear in
+  // place of a typed value; it blocks animation while letting the default
+  // resolve. Detect it before attempting to parse a typed value.
+  if (MaybeAnimationBlock()) {
+    anim_blocked = true;
+  } else if (array_qual) {
     if (MaybeNone()) {
     } else {
       std::vector<T> value;
@@ -919,7 +925,17 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   }
   attr.metas() = meta;
 
-  if (blocked) {
+  if (anim_blocked) {
+    // AnimationBlock sentinel: carried as a normal default value (not a full
+    // ValueBlock), so the declared type is retained.
+    value::AnimationBlock animval;
+    attr.set_value(std::move(animval));
+    if (array_qual) {
+      attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");
+    } else {
+      attr.set_type_name(value::TypeTraits<T>::type_name());
+    }
+  } else if (blocked) {
     // There is still have a type for ValueBlock.
     value::ValueBlock noneval;
     attr.set_value(std::move(noneval));

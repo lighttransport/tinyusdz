@@ -661,6 +661,13 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(block);
       return true;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK: {
+      // SdfAnimationBlock is an inline type tag with no payload (like
+      // ValueBlock). It blocks animation while letting the default resolve.
+      value::AnimationBlock block;
+      value->Set(block);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
@@ -3106,6 +3113,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK: {
       PUSH_ERROR(
           "ValueBlock must be defined in Inlined ValueRep.");
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK: {
+      PUSH_ERROR(
+          "AnimationBlock must be defined in Inlined ValueRep.");
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE: {
