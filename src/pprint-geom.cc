@@ -292,6 +292,7 @@ DEFINE_PLACEHOLDER_PRIM_TO_STRING(Field3DAsset, "Field3DAsset")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderSettings, "RenderSettings")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderProduct, "RenderProduct")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderVar, "RenderVar")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(GenerativeProcedural, "GenerativeProcedural")
 #undef DEFINE_PLACEHOLDER_PRIM_TO_STRING
 
 std::string to_string(const GPrim &gprim, const uint32_t indent,

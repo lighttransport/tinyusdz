@@ -1040,6 +1040,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<RenderSettings>();
   RegisterReconstructCallback<RenderProduct>();
   RegisterReconstructCallback<RenderVar>();
+  RegisterReconstructCallback<GenerativeProcedural>();
 
   RegisterReconstructCallback<SphereLight>();
   RegisterReconstructCallback<DomeLight>();

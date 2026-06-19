@@ -429,6 +429,7 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(RenderSettings, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RenderProduct, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(RenderVar, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GenerativeProcedural, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomPoints, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCylinder, typeName, prim_name, spec)
