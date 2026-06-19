@@ -224,7 +224,8 @@ std::string DirOfPath(const std::string& path) {
 }  // namespace
 
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
-                     std::string* warn, std::string* err) {
+                     std::string* warn, std::string* err,
+                     const pcp::CompositionOptions* comp_opts) {
   // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
   if (!LoadUSD(filename, stage, warn, err)) {
     return false;
@@ -261,6 +262,13 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
     if (n > 1) copts.num_threads = n;
+  }
+  // Merge caller-supplied composition options (e.g. variant_overrides) into our
+  // defaults. Caller-populated fields take precedence.
+  if (comp_opts) {
+    if (!comp_opts->variant_overrides.empty())
+      copts.variant_overrides = comp_opts->variant_overrides;
+    // Other composition fields from comp_opts can be merged here as needed.
   }
 
   Stage composed;

@@ -1025,6 +1025,12 @@ struct Cache::Impl {
       const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }
+    // Apply variant overrides (stronger than any authored selection) so the
+    // caller can force a specific variant (e.g. --variant districtLod=full)
+    // without modifying the layer files.
+    for (const auto &ov : options.variant_overrides) {
+      sels[ov.first] = ov.second;
+    }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
   }
