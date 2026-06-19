@@ -1342,18 +1342,24 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   if (auto* ae = value.as<value::ArrayEdit>()) {
     RequestCrateVersionUpgrade(0, 14, 0);  // VtArrayEdit requires crate 0.14.0
     crate::ValueRep aerep;
-    aerep.SetType(ae->element_type_id);
     aerep.SetIsArrayEdit();
     if (ae->ops.empty()) {
-      // Identity edit: no out-of-line data.
+      // Identity edit: no out-of-line data. The element type comes from the
+      // model (no literals are packed to derive it from).
+      aerep.SetType(ae->element_type_id);
       aerep.SetPayload(0);
       return aerep;
     }
+    last_array_edit_elem_type_ = 0;
     bool is_compressed = false;
     int64_t offset = WriteValueData(value, &is_compressed, err);
     if (offset < 0 || (err && !err->empty())) {
       return crate::ValueRep();
     }
+    // Adopt the element type from the packed literals array (robust even for
+    // ref-only edits with empty literals); fall back to the model's id.
+    aerep.SetType(last_array_edit_elem_type_ ? last_array_edit_elem_type_
+                                             : ae->element_type_id);
     aerep.SetPayload(static_cast<uint64_t>(offset));
     return aerep;
   }

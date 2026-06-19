@@ -1197,6 +1197,15 @@ class AsciiParser {
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
                           Attribute *out_attr);
 
+  // Parse the body of an `edit [ <op>; ... ]` array-edit value (the `edit`
+  // keyword is consumed by the caller). Element literals are read as type T;
+  // builds the literal array and the Vt_ArrayEditOps `_ins` instruction stream.
+  template <typename T>
+  bool ParseArrayEditValue(std::vector<T> *literals, std::vector<int64_t> *ops);
+
+  // Consume the upcoming `edit` keyword iff present (array-edit value).
+  bool MaybeArrayEdit();
+
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
 
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);

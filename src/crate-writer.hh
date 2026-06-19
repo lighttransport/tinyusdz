@@ -893,6 +893,12 @@ private:
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
 
+  // Element crate type id of the most recently packed VtArrayEdit's literals
+  // array (set by WriteValueData, read by PackValue). Lets the array-edit
+  // ValueRep adopt the element type from the packed literals rather than a
+  // separately-tracked id (robust even for ref-only edits with empty literals).
+  int32_t last_array_edit_elem_type_ = 0;
+
   // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
   // all other values hash by bit pattern.
