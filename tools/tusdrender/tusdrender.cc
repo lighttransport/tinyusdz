@@ -44,6 +44,7 @@
 // world transforms (see src/tydra/next/scene-access.cc).
 #include "next/layer/prim-spec.hh"
 #include "next/prim/path.hh"
+#include "next/reader/usdz-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
@@ -351,19 +352,52 @@ using FloatVec = std::vector<float, PoolAlloc<float>>;
 using TriVec = std::vector<TriInfo, PoolAlloc<TriInfo>>;
 
 // Decoded RGB(A) texture (8-bit) sampled by the diffuse texture pipeline.
+// UsdUVTexture wrap mode (inputs:wrapS / inputs:wrapT).
+enum class WrapMode { Repeat, Clamp, Mirror, Black };
+
 struct Texture {
   int width{0}, height{0}, channels{0};
   std::vector<uint8_t> pixels;  // width*height*channels, row-major, top-left
+  WrapMode wrap_s{WrapMode::Repeat};
+  WrapMode wrap_t{WrapMode::Repeat};
+  bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
 
-  // Bilinear sample with repeat wrapping; returns linear-ish RGB in [0,1].
-  // (USD UV origin is bottom-left, so v is flipped.)
+  static float ApplyWrap(float x, WrapMode m, bool *in_bounds) {
+    *in_bounds = true;
+    switch (m) {
+      case WrapMode::Repeat:
+        return x - std::floor(x);
+      case WrapMode::Clamp:
+        return std::min(1.0f, std::max(0.0f, x));
+      case WrapMode::Mirror: {
+        float t = std::fabs(x);
+        int k = int(std::floor(t));
+        float f = t - float(k);
+        return (k & 1) ? (1.0f - f) : f;
+      }
+      case WrapMode::Black:
+        if (x < 0.0f || x > 1.0f) *in_bounds = false;
+        return std::min(1.0f, std::max(0.0f, x));
+    }
+    return x - std::floor(x);
+  }
+  static float SrgbToLinear(float c) {
+    return c <= 0.04045f ? c / 12.92f
+                         : std::pow((c + 0.055f) / 1.055f, 2.4f);
+  }
+
+  // Bilinear sample honoring wrap modes; returns RGB in [0,1] (linearized when
+  // srgb). (USD UV origin is bottom-left, so v is flipped.)
   Vec3 sample(float u, float v) const {
     if (width <= 0 || height <= 0 || pixels.empty()) {
       return Vec3{0.5f, 0.5f, 0.5f};
     }
-    auto wrap = [](float x) { x -= std::floor(x); return x; };
-    float fu = wrap(u) * float(width) - 0.5f;
-    float fv = wrap(1.0f - v) * float(height) - 0.5f;
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return Vec3{0.0f, 0.0f, 0.0f};  // Black wrap, out of bounds
+    float fu = wu * float(width) - 0.5f;
+    float fv = wv * float(height) - 0.5f;
     int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
     float tx = fu - float(x0), ty = fv - float(y0);
     auto texel = [&](int x, int y) -> Vec3 {
@@ -381,7 +415,9 @@ struct Texture {
       return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
                   a.z + (b.z - a.z) * t};
     };
-    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+    Vec3 c = lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
+    return c;
   }
 };
 
@@ -3702,7 +3738,8 @@ template <class FVec, class TVec>
 void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const matrix4d &world, tinyusdz::Purpose purpose,
                           uint32_t purpose_mask, double time,
-                          const Vec3 &base_color, int32_t tex_id, bool want_uvs,
+                          const Vec3 &base_color, int32_t tex_id,
+                          float roughness, float metallic, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
                           bool purpose_cull = false) {
@@ -3804,6 +3841,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       tri.n = n;
       tri.base_color = base_color;
       tri.tex_id = tex_id;
+      tri.roughness = roughness;
+      tri.metallic = metallic;
       tri.purpose_bit = PurposeBit(purpose);
       if (tri.purpose_bit == kPurposeRenderBit) {
         stats->purpose_render_triangles++;
@@ -3847,6 +3886,8 @@ struct MeshJobNext {
   tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
+  float roughness{0.55f};                // resolved inputs:roughness
+  float metallic{0.0f};                  // resolved inputs:metallic
 };
 
 // ---------------------------------------------------------------------------
@@ -3866,40 +3907,78 @@ std::string DirName(const std::string &path) {
   return path.substr(0, slash);
 }
 
-// Loaded RGB(A) textures + a path->index cache so each file loads once.
+// Loaded RGB(A) textures + a key->index cache so each (file, wrap, colorspace)
+// loads once. `usdz`, when set, is searched first so textures packed inside a
+// .usdz archive resolve without touching the filesystem.
 struct TextureCache {
   std::vector<Texture> *textures{nullptr};
-  std::unordered_map<std::string, int32_t> by_path;
+  std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
+  const tinyusdz::next::USDZReader *usdz{nullptr};
 };
 
-int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path) {
-  auto it = tc.by_path.find(asset_path);
-  if (it != tc.by_path.end()) return it->second;
-  std::string path = asset_path;
-  if (!path.empty() && path[0] != '/' && !tc.base_dir.empty()) {
-    path = tc.base_dir + "/" + path;
+// True if a usdz entry name refers to the same asset as `asset_path` (which may
+// be relative, "./tex.png", or "tex.png"). Matches on full path or basename.
+bool UsdzEntryMatches(const std::string &entry, const std::string &asset) {
+  std::string a = asset;
+  if (a.rfind("./", 0) == 0) a = a.substr(2);
+  if (entry == a) return true;
+  if (entry.size() > a.size() &&
+      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
+      entry[entry.size() - a.size() - 1] == '/') {
+    return true;
   }
-  int32_t id = -1;
-  auto res = tinyusdz::image::LoadImageFromFile(path);
-  if (res) {
-    const tinyusdz::Image &img = res.value().image;
-    if (img.width > 0 && img.height > 0 && img.bpp == 8 && !img.data.empty()) {
-      Texture t;
-      t.width = img.width;
-      t.height = img.height;
-      t.channels = img.channels;
-      t.pixels = img.data;
-      id = int32_t(tc.textures->size());
-      tc.textures->push_back(std::move(t));
-    } else {
-      std::cerr << "WARN: unsupported texture format (need 8bpp): " << path
-                << "\n";
+  auto base = [](const std::string &s) {
+    size_t p = s.find_last_of('/');
+    return p == std::string::npos ? s : s.substr(p + 1);
+  };
+  return base(entry) == base(a);
+}
+
+int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
+                          WrapMode ws, WrapMode wt, bool srgb) {
+  const std::string key = asset_path + "|" + std::to_string(int(ws)) + "," +
+                          std::to_string(int(wt)) + (srgb ? "|s" : "|r");
+  auto it = tc.by_key.find(key);
+  if (it != tc.by_key.end()) return it->second;
+
+  auto adopt = [&](const tinyusdz::Image &img) -> int32_t {
+    if (img.width <= 0 || img.height <= 0 || img.bpp != 8 || img.data.empty()) {
+      return -1;
     }
-  } else {
-    std::cerr << "WARN: failed to load texture: " << path << "\n";
+    Texture t;
+    t.width = img.width;
+    t.height = img.height;
+    t.channels = img.channels;
+    t.pixels = img.data;
+    t.wrap_s = ws;
+    t.wrap_t = wt;
+    t.srgb = srgb;
+    int32_t id = int32_t(tc.textures->size());
+    tc.textures->push_back(std::move(t));
+    return id;
+  };
+
+  int32_t id = -1;
+  // 1. usdz-embedded.
+  if (tc.usdz) {
+    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
+      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
+      auto res = tinyusdz::image::LoadImageFromMemory(
+          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
+      if (res) id = adopt(res.value().image);
+      break;
+    }
   }
-  tc.by_path[asset_path] = id;
+  // 2. filesystem (anchored to the input dir).
+  if (id < 0 && (!asset_path.empty())) {
+    std::string path = asset_path;
+    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
+    auto res = tinyusdz::image::LoadImageFromFile(path);
+    if (res) id = adopt(res.value().image);
+  }
+  if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  tc.by_key[key] = id;
   return id;
 }
 
@@ -3915,10 +3994,17 @@ tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
   return stage.GetPrimAtPath((*c)[0].prim_path());
 }
 
+WrapMode ParseWrapMode(const std::string &s) {
+  if (s == "clamp") return WrapMode::Clamp;
+  if (s == "mirror") return WrapMode::Mirror;
+  if (s == "black") return WrapMode::Black;
+  return WrapMode::Repeat;  // "repeat"/"useMetadata"/default
+}
+
 void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              const tinyusdz::next::UsdPrim &mesh,
-                             TextureCache &tc, Vec3 *base_color,
-                             int32_t *tex_id) {
+                             TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
+                             float *roughness, float *metallic) {
   const std::vector<tinyusdz::next::Path> *bind =
       mesh.GetRelationship("material:binding");
   if (!bind || bind->empty()) return;
@@ -3930,6 +4016,14 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
   if (!surf.IsValid()) return;
 
+  // Scalar PBR params (UsdPreviewSurface inputs:roughness / inputs:metallic).
+  if (const tinyusdz::next::Value *r = surf.GetPropertyValue("inputs:roughness")) {
+    if (const float *f = r->as_float()) *roughness = std::min(1.0f, std::max(0.0f, *f));
+  }
+  if (const tinyusdz::next::Value *m = surf.GetPropertyValue("inputs:metallic")) {
+    if (const float *f = m->as_float()) *metallic = std::min(1.0f, std::max(0.0f, *f));
+  }
+
   // Constant diffuse color (also the texture's fallback tint).
   if (const tinyusdz::next::Value *dc =
           surf.GetPropertyValue("inputs:diffuseColor")) {
@@ -3937,7 +4031,8 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
       *base_color = Vec3{f[0], f[1], f[2]};
     }
   }
-  // Diffuse texture: inputs:diffuseColor -> UsdUVTexture(inputs:file).
+  // Diffuse texture: inputs:diffuseColor -> UsdUVTexture(inputs:file), honoring
+  // its wrapS/wrapT and sourceColorSpace (sRGB by default for color).
   tinyusdz::next::UsdPrim tex =
       ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
   if (tex.IsValid()) {
@@ -3945,7 +4040,17 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
       const std::string *ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
-        int32_t id = LoadTextureCached(tc, *ap);
+        WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
+          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
+          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+        bool srgb = true;
+        if (const tinyusdz::next::Value *v =
+                tex.GetPropertyValue("inputs:sourceColorSpace")) {
+          if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+        }
+        int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb);
         if (id >= 0) {
           *tex_id = id;
           // A textured surface tints by the texture, not the (often unauthored)
@@ -4423,7 +4528,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         const MeshJobNext &job = jobs[i];
         R &r = results[i];
         AddRTPreviewMeshNext(job.prim, job.world, job.purpose, purpose_mask, time,
-                             job.base_color, job.tex_id, want_uvs, &r.v, &r.t,
+                             job.base_color, job.tex_id, job.roughness,
+                             job.metallic, want_uvs, &r.v, &r.t,
                              &r.uv, &r.b, &r.s, purpose_cull);
       }
     } catch (const std::bad_alloc &) {
@@ -4525,6 +4631,19 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   build_opts.max_leaf_size = 0;
   build_opts.num_threads = WorkerThreadCount(opt.threads);
 
+  // Embedded textures: if the input is a .usdz package, open it so material
+  // resolution can pull packed textures from the archive (else nullptr -> the
+  // texture cache falls back to the filesystem).
+  tinyusdz::next::USDZReader usdz_archive;
+  const tinyusdz::next::USDZReader *usdz_ptr = nullptr;
+  {
+    const std::string &in = opt.input;
+    if (in.size() >= 5 && in.compare(in.size() - 5, 5, ".usdz") == 0 &&
+        usdz_archive.OpenFile(in)) {
+      usdz_ptr = &usdz_archive;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Flat path: no native instances. Identical to the historical single-scene
   // build (preserves byte-for-byte renders of self-contained scenes).
@@ -4535,9 +4654,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       TextureCache tc;
       tc.textures = &ctx.textures;
       tc.base_dir = DirName(opt.input);
+      tc.usdz = usdz_ptr;
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                                &job.tex_id);
+                                &job.tex_id, &job.roughness, &job.metallic);
       }
     }
     const bool want_uvs = !ctx.textures.empty();
@@ -4596,14 +4716,15 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     TextureCache tc;
     tc.textures = &ctx.textures;
     tc.base_dir = DirName(opt.input);
+    tc.usdz = usdz_ptr;
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                              &job.tex_id);
+                              &job.tex_id, &job.roughness, &job.metallic);
     }
     for (std::vector<MeshJobNext> &pj : proto_jobs) {
       for (MeshJobNext &job : pj) {
         ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                                &job.tex_id);
+                                &job.tex_id, &job.roughness, &job.metallic);
       }
     }
   }
@@ -5474,9 +5595,10 @@ int main(int argc, char **argv) {
   }
 
   // Default RT preview backend: the `next` lazy loader (fast, low-memory USDC
-  // parse). Falls back to the legacy eager loader for non-USDC inputs or when
-  // -legacyLoad is requested.
-  if (opt.rt_preview && !opt.legacy_load && tinyusdz::IsUSDC(opt.input)) {
+  // parse; also handles .usdz, incl. packed textures). Falls back to the legacy
+  // eager loader for other inputs or when -legacyLoad is requested.
+  if (opt.rt_preview && !opt.legacy_load &&
+      (tinyusdz::IsUSDC(opt.input) || tinyusdz::IsUSDZ(opt.input))) {
     return RunRTPreviewNext(opt);
   }
 
