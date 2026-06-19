@@ -222,6 +222,10 @@ class MemBudget {
 // before an OOM rather than after.
 static constexpr size_t kBvhBytesPerTri = 80;
 
+// Max anisotropic taps for diffuse texture sampling (GPU-style; 1 = isotropic
+// trilinear). Each tap is a trilinear lookup, so this bounds the per-hit cost.
+static constexpr int kMaxAniso = 8;
+
 // Thread-safe size-bucketed free-list pool. Cuts malloc/free traffic for the
 // render buffers (which are freed + reallocated across animation frames / re-
 // renders) and recycles whole bucket-sized blocks so reuse is always safe.
@@ -485,6 +489,39 @@ struct Texture {
     }
     if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
     return c;
+  }
+
+  // Anisotropic sample: the UV footprint is a parallelogram whose axes are the
+  // per-screen-axis UV derivatives. Pick the mip from the MINOR axis (so the
+  // result stays sharp across the narrow direction) and average up to
+  // `max_aniso` trilinear taps stepped along the MAJOR axis (anti-aliasing the
+  // long direction). Reduces to plain trilinear when the footprint is isotropic.
+  Vec3 sample_aniso(float u, float v, float dudx, float dvdx, float dudy,
+                    float dvdy, int max_aniso) const {
+    const float W = float(width), H = float(height);
+    const float lx = std::sqrt(dudx * dudx * W * W + dvdx * dvdx * H * H);
+    const float ly = std::sqrt(dudy * dudy * W * W + dvdy * dvdy * H * H);
+    float Pmax, Pmin, mdu, mdv;  // major-axis length (texels) + UV step
+    if (lx >= ly) {
+      Pmax = lx; Pmin = ly; mdu = dudx; mdv = dvdx;
+    } else {
+      Pmax = ly; Pmin = lx; mdu = dudy; mdv = dvdy;
+    }
+    if (Pmax < 1.0e-8f) return sample(u, v, 0.0f);
+    int n = int(std::ceil(Pmax / std::max(Pmin, 1.0e-8f)));
+    n = std::min(std::max(n, 1), std::max(1, max_aniso));
+    const float lod = std::log2(std::max(Pmax / float(n), 1.0e-8f));
+    if (n <= 1) return sample(u, v, lod);
+    Vec3 acc{0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < n; ++i) {
+      const float t = (float(i) + 0.5f) / float(n) - 0.5f;  // [-0.5, 0.5)
+      Vec3 s = sample(u + t * mdu, v + t * mdv, lod);
+      acc.x += s.x;
+      acc.y += s.y;
+      acc.z += s.z;
+    }
+    const float inv = 1.0f / float(n);
+    return Vec3{acc.x * inv, acc.y * inv, acc.z * inv};
   }
 };
 
@@ -3586,10 +3623,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                              &dudy, &dvdy);
       if (lt.tex_id >= 0 && size_t(lt.tex_id) < textures->size()) {
         const Texture &dt = (*textures)[size_t(lt.tex_id)];
-        float lod = have_fp ? TextureLod(dudx, dvdx, dudy, dvdy, dt.width,
-                                         dt.height)
-                            : 0.0f;
-        Vec3 t = dt.sample(u, v, lod);
+        Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
+                         : dt.sample(u, v, 0.0f);
         out->base_color = Vec3{lt.base_color.x * t.x, lt.base_color.y * t.y,
                                lt.base_color.z * t.z};
       }
@@ -3663,10 +3698,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               &dudy, &dvdy);
           if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
             const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
-            float lod = have_fp
-                            ? TextureLod(dudx, dvdx, dudy, dvdy, dt.width, dt.height)
-                            : 0.0f;
-            Vec3 t = dt.sample(u, v, lod);
+            Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                               kMaxAniso)
+                             : dt.sample(u, v, 0.0f);
             hit_tri.base_color = Vec3{hit_tri.base_color.x * t.x,
                                       hit_tri.base_color.y * t.y,
                                       hit_tri.base_color.z * t.z};
