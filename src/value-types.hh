@@ -325,6 +325,7 @@ enum TypeId {
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
   TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
+  TYPE_ID_ANIMATION_BLOCK,  // Animation block. `AnimationBlock` in ascii (Crate type 60).
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
@@ -1215,6 +1216,10 @@ struct texcoord3d {
 // Attribute value Block(`None`)
 struct ValueBlock {};
 
+// Attribute animation Block(`AnimationBlock`). Blocks spline/timeSamples on
+// weaker layers while letting the default value resolve (SdfAnimationBlock).
+struct AnimationBlock {};
+
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
@@ -1284,6 +1289,7 @@ struct TypeTraits<const char*> {
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 // DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
+DEFINE_TYPE_TRAIT(AnimationBlock, "AnimationBlock", TYPE_ID_ANIMATION_BLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);

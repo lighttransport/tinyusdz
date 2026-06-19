@@ -315,6 +315,14 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
+    case TypeTraits<value::AnimationBlock>::type_id(): {
+      if (v.as<value::AnimationBlock>()) {
+        os << "AnimationBlock";
+      } else {
+        os << "[InternalError: AnimationBlock type TypeId mismatch.]";
+      }
+      break;
+    }
     // TODO: List-up all case and remove `default` clause.
     default: {
       os << "VALUE_PPRINT: TODO: (type: " << v.type_name() << ") ";

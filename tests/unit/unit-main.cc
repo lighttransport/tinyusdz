@@ -12,6 +12,7 @@
 #include "unit-spline.h"
 #include "unit-relocates.h"
 #include "unit-value-clips.h"
+#include "unit-animation-block.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
 #include "unit-customdata.h"
@@ -146,6 +147,8 @@ TEST_LIST = {
   { "relocates_crate_roundtrip_test", relocates_crate_roundtrip_test },
   { "value_clips_multiple_sets_parse_test", value_clips_multiple_sets_parse_test },
   { "value_clips_template_set_parse_test", value_clips_template_set_parse_test },
+  { "animation_block_usda_roundtrip_test", animation_block_usda_roundtrip_test },
+  { "animation_block_crate_roundtrip_test", animation_block_crate_roundtrip_test },
   { "ioutil_test", ioutil_test },
   { "ioutil_asset_path_suffix_candidates_test", ioutil_asset_path_suffix_candidates_test },
   { "strutil_test", strutil_test },

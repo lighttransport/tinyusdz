@@ -1058,6 +1058,7 @@ class AsciiParser {
   }
 
   bool MaybeNone();
+  bool MaybeAnimationBlock();
   bool MaybeCustom();
 
   template <typename T>

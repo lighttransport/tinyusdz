@@ -1321,6 +1321,26 @@ bool AsciiParser::MaybeNone() {
   return false;
 }
 
+// Consume and return true iff the upcoming token is the literal keyword
+// `AnimationBlock` (the SdfAnimationBlock sentinel, parallel to `None`).
+// Uses identifier reading so it respects word boundaries.
+bool AsciiParser::MaybeAnimationBlock() {
+  auto loc = CurrLoc();
+
+  std::string tok;
+  if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (tok == "AnimationBlock") {
+    return true;  // consumed
+  }
+
+  SeekTo(loc);
+  return false;
+}
+
 bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;

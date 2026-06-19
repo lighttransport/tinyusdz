@@ -13,6 +13,7 @@ set(TEST_SOURCES
 	unit-spline.cc
 	unit-relocates.cc
 	unit-value-clips.cc
+	unit-animation-block.cc
 	unit-pprint.cc
 	unit-strutil.cc
 	unit-value-types.cc
