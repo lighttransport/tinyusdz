@@ -348,6 +348,11 @@ struct PrimVar {
     double postTangentSlope{0.0};
     double postTangentWidth{0.0};
     int interpolationMode{3};  // 0=none, 1=held, 2=linear, 3=curve
+    // Tangent algorithm (OpenUSD TsTangentAlgorithm): 0=None, 1=Custom,
+    // 2=AutoEase. A non-None algorithm requires spline binary version 2, which
+    // in turn requires crate version 0.13.0 on write.
+    int preTangentAlgorithm{0};
+    int postTangentAlgorithm{0};
   };
 
   struct SplineData {

@@ -966,9 +966,28 @@ bool AsciiParser::ParseSplineValue(const std::string &type_name,
     PUSH_ERROR_AND_RETURN("Expected `{` for spline value.");
   }
 
-  // `( <width>, <slope> )` (bezier) or `( <slope> )` (hermite). Detected by
-  // the presence of a comma, so the tangent form is curveType-agnostic here.
-  auto parseTangent = [&](double *width, double *slope) -> bool {
+  // Optional tangent algorithm keyword: none|custom|autoEase
+  // (OpenUSD TsTangentAlgorithm: 0=None, 1=Custom, 2=AutoEase).
+  auto parseTangentAlgo = [&](int *algo) -> bool {
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    if (kw == "none") {
+      *algo = 0;
+    } else if (kw == "custom") {
+      *algo = 1;
+    } else if (kw == "autoEase") {
+      *algo = 2;
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown spline tangent algorithm: " + kw);
+    }
+    return true;
+  };
+
+  // `( <width>, <slope> [, <algo>] )` (bezier) or `( <slope> [, <algo>] )`
+  // (hermite). Detected by the presence of a comma; a trailing identifier
+  // after a comma is the tangent algorithm (crate 0.13.0 feature).
+  auto parseTangent = [&](double *width, double *slope, int *algo) -> bool {
+    *algo = 0;
     if (!SkipWhitespace()) return false;
     if (!Expect('(')) return false;
     if (!SkipWhitespace()) return false;
@@ -979,10 +998,27 @@ bool AsciiParser::ParseSplineValue(const std::string &type_name,
     if (LookChar1(&c) && c == ',') {
       Char1(&c);
       if (!SkipWhitespace()) return false;
-      double b;
-      if (!ReadBasicType(&b)) return false;
-      *width = a;
-      *slope = b;
+      char nc;
+      if (LookChar1(&nc) &&
+          (std::isalpha(static_cast<unsigned char>(nc)) || nc == '_')) {
+        // hermite with algorithm: `( <slope>, <algo> )`
+        *width = 1.0;
+        *slope = a;
+        if (!parseTangentAlgo(algo)) return false;
+      } else {
+        // bezier: `( <width>, <slope> [, <algo>] )`
+        double b;
+        if (!ReadBasicType(&b)) return false;
+        *width = a;
+        *slope = b;
+        if (!SkipWhitespace()) return false;
+        char c2;
+        if (LookChar1(&c2) && c2 == ',') {
+          Char1(&c2);
+          if (!SkipWhitespace()) return false;
+          if (!parseTangentAlgo(algo)) return false;
+        }
+      }
     } else {
       *width = 1.0;  // hermite: width is implied
       *slope = a;
@@ -1153,7 +1189,8 @@ bool AsciiParser::ParseSplineValue(const std::string &type_name,
         std::string spec;
         if (!ReadIdentifier(&spec)) return false;
         if (spec == "pre") {
-          if (!parseTangent(&kd.preTangentWidth, &kd.preTangentSlope)) {
+          if (!parseTangent(&kd.preTangentWidth, &kd.preTangentSlope,
+                            &kd.preTangentAlgorithm)) {
             return false;
           }
         } else if (spec == "post") {
@@ -1168,7 +1205,8 @@ bool AsciiParser::ParseSplineValue(const std::string &type_name,
             kd.interpolationMode = 2;
           } else if (interp == "curve") {
             kd.interpolationMode = 3;
-            if (!parseTangent(&kd.postTangentWidth, &kd.postTangentSlope)) {
+            if (!parseTangent(&kd.postTangentWidth, &kd.postTangentSlope,
+                              &kd.postTangentAlgorithm)) {
               return false;
             }
           } else {
