@@ -10600,16 +10600,12 @@ static uint32_t tlas_collapse(tlas_collapse_ctx *cc, uint32_t b_idx) {
 
 /* (Re)build the TLAS BVH over the instances' current world AABBs. Frees any
  * existing nodes/inst_refs first. Returns 0 on success. */
-static int tlas_rebuild(lrt_tlas *t, unsigned num_threads) {
-    size_t ninsts = t->ninsts;
-    tri_build_ctx bc;
-    memset(&bc, 0, sizeof(bc));
-    bc.ntris = ninsts;
-    bc.max_leaf = 4u;
-    bc.block_shift = 2u;
-    bc.quality = LRT_TRI_BUILD_DEFAULT;
-    if (tri_alloc_aabb_scratch(&bc, ninsts)) return 1;
-    for (size_t i = 0; i < ninsts; i++) {
+/* Compute world-space AABBs for instances [begin, end) into bc->plo/phi/cen.
+ * Each instance writes only its own [i*3, i*3+3) slots, so chunks are
+ * independent. */
+static void tlas_bounds_chunk(const lrt_tlas *t, tri_build_ctx *bc,
+                              uint32_t begin, uint32_t end) {
+    for (uint32_t i = begin; i < end; i++) {
         const lrt_instance_int *in = &t->insts[i];
         float wlo[3], whi[3];
         const lrt_tri_scene *bl = t->blas[in->blas_id];
@@ -10624,11 +10620,47 @@ static int tlas_rebuild(lrt_tlas *t, unsigned num_threads) {
             tlas_transform_aabb(in->obj2world, bl->root_lo, bl->root_hi, wlo, whi);
         }
         for (int a = 0; a < 3; a++) {
-            bc.plo[i * 3 + a] = wlo[a];
-            bc.phi[i * 3 + a] = whi[a];
-            bc.cen[i * 3 + a] = 0.5f * (wlo[a] + whi[a]);
+            bc->plo[(size_t)i * 3 + a] = wlo[a];
+            bc->phi[(size_t)i * 3 + a] = whi[a];
+            bc->cen[(size_t)i * 3 + a] = 0.5f * (wlo[a] + whi[a]);
         }
-        bc.indices[i] = (uint32_t)i;
+        bc->indices[i] = i;
+    }
+}
+
+#if !defined(__STDC_NO_THREADS__)
+typedef struct tlas_bounds_job {
+    const lrt_tlas *t;
+    tri_build_ctx *bc;
+} tlas_bounds_job;
+
+static void tlas_bounds_pfor(void *arg, unsigned chunk, uint32_t begin,
+                             uint32_t end) {
+    (void)chunk;
+    tlas_bounds_job *j = (tlas_bounds_job *)arg;
+    tlas_bounds_chunk(j->t, j->bc, begin, end);
+}
+#endif
+
+static int tlas_rebuild(lrt_tlas *t, unsigned num_threads) {
+    size_t ninsts = t->ninsts;
+    tri_build_ctx bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.ntris = ninsts;
+    bc.max_leaf = 4u;
+    bc.block_shift = 2u;
+    bc.quality = LRT_TRI_BUILD_DEFAULT;
+    if (tri_alloc_aabb_scratch(&bc, ninsts)) return 1;
+#if !defined(__STDC_NO_THREADS__)
+    if (num_threads > 1 && ninsts >= 4096) {
+        tlas_bounds_job j;
+        j.t = t;
+        j.bc = &bc;
+        tri_parallel_for((uint32_t)ninsts, num_threads, tlas_bounds_pfor, &j);
+    } else
+#endif
+    {
+        tlas_bounds_chunk(t, &bc, 0u, (uint32_t)ninsts);
     }
 #if !defined(__STDC_NO_THREADS__)
     if (num_threads > 1 && ninsts >= 4096) {
@@ -10673,23 +10705,63 @@ static int tlas_rebuild(lrt_tlas *t, unsigned num_threads) {
     return failed;
 }
 
-static int tlas_fill_instances(lrt_tlas *t, const lrt_instance *insts,
-                               size_t ninsts) {
-    for (size_t i = 0; i < ninsts; i++) {
+/* Fill t->insts[begin, end) from insts[]; returns 1 if any instance references
+ * a missing (out-of-range or NULL) BLAS. Per-instance work (a 3x4 affine copy +
+ * matrix inversion) is independent and indexed by i, so chunks never collide. */
+static int tlas_fill_chunk(lrt_tlas *t, const lrt_instance *insts,
+                           uint32_t begin, uint32_t end) {
+    int bad = 0;
+    for (uint32_t i = begin; i < end; i++) {
         lrt_instance_int *in = &t->insts[i];
         /* Reject an instance that references a missing (out-of-range or NULL)
          * BLAS. NULL entries that no instance references are allowed: the build
          * and traversal only ever touch t->blas[in->blas_id] for live
          * instances, so callers may pass a sparse blas[] array (e.g. with empty
          * prototype slots) without compacting + remapping it first. */
-        if (insts[i].blas_id >= t->nblas || !t->blas[insts[i].blas_id]) return 1;
+        if (insts[i].blas_id >= t->nblas || !t->blas[insts[i].blas_id]) {
+            bad = 1;
+            continue;
+        }
         memcpy(in->obj2world, insts[i].obj2world, sizeof(in->obj2world));
         in->blas_id = insts[i].blas_id;
         in->instance_id = insts[i].instance_id;
         in->mask = insts[i].mask;
         in->degenerate = tlas_affine_invert(in->obj2world, in->world2obj) ? 0u : 1u;
     }
-    return 0;
+    return bad;
+}
+
+#if !defined(__STDC_NO_THREADS__)
+typedef struct tlas_fill_job {
+    lrt_tlas *t;
+    const lrt_instance *insts;
+    atomic_int bad;
+} tlas_fill_job;
+
+static void tlas_fill_pfor(void *arg, unsigned chunk, uint32_t begin,
+                           uint32_t end) {
+    (void)chunk;
+    tlas_fill_job *j = (tlas_fill_job *)arg;
+    if (tlas_fill_chunk(j->t, j->insts, begin, end))
+        atomic_store_explicit(&j->bad, 1, memory_order_relaxed);
+}
+#endif
+
+static int tlas_fill_instances(lrt_tlas *t, const lrt_instance *insts,
+                               size_t ninsts, unsigned num_threads) {
+#if !defined(__STDC_NO_THREADS__)
+    if (num_threads > 1 && ninsts >= 4096) {
+        tlas_fill_job j;
+        j.t = t;
+        j.insts = insts;
+        atomic_init(&j.bad, 0);
+        tri_parallel_for((uint32_t)ninsts, num_threads, tlas_fill_pfor, &j);
+        return atomic_load(&j.bad);
+    }
+#else
+    (void)num_threads;
+#endif
+    return tlas_fill_chunk(t, insts, 0u, (uint32_t)ninsts);
 }
 
 lrt_tlas *lrt_tlas_build(lrt_tri_scene *const *blas, size_t nblas,
@@ -10721,7 +10793,7 @@ lrt_tlas *lrt_tlas_build(lrt_tri_scene *const *blas, size_t nblas,
         return NULL;
     }
     memcpy(t->blas, blas, nblas * sizeof(lrt_tri_scene *));
-    if (tlas_fill_instances(t, insts, ninsts)) {
+    if (tlas_fill_instances(t, insts, ninsts, num_threads)) {
         free(t->insts);
         free(t);
         tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
@@ -10747,7 +10819,7 @@ void lrt_tlas_free(lrt_tlas *t) {
 lrt_result lrt_tlas_refit(lrt_tlas *t, const lrt_instance *insts,
                           size_t ninsts) {
     if (!t || !insts || ninsts != t->ninsts) return LRT_RESULT_INVALID_ARGUMENT;
-    if (tlas_fill_instances(t, insts, ninsts)) return LRT_RESULT_INVALID_ARGUMENT;
+    if (tlas_fill_instances(t, insts, ninsts, 1u)) return LRT_RESULT_INVALID_ARGUMENT;
     return tlas_rebuild(t, 1u) ? LRT_RESULT_OUT_OF_MEMORY : LRT_RESULT_OK;
 }
 
