@@ -428,6 +428,9 @@ struct ScalarTex {
 // Budget-tracked, pooled vectors for the big render buffers (triangle positions,
 // TriInfo, UVs). All other vectors keep the default allocator.
 using FloatVec = std::vector<float, PoolAlloc<float>>;
+// Per-corner displayColor/Opacity stored as RGBA8 (12 B/tri vs 48 B as float):
+// the rendered difference is <=1/255 (1 LSB), well below output precision.
+using ByteVec = std::vector<uint8_t, PoolAlloc<uint8_t>>;
 using TriVec = std::vector<TriInfo, PoolAlloc<TriInfo>>;
 using TriStoreVec = std::vector<TriStore, PoolAlloc<TriStore>>;
 
@@ -3633,7 +3636,7 @@ struct Blas {
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
-  FloatVec tri_colors;  // 12 floats/tri (per-corner RGBA) or empty
+  ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8) or empty
   FloatVec tri_normals; // 9 floats/tri (per-corner authored normals) or empty
   // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
   // curve_info holds one TriInfo per segment (local-space endpoints + color),
@@ -3853,12 +3856,13 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                  : TriMat{});
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
   if (size_t(th.prim_id) * 12 + 11 < b.tri_colors.size()) {
-    const float *cc = &b.tri_colors[size_t(th.prim_id) * 12];
+    const uint8_t *cc = &b.tri_colors[size_t(th.prim_id) * 12];
     const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
-    lt.base_color = Vec3{w0 * cc[0] + w1 * cc[4] + w2 * cc[8],
-                         w0 * cc[1] + w1 * cc[5] + w2 * cc[9],
-                         w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
-    lt.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
+    const float s = 1.0f / 255.0f;
+    lt.base_color = Vec3{(w0 * cc[0] + w1 * cc[4] + w2 * cc[8]) * s,
+                         (w0 * cc[1] + w1 * cc[5] + w2 * cc[9]) * s,
+                         (w0 * cc[2] + w1 * cc[6] + w2 * cc[10]) * s};
+    lt.opacity = (w0 * cc[3] + w1 * cc[7] + w2 * cc[11]) * s;
   }
   // Local-space triangle positions: from the vertex soup when present, else
   // recovered from the BVH leaves (the soup was freed post-build to save
@@ -3964,7 +3968,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<Blas> *blas = nullptr,
            const std::vector<InstanceRT> *instances = nullptr,
            const RayDiff &rd = RayDiff{}, int depth = 0,
-           const std::vector<float> *tri_colors = nullptr,
+           const ByteVec *tri_colors = nullptr,
            const std::vector<float> *tri_normals = nullptr) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
@@ -3995,12 +3999,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       hit_tri = tris[size_t(hit.prim_id)];
       // Per-corner displayColor/displayOpacity (RGBA), barycentric-interpolated.
       if (tri_colors && size_t(hit.prim_id) * 12 + 11 < tri_colors->size()) {
-        const float *cc = &(*tri_colors)[size_t(hit.prim_id) * 12];
+        const uint8_t *cc = &(*tri_colors)[size_t(hit.prim_id) * 12];
         const float w1 = hit.u, w2 = hit.v, w0 = 1.0f - w1 - w2;
-        hit_tri.base_color = Vec3{w0 * cc[0] + w1 * cc[4] + w2 * cc[8],
-                                  w0 * cc[1] + w1 * cc[5] + w2 * cc[9],
-                                  w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
-        hit_tri.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
+        const float s = 1.0f / 255.0f;
+        hit_tri.base_color = Vec3{(w0 * cc[0] + w1 * cc[4] + w2 * cc[8]) * s,
+                                  (w0 * cc[1] + w1 * cc[5] + w2 * cc[9]) * s,
+                                  (w0 * cc[2] + w1 * cc[6] + w2 * cc[10]) * s};
+        hit_tri.opacity = (w0 * cc[3] + w1 * cc[7] + w2 * cc[11]) * s;
       }
       // Smooth shading: interpolate per-corner authored normals (world-space in
       // the flat path), falling back to the stored geometric normal.
@@ -4246,7 +4251,7 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const lrt_tlas *tlas = nullptr,
                             const std::vector<Blas> *blas = nullptr,
                             const std::vector<InstanceRT> *instances = nullptr,
-                            const std::vector<float> *tri_colors = nullptr,
+                            const ByteVec *tri_colors = nullptr,
                             const std::vector<float> *tri_normals = nullptr) {
   tinyusdz::Image img;
   img.width = opt.width;
@@ -4410,7 +4415,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           Bounds *bounds, RTPreviewStats *stats,
                           bool purpose_cull = false,
                           TriMat *out_job_mat = nullptr, float opacity = 1.0f,
-                          bool want_colors = false, FVec *tri_colors = nullptr,
+                          bool want_colors = false, ByteVec *tri_colors = nullptr,
                           bool want_normals = false, FVec *tri_normals = nullptr) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
@@ -4654,15 +4659,20 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                                          uv1.second, uv2.first, uv2.second});
       }
       if (want_colors) {
-        // Per-corner RGBA parallel to tris (12 floats/tri), fan order matching
+        // Per-corner RGBA8 parallel to tris (12 bytes/tri), fan order matching
         // i0/i1/i2. Constant meshes replicate base_color/opacity at all corners.
         float c0[4], c1[4], c2[4];
         col_at(cursor + 0, i0, face, c0);
         col_at(cursor + size_t(k), i1, face, c1);
         col_at(cursor + size_t(k + 1), i2, face, c2);
+        auto q = [](float x) -> uint8_t {
+          x = x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
+          return uint8_t(int(x * 255.0f + 0.5f));
+        };
         tri_colors->insert(tri_colors->end(),
-                           {c0[0], c0[1], c0[2], c0[3], c1[0], c1[1], c1[2],
-                            c1[3], c2[0], c2[1], c2[2], c2[3]});
+                           {q(c0[0]), q(c0[1]), q(c0[2]), q(c0[3]), q(c1[0]),
+                            q(c1[1]), q(c1[2]), q(c1[3]), q(c2[0]), q(c2[1]),
+                            q(c2[2]), q(c2[3])});
       }
       if (want_normals) {
         // Per-corner normals (9 floats/tri), fan order matching i0/i1/i2.
@@ -5400,7 +5410,7 @@ struct RenderContext {
   std::vector<TriInfo> tris;
   std::vector<Texture> textures;  // diffuse textures referenced by tris[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
-  std::vector<float> tri_colors;  // 12 floats/tri (per-corner RGBA); empty if none
+  ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
   Bounds bounds;
   RTPreviewStats stats;
@@ -6023,13 +6033,13 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
-                    bool want_colors = false, FVec *out_tri_colors = nullptr,
+                    bool want_colors = false, ByteVec *out_tri_colors = nullptr,
                     bool want_normals = false, FVec *out_tri_normals = nullptr) {
   struct R {
     FVec v;
     TVec t;
     FVec uv;
-    FVec col;  // per-corner RGBA (12 floats/tri) when want_colors
+    ByteVec col;  // per-corner RGBA8 (12 bytes/tri) when want_colors
     FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
     Bounds b;
     RTPreviewStats s;
@@ -6129,7 +6139,7 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         FVec().swap(r.v);
         TVec().swap(r.t);
         FVec().swap(r.uv);
-        FVec().swap(r.col);
+        ByteVec().swap(r.col);
         FVec().swap(r.nrm);
       }
     }
