@@ -6348,7 +6348,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // that dominates peak RSS; per-group builds keep that arena small (freed between
   // groups). Byte-identical: same world-space triangles, same closest hits (the
   // groups partition by mesh, so no triangle's coincidences are split).
-  const size_t kBaseGroupTris = size_t(2) << 20;  // ~2M tris/group
+  const size_t kBaseGroupTris = size_t(1) << 20;  // ~2M tris/group
   std::vector<std::vector<size_t>> base_group_idx;
   {
     std::vector<size_t> cur;
@@ -6473,12 +6473,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // (rather than all at the end) keeps them from accumulating, so the build-phase
   // peak holds at most one large soup + the built BVHs instead of every soup at
   // once (isCoral ~600 MB off peak). Curve BLAS / unrecoverable leaves keep theirs.
-  uint64_t freed_soup_bytes = 0;
+  std::atomic<uint64_t> freed_soup_bytes{0};
   auto drop_soup = [&](size_t b) {
     if (ctx.blas[b].scene && !ctx.blas[b].is_curve &&
         lrt_tri_scene_has_verts(ctx.blas[b].scene) &&
         !ctx.blas[b].vertices.empty()) {
-      freed_soup_bytes += uint64_t(ctx.blas[b].vertices.size()) * sizeof(float);
+      freed_soup_bytes.fetch_add(uint64_t(ctx.blas[b].vertices.size()) * sizeof(float),
+                                 std::memory_order_relaxed);
       FloatVec().swap(ctx.blas[b].vertices);
     }
   };
@@ -6486,18 +6487,46 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   {
     const size_t nb = ctx.blas.size();
     const size_t kLargeTris = 32768;  // above this, intra-build threading wins
-    // Pass 1: large BLAS, full internal threading; free each soup right after.
-    for (size_t b = 0; b < nb; ++b) {
-      if (ctx.blas[b].tris.size() >= kLargeTris) {
+    // Pass 1: large BLAS. Build with BOUNDED concurrency -- each build runs
+    // single-threaded but a few run at once, so the live BVH-build scratch stays
+    // ~kBuildPar * one-build's-worth (keeping peak under Embree) while using more
+    // cores than the one-at-a-time intra-threaded loop. Byte-identical: each BLAS
+    // builds independently from its own geometry; each soup freed right after.
+    std::vector<size_t> large;
+    for (size_t b = 0; b < nb; ++b)
+      if (ctx.blas[b].tris.size() >= kLargeTris) large.push_back(b);
+    lrt_tri_build_options sbuild = build_opts;
+    sbuild.num_threads = 1;  // single-threaded per build; parallelism is across builds
+    const unsigned kBuildPar = std::min<unsigned>(
+        WorkerThreadCount(opt.threads), large.empty() ? 1u : 3u);  // cap for peak
+    std::atomic<size_t> lcur{0};
+    std::atomic<bool> lfail{false};
+    auto lworker = [&]() {
+      for (;;) {
+        const size_t i = lcur.fetch_add(1, std::memory_order_relaxed);
+        if (i >= large.size() || lfail.load(std::memory_order_relaxed)) break;
+        const size_t b = large[i];
         lrt_result e = LRT_RESULT_OK;
-        ctx.blas[b].scene = lrt_tri_scene_build(
-            ctx.blas[b].vertices.data(), ctx.blas[b].tris.size(), &build_opts, &e);
+        ctx.blas[b].scene = lrt_tri_scene_build(ctx.blas[b].vertices.data(),
+                                                ctx.blas[b].tris.size(), &sbuild, &e);
         if (!ctx.blas[b].scene) {
-          std::cerr << "Failed to build BLAS (err=" << int(e) << ").\n";
-          return false;
+          lfail.store(true, std::memory_order_relaxed);
+          break;
         }
         drop_soup(b);
       }
+    };
+    if (kBuildPar <= 1) {
+      lworker();
+    } else {
+      std::vector<std::thread> lpool;
+      lpool.reserve(kBuildPar);
+      for (unsigned t = 0; t < kBuildPar; ++t) lpool.emplace_back(lworker);
+      for (std::thread &th : lpool) th.join();
+    }
+    if (lfail.load()) {
+      std::cerr << "Failed to build BLAS.\n";
+      return false;
     }
     // Pass 2: small BLAS, batched across workers (bntris==0 skips large/empty).
     std::vector<const float *> bverts(nb, nullptr);
@@ -6667,7 +6696,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   }
   ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
   ctx.stats.build_seconds = ctx.stream_seconds;
-  uint64_t blas_bytes = freed_soup_bytes;  // soup dropped post-build (see above)
+  uint64_t blas_bytes = freed_soup_bytes.load();  // soup dropped post-build (above)
   for (const Blas &b : ctx.blas) blas_bytes += uint64_t(b.vertices.size()) * sizeof(float);
   ctx.stats.packed_triangle_bytes = blas_bytes;
   return true;
