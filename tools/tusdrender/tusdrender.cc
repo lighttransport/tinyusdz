@@ -4447,6 +4447,17 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     return;
   }
   const size_t npts = points.size() / 3;
+  // Transform each unique vertex ONCE up front. The triangle-fan loop below would
+  // otherwise re-transform a shared/fan-center vertex for every incident corner
+  // (~6x on a typical triangle mesh) via the double-precision matrix. These are
+  // the same world-space floats the loop produced before, just deduplicated, so
+  // the emitted soup / normals are byte-identical. (Phase 2b hands this array
+  // straight to the indexed build instead of re-expanding it into a soup.)
+  std::vector<Vec3> wpts(npts);
+  for (size_t i = 0; i < npts; i++) {
+    wpts[i] = TransformPoint(
+        world, Vec3{points[3 * i], points[3 * i + 1], points[3 * i + 2]});
+  }
 
   // UV (primvars:st) for the diffuse texture. Stored flat [u0,v0,u1,v1,...].
   // Interpolation is inferred from sizes: per-point ("vertex"/"varying") when
@@ -4608,12 +4619,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
           size_t(i1) >= npts || size_t(i2) >= npts) {
         continue;
       }
-      Vec3 p0 = TransformPoint(
-          world, Vec3{points[3 * i0], points[3 * i0 + 1], points[3 * i0 + 2]});
-      Vec3 p1 = TransformPoint(
-          world, Vec3{points[3 * i1], points[3 * i1 + 1], points[3 * i1 + 2]});
-      Vec3 p2 = TransformPoint(
-          world, Vec3{points[3 * i2], points[3 * i2 + 1], points[3 * i2 + 2]});
+      const Vec3 &p0 = wpts[size_t(i0)];
+      const Vec3 &p1 = wpts[size_t(i1)];
+      const Vec3 &p2 = wpts[size_t(i2)];
       Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
       if (Length(n) < 1.0e-12f) continue;
 
