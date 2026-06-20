@@ -1178,7 +1178,11 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             : key == "payload"    ? &out->payloads
             : key == "inherits"   ? &out->inherits
                                   : &out->specializes;
-        if (Match(TokenType::OpenBracket)) {
+        if (Check(TokenType::None)) {
+          // `payload = None` (a value block, not an arc) — clears the arc; the
+          // variant option simply authors no payload. Consume and move on.
+          lexer_->next();
+        } else if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string ref;
             if (!ReadArcRef(&ref)) break;
