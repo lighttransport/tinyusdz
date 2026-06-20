@@ -5800,7 +5800,15 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        std::unordered_map<std::string, uint32_t> *proto_ids,
                        std::vector<ProtoBuildReq> *protos,
                        std::vector<CurveJobNext> *curve_jobs,
-                       CurveProtoCollect *curve_inst, RTPreviewStats *stats) {
+                       CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                       const std::unordered_set<std::string> *proto_holders) {
+  // A native-instance prototype holder is rendered only through its instance
+  // proxies (queued as a prototype BLAS below). Skipping its subtree here keeps
+  // it from also being collected as base geometry -- the holder's `instanceable`
+  // flag is cleared during composition, so it is identified instead as the
+  // target of some instance_prototype() (gathered in proto_holders).
+  if (proto_holders && proto_holders->count(prim.GetPath().str())) return;
+
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -5882,8 +5890,24 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
     CollectSceneSplit(stage, child, world, purpose, time, mask, base_jobs,
                       instances, proto_ids, protos, curve_jobs, curve_inst,
-                      stats);
+                      stats, proto_holders);
   }
+}
+
+// Pre-pass: gather the paths of native-instance prototype holders (the targets
+// of instance_prototype()). Walks the same prims CollectSceneSplit collects as
+// base geometry -- it stops at instance proxies and PointInstancers, so its cost
+// is one base-graph traversal (no instance multiplicity), not the expanded set.
+void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
+                           std::unordered_set<std::string> *out) {
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  if (spec && !spec->meta().instance_prototype().empty()) {
+    out->insert(spec->meta().instance_prototype());
+    return;  // proxy children come from the prototype; don't descend
+  }
+  if (prim.GetTypeName() == "PointInstancer") return;
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+    CollectPrototypePaths(child, out);
 }
 
 // Collect a prototype's mesh jobs in prototype-LOCAL space (the holder prim at
@@ -6114,11 +6138,17 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<ProtoBuildReq> protos;
   std::vector<CurveJobNext> curve_jobs;
   CurveProtoCollect curve_inst;
+  // Gather native-instance prototype holders up front so the base-geometry
+  // traversal can skip them (they are rendered via their instance proxies).
+  std::unordered_set<std::string> proto_holders;
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
+    CollectPrototypePaths(root, &proto_holders);
+  }
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
                       tinyusdz::Purpose::Default, time, opt.mask, &base_jobs,
                       &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
-                      &ctx.stats);
+                      &ctx.stats, &proto_holders);
   }
   // Curves (BasisCurves/NurbsCurves, plus any baked from curve-prototype
   // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
