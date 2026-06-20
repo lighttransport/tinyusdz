@@ -6416,6 +6416,65 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   return true;
 }
 
+// Collect finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) from the next
+// stage into the LightCache, mirroring the legacy CollectLights/AddFiniteLight.
+// DomeLights are handled separately as IBL (BuildNextIbl). Radiance is
+// color * intensity * 2^exposure; position/direction come from the world xform
+// (UsdLux lights emit along local -Z).
+void CollectLightsNext(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &prim,
+                       const matrix4d &parent_world, double time,
+                       LightCache *cache) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  const std::string &t = prim.GetTypeName();
+  PreviewLight::Kind kind;
+  bool is_light = true;
+  if (t == "RectLight") kind = PreviewLight::Kind::Rect;
+  else if (t == "SphereLight") kind = PreviewLight::Kind::Sphere;
+  else if (t == "DiskLight") kind = PreviewLight::Kind::Disk;
+  else if (t == "CylinderLight") kind = PreviewLight::Kind::Cylinder;
+  else if (t == "DistantLight") kind = PreviewLight::Kind::Distant;
+  else is_light = false;
+
+  if (is_light) {
+    const float intensity = ReadCamFloatNext(prim, "inputs:intensity", 1.0f);
+    const float exposure = ReadCamFloatNext(prim, "inputs:exposure", 0.0f);
+    Vec3 color{1.0f, 1.0f, 1.0f};
+    if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
+      if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+    const float scale = intensity * std::pow(2.0f, exposure);
+    PreviewLight dst;
+    dst.kind = kind;
+    dst.position = Vec3{float(world.m[3][0]), float(world.m[3][1]),
+                        float(world.m[3][2])};
+    Vec3 dir = TransformVector(world, Vec3{0.0f, 0.0f, -1.0f});  // -Z forward
+    dst.direction = Length(dir) > 1.0e-6f ? Normalize(dir) : Vec3{0, -1, 0};
+    dst.normal = Mul(dst.direction, -1.0f);
+    dst.radiance = Mul(color, scale);
+    const float radius = ReadCamFloatNext(prim, "inputs:radius", 0.5f);
+    const float width = ReadCamFloatNext(prim, "inputs:width", 1.0f);
+    const float height = ReadCamFloatNext(prim, "inputs:height", 1.0f);
+    const float length = ReadCamFloatNext(prim, "inputs:length", 1.0f);
+    constexpr float kPi = 3.14159265358979323846f;
+    dst.radius = radius;
+    dst.width = width;
+    dst.height = height;
+    if (kind == PreviewLight::Kind::Rect) dst.area = width * height;
+    else if (kind == PreviewLight::Kind::Sphere) dst.area = 4 * kPi * radius * radius;
+    else if (kind == PreviewLight::Kind::Disk) dst.area = kPi * radius * radius;
+    else if (kind == PreviewLight::Kind::Cylinder) dst.area = 2 * kPi * radius * length;
+    dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
+    cache->finite.push_back(std::move(dst));
+  }
+  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren())
+    CollectLightsNext(stage, c, world, time, cache);
+}
+
 // Load the scene via next, then stream + build the BVH at the initial time.
 // First UsdLuxDomeLight in the composed stage (depth-first), or an invalid prim.
 tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim) {
@@ -6516,6 +6575,15 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
     std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
               << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
   }
+  // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
+  // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
+  ctx.lights.finite.clear();
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
+                      &ctx.lights);
+  AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
+  if (opt.stats && !ctx.lights.finite.empty())
+    std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
   return true;
 }
 

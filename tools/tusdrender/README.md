@@ -41,6 +41,11 @@ Common flags:
   glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
+* **Lighting** — UsdLux finite lights (Rect/Sphere/Disk/Cylinder/Distant) are
+  collected from the composed stage and shaded with soft area falloff; DomeLight
+  is image-based lighting (`--env` overrides it). Scenes with no lights fall back
+  to a camera headlight. This lights interiors a dome can't reach (e.g. ALab's
+  shot lighting rig, which renders the full lit shot directly from `entry.usda`).
 * **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
   (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
