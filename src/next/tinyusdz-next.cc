@@ -10,6 +10,7 @@
 #include "resolver/asset-resolver.hh"
 #include <fstream>
 #include <cstdlib>
+#include <thread>
 #include <cstring>
 
 namespace tinyusdz {
@@ -259,9 +260,14 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
   // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
   if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
+  // Parallel composition is on by default (the per-prim opinion fill runs across
+  // cores; byte-identical to the serial fill). TUSDRENDER_COMPOSE_THREADS=N
+  // overrides the thread count (1 = force serial).
+  copts.num_threads = std::thread::hardware_concurrency();
+  if (copts.num_threads < 1) copts.num_threads = 1;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
-    if (n > 1) copts.num_threads = n;
+    if (n >= 1) copts.num_threads = static_cast<unsigned>(n);
   }
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.

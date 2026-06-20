@@ -1113,6 +1113,17 @@ struct Cache::Impl {
   // `[LOD0, Materials, LOD1]`). So we collect names in a separate reverse pass.
   std::vector<std::string> ComposeInto(const std::vector<Src> &srcs,
                                         PrimSpec *out) {
+    ComposeOpinions(srcs, out);
+    // Pass 2 (weak->strong): compose child-name ORDER.
+    return ComposeChildNames(srcs);
+  }
+
+  // ComposeInto's Pass 1 (opinion merge), factored out so the parallel compose
+  // can fill PrimSpec opinion slots independently after a serial structure pass
+  // has fixed every prim's index/parent/child-order. Writes only into `out`
+  // (and interns property names into the shared, locked PropNameTable), so
+  // distinct slots fill concurrently without interfering.
+  void ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     bool specifier_set = false;
 
     // Pass 1 (strong->weak): compose opinions.
@@ -1174,9 +1185,6 @@ struct Cache::Impl {
       if (!cm.variantSets().empty()) out->meta().variantSets().clear();
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
-
-    // Pass 2 (weak->strong): compose child-name ORDER.
-    return ComposeChildNames(srcs);
   }
 
   // Composed child-name ORDER for a prim's sources (weak->strong): iterate sources
@@ -1363,9 +1371,14 @@ struct Cache::Impl {
       const std::vector<Src> &srcs = SourcesForPath(w.src_path, warn, err);
       auto ps1 = prof ? ProfClock::now() : ProfClock::time_point{};
 
+      // STRUCTURE PASS: fix this prim's slot, parent, child order and instancing
+      // now, but DEFER opinion composition to the parallel fill below. Child-name
+      // order (ComposeChildNames) and instancing (RegisterInstance) depend only on
+      // `srcs`, never on the prim's own composed opinions, so deferring opinions
+      // does not change the tree the walk produces.
       PrimSpec spec(w.out_path.name());
       spec.set_path(w.out_path);
-      std::vector<std::string> children = ComposeInto(srcs, &spec);
+      std::vector<std::string> children = ComposeChildNames(srcs);
       auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (prof) {
         prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
@@ -1394,6 +1407,8 @@ struct Cache::Impl {
       } else {
         out->set_parent(idx, w.parent_idx);
       }
+      // Opinions for this slot are filled (in parallel) after the whole walk.
+      fill_.push_back({idx, w.src_path.str()});
 
       if (is_instance) continue;  // prototype provides the subtree
 
@@ -1414,6 +1429,42 @@ struct Cache::Impl {
                          w.depth + 1});
       }
     }
+  }
+
+  // Per-prim opinion records collected by the structure pass, drained by
+  // FillOpinions. Member (not local) so a single fill can cover every root.
+  std::vector<std::pair<uint32_t, std::string>> fill_;
+
+  // OPINION-FILL PASS: compose each slot's opinions from its (already cached)
+  // sources. Slots are disjoint PrimSpec objects, sources_cache is only read, and
+  // add_prim is done -- so distinct slots fill concurrently. Byte-identical to the
+  // serial ComposeInto: the same ComposeOpinions runs on the same (slot, srcs)
+  // pairs; only the order across independent slots changes.
+  void FillOpinions(Layer *out) {
+    auto do_range = [&](size_t b, size_t e) {
+      for (size_t i = b; i < e; ++i) {
+        auto it = sources_cache.find(fill_[i].second);
+        if (it == sources_cache.end()) continue;
+        if (PrimSpec *ps = out->prim_mutable(fill_[i].first))
+          ComposeOpinions(it->second, ps);
+      }
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    unsigned nt = options.num_threads;
+    if (nt > 1 && fill_.size() >= 2048) {
+      if (nt > 64) nt = 64;
+      std::vector<std::thread> pool;
+      pool.reserve(nt);
+      for (unsigned t = 0; t < nt; ++t) {
+        size_t b = fill_.size() * t / nt;
+        size_t e = fill_.size() * (t + 1) / nt;
+        if (b < e) pool.emplace_back([&do_range, b, e]() { do_range(b, e); });
+      }
+      for (std::thread &th : pool) th.join();
+      return;
+    }
+#endif
+    do_range(0, fill_.size());
   }
 
   bool BuildStage(Stage *stage, std::string *warn, std::string *err) {
@@ -1445,25 +1496,24 @@ struct Cache::Impl {
         if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
       }
     }
-#if defined(TINYUSDZ_ENABLE_THREAD)
-    // Pre-warm sources_cache in parallel (LIVRPS arc resolution dominates
-    // build_stage). The serial walk below then runs against an already-warm
-    // cache; output is byte-identical (warming only fills a cache, and property
-    // emission is name-ordered so it does not depend on intern/parse order).
-    // OPT-IN: only when num_threads is explicitly > 1 (not auto), because the
-    // pre-warm currently wins on small compose-bound scenes but regresses huge
-    // instanced scenes (the worker layer-parse is serialized by the global
-    // PropNameTable lock, plus merge + name-id-bloat overhead). Perf tuning
-    // (serial layer pre-load, instancing-aware warming, parallel merge) is TODO.
-    if (options.num_threads > 1 && !root_names.empty()) {
-      ParallelWarmSources(root_names, options.num_threads, warn, err);
-    }
-#endif
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+    // Structure pass (serial): walk every root, fixing each prim's slot/parent/
+    // child-order/instancing and recording its (slot, sources) for opinion fill.
+    fill_.clear();
     for (const std::string &nm : root_names) {
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
     }
+    // Opinion-fill pass: compose every slot's opinions, in parallel when
+    // num_threads > 1 (each slot is independent; sources_cache is read-only here).
+    auto fill_t0 = std::chrono::steady_clock::now();
+    FillOpinions(out.get());
+    if (options.enable_timing) {
+      prof_compose_ns_ +=
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - fill_t0).count();
+    }
+    std::vector<std::pair<uint32_t, std::string>>().swap(fill_);
     if (options.enable_timing) {
       TUSDZ_LOG_I("[next_build] sources=" + FmtMs(prof_sources_ns_ / 1e6) +
                   "ms compose=" + FmtMs(prof_compose_ns_ / 1e6) +
