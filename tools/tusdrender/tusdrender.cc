@@ -16,6 +16,7 @@
 #include <mutex>
 #include <new>
 #include <unistd.h>
+#include <array>
 #include <limits>
 #include <memory>
 #include <set>
@@ -6086,16 +6087,29 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
 bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
                     const std::string &proto_path, tinyusdz::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
-                    Blas *out, Bounds *local) {
+                    Blas *out, Bounds *local,
+                    // Sub-BLAS split: a large curve prototype is split into
+                    // several disjoint sub-BLAS so their (serial) LBVH collapses
+                    // run CONCURRENTLY. The first sub-BLAS fills `out`/`local`;
+                    // any extras are appended here (the caller places each as a
+                    // TLAS instance at the prototype's transform). Null => never
+                    // split (single BLAS, byte-identical to the old path).
+                    std::vector<Blas> *extra_blas = nullptr,
+                    std::vector<Bounds> *extra_bounds = nullptr) {
   std::vector<CurveJobNext> curves;
   CollectProtoCurves(stage, proto_path, purpose, time, &curves);
   if (curves.empty()) return true;
   std::vector<float> pts, radii;
   std::vector<uint32_t> first, count;
   // AppendLinearCurveStrands fills a full TriInfo/segment; we slim it to
-  // endpoints + a deduped material id below and free this transient (it never
-  // coexists with the larger BVH-build scratch, so it doesn't raise peak).
+  // endpoints + a deduped material id below and free this transient.
   std::vector<TriInfo> tmp_info;
+  // The FULL prototype bounds (over all points). Every sub-BLAS reports this same
+  // bounds so the TLAS / autoframe is byte-identical to the unsplit path: the
+  // world bounds is the transformed-AABB hull, and a union of partial AABB hulls
+  // is tighter than the full AABB's hull under a rotated transform (would reframe
+  // the camera). Conservative per sub-BLAS but correct (geometry is within).
+  Bounds proto_bounds;
   for (const CurveJobNext &job : curves) {
     std::vector<tinyusdz::value::point3f> p = ReadCurvePointsNext(job.prim, time);
     std::vector<int32_t> c32 =
@@ -6104,46 +6118,125 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
     AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
-                             &tmp_info, local);
+                             &tmp_info, &proto_bounds);
   }
   if (first.empty()) return true;
-  // Slim the per-segment TriInfo into endpoints (curve_seg) + a material id into
-  // the BLAS mat_table (curve_seg_mat). Segments are grouped by curve job, so a
-  // run-length dedup against the previous material collapses each job to one
-  // mat_table entry (3M segments of one bonsai material -> one TriMat).
-  out->curve_seg.reserve(tmp_info.size() * 6);
-  out->curve_seg_mat.reserve(tmp_info.size());
-  uint32_t last_id = UINT32_MAX;
-  TriMat last_mat;
-  for (const TriInfo &ti : tmp_info) {
-    TriMat m = ExtractTriMat(ti);
-    if (last_id == UINT32_MAX || !SameTriMat(m, last_mat)) {
-      last_id = uint32_t(out->mat_table.size());
-      out->mat_table.push_back(m);
-      last_mat = m;
+
+  // Partition strands into groups of ~kCurveSplitSegs segments so each group's
+  // BLAS build/collapse is a separate, concurrent job. Small prototypes (the
+  // common case) stay a single BLAS -> byte-identical to the unsplit path.
+  const size_t total_segs = tmp_info.size();
+  const size_t kCurveSplitSegs = size_t(1) << 20;  // ~1M segments/sub-BLAS
+  std::vector<std::array<size_t, 3>> groups;  // {s0, s1, seg0}
+  if (!extra_blas || total_segs <= kCurveSplitSegs) {
+    groups.push_back({0, first.size(), 0});
+  } else {
+    const size_t nsub = (total_segs + kCurveSplitSegs - 1) / kCurveSplitSegs;
+    const size_t per = (total_segs + nsub - 1) / nsub;
+    size_t s0 = 0, seg0 = 0, acc = 0, segc = 0;
+    for (size_t s = 0; s < first.size(); s++) {
+      acc += size_t(count[s]) - 1u;
+      if (acc >= per && s + 1 < first.size()) {
+        groups.push_back({s0, s + 1, seg0});
+        s0 = s + 1;
+        seg0 = segc + acc;
+        segc = seg0;
+        acc = 0;
+      }
     }
-    out->curve_seg.push_back(ti.p0.x);
-    out->curve_seg.push_back(ti.p0.y);
-    out->curve_seg.push_back(ti.p0.z);
-    out->curve_seg.push_back(ti.p1.x);
-    out->curve_seg.push_back(ti.p1.y);
-    out->curve_seg.push_back(ti.p1.z);
-    out->curve_seg_mat.push_back(last_id);
+    groups.push_back({s0, first.size(), seg0});
   }
-  std::vector<TriInfo>().swap(tmp_info);  // free the full per-segment TriInfo
-  lrt_hair_strands s;
-  std::memset(&s, 0, sizeof(s));
-  s.points = pts.data();
-  s.radius = radii.data();
-  s.strand_first = first.data();
-  s.strand_count = count.data();
-  s.nstrands = first.size();
-  s.npoints = radii.size();
-  lrt_result e = LRT_RESULT_OK;
-  out->scene = lrt_roundcurve_scene_build(&s, &build_opts, &e);
-  out->is_curve = true;
-  if (!out->scene) {
-    std::cerr << "Failed to build curve BLAS (err=" << int(e) << ").\n";
+  if (extra_blas && groups.size() > 1) {
+    extra_blas->resize(groups.size() - 1);
+    extra_bounds->resize(groups.size() - 1);
+  }
+
+  // Phase A (serial): for each group, slim its segments' TriInfo into the
+  // destination BLAS (curve_seg + a deduped material id) and cut its rebased
+  // strand offsets. This is the only step that reads the big tmp_info, so free
+  // tmp_info right after -- the parallel scene builds (Phase B) then never
+  // coexist with it (keeps peak ~unchanged from the unsplit path). Points are
+  // NOT copied: each sub-scene reads the shared pts/radii at a base offset.
+  struct SubGeom {
+    std::vector<uint32_t> sf, sc;  // rebased strand offsets/counts
+    uint32_t pbase, npts;
+    Blas *dst;
+  };
+  std::vector<SubGeom> subs(groups.size());
+  for (size_t g = 0; g < groups.size(); ++g) {
+    const size_t s0 = groups[g][0], s1 = groups[g][1], seg0 = groups[g][2];
+    Blas *dst = g == 0 ? out : &(*extra_blas)[g - 1];
+    *(g == 0 ? local : &(*extra_bounds)[g - 1]) = proto_bounds;  // full bounds
+    SubGeom &sg = subs[g];
+    sg.dst = dst;
+    sg.pbase = first[s0];
+    sg.npts = first[s1 - 1] + count[s1 - 1] - sg.pbase;
+    sg.sf.resize(s1 - s0);
+    sg.sc.resize(s1 - s0);
+    size_t nseg_sub = 0;
+    for (size_t s = s0; s < s1; s++) {
+      sg.sf[s - s0] = first[s] - sg.pbase;
+      sg.sc[s - s0] = count[s];
+      nseg_sub += size_t(count[s]) - 1u;
+    }
+    dst->curve_seg.reserve(nseg_sub * 6);
+    dst->curve_seg_mat.reserve(nseg_sub);
+    uint32_t last_id = UINT32_MAX;
+    TriMat last_mat;
+    for (size_t k = 0; k < nseg_sub; k++) {
+      const TriInfo &ti = tmp_info[seg0 + k];
+      TriMat m = ExtractTriMat(ti);
+      if (last_id == UINT32_MAX || !SameTriMat(m, last_mat)) {
+        last_id = uint32_t(dst->mat_table.size());
+        dst->mat_table.push_back(m);
+        last_mat = m;
+      }
+      dst->curve_seg.push_back(ti.p0.x);
+      dst->curve_seg.push_back(ti.p0.y);
+      dst->curve_seg.push_back(ti.p0.z);
+      dst->curve_seg.push_back(ti.p1.x);
+      dst->curve_seg.push_back(ti.p1.y);
+      dst->curve_seg.push_back(ti.p1.z);
+      dst->curve_seg_mat.push_back(last_id);
+    }
+  }
+  std::vector<TriInfo>().swap(tmp_info);  // freed before the parallel builds
+
+  // Phase B (parallel): build each sub-BLAS's round-hair scene (its serial LBVH
+  // collapse runs concurrently with the others). Reads the shared pts/radii.
+  std::atomic<bool> ok{true};
+  std::atomic<size_t> gcur{0};
+  auto gw = [&]() {
+    for (;;) {
+      const size_t g = gcur.fetch_add(1, std::memory_order_relaxed);
+      if (g >= subs.size()) break;
+      SubGeom &sg = subs[g];
+      lrt_hair_strands hs;
+      std::memset(&hs, 0, sizeof(hs));
+      hs.points = pts.data() + size_t(sg.pbase) * 3;
+      hs.radius = radii.data() + sg.pbase;
+      hs.strand_first = sg.sf.data();
+      hs.strand_count = sg.sc.data();
+      hs.nstrands = sg.sf.size();
+      hs.npoints = sg.npts;
+      lrt_result e = LRT_RESULT_OK;
+      sg.dst->scene = lrt_roundcurve_scene_build(&hs, &build_opts, &e);
+      sg.dst->is_curve = true;
+      if (!sg.dst->scene) ok.store(false, std::memory_order_relaxed);
+    }
+  };
+  const unsigned gt = std::min<unsigned>(
+      WorkerThreadCount(int(build_opts.num_threads)), unsigned(subs.size()));
+  if (gt <= 1) {
+    gw();
+  } else {
+    std::vector<std::thread> pool;
+    pool.reserve(gt);
+    for (unsigned t = 0; t < gt; ++t) pool.emplace_back(gw);
+    for (std::thread &th : pool) th.join();
+  }
+  if (!ok.load()) {
+    std::cerr << "Failed to build curve BLAS.\n";
     return false;
   }
   return true;
@@ -6602,13 +6695,26 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
     return false;
   }
-  // Each curve prototype (local space) -> blas[curve_base + i] as a curve BLAS.
+  // Each curve prototype -> blas[curve_base + i] (its first sub-BLAS); a large
+  // prototype is split into extra sub-BLAS appended at the end of ctx.blas so
+  // their LBVH collapses build concurrently. curve_proto_blas[i] lists every
+  // sub-BLAS id for prototype i, used below to place one TLAS instance per
+  // sub-BLAS at the prototype's transform.
+  std::vector<std::vector<uint32_t>> curve_proto_blas(curve_inst.protos.size());
   for (size_t i = 0; i < curve_inst.protos.size(); ++i) {
     const size_t b = curve_base + i;
+    std::vector<Blas> extra;
+    std::vector<Bounds> extra_b;
     if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
                         curve_inst.protos[i].purpose, time, build_opts,
-                        &ctx.blas[b], &local_bounds[b])) {
+                        &ctx.blas[b], &local_bounds[b], &extra, &extra_b)) {
       return false;
+    }
+    curve_proto_blas[i].push_back(uint32_t(b));
+    for (size_t j = 0; j < extra.size(); ++j) {
+      curve_proto_blas[i].push_back(uint32_t(ctx.blas.size()));
+      ctx.blas.push_back(std::move(extra[j]));
+      local_bounds.push_back(extra_b[j]);
     }
   }
   const auto stream_t1 = std::chrono::steady_clock::now();
@@ -6825,11 +6931,18 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   static const float kIdentO2W[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
   std::vector<lrt_instance> lrt_insts;
   const size_t n_inst_src = instances.size();
-  const size_t n_curve_src = curve_inst.instances.size();
+  // Expand curve placements: one TLAS instance per sub-BLAS of each curve
+  // instance's prototype (split prototypes have several), all at the instance's
+  // transform. (curve_inst.instances persists, so o2w pointers stay valid.)
+  std::vector<std::pair<uint32_t, const float *>> curve_placements;
+  for (const CurveInstanceRT &ci : curve_inst.instances)
+    for (uint32_t bid : curve_proto_blas[ci.curve_proto_idx])
+      curve_placements.push_back({bid, ci.o2w});
+  const size_t n_curve_src = curve_placements.size();
   const size_t n_src = n_base_groups + n_inst_src + n_curve_src;
   // Resolve a source index [0, n_src) to its (blas_id, o2w) without materializing
   // a unified array: [0, G) = base groups (at identity), [G, G+nI) = native
-  // instances, the remainder = instanced curve prototypes.
+  // instances, the remainder = instanced curve sub-BLAS placements.
   auto src_at = [&](size_t i, uint32_t *blas_id, const float **o2w) {
     if (i < n_base_groups) {
       *blas_id = base_blas_id(i);
@@ -6843,8 +6956,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       return;
     }
     i -= n_inst_src;
-    *blas_id = uint32_t(curve_base + curve_inst.instances[i].curve_proto_idx);
-    *o2w = curve_inst.instances[i].o2w;
+    *blas_id = curve_placements[i].first;
+    *o2w = curve_placements[i].second;
   };
   auto blas_ok = [&](uint32_t blas_id) {
     return blas_id < ctx.blas.size() && ctx.blas[blas_id].scene;
