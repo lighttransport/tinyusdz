@@ -69,6 +69,13 @@ struct DrawMeshCPU {
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
   std::vector<DrawSubmesh> submeshes;
 
+  // GPU instancing: per-instance model matrices, 16 floats each in light3d
+  // column-major layout (the same convention as `world`). When non-empty, the
+  // mesh is drawn with glDrawElementsInstanced and `world` is ignored (each
+  // instance carries its own placement). Empty = a single non-instanced draw.
+  std::vector<float> instanceXforms;
+  size_t instanceCount() const { return instanceXforms.size() / 16; }
+
   float world[16];  // column-major (light3d::Mat4 layout), world transform
   // USD row-vector matrix copied with the same convention as `world`.
   float skinGeomBind[16];
