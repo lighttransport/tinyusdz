@@ -444,7 +444,11 @@ typedef struct tri_bnode {
  * [node_next, node_end) slice of the shared bnodes arena and a disjoint range
  * of the shared indices array, so no synchronization is needed. */
 typedef struct tri_build_ctx {
-    const float *verts; /* caller soup, 9*ntris (NULL for curve scenes) */
+    const float *verts; /* caller soup, 9*ntris (NULL for curve scenes), OR
+                         * when vidx != NULL: a unique-vertex array (3*nverts)
+                         * gathered through vidx (indexed build, see tri_fetch9). */
+    const uint32_t *vidx; /* NULL = flat soup; else 3*ntris vertex indices into
+                           * `verts` (3 floats/vertex) for indexed triangle input */
     const tri_subseg *subsegs; /* curve sub-segments (NULL for triangles) */
     const tri_rlcseg *rlcsegs; /* round-linear curve segs (TRI_PRIM_RLCURVE) */
     size_t ntris;
@@ -709,6 +713,22 @@ static void tri_part_copyback(void *arg, unsigned chunk, uint32_t begin,
 
 /* Per-triangle AABB + centroid precompute. Returns non-zero on non-finite
  * input. Parallelized by chunks when threads > 1. */
+/* Return a pointer to triangle `i`'s 9 object-space floats (v0 v1 v2). For a
+ * flat soup (vidx == NULL) this is a zero-copy view into `verts`; for indexed
+ * input it gathers the three vertices through vidx into `buf` (byte-identical
+ * floats, just relocated from the caller's de-index into the build). */
+static inline const float *tri_fetch9(const float *verts, const uint32_t *vidx,
+                                      size_t i, float buf[9]) {
+    if (!vidx) return &verts[i * 9];
+    const uint32_t a = vidx[i * 3 + 0];
+    const uint32_t b = vidx[i * 3 + 1];
+    const uint32_t c = vidx[i * 3 + 2];
+    memcpy(&buf[0], &verts[(size_t)a * 3], 3 * sizeof(float));
+    memcpy(&buf[3], &verts[(size_t)b * 3], 3 * sizeof(float));
+    memcpy(&buf[6], &verts[(size_t)c * 3], 3 * sizeof(float));
+    return buf;
+}
+
 typedef struct tri_precompute_job {
     tri_build_ctx *c;
     atomic_int bad;
@@ -718,7 +738,8 @@ static void tri_precompute_chunk_impl(tri_build_ctx *c, uint32_t begin,
                                       uint32_t end, int *bad_out) {
     int bad = 0;
     for (uint32_t i = begin; i < end; i++) {
-        const float *v = &c->verts[(size_t)i * 9];
+        float vbuf[9];
+        const float *v = tri_fetch9(c->verts, c->vidx, i, vbuf);
         for (int a = 0; a < 3; a++) {
             /* check the vertices, not min/max results: minf/maxf comparisons
              * are false for NaN and would swallow it */
@@ -2552,7 +2573,9 @@ static uint32_t tri_emit_leaf(tri_collapse_ctx *cc, const tri_bnode *bn) {
                 if (k < count) {
                     uint32_t prim = bc->indices[bn->a + k];
                     prims[lane] = prim;
-                    memcpy(vtx[lane], &bc->verts[(size_t)prim * 9],
+                    float vbuf[9];
+                    memcpy(vtx[lane],
+                           tri_fetch9(bc->verts, bc->vidx, prim, vbuf),
                            9 * sizeof(float));
                 } else {
                     prims[lane] = LRT_TRI_NO_HIT;
@@ -2576,7 +2599,8 @@ static uint32_t tri_emit_leaf(tri_collapse_ctx *cc, const tri_bnode *bn) {
             uint32_t k = b * bw + lane;
             if (k < count) {
                 uint32_t prim = bc->indices[bn->a + k];
-                const float *v = &bc->verts[(size_t)prim * 9];
+                float vbuf[9];
+                const float *v = tri_fetch9(bc->verts, bc->vidx, prim, vbuf);
                 f[0 * bw + lane] = v[0];
                 f[1 * bw + lane] = v[1];
                 f[2 * bw + lane] = v[2];
@@ -7520,6 +7544,7 @@ static int tri_collapse_into(lrt_tri_scene *s, tri_build_ctx *bc,
 static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
                                            const lrt_tri_build_options *opts,
                                            const uint32_t *morton_override,
+                                           const uint32_t *vidx,
                                            lrt_result *err) {
     tri_set_err(err, LRT_RESULT_OK);
     if (!vertices || ntris == 0 || ntris > 0x07FFFFFFu) {
@@ -7578,6 +7603,7 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
     tri_build_ctx bc;
     memset(&bc, 0, sizeof(bc));
     bc.verts = vertices;
+    bc.vidx = vidx; /* NULL => flat soup; else indexed gather (tri_fetch9) */
     bc.ntris = ntris;
     bc.max_leaf = max_leaf;
     bc.block_shift = layout == 8 ? 3u : 2u;
@@ -7792,7 +7818,27 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
 lrt_tri_scene *lrt_tri_scene_build(const float *vertices, size_t ntris,
                                    const lrt_tri_build_options *opts,
                                    lrt_result *err) {
-    return tri_scene_build_impl(vertices, ntris, opts, NULL, err);
+    return tri_scene_build_impl(vertices, ntris, opts, NULL, NULL, err);
+}
+
+/* Indexed build: `vertices` is a unique-vertex array (3 floats each, nverts of
+ * them) and `indices` is 3*ntris vertex ids. Byte-identical to passing the
+ * de-indexed soup to lrt_tri_scene_build -- the build gathers each triangle's 3
+ * vertices through `indices` (tri_fetch9) instead of reading a pre-expanded
+ * soup, so the caller need not materialize 9*ntris floats. prim_id in the BVH is
+ * still the triangle index 0..ntris-1, so per-triangle caller data (color,
+ * material, face map) indexes unchanged. The de-indexed leaf is identical, so
+ * lrt_tri_get_verts works the same. */
+lrt_tri_scene *lrt_tri_scene_build_indexed(const float *vertices, size_t nverts,
+                                           const uint32_t *indices, size_t ntris,
+                                           const lrt_tri_build_options *opts,
+                                           lrt_result *err) {
+    if (!vertices || !indices || ntris == 0) {
+        tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
+        return NULL;
+    }
+    (void)nverts; /* bounds are the caller's contract; gather trusts indices */
+    return tri_scene_build_impl(vertices, ntris, opts, NULL, indices, err);
 }
 
 /* Batch build: build many independent scenes, parallelizing ACROSS scenes. This
@@ -7899,7 +7945,7 @@ lrt_tri_scene *lrt_tri_scene_build_lbvh_morton(const float *vertices,
     o.layout = layout;
     o.max_leaf_size = max_leaf_size;
     o.num_threads = 1;
-    return tri_scene_build_impl(vertices, ntris, &o, morton, err);
+    return tri_scene_build_impl(vertices, ntris, &o, morton, NULL, err);
 }
 
 /* Release a memory-mapped scene's backing store. The mmap path is implemented
