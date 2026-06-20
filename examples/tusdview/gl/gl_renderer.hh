@@ -43,6 +43,8 @@ class GLRenderer final : public Renderer {
   struct GLMesh {
     GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
     GLuint influenceVbo{0}, influenceTex{0};
+    GLuint instanceVbo{0};   // per-instance model matrices (mat4); 0 = none
+    int instanceCount{0};    // >0 => drawn with glDrawElementsInstanced
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     bool doubleSided{false};
@@ -78,6 +80,13 @@ class GLRenderer final : public Renderer {
   GLint uSkinningEnabled_{-1};
   GLint uExtendedSkinningEnabled_{-1};
   GLint uBoneTexWidth_{-1}, uBoneMatrixCount_{-1}, uInfluenceTexWidth_{-1};
+
+  // Instanced flat-shaded program (GPU instancing for PointInstancer prototypes):
+  // per-instance mat4 model matrix in vertex attribs 6-9, view-proj uniform.
+  GLuint instProgram_{0};
+  GLint iUViewProj_{-1}, iCameraPos_{-1};
+  GLint iBaseColor_{-1}, iMetallic_{-1}, iRoughness_{-1}, iEmissive_{-1}, iAlpha_{-1};
+  GLint iHasBaseColorTex_{-1}, iHasMetalRoughTex_{-1}, iHasNormalTex_{-1}, iHasEmissiveTex_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
