@@ -4563,6 +4563,30 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     if (want_normals) tri_normals->reserve(tri_normals->size() + tri_estimate * 9);
   }
 
+  // Material + purpose are constant across a mesh's triangles, so resolve them
+  // ONCE here instead of rebuilding a full TriInfo per triangle. The slim TLAS
+  // path (TriStore) stores the material once in mat_table and needs none of these
+  // per-tri; the flat path copies this template and overwrites only the positions.
+  const uint32_t purpose_bit = PurposeBit(purpose);
+  const bool visible_for_fit = PurposeVisible(purpose_bit, purpose_mask);
+  TriInfo tmpl;
+  tmpl.base_color = base_color;
+  tmpl.tex_id = tex_id;
+  tmpl.normal_tex_id = normal_tex_id;
+  tmpl.roughness = roughness;
+  tmpl.metallic = metallic;
+  tmpl.rough_tex_id = rough_tex.id;
+  tmpl.rough_ch = rough_tex.ch;
+  tmpl.metal_tex_id = metal_tex.id;
+  tmpl.metal_ch = metal_tex.ch;
+  tmpl.emission = emission;
+  tmpl.emission_tex_id = emission_tex_id;
+  tmpl.occlusion = occlusion;
+  tmpl.occ_tex_id = occ_tex.id;
+  tmpl.occ_ch = occ_tex.ch;
+  tmpl.opacity = opacity;
+  tmpl.purpose_bit = purpose_bit;
+
   size_t cursor = 0;
   size_t face_idx = 0;
   for (int32_t c : counts) {
@@ -4588,37 +4612,15 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
       if (Length(n) < 1.0e-12f) continue;
 
-      TriInfo tri;
-      tri.p0 = p0;
-      tri.p1 = p1;
-      tri.p2 = p2;
-      tri.n = n;
-      tri.base_color = base_color;
-      tri.tex_id = tex_id;
-      tri.normal_tex_id = normal_tex_id;
-      tri.roughness = roughness;
-      tri.metallic = metallic;
-      tri.rough_tex_id = rough_tex.id;
-      tri.rough_ch = rough_tex.ch;
-      tri.metal_tex_id = metal_tex.id;
-      tri.metal_ch = metal_tex.ch;
-      tri.emission = emission;
-      tri.emission_tex_id = emission_tex_id;
-      tri.occlusion = occlusion;
-      tri.occ_tex_id = occ_tex.id;
-      tri.occ_ch = occ_tex.ch;
-      tri.opacity = opacity;
-      tri.purpose_bit = PurposeBit(purpose);
-      if (tri.purpose_bit == kPurposeRenderBit) {
+      if (purpose_bit == kPurposeRenderBit) {
         stats->purpose_render_triangles++;
-      } else if (tri.purpose_bit == kPurposeProxyBit) {
+      } else if (purpose_bit == kPurposeProxyBit) {
         stats->purpose_proxy_triangles++;
-      } else if (tri.purpose_bit == kPurposeGuideBit) {
+      } else if (purpose_bit == kPurposeGuideBit) {
         stats->purpose_guide_triangles++;
       } else {
         stats->purpose_default_triangles++;
       }
-      const bool visible_for_fit = PurposeVisible(tri.purpose_bit, purpose_mask);
       // TLAS mode culls purpose-invisible triangles at build time (closest-hit
       // can't filter per-prim like the flat multi-hit path does).
       if (purpose_cull && !visible_for_fit) continue;
@@ -4631,6 +4633,11 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         ts.mat_id = 0;
         tris->push_back(ts);
       } else {
+        TriInfo tri = tmpl;  // per-mesh material; per-tri geometry below
+        tri.p0 = p0;
+        tri.p1 = p1;
+        tri.p2 = p2;
+        tri.n = n;
         tris->push_back(tri);
       }
       if (want_uvs) {
