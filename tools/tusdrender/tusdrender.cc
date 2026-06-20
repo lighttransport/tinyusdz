@@ -6487,18 +6487,23 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   {
     const size_t nb = ctx.blas.size();
     const size_t kLargeTris = 32768;  // above this, intra-build threading wins
-    // Pass 1: large BLAS. Build with BOUNDED concurrency -- each build runs
-    // single-threaded but a few run at once, so the live BVH-build scratch stays
-    // ~kBuildPar * one-build's-worth (keeping peak under Embree) while using more
-    // cores than the one-at-a-time intra-threaded loop. Byte-identical: each BLAS
-    // builds independently from its own geometry; each soup freed right after.
+    // Pass 1: large BLAS. Build with BOUNDED concurrency -- kBuildPar builds run
+    // at once, each with a few INTRA-build threads (kBuildPar * intra_t cores), so
+    // the morton/radix/tree steps (tri_parallel_for) use the cores that a
+    // single-threaded build leaves idle (the bvh phase otherwise ran ~3/32 cores).
+    // kBuildPar bounds the coexisting build scratch to hold peak under Embree.
+    // Byte-identical: each BLAS builds independently from its own geometry.
     std::vector<size_t> large;
     for (size_t b = 0; b < nb; ++b)
       if (ctx.blas[b].tris.size() >= kLargeTris) large.push_back(b);
     lrt_tri_build_options sbuild = build_opts;
-    sbuild.num_threads = 1;  // single-threaded per build; parallelism is across builds
     const unsigned kBuildPar = std::min<unsigned>(
         WorkerThreadCount(opt.threads), large.empty() ? 1u : 3u);  // cap for peak
+    // Give each concurrent build a few intra-build threads (verified sweet spot
+    // ~4: k=3 x 4 = 12 cores, bvh 1.7->1.5s, peak still ~180MB under Embree;
+    // higher T tightens peak for little gain). Scales down on smaller machines.
+    sbuild.num_threads = std::max(
+        1u, std::min(4u, WorkerThreadCount(opt.threads) / kBuildPar));
     std::atomic<size_t> lcur{0};
     std::atomic<bool> lfail{false};
     auto lworker = [&]() {
