@@ -34,26 +34,33 @@ Methodology mirrors the Activision Caldera benchmark in
 
 | element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
-| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 14.5 MB | 1.06 | 175.4 MB | 26.5× |
-| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.20 | 87.8 MB | 1.15 | 257.7 MB | 5.7× |
-| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.64 | 202.4 MB | 3.2× |
-| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 155.7 MB | 1.92 | 425.3 MB | 4.1× |
-| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.37 | 123.0 MB | 2.69 | 703.2 MB | 7.3× |
-| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.09 | 0.02 | 2.39 | 1.1 GB | 0.62 | 232.4 MB | 0.3× |
-| isCoral | 415.2 MB | 87.49 M | 3.50 | 1.56 | 0.01 | 8.21 | 3.0 GB | 4.29 | 3.3 GB | 0.5× |
-| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.94 | 0.01 | 18.86 | 7.1 GB | 72.62 | 15.2 GB | 3.9× |
+| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 15.2 MB | 0.72 | 176.8 MB | 18.0× |
+| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.13 | 257.5 MB | 5.9× |
+| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.63 | 203.2 MB | 3.1× |
+| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 154.7 MB | 1.94 | 418.7 MB | 4.1× |
+| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.36 | 123.9 MB | 2.63 | 722.8 MB | 7.3× |
+| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.08 | 0.03 | 1.57 | 816.4 MB | 0.62 | 231.4 MB | 0.4× |
+| isCoral | 415.2 MB | 87.49 M | 3.38 | 1.54 | 0.01 | 8.24 | 3.0 GB | 4.02 | 3.3 GB | 0.5× |
+| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.79 | 0.01 | 18.38 | 7.1 GB | 74.23 | 15.4 GB | 4.0× |
 
 *(Table refreshed 2026-06 on the current optimized build — the same large-scene
-work in the [refresh section](#large-scene-refresh--caldera--island--alab-2026-06-post-optimization).
-The first-pass numbers are preserved in git history.)*
+work in the [refresh section](#large-scene-refresh--caldera--island--alab-2026-06-post-optimization),
+plus the curve-build optimizations (slim curve storage, Morton-LBVH curve build,
+parallel curve sub-BLAS) that cut isIronwoodA1 2.39→1.57 s and 1.1 GB→816 MB. The
+first-pass numbers are preserved in git history.)*
 
 `tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
 across 86 prototypes placed by 22.1 M instances; it excludes curve strands).
 `speedup` = usdrecord wall ÷ tusdrender wall. ‡ = isIronwoodA1's heavy XGen is
-*curves* (`xgBonsai_curves.usd`, 34 BasisCurves prims) now ray-traced as hair —
-its 2.27 s / 1.1 GB is the curve-scene build, and it renders the foliage usdrecord
-does (the bare-trunk-only usdrecord row is 0.62 s).
+*curves* (`xgBonsai_curves.usd`, 34 BasisCurves prims, ~3 M hair segments) ray-
+traced as hair — its 1.57 s / 816 MB is the curve build, and it renders the
+foliage usdrecord does (the bare-trunk-only usdrecord row is 0.62 s). The curve
+path was optimized: per-segment storage slimmed to endpoints + a per-BLAS material
+(1.08 GB → 842 MB), the build switched from serial binned-SAH to parallel
+Morton-LBVH, and large prototypes are split into sub-BLAS whose collapses build
+concurrently (2.32 → 1.57 s, −32 %). The residual gap to usdrecord is the serial
+curve read/transform setup + LightRT per-sub build scratch.
 
 > **PointInstancer expansion (fixed).** An earlier revision of this benchmark
 > showed isBeach at 0.06 M tris because the `-rtPreview` path skipped
@@ -160,7 +167,7 @@ tusdrender _merged_ALab/entity/alab_set01/alab_set01.usda out.png \
 ## Analysis
 
 **Light/medium elements (isNaupakaA → isDunesA, isHibiscus): clean tusdrender
-wins.** 3–26× faster wall and ~2–12× lower peak RSS than hdEmbree. The
+wins.** 3–18× faster wall and ~2–12× lower peak RSS than hdEmbree. The
 `next` loader's startup is sub-second and LightRT's preview BVH builds in tens of
 milliseconds, where usdrecord pays a fixed Hydra/USD-stage + delegate spin-up
 cost (~0.7 s floor even on the tiniest element) and carries a larger resident
