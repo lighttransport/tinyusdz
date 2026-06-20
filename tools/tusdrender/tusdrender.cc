@@ -2590,6 +2590,10 @@ void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
   }
 }
 
+// Fixed base color for unmaterialed curve geometry (the `next` path doesn't
+// resolve curve displayColor yet). One value for every hair segment.
+static const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
+
 void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
                               const std::vector<int> &counts,
                               const std::vector<float> &widths,
@@ -2616,20 +2620,26 @@ void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &point
       curve_radii->push_back(std::max(1.0e-5f, radius * ApproxScale(world)));
       Expand(bounds, p);
     }
-    for (int i = 0; i + 1 < c; i++) {
-      TriInfo ti;
-      size_t point_base = size_t(first->back()) + size_t(i);
-      Vec3 p0{(*curve_points)[point_base * 3 + 0],
-              (*curve_points)[point_base * 3 + 1],
-              (*curve_points)[point_base * 3 + 2]};
-      Vec3 p1{(*curve_points)[(point_base + 1) * 3 + 0],
-              (*curve_points)[(point_base + 1) * 3 + 1],
-              (*curve_points)[(point_base + 1) * 3 + 2]};
-      ti.p0 = p0;
-      ti.p1 = p1;
-      ti.p2 = Add(p0, Vec3{0.0f, 1.0f, 0.0f});
-      ti.base_color = Vec3{0.62f, 0.50f, 0.34f};
-      info->push_back(ti);
+    // Per-segment TriInfo: only for the DirectScene curve path (info != null).
+    // The instanced curve BLAS passes info == null and derives its slim per-
+    // segment endpoints straight from curve_points (kCurveColor is the material),
+    // skipping this 120 B/segment intermediate entirely.
+    if (info) {
+      for (int i = 0; i + 1 < c; i++) {
+        TriInfo ti;
+        size_t point_base = size_t(first->back()) + size_t(i);
+        Vec3 p0{(*curve_points)[point_base * 3 + 0],
+                (*curve_points)[point_base * 3 + 1],
+                (*curve_points)[point_base * 3 + 2]};
+        Vec3 p1{(*curve_points)[(point_base + 1) * 3 + 0],
+                (*curve_points)[(point_base + 1) * 3 + 1],
+                (*curve_points)[(point_base + 1) * 3 + 2]};
+        ti.p0 = p0;
+        ti.p1 = p1;
+        ti.p2 = Add(p0, Vec3{0.0f, 1.0f, 0.0f});
+        ti.base_color = kCurveColor;
+        info->push_back(ti);
+      }
     }
     cursor += size_t(c);
   }
@@ -6101,9 +6111,11 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   if (curves.empty()) return true;
   std::vector<float> pts, radii;
   std::vector<uint32_t> first, count;
-  // AppendLinearCurveStrands fills a full TriInfo/segment; we slim it to
-  // endpoints + a deduped material id below and free this transient.
-  std::vector<TriInfo> tmp_info;
+  // Curve endpoints (curve_seg) are derived directly from the transformed points
+  // below, so pass info == null: AppendLinearCurveStrands skips the redundant
+  // 120 B/segment TriInfo intermediate (its only payload here is p0/p1 -- already
+  // in pts -- and the constant kCurveColor). On a 3 M-segment prototype that
+  // removes ~360 MB of build + slim work that was the dominant serial cost.
   // The FULL prototype bounds (over all points). Every sub-BLAS reports this same
   // bounds so the TLAS / autoframe is byte-identical to the unsplit path: the
   // world bounds is the transformed-AABB hull, and a union of partial AABB hulls
@@ -6118,45 +6130,47 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
     AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
-                             &tmp_info, &proto_bounds);
+                             /*info=*/nullptr, &proto_bounds);
   }
   if (first.empty()) return true;
+  const TriMat kCurveMat = ExtractTriMat([] {
+    TriInfo t;
+    t.base_color = kCurveColor;
+    return t;
+  }());
 
   // Partition strands into groups of ~kCurveSplitSegs segments so each group's
   // BLAS build/collapse is a separate, concurrent job. Small prototypes (the
   // common case) stay a single BLAS -> byte-identical to the unsplit path.
-  const size_t total_segs = tmp_info.size();
+  size_t total_segs = 0;
+  for (uint32_t c : count) total_segs += size_t(c) - 1u;
   const size_t kCurveSplitSegs = size_t(1) << 20;  // ~1M segments/sub-BLAS
-  std::vector<std::array<size_t, 3>> groups;  // {s0, s1, seg0}
+  std::vector<std::array<size_t, 2>> groups;  // {s0, s1}
   if (!extra_blas || total_segs <= kCurveSplitSegs) {
-    groups.push_back({0, first.size(), 0});
+    groups.push_back({0, first.size()});
   } else {
     const size_t nsub = (total_segs + kCurveSplitSegs - 1) / kCurveSplitSegs;
     const size_t per = (total_segs + nsub - 1) / nsub;
-    size_t s0 = 0, seg0 = 0, acc = 0, segc = 0;
+    size_t s0 = 0, acc = 0;
     for (size_t s = 0; s < first.size(); s++) {
       acc += size_t(count[s]) - 1u;
       if (acc >= per && s + 1 < first.size()) {
-        groups.push_back({s0, s + 1, seg0});
+        groups.push_back({s0, s + 1});
         s0 = s + 1;
-        seg0 = segc + acc;
-        segc = seg0;
         acc = 0;
       }
     }
-    groups.push_back({s0, first.size(), seg0});
+    groups.push_back({s0, first.size()});
   }
   if (extra_blas && groups.size() > 1) {
     extra_blas->resize(groups.size() - 1);
     extra_bounds->resize(groups.size() - 1);
   }
 
-  // Phase A (serial): for each group, slim its segments' TriInfo into the
-  // destination BLAS (curve_seg + a deduped material id) and cut its rebased
-  // strand offsets. This is the only step that reads the big tmp_info, so free
-  // tmp_info right after -- the parallel scene builds (Phase B) then never
-  // coexist with it (keeps peak ~unchanged from the unsplit path). Points are
-  // NOT copied: each sub-scene reads the shared pts/radii at a base offset.
+  // Phase A (serial): for each group, derive its per-segment endpoints
+  // (curve_seg) straight from the shared transformed points and cut its rebased
+  // strand offsets. One material (kCurveMat) covers every segment. Points are NOT
+  // copied: each sub-scene reads the shared pts/radii at a base offset.
   struct SubGeom {
     std::vector<uint32_t> sf, sc;  // rebased strand offsets/counts
     uint32_t pbase, npts;
@@ -6164,7 +6178,7 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   };
   std::vector<SubGeom> subs(groups.size());
   for (size_t g = 0; g < groups.size(); ++g) {
-    const size_t s0 = groups[g][0], s1 = groups[g][1], seg0 = groups[g][2];
+    const size_t s0 = groups[g][0], s1 = groups[g][1];
     Blas *dst = g == 0 ? out : &(*extra_blas)[g - 1];
     *(g == 0 ? local : &(*extra_bounds)[g - 1]) = proto_bounds;  // full bounds
     SubGeom &sg = subs[g];
@@ -6179,28 +6193,23 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
       sg.sc[s - s0] = count[s];
       nseg_sub += size_t(count[s]) - 1u;
     }
+    dst->mat_table.push_back(kCurveMat);  // index 0 for every segment
     dst->curve_seg.reserve(nseg_sub * 6);
-    dst->curve_seg_mat.reserve(nseg_sub);
-    uint32_t last_id = UINT32_MAX;
-    TriMat last_mat;
-    for (size_t k = 0; k < nseg_sub; k++) {
-      const TriInfo &ti = tmp_info[seg0 + k];
-      TriMat m = ExtractTriMat(ti);
-      if (last_id == UINT32_MAX || !SameTriMat(m, last_mat)) {
-        last_id = uint32_t(dst->mat_table.size());
-        dst->mat_table.push_back(m);
-        last_mat = m;
+    dst->curve_seg_mat.assign(nseg_sub, 0u);
+    for (size_t s = s0; s < s1; s++) {
+      const size_t pf = first[s];  // global point base (pts is concatenated)
+      for (uint32_t i = 0; i + 1u < count[s]; i++) {
+        const float *a = &pts[(pf + i) * 3];
+        const float *b = &pts[(pf + i + 1) * 3];
+        dst->curve_seg.push_back(a[0]);
+        dst->curve_seg.push_back(a[1]);
+        dst->curve_seg.push_back(a[2]);
+        dst->curve_seg.push_back(b[0]);
+        dst->curve_seg.push_back(b[1]);
+        dst->curve_seg.push_back(b[2]);
       }
-      dst->curve_seg.push_back(ti.p0.x);
-      dst->curve_seg.push_back(ti.p0.y);
-      dst->curve_seg.push_back(ti.p0.z);
-      dst->curve_seg.push_back(ti.p1.x);
-      dst->curve_seg.push_back(ti.p1.y);
-      dst->curve_seg.push_back(ti.p1.z);
-      dst->curve_seg_mat.push_back(last_id);
     }
   }
-  std::vector<TriInfo>().swap(tmp_info);  // freed before the parallel builds
 
   // Phase B (parallel): build each sub-BLAS's round-hair scene (its serial LBVH
   // collapse runs concurrently with the others). Reads the shared pts/radii.
