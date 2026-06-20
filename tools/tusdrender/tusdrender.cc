@@ -5996,6 +5996,20 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   return true;
 }
 
+// Upper bound on the triangles a mesh job emits: the fan-triangulation count
+// (sum of max(0, c-2) over faceVertexCounts). Invalid/degenerate/purpose-culled
+// triangles only reduce the actual count, so this never under-reserves -- used to
+// reserve the stream output up front so the chunked append never reallocates.
+inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
+                                 double time) {
+  const std::vector<int32_t> counts =
+      ReadIntArrayLazy(prim, "faceVertexCounts", time);
+  size_t est = 0;
+  for (int32_t c : counts)
+    if (c >= 3) est += size_t(c - 2);
+  return est;
+}
+
 // Stream a list of (material-resolved) mesh jobs into packed triangle buffers +
 // a bounds, in parallel, appending in job order (deterministic). Geometry is
 // emitted in each job's `world` space. `purpose_cull` drops purpose-invisible
@@ -6021,86 +6035,108 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
   };
-  std::vector<R> results(jobs.size());
   const unsigned nthreads =
       std::min<unsigned>(WorkerThreadCount(threads),
                          jobs.empty() ? 1u : unsigned(jobs.size()));
-  std::atomic<size_t> cursor{0};
-  std::atomic<bool> oom{false};
-  // A bad_alloc must be caught INSIDE each worker thread (an exception escaping a
-  // std::thread calls std::terminate); it signals the cap was hit so all workers
-  // stop early.
-  auto worker = [&]() {
-    try {
-      for (;;) {
-        const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
-        if (i >= jobs.size() || oom.load(std::memory_order_relaxed)) break;
-        const MeshJobNext &job = jobs[i];
-        R &r = results[i];
-        AddRTPreviewMeshNext(job.prim, job.world, job.purpose, purpose_mask, time,
-                             job.base_color, job.tex_id, job.normal_tex_id,
-                             job.roughness, job.metallic, job.rough_tex,
-                             job.metal_tex, job.emission, job.emission_tex_id,
-                             job.occlusion, job.occ_tex, job.uv_xform, want_uvs,
-                             &r.v, &r.t,
-                             &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
-                             job.opacity, want_colors, &r.col, want_normals,
-                             &r.nrm);
-      }
-    } catch (const std::bad_alloc &) {
-      oom.store(true, std::memory_order_relaxed);
-    }
-  };
-  if (nthreads <= 1) {
-    worker();
-  } else {
-    std::vector<std::thread> pool;
-    pool.reserve(nthreads);
-    for (unsigned t = 0; t < nthreads; ++t) pool.emplace_back(worker);
-    for (std::thread &th : pool) th.join();
-  }
-  if (oom.load(std::memory_order_relaxed)) return false;
 
-  size_t tf = 0, tt = 0, tu = 0;
-  for (const R &r : results) {
-    tf += r.v.size();
-    tt += r.t.size();
-    tu += r.uv.size();
-  }
+  // Reserve the outputs from a triangle upper bound (so the appends never
+  // reallocate), then stream in CHUNKS: only one chunk's per-job buffers are held
+  // at a time and appended (in job order) into the reserved outputs before the
+  // next chunk runs. This keeps the FULL per-job set and the concatenated copy
+  // from ever coexisting -- the transient that drove the streaming-phase peak RSS
+  // on big multi-mesh scenes (isCoral's base). Byte-identical to the old
+  // all-jobs-then-concat: same job-order append, same content.
+  size_t est_tris = 0;
+  for (const MeshJobNext &job : jobs) est_tris += EstimateTrisForJob(job.prim, time);
   try {
-    out_vertices->reserve(out_vertices->size() + tf);
-    out_tris->reserve(out_tris->size() + tt);
-    if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + tu);
-    for (R &r : results) {
-      out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
-      // Slim-store path: assign each of this job's triangles a global material id
-      // and append the job's material to the shared table (one entry per job).
-      if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
-        if (out_mat_table) {
-          const uint32_t mid = uint32_t(out_mat_table->size());
-          out_mat_table->push_back(r.mat);
-          for (auto &ts : r.t) ts.mat_id = mid;
+    out_vertices->reserve(out_vertices->size() + est_tris * 9);
+    out_tris->reserve(out_tris->size() + est_tris);
+    if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + est_tris * 6);
+    if (want_colors && out_tri_colors)
+      out_tri_colors->reserve(out_tri_colors->size() + est_tris * 12);
+    if (want_normals && out_tri_normals)
+      out_tri_normals->reserve(out_tri_normals->size() + est_tris * 9);
+  } catch (const std::bad_alloc &) {
+    return false;
+  }
+
+  std::vector<R> results(jobs.size());
+  std::atomic<bool> oom{false};
+  const size_t njobs = jobs.size();
+  const size_t chunk = std::max<size_t>(size_t(nthreads) * 2u, 1u);
+  try {
+    for (size_t cstart = 0;
+         cstart < njobs && !oom.load(std::memory_order_relaxed);
+         cstart += chunk) {
+      const size_t cend = std::min(cstart + chunk, njobs);
+      std::atomic<size_t> cursor{cstart};
+      // A bad_alloc must be caught INSIDE each worker thread (an exception
+      // escaping a std::thread calls std::terminate); it signals the cap was hit.
+      auto worker = [&]() {
+        try {
+          for (;;) {
+            const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
+            if (i >= cend || oom.load(std::memory_order_relaxed)) break;
+            const MeshJobNext &job = jobs[i];
+            R &r = results[i];
+            AddRTPreviewMeshNext(
+                job.prim, job.world, job.purpose, purpose_mask, time,
+                job.base_color, job.tex_id, job.normal_tex_id, job.roughness,
+                job.metallic, job.rough_tex, job.metal_tex, job.emission,
+                job.emission_tex_id, job.occlusion, job.occ_tex, job.uv_xform,
+                want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
+                job.opacity, want_colors, &r.col, want_normals, &r.nrm);
+          }
+        } catch (const std::bad_alloc &) {
+          oom.store(true, std::memory_order_relaxed);
         }
+      };
+      const unsigned cn =
+          std::min<unsigned>(nthreads, unsigned(cend - cstart));
+      if (cn <= 1) {
+        worker();
+      } else {
+        std::vector<std::thread> pool;
+        pool.reserve(cn);
+        for (unsigned t = 0; t < cn; ++t) pool.emplace_back(worker);
+        for (std::thread &th : pool) th.join();
       }
-      out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
-      if (want_uvs)
-        out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
-      if (want_colors && out_tri_colors)
-        out_tri_colors->insert(out_tri_colors->end(), r.col.begin(), r.col.end());
-      if (want_normals && out_tri_normals)
-        out_tri_normals->insert(out_tri_normals->end(), r.nrm.begin(),
-                                r.nrm.end());
-      MergeBounds(out_bounds, r.b);
-      MergeStats(out_stats, r.s);
-      FVec().swap(r.v);
-      TVec().swap(r.t);
-      FVec().swap(r.uv);
-      FVec().swap(r.col);
-      FVec().swap(r.nrm);
+      if (oom.load(std::memory_order_relaxed)) break;
+      // Append this chunk in job order into the (reserved) outputs; free as we go.
+      for (size_t i = cstart; i < cend; ++i) {
+        R &r = results[i];
+        out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
+        // Slim store: assign each of this job's triangles a global material id and
+        // append the job's material to the shared table (one entry per job).
+        if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
+          if (out_mat_table) {
+            const uint32_t mid = uint32_t(out_mat_table->size());
+            out_mat_table->push_back(r.mat);
+            for (auto &ts : r.t) ts.mat_id = mid;
+          }
+        }
+        out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
+        if (want_uvs)
+          out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
+        if (want_colors && out_tri_colors)
+          out_tri_colors->insert(out_tri_colors->end(), r.col.begin(),
+                                 r.col.end());
+        if (want_normals && out_tri_normals)
+          out_tri_normals->insert(out_tri_normals->end(), r.nrm.begin(),
+                                  r.nrm.end());
+        MergeBounds(out_bounds, r.b);
+        MergeStats(out_stats, r.s);
+        FVec().swap(r.v);
+        TVec().swap(r.t);
+        FVec().swap(r.uv);
+        FVec().swap(r.col);
+        FVec().swap(r.nrm);
+      }
     }
   } catch (const std::bad_alloc &) {
     return false;
   }
+  if (oom.load(std::memory_order_relaxed)) return false;
   return true;
 }
 
