@@ -33,6 +33,11 @@ Common flags:
 * **Two-level (instanced) BVH** — native instances are placed by a LightRT TLAS
   with each prototype's geometry built once (BLAS), so a scene with millions of
   *visible* triangles only stores the *unique* prototype geometry.
+* **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
+  emissive/occlusion textures); for unmaterialed geometry, constant
+  `primvars:displayColor` / `displayOpacity` are honored (the latter blended
+  see-through), so geom-only assets (e.g. Animal Logic ALab) render in color with
+  transparent glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair.
 * **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
   (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
@@ -62,3 +67,28 @@ Notes:
 * These RSS figures scale with the host. On a 32 GiB machine the cap is ~16 GiB,
   so airfield/capital abort gracefully (use `-maxMem`/`-mask`) rather than
   OOM-killing.
+
+## Moana Island per-element benchmark
+
+A head-to-head against Pixar `usdrecord` (CPU **hdEmbree**) on the Disney Moana
+Island per-element geometry files lives in
+[`doc/island-benchmark.md`](../../doc/island-benchmark.md), with the reproducible
+harness [`bench_island.py`](bench_island.py). Summary: tusdrender is 2.9–14×
+faster with 2–9× lower RSS on light/medium elements. UsdGeomPointInstancer
+geometry (the XGen ground cover / foliage) is expanded through the two-level
+BLAS/TLAS path, so isBeach renders its 4.09 B effective triangles (22 M instances,
+63 K unique) in 32 s / 11.7 GB — **2.2× faster and lower RAM than usdrecord**
+(73 s / 15.2 GB). UsdGeomBasisCurves / NurbsCurves are ray-traced as LightRT hair
+strands; curve-prototype PointInstancers store the curve geometry once (a curve
+BLAS) and instance it through the same TLAS as meshes, so isIronwoodA1's bonsai
+foliage renders. The instanced (TLAS) path is memory-lean: the per-triangle
+record is a 4 B material id (material in a per-BLAS table; positions read from the
+LightRT-aliased vertex soup), and instance placements are a compact 3×4 float.
+This cut isCoral 6.5 → 4.85 GB and isBeach 11.7 → 7.5 GB (both byte-identical).
+The one genuinely geometry-bound element (isCoral, 87.5 M tris, no instancing
+shortcut) is still ~3× slower than Embree at ~1.5× the RAM (memory-bandwidth
+bound; the gap is architectural). The full
+assembled `island.usda` (all 20 elements + XGen + curves + DomeLight) renders
+directly from raw USD: **5.69 B effective triangles** (22.8 M instances, 56.6 M
+unique) in **1 m 33 s / 25.9 GB** (`-maxMem`). See the doc's analysis and
+follow-ups.
