@@ -1063,9 +1063,10 @@ struct Cache::Impl {
       }
     }
 
+    const std::vector<Src> *result = nullptr;
     for (size_t i = pending.size(); i-- > 0;) {
       const Path &p = pending[i];
-      const std::string key = p.str();
+      const std::string &key = p.str();  // ref into Path; no copy
 
       std::vector<Src> base;
       Path parent = p.parent();
@@ -1094,10 +1095,13 @@ struct Cache::Impl {
         }
       }
 
-      std::vector<Src> expanded = ExpandList(base, warn, err);
-      sources_cache[key] = std::move(expanded);
+      // unordered_map element refs are stable across later inserts, and
+      // pending[0] (the queried leaf) is filled last, so this captures it.
+      std::vector<Src> &slot = sources_cache[key];
+      slot = ExpandList(base, warn, err);
+      result = &slot;
     }
-    return sources_cache[path.str()];
+    return *result;
   }
 
   // --- value resolution ---------------------------------------------------
