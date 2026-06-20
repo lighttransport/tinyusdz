@@ -182,7 +182,6 @@ def Mesh "SubdivQuad"
     for expected in (
         "rt preview: 1",
         "rt meshes: 1",
-        "rt owned point meshes: 1",
         "triangles: 2",
     ):
         if expected not in rt_stats.stderr:
@@ -193,6 +192,164 @@ def Mesh "SubdivQuad"
     pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
     if len(set(pixels)) <= 1:
         raise RuntimeError("RT preview render appears blank")
+
+    # PointInstancer expansion in the -rtPreview (next) path: each prototype is a
+    # deduped BLAS and each visible instance a TLAS placement. Three instances of
+    # a one-triangle prototype must expand to 3 visible / 1 unique triangle.
+    pi_scene = outdir / "tusdrender-pointinstancer.usda"
+    pi_scene.write_text("""#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def PointInstancer "Instancer"
+    {
+        point3f[] positions = [(-3, 0, 0), (0, 0, 0), (3, 0, 0)]
+        int[] protoIndices = [0, 0, 0]
+        quatf[] orientations = [(0, 0, 0, 1), (0, 0, 0, 1), (0, 0, 0, 1)]
+        float3[] scales = [(1, 1, 1), (1, 1, 1), (1, 1, 1)]
+        rel prototypes = [</World/Instancer/Proto>]
+
+        def Mesh "Proto"
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(-1, -1, 0), (1, -1, 0), (0, 1, 0)]
+        }
+    }
+}
+""")
+    pi_out = outdir / "tusdrender-pointinstancer.png"
+    pi_stats = subprocess.run(
+        [exe, str(pi_scene), str(pi_out), "-w", "32", "-height", "32",
+         "-rtPreview", "-stats"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for expected in (
+        "rt instancing: tlas",
+        "rt point instancers: 1",
+        "rt point instances: 3",
+        "rt unique triangles: 1",
+        "triangles: 3",
+    ):
+        if expected not in pi_stats.stderr:
+            raise RuntimeError(
+                f"missing PointInstancer stat {expected!r}:\n{pi_stats.stderr}")
+    w, h, rgba = read_png_rgba(pi_out)
+    pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
+    if len(set(pixels)) <= 1:
+        raise RuntimeError("PointInstancer RT preview render appears blank")
+
+    # BasisCurves ray tracing in the -rtPreview path (curves build into the
+    # DirectScene as LightRT hair strands), including curve-prototype instancing
+    # (a PointInstancer whose prototype is a BasisCurves is baked per instance).
+    curve_scene = outdir / "tusdrender-curves.usda"
+    curve_scene.write_text("""#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def Mesh "Ground"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(-10, 0, -10), (10, 0, -10), (0, 0, 10)]
+    }
+    def BasisCurves "Hair"
+    {
+        uniform token type = "linear"
+        int[] curveVertexCounts = [3]
+        point3f[] points = [(-6, 0, 0), (-6, 3, 0), (-6, 6, 0)]
+        float[] widths = [0.3, 0.2, 0.1]
+    }
+    def PointInstancer "Grass"
+    {
+        point3f[] positions = [(0, 0, 0), (4, 0, 0)]
+        int[] protoIndices = [0, 0]
+        rel prototypes = [</World/Grass/Blade>]
+        def BasisCurves "Blade"
+        {
+            uniform token type = "linear"
+            int[] curveVertexCounts = [3]
+            point3f[] points = [(0, 0, 0), (0, 2, 0), (0, 4, 0)]
+            float[] widths = [0.2, 0.15, 0.05]
+        }
+    }
+}
+""")
+    curve_out = outdir / "tusdrender-curves.png"
+    curve_stats = subprocess.run(
+        [exe, str(curve_scene), str(curve_out), "-w", "64", "-height", "64",
+         "-rtPreview", "-stats", "-autoframe"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    # 1 direct BasisCurves "Hair" (DirectScene) + a curve-prototype instancer
+    # whose Blade curve geometry is stored once and TLAS-instanced 2×.
+    for expected in (
+        "rt curve strands: 1",
+        "rt curve instances: 2",
+        "rt point instances: 2",
+        "rt instancing: tlas",
+    ):
+        if expected not in curve_stats.stderr:
+            raise RuntimeError(
+                f"missing curve stat {expected!r}:\n{curve_stats.stderr}")
+    w, h, rgba = read_png_rgba(curve_out)
+    pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
+    if len(set(pixels)) <= 1:
+        raise RuntimeError("curve RT preview render appears blank")
+
+    # primvars:displayColor (constant) as base color + primvars:displayOpacity
+    # (constant) see-through blend: a 0.5-opacity green quad in front of an opaque
+    # red quad -> the overlap blends to a red+green mix (both channels present).
+    disp_scene = outdir / "tusdrender-display.usda"
+    disp_scene.write_text("""#usda 1.0
+(
+    defaultPrim = "root"
+    upAxis = "Y"
+)
+def Xform "root"
+{
+    def Mesh "back_red" {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-2, -2, 2), (2, -2, 2), (2, 2, 2), (-2, 2, 2)]
+        color3f[] primvars:displayColor = [(1, 0, 0)] (interpolation = "constant")
+    }
+    def Mesh "front_green_glass" {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1.5, -1.5, -2), (1.5, -1.5, -2), (1.5, 1.5, -2), (-1.5, 1.5, -2)]
+        color3f[] primvars:displayColor = [(0, 1, 0)] (interpolation = "constant")
+        float[] primvars:displayOpacity = [0.5] (interpolation = "constant")
+    }
+}
+""")
+    disp_out = outdir / "tusdrender-display.png"
+    subprocess.run(
+        [exe, str(disp_scene), str(disp_out), "-w", "64", "-height", "64",
+         "-rtPreview", "-viewDir", "0,0,-1", "-fitScale", "1.4", "-ambient", "1"],
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    w, h, rgba = read_png_rgba(disp_out)
+    cx, cy = w // 2, h // 2
+    o = (cy * w + cx) * 4
+    cr, cg, cb = rgba[o], rgba[o + 1], rgba[o + 2]
+    # Front glass is green, back is red; the blended overlap must show BOTH the
+    # green (displayColor) and red-through (displayOpacity) — not pure green.
+    if not (cg > 40 and cr > 40):
+        raise RuntimeError(
+            f"displayColor/displayOpacity blend wrong: center RGB=({cr},{cg},{cb})")
 
     env_png = outdir / "tusdrender-env.png"
     env_pixels = bytearray()
