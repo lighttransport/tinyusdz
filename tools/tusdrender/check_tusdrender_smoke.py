@@ -351,6 +351,40 @@ def Xform "root"
         raise RuntimeError(
             f"displayColor/displayOpacity blend wrong: center RGB=({cr},{cg},{cb})")
 
+    # Per-vertex displayColor: a quad with a distinct color per vertex must
+    # interpolate (opposite corners differ markedly).
+    vcol_scene = outdir / "tusdrender-vcolor.usda"
+    vcol_scene.write_text("""#usda 1.0
+(
+    defaultPrim = "root"
+    upAxis = "Y"
+)
+def Mesh "root"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-2, -2, 0), (2, -2, 0), (2, 2, 0), (-2, 2, 0)]
+    color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)] (interpolation = "vertex")
+}
+""")
+    vcol_out = outdir / "tusdrender-vcolor.png"
+    subprocess.run(
+        [exe, str(vcol_scene), str(vcol_out), "-w", "64", "-height", "64",
+         "-rtPreview", "-viewDir", "0,0,-1", "-fitScale", "1.1", "-ambient", "1"],
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    w, h, rgba = read_png_rgba(vcol_out)
+    # Sample inside the quad near opposite corners; per-vertex interpolation must
+    # produce clearly different colors (constant would make them identical).
+    def px(fx, fy):
+        x, y = int(w * fx), int(h * fy)
+        o = (y * w + x) * 4
+        return (rgba[o], rgba[o + 1], rgba[o + 2])
+    p_bl, p_tr = px(0.3, 0.7), px(0.7, 0.3)
+    if sum(abs(a - b) for a, b in zip(p_bl, p_tr)) < 60:
+        raise RuntimeError(
+            f"per-vertex displayColor not interpolated: {p_bl} vs {p_tr}")
+
     env_png = outdir / "tusdrender-env.png"
     env_pixels = bytearray()
     for y in range(2):
