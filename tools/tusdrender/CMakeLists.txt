@@ -60,6 +60,10 @@ target_link_libraries(tusdrender
 # tusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
 # parse) as the default for the RT preview path, plus tydra_next for bit-exact
 # world transforms. Build those targets on demand and link them.
+# Parallel composition (per-prim opinion fill across cores) needs the next lib's
+# std::thread paths; output is byte-identical to the serial fill. Force it on for
+# tusdrender's on-demand next build.
+set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
 if(NOT TARGET tinyusdz_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusdrender_next_build)
