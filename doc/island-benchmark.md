@@ -34,33 +34,36 @@ Methodology mirrors the Activision Caldera benchmark in
 
 | element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
-| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 15.2 MB | 0.72 | 176.8 MB | 18.0× |
-| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.13 | 257.5 MB | 5.9× |
-| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.63 | 203.2 MB | 3.1× |
-| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 154.7 MB | 1.94 | 418.7 MB | 4.1× |
-| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.36 | 123.9 MB | 2.63 | 722.8 MB | 7.3× |
-| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.08 | 0.03 | 1.57 | 816.4 MB | 0.62 | 231.4 MB | 0.4× |
-| isCoral | 415.2 MB | 87.49 M | 3.38 | 1.54 | 0.01 | 8.24 | 3.0 GB | 4.02 | 3.3 GB | 0.5× |
-| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.79 | 0.01 | 18.38 | 7.1 GB | 74.23 | 15.4 GB | 4.0× |
+| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 15.0 MB | 0.71 | 175.9 MB | 17.8× |
+| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.13 | 258.0 MB | 5.9× |
+| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.64 | 203.1 MB | 3.2× |
+| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 154.8 MB | 1.89 | 425.1 MB | 4.0× |
+| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.36 | 123.7 MB | 2.67 | 732.5 MB | 7.4× |
+| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.00 | 0.08 | 0.03 | 0.89 | 835.9 MB | 0.58 | 230.9 MB | 0.7× |
+| isCoral | 415.2 MB | 87.49 M | 3.41 | 1.48 | 0.01 | 8.23 | 3.0 GB | 4.08 | 3.3 GB | 0.5× |
+| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.81 | 0.01 | 18.43 | 7.1 GB | 70.92 | 15.2 GB | 3.8× |
 
 *(Table refreshed 2026-06 on the current optimized build — the same large-scene
 work in the [refresh section](#large-scene-refresh--caldera--island--alab-2026-06-post-optimization),
 plus the curve-build optimizations (slim curve storage, Morton-LBVH curve build,
-parallel curve sub-BLAS) that cut isIronwoodA1 2.39→1.57 s and 1.1 GB→816 MB. The
-first-pass numbers are preserved in git history.)*
+parallel curve sub-BLAS, and dropping the redundant per-segment TriInfo) that cut
+isIronwoodA1 2.39→0.89 s and 1.1 GB→836 MB — closing most of the gap to usdrecord
+(0.7× wall). The first-pass numbers are preserved in git history.)*
 
 `tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
 across 86 prototypes placed by 22.1 M instances; it excludes curve strands).
 `speedup` = usdrecord wall ÷ tusdrender wall. ‡ = isIronwoodA1's heavy XGen is
 *curves* (`xgBonsai_curves.usd`, 34 BasisCurves prims, ~3 M hair segments) ray-
-traced as hair — its 1.57 s / 816 MB is the curve build, and it renders the
-foliage usdrecord does (the bare-trunk-only usdrecord row is 0.62 s). The curve
-path was optimized: per-segment storage slimmed to endpoints + a per-BLAS material
-(1.08 GB → 842 MB), the build switched from serial binned-SAH to parallel
-Morton-LBVH, and large prototypes are split into sub-BLAS whose collapses build
-concurrently (2.32 → 1.57 s, −32 %). The residual gap to usdrecord is the serial
-curve read/transform setup + LightRT per-sub build scratch.
+traced as hair — its 0.89 s / 836 MB is the curve build, and it renders the
+foliage usdrecord does (the bare-trunk-only usdrecord row is 0.58 s). The curve
+path was optimized end to end: per-segment storage slimmed to endpoints + a
+per-BLAS material (1.08 GB → 842 MB); the build switched from serial binned-SAH to
+parallel Morton-LBVH; large prototypes split into sub-BLAS whose collapses build
+concurrently; and the redundant per-segment `TriInfo` intermediate (~360 MB,
+profiling showed it — not the read/transform — was the serial bottleneck) was
+dropped, deriving endpoints straight from the points. Net **2.32 → 0.89 s
+(−62 %)**, now 0.7× usdrecord. The residual is the parallel LightRT build/collapse.
 
 > **PointInstancer expansion (fixed).** An earlier revision of this benchmark
 > showed isBeach at 0.06 M tris because the `-rtPreview` path skipped
