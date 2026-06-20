@@ -320,16 +320,13 @@ UsdPrim Stage::GetPrimAtPath(const Path& path) const {
 UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
   if (!root_layer_) return UsdPrim();
 
-  const PrimSpec* spec = root_layer_->prim_at_path(path);
-  if (!spec) return UsdPrim();
-
-  // Find index (could be optimized with reverse map)
-  for (size_t i = 0; i < root_layer_->prim_count(); ++i) {
-    if (root_layer_->prim(static_cast<uint32_t>(i)) == spec) {
-      return UsdPrim(spec, root_layer_.get(), static_cast<uint32_t>(i));
-    }
-  }
-  return UsdPrim();
+  // The path index already maps path -> index; use it directly. (Previously this
+  // re-derived the index with a linear scan over every prim -- O(N) per call,
+  // O(meshes*prims) over a render, ~8% of an isCoral render in per-mesh
+  // material/texture/prototype lookups.)
+  const uint32_t idx = root_layer_->index_at_path(path);
+  if (idx == UINT32_MAX) return UsdPrim();
+  return UsdPrim(root_layer_->prim(idx), root_layer_.get(), idx);
 }
 
 UsdPrim Stage::GetDefaultPrim() const {
