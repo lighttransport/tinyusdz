@@ -418,6 +418,43 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   return t;
 }
 
+// Inverse of CombineTriMat: pull the shading parameters out of a full TriInfo so
+// a curve BLAS can store one TriMat per material instead of replicating ~64 B of
+// material on every hair segment (the geometry p0/p1 stay per-segment; p2/n are
+// synthetic/recomputed). Mirrors the mesh TriStore + TriMat split.
+inline TriMat ExtractTriMat(const TriInfo &t) {
+  TriMat m;
+  m.base_color = t.base_color;
+  m.emission = t.emission;
+  m.roughness = t.roughness;
+  m.metallic = t.metallic;
+  m.tex_id = t.tex_id;
+  m.normal_tex_id = t.normal_tex_id;
+  m.rough_tex_id = t.rough_tex_id;
+  m.metal_tex_id = t.metal_tex_id;
+  m.emission_tex_id = t.emission_tex_id;
+  m.occ_tex_id = t.occ_tex_id;
+  m.occlusion = t.occlusion;
+  m.opacity = t.opacity;
+  m.rough_ch = t.rough_ch;
+  m.metal_ch = t.metal_ch;
+  m.occ_ch = t.occ_ch;
+  return m;
+}
+
+inline bool SameTriMat(const TriMat &a, const TriMat &b) {
+  return a.base_color.x == b.base_color.x && a.base_color.y == b.base_color.y &&
+         a.base_color.z == b.base_color.z && a.emission.x == b.emission.x &&
+         a.emission.y == b.emission.y && a.emission.z == b.emission.z &&
+         a.roughness == b.roughness && a.metallic == b.metallic &&
+         a.tex_id == b.tex_id && a.normal_tex_id == b.normal_tex_id &&
+         a.rough_tex_id == b.rough_tex_id && a.metal_tex_id == b.metal_tex_id &&
+         a.emission_tex_id == b.emission_tex_id && a.occ_tex_id == b.occ_tex_id &&
+         a.occlusion == b.occlusion && a.opacity == b.opacity &&
+         a.rough_ch == b.rough_ch && a.metal_ch == b.metal_ch &&
+         a.occ_ch == b.occ_ch;
+}
+
 // A scalar texture binding: texture index + source channel (UsdUVTexture
 // outputs:r/g/b/a; for ORM packing roughness=g, metallic=b in one texture).
 struct ScalarTex {
@@ -3652,11 +3689,16 @@ struct Blas {
   // When non-empty, tri_colors is freed and the hit indexes this by lrt_tri_get_slot.
   ByteVec tri_colors_slot;
   FloatVec tri_normals; // 9 floats/tri (per-corner authored normals) or empty
-  // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
-  // curve_info holds one TriInfo per segment (local-space endpoints + color),
-  // resolved at hit time exactly like the DirectScene curve path.
+  // Curve BLAS (is_curve): the scene is a LightRT round-hair scene. Per segment
+  // we keep only the local-space endpoints (curve_seg, 6 floats: p0 p1) + a
+  // material id into mat_table (curve_seg_mat) -- the material is shared by all of
+  // a curve job's segments, so storing one TriMat instead of a 120 B TriInfo per
+  // segment cuts a 3M-segment hair BLAS ~360 -> ~84 MB. p2 (a normal helper) is
+  // synthetic (p0 + +Y) and the geometric normal is recomputed at hit, matching
+  // the old full-TriInfo path byte-for-byte.
   bool is_curve{false};
-  std::vector<TriInfo> curve_info;
+  std::vector<float> curve_seg;         // 6 floats/segment: p0.xyz p1.xyz
+  std::vector<uint32_t> curve_seg_mat;  // mat_id into mat_table, per segment
   lrt_tri_scene *scene{nullptr};
 
   Blas() = default;
@@ -3673,7 +3715,8 @@ struct Blas {
       tri_colors_slot = std::move(o.tri_colors_slot);
       tri_normals = std::move(o.tri_normals);
       is_curve = o.is_curve;
-      curve_info = std::move(o.curve_info);
+      curve_seg = std::move(o.curve_seg);
+      curve_seg_mat = std::move(o.curve_seg_mat);
       if (scene) lrt_tri_scene_free(scene);
       scene = o.scene;
       o.scene = nullptr;
@@ -3854,12 +3897,20 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   // Curve BLAS: resolve the segment's local TriInfo, transform endpoints to world
   // (no UVs/textures for curves — matches the DirectScene curve path).
   if (b.is_curve) {
-    if (size_t(th.prim_id) >= b.curve_info.size()) return false;
-    const TriInfo &lt = b.curve_info[size_t(th.prim_id)];
-    Vec3 wp0 = TransformPointO2W(inst.o2w, lt.p0);
-    Vec3 wp1 = TransformPointO2W(inst.o2w, lt.p1);
-    Vec3 wp2 = TransformPointO2W(inst.o2w, lt.p2);
-    *out = lt;
+    const size_t si = size_t(th.prim_id);
+    if (si * 6 + 5 >= b.curve_seg.size() || si >= b.curve_seg_mat.size())
+      return false;
+    const float *sg = &b.curve_seg[si * 6];
+    const Vec3 p0{sg[0], sg[1], sg[2]};
+    const Vec3 p1{sg[3], sg[4], sg[5]};
+    // p2 is the synthetic normal helper AppendLinearCurveStrands used (p0 + +Y);
+    // recomputed here instead of stored, so the hit normal is byte-identical.
+    const Vec3 p2 = Add(p0, Vec3{0.0f, 1.0f, 0.0f});
+    Vec3 wp0 = TransformPointO2W(inst.o2w, p0);
+    Vec3 wp1 = TransformPointO2W(inst.o2w, p1);
+    Vec3 wp2 = TransformPointO2W(inst.o2w, p2);
+    const uint32_t mid = b.curve_seg_mat[si];
+    *out = CombineTriMat(mid < b.mat_table.size() ? b.mat_table[mid] : TriMat{});
     out->p0 = wp0;
     out->p1 = wp1;
     out->p2 = wp2;
@@ -6041,6 +6092,10 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   if (curves.empty()) return true;
   std::vector<float> pts, radii;
   std::vector<uint32_t> first, count;
+  // AppendLinearCurveStrands fills a full TriInfo/segment; we slim it to
+  // endpoints + a deduped material id below and free this transient (it never
+  // coexists with the larger BVH-build scratch, so it doesn't raise peak).
+  std::vector<TriInfo> tmp_info;
   for (const CurveJobNext &job : curves) {
     std::vector<tinyusdz::value::point3f> p = ReadCurvePointsNext(job.prim, time);
     std::vector<int32_t> c32 =
@@ -6049,9 +6104,33 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
     AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
-                             &out->curve_info, local);
+                             &tmp_info, local);
   }
   if (first.empty()) return true;
+  // Slim the per-segment TriInfo into endpoints (curve_seg) + a material id into
+  // the BLAS mat_table (curve_seg_mat). Segments are grouped by curve job, so a
+  // run-length dedup against the previous material collapses each job to one
+  // mat_table entry (3M segments of one bonsai material -> one TriMat).
+  out->curve_seg.reserve(tmp_info.size() * 6);
+  out->curve_seg_mat.reserve(tmp_info.size());
+  uint32_t last_id = UINT32_MAX;
+  TriMat last_mat;
+  for (const TriInfo &ti : tmp_info) {
+    TriMat m = ExtractTriMat(ti);
+    if (last_id == UINT32_MAX || !SameTriMat(m, last_mat)) {
+      last_id = uint32_t(out->mat_table.size());
+      out->mat_table.push_back(m);
+      last_mat = m;
+    }
+    out->curve_seg.push_back(ti.p0.x);
+    out->curve_seg.push_back(ti.p0.y);
+    out->curve_seg.push_back(ti.p0.z);
+    out->curve_seg.push_back(ti.p1.x);
+    out->curve_seg.push_back(ti.p1.y);
+    out->curve_seg.push_back(ti.p1.z);
+    out->curve_seg_mat.push_back(last_id);
+  }
+  std::vector<TriInfo>().swap(tmp_info);  // free the full per-segment TriInfo
   lrt_hair_strands s;
   std::memset(&s, 0, sizeof(s));
   s.points = pts.data();
