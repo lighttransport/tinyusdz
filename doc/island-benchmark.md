@@ -34,21 +34,23 @@ Methodology mirrors the Activision Caldera benchmark in
 
 | element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
-| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 15.0 MB | 0.71 | 175.9 MB | 17.8× |
-| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.13 | 258.0 MB | 5.9× |
-| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.64 | 203.1 MB | 3.2× |
-| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 154.8 MB | 1.89 | 425.1 MB | 4.0× |
-| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.36 | 123.7 MB | 2.67 | 732.5 MB | 7.4× |
-| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.00 | 0.08 | 0.03 | 0.89 | 835.9 MB | 0.58 | 230.9 MB | 0.7× |
-| isCoral | 415.2 MB | 87.49 M | 3.41 | 1.48 | 0.01 | 8.23 | 3.0 GB | 4.08 | 3.3 GB | 0.5× |
-| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.81 | 0.01 | 18.43 | 7.1 GB | 70.92 | 15.2 GB | 3.8× |
+| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 14.7 MB | 0.74 | 174.8 MB | 18.5× |
+| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.14 | 257.5 MB | 6.0× |
+| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.69 | 201.5 MB | 3.4× |
+| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 154.5 MB | 1.94 | 421.3 MB | 4.1× |
+| isDunesA | 24.9 MB | 0.21 M | 0.24 | 0.04 | 0.00 | 0.36 | 123.6 MB | 2.56 | 704.5 MB | 7.1× |
+| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.08 | 0.03 | 0.92 | 834.7 MB | 0.62 | 231.9 MB | 0.7× |
+| isCoral | 415.2 MB | 87.49 M | 3.40 | 1.54 | 0.01 | 6.43 | 3.1 GB | 4.15 | 3.3 GB | 0.6× |
+| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.74 | 0.01 | 18.59 | 7.1 GB | 73.45 | 15.2 GB | 4.0× |
 
-*(Table refreshed 2026-06 on the current optimized build — the same large-scene
-work in the [refresh section](#large-scene-refresh--caldera--island--alab-2026-06-post-optimization),
-plus the curve-build optimizations (slim curve storage, Morton-LBVH curve build,
-parallel curve sub-BLAS, and dropping the redundant per-segment TriInfo) that cut
-isIronwoodA1 2.39→0.89 s and 1.1 GB→836 MB — closing most of the gap to usdrecord
-(0.7× wall). The first-pass numbers are preserved in git history.)*
+*(Table refreshed 2026-06 on the current optimized build. Notable since the prior
+refresh: the curve-build optimizations (slim curve storage, Morton-LBVH curve
+build, parallel curve sub-BLAS, dropping the redundant per-segment TriInfo) cut
+isIronwoodA1 2.39→0.92 s / 1.1 GB→835 MB; and an **O(1) `Stage::GetPrimAtPath`**
+fix (it was re-deriving the prim index with an O(N) linear scan per per-mesh
+material/texture lookup) cut isCoral's stream 2.47→0.62 s and total 8.2→6.4 s, and
+helps every multi-mesh scene (Island full 73→66 s). The first-pass numbers are
+preserved in git history.)*
 
 `tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
@@ -139,22 +141,23 @@ soup). Same methodology as above — `320×180`, `-rtPreview -autoframe`, geom-o
 
 | scene | input | load s | stream s | bvh s | **total** | **peak RSS** | triangles |
 |---|---|---|---|---|---|---|---|
-| **ALab** `alab_set01` | techvar overlay set | 1.61 | 0.65 | 0.67 | **3.2 s** | **1.58 GiB** | 19.6 M / 10.8 M unique |
-| **isCoral** | `element.usda` | 3.45 | 2.53 | 1.55 | **8.2 s** | **3.11 GiB** | 17.4 M |
-| **Caldera** | `caldera.flattened.usdc` | 3.05 | 6.11 | 6.60 | **17.4 s** | **12.5 GiB** | 38.8 M |
-| **Island (full)** | `island.usda` | 13.4 | 31.1 | 18.7 | **73.2 s** | **22.5 GiB** | 5.68 B inst / 53.8 M unique |
+| **ALab** `alab_set01` | techvar overlay set | 1.60 | 0.63 | 0.69 | **3.2 s** | **1.59 GiB** | 19.6 M / 10.8 M unique |
+| **isCoral** | `element.usda` | 3.40 | 0.62 | 1.50 | **6.4 s** | **3.1 GiB** | 17.4 M |
+| **Caldera** | `caldera.flattened.usdc` | 2.99 | 6.17 | 5.37 | **16.1 s** | **12.5 GiB** | 38.8 M |
+| **Island (full)** | `island.usda` | 13.3 | 24.4 | 18.1 | **65.7 s** | **22.5 GiB** | 5.68 B inst / 53.8 M unique |
 
 The optimizations generalize across the whole large-scene ladder, not just isCoral:
 
-* **ALab** build **6.5 → 3.2 s (−51 %)**, peak **2.6 → 1.58 GiB (−39 %)** vs the
+* **ALab** build **6.5 → 3.2 s (−51 %)**, peak **2.6 → 1.59 GiB (−39 %)** vs the
   prior recorded geom-only set run.
-* **isCoral** **14.1 → 8.2 s** and **6.3 → 3.1 GiB** vs the first-pass row above —
-  the bvh build alone went 4.0 → 1.55 s (bounded-parallel + intra-threaded), and
-  the compose lost the `find()` rwlock contention (PropNameTable freeze) and the
-  arena `mprotect` storm (`M_TOP_PAD`).
+* **isCoral** **14.1 → 6.4 s** and **6.3 → 3.1 GiB** — bvh 4.0 → 1.5 s
+  (bounded-parallel + intra-threaded), compose lost the `find()` rwlock contention
+  (PropNameTable freeze) + the arena `mprotect` storm (`M_TOP_PAD`), and the stream
+  dropped 2.5 → 0.6 s from the O(1) `GetPrimAtPath` fix.
 * **Island (full)** nearly saturates the ~24 GiB graceful-abort cap (22.5 GiB) and
-  completes rather than OOM-killing; geom-only `-autoframe` here vs the lit
-  `shotCam` row above, so the two aren't directly comparable.
+  completes rather than OOM-killing; its stream fell 31 → 24 s from the same
+  `GetPrimAtPath` fix (many small instanced meshes). Geom-only `-autoframe` here vs
+  the lit `shotCam` row above, so the two aren't directly comparable.
 
 **ALab reproduction** needs the techvar overlay (2.3.0 ships placeholder meshes;
 the real geometry is the separate `techvar_assets` package):
@@ -185,20 +188,22 @@ collection-side instance lists before the TLAS build cut isBeach from 11.7 →
 7.5 GB and 32 → 25 s (byte-identical). The wall is dominated by the TLAS build
 over 22 M instances.
 
-**isCoral — the geometry-bound case (0.5×, memory now won).** The one element
-where both renderers load the *same* heavy geometry without an instancing shortcut
-(87.5 M triangles, six `isCoral_geo.usd` variants). This was the focus of a
-dedicated optimization pass (see [`iscoral-embree-gap`](large-scene.md) lineage):
-PropNameTable freeze (compose `find()` rwlock contention), `M_TOP_PAD` (the
-per-prim arena `mprotect` storm), bounded-parallel + intra-threaded BLAS build
-(bvh 4.0 → 1.56 s), and the indexed base-group geometry stream. Result: **14.1 →
-8.2 s and 6.3 → 3.0 GB peak — RSS now *beats* usdrecord (3.0 GB vs 3.3 GB)**,
-while wall is ~1.9× (8.2 s vs 4.3 s). The residual is the geometry build itself:
-even with compose at zero, the LightRT triangle stream + single-shot BVH (≈4.1 s)
-already exceed Embree's *entire* 3.96 s pipeline on 17.4 M genuinely-unique
-triangles — a builder-class gap (LightRT vs Embree's SIMD BVH), not an
-optimization gap. **Memory: parity/win on both axes; build time: the remaining
-architectural lever.**
+**isCoral — the geometry-bound case (0.6×, memory won).** The one element where
+both renderers load the *same* heavy geometry without an instancing shortcut
+(87.5 M triangles, six `isCoral_geo.usd` variants). Focus of a dedicated pass (see
+[`iscoral-embree-gap`](large-scene.md) lineage): PropNameTable freeze (compose
+`find()` rwlock contention), `M_TOP_PAD` (the per-prim arena `mprotect` storm),
+bounded-parallel + intra-threaded BLAS build (bvh 4.0 → 1.5 s), the indexed
+base-group geometry stream, and — the biggest single step — an **O(1)
+`Stage::GetPrimAtPath`**: it was re-deriving the prim index with an O(N) linear
+scan over all 140 K prims on *every* per-mesh material/texture lookup, ~8% of the
+profile but far more in wall time (stream 2.47 → 0.62 s). Result: **14.1 → 6.4 s
+and 6.3 → 3.1 GB peak — RSS *beats* usdrecord (3.1 vs 3.3 GB)**, wall ~1.6×
+(6.4 vs 4.2 s). The residual is now **compose-dominated, not the builder**: load
+≈3.4 s (crate-read ~1.3 + string-keyed Pcp source resolution 1.75 serial) vs the
+BVH build's 1.5 s. The remaining levers are compose path-interning (vs Pixar's
+interned `SdfPath`) and an Embree-class SIMD BVH builder. **Memory won on both
+axes; build time ~1.6× and now a compose + builder question, not pure builder.**
 
 ## Reproduce
 
