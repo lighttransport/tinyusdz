@@ -7724,6 +7724,14 @@ int main(int argc, char **argv) {
   // arena, so the per-call syscall cost is negligible (~0.2 s on isCoral).
   mallopt(M_MMAP_THRESHOLD, 1 << 20);
   mallopt(M_TRIM_THRESHOLD, 4 << 20);
+  // Grow each (sub-MB) arena in 16 MB chunks. The parallel compose allocates
+  // ~140K prims' property storage; with the default minimal top-pad, glibc
+  // commits a fresh page almost per prim -- ~139K mprotect() calls on isCoral
+  // (97% of all syscall time, serialized under the kernel mmap_lock, which caps
+  // the parallel fill near ~4 cores). A 16 MB pad commits arena memory in bulk so
+  // those calls collapse to a few hundred; isCoral load 3.85 -> 3.48 s. Sized to
+  // hold peak RSS under budget (128 MB pad inflated it ~400 MB; 16 MB is +~50 MB).
+  mallopt(M_TOP_PAD, 16 << 20);
 #endif
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
