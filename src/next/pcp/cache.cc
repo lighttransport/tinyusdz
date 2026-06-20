@@ -92,8 +92,13 @@ namespace {
 // A single composition source (one node's worth of provenance).
 struct Src {
   uint32_t stack_idx = 0;
+  // Index into the owning Impl's nm_pool_ (0 == identity). The namespace mapping
+  // is created once per arc and SHARED by every Src in the subtree below it, so
+  // storing an index (and copying it on child-build) avoids re-copying the two
+  // path strings of a non-identity NamespaceMapping for all 140K+ descendants --
+  // the dominant path-string churn in compose. Fills stack_idx's padding hole.
+  uint32_t map_idx = 0;
   std::string site;            // prim path within the layer stack
-  NamespaceMapping map;        // remap site-namespace -> root-prim namespace
   LayerOffset offset;
   ArcType arc_kind = ArcType::Root;  // arc this source arrived through
   // For Variant sources: the selected variant's inline opinions (lives inside a
@@ -187,6 +192,20 @@ struct Cache::Impl {
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
+
+  // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
+  // default Src (and the bulk of subtree children) needs no pool entry. New
+  // mappings are appended only in the SERIAL arc expansion (ProcessArc / variant
+  // ExpandArcs); the parallel opinion fill only READS the pool (Apply), and a
+  // std::deque never relocates existing entries -> lock-free concurrent reads.
+  std::deque<NamespaceMapping> nm_pool_{NamespaceMapping{}};
+  const NamespaceMapping &Mapping(uint32_t idx) const { return nm_pool_[idx]; }
+  uint32_t InternMapping(NamespaceMapping m) {
+    if (m.is_identity()) return 0;
+    uint32_t idx = static_cast<uint32_t>(nm_pool_.size());
+    nm_pool_.push_back(std::move(m));
+    return idx;
+  }
 
   // Phase 10: lazily-composed per-prim specs + their composed child names,
   // keyed by prim path. Populated by ComposePrim, dropped by Invalidate.
@@ -492,7 +511,7 @@ struct Cache::Impl {
     }
     for (size_t i = 1; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
-      if (s.site != s.map.source_prefix) continue;  // ancestral/positional
+      if (s.site != Mapping(s.map_idx).source_prefix) continue;  // ancestral/positional
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;
@@ -696,7 +715,8 @@ struct Cache::Impl {
     Src arc_src;
     arc_src.stack_idx = arc_stack_idx;
     arc_src.site = arc_site;
-    arc_src.map = NamespaceMapping::Compose(src.map, local);
+    arc_src.map_idx =
+        InternMapping(NamespaceMapping::Compose(Mapping(src.map_idx), local));
     // Compose this arc's layer offset under the parent's (root..arc chain), so
     // the referenced content's time samples are mapped into root/stage time.
     LayerOffset arc_off;
@@ -878,8 +898,8 @@ struct Cache::Impl {
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
-            vsrc.map = NamespaceMapping::Compose(
-                src.map, NamespaceMapping{"/__self__", src.site});
+            vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
+                Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
             vsrc.offset = src.offset;
             vsrc.arc_kind = ArcType::Variant;
             const ExpansionFrame vframe{cstack, &vsrc.site, frame,
@@ -908,7 +928,7 @@ struct Cache::Impl {
                        frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
           }
           if (!vd->payloads.empty()) {
-            const std::string root_prim_path = src.map.Apply(src.site);
+            const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
             for (const std::string &pl_str : vd->payloads) {
               CompositionArc arc = Compositor::ParsePayload(pl_str);
               if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
@@ -943,8 +963,8 @@ struct Cache::Impl {
           Src vsrc;
           vsrc.stack_idx = src.stack_idx;
           vsrc.site = holder;
-          vsrc.map = NamespaceMapping::Compose(
-              src.map, NamespaceMapping{holder, src.site});
+          vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
+              Mapping(src.map_idx), NamespaceMapping{holder, src.site}));
           vsrc.offset = src.offset;
           vsrc.arc_kind = ArcType::Variant;
           const ExpansionFrame vframe{src.stack_idx, &vsrc.site, frame,
@@ -963,7 +983,7 @@ struct Cache::Impl {
 
       // Payloads (deferrable, weaker than references).
       if (!spec->meta().payloads.empty()) {
-        const std::string root_prim_path = src.map.Apply(src.site);
+        const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
         for (const std::string &pl_str : spec->meta().payloads) {
           CompositionArc arc = Compositor::ParsePayload(pl_str);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
@@ -992,7 +1012,7 @@ struct Cache::Impl {
       }
       auto mpay = MergeArcField(specs, ArcSel::Payloads);
       if (!mpay.empty()) {
-        const std::string root_prim_path = src.map.Apply(src.site);
+        const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
         for (const auto &pl : mpay) {
           CompositionArc arc = Compositor::ParsePayload(pl.first);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
@@ -1088,7 +1108,7 @@ struct Cache::Impl {
           Src c;
           c.stack_idx = ps.stack_idx;
           c.site = ps.site + "/" + cn;
-          c.map = ps.map;
+          c.map_idx = ps.map_idx;  // share the parent's mapping (no string copy)
           c.offset = ps.offset;
           c.arc_kind = ps.arc_kind;
           base.push_back(std::move(c));
@@ -1150,7 +1170,7 @@ struct Cache::Impl {
         for (const auto &rp : s.variant->relationships) {
           if (out->relationship(rp.first)) continue;
           for (const Path &t : rp.second) {
-            out->add_relationship(rp.first, Path(s.map.Apply(t.str())));
+            out->add_relationship(rp.first, Path(Mapping(s.map_idx).Apply(t.str())));
           }
         }
         continue;
@@ -1173,7 +1193,7 @@ struct Cache::Impl {
         // their flattened paths. Identity for local opinions.
         Compositor::CopyLocalOpinions(
             *out, *spec, s.offset.offset, s.offset.scale,
-            [&s](const std::string &p) { return s.map.Apply(p); });
+            [&](const std::string &p) { return Mapping(s.map_idx).Apply(p); });
       }
     }
 
@@ -1295,7 +1315,7 @@ struct Cache::Impl {
       n.parent = (i == 0) ? 0xFFFF : 0;
       n.layer_stack_idx = s.stack_idx;
       n.site_path_idx = InternPath(s.site);
-      n.map_to_root = s.map;
+      n.map_to_root = Mapping(s.map_idx);
       n.offset = s.offset;
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (!specs.empty()) {
@@ -1859,7 +1879,7 @@ struct Cache::Impl {
   // (>= seed_stack_count) are AdoptStack'd onto the shared table (dedup by
   // identifier). Sites are identifier strings and the variant pointer is into a
   // shared layer -> neither needs remap. Entries already present are skipped.
-  void MergeSources(Impl &w, size_t seed_stack_count) {
+  void MergeSources(Impl &w, size_t seed_stack_count, size_t seed_pool_count) {
     std::unordered_map<uint32_t, uint32_t> stack_remap;
     auto remap = [&](uint32_t ws) -> uint32_t {
       if (ws < seed_stack_count) return ws;  // identical to main (seeded)
@@ -1869,10 +1889,24 @@ struct Cache::Impl {
       stack_remap.emplace(ws, m);
       return m;
     };
+    // nm_pool_ entries below seed_pool_count are the seeded prefix (identical to
+    // main); worker-NEW mappings (>= seed_pool_count) are re-interned into main.
+    std::unordered_map<uint32_t, uint32_t> map_remap;
+    auto remap_map = [&](uint32_t wm) -> uint32_t {
+      if (wm < seed_pool_count) return wm;  // identical to main (seeded)
+      auto it = map_remap.find(wm);
+      if (it != map_remap.end()) return it->second;
+      uint32_t m = InternMapping(w.nm_pool_[wm]);
+      map_remap.emplace(wm, m);
+      return m;
+    };
     for (auto &kv : w.sources_cache) {
       if (sources_cache.count(kv.first)) continue;
       std::vector<Src> srcs = kv.second;
-      for (Src &s : srcs) s.stack_idx = remap(s.stack_idx);
+      for (Src &s : srcs) {
+        s.stack_idx = remap(s.stack_idx);
+        s.map_idx = remap_map(s.map_idx);
+      }
       sources_cache.emplace(kv.first, std::move(srcs));
     }
   }
@@ -1933,6 +1967,7 @@ struct Cache::Impl {
 
     // Snapshot the main resolution context built by the serial discovery above.
     const size_t seed_stack_count = layer_stacks.size();
+    const size_t seed_pool_count = nm_pool_.size();
 
     const int W = std::min<int>(nt, static_cast<int>(level.size()));
     std::vector<std::unique_ptr<Impl>> workers;
@@ -1953,6 +1988,7 @@ struct Cache::Impl {
       wp->layer_stacks = layer_stacks;
       wp->stack_by_id = stack_by_id;
       wp->sources_cache = sources_cache;
+      wp->nm_pool_ = nm_pool_;  // seed the mapping pool (map_idx < seed are shared)
       workers.push_back(std::move(wp));
     }
 
@@ -1979,7 +2015,8 @@ struct Cache::Impl {
     auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
 
     for (int t = 0; t < W; ++t) {
-      MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count);
+      MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count,
+                   seed_pool_count);
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
       if (err) *err += werr[static_cast<size_t>(t)];
     }
