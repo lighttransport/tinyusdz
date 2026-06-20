@@ -696,7 +696,7 @@ struct Options {
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool progress{false};
-  lrt_tri_quality quality{LRT_TRI_BUILD_DEFAULT};
+  lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
   int subdivision_level{0};
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
@@ -6348,7 +6348,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // that dominates peak RSS; per-group builds keep that arena small (freed between
   // groups). Byte-identical: same world-space triangles, same closest hits (the
   // groups partition by mesh, so no triangle's coincidences are split).
-  const size_t kBaseGroupTris = size_t(6) << 20;  // ~2M tris/group
+  const size_t kBaseGroupTris = size_t(2) << 20;  // ~2M tris/group
   std::vector<std::vector<size_t>> base_group_idx;
   {
     std::vector<size_t> cur;
