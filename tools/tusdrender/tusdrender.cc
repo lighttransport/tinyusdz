@@ -432,6 +432,10 @@ using FloatVec = std::vector<float, PoolAlloc<float>>;
 // the rendered difference is <=1/255 (1 LSB), well below output precision.
 using ByteVec = std::vector<uint8_t, PoolAlloc<uint8_t>>;
 using TriVec = std::vector<TriInfo, PoolAlloc<TriInfo>>;
+// Indexed geometry (Phase 2): unique vertex ids, 3 per triangle, into a BLAS's
+// uverts array. Lets the stream hand 1x unique verts + indices to the indexed
+// LightRT build instead of a 3x-expanded soup.
+using IdxVec = std::vector<uint32_t, PoolAlloc<uint32_t>>;
 using TriStoreVec = std::vector<TriStore, PoolAlloc<TriStore>>;
 
 // Decoded RGB(A) texture (8-bit) sampled by the diffuse texture pipeline.
@@ -3632,7 +3636,13 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
 // attributes. Instanced via a TLAS; the prototype geometry is stored once
 // regardless of how many times it is placed.
 struct Blas {
-  FloatVec vertices;  // packed local-space triangle positions
+  FloatVec vertices;  // packed local-space triangle positions (soup; empty when indexed)
+  // Indexed geometry (Phase 2b): when `indices` is non-empty the BLAS streamed
+  // 1x unique verts (uverts, 3 floats each) + 3 indices/tri and is built via
+  // lrt_tri_scene_build_indexed. `vertices` (soup) stays empty in that case.
+  // Both are freed after the BVH build (positions live in the de-indexed leaf).
+  FloatVec uverts;
+  IdxVec indices;
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
@@ -3650,6 +3660,8 @@ struct Blas {
   Blas &operator=(Blas &&o) noexcept {
     if (this != &o) {
       vertices = std::move(o.vertices);
+      uverts = std::move(o.uverts);
+      indices = std::move(o.indices);
       tris = std::move(o.tris);
       mat_table = std::move(o.mat_table);
       tri_uvs = std::move(o.tri_uvs);
@@ -4416,7 +4428,12 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           bool purpose_cull = false,
                           TriMat *out_job_mat = nullptr, float opacity = 1.0f,
                           bool want_colors = false, ByteVec *tri_colors = nullptr,
-                          bool want_normals = false, FVec *tri_normals = nullptr) {
+                          bool want_normals = false, FVec *tri_normals = nullptr,
+                          // Indexed geometry (Phase 2b): when out_uverts != null,
+                          // emit 1x unique verts + 3 vertex indices/tri (offset by
+                          // *io_vbase) instead of writing the de-indexed soup.
+                          FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr,
+                          uint32_t *io_vbase = nullptr) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
@@ -4572,11 +4589,29 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     if (c >= 3) tri_estimate += size_t(c - 2);
   }
   if (tri_estimate) {
-    vertices->reserve(vertices->size() + tri_estimate * 9);
+    if (out_uverts) {
+      out_indices->reserve(out_indices->size() + tri_estimate * 3);
+    } else {
+      vertices->reserve(vertices->size() + tri_estimate * 9);
+    }
     tris->reserve(tris->size() + tri_estimate);
     if (want_uvs) tri_uvs->reserve(tri_uvs->size() + tri_estimate * 6);
     if (want_colors) tri_colors->reserve(tri_colors->size() + tri_estimate * 12);
     if (want_normals) tri_normals->reserve(tri_normals->size() + tri_estimate * 9);
+  }
+  // Indexed path: append this mesh's unique world-space vertices once; triangle
+  // indices below are offset by the BLAS-local base. The soup path leaves these
+  // untouched. All npts are appended (index space == point ids) even if some are
+  // unreferenced -- simpler base arithmetic, negligible waste.
+  const uint32_t vbase = (out_uverts && io_vbase) ? *io_vbase : 0u;
+  if (out_uverts) {
+    out_uverts->reserve(out_uverts->size() + npts * 3);
+    for (size_t i = 0; i < npts; i++) {
+      out_uverts->push_back(wpts[i].x);
+      out_uverts->push_back(wpts[i].y);
+      out_uverts->push_back(wpts[i].z);
+    }
+    if (io_vbase) *io_vbase += uint32_t(npts);
   }
 
   // Material + purpose are constant across a mesh's triangles, so resolve them
@@ -4637,8 +4672,14 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       // TLAS mode culls purpose-invisible triangles at build time (closest-hit
       // can't filter per-prim like the flat multi-hit path does).
       if (purpose_cull && !visible_for_fit) continue;
-      vertices->insert(vertices->end(),
-                       {p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z});
+      if (out_indices) {
+        out_indices->push_back(vbase + uint32_t(i0));
+        out_indices->push_back(vbase + uint32_t(i1));
+        out_indices->push_back(vbase + uint32_t(i2));
+      } else {
+        vertices->insert(vertices->end(),
+                         {p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z});
+      }
       if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
         // Slim store: only mat_id (positions are in `vertices` above; the global
         // mat_id is assigned by StreamMeshJobs when it concatenates jobs).
@@ -6042,13 +6083,20 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
                     bool want_colors = false, ByteVec *out_tri_colors = nullptr,
-                    bool want_normals = false, FVec *out_tri_normals = nullptr) {
+                    bool want_normals = false, FVec *out_tri_normals = nullptr,
+                    // Indexed geometry (Phase 2b): when both non-null, emit unique
+                    // verts + 3 indices/tri here instead of the de-indexed soup
+                    // in out_vertices.
+                    FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr) {
+  const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
     TVec t;
     FVec uv;
     ByteVec col;  // per-corner RGBA8 (12 bytes/tri) when want_colors
     FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
+    FVec uvv;  // unique verts (3 floats each) when indexed
+    IdxVec idx;  // job-local vertex indices (3/tri) when indexed
     Bounds b;
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
@@ -6067,7 +6115,10 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
   size_t est_tris = 0;
   for (const MeshJobNext &job : jobs) est_tris += EstimateTrisForJob(job.prim, time);
   try {
-    out_vertices->reserve(out_vertices->size() + est_tris * 9);
+    if (indexed)
+      out_indices->reserve(out_indices->size() + est_tris * 3);
+    else
+      out_vertices->reserve(out_vertices->size() + est_tris * 9);
     out_tris->reserve(out_tris->size() + est_tris);
     if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + est_tris * 6);
     if (want_colors && out_tri_colors)
@@ -6097,13 +6148,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
             if (i >= cend || oom.load(std::memory_order_relaxed)) break;
             const MeshJobNext &job = jobs[i];
             R &r = results[i];
+            uint32_t jvb = 0;  // job-local vertex base (indices rebased at concat)
             AddRTPreviewMeshNext(
                 job.prim, job.world, job.purpose, purpose_mask, time,
                 job.base_color, job.tex_id, job.normal_tex_id, job.roughness,
                 job.metallic, job.rough_tex, job.metal_tex, job.emission,
                 job.emission_tex_id, job.occlusion, job.occ_tex, job.uv_xform,
                 want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
-                job.opacity, want_colors, &r.col, want_normals, &r.nrm);
+                job.opacity, want_colors, &r.col, want_normals, &r.nrm,
+                indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
+                indexed ? &jvb : nullptr);
           }
         } catch (const std::bad_alloc &) {
           oom.store(true, std::memory_order_relaxed);
@@ -6123,7 +6177,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
       // Append this chunk in job order into the (reserved) outputs; free as we go.
       for (size_t i = cstart; i < cend; ++i) {
         R &r = results[i];
-        out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
+        if (indexed) {
+          // Rebase this job's local vertex indices by the BLAS-global vertex
+          // count, then append its unique verts. Byte-identical triangle set to
+          // the soup path (same vertices, same per-tri order).
+          const uint32_t base = uint32_t(out_uverts->size() / 3);
+          out_uverts->insert(out_uverts->end(), r.uvv.begin(), r.uvv.end());
+          for (uint32_t id : r.idx) out_indices->push_back(base + id);
+        } else {
+          out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
+        }
         // Slim store: assign each of this job's triangles a global material id and
         // append the job's material to the shared table (one entry per job).
         if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
@@ -6149,6 +6212,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         FVec().swap(r.uv);
         ByteVec().swap(r.col);
         FVec().swap(r.nrm);
+        FVec().swap(r.uvv);
+        IdxVec().swap(r.idx);
       }
     }
   } catch (const std::bad_alloc &) {
@@ -6408,7 +6473,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               /*threads=*/1, &ctx.blas[b].vertices, &ctx.blas[b].tris,
               &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
               &ctx.blas[b].mat_table, jobs_have_color(gjobs),
-              &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals))
+              &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
+              /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices))
         gstream_ok.store(false, std::memory_order_relaxed);
     }
   };
@@ -6484,12 +6550,34 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::atomic<uint64_t> freed_soup_bytes{0};
   auto drop_soup = [&](size_t b) {
     if (ctx.blas[b].scene && !ctx.blas[b].is_curve &&
-        lrt_tri_scene_has_verts(ctx.blas[b].scene) &&
-        !ctx.blas[b].vertices.empty()) {
-      freed_soup_bytes.fetch_add(uint64_t(ctx.blas[b].vertices.size()) * sizeof(float),
-                                 std::memory_order_relaxed);
-      FloatVec().swap(ctx.blas[b].vertices);
+        lrt_tri_scene_has_verts(ctx.blas[b].scene)) {
+      if (!ctx.blas[b].vertices.empty()) {
+        freed_soup_bytes.fetch_add(
+            uint64_t(ctx.blas[b].vertices.size()) * sizeof(float),
+            std::memory_order_relaxed);
+        FloatVec().swap(ctx.blas[b].vertices);
+      }
+      // Indexed BLAS: the leaf holds the de-indexed verts, so the unique-vertex
+      // array + indices are no longer needed (lrt_tri_get_verts recovers hits).
+      if (!ctx.blas[b].indices.empty()) {
+        freed_soup_bytes.fetch_add(
+            uint64_t(ctx.blas[b].uverts.size()) * sizeof(float) +
+                uint64_t(ctx.blas[b].indices.size()) * sizeof(uint32_t),
+            std::memory_order_relaxed);
+        FloatVec().swap(ctx.blas[b].uverts);
+        IdxVec().swap(ctx.blas[b].indices);
+      }
     }
+  };
+  // Build a BLAS from whichever geometry form it streamed: indexed (uverts +
+  // indices, the base groups) or de-indexed soup (everything else). The leaf is
+  // identical either way (lrt_tri_scene_build_indexed gathers through indices).
+  auto build_blas = [](Blas &bl, const lrt_tri_build_options *o,
+                       lrt_result *e) -> lrt_tri_scene * {
+    if (!bl.indices.empty())
+      return lrt_tri_scene_build_indexed(bl.uverts.data(), bl.uverts.size() / 3,
+                                         bl.indices.data(), bl.tris.size(), o, e);
+    return lrt_tri_scene_build(bl.vertices.data(), bl.tris.size(), o, e);
   };
   const auto bvh_t0 = std::chrono::steady_clock::now();
   {
@@ -6520,8 +6608,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
         if (i >= large.size() || lfail.load(std::memory_order_relaxed)) break;
         const size_t b = large[i];
         lrt_result e = LRT_RESULT_OK;
-        ctx.blas[b].scene = lrt_tri_scene_build(ctx.blas[b].vertices.data(),
-                                                ctx.blas[b].tris.size(), &sbuild, &e);
+        ctx.blas[b].scene = build_blas(ctx.blas[b], &sbuild, &e);
         if (!ctx.blas[b].scene) {
           lfail.store(true, std::memory_order_relaxed);
           break;
@@ -6549,8 +6636,20 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     for (size_t b = 0; b < nb; ++b) {
       const size_t nt = ctx.blas[b].tris.size();
       if (nt > 0 && nt < kLargeTris) {
-        bverts[b] = ctx.blas[b].vertices.data();
-        bntris[b] = nt;
+        if (!ctx.blas[b].indices.empty()) {
+          // Small indexed BLAS (not expected -- base groups are large -- but kept
+          // correct): the soup batch can't consume indexed input, so build it now.
+          lrt_result e = LRT_RESULT_OK;
+          ctx.blas[b].scene = build_blas(ctx.blas[b], &build_opts, &e);
+          if (!ctx.blas[b].scene) {
+            std::cerr << "Failed to build BLAS (err=" << int(e) << ").\n";
+            return false;
+          }
+          drop_soup(b);
+        } else {
+          bverts[b] = ctx.blas[b].vertices.data();
+          bntris[b] = nt;
+        }
       }
     }
     lrt_tri_scene_build_batch(bverts.data(), bntris.data(), nb, &build_opts,
