@@ -8908,7 +8908,14 @@ lrt_tri_scene *lrt_roundcurve_scene_build(const lrt_hair_strands *strands,
     bc.ntris = nseg;
     bc.max_leaf = max_leaf;
     bc.block_shift = 2u; /* round-linear blocks are 4-wide */
-    bc.quality = LRT_TRI_BUILD_DEFAULT;
+    /* Honor the caller's quality. FAST routes through the parallel Morton LBVH
+     * below (same path the mesh FAST build uses) instead of the recursive,
+     * serial-top-level binned SAH -- the SAH build dominated curve-heavy scenes
+     * (Island isIronwoodA1: 3M hair segments, ~2s, barely scaling past ~2 cores)
+     * and its 2*nseg bnode arena drove peak RSS. LBVH is fully parallel and uses
+     * a much smaller frontier. Same closest hits, so renders are byte-identical. */
+    bc.quality = (o.quality == LRT_TRI_BUILD_FAST) ? LRT_TRI_BUILD_FAST
+                                                   : LRT_TRI_BUILD_DEFAULT;
     bc.emit_kind = TRI_PRIM_RLCURVE;
     bc.plo = (float *)malloc(nseg * 3 * sizeof(float));
     bc.phi = (float *)malloc(nseg * 3 * sizeof(float));
@@ -9001,7 +9008,44 @@ lrt_tri_scene *lrt_roundcurve_scene_build(const lrt_hair_strands *strands,
     }
 #endif
 
-    uint32_t b_root = tri_build_binary(&bc, num_threads);
+    /* LBVH preprocessing (Morton sort) for the FAST path -- mirrors
+     * tri_scene_build_impl. Centroids (bc.cen) are already filled above. */
+    uint64_t *lbvh_keys = NULL, *lbvh_tmp = NULL;
+    if (bc.quality == LRT_TRI_BUILD_FAST) {
+        lbvh_keys = (uint64_t *)malloc(nseg * sizeof(uint64_t));
+        lbvh_tmp = (uint64_t *)malloc(nseg * sizeof(uint64_t));
+        if (!lbvh_keys || !lbvh_tmp) {
+            free(lbvh_keys);
+            free(lbvh_tmp);
+            free(segs);
+            free(bc.plo);
+            free(bc.phi);
+            free(bc.cen);
+            free(bc.indices);
+            free(bc.bnodes);
+            free(bc.par_scratch);
+            tri_set_err(err, LRT_RESULT_OUT_OF_MEMORY);
+            return NULL;
+        }
+        tri_morton_encode(&bc, lbvh_keys, num_threads);
+        const uint64_t *sorted = tri_radix_sort_keys(lbvh_keys, lbvh_tmp, nseg);
+        for (size_t i = 0; i < nseg; i++) bc.indices[i] = (uint32_t)sorted[i];
+        bc.lbvh_keys = sorted;
+        uint32_t bw = 1u << bc.block_shift;
+        bc.lbvh_leaf = 2u * bw;
+        if (bc.lbvh_leaf > max_leaf) bc.lbvh_leaf = max_leaf;
+        /* Centroids are only needed for the Morton encode (the LBVH build uses
+         * plo/phi + the sorted order); free them now to offset the Morton-key
+         * buffers (the SAH path keeps cen for binning, so free only here). */
+        free(bc.cen);
+        bc.cen = NULL;
+    }
+
+    uint32_t b_root = (bc.quality == LRT_TRI_BUILD_FAST)
+                          ? tri_build_lbvh(&bc, num_threads)
+                          : tri_build_binary(&bc, num_threads);
+    free(lbvh_keys);
+    free(lbvh_tmp);
 
     lrt_tri_scene *s = NULL;
     if (!bc.failed) {
