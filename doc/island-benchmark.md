@@ -170,6 +170,43 @@ tusdrender _merged_ALab/entity/alab_set01/alab_set01.usda out.png \
     -rtPreview -stats -w 320 -height 180 -autoframe
 ```
 
+### NamespaceMapping pooling — compose allocation lever (commit `48aef48d`, 2026-06-21)
+
+Profiling the isCoral compose showed `basic_string` operations at **~12 % self**
+(the largest aggregate, ahead of the geometry stream) — path-string churn, not
+`Value` copies (only 0.43 %). A big slice is the per-source `NamespaceMapping`:
+a non-identity mapping's two path prefixes are *shared* by every `Src` in the
+subtree below an arc (children inherit the parent's mapping unchanged in the
+source child-build), yet the build re-copied them per prim — ~280 K redundant
+long-string copies on isCoral's 140 K reference/payload-backed prims. The fix
+pools the mappings in the compose `Impl` and stores a 4-byte index on each source
+(`Src.map` 64 B → `map_idx` 4 B; `Src` shrinks 136 → 128 B), so the bulk
+child-build copies an int. New mappings are appended only in the serial arc
+expansion; the parallel opinion fill only *reads* the pool (deque → stable
+addresses, lock-free). **Byte-identical** (suzanne / isCoral / isIronwoodA1 /
+isBeach / isPandanusA + full `island.usda` all unchanged; `next` 23/23; smoke).
+
+Measured before → after on the same build (`-rtPreview -w 320 -height 180`;
+`sources` = the serial `[next_build]` source-resolution phase via
+`TINYUSDZ_NEXT_TIMING`; wall + peak RSS from `/usr/bin/time`):
+
+| scene | input | `sources` ms | wall s | peak RSS | md5 |
+|---|---|---|---|---|---|
+| **isCoral** | `element.usda` | 1739 → **1480** (−260) | 6.52 → **6.0** (−8 %) | ~3.07 GB (flat) | `d00a4931041f` |
+| **ALab** | `_merged_ALab/entry.usda` | 1555 → **1360** (−195) | 4.14 → **3.77** (−9 %) | 1.95 → **1.80 GB** (−150 MB) | `3e526a58217e` |
+| **Caldera** | `caldera.usda` | 572 → 571 (~0) | ~5.07 (~0) | ~3.49 GB (~0) | `563be5ec4d1d` |
+
+The win scales with the number of prims under **non-identity** arc mappings:
+solid on the two reference/payload-heavy scenes (isCoral 140 K prims; ALab ~3.3 K
+prims / ~1.3 K payloads, which also sheds 150 MB resident from the smaller `Src`
+and de-duplicated mappings), and a clean **no-op on Caldera** — it composes to
+comparatively few prims, so most mappings are identity (`map_idx 0`, no pool
+entry, nothing to dedup). No regression anywhere: with identity mappings the
+pooled path is a strict 4-byte index copy. (This is the *tractable* allocation
+lever; a parallel attempt at compose **path-interning** — int-keying the spec
+cache — proved net-neutral because interning re-allocates the path it removes,
+on this allocation-bound compose.)
+
 ## Analysis
 
 **Light/medium elements (isNaupakaA → isDunesA, isHibiscus): clean tusdrender
