@@ -17,6 +17,7 @@
 #include "imgui_impl_glfw.h"
 #include "log.hh"
 #include "mesh_build.hh"
+#include "next_scene_loader.hh"
 #include "skinning.hh"
 
 #if defined(HAVE_NFD)
@@ -284,6 +285,18 @@ void App::loadFileBlocking(const std::string& path) {
   LoadedScene tmp;
   DrawScene drawTmp;
   LoadOptions opts = loadOpts_;
+  if (useNextLoader_) {
+    // `next` flat-preview path: builds only the DrawScene (no Tydra
+    // RenderScene/skinning); the hierarchy browser/inspector stay empty.
+    const bool ok =
+        LoadUSDViaNext(path, opts, &drawTmp, &tmp.warn, &tmp.err, &loadCtrl_);
+    tmp.ok = ok;
+    tmp.filepath = path;
+    loaded_ = std::move(tmp);
+    draw_ = ok ? std::move(drawTmp) : DrawScene{};
+    applyLoaded(ok, /*progressive=*/false);
+    return;
+  }
   const bool gpuRestLoad = std::isfinite(loadOpts_.timecode) &&
                            skinningRequested_ == SkinningMode::GPU;
   if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
@@ -338,8 +351,14 @@ void App::startLoadAsync(const std::string& path) {
   if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
-  loadThread_ = std::thread([this, path, opts, lp, dp, rt]() {
-    LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
+  const bool useNext = useNextLoader_;
+  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext]() {
+    if (useNext) {
+      lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_);
+      lp->filepath = path;
+    } else {
+      LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
+    }
     loadFinished_.store(true, std::memory_order_release);
   });
 }

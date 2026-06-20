@@ -53,6 +53,7 @@ set(TUSDVIEW_SOURCES
     app.cc
     config.cc
     scene_loader.cc
+    next_scene_loader.cc
     mesh_build.cc
     gizmo_build.cc
     parametric_tess.cc
@@ -98,6 +99,21 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     glfw
     OpenGL::GL
     ${CMAKE_DL_LIBS})
+
+# --- `next` lazy loader + tydra-next converter (large-scene preview path) -----
+# Mirrors tools/tusdrender/CMakeLists.txt: build the next libs on demand (with
+# the std::thread parallel-compose path forced on) and link them. Used by
+# next_scene_loader.cc (the --next OpenGL mesh preview).
+set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET tinyusdz_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+                   ${CMAKE_BINARY_DIR}/tusdview_next_build)
+endif()
+if(NOT TARGET tydra_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next
+                   ${CMAKE_BINARY_DIR}/tusdview_tydra_next_build)
+endif()
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE tinyusdz_next tydra_next)
 
 if(UNIX AND NOT APPLE)
   find_package(X11 REQUIRED)
