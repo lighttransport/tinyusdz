@@ -88,6 +88,18 @@ lrt_tri_scene *lrt_tri_scene_build(const float *vertices, size_t ntris,
                                    const lrt_tri_build_options *opts,
                                    lrt_result *err);
 
+/* Indexed build: `vertices` is `nverts` unique vertices (3 floats each) and
+ * `indices` is 3*ntris vertex ids (3 per triangle). Equivalent to de-indexing
+ * into a 9*ntris soup and calling lrt_tri_scene_build -- byte-identical result --
+ * but the caller avoids materializing the soup (the build gathers each
+ * triangle's vertices through `indices`). prim_id stays 0..ntris-1 (the triangle
+ * index), so lrt_tri_get_verts and per-triangle caller data are unchanged.
+ * Returns NULL on failure (err set when non-NULL). */
+lrt_tri_scene *lrt_tri_scene_build_indexed(const float *vertices, size_t nverts,
+                                           const uint32_t *indices, size_t ntris,
+                                           const lrt_tri_build_options *opts,
+                                           lrt_result *err);
+
 /* Build `n` independent scenes at once, parallelizing ACROSS scenes (each scene
  * is built single-threaded; workers steal scenes one at a time). This is the
  * efficient path for two-level/TLAS builds with many small BLAS, where the
