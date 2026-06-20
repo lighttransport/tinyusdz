@@ -34,10 +34,11 @@ Common flags:
   with each prototype's geometry built once (BLAS), so a scene with millions of
   *visible* triangles only stores the *unique* prototype geometry.
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
-  emissive/occlusion textures); for unmaterialed geometry, constant
-  `primvars:displayColor` / `displayOpacity` are honored (the latter blended
-  see-through), so geom-only assets (e.g. Animal Logic ALab) render in color with
-  transparent glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair.
+  emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
+  / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/
+  uniform (barycentrically interpolated per hit), with opacity blended see-through.
+  Geom-only assets (e.g. Animal Logic ALab) render in color with transparent
+  glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair.
 * **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
   (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or

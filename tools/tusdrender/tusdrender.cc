@@ -3627,6 +3627,7 @@ struct Blas {
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
+  FloatVec tri_colors;  // 12 floats/tri (per-corner RGBA) or empty
   // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
   // curve_info holds one TriInfo per segment (local-space endpoints + color),
   // resolved at hit time exactly like the DirectScene curve path.
@@ -3642,6 +3643,7 @@ struct Blas {
       tris = std::move(o.tris);
       mat_table = std::move(o.mat_table);
       tri_uvs = std::move(o.tri_uvs);
+      tri_colors = std::move(o.tri_colors);
       is_curve = o.is_curve;
       curve_info = std::move(o.curve_info);
       if (scene) lrt_tri_scene_free(scene);
@@ -3830,9 +3832,18 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   if (size_t(th.prim_id) >= b.tris.size()) return false;
   if (size_t(th.prim_id) * 9 + 8 >= b.vertices.size()) return false;
   const TriStore &ts = b.tris[size_t(th.prim_id)];
-  const TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
-                                       ? b.mat_table[size_t(ts.mat_id)]
-                                       : TriMat{});
+  TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
+                                 ? b.mat_table[size_t(ts.mat_id)]
+                                 : TriMat{});
+  // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
+  if (size_t(th.prim_id) * 12 + 11 < b.tri_colors.size()) {
+    const float *cc = &b.tri_colors[size_t(th.prim_id) * 12];
+    const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
+    lt.base_color = Vec3{w0 * cc[0] + w1 * cc[4] + w2 * cc[8],
+                         w0 * cc[1] + w1 * cc[5] + w2 * cc[9],
+                         w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
+    lt.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
+  }
   // Local-space positions come from the vertex soup (LightRT aliases it).
   const float *v = &b.vertices[size_t(th.prim_id) * 9];
   Vec3 wp0 = TransformPointO2W(inst.o2w, Vec3{v[0], v[1], v[2]});
@@ -3917,7 +3928,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const lrt_tlas *tlas = nullptr,
            const std::vector<Blas> *blas = nullptr,
            const std::vector<InstanceRT> *instances = nullptr,
-           const RayDiff &rd = RayDiff{}, int depth = 0) {
+           const RayDiff &rd = RayDiff{}, int depth = 0,
+           const std::vector<float> *tri_colors = nullptr) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -3945,6 +3957,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     if (IntersectVisibleTriangles(scene, tris, ray, opt.purpose_mask, &hit) &&
         hit.prim_id != LRT_TRI_NO_HIT && size_t(hit.prim_id) < tris.size()) {
       hit_tri = tris[size_t(hit.prim_id)];
+      // Per-corner displayColor/displayOpacity (RGBA), barycentric-interpolated.
+      if (tri_colors && size_t(hit.prim_id) * 12 + 11 < tri_colors->size()) {
+        const float *cc = &(*tri_colors)[size_t(hit.prim_id) * 12];
+        const float w1 = hit.u, w2 = hit.v, w0 = 1.0f - w1 - w2;
+        hit_tri.base_color = Vec3{w0 * cc[0] + w1 * cc[4] + w2 * cc[8],
+                                  w0 * cc[1] + w1 * cc[5] + w2 * cc[9],
+                                  w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
+        hit_tri.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
+      }
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
@@ -4080,7 +4101,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const Vec3 behind_org = Add(ray_org, Mul(ray_dir, hit_t + 0.01f));
     const Vec3 behind =
         Shade(scene, direct, tris, lights, ibl, camera, opt, behind_org, ray_dir,
-              textures, tri_uvs, tlas, blas, instances, rd, depth + 1);
+              textures, tri_uvs, tlas, blas, instances, rd, depth + 1, tri_colors);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
@@ -4177,7 +4198,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<float> *tri_uvs = nullptr,
                             const lrt_tlas *tlas = nullptr,
                             const std::vector<Blas> *blas = nullptr,
-                            const std::vector<InstanceRT> *instances = nullptr) {
+                            const std::vector<InstanceRT> *instances = nullptr,
+                            const std::vector<float> *tri_colors = nullptr) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -4214,7 +4236,7 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             rd.valid = true;
             color = Add(color, Shade(scene, direct, tris, lights, ibl, camera,
                                      opt, org, dir, textures, tri_uvs, tlas,
-                                     blas, instances, rd));
+                                     blas, instances, rd, 0, tri_colors));
           }
         }
         color = Mul(color, 1.0f / float(spp));
@@ -4338,7 +4360,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
                           bool purpose_cull = false,
-                          TriMat *out_job_mat = nullptr, float opacity = 1.0f) {
+                          TriMat *out_job_mat = nullptr, float opacity = 1.0f,
+                          bool want_colors = false, FVec *tri_colors = nullptr) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
@@ -4413,6 +4436,41 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     return {st[s * 2 + 0], st[s * 2 + 1]};
   };
 
+  // Per-corner displayColor/displayOpacity (RGBA), when the scene has any
+  // non-constant display primvar. Interpolation is inferred from array size:
+  // vertex (== npoints), faceVarying (== face-vertex count), uniform (== nfaces);
+  // a 1-element array (or absent) falls back to the constant base_color/opacity.
+  std::vector<float> dcol, dopac;
+  int dc_mode = 0, do_mode = 0;  // 0=const, 1=vertex, 2=faceVarying, 3=uniform
+  if (want_colors) {
+    dcol = ReadFloatArrayLazy(prim, "primvars:displayColor", time);
+    const size_t nc = dcol.size() / 3;
+    if (nc == npts) dc_mode = 1;
+    else if (nc == indices.size()) dc_mode = 2;
+    else if (nc == counts.size()) dc_mode = 3;
+    dopac = ReadFloatArrayLazy(prim, "primvars:displayOpacity", time);
+    const size_t no = dopac.size();
+    if (no == npts) do_mode = 1;
+    else if (no == indices.size()) do_mode = 2;
+    else if (no == counts.size()) do_mode = 3;
+  }
+  // RGBA for face-vertex slot `fv` (point index `pi`, face `face`).
+  auto col_at = [&](size_t fv, int32_t pi, size_t face, float out[4]) {
+    out[0] = base_color.x; out[1] = base_color.y; out[2] = base_color.z;
+    out[3] = opacity;
+    if (dc_mode) {
+      size_t ci = dc_mode == 1 ? size_t(pi) : dc_mode == 2 ? fv : face;
+      if (ci * 3 + 2 < dcol.size()) {
+        out[0] = dcol[ci * 3 + 0]; out[1] = dcol[ci * 3 + 1];
+        out[2] = dcol[ci * 3 + 2];
+      }
+    }
+    if (do_mode) {
+      size_t oi = do_mode == 1 ? size_t(pi) : do_mode == 2 ? fv : face;
+      if (oi < dopac.size()) out[3] = std::min(1.0f, std::max(0.0f, dopac[oi]));
+    }
+  };
+
   // Reserve from the exact triangle-fan estimate. StreamMeshJobs gives each mesh
   // its OWN thread-local buffers (one mesh's worth), so a single up-front reserve
   // replaces the per-triangle geometric reallocations (the TriInfo realloc churn
@@ -4426,10 +4484,13 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     vertices->reserve(vertices->size() + tri_estimate * 9);
     tris->reserve(tris->size() + tri_estimate);
     if (want_uvs) tri_uvs->reserve(tri_uvs->size() + tri_estimate * 6);
+    if (want_colors) tri_colors->reserve(tri_colors->size() + tri_estimate * 12);
   }
 
   size_t cursor = 0;
+  size_t face_idx = 0;
   for (int32_t c : counts) {
+    const size_t face = face_idx++;
     if (c < 3 || cursor + size_t(c) > indices.size()) {
       cursor += size_t(std::max<int32_t>(0, c));
       continue;
@@ -4509,6 +4570,17 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
                                          uv1.second, uv2.first, uv2.second});
       }
+      if (want_colors) {
+        // Per-corner RGBA parallel to tris (12 floats/tri), fan order matching
+        // i0/i1/i2. Constant meshes replicate base_color/opacity at all corners.
+        float c0[4], c1[4], c2[4];
+        col_at(cursor + 0, i0, face, c0);
+        col_at(cursor + size_t(k), i1, face, c1);
+        col_at(cursor + size_t(k + 1), i2, face, c2);
+        tri_colors->insert(tri_colors->end(),
+                           {c0[0], c0[1], c0[2], c0[3], c1[0], c1[1], c1[2],
+                            c1[3], c2[0], c2[1], c2[2], c2[3]});
+      }
       stats->triangles++;
       if (visible_for_fit) {
         Expand(bounds, p0);
@@ -4537,6 +4609,7 @@ struct MeshJobNext {
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
   float opacity{1.0f};                   // resolved primvars:displayOpacity
+  bool vertex_color{false};              // displayColor/Opacity is per-vertex
 };
 
 // ---------------------------------------------------------------------------
@@ -4733,13 +4806,18 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              ScalarTex *rough_tex, ScalarTex *metal_tex,
                              Vec3 *emission, int32_t *emission_tex_id,
                              float *occlusion, ScalarTex *occ_tex,
-                             float *opacity = nullptr) {
-  // Geometry display primvars (constant): the unmaterialed base color/opacity
-  // (e.g. ALab geom-only meshes). A bound material below overrides the color.
+                             float *opacity = nullptr,
+                             bool *vertex_color = nullptr) {
+  // Geometry display primvars: the unmaterialed base color/opacity (e.g. ALab
+  // geom-only meshes). The first value seeds the constant base; a >1-element
+  // array is per-vertex/faceVarying/uniform and sets *vertex_color so the stream
+  // stores per-corner colors (see AddRTPreviewMeshNext). A bound material below
+  // overrides the constant color.
   if (const tinyusdz::next::Value *dcv =
           mesh.GetPropertyValue("primvars:displayColor")) {
     if (const std::vector<float> *dc = dcv->as_float_array()) {
       if (dc->size() >= 3) *base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
+      if (vertex_color && dc->size() > 3) *vertex_color = true;
     }
   }
   if (opacity) {
@@ -4747,6 +4825,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
             mesh.GetPropertyValue("primvars:displayOpacity")) {
       if (const std::vector<float> *od = dov->as_float_array()) {
         if (!od->empty()) *opacity = std::min(1.0f, std::max(0.0f, (*od)[0]));
+        if (vertex_color && od->size() > 1) *vertex_color = true;
       }
     }
   }
@@ -4904,6 +4983,7 @@ struct ResolvedMat {
   float occlusion{1.0f};
   ScalarTex occ_tex;
   float opacity{1.0f};
+  bool vertex_color{false};
 };
 
 // Resolve a mesh job's material with per-material memoization. The result is a
@@ -4934,6 +5014,7 @@ void ResolveMeshMaterialCached(
       job->occlusion = r.occlusion;
       job->occ_tex = r.occ_tex;
       job->opacity = r.opacity;
+      job->vertex_color = r.vertex_color;
       return;
     }
   }
@@ -4941,7 +5022,7 @@ void ResolveMeshMaterialCached(
                           &job->roughness, &job->metallic, &job->normal_tex_id,
                           &job->uv_xform, &job->rough_tex, &job->metal_tex,
                           &job->emission, &job->emission_tex_id, &job->occlusion,
-                          &job->occ_tex, &job->opacity);
+                          &job->occ_tex, &job->opacity, &job->vertex_color);
   if (!key.empty()) {
     ResolvedMat r;
     r.base_color = job->base_color;
@@ -4957,6 +5038,7 @@ void ResolveMeshMaterialCached(
     r.occlusion = job->occlusion;
     r.occ_tex = job->occ_tex;
     r.opacity = job->opacity;
+    r.vertex_color = job->vertex_color;
     cache.emplace(key, r);
   }
 }
@@ -5226,6 +5308,7 @@ struct RenderContext {
   std::vector<TriInfo> tris;
   std::vector<Texture> textures;  // diffuse textures referenced by tris[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
+  std::vector<float> tri_colors;  // 12 floats/tri (per-corner RGBA); empty if none
   Bounds bounds;
   RTPreviewStats stats;
   lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
@@ -5808,11 +5891,13 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     double time, bool want_uvs, bool purpose_cull, int threads,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
-                    std::vector<TriMat> *out_mat_table = nullptr) {
+                    std::vector<TriMat> *out_mat_table = nullptr,
+                    bool want_colors = false, FVec *out_tri_colors = nullptr) {
   struct R {
     FVec v;
     TVec t;
     FVec uv;
+    FVec col;  // per-corner RGBA (12 floats/tri) when want_colors
     Bounds b;
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
@@ -5840,7 +5925,7 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                              job.occlusion, job.occ_tex, job.uv_xform, want_uvs,
                              &r.v, &r.t,
                              &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
-                             job.opacity);
+                             job.opacity, want_colors, &r.col);
       }
     } catch (const std::bad_alloc &) {
       oom.store(true, std::memory_order_relaxed);
@@ -5880,11 +5965,14 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
       out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
       if (want_uvs)
         out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
+      if (want_colors && out_tri_colors)
+        out_tri_colors->insert(out_tri_colors->end(), r.col.begin(), r.col.end());
       MergeBounds(out_bounds, r.b);
       MergeStats(out_stats, r.s);
       FVec().swap(r.v);
       TVec().swap(r.t);
       FVec().swap(r.uv);
+      FVec().swap(r.col);
     }
   } catch (const std::bad_alloc &) {
     return false;
@@ -5926,6 +6014,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.tris.clear();
   ctx.textures.clear();
   ctx.tri_uvs.clear();
+  ctx.tri_colors.clear();
   ctx.blas.clear();
   ctx.instances.clear();
   ctx.use_tlas = false;
@@ -5989,9 +6078,14 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       }
     }
     const bool want_uvs = !ctx.textures.empty();
+    bool want_colors = false;
+    for (const MeshJobNext &j : base_jobs)
+      if (j.vertex_color) { want_colors = true; break; }
     if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
-                        &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats)) {
+                        &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
+                        /*out_mat_table=*/nullptr, want_colors,
+                        &ctx.tri_colors)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -6059,6 +6153,12 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
   const bool want_uvs = !ctx.textures.empty();
+  bool want_colors = false;
+  for (const MeshJobNext &j : base_jobs)
+    if (j.vertex_color) { want_colors = true; break; }
+  for (const std::vector<MeshJobNext> &pj : proto_jobs)
+    for (const MeshJobNext &j : pj)
+      if (j.vertex_color) { want_colors = true; break; }
 
   // blas layout: [0] base, [1 .. P] mesh prototypes, [P+1 ..] curve prototypes.
   const size_t curve_base = 1 + protos.size();
@@ -6071,7 +6171,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       base_jobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
       opt.threads, &ctx.blas[0].vertices, &ctx.blas[0].tris,
       &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats,
-      &ctx.blas[0].mat_table);
+      &ctx.blas[0].mat_table, want_colors, &ctx.blas[0].tri_colors);
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
@@ -6080,7 +6180,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*purpose_cull=*/true, opt.threads,
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
-                               &ctx.blas[b].mat_table);
+                               &ctx.blas[b].mat_table, want_colors,
+                               &ctx.blas[b].tri_colors);
   }
   if (!stream_ok) {
     std::cerr << "Aborting: triangle stream exceeded memory cap "
@@ -6343,7 +6444,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
       ctx.use_tlas ? ctx.tlas : nullptr,
       ctx.use_tlas ? &ctx.blas : nullptr,
-      ctx.use_tlas ? &ctx.instances : nullptr);
+      ctx.use_tlas ? &ctx.instances : nullptr,
+      ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
