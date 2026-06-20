@@ -215,6 +215,12 @@ int lrt_tri_scene_has_verts(const lrt_tri_scene *s);
 int lrt_tri_get_verts(const lrt_tri_scene *s, uint32_t prim_id, float v0[3],
                       float v1[3], float v2[3]);
 
+/* Leaf slot for a triangle (BVH leaf-emission order), or LRT_TRI_NO_HIT, and the
+ * total slot count. Lets a caller reorder per-triangle shading into slot order
+ * for cache-coherent hit-time reads. Plain triangle scenes only (prim2slot). */
+uint32_t lrt_tri_get_slot(const lrt_tri_scene *s, uint32_t prim_id);
+uint32_t lrt_tri_slot_count(const lrt_tri_scene *s);
+
 /* --- Hair / curve scenes ---------------------------------------------------
  *
  * Axis-aligned boxes around long thin diagonal primitives are mostly empty

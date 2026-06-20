@@ -433,6 +433,22 @@ int lrt_tri_get_verts(const lrt_tri_scene *s, uint32_t prim_id, float v0[3],
     return 1;
 }
 
+/* Leaf slot (block*width + lane) for a triangle, or LRT_TRI_NO_HIT. Slots run in
+ * BVH leaf-emission order, so a caller can lay per-triangle shading out in slot
+ * order for cache-coherent hit-time access (adjacent leaf triangles -> adjacent
+ * slots). Same lookup lrt_tri_get_verts does internally. */
+uint32_t lrt_tri_get_slot(const lrt_tri_scene *s, uint32_t prim_id) {
+    if (!s || !s->prim2slot || prim_id >= s->original_ntris) return LRT_TRI_NO_HIT;
+    return s->prim2slot[prim_id];
+}
+
+/* Number of leaf slots (block_count * width): the size a slot-indexed array must
+ * have. Includes padding lanes (their prim_id is LRT_TRI_NO_HIT). */
+uint32_t lrt_tri_slot_count(const lrt_tri_scene *s) {
+    if (!s) return 0;
+    return s->block_count * (uint32_t)s->layout;
+}
+
 /* Binary build node (arena, freed after collapse). */
 typedef struct tri_bnode {
     float lo[3], hi[3];

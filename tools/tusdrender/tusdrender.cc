@@ -3646,7 +3646,11 @@ struct Blas {
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
-  ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8) or empty
+  ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
+  // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
+  // for cache-coherent hit reads -- adjacent leaf triangles -> adjacent entries.
+  // When non-empty, tri_colors is freed and the hit indexes this by lrt_tri_get_slot.
+  ByteVec tri_colors_slot;
   FloatVec tri_normals; // 9 floats/tri (per-corner authored normals) or empty
   // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
   // curve_info holds one TriInfo per segment (local-space endpoints + color),
@@ -3666,6 +3670,7 @@ struct Blas {
       mat_table = std::move(o.mat_table);
       tri_uvs = std::move(o.tri_uvs);
       tri_colors = std::move(o.tri_colors);
+      tri_colors_slot = std::move(o.tri_colors_slot);
       tri_normals = std::move(o.tri_normals);
       is_curve = o.is_curve;
       curve_info = std::move(o.curve_info);
@@ -3867,8 +3872,18 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                  ? b.mat_table[size_t(ts.mat_id)]
                                  : TriMat{});
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
-  if (size_t(th.prim_id) * 12 + 11 < b.tri_colors.size()) {
-    const uint8_t *cc = &b.tri_colors[size_t(th.prim_id) * 12];
+  // Phase 5: when colors were reordered into leaf-slot order (TUSD_COHCOLOR), the
+  // hit indexes by the leaf slot (cache-coherent) instead of prim_id; otherwise
+  // the prim_id-ordered array is used. Same 12 bytes either way.
+  const uint8_t *cc = nullptr;
+  if (!b.tri_colors_slot.empty()) {
+    const uint32_t slot = lrt_tri_get_slot(b.scene, th.prim_id);
+    if (slot != LRT_TRI_NO_HIT && size_t(slot) * 12 + 11 < b.tri_colors_slot.size())
+      cc = &b.tri_colors_slot[size_t(slot) * 12];
+  } else if (size_t(th.prim_id) * 12 + 11 < b.tri_colors.size()) {
+    cc = &b.tri_colors[size_t(th.prim_id) * 12];
+  }
+  if (cc) {
     const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
     const float s = 1.0f / 255.0f;
     lt.base_color = Vec3{(w0 * cc[0] + w1 * cc[4] + w2 * cc[8]) * s,
@@ -6663,6 +6678,48 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
         }
         drop_soup(b);
       }
+    }
+  }
+
+  // Phase 5 (opt-in via TUSD_COHCOLOR): reorder each BLAS's per-corner colors
+  // from prim_id order into BVH leaf-slot order, so hits within a leaf read
+  // adjacent color records instead of scattered ones (the prim_id->slot map is
+  // already touched by lrt_tri_get_verts at every hit). Per-BLAS scatter +
+  // immediate free of the old array keeps the transient to one BLAS's colors.
+  // Off by default: it adds a build-time scatter pass that isn't worth it for the
+  // tiny primary-only preview render, but helps render-heavy (hi-res) use.
+  // Byte-identical: same 12 bytes, relocated and read back through the same slot.
+  if (std::getenv("TUSD_COHCOLOR")) {
+    const size_t nb = ctx.blas.size();
+    std::atomic<size_t> ccur{0};
+    auto cworker = [&]() {
+      for (;;) {
+        const size_t b = ccur.fetch_add(1, std::memory_order_relaxed);
+        if (b >= nb) break;
+        Blas &bl = ctx.blas[b];
+        if (bl.tri_colors.empty() || !bl.scene) continue;
+        const uint32_t ns = lrt_tri_slot_count(bl.scene);
+        if (!ns) continue;
+        ByteVec cs(size_t(ns) * 12, 0);
+        const size_t nt = bl.tris.size();
+        for (size_t p = 0; p < nt; p++) {
+          const uint32_t slot = lrt_tri_get_slot(bl.scene, uint32_t(p));
+          if (slot != LRT_TRI_NO_HIT && size_t(slot) * 12 + 11 < cs.size())
+            std::memcpy(&cs[size_t(slot) * 12], &bl.tri_colors[p * 12], 12);
+        }
+        bl.tri_colors_slot = std::move(cs);
+        ByteVec().swap(bl.tri_colors);
+      }
+    };
+    const unsigned cn = std::min<unsigned>(WorkerThreadCount(opt.threads),
+                                           nb ? unsigned(nb) : 1u);
+    if (cn <= 1) {
+      cworker();
+    } else {
+      std::vector<std::thread> cp;
+      cp.reserve(cn);
+      for (unsigned t = 0; t < cn; ++t) cp.emplace_back(cworker);
+      for (std::thread &th : cp) th.join();
     }
   }
 
