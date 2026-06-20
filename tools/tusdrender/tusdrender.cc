@@ -6359,34 +6359,117 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   for (size_t b = 0; b < ctx.blas.size(); ++b) blas_ptrs[b] = ctx.blas[b].scene;
 
   // Placements: instance 0 is the base scene at identity, then each native
-  // instance whose prototype BLAS is non-empty. instance_id indexes
-  // ctx.instances (resolved back to blas_id + transform at shade time).
-  std::vector<lrt_instance> lrt_insts;
-  auto add_instance = [&](uint32_t blas_id, const float o2w[12]) {
-    if (blas_id >= ctx.blas.size() || !ctx.blas[blas_id].scene) return;
-    const uint32_t id = uint32_t(ctx.instances.size());
-    InstanceRT inst;
-    inst.blas_id = blas_id;
-    std::memcpy(inst.o2w, o2w, sizeof(inst.o2w));
-    ctx.instances.push_back(inst);
-    lrt_instance li;
-    std::memset(&li, 0, sizeof(li));
-    li.blas_id = blas_id;
-    std::memcpy(li.obj2world, o2w, sizeof(li.obj2world));
-    li.instance_id = id;
-    li.mask = 0xffffffffu;
-    lrt_insts.push_back(li);
-    ExpandBoundsByTransformedO2W(&ctx.bounds, local_bounds[blas_id], o2w);
-    ctx.stats.triangles += uint64_t(ctx.blas[blas_id].tris.size());
-  };
+  // instance whose prototype BLAS is non-empty, then each instanced curve
+  // prototype placement. instance_id indexes ctx.instances (resolved back to
+  // blas_id + transform at shade time).
+  //
+  // For Island-scale scenes this is tens of millions of instances. The per-
+  // instance fill (two 3x4 copies + an 8-corner bounds expand) is independent,
+  // so it runs in parallel: a validity mask is filled in parallel, an exclusive
+  // scan assigns each kept instance its output slot (preserving the serial
+  // base->instances->curves order, hence identical instance_id), then the
+  // InstanceRT/lrt_instance arrays are scattered in parallel with per-thread
+  // bounds and triangle-count reductions. Output is byte-identical to the serial
+  // fill (indexed writes + min/max + integer sums are all order-invariant).
   static const float kIdentO2W[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+  std::vector<lrt_instance> lrt_insts;
+  const size_t n_inst_src = instances.size();
+  const size_t n_curve_src = curve_inst.instances.size();
+  const size_t n_src = 1 + n_inst_src + n_curve_src;
+  // Resolve a source index [0, n_src) to its (blas_id, o2w) without
+  // materializing a unified array: 0 = base, [1, 1+nI) = native instances, the
+  // remainder = instanced curve prototypes.
+  auto src_at = [&](size_t i, uint32_t *blas_id, const float **o2w) {
+    if (i == 0) {
+      *blas_id = 0;
+      *o2w = kIdentO2W;
+      return;
+    }
+    i -= 1;
+    if (i < n_inst_src) {
+      *blas_id = instances[i].blas_id;
+      *o2w = instances[i].o2w;
+      return;
+    }
+    i -= n_inst_src;
+    *blas_id = uint32_t(curve_base + curve_inst.instances[i].curve_proto_idx);
+    *o2w = curve_inst.instances[i].o2w;
+  };
+  auto blas_ok = [&](uint32_t blas_id) {
+    return blas_id < ctx.blas.size() && ctx.blas[blas_id].scene;
+  };
+  const unsigned ai_threads = std::min<unsigned>(
+      WorkerThreadCount(opt.threads), n_src ? unsigned(n_src) : 1u);
+  auto run_range = [&](const std::function<void(unsigned, size_t, size_t)> &fn) {
+    if (ai_threads <= 1) {
+      fn(0u, 0, n_src);
+      return;
+    }
+    std::vector<std::thread> pool;
+    pool.reserve(ai_threads);
+    for (unsigned t = 0; t < ai_threads; ++t) {
+      const size_t b = (n_src * t) / ai_threads;
+      const size_t e = (n_src * (t + 1)) / ai_threads;
+      pool.emplace_back([&, t, b, e]() { fn(t, b, e); });
+    }
+    for (std::thread &th : pool) th.join();
+  };
+
+  std::vector<uint8_t> valid(n_src);
+  run_range([&](unsigned, size_t b, size_t e) {
+    for (size_t i = b; i < e; ++i) {
+      uint32_t bid;
+      const float *o;
+      src_at(i, &bid, &o);
+      valid[i] = blas_ok(bid) ? 1u : 0u;
+    }
+  });
+  // Exclusive scan -> output slot per kept instance (cheap, ~tens of ms at 22M).
+  std::vector<uint32_t> slot(n_src);
+  uint32_t kept = 0;
+  for (size_t i = 0; i < n_src; ++i) {
+    slot[i] = kept;
+    kept += valid[i];
+  }
+  ctx.instances.resize(kept);
+  lrt_insts.resize(kept);
+
+  std::vector<Bounds> tls_bounds(ai_threads ? ai_threads : 1);
+  std::vector<uint64_t> tls_tris(ai_threads ? ai_threads : 1, 0);
+  run_range([&](unsigned tid, size_t b, size_t e) {
+    Bounds lb;
+    uint64_t lt = 0;
+    for (size_t i = b; i < e; ++i) {
+      if (!valid[i]) continue;
+      uint32_t bid;
+      const float *o;
+      src_at(i, &bid, &o);
+      const uint32_t id = slot[i];
+      InstanceRT &inst = ctx.instances[id];
+      inst.blas_id = bid;
+      std::memcpy(inst.o2w, o, sizeof(inst.o2w));
+      lrt_instance &li = lrt_insts[id];
+      std::memset(&li, 0, sizeof(li));
+      li.blas_id = bid;
+      std::memcpy(li.obj2world, o, sizeof(li.obj2world));
+      li.instance_id = id;
+      li.mask = 0xffffffffu;
+      ExpandBoundsByTransformedO2W(&lb, local_bounds[bid], o);
+      lt += uint64_t(ctx.blas[bid].tris.size());
+    }
+    tls_bounds[tid] = lb;
+    tls_tris[tid] = lt;
+  });
+  for (const Bounds &lb : tls_bounds) {
+    if (lb.valid) {
+      Expand(&ctx.bounds, lb.lo);
+      Expand(&ctx.bounds, lb.hi);
+    }
+  }
   ctx.stats.triangles = 0;
-  add_instance(0, kIdentO2W);  // base
-  for (const InstanceRT &inst : instances) add_instance(inst.blas_id, inst.o2w);
-  // Instanced curve prototypes: each placement references its curve BLAS, stored
-  // once (no per-instance world-space copy).
-  for (const CurveInstanceRT &ci : curve_inst.instances)
-    add_instance(uint32_t(curve_base + ci.curve_proto_idx), ci.o2w);
+  for (uint64_t v : tls_tris) ctx.stats.triangles += v;
+  std::vector<uint8_t>().swap(valid);
+  std::vector<uint32_t>().swap(slot);
   ctx.stats.curve_instances = curve_inst.instances.size();
   // The collection-side instance lists are now fully copied into ctx.instances +
   // lrt_insts; free them before lrt_tlas_build allocates the (peak) TLAS nodes.
