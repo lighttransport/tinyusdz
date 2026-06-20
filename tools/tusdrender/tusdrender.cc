@@ -6379,20 +6379,43 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     return g == 0 ? 0u : uint32_t(curve_base + n_curve_protos + (g - 1));
   };
 
-  // Base groups -> their BLAS (each at identity in the TLAS, added below).
-  bool stream_ok = true;
-  for (size_t g = 0; stream_ok && g < n_base_groups; ++g) {
-    const uint32_t b = base_blas_id(g);
-    std::vector<MeshJobNext> gjobs;
-    gjobs.reserve(base_group_idx[g].size());
-    for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
-    stream_ok = StreamMeshJobs(
-        gjobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
-        opt.threads, &ctx.blas[b].vertices, &ctx.blas[b].tris,
-        &ctx.blas[b].tri_uvs, &local_bounds[b], &ctx.stats,
-        &ctx.blas[b].mat_table, jobs_have_color(gjobs),
-        &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals);
+  // Stream base groups CONCURRENTLY, each into its own disjoint BLAS with internal
+  // threads=1: isCoral's base is a few huge meshes, so the per-mesh threading
+  // inside one StreamMeshJobs leaves most cores cold; running the groups across a
+  // pool instead uses them. Byte-identical -- outputs are disjoint and per-group
+  // stats are summed afterward (order-independent).
+  std::vector<RTPreviewStats> gstats(n_base_groups);
+  std::atomic<bool> gstream_ok{true};
+  std::atomic<size_t> gcur{0};
+  auto gworker = [&]() {
+    for (;;) {
+      const size_t g = gcur.fetch_add(1, std::memory_order_relaxed);
+      if (g >= n_base_groups || !gstream_ok.load(std::memory_order_relaxed)) break;
+      const uint32_t b = base_blas_id(g);
+      std::vector<MeshJobNext> gjobs;
+      gjobs.reserve(base_group_idx[g].size());
+      for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
+      if (!StreamMeshJobs(
+              gjobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
+              /*threads=*/1, &ctx.blas[b].vertices, &ctx.blas[b].tris,
+              &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
+              &ctx.blas[b].mat_table, jobs_have_color(gjobs),
+              &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals))
+        gstream_ok.store(false, std::memory_order_relaxed);
+    }
+  };
+  const unsigned gthreads = std::min<unsigned>(
+      WorkerThreadCount(opt.threads), unsigned(n_base_groups ? n_base_groups : 1));
+  if (gthreads <= 1) {
+    gworker();
+  } else {
+    std::vector<std::thread> gpool;
+    gpool.reserve(gthreads);
+    for (unsigned t = 0; t < gthreads; ++t) gpool.emplace_back(gworker);
+    for (std::thread &th : gpool) th.join();
   }
+  for (const RTPreviewStats &gs : gstats) MergeStats(&ctx.stats, gs);
+  bool stream_ok = gstream_ok.load();
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
