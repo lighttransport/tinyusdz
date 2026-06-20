@@ -21,6 +21,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <malloc.h>  // mallopt (peak-RSS tuning, glibc)
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -6269,12 +6270,17 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
   const bool want_uvs = !ctx.textures.empty();
-  bool want_colors = false;
-  for (const MeshJobNext &j : base_jobs)
-    if (j.vertex_color) { want_colors = true; break; }
-  for (const std::vector<MeshJobNext> &pj : proto_jobs)
-    for (const MeshJobNext &j : pj)
-      if (j.vertex_color) { want_colors = true; break; }
+  // displayColor/Opacity is stored per-corner (48 B/tri) only for BLAS that
+  // actually carry a *varying* (per-vertex/faceVarying/uniform) primvar. A BLAS
+  // whose meshes are all constant-color needs no per-tri storage: the shader
+  // falls back to the material base_color (which holds the constant displayColor),
+  // so this is byte-identical while skipping the dominant Island footprint
+  // (isCoral: ~800 MB of per-corner color across prototypes that don't vary).
+  auto jobs_have_color = [](const std::vector<MeshJobNext> &jobs) {
+    for (const MeshJobNext &j : jobs)
+      if (j.vertex_color) return true;
+    return false;
+  };
 
   // blas layout: [0] base, [1 .. P] mesh prototypes, [P+1 ..] curve prototypes.
   const size_t curve_base = 1 + protos.size();
@@ -6287,8 +6293,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       base_jobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
       opt.threads, &ctx.blas[0].vertices, &ctx.blas[0].tris,
       &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats,
-      &ctx.blas[0].mat_table, want_colors, &ctx.blas[0].tri_colors, opt.smooth,
-      &ctx.blas[0].tri_normals);
+      &ctx.blas[0].mat_table, jobs_have_color(base_jobs),
+      &ctx.blas[0].tri_colors, opt.smooth, &ctx.blas[0].tri_normals);
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
@@ -6297,7 +6303,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*purpose_cull=*/true, opt.threads,
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
-                               &ctx.blas[b].mat_table, want_colors,
+                               &ctx.blas[b].mat_table, jobs_have_color(proto_jobs[i]),
                                &ctx.blas[b].tri_colors, opt.smooth,
                                &ctx.blas[b].tri_normals);
   }
@@ -7535,6 +7541,18 @@ static bool RunVulkanLightRT(const Options &opt,
 #endif
 
 int main(int argc, char **argv) {
+#if defined(__GLIBC__)
+  // Triangle streaming allocates and frees large transient per-job buffers
+  // (megabytes each) while the final geometry buffers stay live. glibc's default
+  // dynamic mmap threshold (which grows up to 32 MB) keeps those big frees in the
+  // arena interleaved with live data, so they cannot be returned to the OS and
+  // inflate peak RSS by ~1.3 GB on Island-scale scenes (isCoral 6.4 -> 5.0 GB).
+  // Pinning the mmap threshold at 1 MB routes the large temporaries through
+  // mmap/munmap (returned to the OS on free); only sub-MB allocations stay in the
+  // arena, so the per-call syscall cost is negligible (~0.2 s on isCoral).
+  mallopt(M_MMAP_THRESHOLD, 1 << 20);
+  mallopt(M_TRIM_THRESHOLD, 4 << 20);
+#endif
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
