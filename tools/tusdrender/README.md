@@ -38,7 +38,9 @@ Common flags:
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/
   uniform (barycentrically interpolated per hit), with opacity blended see-through.
   Geom-only assets (e.g. Animal Logic ALab) render in color with transparent
-  glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair.
+  glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
+  interpolates authored `normals` for smooth shading (default is per-face
+  geometric normals, which keeps the lean 4 B/triangle instanced footprint).
 * **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
   (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or

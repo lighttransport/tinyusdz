@@ -385,6 +385,49 @@ def Mesh "root"
         raise RuntimeError(
             f"per-vertex displayColor not interpolated: {p_bl} vs {p_tr}")
 
+    # -smooth: authored normals interpolated for smooth shading. A coarse sphere
+    # with radial per-vertex normals must shade differently with -smooth (round)
+    # than without (faceted).
+    import math
+    nu, nv = 12, 8
+    sp_pts, sp_nrm = [], []
+    for j in range(nv + 1):
+        th = math.pi * j / nv
+        for i in range(nu):
+            ph = 2 * math.pi * i / nu
+            v = (math.sin(th) * math.cos(ph), math.cos(th),
+                 math.sin(th) * math.sin(ph))
+            sp_pts.append(v)
+            sp_nrm.append(v)
+    sp_cnt, sp_idx = [], []
+    for j in range(nv):
+        for i in range(nu):
+            sp_cnt.append(4)
+            sp_idx += [j * nu + i, j * nu + (i + 1) % nu,
+                       (j + 1) * nu + (i + 1) % nu, (j + 1) * nu + i]
+    fmt3 = lambda seq: ", ".join("(%g, %g, %g)" % p for p in seq)
+    sph_scene = outdir / "tusdrender-sphere.usda"
+    sph_scene.write_text(
+        '#usda 1.0\n( defaultPrim = "s" upAxis = "Y" )\n'
+        'def Mesh "s" {\n'
+        f'    int[] faceVertexCounts = [{", ".join(map(str, sp_cnt))}]\n'
+        f'    int[] faceVertexIndices = [{", ".join(map(str, sp_idx))}]\n'
+        f'    point3f[] points = [{fmt3(sp_pts)}]\n'
+        f'    normal3f[] normals = [{fmt3(sp_nrm)}] (interpolation = "vertex")\n'
+        '}\n')
+    sph_a, sph_b = outdir / "tusdrender-faceted.png", outdir / "tusdrender-smooth.png"
+    base_args = [str(sph_scene), "-w", "80", "-height", "80", "-rtPreview",
+                 "-autoframe", "-ambient", "0.3"]
+    subprocess.run([exe] + base_args[:1] + [str(sph_a)] + base_args[1:],
+                   check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run([exe] + base_args[:1] + [str(sph_b)] + base_args[1:] +
+                   ["-smooth"], check=True, stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE)
+    _, _, fac = read_png_rgba(sph_a)
+    _, _, smo = read_png_rgba(sph_b)
+    if bytes(fac) == bytes(smo):
+        raise RuntimeError("-smooth did not change shading vs faceted")
+
     env_png = outdir / "tusdrender-env.png"
     env_pixels = bytearray()
     for y in range(2):
