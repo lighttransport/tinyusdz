@@ -34,14 +34,18 @@ Methodology mirrors the Activision Caldera benchmark in
 
 | element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
-| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.02 | 0.01 | 0.05 | 18.0 MB | 0.70 | 175.4 MB | 14.0× |
-| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.01 | 0.00 | 0.19 | 87.0 MB | 1.11 | 256.1 MB | 5.8× |
-| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.10 | 0.01 | 0.28 | 132.0 MB | 0.63 | 202.1 MB | 2.2× |
-| isHibiscus | 5.5 MB | 1.02 M | 0.31 | 0.08 | 0.00 | 0.48 | 158.3 MB | 1.84 | 418.1 MB | 3.8× |
-| isDunesA | 24.9 MB | 0.21 M | 0.31 | 0.09 | 0.01 | 0.52 | 152.8 MB | 2.71 | 717.0 MB | 5.2× |
-| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.15 | 0.02 | 2.27 | 1.1 GB | 0.62 | 232.6 MB | 0.3× |
-| isCoral | 415.2 MB | 87.49 M | 4.54 | 4.00 | 0.01 | 14.11 | 6.3 GB | 3.99 | 3.2 GB | 0.3× |
-| isBeach | 713.3 MB | 4086.73 M | 0.08 | 12.59 | 0.01 | 18.22 | 7.1 GB | 71.44 | 15.2 GB | 3.9× |
+| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 14.5 MB | 1.06 | 175.4 MB | 26.5× |
+| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.20 | 87.8 MB | 1.15 | 257.7 MB | 5.7× |
+| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.05 | 0.01 | 0.20 | 120.8 MB | 0.64 | 202.4 MB | 3.2× |
+| isHibiscus | 5.5 MB | 1.02 M | 0.27 | 0.04 | 0.00 | 0.47 | 155.7 MB | 1.92 | 425.3 MB | 4.1× |
+| isDunesA | 24.9 MB | 0.21 M | 0.23 | 0.04 | 0.00 | 0.37 | 123.0 MB | 2.69 | 703.2 MB | 7.3× |
+| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.09 | 0.02 | 2.39 | 1.1 GB | 0.62 | 232.4 MB | 0.3× |
+| isCoral | 415.2 MB | 87.49 M | 3.50 | 1.56 | 0.01 | 8.21 | 3.0 GB | 4.29 | 3.3 GB | 0.5× |
+| isBeach | 713.3 MB | 4086.73 M | 0.07 | 12.94 | 0.01 | 18.86 | 7.1 GB | 72.62 | 15.2 GB | 3.9× |
+
+*(Table refreshed 2026-06 on the current optimized build — the same large-scene
+work in the [refresh section](#large-scene-refresh--caldera--island--alab-2026-06-post-optimization).
+The first-pass numbers are preserved in git history.)*
 
 `tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
@@ -113,10 +117,50 @@ initial **44 GB → 25.9 GB (−41 %)** and wall from 2 m 18 s → 1 m 33 s
 (production references use Hyperion/RenderMan render farms); the per-element table
 above characterizes the two renderers.
 
+## Large-scene refresh — Caldera / Island / ALab (2026-06, post-optimization)
+
+A cross-scene snapshot on the **current build**, after the compose + BVH-build +
+indexed-geometry optimization work: `next` PropNameTable freeze (lock-free reads),
+`M_TOP_PAD` arena tuning (kills the per-prim `mprotect` storm), bounded-parallel +
+intra-threaded BLAS build, and the indexed base-group geometry stream
+(`lrt_tri_scene_build_indexed`: 1× unique verts + indices instead of a 3×-expanded
+soup). Same methodology as above — `320×180`, `-rtPreview -autoframe`, geom-only
+(no camera/lights), `/usr/bin/time -v` for peak RSS. Auto memory cap ≈ 24.6 GiB.
+
+| scene | input | load s | stream s | bvh s | **total** | **peak RSS** | triangles |
+|---|---|---|---|---|---|---|---|
+| **ALab** `alab_set01` | techvar overlay set | 1.61 | 0.65 | 0.67 | **3.2 s** | **1.58 GiB** | 19.6 M / 10.8 M unique |
+| **isCoral** | `element.usda` | 3.45 | 2.53 | 1.55 | **8.2 s** | **3.11 GiB** | 17.4 M |
+| **Caldera** | `caldera.flattened.usdc` | 3.05 | 6.11 | 6.60 | **17.4 s** | **12.5 GiB** | 38.8 M |
+| **Island (full)** | `island.usda` | 13.4 | 31.1 | 18.7 | **73.2 s** | **22.5 GiB** | 5.68 B inst / 53.8 M unique |
+
+The optimizations generalize across the whole large-scene ladder, not just isCoral:
+
+* **ALab** build **6.5 → 3.2 s (−51 %)**, peak **2.6 → 1.58 GiB (−39 %)** vs the
+  prior recorded geom-only set run.
+* **isCoral** **14.1 → 8.2 s** and **6.3 → 3.1 GiB** vs the first-pass row above —
+  the bvh build alone went 4.0 → 1.55 s (bounded-parallel + intra-threaded), and
+  the compose lost the `find()` rwlock contention (PropNameTable freeze) and the
+  arena `mprotect` storm (`M_TOP_PAD`).
+* **Island (full)** nearly saturates the ~24 GiB graceful-abort cap (22.5 GiB) and
+  completes rather than OOM-killing; geom-only `-autoframe` here vs the lit
+  `shotCam` row above, so the two aren't directly comparable.
+
+**ALab reproduction** needs the techvar overlay (2.3.0 ships placeholder meshes;
+the real geometry is the separate `techvar_assets` package):
+
+```sh
+cd /mnt/disk1/data/alab/usd
+cp -al ALab-2.3.0/ALab _merged_ALab            # hardlink farm (~0 extra space)
+cp -alf techvar_assets/fragment/. _merged_ALab/fragment/
+tusdrender _merged_ALab/entity/alab_set01/alab_set01.usda out.png \
+    -rtPreview -stats -w 320 -height 180 -autoframe
+```
+
 ## Analysis
 
 **Light/medium elements (isNaupakaA → isDunesA, isHibiscus): clean tusdrender
-wins.** 2.9–14× faster wall and 2–9× lower peak RSS than hdEmbree. The
+wins.** 3–26× faster wall and ~2–12× lower peak RSS than hdEmbree. The
 `next` loader's startup is sub-second and LightRT's preview BVH builds in tens of
 milliseconds, where usdrecord pays a fixed Hydra/USD-stage + delegate spin-up
 cost (~0.7 s floor even on the tiniest element) and carries a larger resident
@@ -131,15 +175,20 @@ collection-side instance lists before the TLAS build cut isBeach from 11.7 →
 7.5 GB and 32 → 25 s (byte-identical). The wall is dominated by the TLAS build
 over 22 M instances.
 
-**isCoral — the honest loss (0.3×).** The one element where both renderers load
-the *same* heavy geometry without an instancing shortcut (87.5 M triangles, six
-`isCoral_geo.usd` variants). After the per-triangle footprint work (follow-up 4)
-tusdrender is **~3× slower** (12.8 s vs 4.3 s) and uses **~1.5× the RAM**
-(4.85 GB vs 3.2 GB, down from 6.5 GB). The cost is load (4.6 s) + preview-BVH
-build (4.4 s): the `next` triangle stream and the single-shot LightRT builder are
-not competitive with Embree's mature parallel BVH and its tighter in-memory
-geometry layout. **This is the case to optimize** — actual-geometry-bound scenes,
-not loader-bound ones.
+**isCoral — the geometry-bound case (0.5×, memory now won).** The one element
+where both renderers load the *same* heavy geometry without an instancing shortcut
+(87.5 M triangles, six `isCoral_geo.usd` variants). This was the focus of a
+dedicated optimization pass (see [`iscoral-embree-gap`](large-scene.md) lineage):
+PropNameTable freeze (compose `find()` rwlock contention), `M_TOP_PAD` (the
+per-prim arena `mprotect` storm), bounded-parallel + intra-threaded BLAS build
+(bvh 4.0 → 1.56 s), and the indexed base-group geometry stream. Result: **14.1 →
+8.2 s and 6.3 → 3.0 GB peak — RSS now *beats* usdrecord (3.0 GB vs 3.3 GB)**,
+while wall is ~1.9× (8.2 s vs 4.3 s). The residual is the geometry build itself:
+even with compose at zero, the LightRT triangle stream + single-shot BVH (≈4.1 s)
+already exceed Embree's *entire* 3.96 s pipeline on 17.4 M genuinely-unique
+triangles — a builder-class gap (LightRT vs Embree's SIMD BVH), not an
+optimization gap. **Memory: parity/win on both axes; build time: the remaining
+architectural lever.**
 
 ## Reproduce
 
