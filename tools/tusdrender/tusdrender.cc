@@ -6342,19 +6342,57 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     return false;
   };
 
-  // blas layout: [0] base, [1 .. P] mesh prototypes, [P+1 ..] curve prototypes.
-  const size_t curve_base = 1 + protos.size();
-  ctx.blas.clear();
-  ctx.blas.resize(curve_base + curve_inst.protos.size());
-  std::vector<Bounds> local_bounds(ctx.blas.size());
+  // Partition the (world-space, non-instanced) base geometry into ~2M-triangle
+  // groups, each built as its OWN BLAS and placed as a TLAS instance at identity.
+  // One 17M-tri base build allocates a huge BVH-scratch arena (2*ntris bnodes)
+  // that dominates peak RSS; per-group builds keep that arena small (freed between
+  // groups). Byte-identical: same world-space triangles, same closest hits (the
+  // groups partition by mesh, so no triangle's coincidences are split).
+  const size_t kBaseGroupTris = size_t(6) << 20;  // ~2M tris/group
+  std::vector<std::vector<size_t>> base_group_idx;
+  {
+    std::vector<size_t> cur;
+    size_t cur_tris = 0;
+    for (size_t i = 0; i < base_jobs.size(); ++i) {
+      const size_t e = EstimateTrisForJob(base_jobs[i].prim, time);
+      if (!cur.empty() && cur_tris + e > kBaseGroupTris) {
+        base_group_idx.push_back(std::move(cur));
+        cur.clear();
+        cur_tris = 0;
+      }
+      cur_tris += e;
+      cur.push_back(i);
+    }
+    if (!cur.empty()) base_group_idx.push_back(std::move(cur));
+    if (base_group_idx.empty()) base_group_idx.emplace_back();  // keep blas[0]
+  }
+  const size_t n_base_groups = base_group_idx.size();
 
-  // Base geometry (world space) -> blas[0].
-  bool stream_ok = StreamMeshJobs(
-      base_jobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
-      opt.threads, &ctx.blas[0].vertices, &ctx.blas[0].tris,
-      &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats,
-      &ctx.blas[0].mat_table, jobs_have_color(base_jobs),
-      &ctx.blas[0].tri_colors, opt.smooth, &ctx.blas[0].tri_normals);
+  // blas layout: [0] base group 0, [1..P] mesh protos, [P+1..P+C] curve protos,
+  // [P+C+1..] base groups 1..n-1 (appended so proto/curve ids stay stable).
+  const size_t curve_base = 1 + protos.size();
+  const size_t n_curve_protos = curve_inst.protos.size();
+  ctx.blas.clear();
+  ctx.blas.resize(curve_base + n_curve_protos + (n_base_groups - 1));
+  std::vector<Bounds> local_bounds(ctx.blas.size());
+  auto base_blas_id = [&](size_t g) -> uint32_t {
+    return g == 0 ? 0u : uint32_t(curve_base + n_curve_protos + (g - 1));
+  };
+
+  // Base groups -> their BLAS (each at identity in the TLAS, added below).
+  bool stream_ok = true;
+  for (size_t g = 0; stream_ok && g < n_base_groups; ++g) {
+    const uint32_t b = base_blas_id(g);
+    std::vector<MeshJobNext> gjobs;
+    gjobs.reserve(base_group_idx[g].size());
+    for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
+    stream_ok = StreamMeshJobs(
+        gjobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
+        opt.threads, &ctx.blas[b].vertices, &ctx.blas[b].tris,
+        &ctx.blas[b].tri_uvs, &local_bounds[b], &ctx.stats,
+        &ctx.blas[b].mat_table, jobs_have_color(gjobs),
+        &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals);
+  }
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
@@ -6488,17 +6526,17 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<lrt_instance> lrt_insts;
   const size_t n_inst_src = instances.size();
   const size_t n_curve_src = curve_inst.instances.size();
-  const size_t n_src = 1 + n_inst_src + n_curve_src;
-  // Resolve a source index [0, n_src) to its (blas_id, o2w) without
-  // materializing a unified array: 0 = base, [1, 1+nI) = native instances, the
-  // remainder = instanced curve prototypes.
+  const size_t n_src = n_base_groups + n_inst_src + n_curve_src;
+  // Resolve a source index [0, n_src) to its (blas_id, o2w) without materializing
+  // a unified array: [0, G) = base groups (at identity), [G, G+nI) = native
+  // instances, the remainder = instanced curve prototypes.
   auto src_at = [&](size_t i, uint32_t *blas_id, const float **o2w) {
-    if (i == 0) {
-      *blas_id = 0;
+    if (i < n_base_groups) {
+      *blas_id = base_blas_id(i);
       *o2w = kIdentO2W;
       return;
     }
-    i -= 1;
+    i -= n_base_groups;
     if (i < n_inst_src) {
       *blas_id = instances[i].blas_id;
       *o2w = instances[i].o2w;
