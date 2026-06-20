@@ -34,22 +34,22 @@ Methodology mirrors the Activision Caldera benchmark in
 
 | element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
-| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.02 | 0.01 | 0.05 | 19.0 MB | 0.71 | 176.7 MB | 14.2× |
-| isGardeniaA | 2.4 MB | 0.17 M | 0.17 | 0.01 | 0.00 | 0.20 | 86.7 MB | 1.14 | 258.0 MB | 5.7× |
-| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.11 | 0.01 | 0.23 | 101.6 MB | 0.72 | 202.3 MB | 3.1× |
-| isHibiscus | 5.5 MB | 1.28 M | 0.32 | 0.17 | 0.00 | 0.68 | 228.3 MB | 1.95 | 418.2 MB | 2.9× |
-| isDunesA | 24.9 MB | 0.21 M | 0.32 | 0.08 | 0.00 | 0.52 | 176.6 MB | 2.69 | 726.1 MB | 5.2× |
-| isIronwoodA1‡ | 102.4 MB | 0.97 M | 0.01 | 0.29 | 0.01 | 2.61 | 1.0 GB | 0.62 | 232.5 MB | 0.2× |
-| isCoral | 415.2 MB | 87.49 M | 4.64 | 4.35 | 0.01 | 12.84 | 4.85 GB | 4.25 | 3.2 GB | 0.3× |
-| isBeach | 713.3 MB | 4086.73 M | 0.09 | 19.33 | 0.01 | 25.1 | 7.5 GB | 72.65 | 15.2 GB | 2.9× |
+| isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.02 | 0.01 | 0.05 | 18.0 MB | 0.70 | 175.4 MB | 14.0× |
+| isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.01 | 0.00 | 0.19 | 87.0 MB | 1.11 | 256.1 MB | 5.8× |
+| isPalmDead | 3.6 MB | 0.31 M | 0.00 | 0.10 | 0.01 | 0.28 | 132.0 MB | 0.63 | 202.1 MB | 2.2× |
+| isHibiscus | 5.5 MB | 1.02 M | 0.31 | 0.08 | 0.00 | 0.48 | 158.3 MB | 1.84 | 418.1 MB | 3.8× |
+| isDunesA | 24.9 MB | 0.21 M | 0.31 | 0.09 | 0.01 | 0.52 | 152.8 MB | 2.71 | 717.0 MB | 5.2× |
+| isIronwoodA1‡ | 102.4 MB | 0.49 M | 0.01 | 0.15 | 0.02 | 2.27 | 1.1 GB | 0.62 | 232.6 MB | 0.3× |
+| isCoral | 415.2 MB | 87.49 M | 4.54 | 4.00 | 0.01 | 14.11 | 6.3 GB | 3.99 | 3.2 GB | 0.3× |
+| isBeach | 713.3 MB | 4086.73 M | 0.08 | 12.59 | 0.01 | 18.22 | 7.1 GB | 71.44 | 15.2 GB | 3.9× |
 
 `tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
 across 86 prototypes placed by 22.1 M instances; it excludes curve strands).
 `speedup` = usdrecord wall ÷ tusdrender wall. ‡ = isIronwoodA1's heavy XGen is
 *curves* (`xgBonsai_curves.usd`, 34 BasisCurves prims) now ray-traced as hair —
-its 2.6 s / 1.0 GB is the curve-scene build, and it renders the foliage usdrecord
-does (the prior 0.62 s row rendered the bare trunk only).
+its 2.27 s / 1.1 GB is the curve-scene build, and it renders the foliage usdrecord
+does (the bare-trunk-only usdrecord row is 0.62 s).
 
 > **PointInstancer expansion (fixed).** An earlier revision of this benchmark
 > showed isBeach at 0.06 M tris because the `-rtPreview` path skipped
@@ -70,6 +70,24 @@ does (the prior 0.62 s row rendered the bare trunk only).
 > deduped, not baked per instance. isIronwoodA1 now renders its bonsai foliage;
 > verified visually (`isPalmRig` upright fronds, isIronwoodA1 canopy) and with a
 > synthetic curve-prototype-instancer smoke test.
+
+> **Parallel TLAS build (added).** The two-level instanced path built its TLAS
+> through three serial per-instance loops (the `add_instance` fill in
+> `tusdrender.cc`, plus LightRT's `tlas_fill_instances` matrix-inversion and
+> `tlas_rebuild` bounds passes). All three are now multithreaded — a pre-sized
+> parallel scatter with a validity prefix-scan on the tusdrender side, and
+> `tri_parallel_for` chunks (gated ≥4096 instances) on the LightRT side — byte
+> for byte identical output. isBeach's 22.1 M-instance bvh build dropped
+> 19.3 s → 12.6 s; the remaining cost is LightRT's already-threaded SAH BVH build
+> over the instances (architectural, shared with the isCoral gap).
+
+> **Prototype double-count (fixed).** A native-instance *prototype holder* prim
+> (e.g. `/isIronwoodA1/isIronwoodA2`) has its `instanceable` flag cleared during
+> composition, so it was both traversed as base geometry *and* drawn through its
+> instance proxy — double-counting its triangles (and rendering two overlapping
+> copies). A `CollectPrototypePaths` pre-pass now gathers holder paths and
+> `CollectSceneSplit` skips their subtrees. This corrected isIronwoodA1
+> (0.97 → 0.49 M tris, one tree) and isHibiscus (1.28 → 1.02 M).
 
 ## Full scene — `island.usda`
 
