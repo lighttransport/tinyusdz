@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
+  bool useNextLoader = false;             // --next: next loader + flat GL preview
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
@@ -82,6 +83,8 @@ int main(int argc, char** argv) {
       windowShot = argv[++i];
     } else if (std::strcmp(argv[i], "--headless") == 0) {
       headless = true;
+    } else if (std::strcmp(argv[i], "--next") == 0) {
+      useNextLoader = true;
     } else if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -134,6 +137,8 @@ int main(int argc, char** argv) {
           "(implies --backend vk).\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
+          "  --next        Load via the `next` lazy loader + tydra-next converter "
+          "(flat-shaded OpenGL preview for large scenes; defaults to --backend gl).\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"
           "  --defer-payloads  Lazy payloads: skip payload arcs on load; load on "
           "demand from the GUI (default for interactive runs).\n"
@@ -164,6 +169,11 @@ int main(int argc, char** argv) {
   if (headless) {
     backend = tusdview::Backend::Vulkan;
     backendExplicit = true;
+  }
+  // The `next` loader is the OpenGL large-scene mesh preview; default it to the
+  // GL backend unless the user picked one explicitly (it feeds either backend).
+  if (useNextLoader && !backendExplicit) {
+    backend = tusdview::Backend::GL;
   }
 
 #if !defined(HAVE_VULKAN)
@@ -242,6 +252,7 @@ int main(int argc, char** argv) {
       LOGW("ignoring invalid --ui-scale %.3f (must be > 0.25)", *uiScale);
     }
   }
+  app.setUseNextLoader(useNextLoader);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
