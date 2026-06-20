@@ -1445,6 +1445,13 @@ struct Cache::Impl {
   // serial ComposeInto: the same ComposeOpinions runs on the same (slot, srcs)
   // pairs; only the order across independent slots changes.
   void FillOpinions(Layer *out) {
+    // The serial structure pass has parsed every referenced layer, so the full
+    // set of property names is now interned. Freeze the name table: the parallel
+    // fill below does heavy find() (and intern() that all HIT) on it, and the
+    // per-call shared_lock otherwise contends purely on the lock's cache line
+    // (~12% of an Island render). Frozen, those go lock-free. A genuinely new
+    // name (not expected here) would unfreeze and fall back to locking.
+    GetPropNameTable().freeze();
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         auto it = sources_cache.find(fill_[i].second);
