@@ -345,6 +345,11 @@ struct lrt_tri_scene {
     uint32_t node_count;
     void *blocks; /* lrt_tri4[] when layout==4, lrt_tri8[] when layout==8 */
     uint32_t block_count;
+    /* Optional prim_id -> (block*width + lane) map so callers can recover a
+     * triangle's object-space vertices from the swizzled leaves (lrt_tri_get_verts)
+     * and drop their own vertex copy. Built only for plain TRI_PRIM_TRI scenes;
+     * NULL otherwise. */
+    uint32_t *prim2slot;
     uint32_t block_stride; /* bytes per leaf block (varies for quantized leaves) */
     lrt_tri_stats stats;
     const char *kernel_name;
@@ -375,6 +380,57 @@ static inline const float *tri_block_floats(const void *blocks, uint32_t idx,
                                             int width) {
     return (const float *)((const char *)blocks +
                            (size_t)idx * tri_block_size(width));
+}
+
+/* Build the prim_id -> leaf-slot map for a plain triangle scene, so
+ * lrt_tri_get_verts can recover object-space vertices from the swizzled leaves.
+ * Cheap O(ntris) pass over the leaf blocks; leaves s->prim2slot NULL on any
+ * unsupported layout or OOM (caller then keeps its own vertex copy). */
+static void tri_build_prim2slot(lrt_tri_scene *s) {
+    if (!s || s->prim_kind != TRI_PRIM_TRI || s->quantized || s->curve) return;
+    const int w = s->layout; /* 4 or 8 */
+    const uint32_t nt = s->original_ntris;
+    if (nt == 0) return;
+    uint32_t *p2s = (uint32_t *)malloc((size_t)nt * sizeof(uint32_t));
+    if (!p2s) return;
+    for (uint32_t i = 0; i < nt; i++) p2s[i] = LRT_TRI_NO_HIT;
+    for (uint32_t blk = 0; blk < s->block_count; blk++) {
+        const float *f = tri_block_floats(s->blocks, blk, w);
+        const uint32_t *ids = (const uint32_t *)(const void *)(f + 9 * (size_t)w);
+        for (int lane = 0; lane < w; lane++) {
+            const uint32_t prim = ids[lane];
+            if (prim < nt) p2s[prim] = blk * (uint32_t)w + (uint32_t)lane;
+        }
+    }
+    s->prim2slot = p2s;
+}
+
+int lrt_tri_scene_has_verts(const lrt_tri_scene *s) {
+    return (s && s->prim2slot) ? 1 : 0;
+}
+
+int lrt_tri_get_verts(const lrt_tri_scene *s, uint32_t prim_id, float v0[3],
+                      float v1[3], float v2[3]) {
+    if (!s || !s->prim2slot || prim_id >= s->original_ntris) return 0;
+    const uint32_t slot = s->prim2slot[prim_id];
+    if (slot == LRT_TRI_NO_HIT) return 0;
+    const int w = s->layout;
+    const uint32_t blk = slot / (uint32_t)w;
+    const uint32_t lane = slot % (uint32_t)w;
+    const float *f = tri_block_floats(s->blocks, blk, w);
+    /* Leaves store v0 and the precomputed edges e1=v1-v0, e2=v2-v0 (see
+     * tri_emit_leaf); v0 + e is byte-exact for adjacent mesh coords (Sterbenz). */
+    const float v0x = f[0 * w + lane], v0y = f[1 * w + lane], v0z = f[2 * w + lane];
+    v0[0] = v0x;
+    v0[1] = v0y;
+    v0[2] = v0z;
+    v1[0] = v0x + f[3 * w + lane];
+    v1[1] = v0y + f[4 * w + lane];
+    v1[2] = v0z + f[5 * w + lane];
+    v2[0] = v0x + f[6 * w + lane];
+    v2[1] = v0y + f[7 * w + lane];
+    v2[2] = v0z + f[8 * w + lane];
+    return 1;
 }
 
 /* Binary build node (arena, freed after collapse). */
@@ -7729,6 +7785,7 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
                      : quantized    ? "bvh8q/scalar"
                                     : "bvh8/scalar";
 #endif
+    tri_build_prim2slot(s);
     return s;
 }
 
@@ -7869,6 +7926,7 @@ void lrt_tri_scene_free(lrt_tri_scene *s) {
         tri_aligned_free(s->nodes8q4);
         tri_aligned_free(s->blocks);
     }
+    free(s->prim2slot); /* always heap, even for mmap'd scenes (NULL if absent) */
     free(s->owned_user);
     free(s);
 }

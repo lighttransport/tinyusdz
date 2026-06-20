@@ -193,6 +193,16 @@ void lrt_tri_scene_stats(const lrt_tri_scene *s, lrt_tri_stats *out);
  * compiler SIMD flags. */
 const char *lrt_tri_kernel_name(const lrt_tri_scene *s);
 
+/* Recover a triangle's object-space vertices from the built BVH leaves, so a
+ * caller need not retain its own (9-float-per-triangle) vertex copy. Available
+ * only for plain triangle scenes (lrt_tri_scene_has_verts() != 0); returns 1 and
+ * fills v0/v1/v2 on success, 0 otherwise. The result is byte-exact with the input
+ * soup for typical mesh coordinates (leaves store v0 + edges; v0+edge round-trips
+ * exactly when |vk-v0| < 2|v0|, i.e. adjacent vertices, by Sterbenz's lemma). */
+int lrt_tri_scene_has_verts(const lrt_tri_scene *s);
+int lrt_tri_get_verts(const lrt_tri_scene *s, uint32_t prim_id, float v0[3],
+                      float v1[3], float v2[3]);
+
 /* --- Hair / curve scenes ---------------------------------------------------
  *
  * Axis-aligned boxes around long thin diagonal primitives are mostly empty
