@@ -360,7 +360,62 @@ struct TriInfo {
   uint8_t rough_ch{0};          // source channel (0=r,1=g,2=b,3=a)
   uint8_t metal_ch{0};
   uint8_t occ_ch{0};
+  float opacity{1.0f};          // primvars:displayOpacity (constant); <1 = blend
 };
+
+// Per-material shading parameters, factored out of the per-triangle record. A
+// scene with many meshes sharing few materials (e.g. Island's coral) stores one
+// of these per mesh-job instead of replicating ~64 B of material data on every
+// triangle. The instanced (TLAS) BLAS arrays store the slim TriStore below + a
+// side table of TriMat, cutting per-triangle memory ~2× on geometry-heavy scenes.
+struct TriMat {
+  Vec3 base_color{0.18f, 0.18f, 0.18f};
+  Vec3 emission{0.0f, 0.0f, 0.0f};
+  float roughness{0.55f};
+  float metallic{0.0f};
+  int32_t tex_id{-1};
+  int32_t normal_tex_id{-1};
+  int32_t rough_tex_id{-1};
+  int32_t metal_tex_id{-1};
+  int32_t emission_tex_id{-1};
+  int32_t occ_tex_id{-1};
+  float occlusion{1.0f};
+  float opacity{1.0f};  // primvars:displayOpacity (constant); <1 = see-through
+  uint8_t rough_ch{0};
+  uint8_t metal_ch{0};
+  uint8_t occ_ch{0};
+};
+
+// Slim per-triangle record for instanced BLAS storage: just a material id into
+// the BLAS's TriMat table. Triangle positions are read from the BLAS's vertex
+// soup (`Blas::vertices`, which LightRT aliases so it stays resident) at hit
+// time, and the geometric normal is recomputed there — so the instanced
+// per-triangle record is only 4 bytes (down from a 124 B TriInfo).
+struct TriStore {
+  uint32_t mat_id{0};
+};
+
+// Build a full TriInfo from a material record (positions/normal are filled by the
+// caller from the vertex soup). Used by ResolveTLASHit for instanced mesh hits.
+inline TriInfo CombineTriMat(const TriMat &m) {
+  TriInfo t;
+  t.base_color = m.base_color;
+  t.emission = m.emission;
+  t.roughness = m.roughness;
+  t.metallic = m.metallic;
+  t.tex_id = m.tex_id;
+  t.normal_tex_id = m.normal_tex_id;
+  t.rough_tex_id = m.rough_tex_id;
+  t.metal_tex_id = m.metal_tex_id;
+  t.emission_tex_id = m.emission_tex_id;
+  t.occ_tex_id = m.occ_tex_id;
+  t.occlusion = m.occlusion;
+  t.opacity = m.opacity;
+  t.rough_ch = m.rough_ch;
+  t.metal_ch = m.metal_ch;
+  t.occ_ch = m.occ_ch;
+  return t;
+}
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
 // outputs:r/g/b/a; for ORM packing roughness=g, metallic=b in one texture).
@@ -373,6 +428,7 @@ struct ScalarTex {
 // TriInfo, UVs). All other vectors keep the default allocator.
 using FloatVec = std::vector<float, PoolAlloc<float>>;
 using TriVec = std::vector<TriInfo, PoolAlloc<TriInfo>>;
+using TriStoreVec = std::vector<TriStore, PoolAlloc<TriStore>>;
 
 // Decoded RGB(A) texture (8-bit) sampled by the diffuse texture pipeline.
 // UsdUVTexture wrap mode (inputs:wrapS / inputs:wrapT).
@@ -1736,6 +1792,10 @@ struct RTPreviewStats {
   uint64_t purpose_render_triangles{0};
   uint64_t purpose_proxy_triangles{0};
   uint64_t purpose_guide_triangles{0};
+  size_t point_instancers{0};  // UsdGeomPointInstancer prims expanded
+  size_t point_instances{0};   // visible instances they emitted (TLAS placements)
+  size_t curve_strands{0};     // top-level BasisCurves/NurbsCurves prims
+  size_t curve_instances{0};   // instanced curve-prototype placements (TLAS)
   double build_seconds{0.0};
 };
 
@@ -3564,8 +3624,14 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
 // regardless of how many times it is placed.
 struct Blas {
   FloatVec vertices;  // packed local-space triangle positions
-  TriVec tris;        // local p0/p1/p2/n + base_color/tex_id/...
+  TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
+  std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
+  // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
+  // curve_info holds one TriInfo per segment (local-space endpoints + color),
+  // resolved at hit time exactly like the DirectScene curve path.
+  bool is_curve{false};
+  std::vector<TriInfo> curve_info;
   lrt_tri_scene *scene{nullptr};
 
   Blas() = default;
@@ -3574,7 +3640,10 @@ struct Blas {
     if (this != &o) {
       vertices = std::move(o.vertices);
       tris = std::move(o.tris);
+      mat_table = std::move(o.mat_table);
       tri_uvs = std::move(o.tri_uvs);
+      is_curve = o.is_curve;
+      curve_info = std::move(o.curve_info);
       if (scene) lrt_tri_scene_free(scene);
       scene = o.scene;
       o.scene = nullptr;
@@ -3588,13 +3657,6 @@ struct Blas {
   }
 };
 
-// One placement of a BLAS in world space (object->world, row-vector convention
-// matching TransformPoint). instances[0] is always the base scene at identity.
-struct InstanceRT {
-  uint32_t blas_id{0};
-  matrix4d xform{matrix4d::identity()};
-};
-
 // 3x4 row-major object->world for LightRT (p' = L*p + t), derived from a
 // row-vector matrix4d so it matches TransformPoint(m, p) exactly.
 inline void Mat4ToObj2World(const matrix4d &m, float out[12]) {
@@ -3605,6 +3667,23 @@ inline void Mat4ToObj2World(const matrix4d &m, float out[12]) {
     out[k * 4 + 3] = float(m.m[3][k]);
   }
 }
+
+// Apply a 3x4 object->world (same layout as Mat4ToObj2World) to a point. Matches
+// TransformPoint(matrix4d, p) for affine transforms (instances are affine), in
+// float — the same precision LightRT uses for traversal.
+inline Vec3 TransformPointO2W(const float o[12], const Vec3 &p) {
+  return Vec3{o[0] * p.x + o[1] * p.y + o[2] * p.z + o[3],
+              o[4] * p.x + o[5] * p.y + o[6] * p.z + o[7],
+              o[8] * p.x + o[9] * p.y + o[10] * p.z + o[11]};
+}
+
+// One placement of a BLAS, stored as a compact 3x4 float object->world (48 B vs a
+// 128 B matrix4d) — instance arrays dominate footprint on heavily-instanced
+// scenes (e.g. Island's 22 M instances). instances[0] is the base at identity.
+struct InstanceRT {
+  uint32_t blas_id{0};
+  float o2w[12]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+};
 
 // Resolve a primary TLAS hit into a world-space TriInfo (positions transformed,
 // normal recomputed, diffuse texture sampled). Returns false if the hit indices
@@ -3733,11 +3812,32 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   const InstanceRT &inst = instances[size_t(th.inst_id)];
   if (size_t(inst.blas_id) >= blas.size()) return false;
   const Blas &b = blas[size_t(inst.blas_id)];
+  // Curve BLAS: resolve the segment's local TriInfo, transform endpoints to world
+  // (no UVs/textures for curves — matches the DirectScene curve path).
+  if (b.is_curve) {
+    if (size_t(th.prim_id) >= b.curve_info.size()) return false;
+    const TriInfo &lt = b.curve_info[size_t(th.prim_id)];
+    Vec3 wp0 = TransformPointO2W(inst.o2w, lt.p0);
+    Vec3 wp1 = TransformPointO2W(inst.o2w, lt.p1);
+    Vec3 wp2 = TransformPointO2W(inst.o2w, lt.p2);
+    *out = lt;
+    out->p0 = wp0;
+    out->p1 = wp1;
+    out->p2 = wp2;
+    out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+    return true;
+  }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
-  const TriInfo &lt = b.tris[size_t(th.prim_id)];
-  Vec3 wp0 = TransformPoint(inst.xform, lt.p0);
-  Vec3 wp1 = TransformPoint(inst.xform, lt.p1);
-  Vec3 wp2 = TransformPoint(inst.xform, lt.p2);
+  if (size_t(th.prim_id) * 9 + 8 >= b.vertices.size()) return false;
+  const TriStore &ts = b.tris[size_t(th.prim_id)];
+  const TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
+                                       ? b.mat_table[size_t(ts.mat_id)]
+                                       : TriMat{});
+  // Local-space positions come from the vertex soup (LightRT aliases it).
+  const float *v = &b.vertices[size_t(th.prim_id) * 9];
+  Vec3 wp0 = TransformPointO2W(inst.o2w, Vec3{v[0], v[1], v[2]});
+  Vec3 wp1 = TransformPointO2W(inst.o2w, Vec3{v[3], v[4], v[5]});
+  Vec3 wp2 = TransformPointO2W(inst.o2w, Vec3{v[6], v[7], v[8]});
   *out = lt;
   out->p0 = wp0;
   out->p1 = wp1;
@@ -3817,7 +3917,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const lrt_tlas *tlas = nullptr,
            const std::vector<Blas> *blas = nullptr,
            const std::vector<InstanceRT> *instances = nullptr,
-           const RayDiff &rd = RayDiff{}) {
+           const RayDiff &rd = RayDiff{}, int depth = 0) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -3971,6 +4071,18 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   } else if (lights.has_dome) {
     c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
   }
+  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
+  // lies behind it (continuation ray; bounded recursion). Opaque hits (default
+  // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
+  auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
+    if (tri.opacity >= 0.999f || depth >= 4) return col;
+    const float a = std::max(0.0f, tri.opacity);
+    const Vec3 behind_org = Add(ray_org, Mul(ray_dir, hit_t + 0.01f));
+    const Vec3 behind =
+        Shade(scene, direct, tris, lights, ibl, camera, opt, behind_org, ray_dir,
+              textures, tri_uvs, tlas, blas, instances, rd, depth + 1);
+    return Add(Mul(col, a), Mul(behind, 1.0f - a));
+  };
   if (lights.finite.empty() && lights.mesh.empty()) {
     Vec3 l = Normalize(Sub(camera.origin, p));
     float ndotl = std::max(0.0f, Dot(n, l));
@@ -3980,7 +4092,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                    std::max(0.0f, Length(Sub(camera.origin, p)) - 1.0e-3f)))) {
       c = Add(c, Mul(tri.base_color, ndotl));
     }
-    return c;
+    return apply_opacity(c);
   }
   auto eval_light = [&](const PreviewLight &light) {
     Vec3 l;
@@ -4017,7 +4129,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   for (const PreviewLight &light : lights.mesh) {
     eval_light(light);
   }
-  return c;
+  // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
+  // lies behind it (continuation ray), bounded recursion. Opaque hits (the
+  // default opacity 1.0) skip this entirely, so opaque renders are unchanged.
+  return apply_opacity(c);
 }
 
 uint8_t ToSRGB8(float linear) {
@@ -4192,6 +4307,21 @@ std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
   return {};
 }
 
+std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                        const char *name, double time) {
+  const tinyusdz::next::Value *v = std::isnan(time)
+                                       ? prim.GetPropertyValue(name)
+                                       : prim.GetValueAtTime(name, time);
+  if (!v) return {};
+  if (v->is_lazy()) {
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    if (const std::vector<int64_t> *a = tmp.as_int64_array()) return *a;
+    return {};
+  }
+  if (const std::vector<int64_t> *a = v->as_int64_array()) return *a;
+  return {};
+}
+
 // Templated on the output buffer type so the flat path can stream into plain
 // std::vector (ctx.tris) while the instanced path streams into the budget-tracked
 // Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
@@ -4207,7 +4337,27 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
-                          bool purpose_cull = false) {
+                          bool purpose_cull = false,
+                          TriMat *out_job_mat = nullptr, float opacity = 1.0f) {
+  // When the output is the slim TriStore (instanced BLAS), the per-mesh material
+  // is emitted once into out_job_mat and each triangle stores only its mat_id.
+  if (out_job_mat) {
+    out_job_mat->base_color = base_color;
+    out_job_mat->emission = emission;
+    out_job_mat->roughness = roughness;
+    out_job_mat->metallic = metallic;
+    out_job_mat->tex_id = tex_id;
+    out_job_mat->normal_tex_id = normal_tex_id;
+    out_job_mat->rough_tex_id = rough_tex.id;
+    out_job_mat->metal_tex_id = metal_tex.id;
+    out_job_mat->emission_tex_id = emission_tex_id;
+    out_job_mat->occ_tex_id = occ_tex.id;
+    out_job_mat->occlusion = occlusion;
+    out_job_mat->opacity = opacity;
+    out_job_mat->rough_ch = rough_tex.ch;
+    out_job_mat->metal_ch = metal_tex.ch;
+    out_job_mat->occ_ch = occ_tex.ch;
+  }
   // Read geometry without permanently materializing it into the stage.
   const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
   const std::vector<int32_t> counts =
@@ -4320,6 +4470,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       tri.occlusion = occlusion;
       tri.occ_tex_id = occ_tex.id;
       tri.occ_ch = occ_tex.ch;
+      tri.opacity = opacity;
       tri.purpose_bit = PurposeBit(purpose);
       if (tri.purpose_bit == kPurposeRenderBit) {
         stats->purpose_render_triangles++;
@@ -4336,7 +4487,15 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       if (purpose_cull && !visible_for_fit) continue;
       vertices->insert(vertices->end(),
                        {p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z});
-      tris->push_back(tri);
+      if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
+        // Slim store: only mat_id (positions are in `vertices` above; the global
+        // mat_id is assigned by StreamMeshJobs when it concatenates jobs).
+        TriStore ts;
+        ts.mat_id = 0;
+        tris->push_back(ts);
+      } else {
+        tris->push_back(tri);
+      }
       if (want_uvs) {
         // Keep tri_uvs parallel to tris (6 floats/tri). uv0=vert0, uv1=vert(k),
         // uv2=vert(k+1) in fan order, matching i0/i1/i2 above.
@@ -4377,6 +4536,7 @@ struct MeshJobNext {
   float occlusion{1.0f};                 // resolved inputs:occlusion
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
+  float opacity{1.0f};                   // resolved primvars:displayOpacity
 };
 
 // ---------------------------------------------------------------------------
@@ -4572,7 +4732,24 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              int32_t *normal_tex_id, UvXform *uv_xform,
                              ScalarTex *rough_tex, ScalarTex *metal_tex,
                              Vec3 *emission, int32_t *emission_tex_id,
-                             float *occlusion, ScalarTex *occ_tex) {
+                             float *occlusion, ScalarTex *occ_tex,
+                             float *opacity = nullptr) {
+  // Geometry display primvars (constant): the unmaterialed base color/opacity
+  // (e.g. ALab geom-only meshes). A bound material below overrides the color.
+  if (const tinyusdz::next::Value *dcv =
+          mesh.GetPropertyValue("primvars:displayColor")) {
+    if (const std::vector<float> *dc = dcv->as_float_array()) {
+      if (dc->size() >= 3) *base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
+    }
+  }
+  if (opacity) {
+    if (const tinyusdz::next::Value *dov =
+            mesh.GetPropertyValue("primvars:displayOpacity")) {
+      if (const std::vector<float> *od = dov->as_float_array()) {
+        if (!od->empty()) *opacity = std::min(1.0f, std::max(0.0f, (*od)[0]));
+      }
+    }
+  }
   const std::vector<tinyusdz::next::Path> *bind =
       mesh.GetRelationship("material:binding");
   if (!bind || bind->empty()) return;
@@ -4705,6 +4882,82 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
         }
       }
     }
+  }
+}
+
+// The full resolved-material result for one bound material (everything
+// ResolveMeshMaterialNext writes). Memoized by bound-material path so a scene
+// with many meshes sharing few materials (e.g. Island's 605k coral meshes over a
+// handful of coral materials) resolves each material — and its shader-graph walk
+// + texture lookups — exactly once instead of per mesh.
+struct ResolvedMat {
+  Vec3 base_color{0.55f, 0.55f, 0.55f};
+  int32_t tex_id{-1};
+  float roughness{0.55f};
+  float metallic{0.0f};
+  int32_t normal_tex_id{-1};
+  UvXform uv_xform;
+  ScalarTex rough_tex;
+  ScalarTex metal_tex;
+  Vec3 emission{0.0f, 0.0f, 0.0f};
+  int32_t emission_tex_id{-1};
+  float occlusion{1.0f};
+  ScalarTex occ_tex;
+  float opacity{1.0f};
+};
+
+// Resolve a mesh job's material with per-material memoization. The result is a
+// pure function of the bound material (+ shared texture cache), so a cache hit
+// skips the shader-graph walk entirely. Unbound meshes keep MeshJobNext defaults.
+void ResolveMeshMaterialCached(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
+    TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
+    MeshJobNext *job) {
+  const std::vector<tinyusdz::next::Path> *bind =
+      mesh.GetRelationship("material:binding");
+  const std::string key =
+      (bind && !bind->empty()) ? (*bind)[0].str() : std::string();
+  if (!key.empty()) {
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+      const ResolvedMat &r = it->second;
+      job->base_color = r.base_color;
+      job->tex_id = r.tex_id;
+      job->roughness = r.roughness;
+      job->metallic = r.metallic;
+      job->normal_tex_id = r.normal_tex_id;
+      job->uv_xform = r.uv_xform;
+      job->rough_tex = r.rough_tex;
+      job->metal_tex = r.metal_tex;
+      job->emission = r.emission;
+      job->emission_tex_id = r.emission_tex_id;
+      job->occlusion = r.occlusion;
+      job->occ_tex = r.occ_tex;
+      job->opacity = r.opacity;
+      return;
+    }
+  }
+  ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
+                          &job->roughness, &job->metallic, &job->normal_tex_id,
+                          &job->uv_xform, &job->rough_tex, &job->metal_tex,
+                          &job->emission, &job->emission_tex_id, &job->occlusion,
+                          &job->occ_tex, &job->opacity);
+  if (!key.empty()) {
+    ResolvedMat r;
+    r.base_color = job->base_color;
+    r.tex_id = job->tex_id;
+    r.roughness = job->roughness;
+    r.metallic = job->metallic;
+    r.normal_tex_id = job->normal_tex_id;
+    r.uv_xform = job->uv_xform;
+    r.rough_tex = job->rough_tex;
+    r.metal_tex = job->metal_tex;
+    r.emission = job->emission;
+    r.emission_tex_id = job->emission_tex_id;
+    r.occlusion = job->occlusion;
+    r.occ_tex = job->occ_tex;
+    r.opacity = job->opacity;
+    cache.emplace(key, r);
   }
 }
 
@@ -5051,12 +5304,331 @@ struct ProtoBuildReq {
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
+// A curve prim (UsdGeomBasisCurves / NurbsCurves) to ray-trace as hair strands
+// in the next path. `world` is the world transform; the linear-strand geometry is
+// built into the RenderContext's DirectScene (shared by the flat and TLAS render
+// paths) — see BuildNextCurves.
+struct CurveJobNext {
+  tinyusdz::next::UsdPrim prim;
+  matrix4d world{matrix4d::identity()};
+  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+};
+
+// One placement of a curve prototype's curve BLAS (deduped curve geometry stored
+// once and instanced through the TLAS, like mesh prototypes).
+struct CurveInstanceRT {
+  uint32_t curve_proto_idx{0};  // index into CurveProtoCollect::protos
+  float o2w[12]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+};
+
+// Curve prototypes referenced by PointInstancers + their placements, so a
+// heavily-instanced curve prototype stores its hair geometry once (a curve BLAS)
+// instead of baking world-space copies per instance.
+struct CurveProtoCollect {
+  std::vector<ProtoBuildReq> protos;             // curve prototype paths
+  std::unordered_map<std::string, uint32_t> ids;  // dedup key -> protos index
+  std::vector<CurveInstanceRT> instances;
+};
+
+bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
+  const std::string &t = prim.GetTypeName();
+  return t == "BasisCurves" || t == "NurbsCurves";
+}
+
+// Read a curve prim's `points` into a point3f vector via the lazy float accessor.
+std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
+    const tinyusdz::next::UsdPrim &prim, double time) {
+  const std::vector<float> pf = ReadFloatArrayLazy(prim, "points", time);
+  std::vector<tinyusdz::value::point3f> pts(pf.size() / 3);
+  for (size_t i = 0; i < pts.size(); ++i)
+    pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
+  return pts;
+}
+
+// Build the collected curve jobs into the RenderContext's DirectScene as LightRT
+// hair-strand scenes (round by default; flat/ribbon when the prim authors
+// `normals`), reusing AppendLinearCurveStrands + the same intersectors the
+// legacy direct path uses. Curve hits/occlusion are then traced by RenderImage's
+// existing DirectScene path regardless of use_tlas. Returns false only on a
+// LightRT build failure.
+bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
+                     double time) {
+  if (jobs.empty()) return true;
+  std::vector<float> round_points, round_radii, flat_points, flat_radii;
+  std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
+  for (const CurveJobNext &job : jobs) {
+    std::vector<tinyusdz::value::point3f> points =
+        ReadCurvePointsNext(job.prim, time);
+    std::vector<int32_t> counts32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (points.empty() || counts32.empty()) continue;
+    std::vector<int> counts(counts32.begin(), counts32.end());
+    std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
+    const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
+    if (flat) {
+      AppendLinearCurveStrands(points, counts, widths, job.world, &flat_points,
+                               &flat_radii, &flat_first, &flat_count,
+                               &ctx.direct.flat_curve_info, &ctx.bounds);
+    } else {
+      AppendLinearCurveStrands(points, counts, widths, job.world, &round_points,
+                               &round_radii, &round_first, &round_count,
+                               &ctx.direct.round_curve_info, &ctx.bounds);
+    }
+  }
+
+  lrt_tri_build_options build_opts;
+  std::memset(&build_opts, 0, sizeof(build_opts));
+  build_opts.quality = ctx.opt.quality;
+  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
+  build_opts.num_threads = WorkerThreadCount(ctx.opt.threads);
+  lrt_result lrt_err = LRT_RESULT_OK;
+  auto make_strands = [](const std::vector<float> &pts,
+                         const std::vector<float> &radii,
+                         const std::vector<uint32_t> &first,
+                         const std::vector<uint32_t> &count) {
+    lrt_hair_strands s;
+    std::memset(&s, 0, sizeof(s));
+    s.points = pts.data();
+    s.radius = radii.data();
+    s.strand_first = first.data();
+    s.strand_count = count.data();
+    s.nstrands = first.size();
+    s.npoints = radii.size();
+    return s;
+  };
+  if (!round_first.empty()) {
+    lrt_hair_strands s =
+        make_strands(round_points, round_radii, round_first, round_count);
+    ctx.direct.round_curves.reset(
+        lrt_roundcurve_scene_build(&s, &build_opts, &lrt_err));
+    if (!ctx.direct.round_curves) {
+      std::cerr << "Failed to build LightRT round curve scene.\n";
+      return false;
+    }
+  }
+  if (!flat_first.empty()) {
+    lrt_hair_strands s =
+        make_strands(flat_points, flat_radii, flat_first, flat_count);
+    ctx.direct.flat_curves.reset(
+        lrt_flatcurve_scene_build(&s, &build_opts, &lrt_err));
+    if (!ctx.direct.flat_curves) {
+      std::cerr << "Failed to build LightRT flat curve scene.\n";
+      return false;
+    }
+  }
+  return true;
+}
+
+// Build a UsdGeomPointInstancer per-instance object->world matrix in the
+// row-vector convention (p' = p * M): scale, then orient, then translate, all in
+// the instancer's local space (USD's instance transform order). `quat_xyzw` is
+// the orientation as stored by the next loader (imaginary x,y,z then real w);
+// `scale3`/`pos` are per-axis scale and translation.
+matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
+                     const float *scale3) {
+  tinyusdz::value::quatf q;
+  q.imag[0] = quat_xyzw[0];
+  q.imag[1] = quat_xyzw[1];
+  q.imag[2] = quat_xyzw[2];
+  q.real = quat_xyzw[3];
+  // 3x3 rotation in the same convention as the rest of the xform stack.
+  tinyusdz::value::matrix3d rot = tinyusdz::to_matrix3x3(q);
+  // p * S * R with S diagonal scales row i of R by scale[i].
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) rot.m[i][j] *= double(scale3[i]);
+  tinyusdz::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
+  return tinyusdz::to_matrix(rot, t);  // translation into row 3
+}
+
+// Recursively collect curve prims under `prim`, accumulating world transforms in
+// the row-vector convention. Used both at scene level and to gather a
+// PointInstancer prototype's curves (relative to the prototype root).
+void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
+                          const matrix4d &parent_world,
+                          tinyusdz::Purpose inherited_purpose, double time,
+                          std::vector<CurveJobNext> *out) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") purpose = tinyusdz::Purpose::Render;
+      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
+      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+    }
+  }
+  if (IsCurvePrimNext(prim)) {
+    CurveJobNext cj;
+    cj.prim = prim;
+    cj.world = world;
+    cj.purpose = purpose;
+    out->push_back(std::move(cj));
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+    CollectCurvesNextRec(child, world, purpose, time, out);
+}
+
+// Collect a PointInstancer prototype's curves with transforms relative to the
+// prototype root (root at identity, replaced by the instance transform).
+void CollectProtoCurves(const tinyusdz::next::Stage &stage,
+                        const std::string &proto_path,
+                        tinyusdz::Purpose start_purpose, double time,
+                        std::vector<CurveJobNext> *out) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  if (IsCurvePrimNext(proto)) {
+    CurveJobNext cj;
+    cj.prim = proto;
+    cj.world = matrix4d::identity();
+    cj.purpose = start_purpose;
+    out->push_back(std::move(cj));
+  }
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+    CollectCurvesNextRec(child, matrix4d::identity(), start_purpose, time, out);
+}
+
+// Reserve (deduped by path+purpose) a curve BLAS for a prototype's curves, shared
+// by PointInstancer and native-instance placements. Returns its index in
+// curve_inst->protos, or -1 if curve_inst is null or the prototype has no curves.
+int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
+                          const std::string &proto_path,
+                          tinyusdz::Purpose purpose, double time,
+                          CurveProtoCollect *curve_inst) {
+  if (!curve_inst) return -1;
+  const std::string key =
+      proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+  auto it = curve_inst->ids.find(key);
+  if (it != curve_inst->ids.end()) return int32_t(it->second);
+  std::vector<CurveJobNext> probe;
+  CollectProtoCurves(stage, proto_path, purpose, time, &probe);
+  if (probe.empty()) return -1;
+  const uint32_t idx = uint32_t(curve_inst->protos.size());
+  curve_inst->ids[key] = idx;
+  curve_inst->protos.push_back({proto_path, purpose, 0});
+  return int32_t(idx);
+}
+
+// Expand a UsdGeomPointInstancer into TLAS placements: each prototype becomes a
+// deduped BLAS (shared with the native-instance pool) and every visible instance
+// becomes an InstanceRT placing that BLAS at scale*orient*translate composed with
+// the instancer's world transform. Prototype paths come from the `prototypes`
+// relationship; they are normally descendants of the instancer, so we resolve
+// each target by leaf name among the instancer's children first (robust to
+// whether composition re-rooted the authored target paths) and fall back to an
+// absolute stage lookup. `invisibleIds` are skipped. The instancer's children
+// are the prototypes, so the caller must NOT descend into it. Curve prototypes
+// are deduped into a curve BLAS and instanced through the same TLAS as meshes.
+void CollectPointInstancer(const tinyusdz::next::Stage &stage,
+                           const tinyusdz::next::UsdPrim &instancer,
+                           const matrix4d &instancer_world,
+                           tinyusdz::Purpose purpose, double time,
+                           const std::vector<std::string> &mask,
+                           std::vector<InstanceRT> *instances,
+                           std::unordered_map<std::string, uint32_t> *proto_ids,
+                           std::vector<ProtoBuildReq> *protos,
+                           CurveProtoCollect *curve_inst,
+                           RTPreviewStats *stats) {
+  if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
+  const std::vector<tinyusdz::next::Path> *targets =
+      instancer.GetRelationship("prototypes");
+  if (!targets || targets->empty()) return;
+
+  // Resolve each prototype target to a live stage prim and reserve its mesh BLAS
+  // id (deduped by path + purpose, matching the native-instance path) and, if the
+  // prototype has curves, a curve BLAS id (also deduped) — both stored once and
+  // instanced via the TLAS rather than baked per instance.
+  std::unordered_map<std::string, tinyusdz::next::UsdPrim> children_by_name;
+  for (const tinyusdz::next::UsdPrim &c : instancer.GetChildren())
+    children_by_name.emplace(c.GetName(), c);
+  std::vector<int32_t> proto_blas(targets->size(), -1);
+  std::vector<int32_t> proto_curve(targets->size(), -1);  // CurveProtoCollect idx
+  for (size_t pi = 0; pi < targets->size(); ++pi) {
+    const tinyusdz::next::Path &tp = (*targets)[pi];
+    tinyusdz::next::UsdPrim proto;
+    auto cit = children_by_name.find(tp.name());
+    if (cit != children_by_name.end()) proto = cit->second;
+    else proto = stage.GetPrimAtPath(tp.str());
+    if (!proto.IsValid()) continue;
+    const std::string proto_path = proto.GetPath().str();
+    const std::string key =
+        proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+    auto it = proto_ids->find(key);
+    if (it == proto_ids->end()) {
+      const uint32_t blas_id = uint32_t(protos->size()) + 1;  // blas[0] = base
+      (*proto_ids)[key] = blas_id;
+      protos->push_back({proto_path, purpose, blas_id});
+      proto_blas[pi] = int32_t(blas_id);
+    } else {
+      proto_blas[pi] = int32_t(it->second);
+    }
+    proto_curve[pi] =
+        ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+  }
+
+  // Per-instance arrays. `positions` drives the instance count; the rest default
+  // (identity orientation, unit scale, proto 0) when absent or shorter.
+  const std::vector<float> positions =
+      ReadFloatArrayLazy(instancer, "positions", time);
+  if (positions.empty()) return;
+  const size_t n = positions.size() / 3;
+  const std::vector<int32_t> proto_indices =
+      ReadIntArrayLazy(instancer, "protoIndices", time);
+  const std::vector<float> orientations =
+      ReadFloatArrayLazy(instancer, "orientations", time);
+  const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
+  const std::vector<int64_t> invisible =
+      ReadInt64ArrayLazy(instancer, "invisibleIds", time);
+  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
+                                                  invisible.end());
+
+  static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
+  size_t emitted = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
+    if (pidx < 0 || size_t(pidx) >= proto_blas.size()) continue;
+    const int32_t blas_id = proto_blas[size_t(pidx)];
+    const int32_t curve_idx = proto_curve[size_t(pidx)];
+    if (blas_id < 0 && curve_idx < 0) continue;
+    const float *q = (orientations.size() >= (i + 1) * 4) ? &orientations[i * 4]
+                                                          : kIdentQuat;
+    const float *s =
+        (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+    const matrix4d inst_world =
+        InstanceTRS(&positions[i * 3], q, s) * instancer_world;
+    float o2w[12];
+    Mat4ToObj2World(inst_world, o2w);
+    if (blas_id >= 0) {
+      InstanceRT inst;
+      inst.blas_id = uint32_t(blas_id);
+      std::memcpy(inst.o2w, o2w, sizeof(o2w));
+      instances->push_back(inst);
+    }
+    if (curve_idx >= 0 && curve_inst) {
+      CurveInstanceRT ci;
+      ci.curve_proto_idx = uint32_t(curve_idx);
+      std::memcpy(ci.o2w, o2w, sizeof(o2w));
+      curve_inst->instances.push_back(ci);
+    }
+    emitted++;
+  }
+  if (stats) {
+    stats->point_instancers++;
+    stats->point_instances += emitted;
+  }
+}
+
 // Walk the composed stage, splitting it into (a) base mesh jobs — geometry not
 // under any native instance, emitted in world space — and (b) instance
 // placements that reference a per-prototype BLAS. Native instances (prims with
-// instance_prototype set) are NOT descended into; instead each is recorded as an
-// InstanceRT and its prototype (deduped by path+purpose) is queued for a BLAS
-// build. This keeps each prototype's geometry stored once. Honors `mask`.
+// instance_prototype set) and UsdGeomPointInstancer prims are NOT descended
+// into; instead each placement is recorded as an InstanceRT and its prototype
+// (deduped by path+purpose) is queued for a BLAS build. This keeps each
+// prototype's geometry stored once. Honors `mask`.
 void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        const tinyusdz::next::UsdPrim &prim,
                        const matrix4d &parent_world,
@@ -5065,7 +5637,9 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        std::vector<MeshJobNext> *base_jobs,
                        std::vector<InstanceRT> *instances,
                        std::unordered_map<std::string, uint32_t> *proto_ids,
-                       std::vector<ProtoBuildReq> *protos) {
+                       std::vector<ProtoBuildReq> *protos,
+                       std::vector<CurveJobNext> *curve_jobs,
+                       CurveProtoCollect *curve_inst, RTPreviewStats *stats) {
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -5099,11 +5673,33 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
       } else {
         blas_id = it->second;
       }
+      float o2w[12];
+      Mat4ToObj2World(world, o2w);
       InstanceRT inst;
       inst.blas_id = blas_id;
-      inst.xform = world;
+      std::memcpy(inst.o2w, o2w, sizeof(o2w));
       instances->push_back(inst);
+      // Curves under the prototype: place them per native instance via a deduped
+      // curve BLAS (the prototype's own copy is collected once as base geometry).
+      const int32_t curve_idx =
+          ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+      if (curve_idx >= 0 && curve_inst) {
+        CurveInstanceRT ci;
+        ci.curve_proto_idx = uint32_t(curve_idx);
+        std::memcpy(ci.o2w, o2w, sizeof(o2w));
+        curve_inst->instances.push_back(ci);
+      }
     }
+    return;
+  }
+
+  // UsdGeomPointInstancer: expand into TLAS placements (one BLAS per prototype,
+  // shared with the native-instance pool) plus instanced curves. Its children are
+  // the prototypes, so do not descend (that would emit each prototype once,
+  // un-instanced).
+  if (prim.GetTypeName() == "PointInstancer") {
+    CollectPointInstancer(stage, prim, world, purpose, time, mask, instances,
+                          proto_ids, protos, curve_inst, stats);
     return;
   }
 
@@ -5114,10 +5710,18 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
     job.world = world;
     job.purpose = purpose;
     base_jobs->push_back(std::move(job));
+  } else if (curve_jobs && IsCurvePrimNext(prim) &&
+             PathMatchesMask(prim.GetPath().str(), mask)) {
+    CurveJobNext cj;
+    cj.prim = prim;
+    cj.world = world;
+    cj.purpose = purpose;
+    curve_jobs->push_back(std::move(cj));
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
     CollectSceneSplit(stage, child, world, purpose, time, mask, base_jobs,
-                      instances, proto_ids, protos);
+                      instances, proto_ids, protos, curve_jobs, curve_inst,
+                      stats);
   }
 }
 
@@ -5133,10 +5737,63 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
   tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
+  // A prototype root is placed at identity (its own transform is replaced by the
+  // instance transform), but if the prototype prim IS a Mesh (a PointInstancer
+  // prototype can point straight at a Mesh) it must still be collected.
+  if (proto.GetTypeName() == "Mesh") {
+    MeshJobNext job;
+    job.prim = proto;
+    job.world = matrix4d::identity();
+    job.purpose = start_purpose;
+    jobs->push_back(std::move(job));
+  }
   for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
     CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), start_purpose,
                                time, kNoMask, jobs);
   }
+}
+
+// Build one curve prototype into a curve BLAS (round hair) in prototype-LOCAL
+// space, with one TriInfo per segment for hit resolution. The instance transform
+// is applied later by the TLAS. Instanced curves are treated as round (the common
+// XGen case; per-instance flat/ribbon curves are not separated). Returns false
+// only on a LightRT build failure.
+bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
+                    const std::string &proto_path, tinyusdz::Purpose purpose,
+                    double time, const lrt_tri_build_options &build_opts,
+                    Blas *out, Bounds *local) {
+  std::vector<CurveJobNext> curves;
+  CollectProtoCurves(stage, proto_path, purpose, time, &curves);
+  if (curves.empty()) return true;
+  std::vector<float> pts, radii;
+  std::vector<uint32_t> first, count;
+  for (const CurveJobNext &job : curves) {
+    std::vector<tinyusdz::value::point3f> p = ReadCurvePointsNext(job.prim, time);
+    std::vector<int32_t> c32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (p.empty() || c32.empty()) continue;
+    std::vector<int> c(c32.begin(), c32.end());
+    std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
+    AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
+                             &out->curve_info, local);
+  }
+  if (first.empty()) return true;
+  lrt_hair_strands s;
+  std::memset(&s, 0, sizeof(s));
+  s.points = pts.data();
+  s.radius = radii.data();
+  s.strand_first = first.data();
+  s.strand_count = count.data();
+  s.nstrands = first.size();
+  s.npoints = radii.size();
+  lrt_result e = LRT_RESULT_OK;
+  out->scene = lrt_roundcurve_scene_build(&s, &build_opts, &e);
+  out->is_curve = true;
+  if (!out->scene) {
+    std::cerr << "Failed to build curve BLAS (err=" << int(e) << ").\n";
+    return false;
+  }
+  return true;
 }
 
 // Stream a list of (material-resolved) mesh jobs into packed triangle buffers +
@@ -5150,13 +5807,15 @@ template <class FVec, class TVec>
 bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     double time, bool want_uvs, bool purpose_cull, int threads,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
-                    Bounds *out_bounds, RTPreviewStats *out_stats) {
+                    Bounds *out_bounds, RTPreviewStats *out_stats,
+                    std::vector<TriMat> *out_mat_table = nullptr) {
   struct R {
     FVec v;
     TVec t;
     FVec uv;
     Bounds b;
     RTPreviewStats s;
+    TriMat mat;  // this job's single material (slim TriStore path only)
   };
   std::vector<R> results(jobs.size());
   const unsigned nthreads =
@@ -5180,7 +5839,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                              job.metal_tex, job.emission, job.emission_tex_id,
                              job.occlusion, job.occ_tex, job.uv_xform, want_uvs,
                              &r.v, &r.t,
-                             &r.uv, &r.b, &r.s, purpose_cull);
+                             &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
+                             job.opacity);
       }
     } catch (const std::bad_alloc &) {
       oom.store(true, std::memory_order_relaxed);
@@ -5208,6 +5868,15 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
     if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + tu);
     for (R &r : results) {
       out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
+      // Slim-store path: assign each of this job's triangles a global material id
+      // and append the job's material to the shared table (one entry per job).
+      if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
+        if (out_mat_table) {
+          const uint32_t mid = uint32_t(out_mat_table->size());
+          out_mat_table->push_back(r.mat);
+          for (auto &ts : r.t) ts.mat_id = mid;
+        }
+      }
       out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
       if (want_uvs)
         out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
@@ -5223,15 +5892,15 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
   return true;
 }
 
-// Expand `g` by a local AABB transformed by `m` (8 corners).
-void ExpandBoundsByTransformed(Bounds *g, const Bounds &local,
-                               const matrix4d &m) {
+// Expand `g` by a local AABB transformed by a 3x4 object->world (8 corners).
+void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
+                                  const float o2w[12]) {
   if (!local.valid) return;
   for (int c = 0; c < 8; ++c) {
     Vec3 corner{(c & 1) ? local.hi.x : local.lo.x,
                 (c & 2) ? local.hi.y : local.lo.y,
                 (c & 4) ? local.hi.z : local.lo.z};
-    Expand(g, TransformPoint(m, corner));
+    Expand(g, TransformPointO2W(o2w, corner));
   }
 }
 
@@ -5268,11 +5937,19 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<InstanceRT> instances;
   std::unordered_map<std::string, uint32_t> proto_ids;
   std::vector<ProtoBuildReq> protos;
+  std::vector<CurveJobNext> curve_jobs;
+  CurveProtoCollect curve_inst;
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
                       tinyusdz::Purpose::Default, time, opt.mask, &base_jobs,
-                      &instances, &proto_ids, &protos);
+                      &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
+                      &ctx.stats);
   }
+  // Curves (BasisCurves/NurbsCurves, plus any baked from curve-prototype
+  // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
+  // them via the DirectScene path in both the flat and TLAS render modes.
+  if (!BuildNextCurves(ctx, curve_jobs, time)) return false;
+  ctx.stats.curve_strands = curve_jobs.size();
 
   lrt_tri_build_options build_opts;
   std::memset(&build_opts, 0, sizeof(build_opts));
@@ -5295,23 +5972,20 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   }
 
   // -------------------------------------------------------------------------
-  // Flat path: no native instances. Identical to the historical single-scene
-  // build (preserves byte-for-byte renders of self-contained scenes).
+  // Flat path: no native instances and no instanced curve prototypes. Identical
+  // to the historical single-scene build (preserves byte-for-byte renders of
+  // self-contained scenes).
   // -------------------------------------------------------------------------
-  if (instances.empty()) {
+  if (instances.empty() && curve_inst.instances.empty()) {
     ctx.stats.meshes = base_jobs.size();
     {
       TextureCache tc;
       tc.textures = &ctx.textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = usdz_ptr;
+      std::unordered_map<std::string, ResolvedMat> mat_cache;
       for (MeshJobNext &job : base_jobs) {
-        ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                                &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex,
-                                &job.emission, &job.emission_tex_id,
-                                &job.occlusion, &job.occ_tex);
+        ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
       }
     }
     const bool want_uvs = !ctx.textures.empty();
@@ -5329,7 +6003,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     ctx.stats.build_seconds = ctx.stream_seconds;
     ctx.stats.packed_triangle_bytes =
         uint64_t(ctx.vertices.size()) * sizeof(float);
+    const bool have_curves = ctx.direct.round_curves || ctx.direct.flat_curves ||
+                             ctx.direct.bez_curves;
     if (ctx.tris.empty()) {
+      if (have_curves) return true;  // curves-only scene: traced via DirectScene
       std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
       return false;
     }
@@ -5371,50 +6048,54 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.textures = &ctx.textures;
     tc.base_dir = DirName(opt.input);
     tc.usdz = usdz_ptr;
+    std::unordered_map<std::string, ResolvedMat> mat_cache;
     for (MeshJobNext &job : base_jobs) {
-      ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                              &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex,
-                                &job.emission, &job.emission_tex_id,
-                                &job.occlusion, &job.occ_tex);
+      ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
     }
     for (std::vector<MeshJobNext> &pj : proto_jobs) {
       for (MeshJobNext &job : pj) {
-        ResolveMeshMaterialNext(ctx.stage, job.prim, tc, &job.base_color,
-                                &job.tex_id, &job.roughness, &job.metallic,
-                                &job.normal_tex_id, &job.uv_xform,
-                                &job.rough_tex, &job.metal_tex,
-                                &job.emission, &job.emission_tex_id,
-                                &job.occlusion, &job.occ_tex);
+        ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
       }
     }
   }
   const bool want_uvs = !ctx.textures.empty();
 
+  // blas layout: [0] base, [1 .. P] mesh prototypes, [P+1 ..] curve prototypes.
+  const size_t curve_base = 1 + protos.size();
   ctx.blas.clear();
-  ctx.blas.resize(1 + protos.size());  // [0] base, [1..] prototypes
+  ctx.blas.resize(curve_base + curve_inst.protos.size());
   std::vector<Bounds> local_bounds(ctx.blas.size());
 
   // Base geometry (world space) -> blas[0].
   bool stream_ok = StreamMeshJobs(
       base_jobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
       opt.threads, &ctx.blas[0].vertices, &ctx.blas[0].tris,
-      &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats);
-  // Each prototype (local space) -> blas[blas_id].
+      &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats,
+      &ctx.blas[0].mat_table);
+  // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
     RTPreviewStats discard;
     stream_ok = StreamMeshJobs(proto_jobs[i], opt.purpose_mask, time, want_uvs,
                                /*purpose_cull=*/true, opt.threads,
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
-                               &ctx.blas[b].tri_uvs, &local_bounds[b], &discard);
+                               &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
+                               &ctx.blas[b].mat_table);
   }
   if (!stream_ok) {
     std::cerr << "Aborting: triangle stream exceeded memory cap "
               << MemBudget::GiB(MemBudget::Get().Cap())
               << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
     return false;
+  }
+  // Each curve prototype (local space) -> blas[curve_base + i] as a curve BLAS.
+  for (size_t i = 0; i < curve_inst.protos.size(); ++i) {
+    const size_t b = curve_base + i;
+    if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
+                        curve_inst.protos[i].purpose, time, build_opts,
+                        &ctx.blas[b], &local_bounds[b])) {
+      return false;
+    }
   }
   const auto stream_t1 = std::chrono::steady_clock::now();
   ctx.stream_seconds =
@@ -5492,26 +6173,36 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // instance whose prototype BLAS is non-empty. instance_id indexes
   // ctx.instances (resolved back to blas_id + transform at shade time).
   std::vector<lrt_instance> lrt_insts;
-  auto add_instance = [&](uint32_t blas_id, const matrix4d &xform) {
+  auto add_instance = [&](uint32_t blas_id, const float o2w[12]) {
     if (blas_id >= ctx.blas.size() || !ctx.blas[blas_id].scene) return;
     const uint32_t id = uint32_t(ctx.instances.size());
     InstanceRT inst;
     inst.blas_id = blas_id;
-    inst.xform = xform;
+    std::memcpy(inst.o2w, o2w, sizeof(inst.o2w));
     ctx.instances.push_back(inst);
     lrt_instance li;
     std::memset(&li, 0, sizeof(li));
     li.blas_id = blas_id;
-    Mat4ToObj2World(xform, li.obj2world);
+    std::memcpy(li.obj2world, o2w, sizeof(li.obj2world));
     li.instance_id = id;
     li.mask = 0xffffffffu;
     lrt_insts.push_back(li);
-    ExpandBoundsByTransformed(&ctx.bounds, local_bounds[blas_id], xform);
+    ExpandBoundsByTransformedO2W(&ctx.bounds, local_bounds[blas_id], o2w);
     ctx.stats.triangles += uint64_t(ctx.blas[blas_id].tris.size());
   };
+  static const float kIdentO2W[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
   ctx.stats.triangles = 0;
-  add_instance(0, matrix4d::identity());  // base
-  for (const InstanceRT &inst : instances) add_instance(inst.blas_id, inst.xform);
+  add_instance(0, kIdentO2W);  // base
+  for (const InstanceRT &inst : instances) add_instance(inst.blas_id, inst.o2w);
+  // Instanced curve prototypes: each placement references its curve BLAS, stored
+  // once (no per-instance world-space copy).
+  for (const CurveInstanceRT &ci : curve_inst.instances)
+    add_instance(uint32_t(curve_base + ci.curve_proto_idx), ci.o2w);
+  ctx.stats.curve_instances = curve_inst.instances.size();
+  // The collection-side instance lists are now fully copied into ctx.instances +
+  // lrt_insts; free them before lrt_tlas_build allocates the (peak) TLAS nodes.
+  std::vector<InstanceRT>().swap(instances);
+  std::vector<CurveInstanceRT>().swap(curve_inst.instances);
 
   if (lrt_insts.empty()) {
     std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
@@ -5673,6 +6364,10 @@ void PrintRTStats(const RenderContext &ctx) {
             << ctx.stats.purpose_default_triangles << "\n";
   std::cerr << "rt purpose guide triangles: "
             << ctx.stats.purpose_guide_triangles << "\n";
+  if (ctx.stats.curve_strands > 0)
+    std::cerr << "rt curve strands: " << ctx.stats.curve_strands << "\n";
+  if (ctx.stats.curve_instances > 0)
+    std::cerr << "rt curve instances: " << ctx.stats.curve_instances << "\n";
   std::cerr << "load seconds: " << ctx.load_seconds << "\n";
   std::cerr << "rt triangle stream seconds: " << ctx.stream_seconds << "\n";
   std::cerr << "rt bvh build seconds: " << ctx.bvh_seconds << "\n";
@@ -5689,6 +6384,8 @@ void PrintRTStats(const RenderContext &ctx) {
     std::cerr << "rt instancing: tlas\n";
     std::cerr << "rt blas count: " << ctx.blas.size() << "\n";
     std::cerr << "rt instances: " << ctx.instances.size() << "\n";
+    std::cerr << "rt point instancers: " << ctx.stats.point_instancers << "\n";
+    std::cerr << "rt point instances: " << ctx.stats.point_instances << "\n";
     std::cerr << "rt unique triangles: " << unique_tris << "\n";
   } else {
     lrt_tri_stats st;
