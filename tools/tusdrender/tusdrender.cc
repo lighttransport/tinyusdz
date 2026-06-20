@@ -3847,7 +3847,6 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     return true;
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
-  if (size_t(th.prim_id) * 9 + 8 >= b.vertices.size()) return false;
   const TriStore &ts = b.tris[size_t(th.prim_id)];
   TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
                                  ? b.mat_table[size_t(ts.mat_id)]
@@ -3861,11 +3860,19 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                          w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
     lt.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
   }
-  // Local-space positions come from the vertex soup (LightRT aliases it).
-  const float *v = &b.vertices[size_t(th.prim_id) * 9];
-  Vec3 wp0 = TransformPointO2W(inst.o2w, Vec3{v[0], v[1], v[2]});
-  Vec3 wp1 = TransformPointO2W(inst.o2w, Vec3{v[3], v[4], v[5]});
-  Vec3 wp2 = TransformPointO2W(inst.o2w, Vec3{v[6], v[7], v[8]});
+  // Local-space triangle positions: from the vertex soup when present, else
+  // recovered from the BVH leaves (the soup was freed post-build to save
+  // 36 B/tri). lrt_tri_get_verts is byte-exact with the soup for mesh coords.
+  float lv[9];
+  if (!b.vertices.empty()) {
+    if (size_t(th.prim_id) * 9 + 8 >= b.vertices.size()) return false;
+    std::memcpy(lv, &b.vertices[size_t(th.prim_id) * 9], sizeof(lv));
+  } else if (!lrt_tri_get_verts(b.scene, th.prim_id, &lv[0], &lv[3], &lv[6])) {
+    return false;
+  }
+  Vec3 wp0 = TransformPointO2W(inst.o2w, Vec3{lv[0], lv[1], lv[2]});
+  Vec3 wp1 = TransformPointO2W(inst.o2w, Vec3{lv[3], lv[4], lv[5]});
+  Vec3 wp2 = TransformPointO2W(inst.o2w, Vec3{lv[6], lv[7], lv[8]});
   *out = lt;
   out->p0 = wp0;
   out->p1 = wp1;
@@ -6346,11 +6353,26 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // for everything would force big BLAS single-threaded and regress heavily
   // instanced scenes; the serial loop alone leaves the small-BLAS fleet building
   // one-at-a-time.
+  // Drop a BLAS's vertex soup (9 floats/tri) as soon as its BVH is built --
+  // ResolveTLASHit recovers a hit triangle's object-space vertices from the BVH
+  // leaves (lrt_tri_get_verts, byte-exact). Freeing each soup at build time
+  // (rather than all at the end) keeps them from accumulating, so the build-phase
+  // peak holds at most one large soup + the built BVHs instead of every soup at
+  // once (isCoral ~600 MB off peak). Curve BLAS / unrecoverable leaves keep theirs.
+  uint64_t freed_soup_bytes = 0;
+  auto drop_soup = [&](size_t b) {
+    if (ctx.blas[b].scene && !ctx.blas[b].is_curve &&
+        lrt_tri_scene_has_verts(ctx.blas[b].scene) &&
+        !ctx.blas[b].vertices.empty()) {
+      freed_soup_bytes += uint64_t(ctx.blas[b].vertices.size()) * sizeof(float);
+      FloatVec().swap(ctx.blas[b].vertices);
+    }
+  };
   const auto bvh_t0 = std::chrono::steady_clock::now();
   {
     const size_t nb = ctx.blas.size();
     const size_t kLargeTris = 32768;  // above this, intra-build threading wins
-    // Pass 1: large BLAS, full internal threading.
+    // Pass 1: large BLAS, full internal threading; free each soup right after.
     for (size_t b = 0; b < nb; ++b) {
       if (ctx.blas[b].tris.size() >= kLargeTris) {
         lrt_result e = LRT_RESULT_OK;
@@ -6360,6 +6382,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
           std::cerr << "Failed to build BLAS (err=" << int(e) << ").\n";
           return false;
         }
+        drop_soup(b);
       }
     }
     // Pass 2: small BLAS, batched across workers (bntris==0 skips large/empty).
@@ -6383,6 +6406,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
           std::cerr << "Failed to build BLAS (err=" << int(berrs[b]) << ").\n";
           return false;
         }
+        drop_soup(b);
       }
     }
   }
@@ -6529,7 +6553,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   }
   ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
   ctx.stats.build_seconds = ctx.stream_seconds;
-  uint64_t blas_bytes = 0;
+  uint64_t blas_bytes = freed_soup_bytes;  // soup dropped post-build (see above)
   for (const Blas &b : ctx.blas) blas_bytes += uint64_t(b.vertices.size()) * sizeof(float);
   ctx.stats.packed_triangle_bytes = blas_bytes;
   return true;
