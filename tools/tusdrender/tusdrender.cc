@@ -690,6 +690,7 @@ struct Options {
   bool direct_prims{true};
   bool rt_preview{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
+  bool smooth{false};       // interpolate authored normals (smooth shading)
   bool progress{false};
   lrt_tri_quality quality{LRT_TRI_BUILD_DEFAULT};
   int threads{0};
@@ -890,6 +891,8 @@ void PrintUsage(const char *prog) {
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
+      << "  -smooth                Interpolate authored normals (smooth shading)\n"
+      << "                         instead of per-face geometric normals.\n"
       << "  -rtPreview             Use mmap zero-copy mesh preview path for large USDC.\n"
       << "  -progress              Print long-running load/build progress.\n"
       << "  -quality <fast|default|hq>\n"
@@ -1034,6 +1037,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
+    } else if (a == "-smooth" || a == "--smooth") {
+      opt->smooth = true;
     } else if (a == "-noShadows" || a == "--noShadows") {
       opt->shadows = false;
     } else if (a == "-rtPreview" || a == "--rtPreview" ||
@@ -3628,6 +3633,7 @@ struct Blas {
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
   FloatVec tri_colors;  // 12 floats/tri (per-corner RGBA) or empty
+  FloatVec tri_normals; // 9 floats/tri (per-corner authored normals) or empty
   // Curve BLAS (is_curve): the scene is a LightRT round-hair scene and
   // curve_info holds one TriInfo per segment (local-space endpoints + color),
   // resolved at hit time exactly like the DirectScene curve path.
@@ -3644,6 +3650,7 @@ struct Blas {
       mat_table = std::move(o.mat_table);
       tri_uvs = std::move(o.tri_uvs);
       tri_colors = std::move(o.tri_colors);
+      tri_normals = std::move(o.tri_normals);
       is_curve = o.is_curve;
       curve_info = std::move(o.curve_info);
       if (scene) lrt_tri_scene_free(scene);
@@ -3677,6 +3684,15 @@ inline Vec3 TransformPointO2W(const float o[12], const Vec3 &p) {
   return Vec3{o[0] * p.x + o[1] * p.y + o[2] * p.z + o[3],
               o[4] * p.x + o[5] * p.y + o[6] * p.z + o[7],
               o[8] * p.x + o[9] * p.y + o[10] * p.z + o[11]};
+}
+
+// Transform a direction (e.g. a normal) by the 3x3 part of a 3x4 object->world.
+// Exact for rigid/uniform-scale instances (the common case); non-uniform scale
+// is approximate (true normals need the inverse-transpose) — fine for preview.
+inline Vec3 TransformDirO2W(const float o[12], const Vec3 &v) {
+  return Vec3{o[0] * v.x + o[1] * v.y + o[2] * v.z,
+              o[4] * v.x + o[5] * v.y + o[6] * v.z,
+              o[8] * v.x + o[9] * v.y + o[10] * v.z};
 }
 
 // One placement of a BLAS, stored as a compact 3x4 float object->world (48 B vs a
@@ -3854,6 +3870,17 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   out->p1 = wp1;
   out->p2 = wp2;
   out->n = Normalize(Cross(Sub(wp1, wp0), Sub(wp2, wp0)));
+  // Smooth shading: interpolate per-corner authored normals (local) and transform
+  // by the instance, falling back to the geometric normal above.
+  if (size_t(th.prim_id) * 9 + 8 < b.tri_normals.size()) {
+    const float *nn = &b.tri_normals[size_t(th.prim_id) * 9];
+    const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
+    Vec3 ln{w0 * nn[0] + w1 * nn[3] + w2 * nn[6],
+            w0 * nn[1] + w1 * nn[4] + w2 * nn[7],
+            w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
+    Vec3 wn = TransformDirO2W(inst.o2w, ln);
+    if (Length(wn) > 1.0e-12f) out->n = Normalize(wn);
+  }
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0);
@@ -3929,7 +3956,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<Blas> *blas = nullptr,
            const std::vector<InstanceRT> *instances = nullptr,
            const RayDiff &rd = RayDiff{}, int depth = 0,
-           const std::vector<float> *tri_colors = nullptr) {
+           const std::vector<float> *tri_colors = nullptr,
+           const std::vector<float> *tri_normals = nullptr) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -3965,6 +3993,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                                   w0 * cc[1] + w1 * cc[5] + w2 * cc[9],
                                   w0 * cc[2] + w1 * cc[6] + w2 * cc[10]};
         hit_tri.opacity = w0 * cc[3] + w1 * cc[7] + w2 * cc[11];
+      }
+      // Smooth shading: interpolate per-corner authored normals (world-space in
+      // the flat path), falling back to the stored geometric normal.
+      if (tri_normals && size_t(hit.prim_id) * 9 + 8 < tri_normals->size()) {
+        const float *nn = &(*tri_normals)[size_t(hit.prim_id) * 9];
+        const float w1 = hit.u, w2 = hit.v, w0 = 1.0f - w1 - w2;
+        Vec3 sn{w0 * nn[0] + w1 * nn[3] + w2 * nn[6],
+                w0 * nn[1] + w1 * nn[4] + w2 * nn[7],
+                w0 * nn[2] + w1 * nn[5] + w2 * nn[8]};
+        if (Length(sn) > 1.0e-12f) hit_tri.n = Normalize(sn);
       }
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
@@ -4101,7 +4139,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const Vec3 behind_org = Add(ray_org, Mul(ray_dir, hit_t + 0.01f));
     const Vec3 behind =
         Shade(scene, direct, tris, lights, ibl, camera, opt, behind_org, ray_dir,
-              textures, tri_uvs, tlas, blas, instances, rd, depth + 1, tri_colors);
+              textures, tri_uvs, tlas, blas, instances, rd, depth + 1, tri_colors,
+              tri_normals);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
@@ -4199,7 +4238,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const lrt_tlas *tlas = nullptr,
                             const std::vector<Blas> *blas = nullptr,
                             const std::vector<InstanceRT> *instances = nullptr,
-                            const std::vector<float> *tri_colors = nullptr) {
+                            const std::vector<float> *tri_colors = nullptr,
+                            const std::vector<float> *tri_normals = nullptr) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -4236,7 +4276,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             rd.valid = true;
             color = Add(color, Shade(scene, direct, tris, lights, ibl, camera,
                                      opt, org, dir, textures, tri_uvs, tlas,
-                                     blas, instances, rd, 0, tri_colors));
+                                     blas, instances, rd, 0, tri_colors,
+                                     tri_normals));
           }
         }
         color = Mul(color, 1.0f / float(spp));
@@ -4361,7 +4402,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           Bounds *bounds, RTPreviewStats *stats,
                           bool purpose_cull = false,
                           TriMat *out_job_mat = nullptr, float opacity = 1.0f,
-                          bool want_colors = false, FVec *tri_colors = nullptr) {
+                          bool want_colors = false, FVec *tri_colors = nullptr,
+                          bool want_normals = false, FVec *tri_normals = nullptr) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
@@ -4471,6 +4513,31 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     }
   };
 
+  // Authored normals for smooth shading (`-smooth`). Stored per corner in the
+  // job's frame (world for flat, prototype-local for instanced — `world` is
+  // identity there), transformed at hit. Falls back to the geometric normal when
+  // absent. Interpolation inferred from size (vertex / faceVarying).
+  std::vector<float> nrm;
+  int nrm_mode = 0;  // 0=none, 1=vertex, 2=faceVarying
+  if (want_normals) {
+    nrm = ReadFloatArrayLazy(prim, "normals", time);
+    if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
+    const size_t nn = nrm.size() / 3;
+    if (nn == npts) nrm_mode = 1;
+    else if (nn == indices.size()) nrm_mode = 2;
+  }
+  // World-space normal for face-vertex slot `fv` (point index `pi`); `geom` is the
+  // face's geometric normal (already in the job frame) used as the fallback.
+  auto norm_at = [&](size_t fv, int32_t pi, const Vec3 &geom) -> Vec3 {
+    if (!nrm_mode) return geom;
+    size_t ni = nrm_mode == 1 ? size_t(pi) : fv;
+    if (ni * 3 + 2 >= nrm.size()) return geom;
+    Vec3 ln{nrm[ni * 3 + 0], nrm[ni * 3 + 1], nrm[ni * 3 + 2]};
+    Vec3 wn = TransformVector(world, ln);  // job-frame (world for flat path)
+    float len = Length(wn);
+    return len > 1.0e-12f ? Mul(wn, 1.0f / len) : geom;
+  };
+
   // Reserve from the exact triangle-fan estimate. StreamMeshJobs gives each mesh
   // its OWN thread-local buffers (one mesh's worth), so a single up-front reserve
   // replaces the per-triangle geometric reallocations (the TriInfo realloc churn
@@ -4485,6 +4552,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     tris->reserve(tris->size() + tri_estimate);
     if (want_uvs) tri_uvs->reserve(tri_uvs->size() + tri_estimate * 6);
     if (want_colors) tri_colors->reserve(tri_colors->size() + tri_estimate * 12);
+    if (want_normals) tri_normals->reserve(tri_normals->size() + tri_estimate * 9);
   }
 
   size_t cursor = 0;
@@ -4580,6 +4648,15 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         tri_colors->insert(tri_colors->end(),
                            {c0[0], c0[1], c0[2], c0[3], c1[0], c1[1], c1[2],
                             c1[3], c2[0], c2[1], c2[2], c2[3]});
+      }
+      if (want_normals) {
+        // Per-corner normals (9 floats/tri), fan order matching i0/i1/i2.
+        Vec3 n0 = norm_at(cursor + 0, i0, n);
+        Vec3 n1 = norm_at(cursor + size_t(k), i1, n);
+        Vec3 n2 = norm_at(cursor + size_t(k + 1), i2, n);
+        tri_normals->insert(tri_normals->end(),
+                            {n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y,
+                             n2.z});
       }
       stats->triangles++;
       if (visible_for_fit) {
@@ -5309,6 +5386,7 @@ struct RenderContext {
   std::vector<Texture> textures;  // diffuse textures referenced by tris[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   std::vector<float> tri_colors;  // 12 floats/tri (per-corner RGBA); empty if none
+  std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
   Bounds bounds;
   RTPreviewStats stats;
   lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
@@ -5892,12 +5970,14 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
-                    bool want_colors = false, FVec *out_tri_colors = nullptr) {
+                    bool want_colors = false, FVec *out_tri_colors = nullptr,
+                    bool want_normals = false, FVec *out_tri_normals = nullptr) {
   struct R {
     FVec v;
     TVec t;
     FVec uv;
     FVec col;  // per-corner RGBA (12 floats/tri) when want_colors
+    FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
     Bounds b;
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
@@ -5925,7 +6005,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                              job.occlusion, job.occ_tex, job.uv_xform, want_uvs,
                              &r.v, &r.t,
                              &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
-                             job.opacity, want_colors, &r.col);
+                             job.opacity, want_colors, &r.col, want_normals,
+                             &r.nrm);
       }
     } catch (const std::bad_alloc &) {
       oom.store(true, std::memory_order_relaxed);
@@ -5967,12 +6048,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
       if (want_colors && out_tri_colors)
         out_tri_colors->insert(out_tri_colors->end(), r.col.begin(), r.col.end());
+      if (want_normals && out_tri_normals)
+        out_tri_normals->insert(out_tri_normals->end(), r.nrm.begin(),
+                                r.nrm.end());
       MergeBounds(out_bounds, r.b);
       MergeStats(out_stats, r.s);
       FVec().swap(r.v);
       TVec().swap(r.t);
       FVec().swap(r.uv);
       FVec().swap(r.col);
+      FVec().swap(r.nrm);
     }
   } catch (const std::bad_alloc &) {
     return false;
@@ -6015,6 +6100,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.textures.clear();
   ctx.tri_uvs.clear();
   ctx.tri_colors.clear();
+  ctx.tri_normals.clear();
   ctx.blas.clear();
   ctx.instances.clear();
   ctx.use_tlas = false;
@@ -6084,8 +6170,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
                         &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
-                        /*out_mat_table=*/nullptr, want_colors,
-                        &ctx.tri_colors)) {
+                        /*out_mat_table=*/nullptr, want_colors, &ctx.tri_colors,
+                        opt.smooth, &ctx.tri_normals)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -6171,7 +6257,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       base_jobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
       opt.threads, &ctx.blas[0].vertices, &ctx.blas[0].tris,
       &ctx.blas[0].tri_uvs, &local_bounds[0], &ctx.stats,
-      &ctx.blas[0].mat_table, want_colors, &ctx.blas[0].tri_colors);
+      &ctx.blas[0].mat_table, want_colors, &ctx.blas[0].tri_colors, opt.smooth,
+      &ctx.blas[0].tri_normals);
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
@@ -6181,7 +6268,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
                                &ctx.blas[b].mat_table, want_colors,
-                               &ctx.blas[b].tri_colors);
+                               &ctx.blas[b].tri_colors, opt.smooth,
+                               &ctx.blas[b].tri_normals);
   }
   if (!stream_ok) {
     std::cerr << "Aborting: triangle stream exceeded memory cap "
@@ -6445,7 +6533,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.use_tlas ? ctx.tlas : nullptr,
       ctx.use_tlas ? &ctx.blas : nullptr,
       ctx.use_tlas ? &ctx.instances : nullptr,
-      ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors);
+      ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors,
+      ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
