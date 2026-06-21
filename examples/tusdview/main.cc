@@ -47,6 +47,8 @@ int main(int argc, char** argv) {
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool useNextLoader = false;             // --next: next loader + flat GL preview
+  bool noCull = false;                     // --no-cull: disable frustum culling
+  float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
@@ -91,6 +93,10 @@ int main(int argc, char** argv) {
       headless = true;
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
+    } else if (std::strcmp(argv[i], "--no-cull") == 0) {
+      noCull = true;
+    } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
+      camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -325,6 +331,8 @@ int main(int argc, char** argv) {
     }
   }
   app.setUseNextLoader(useNextLoader);
+  app.setCullEnabled(!noCull);
+  app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);

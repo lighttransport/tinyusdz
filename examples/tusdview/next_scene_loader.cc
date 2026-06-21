@@ -4,6 +4,7 @@
 
 #include "next_scene_loader.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -313,6 +314,18 @@ void EmitInstancedProto(const tnext::Stage& stage,
     DrawMeshCPU dm;
     matrix4d mesh_rel;
     if (!BuildProtoMesh(stage, conv, mp, inv_proto, time, &dm, &mesh_rel)) continue;
+    // Prototype-LOCAL bbox over the (untransformed) vertices, for per-instance
+    // frustum culling + CUDA instance world-AABBs (each instance transforms it).
+    if (!dm.vertices.empty()) {
+      float lo[3] = {dm.vertices[0].px, dm.vertices[0].py, dm.vertices[0].pz};
+      float hi[3] = {lo[0], lo[1], lo[2]};
+      for (const DrawVertex& v : dm.vertices) {
+        lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+        lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+        lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+      }
+      for (int k = 0; k < 3; ++k) { dm.protoAabbMin[k] = lo[k]; dm.protoAabbMax[k] = hi[k]; }
+    }
     dm.instanceXforms.reserve(placements.size() * 12);
     if (haveColors) dm.instanceColors.reserve(placements.size() * 3);
     for (size_t k = 0; k < placements.size(); ++k) {
