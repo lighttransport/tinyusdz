@@ -100,6 +100,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uDepthScale_ = glGetUniformLocation(program_, "uDepthScale");
   uSceneMin_ = glGetUniformLocation(program_, "uSceneMin");
   uSceneExtent_ = glGetUniformLocation(program_, "uSceneExtent");
+  uMeshId_ = glGetUniformLocation(program_, "uMeshId");
+  uDoubleSided_ = glGetUniformLocation(program_, "uDoubleSided");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -684,6 +686,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1f(uDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(uSceneMin_, 1, params.sceneMin);
     glUniform3fv(uSceneExtent_, 1, params.sceneExtent);
+    glUniform1i(uMeshId_, static_cast<int>(mi));
+    glUniform1i(uDoubleSided_, mesh.doubleSided ? 1 : 0);
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
     if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);

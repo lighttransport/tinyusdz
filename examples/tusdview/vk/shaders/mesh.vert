@@ -28,6 +28,8 @@ layout(push_constant) uniform PushConstants {
   vec4 sceneExtent;
   int matId;
   int renderMode;
+  int flags;
+  int meshId;
 } pc;
 
 layout(location = 0) out vec3 vNormalW;
