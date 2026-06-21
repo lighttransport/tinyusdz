@@ -9,6 +9,7 @@
 
 #include "core/prim.hh"
 #include "gizmo_build.hh"
+#include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
 #include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
@@ -545,6 +546,7 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
       ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
       ImGui::MenuItem("Skeleton", nullptr, &showSkeleton_);
+      ImGui::MenuItem("Frustum culling", nullptr, &cullEnabled_);
       ImGui::Separator();
       if (ImGui::BeginMenu("Purpose")) {
         ImGui::MenuItem("default", nullptr, &showPurposeDefault_);
@@ -2084,6 +2086,16 @@ void Gui::drawStats() {
       ImGui::Text("Vertices: %zu", totalVerts);
     }
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
+    // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
+    // culling; with culling disabled these equal the totals.
+    ImGui::Text("Visible meshes: %zu / %zu", statVisibleMeshes_,
+                draw_->meshes.size());
+    if (statTotalInstances_ > 0) {
+      ImGui::Text("Visible instances: %zu / %zu", statVisibleInstances_,
+                  statTotalInstances_);
+    }
+    ImGui::Text("Drawn triangles: %zu", statDrawnTriangles_);
+    ImGui::Text("Draw calls: %zu", statDrawCalls_);
     ImGui::Text("Materials: %zu", draw_->materials.size());
     ImGui::Text("Textures: %zu", draw_->textures.size());
     if (draw_->hasBounds) {
@@ -2275,8 +2287,52 @@ void Gui::buildViewVisibilityMask() {
   viewVisible_.clear();
   if (!draw_ || draw_->meshes.empty()) return;
   viewVisible_.resize(draw_->meshes.size(), uint8_t{1});
+
+  // Per-mesh frustum culling. Extract the frustum from the GL-convention P*V
+  // (Z in [-1,1]) regardless of backend: light3d's Gribb-Hartmann near-plane
+  // formula assumes that range, and the side/far planes are convention-neutral.
+  // Instanced prototypes carry a scene-spanning union AABB so they rarely cull
+  // here -- per-instance culling (A4) handles those; static-batched non-instanced
+  // meshes have tight world AABBs and cull well.
+  const bool doCull = cullEnabled_ && cam_;
+  light3d::Frustum fr;
+  if (doCull) {
+    const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+    fr = light3d::Frustum::fromViewProjection(vp);
+  }
+  statVisibleMeshes_ = 0;
+  statTotalInstances_ = 0;
+  statVisibleInstances_ = 0;
+  statDrawnTriangles_ = 0;
+  statDrawCalls_ = 0;
   for (size_t i = 0; i < draw_->meshes.size(); ++i) {
-    viewVisible_[i] = meshVisibleForView(i) ? uint8_t{1} : uint8_t{0};
+    const DrawMeshCPU& m = draw_->meshes[i];
+    const size_t ninst = m.instanceCount();
+    statTotalInstances_ += ninst;
+    bool vis = meshVisibleForView(i);
+    if (vis && doCull) {
+      const light3d::Vec3 mn{m.aabbMin[0], m.aabbMin[1], m.aabbMin[2]};
+      const light3d::Vec3 mx{m.aabbMax[0], m.aabbMax[1], m.aabbMax[2]};
+      if (fr.testAABB(mn, mx) == light3d::CullResult::Outside) vis = false;
+    }
+    viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    if (!vis) continue;
+    ++statVisibleMeshes_;
+    // Triangle count from submesh metadata: DrawMeshCPU.indices is freed after the
+    // GPU upload, but submeshes (small) survive.
+    size_t tris = 0;
+    for (const DrawSubmesh& s : m.submeshes) tris += s.indexCount / 3;
+    if (ninst > 0) {
+      // Baseline: all instances of a visible prototype. The per-instance cull
+      // pass (A4) overwrites statVisibleInstances_/statDrawnTriangles_ with the
+      // culled counts.
+      statVisibleInstances_ += ninst;
+      statDrawnTriangles_ += tris * ninst;
+      ++statDrawCalls_;  // one instanced draw per prototype mesh
+    } else {
+      statDrawnTriangles_ += tris;
+      statDrawCalls_ += m.submeshes.size();
+    }
   }
 }
 

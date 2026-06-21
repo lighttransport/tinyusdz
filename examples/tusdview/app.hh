@@ -84,6 +84,8 @@ class App
   // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
+  void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
+  void setCamDolly(float f) { camDolly_ = f; }
 
   // Request the Vulkan ray-tracing technique at startup (honored only when the
   // device supports it; otherwise the viewer stays on rasterization).
@@ -186,6 +188,7 @@ class App
   DrawScene draw_;
   LoadOptions loadOpts_;
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
+  float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
   Gui gui_;
   AdaptiveTessellator tess_;      // adaptive re-tessellation for parametric prims

@@ -112,6 +112,12 @@ struct DrawMeshCPU {
   std::vector<float> skinnedHelperPoints;
   float aabbMin[3]{0, 0, 0};
   float aabbMax[3]{0, 0, 0};
+  // Prototype-LOCAL bbox over `vertices` (object space, before any instance
+  // transform). For instanced meshes aabbMin/Max is the union over all instance
+  // placements (scene-spanning); this local box is what per-instance frustum
+  // culling (raster) and the CUDA instance world-AABBs transform per instance.
+  float protoAabbMin[3]{0, 0, 0};
+  float protoAabbMax[3]{0, 0, 0};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
   // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =
