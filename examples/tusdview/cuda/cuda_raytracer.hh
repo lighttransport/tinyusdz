@@ -74,6 +74,7 @@ class CudaRayTracer {
   uintptr_t dUV_{0};         // float[6] per-vertex uv per tri (uv viz)
   uintptr_t dUV1_{0};        // float[6] per-vertex uv set 1 per tri (multi-UV AOV)
   uintptr_t dInfl_{0};       // float[3] per-vertex blendshape influence per tri
+  uintptr_t dFace_{0};       // int source USD face id per tri (source-face-id AOV)
   uintptr_t dNodes_{0};      // BVH nodes
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_

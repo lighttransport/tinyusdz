@@ -100,6 +100,9 @@ class VulkanRenderer final : public Renderer {
     VkDeviceAddress vtxColorAddr{0};
     VkDeviceAddress uv1Addr{0};              // uv1 SSBO address (RT multi-UV AOV)
     VkDeviceAddress inflAddr{0};             // influence SSBO address (RT influence AOV)
+    VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
+    VkDeviceMemory faceMem{VK_NULL_HANDLE};
+    VkDeviceAddress faceAddr{0};             // RT source-face-id AOV
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide

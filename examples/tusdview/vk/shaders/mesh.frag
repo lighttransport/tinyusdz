@@ -109,6 +109,15 @@ void main() {
       outColor = vec4(idColor(tile), 1.0);
       return;
     }
+    if (pc.renderMode == 33) {  // texel density (UV/world area ratio, view-independent)
+      vec2 du = dFdx(vUV), dv = dFdy(vUV);
+      float uvArea = abs(du.x * dv.y - dv.x * du.y);
+      float worldArea = length(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+      float td = sqrt(uvArea / max(worldArea, 1e-12));
+      float c = clamp(td * pc.camPos.w * 0.5, 0.0, 1.0);
+      outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0);
+      return;
+    }
     if (pc.renderMode == 31) { outColor = vec4(fract(vUV1), 0.0, 1.0); return; }  // uv set 1
     if (pc.renderMode == 32) {  // blendshape influence (normalize by ~10% scene extent)
       float c = clamp(vMorphInfl / max(pc.camPos.w * 0.1, 1e-4), 0.0, 1.0);

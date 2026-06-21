@@ -19,6 +19,7 @@ layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
 layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
+layout(buffer_reference, scalar) readonly buffer Faces { uint  fc[]; }; // face id per triangle
 
 struct MeshDesc {
   uint64_t vtxAddr;       // device address of the vertex buffer (DrawVertex[])
@@ -26,6 +27,7 @@ struct MeshDesc {
   uint64_t vtxColorAddr;  // per-vertex displayColor (vec3[]); 0 = none
   uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
+  uint64_t faceAddr;      // per-triangle source USD face id (uint[]); 0 = none
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
   uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
                              // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
@@ -245,6 +247,20 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       int tile = int(floor(uvh.x)) + 10 * int(floor(uvh.y));
       outc = idColor(uint(max(tile, 0)));
+    } else if (rmode == 33) {  // texel density (per-triangle UV/world area ratio)
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec2 t0 = fetchUV(vb, i0), t1 = fetchUV(vb, i1), t2 = fetchUV(vb, i2);
+      float worldArea = length(cross(wp1 - wp0, wp2 - wp0));
+      vec2 d1 = t1 - t0, d2 = t2 - t0;
+      float uvArea = abs(d1.x * d2.y - d2.x * d1.y);
+      float td = sqrt(uvArea / max(worldArea, 1e-12));
+      float c = clamp(td * pc.lightDir.w * 0.5, 0.0, 1.0);
+      outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
+    } else if (rmode == 34) {  // source USD face id
+      outc = (md.faceAddr != 0ul) ? idColor(Faces(md.faceAddr).fc[uint(prim)])
+                                  : vec3(0.45);
     } else if (rmode == 31) {  // uv set 1 (multi-UV)
       if (md.uv1Addr != 0ul) {
         UV1s ub = UV1s(md.uv1Addr);

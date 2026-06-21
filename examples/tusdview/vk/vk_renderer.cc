@@ -100,13 +100,14 @@ struct MeshDescGPU {
   uint64_t vtxColorAddr;     // per-vertex displayColor (vec3[]); 0 = none
   uint64_t uv1Addr;          // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;         // per-vertex blendshape influence (float[]); 0 = none
+  uint64_t faceAddr;         // per-triangle source USD face id (uint[]); 0 = none
   uint32_t matId;
   uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 96, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 104, "MeshDescGPU must be tightly packed (scalar)");
 
 // Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
 // TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
@@ -1540,6 +1541,8 @@ void VulkanRenderer::destroyScene() {
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
     if (m.vtxColorBuf) vkDestroyBuffer(device_, m.vtxColorBuf, nullptr);
     if (m.vtxColorMem) vkFreeMemory(device_, m.vtxColorMem, nullptr);
+    if (m.faceBuf) vkDestroyBuffer(device_, m.faceBuf, nullptr);
+    if (m.faceMem) vkFreeMemory(device_, m.faceMem, nullptr);
     if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
@@ -1855,6 +1858,14 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
     if (gm.uv1Vbo) gm.uv1Addr = bufferDeviceAddress(gm.uv1Vbo);
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
+    // Per-triangle source USD face id (uint[]) as a device-address SSBO.
+    if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
+      if (createHostBuffer(sm.sourceFaceId.size() * sizeof(uint32_t),
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.sourceFaceId.data(),
+                           &gm.faceBuf, &gm.faceMem, /*deviceAddress=*/true)) {
+        gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
+      }
+    }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
   meshes_.push_back(gm);
@@ -1971,6 +1982,7 @@ void VulkanRenderer::rebuildTlas() {
     d.vtxColorAddr = m.vtxColorAddr;
     d.uv1Addr = m.uv1Addr;
     d.inflAddr = m.inflAddr;
+    d.faceAddr = m.faceAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose

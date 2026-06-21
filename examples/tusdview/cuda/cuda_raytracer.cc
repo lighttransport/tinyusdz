@@ -139,7 +139,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const float* matPbr, int numMats,
                                  const float* uvs, const float* uvs1,
-                                 const float* infls, const Node* nodes,
+                                 const float* infls, const int* faces,
+                                 const Node* nodes,
                                  unsigned char* out, int W, int H, Cam cam){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
@@ -259,6 +260,18 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       int tile=int(floorf(uu))+10*int(floorf(vv2));
       outc=idColor(tile);
+    } else if (rmode==33){  // texel density (per-triangle UV/world area ratio)
+      const float* tv=&tris[ht*9]; const float* uv=&uvs[ht*6];
+      F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
+      F3 cr=cross3(sub(q1,q0),sub(q2,q0));
+      float worldArea=sqrtf(dot3(cr,cr));
+      float d1x=uv[2]-uv[0], d1y=uv[3]-uv[1], d2x=uv[4]-uv[0], d2y=uv[5]-uv[1];
+      float uvArea=fabsf(d1x*d2y-d2x*d1y);
+      float td=sqrtf(uvArea/fmaxf(worldArea,1e-12f));
+      float c=fminf(fmaxf(td*cam.lightDir[3]*0.5f,0.f),1.f);
+      outc=mk(c, 1.f-fabsf(c-0.5f)*2.f, 1.f-c);
+    } else if (rmode==34){  // source USD face id
+      outc=idColor(faces[ht]);
     } else if (rmode==31){  // uv set 1 (multi-UV)
       const float* uv=&uvs1[ht*6];
       float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
@@ -355,7 +368,7 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dNodes_); F(dOut_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dNodes_); F(dOut_);
   numMats_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
 }
@@ -481,12 +494,12 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   // 1 material id (for material-id visualization).
   std::vector<float> tris, nrms, cols, uvs, uvs1, infls;
   std::vector<uint8_t> geo;
-  std::vector<int> mats;
+  std::vector<int> mats, faces;
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
 
   auto emitTri = [&](const float wp[9], const float wn[9], const float wc[9],
                      const float wuv[6], const float wuv1[6], const float winfl[3],
-                     uint8_t g, int matId) {
+                     uint8_t g, int matId, int faceId) {
     tris.insert(tris.end(), wp, wp + 9);
     nrms.insert(nrms.end(), wn, wn + 9);
     cols.insert(cols.end(), wc, wc + 9);
@@ -495,6 +508,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     infls.insert(infls.end(), winfl, winfl + 3);
     geo.push_back(g);
     mats.push_back(matId);
+    faces.push_back(faceId);
   };
 
   for (const DrawMeshCPU& m : scene.meshes) {
@@ -503,6 +517,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
     const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
     const bool hasInfl = m.morphInfluence.size() == m.vertices.size();
+    const bool hasFace = m.sourceFaceId.size() == m.indices.size() / 3;
     // geo byte: bit0 = geometricNormal, bits1-2 = USD purpose id (Purpose AOV).
     const uint8_t g = static_cast<uint8_t>((m.geometricNormal ? 1 : 0) |
                                            ((PurposeId(m.purpose) & 3) << 1) |
@@ -578,7 +593,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
           wc[k * 3 + 2] = curTint[2] * dc[2];
         }
         emitTri(wp, wn, wc, wuv, wuv1, winfl, g,
-                submeshMatId(static_cast<uint32_t>(t)));
+                submeshMatId(static_cast<uint32_t>(t)),
+                hasFace ? static_cast<int>(m.sourceFaceId[t / 3]) : -1);
       }
       if (truncated_) break;
     }
@@ -606,7 +622,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   std::vector<float> rt(triCount_ * 9), rn(triCount_ * 9), rc(triCount_ * 9),
       ruv(triCount_ * 6), ruv1(triCount_ * 6), rinfl(triCount_ * 3);
   std::vector<uint8_t> rg(triCount_);
-  std::vector<int> rm(triCount_);
+  std::vector<int> rm(triCount_), rf(triCount_);
   for (size_t i = 0; i < triCount_; ++i) {
     int s = idx[i];
     std::memcpy(&rt[i * 9], &tris[s * 9], 9 * sizeof(float));
@@ -617,6 +633,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     std::memcpy(&rinfl[i * 3], &infls[s * 3], 3 * sizeof(float));
     rg[i] = geo[s];
     rm[i] = mats[s];
+    rf[i] = faces[s];
   }
 
   // Upload.
@@ -632,6 +649,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   if (!up(rc.data(), rc.size() * sizeof(float), &dCols_)) return false;
   if (!up(rg.data(), rg.size(), &dGeo_)) return false;
   if (!up(rm.data(), rm.size() * sizeof(int), &dMat_)) return false;
+  if (!up(rf.data(), rf.size() * sizeof(int), &dFace_)) return false;
   if (!up(ruv.data(), ruv.size() * sizeof(float), &dUV_)) return false;
   if (!up(ruv1.data(), ruv1.size() * sizeof(float), &dUV1_)) return false;
   if (!up(rinfl.data(), rinfl.size() * sizeof(float), &dInfl_)) return false;
@@ -679,11 +697,11 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dNo = dNodes_,
-              dO = dOut_;
+              dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
+              dNo = dNodes_, dO = dOut_;
   int numMats = numMats_;
-  void* args[] = {&dT, &dN,  &dC,  &dG, &dM, &dMP, &numMats, &dU,
-                  &dU1, &dIn, &dNo, &dO, &w,  &h,   &cam};
+  void* args[] = {&dT,  &dN, &dC,  &dG, &dM, &dMP, &numMats, &dU, &dU1,
+                  &dIn, &dF, &dNo, &dO, &w,  &h,   &cam};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                        nullptr, args, nullptr),

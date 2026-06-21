@@ -346,6 +346,9 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // Expose secondary UV sets (e.g. primvars:st1) for the multi-UV debug AOV even
   // when no material shader references them.
   mc.extract_all_texcoords = true;
+  // Keep per-face triangle counts so each triangle can be mapped back to its
+  // source USD face (SourceFaceId debug AOV).
+  mc.keep_triangulation_intermediates = true;
 
   // Keep texels 8-bit (avoids float-image conversion) and let UDIM collapse to
   // an atlas so the renderer never sees a raw UDIM texture.

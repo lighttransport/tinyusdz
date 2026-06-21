@@ -662,12 +662,26 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
 
   // --- Submeshes (group triangles by material) ---
   const size_t triCount = dm.indices.size() / 3;
+
+  // Per-triangle source USD face id (pre-grouping order): expand the converter's
+  // per-original-face triangle counts. Triangulation keeps face order, so the
+  // t-th triangle belongs to face triFacePre[t].
+  std::vector<uint32_t> triFacePre;
+  if (mesh.is_triangulated() && !mesh.triangulatedFaceCounts.empty()) {
+    triFacePre.reserve(triCount);
+    for (uint32_t f = 0; f < mesh.triangulatedFaceCounts.size(); ++f)
+      for (uint32_t k = 0; k < mesh.triangulatedFaceCounts[f]; ++k)
+        triFacePre.push_back(f);
+  }
+  if (triFacePre.size() != triCount) triFacePre.clear();  // mismatch -> disable
+
   if (mesh.material_subsetMap.empty()) {
     DrawSubmesh sub;
     sub.indexOffset = 0;
     sub.indexCount = static_cast<uint32_t>(dm.indices.size());
     sub.materialId = mesh.material_id;
     dm.submeshes.push_back(sub);
+    dm.sourceFaceId = std::move(triFacePre);  // no reorder
   } else {
     std::vector<int> triMat(triCount, mesh.material_id);
     for (const auto& kv : mesh.material_subsetMap) {
@@ -678,15 +692,19 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
         }
       }
     }
-    // Bucket triangles by material id, preserving order within a material.
+    // Bucket triangles by material id, preserving order within a material. Bucket
+    // the source-face id in lockstep so it stays parallel to the grouped tris.
     std::map<int, std::vector<uint32_t>> buckets;
+    std::map<int, std::vector<uint32_t>> faceBuckets;
     for (size_t t = 0; t < triCount; ++t) {
       auto& bucket = buckets[triMat[t]];
       bucket.push_back(dm.indices[t * 3 + 0]);
       bucket.push_back(dm.indices[t * 3 + 1]);
       bucket.push_back(dm.indices[t * 3 + 2]);
+      if (!triFacePre.empty()) faceBuckets[triMat[t]].push_back(triFacePre[t]);
     }
     std::vector<uint32_t> grouped;
+    std::vector<uint32_t> groupedFace;
     grouped.reserve(dm.indices.size());
     for (auto& kv : buckets) {
       DrawSubmesh sub;
@@ -694,9 +712,14 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
       sub.indexCount = static_cast<uint32_t>(kv.second.size());
       sub.materialId = kv.first;
       grouped.insert(grouped.end(), kv.second.begin(), kv.second.end());
+      if (!triFacePre.empty()) {
+        const auto& fb = faceBuckets[kv.first];
+        groupedFace.insert(groupedFace.end(), fb.begin(), fb.end());
+      }
       dm.submeshes.push_back(sub);
     }
     dm.indices.swap(grouped);
+    dm.sourceFaceId = std::move(groupedFace);
   }
 
   // World left as identity; PlaceDrawMesh applies the node transform.
