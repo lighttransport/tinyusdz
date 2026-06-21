@@ -23,7 +23,8 @@ struct MeshDesc {
   uint64_t idxAddr;       // device address of the index buffer (uint[])
   uint64_t vtxColorAddr;  // per-vertex displayColor (vec3[]); 0 = none
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
-  uint     geometricNormal;  // 1 = no authored normals -> geometric face normal
+  uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
+                             // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
   vec4     nrm0;          // normal matrix columns (xyz used)
   vec4     nrm1;
   vec4     nrm2;
@@ -124,7 +125,7 @@ void main() {
     // interpolated vertex normal transformed by the normal matrix (non-instanced)
     // or the instance's object->world 3x3 (instanced).
     vec3 N;
-    if (md.geometricNormal != 0u) {
+    if ((md.geometricNormal & 1u) != 0u) {
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
       vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
       vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
@@ -140,7 +141,7 @@ void main() {
     // toward the ray so inward-wound / back-facing triangles still light correctly
     // (mirrors the raster's gl_FrontFacing flip). Non-instanced authored normals are
     // left as-authored (matches the material shader, which does not flip them).
-    bool authoredNonInstanced = (ii.useMaterial != 0u) && (md.geometricNormal == 0u);
+    bool authoredNonInstanced = (ii.useMaterial != 0u) && ((md.geometricNormal & 1u) == 0u);
     if (!authoredNonInstanced && dot(N, dir) > 0.0) N = -N;
 
     // Base color: material (non-instanced) or per-instance tint (instanced), times
@@ -230,7 +231,12 @@ void main() {
     } else if (rmode == 16) {  // mesh id
       outc = idColor(ii.meshId);
     } else if (rmode == 19) {  // missing normals
-      outc = (md.geometricNormal != 0u) ? vec3(0.95, 0.1, 0.85) : vec3(0.2);
+      outc = ((md.geometricNormal & 1u) != 0u) ? vec3(0.95, 0.1, 0.85) : vec3(0.2);
+    } else if (rmode == 18) {  // purpose (bits 1-2 of geometricNormal)
+      uint p = (md.geometricNormal >> 1) & 3u;
+      outc = (p == 1u) ? vec3(0.2, 0.8, 0.3)
+           : (p == 2u) ? vec3(0.2, 0.45, 0.95)
+           : (p == 3u) ? vec3(0.95, 0.75, 0.1) : vec3(0.5);
     }
   }
 
