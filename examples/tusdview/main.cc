@@ -147,6 +147,10 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "tangent")) wantMode = tusdview::RenderMode::Tangent;
       else if (!std::strcmp(m, "uv-checker")) wantMode = tusdview::RenderMode::UvChecker;
       else if (!std::strcmp(m, "ao")) wantMode = tusdview::RenderMode::AmbientOcclusion;
+      else if (!std::strcmp(m, "curvature")) wantMode = tusdview::RenderMode::Curvature;
+      else if (!std::strcmp(m, "instance-id")) wantMode = tusdview::RenderMode::InstanceId;
+      else if (!std::strcmp(m, "bvh-heatmap")) wantMode = tusdview::RenderMode::BvhHeatmap;
+      else if (!std::strcmp(m, "soft-shadow")) wantMode = tusdview::RenderMode::SoftShadow;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;

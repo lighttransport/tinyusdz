@@ -422,7 +422,11 @@ void Gui::drawDockspaceAndMenu() {
             {"Double-sided", RenderMode::DoubleSided},
             {"Skin weights", RenderMode::SkinWeights},
             {"Tangent", RenderMode::Tangent},
+            {"Curvature", RenderMode::Curvature},
+            {"Instance ID", RenderMode::InstanceId},
             {"Ambient occlusion (RT)", RenderMode::AmbientOcclusion},
+            {"Soft shadow (RT)", RenderMode::SoftShadow},
+            {"BVH heatmap (CUDA)", RenderMode::BvhHeatmap},
         };
         for (const AovItem& a : kAovs)
           if (ImGui::MenuItem(a.label, nullptr, mode_ == a.m)) mode_ = a.m;
