@@ -135,6 +135,10 @@ struct DrawScene {
   float aabbMax[3]{1, 1, 1};
   bool hasBounds{false};
 
+  // Stage up axis ("Y" or "Z"); drives camera orbit + grid orientation. Set by
+  // the loader (the Tydra path uses RenderScene.meta.upAxis directly instead).
+  std::string upAxis{"Y"};
+
   // Diagnostics surfaced in the GUI (skipped meshes/textures, UDIM, etc.)
   std::vector<std::string> skipped;
   size_t triangleCount{0};

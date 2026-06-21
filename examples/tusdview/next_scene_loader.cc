@@ -218,6 +218,27 @@ void GatherMeshPrims(const tnext::UsdPrim& root,
   for (const tnext::UsdPrim& c : root.GetChildren()) GatherMeshPrims(c, out);
 }
 
+// Resolve a prim's inherited USD `purpose` (default/render/proxy/guide): the
+// nearest authored, non-"default" purpose walking self->ancestors, else
+// "default". Matches mesh_build.cc ResolveInheritedPurpose for the next stage.
+std::string ResolveNextPurpose(const tnext::Stage& stage, const std::string& abs) {
+  std::string p = abs;
+  while (!p.empty()) {
+    tnext::UsdPrim prim = stage.GetPrimAtPath(p);
+    if (prim.IsValid()) {
+      if (const tnext::Value* v = prim.GetPropertyValue("purpose")) {
+        if (const std::string* t = v->as_token()) {
+          if (!t->empty() && *t != "default" && *t != "inherited") return *t;
+        }
+      }
+    }
+    if (p == "/") break;
+    const size_t slash = p.find_last_of('/');
+    p = (slash == std::string::npos || slash == 0) ? "/" : p.substr(0, slash);
+  }
+  return "default";
+}
+
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
@@ -229,6 +250,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, const tydn::RenderScene& scene,
   if (it == scene.mesh_by_path.end()) return false;
   const tydn::RenderMesh& rm = scene.meshes[static_cast<size_t>(it->second)];
   if (!FillFlatGeometry(rm, dm)) return false;
+  dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor -> per-draw constant (average of the mesh's colors).
   if (!rm.colors.empty()) {
     std::vector<float> cols = rm.colors.flatten();
@@ -279,6 +301,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     return false;
   }
   const tydn::RenderScene& scene = res.scene;
+  draw->upAxis = (scene.up_axis == tydn::RenderScene::UpAxis::Z) ? "Z" : "Y";
 
   draw->meshes.clear();
   draw->materials.clear();
@@ -491,6 +514,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
     DrawMeshCPU dm;
     if (!FillFlatGeometry(m, &dm)) continue;
+    dm.purpose = ResolveNextPurpose(stage, node.prim_path);
     // node.world_transform.m is row-major float[16]; the row->column storage swap
     // + geometric transpose cancel, so copy element-wise (see Mat4dToColMajor).
     for (int k = 0; k < 16; ++k) dm.world[k] = node.world_transform.m[k];
@@ -523,11 +547,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     draw->hasBounds = true;
   }
 
-  LOGI("next: '%s' -> %zu draws, %lld instances, %zu unique tris (%lld effective), "
-       "instXform VRAM ~%.2f GB%s",
-       path.c_str(), draw->meshes.size(), instTotal, draw->triangleCount,
-       effectiveTris, double(instTotal) * 48.0 / 1e9,  // 3x4 = 48 B/instance
-       draw->truncated ? " (truncated)" : "");
+  // Purpose breakdown (so the GUI's purpose toggles have something to hide).
+  size_t nGuide = 0, nProxy = 0, nRender = 0;
+  for (const DrawMeshCPU& dm : draw->meshes) {
+    if (dm.purpose == "guide") ++nGuide;
+    else if (dm.purpose == "proxy") ++nProxy;
+    else if (dm.purpose == "render") ++nRender;
+  }
+  LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
+       "%zu unique tris (%lld effective), instXform VRAM ~%.2f GB, up=%s%s",
+       path.c_str(), draw->meshes.size(), nGuide, nProxy, nRender, instTotal,
+       draw->triangleCount, effectiveTris, double(instTotal) * 48.0 / 1e9,
+       draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
 
   if (draw->meshes.empty()) {
     if (err) *err = "next: no renderable mesh produced";
