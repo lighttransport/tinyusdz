@@ -2579,6 +2579,15 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
     overlayCopy_.clear();
   }
 
+  // Copy selection-highlight edge lines (Vulkan has no wireframe overlay pass).
+  if (params.highlightLines && params.highlightLineVertexCount > 0) {
+    highlightLineCopy_.assign(
+        params.highlightLines,
+        params.highlightLines + params.highlightLineVertexCount);
+  } else {
+    highlightLineCopy_.clear();
+  }
+
   // Copy the per-mesh visibility mask (same lifetime caveat; consumed in
   // present(), which records the draw commands after this call returns).
   if (params.meshVisible && params.meshVisibleCount > 0) {
@@ -2822,6 +2831,37 @@ void VulkanRenderer::present() {
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &overlayBuf_[frame_], &off);
         vkCmdDraw(cb, static_cast<uint32_t>(overlayCopy_.size()), 1, 0, 0);
+      }
+    }
+    // Selection-highlight edge lines (X-ray, always visible like GL's overlay).
+    if (!highlightLineCopy_.empty() && linePipelineNoDepth_) {
+      const VkDeviceSize bytes = highlightLineCopy_.size() * sizeof(HelperVertex);
+      if (bytes > highlightLineCap_[frame_]) {
+        if (highlightLineBuf_[frame_])
+          vkDestroyBuffer(device_, highlightLineBuf_[frame_], nullptr);
+        if (highlightLineMem_[frame_])
+          vkFreeMemory(device_, highlightLineMem_[frame_], nullptr);
+        highlightLineBuf_[frame_] = VK_NULL_HANDLE;
+        highlightLineMem_[frame_] = VK_NULL_HANDLE;
+        if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             highlightLineCopy_.data(), &highlightLineBuf_[frame_],
+                             &highlightLineMem_[frame_])) {
+          highlightLineCap_[frame_] = bytes;
+        }
+      } else {
+        void* p = nullptr;
+        vkMapMemory(device_, highlightLineMem_[frame_], 0, bytes, 0, &p);
+        std::memcpy(p, highlightLineCopy_.data(), static_cast<size_t>(bytes));
+        vkUnmapMemory(device_, highlightLineMem_[frame_]);
+      }
+      if (highlightLineBuf_[frame_]) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipelineNoDepth_);
+        const light3d::Mat4 VP = P * V;
+        vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(float) * 16, VP.m);
+        VkDeviceSize off = 0;
+        vkCmdBindVertexBuffers(cb, 0, 1, &highlightLineBuf_[frame_], &off);
+        vkCmdDraw(cb, static_cast<uint32_t>(highlightLineCopy_.size()), 1, 0, 0);
       }
     }
     vkCmdEndRenderPass(cb);
@@ -3084,6 +3124,10 @@ void VulkanRenderer::shutdown() {
     if (overlayMem_[i]) vkFreeMemory(device_, overlayMem_[i], nullptr);
     overlayBuf_[i] = VK_NULL_HANDLE;
     overlayMem_[i] = VK_NULL_HANDLE;
+    if (highlightLineBuf_[i]) vkDestroyBuffer(device_, highlightLineBuf_[i], nullptr);
+    if (highlightLineMem_[i]) vkFreeMemory(device_, highlightLineMem_[i], nullptr);
+    highlightLineBuf_[i] = VK_NULL_HANDLE;
+    highlightLineMem_[i] = VK_NULL_HANDLE;
   }
   if (offscreenPass_) { vkDestroyRenderPass(device_, offscreenPass_, nullptr); offscreenPass_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {

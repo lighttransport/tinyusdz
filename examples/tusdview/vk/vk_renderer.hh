@@ -229,6 +229,11 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory overlayMem_[kFramesInFlight]{};
   VkDeviceSize overlayCap_[kFramesInFlight]{};
   std::vector<HelperVertex> overlayCopy_;
+  // Selection-highlight per-frame edge-line buffers + copy (VK wireframe overlay).
+  VkBuffer highlightLineBuf_[kFramesInFlight]{};
+  VkDeviceMemory highlightLineMem_[kFramesInFlight]{};
+  VkDeviceSize highlightLineCap_[kFramesInFlight]{};
+  std::vector<HelperVertex> highlightLineCopy_;
   std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
 
   // Textures (base color). One combined-image-sampler descriptor per texture,

@@ -94,6 +94,11 @@ struct RenderFrameParams {
   // selected GeomSubset of highlightMeshIndex) instead of the whole mesh.
   const uint32_t* highlightIndices{nullptr};
   int highlightIndexCount{0};
+  // Selection highlight as world-space orange edge lines (2 verts/segment). The
+  // GL backend uses the polygon-mode overlay above; the Vulkan backend, which has
+  // no wireframe pass, draws these through its line pipeline instead.
+  const HelperVertex* highlightLines{nullptr};
+  int highlightLineVertexCount{0};
 
   // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested
   // so geometry occludes them.

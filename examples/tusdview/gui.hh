@@ -209,6 +209,9 @@ class Gui {
   // subset; highlightSubsetMesh_ is that parent mesh's draw index.
   std::vector<uint32_t> highlightSubsetIndices_;
   int highlightSubsetMesh_{-1};
+  // World-space orange edge lines of the highlighted triangles (whole mesh or
+  // subset) for the Vulkan backend's line-pipeline highlight.
+  std::vector<HelperVertex> highlightLinesData_;
   void rebuildSubsetHighlight();
 
   // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when

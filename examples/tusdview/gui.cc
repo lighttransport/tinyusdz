@@ -662,49 +662,90 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
   rebuildSubsetHighlight();
 }
 
-// When the selection is a GeomSubset (elementType=face), gather the triangle
-// vertex indices of its faces from the parent mesh's sourceFaceId, so the
-// highlight overlay outlines exactly the subset's faces.
+// Build the selection-highlight geometry: the GL backend draws a polygon-mode
+// wireframe (whole mesh via highlightMeshIndex, or a GeomSubset's triangles via
+// highlightSubsetIndices_); the Vulkan backend, lacking a wireframe pass, draws
+// world-space orange edge lines (highlightLinesData_). A selected GeomSubset
+// outlines exactly its faces (mapped through the mesh's sourceFaceId).
 void Gui::rebuildSubsetHighlight() {
   highlightSubsetIndices_.clear();
   highlightSubsetMesh_ = -1;
-  if (!draw_ || !selPrim_) return;
-  const auto* gs = selPrim_->as<tinyusdz::GeomSubset>();
-  if (!gs) return;
-  if (gs->elementType.get_value() != tinyusdz::GeomSubset::ElementType::Face) return;
+  highlightLinesData_.clear();
+  if (!draw_) return;
 
-  // Face indices the subset covers.
-  std::set<uint32_t> faces;
-  if (auto opt = gs->indices.get_value()) {
-    std::vector<int32_t> fi;
-    if (opt.value().get_scalar(&fi)) {
-      for (int32_t f : fi)
-        if (f >= 0) faces.insert(static_cast<uint32_t>(f));
-    }
-  }
-  if (faces.empty()) return;
-
-  // Parent mesh = the GeomSubset's owning prim (its path minus the last element).
-  std::string meshPath = selPath_;
-  const size_t slash = meshPath.find_last_of('/');
-  if (slash == std::string::npos || slash == 0) return;
-  meshPath.resize(slash);
+  // Resolve the highlighted mesh + the triangle vertex-index list to outline.
   int mi = -1;
-  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
-    if (draw_->meshes[i].absPath == meshPath) { mi = static_cast<int>(i); break; }
-  }
-  if (mi < 0) return;
-  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
-  if (m.sourceFaceId.size() != m.indices.size() / 3) return;  // need the face map
+  const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
 
-  for (size_t t = 0; t < m.sourceFaceId.size(); ++t) {
-    if (faces.count(m.sourceFaceId[t])) {
-      highlightSubsetIndices_.push_back(m.indices[t * 3 + 0]);
-      highlightSubsetIndices_.push_back(m.indices[t * 3 + 1]);
-      highlightSubsetIndices_.push_back(m.indices[t * 3 + 2]);
+  if (selPrim_) {
+    if (const auto* gs = selPrim_->as<tinyusdz::GeomSubset>()) {
+      if (gs->elementType.get_value() == tinyusdz::GeomSubset::ElementType::Face) {
+        std::set<uint32_t> faces;
+        if (auto opt = gs->indices.get_value()) {
+          std::vector<int32_t> fi;
+          if (opt.value().get_scalar(&fi))
+            for (int32_t f : fi)
+              if (f >= 0) faces.insert(static_cast<uint32_t>(f));
+        }
+        std::string meshPath = selPath_;
+        const size_t slash = meshPath.find_last_of('/');
+        if (!faces.empty() && slash != std::string::npos && slash != 0) {
+          meshPath.resize(slash);
+          for (size_t i = 0; i < draw_->meshes.size(); ++i)
+            if (draw_->meshes[i].absPath == meshPath) { mi = static_cast<int>(i); break; }
+          if (mi >= 0) {
+            const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+            if (m.sourceFaceId.size() == m.indices.size() / 3) {
+              for (size_t t = 0; t < m.sourceFaceId.size(); ++t)
+                if (faces.count(m.sourceFaceId[t])) {
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 0]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 1]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 2]);
+                }
+              if (!highlightSubsetIndices_.empty()) {
+                highlightSubsetMesh_ = mi;
+                tri = &highlightSubsetIndices_;
+              } else {
+                mi = -1;
+              }
+            } else {
+              mi = -1;
+            }
+          }
+        }
+      }
     }
   }
-  if (!highlightSubsetIndices_.empty()) highlightSubsetMesh_ = mi;
+  // No GeomSubset: a selected mesh highlights all its triangles.
+  if (mi < 0 && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    mi = selMeshIndex_;
+    tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
+  }
+  if (mi < 0 || !tri) return;
+
+  // World-space orange edge lines (for the Vulkan line-pipeline highlight).
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+  const float* W = m.world;  // column-major
+  auto wpos = [&](uint32_t vi, float o[3]) {
+    const DrawVertex& v = m.vertices[vi];
+    o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
+    o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
+    o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+  };
+  const float orange[3] = {1.0f, 0.55f, 0.1f};
+  highlightLinesData_.reserve(tri->size() * 2);
+  const size_t nv = m.vertices.size();
+  for (size_t t = 0; t + 2 < tri->size(); t += 3) {
+    const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
+    if (a >= nv || b >= nv || c >= nv) continue;
+    HelperVertex va{}, vb{}, vc{};
+    wpos(a, va.pos); wpos(b, vb.pos); wpos(c, vc.pos);
+    for (int k = 0; k < 3; ++k) { va.col[k] = vb.col[k] = vc.col[k] = orange[k]; }
+    highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
+    highlightLinesData_.push_back(vb); highlightLinesData_.push_back(vc);
+    highlightLinesData_.push_back(vc); highlightLinesData_.push_back(va);
+  }
 }
 
 void Gui::clearSelection() {
@@ -2747,12 +2788,18 @@ void Gui::renderViewportScene() {
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
-  // A selected GeomSubset highlights just its faces on the parent mesh.
+  // A selected GeomSubset highlights just its faces on the parent mesh (GL
+  // polygon-mode path).
   if (highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
       meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
     p.highlightMeshIndex = highlightSubsetMesh_;
     p.highlightIndices = highlightSubsetIndices_.data();
     p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
+  }
+  // Vulkan highlight: world-space edge lines (whole mesh or subset).
+  if (p.highlightMeshIndex >= 0 && !highlightLinesData_.empty()) {
+    p.highlightLines = highlightLinesData_.data();
+    p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
   }
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
   // Scene bbox for the depth + position AOVs.
