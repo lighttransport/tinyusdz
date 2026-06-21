@@ -235,6 +235,16 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       vec2 c = floor(fract(uvh) * 16.0);
       outc = vec3(mix(0.25, 0.85, mod(c.x + c.y, 2.0)));
+    } else if (rmode == 22) {  // tangent (from triangle UV gradient)
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec2 uv0 = fetchUV(vb, i0), uv1 = fetchUV(vb, i1), uv2 = fetchUV(vb, i2);
+      vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+      vec2 d1 = uv1 - uv0, d2 = uv2 - uv0;
+      float r = d1.x * d2.y - d2.x * d1.y;
+      vec3 T = (abs(r) > 1e-8) ? (e1 * d2.y - e2 * d1.y) / r : e1;
+      outc = normalize(T) * 0.5 + 0.5;
     } else if (rmode == 14) {  // barycentric
       outc = vec3(w0, bc.x, bc.y);
     } else if (rmode == 15) {  // prim id
