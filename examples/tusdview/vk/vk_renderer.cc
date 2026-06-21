@@ -79,6 +79,8 @@ struct PushC {
   float sceneExtent[4];// position AOV: scene bbox size
   int32_t matId;       // material id (material-id visualization)
   int32_t renderMode;  // RenderMode (see renderer.hh)
+  int32_t flags;       // bit0 = geometric (no authored) normals, bit1 = double-sided
+  int32_t meshId;      // per-draw mesh index (mesh-id AOV)
 };
 
 // Ray-tracing compute push constants (must match raytrace.comp).
@@ -1679,6 +1681,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  gm.geometricNormal = sm.geometricNormal;  // also feeds the RT MeshDesc + AOV flags
+  gm.doubleSided = sm.doubleSided;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -1792,7 +1796,6 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.eboAddr = bufferDeviceAddress(gm.ebo);
     gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
     NormalMatrix3(gm.world, gm.normalMat);
-    gm.geometricNormal = sm.geometricNormal;
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
     gm.instanceXforms = sm.instanceXforms;
     gm.instanceColors = sm.instanceColors;
@@ -2589,6 +2592,8 @@ void VulkanRenderer::present() {
         }
         pc.matId = sub.materialId;
         pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)
+        pc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0);
+        pc.meshId = static_cast<int>(mi);
         vkCmdPushConstants(cb, pipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(PushC), &pc);

@@ -192,6 +192,12 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       float cx=floorf((uu-floorf(uu))*16.f), cy=floorf((vv2-floorf(vv2))*16.f);
       float kk=fmodf(cx+cy,2.f); float g=0.25f+0.6f*kk; outc=mk(g,g,g);
+    } else if (rmode==14){  // barycentric
+      outc=mk(w0,bu,bv);
+    } else if (rmode==15){  // prim id
+      outc=idColor(ht);
+    } else if (rmode==19){  // missing normals
+      outc=geo[ht]?mk(0.95f,0.1f,0.85f):mk(0.2f,0.2f,0.2f);
     }
   }
   int idx=(py*W+px)*4;

@@ -95,6 +95,7 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
     bool geometricNormal{false};            // no authored normals -> geometric face normal
+    bool doubleSided{false};                // double-sided AOV flag
     float flatColor[3]{0.8f, 0.8f, 0.8f};   // per-draw constant tint (instanced path)
     // GPU instancing: one TLAS instance per 3x4 o2w in instanceXforms (12 floats
     // each); instanceColors is 3 floats/instance (empty -> use flatColor). Held on
