@@ -7,8 +7,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <string>
+#include <thread>
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "gui_style.hh"
@@ -583,6 +585,18 @@ void App::updateGpuSkinningFrameIfNeeded() {
   }
 }
 
+void App::maybeReconvertForManualBlend() {
+  // The GPU path repools live in updateGpuSkinningFrameIfNeeded(); only the
+  // ray-traced / CPU-skinned path needs a geometry+BLAS rebuild here.
+  if (skinningEffective_ == SkinningMode::GPU) return;
+  if (!loaded_.ok || !SceneHasBlendShapes(loaded_.render)) return;
+  if (gui_.consumeBlendDirty()) blendReconvNeeded_ = true;
+  if (blendReconvNeeded_ && !reconvActive_ && !loadActive_ && !progressiveActive_) {
+    blendReconvNeeded_ = false;
+    requestReconvert(animTime_);  // starts immediately (no reconvert in flight)
+  }
+}
+
 void App::advancePlayback(float dtSec) {
   if (!hasAnimation_ || !animPlaying_) return;
   const double span = animEnd_ - animStart_;
@@ -626,12 +640,17 @@ void App::startReconvertAsync(double t) {
   reconvDraw_ = std::make_unique<DrawScene>();
   DrawScene* dp = reconvDraw_.get();
   const bool rt = rtPath_;
+  // Snapshot the manual blendshape weights on the main thread (gui_ is only
+  // touched here); the worker bakes them into the deformed/BLAS geometry.
+  std::unordered_map<std::string, float> ovr;
+  if (const auto* o = gui_.blendOverrides()) ovr = *o;
   // Worker reads loaded_ (stage/mmap/filepath) read-only; the main thread keeps
   // loaded_ alive and joins this worker (cancelAndJoinReconvert) before any
   // reload. RenderSceneAtTime skips texture decode and fills only dp->meshes.
-  reconvThread_ = std::thread([this, t, dp, rt]() {
+  reconvThread_ = std::thread([this, t, dp, rt, ovr = std::move(ovr)]() {
     std::string w, e;
-    const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_);
+    const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_,
+                                      ovr.empty() ? nullptr : &ovr);
     reconvOk_.store(ok, std::memory_order_relaxed);
     reconvFinished_.store(true, std::memory_order_release);
   });
@@ -826,6 +845,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
     }
     updateGpuSkinningFrameIfNeeded();
+    maybeReconvertForManualBlend();
 
     // Feed the GUI the current playback state (drawn this frame).
     Gui::TimelineInfo tl;
@@ -972,6 +992,19 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (maxFrames >= 0 && ++frameCount >= maxFrames) {
       running = false;
       if (!headless_) glfwSetWindowShouldClose(window_, GLFW_TRUE);
+    }
+  }
+
+  // Headless determinism: a manual-blend (or animation) reconvert bakes the
+  // deformed geometry on a worker thread; drain it so the screenshot and any
+  // ray-traced BLAS (built from draw_ below) see the posed result, not the rest
+  // pose. Bounded so a stuck worker can't hang the screenshot.
+  if (maxFrames >= 0) {
+    for (int guard = 0; guard < 2000; ++guard) {
+      finishReconvertIfReady();
+      maybeReconvertForManualBlend();
+      if (!reconvActive_ && !blendReconvNeeded_) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
 
