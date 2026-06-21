@@ -260,6 +260,174 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   return true;
 }
 
+// Split a prototype subtree into its DIRECT mesh prims and its NESTED instancers
+// (PointInstancer / scenegraph instanceable), WITHOUT descending into the latter.
+// The prototype root itself is collected only if it is a Mesh. Mirrors the
+// instancer skips in the static-batching gather + tusdrender CollectProtoMeshNesting.
+void SplitProtoSubtree(const tnext::UsdPrim& root,
+                       std::vector<tnext::UsdPrim>* meshes,
+                       std::vector<tnext::UsdPrim>* instancers) {
+  std::function<void(const tnext::UsdPrim&, bool)> rec =
+      [&](const tnext::UsdPrim& p, bool isRoot) {
+        if (!isRoot) {
+          if (p.GetTypeName() == "PointInstancer") {
+            instancers->push_back(p);
+            return;
+          }
+          const auto* s = p.GetPrimSpec();
+          if (s && !s->meta().instance_prototype().empty()) {
+            instancers->push_back(p);
+            return;
+          }
+        }
+        if (p.GetTypeName() == "Mesh") meshes->push_back(p);
+        for (const tnext::UsdPrim& c : p.GetChildren()) rec(c, false);
+      };
+  rec(root, true);
+}
+
+// Emit GPU-instanced DrawMeshCPU for a prototype subtree placed at the given world
+// transforms `placements`. Direct (non-instancer) meshes become one DrawMeshCPU
+// each (instanceXforms = mesh_rel * each placement). NESTED instancers are
+// flattened: their per-instance transforms (relative to this prototype root) are
+// composed with each outer placement and the inner prototype is emitted
+// recursively, so a TLAS-less GL preview still shows nested instancing -- geometry
+// stays deduped (shared VBO), only the per-instance matrix list grows. Routing the
+// top-level PointInstancer/native passes through this is byte-identical when nothing
+// nests (same mesh order, same per-placement loop). `placementColors`, when set, is
+// 3 floats/placement applied as per-instance color to this level's direct meshes.
+void EmitInstancedProto(const tnext::Stage& stage,
+                        tydn::RenderSceneConverter& conv,
+                        const tnext::UsdPrim& protoRoot,
+                        const std::vector<matrix4d>& placements,
+                        const std::vector<float>* placementColors, double time,
+                        DrawScene* draw, Bounds* bounds, long long* instTotal,
+                        long long* effectiveTris, size_t instBudget,
+                        std::unordered_set<std::string>* consumed) {
+  if (placements.empty()) return;
+  double pr16[16];
+  tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
+  const matrix4d inv_proto = ::tinyusdz::inverse(Mat4dFromArray(pr16));
+
+  std::vector<tnext::UsdPrim> directMeshes, nestedInstancers;
+  SplitProtoSubtree(protoRoot, &directMeshes, &nestedInstancers);
+
+  const bool haveColors =
+      placementColors && placementColors->size() == placements.size() * 3;
+
+  for (const tnext::UsdPrim& mp : directMeshes) {
+    if (consumed) consumed->insert(mp.GetPath().str());
+    DrawMeshCPU dm;
+    matrix4d mesh_rel;
+    if (!BuildProtoMesh(stage, conv, mp, inv_proto, time, &dm, &mesh_rel)) continue;
+    dm.instanceXforms.reserve(placements.size() * 12);
+    if (haveColors) dm.instanceColors.reserve(placements.size() * 3);
+    for (size_t k = 0; k < placements.size(); ++k) {
+      if (static_cast<size_t>(*instTotal) + dm.instanceXforms.size() / 12 >=
+          instBudget)
+        break;
+      const matrix4d fin = Mul4(mesh_rel, placements[k]);
+      float o2w[12];
+      Mat4dToO2W(fin, o2w);
+      dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
+      if (haveColors) {
+        dm.instanceColors.push_back((*placementColors)[k * 3 + 0]);
+        dm.instanceColors.push_back((*placementColors)[k * 3 + 1]);
+        dm.instanceColors.push_back((*placementColors)[k * 3 + 2]);
+      }
+      const float tpos[3] = {static_cast<float>(fin.m[3][0]),
+                             static_cast<float>(fin.m[3][1]),
+                             static_cast<float>(fin.m[3][2])};
+      bounds->add(tpos);
+    }
+    if (dm.instanceXforms.empty()) continue;
+    const size_t ninst = dm.instanceXforms.size() / 12;
+    *instTotal += static_cast<long long>(ninst);
+    *effectiveTris += (dm.indices.size() / 3) * ninst;
+    for (int k = 0; k < 3; ++k) {
+      dm.aabbMin[k] = bounds->mn[k];
+      dm.aabbMax[k] = bounds->mx[k];
+    }
+    std::memset(dm.world, 0, sizeof(dm.world));
+    dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
+    draw->triangleCount += dm.indices.size() / 3;
+    draw->meshes.push_back(std::move(dm));
+  }
+
+  // Nested instancers: compose each per-instance transform (relative to protoRoot)
+  // with every outer placement, then recurse on the inner prototype.
+  static const float kIdentQuat[4] = {0, 0, 0, 1};
+  static const float kUnitScale[3] = {1, 1, 1};
+  for (const tnext::UsdPrim& ni : nestedInstancers) {
+    if (static_cast<size_t>(*instTotal) >= instBudget) break;
+    if (ni.GetTypeName() == "PointInstancer") {
+      double iw16[16];
+      tydn::ComputeWorldTransform(stage, ni, iw16, time);
+      const matrix4d ni_rel = Mul4(Mat4dFromArray(iw16), inv_proto);
+      const std::vector<float> positions = ReadFloats(ni, "positions", time);
+      const size_t n = positions.size() / 3;
+      const std::vector<int32_t> protoIdx = ReadInts(ni, "protoIndices", time);
+      const std::vector<float> orients = ReadFloats(ni, "orientations", time);
+      const std::vector<float> scales = ReadFloats(ni, "scales", time);
+      const std::vector<int64_t> invis = ReadInt64s(ni, "invisibleIds", time);
+      const std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
+      const std::vector<tnext::Path>* iprotos = ni.GetRelationship("prototypes");
+      if (!iprotos) continue;
+      std::vector<std::vector<uint32_t>> byProto(iprotos->size());
+      for (size_t i = 0; i < n; ++i) {
+        if (!invisSet.empty() && invisSet.count(int64_t(i))) continue;
+        const int pix = (i < protoIdx.size()) ? protoIdx[i] : 0;
+        if (pix >= 0 && pix < int(iprotos->size())) byProto[pix].push_back(uint32_t(i));
+      }
+      for (size_t pix = 0; pix < iprotos->size(); ++pix) {
+        if (byProto[pix].empty()) continue;
+        tnext::UsdPrim innerRoot = stage.GetPrimAtPath((*iprotos)[pix]);
+        if (!innerRoot.IsValid()) continue;
+        std::vector<matrix4d> innerPl;
+        innerPl.reserve(byProto[pix].size() * placements.size());
+        bool capped = false;
+        for (const matrix4d& P : placements) {
+          const matrix4d eff = Mul4(ni_rel, P);  // instancer effective world
+          for (uint32_t j : byProto[pix]) {
+            if (static_cast<size_t>(*instTotal) + innerPl.size() >= instBudget) {
+              capped = true;
+              break;
+            }
+            const float* q =
+                (orients.size() >= (j + 1) * 4) ? &orients[j * 4] : kIdentQuat;
+            const float* s =
+                (scales.size() >= (j + 1) * 3) ? &scales[j * 3] : kUnitScale;
+            innerPl.push_back(Mul4(InstanceTRS(&positions[j * 3], q, s), eff));
+          }
+          if (capped) break;
+        }
+        EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time, draw,
+                           bounds, instTotal, effectiveTris, instBudget, consumed);
+      }
+    } else {
+      const auto* s = ni.GetPrimSpec();
+      if (!s) continue;
+      const std::string ipath = s->meta().instance_prototype();
+      if (ipath.empty()) continue;
+      double w16[16];
+      tydn::ComputeWorldTransform(stage, ni, w16, time);
+      const matrix4d m_rel = Mul4(Mat4dFromArray(w16), inv_proto);
+      // The native instance's children are proxies of its prototype; consume them.
+      std::vector<tnext::UsdPrim> proxies;
+      GatherMeshPrims(ni, &proxies);
+      if (consumed)
+        for (const tnext::UsdPrim& m : proxies) consumed->insert(m.GetPath().str());
+      tnext::UsdPrim innerRoot = stage.GetPrimAtPath(ipath);
+      if (!innerRoot.IsValid()) continue;
+      std::vector<matrix4d> innerPl;
+      innerPl.reserve(placements.size());
+      for (const matrix4d& P : placements) innerPl.push_back(Mul4(m_rel, P));
+      EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time, draw,
+                         bounds, instTotal, effectiveTris, instBudget, consumed);
+    }
+  }
+}
+
 }  // namespace
 
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
@@ -346,63 +514,37 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         for (size_t pi = 0; pi < protos->size(); ++pi) {
           tnext::UsdPrim protoRoot = stage.GetPrimAtPath((*protos)[pi]);
           if (!protoRoot.IsValid()) continue;
-          double pr16[16];
-          tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
-          const matrix4d inv_protoroot = ::tinyusdz::inverse(Mat4dFromArray(pr16));
-
+          // Consume ALL of this prototype's mesh paths (including nested-instancer
+          // ones) so the static-batching pass never draws them as base geometry --
+          // prototypes can live outside the instancer subtree.
           std::vector<tnext::UsdPrim> protoMeshes;
           GatherMeshPrims(protoRoot, &protoMeshes);
-          for (const tnext::UsdPrim& mp : protoMeshes) {
+          for (const tnext::UsdPrim& mp : protoMeshes)
             consumed.insert(mp.GetPath().str());
-            if (byProto[pi].empty()) continue;
-            DrawMeshCPU dm;
-            matrix4d mesh_rel;
-            if (!BuildProtoMesh(stage, conv, mp, inv_protoroot, time, &dm,
-                                &mesh_rel))
-              continue;
-
-            dm.instanceXforms.reserve(byProto[pi].size() * 12);
-            if (perInstColor) dm.instanceColors.reserve(byProto[pi].size() * 3);
-            for (uint32_t i : byProto[pi]) {
-              if (static_cast<size_t>(instTotal) +
-                      dm.instanceXforms.size() / 12 >= instBudget)
-                break;
-              const float* q =
-                  (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
-              const float* s =
-                  (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
-              const matrix4d inst_world =
-                  Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world);
-              const matrix4d fin = Mul4(mesh_rel, inst_world);
-              float o2w[12];
-              Mat4dToO2W(fin, o2w);
-              dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
-              if (perInstColor) {
-                dm.instanceColors.push_back(instCol[i * 3 + 0]);
-                dm.instanceColors.push_back(instCol[i * 3 + 1]);
-                dm.instanceColors.push_back(instCol[i * 3 + 2]);
-              }
-              const float tpos[3] = {static_cast<float>(fin.m[3][0]),
-                                     static_cast<float>(fin.m[3][1]),
-                                     static_cast<float>(fin.m[3][2])};
-              bounds.add(tpos);
+          if (byProto[pi].empty()) continue;
+          // One world placement (+ optional per-instance color) per visible
+          // instance; EmitInstancedProto bakes mesh_rel*placement and recurses into
+          // any nested instancers under the prototype.
+          std::vector<matrix4d> placements;
+          std::vector<float> colors;
+          placements.reserve(byProto[pi].size());
+          if (perInstColor) colors.reserve(byProto[pi].size() * 3);
+          for (uint32_t i : byProto[pi]) {
+            const float* q =
+                (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
+            const float* s =
+                (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+            placements.push_back(
+                Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world));
+            if (perInstColor) {
+              colors.push_back(instCol[i * 3 + 0]);
+              colors.push_back(instCol[i * 3 + 1]);
+              colors.push_back(instCol[i * 3 + 2]);
             }
-            if (dm.instanceXforms.empty()) continue;
-            const size_t ninst = dm.instanceXforms.size() / 12;
-            instTotal += static_cast<long long>(ninst);
-            effectiveTris += (dm.indices.size() / 3) * ninst;
-            for (int k = 0; k < 3; ++k) {
-              dm.aabbMin[k] = bounds.mn[k]; dm.aabbMax[k] = bounds.mx[k];
-            }
-            std::memset(dm.world, 0, sizeof(dm.world));
-            dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
-            // Count UNIQUE (uploaded) triangles toward the budget, not the
-            // instance-expanded total -- instances share one geometry buffer, so
-            // the VRAM cost is unique geom + the instance matrices (capped by
-            // TUSDVIEW_NEXT_MAX_INSTANCES), not effective triangles.
-            draw->triangleCount += dm.indices.size() / 3;
-            draw->meshes.push_back(std::move(dm));
           }
+          EmitInstancedProto(stage, conv, protoRoot, placements,
+                             perInstColor ? &colors : nullptr, time, draw, &bounds,
+                             &instTotal, &effectiveTris, instBudget, &consumed);
         }
       }
       return;  // do not descend into a PointInstancer's prototypes as geometry
@@ -440,42 +582,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (kv.second.size() < 2) continue;
       tnext::UsdPrim protoRoot = stage.GetPrimAtPath(kv.first);
       if (!protoRoot.IsValid()) continue;
-      double pr16[16];
-      tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
-      const matrix4d inv_protoroot = ::tinyusdz::inverse(Mat4dFromArray(pr16));
-      std::vector<tnext::UsdPrim> protoMeshes;
-      GatherMeshPrims(protoRoot, &protoMeshes);
-      for (const tnext::UsdPrim& mp : protoMeshes) {
-        DrawMeshCPU dm;
-        matrix4d mesh_rel;
-        if (!BuildProtoMesh(stage, conv, mp, inv_protoroot, time, &dm, &mesh_rel))
-          continue;
-        dm.instanceXforms.reserve(kv.second.size() * 12);
-        for (const matrix4d& iw : kv.second) {
-          if (static_cast<size_t>(instTotal) + dm.instanceXforms.size() / 12 >=
-              instBudget)
-            break;
-          const matrix4d fin = Mul4(mesh_rel, iw);
-          float o2w[12];
-          Mat4dToO2W(fin, o2w);
-          dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
-          const float tpos[3] = {static_cast<float>(fin.m[3][0]),
-                                 static_cast<float>(fin.m[3][1]),
-                                 static_cast<float>(fin.m[3][2])};
-          bounds.add(tpos);
-        }
-        if (dm.instanceXforms.empty()) continue;
-        const size_t ninst = dm.instanceXforms.size() / 12;
-        instTotal += static_cast<long long>(ninst);
-        effectiveTris += (dm.indices.size() / 3) * ninst;
-        for (int k = 0; k < 3; ++k) {
-          dm.aabbMin[k] = bounds.mn[k]; dm.aabbMax[k] = bounds.mx[k];
-        }
-        std::memset(dm.world, 0, sizeof(dm.world));
-        dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
-        draw->triangleCount += dm.indices.size() / 3;
-        draw->meshes.push_back(std::move(dm));
-      }
+      // GPU-instance the prototype's geometry at each native-instance placement;
+      // EmitInstancedProto recurses into any nested instancers under the prototype.
+      // consumed=nullptr: the prototype prim itself still renders via 3b (unchanged).
+      EmitInstancedProto(stage, conv, protoRoot, kv.second, /*placementColors=*/nullptr,
+                         time, draw, &bounds, &instTotal, &effectiveTris, instBudget,
+                         /*consumed=*/nullptr);
     }
   }
 
