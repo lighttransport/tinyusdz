@@ -5,6 +5,8 @@ layout(location = 1) in vec2 vUV;
 layout(location = 2) in vec3 vWorldPos;
 layout(location = 3) flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 layout(location = 4) in float vDomWeight;
+layout(location = 5) in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
+layout(location = 6) in float vMorphInfl;     // blendshape influence (world units)
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
@@ -105,6 +107,12 @@ void main() {
     if (pc.renderMode == 30) {  // udim tile from UV set 0
       int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
       outColor = vec4(idColor(tile), 1.0);
+      return;
+    }
+    if (pc.renderMode == 31) { outColor = vec4(fract(vUV1), 0.0, 1.0); return; }  // uv set 1
+    if (pc.renderMode == 32) {  // blendshape influence (normalize by ~10% scene extent)
+      float c = clamp(vMorphInfl / max(pc.camPos.w * 0.1, 1e-4), 0.0, 1.0);
+      outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0);
       return;
     }
     if (pc.renderMode == 21) {  // skin weights: dominant joint tinted by weight
