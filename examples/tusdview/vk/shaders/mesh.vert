@@ -35,6 +35,8 @@ layout(push_constant) uniform PushConstants {
 layout(location = 0) out vec3 vNormalW;
 layout(location = 1) out vec2 vUV;
 layout(location = 2) out vec3 vWorldPos;
+layout(location = 3) flat out int vDomJoint;   // dominant skin joint (SkinWeights AOV)
+layout(location = 4) out float vDomWeight;
 
 mat4 fetchBone(uint idx) {
   int base = int(idx) * 4;
@@ -84,5 +86,12 @@ void main() {
   vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
   vUV = aUV;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
+  // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
+  vDomJoint = -1;
+  vDomWeight = 0.0;
+  if (aWeight.x > vDomWeight) { vDomWeight = aWeight.x; vDomJoint = int(aJoint.x); }
+  if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
+  if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
+  if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
   gl_Position = pc.mvp * vec4(pos, 1.0);
 }
