@@ -17,11 +17,15 @@ layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
 // Optional per-vertex displayColor (vec3 packed as 3 floats / vertex).
 layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
+layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
+layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
 
 struct MeshDesc {
   uint64_t vtxAddr;       // device address of the vertex buffer (DrawVertex[])
   uint64_t idxAddr;       // device address of the index buffer (uint[])
   uint64_t vtxColorAddr;  // per-vertex displayColor (vec3[]); 0 = none
+  uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
+  uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
   uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
                              // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
@@ -69,6 +73,8 @@ vec3 fetchCol(Cols cb, uint vi) {
 vec2 fetchUV(Verts vb, uint vi) {
   return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
 }
+vec2 fetchUV1(UV1s ub, uint vi) { return vec2(ub.u[vi * 2u + 0u], ub.u[vi * 2u + 1u]); }
+float fetchInfl(Infls ib, uint vi) { return ib.f[vi]; }
 
 // Hash-based per-pixel RNG (PCG-ish) for the ambient-occlusion sampler.
 uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
@@ -239,6 +245,22 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       int tile = int(floor(uvh.x)) + 10 * int(floor(uvh.y));
       outc = idColor(uint(max(tile, 0)));
+    } else if (rmode == 31) {  // uv set 1 (multi-UV)
+      if (md.uv1Addr != 0ul) {
+        UV1s ub = UV1s(md.uv1Addr);
+        vec2 t = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x + fetchUV1(ub, i2) * bc.y;
+        outc = vec3(fract(t), 0.0);
+      } else {
+        outc = vec3(0.0);
+      }
+    } else if (rmode == 32) {  // blendshape influence
+      float infl = 0.0;
+      if (md.inflAddr != 0ul) {
+        Infls fb = Infls(md.inflAddr);
+        infl = fetchInfl(fb, i0) * w0 + fetchInfl(fb, i1) * bc.x + fetchInfl(fb, i2) * bc.y;
+      }
+      float c = clamp(infl / max(pc.lightDir.w * 0.1, 1e-4), 0.0, 1.0);
+      outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
     } else if (rmode == 22) {  // tangent (from triangle UV gradient)
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
       vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
