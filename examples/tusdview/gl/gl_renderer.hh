@@ -95,6 +95,9 @@ class GLRenderer final : public Renderer {
   // the per-instance vColor (no material uniforms).
   GLuint instProgram_{0};
   GLint iUViewProj_{-1}, iCameraPos_{-1}, iEmissive_{-1};
+  // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
+  GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
+  GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};

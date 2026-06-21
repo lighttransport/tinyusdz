@@ -163,12 +163,47 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "in vec3 vColor;\n"
       "uniform vec3 uCameraPos;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
+      // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
+      // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
+      // emissive / opacity modes fall through to a neutral gray here.
+      "uniform int uRenderMode;\n"
+      "uniform float uDepthScale;\n"
+      "uniform vec3 uSceneMin;\n"
+      "uniform vec3 uSceneExtent;\n"
+      "uniform int uMeshId;\n"
+      "uniform bool uGeometricNormal;\n"
+      "uniform bool uDoubleSided;\n"
       "out vec4 FragColor;\n"
+      "vec3 idColor(int id){\n"
+      "  if (id < 0) return vec3(0.45);\n"
+      "  uint h = (uint(id) + 1u) * 2654435761u;\n"
+      "  return vec3(float(h & 255u), float((h >> 8u) & 255u), float((h >> 16u) & 255u)) * (1.0/255.0);\n"
+      "}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
-      "  vec3 N = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));\n"
+      "  vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));\n"
+      "  vec3 N = Ngeo;\n"
       "  if (!gl_FrontFacing) N = -N;\n"  // thin instanced geom is often 1-sided
+      "  if (uRenderMode != 0) {\n"
+      "    vec3 Nshade = uGeometricNormal ? Ngeo : normalize(vNormal);\n"
+      "    if (uRenderMode == 2) { FragColor = vec4(Nshade*0.5+0.5, 1.0); return; }\n"
+      "    if (uRenderMode == 4) { FragColor = vec4(Ngeo*0.5+0.5, 1.0); return; }\n"
+      "    if (uRenderMode == 6) {\n"
+      "      float d = clamp(length(uCameraPos - vWorldPos) / max(uDepthScale,1e-3), 0.0, 1.0);\n"
+      "      FragColor = vec4(vec3(1.0-d), 1.0); return; }\n"
+      "    if (uRenderMode == 7) { FragColor = vec4(vColor, 1.0); return; }\n"  // albedo
+      "    if (uRenderMode == 8) { FragColor = gl_FrontFacing ? vec4(0.1,0.7,0.1,1.0) : vec4(0.7,0.1,0.1,1.0); return; }\n"
+      "    if (uRenderMode == 13) { FragColor = vec4(clamp((vWorldPos-uSceneMin)/uSceneExtent,0.0,1.0), 1.0); return; }\n"
+      "    if (uRenderMode == 15) { FragColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }\n"  // prim id
+      "    if (uRenderMode == 16) { FragColor = vec4(idColor(uMeshId), 1.0); return; }\n"          // mesh id
+      "    if (uRenderMode == 19) { FragColor = uGeometricNormal ? vec4(0.95,0.1,0.85,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
+      "    if (uRenderMode == 20) { FragColor = uDoubleSided ? vec4(0.95,0.55,0.1,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
+      // Modes instanced geometry cannot supply (UV/material scalars): neutral gray
+      // so it is visually obvious the channel has no data here, vs masquerading as
+      // a lit render.
+      "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
+      "  }\n"
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
       "  vec3 L = normalize(vec3(1.0, 1.0, 1.0));\n"
       "  float NdotL = max(dot(N, L), 0.0);\n"
@@ -186,6 +221,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iUViewProj_ = glGetUniformLocation(instProgram_, "uViewProj");
   iCameraPos_ = glGetUniformLocation(instProgram_, "uCameraPos");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
+  iRenderMode_ = glGetUniformLocation(instProgram_, "uRenderMode");
+  iDepthScale_ = glGetUniformLocation(instProgram_, "uDepthScale");
+  iSceneMin_ = glGetUniformLocation(instProgram_, "uSceneMin");
+  iSceneExtent_ = glGetUniformLocation(instProgram_, "uSceneExtent");
+  iMeshId_ = glGetUniformLocation(instProgram_, "uMeshId");
+  iGeometricNormal_ = glGetUniformLocation(instProgram_, "uGeometricNormal");
+  iDoubleSided_ = glGetUniformLocation(instProgram_, "uDoubleSided");
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -775,6 +817,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
     const float black[3] = {0.0f, 0.0f, 0.0f};
     glUniform3fv(iEmissive_, 1, overrideEmissive ? overrideEmissive : black);
+    glUniform1i(iRenderMode_, static_cast<int>(params.mode));
+    glUniform1f(iDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
+    glUniform3fv(iSceneMin_, 1, params.sceneMin);
+    glUniform3fv(iSceneExtent_, 1, params.sceneExtent);
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
           !params.meshVisible[mi]) {
@@ -782,6 +828,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       }
       const GLMesh& mesh = meshes_[mi];
       if (mesh.instanceCount <= 0) continue;
+      glUniform1i(iMeshId_, static_cast<int>(mi));
+      glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+      glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       if (mesh.doubleSided || wireframe) {
         glDisable(GL_CULL_FACE);
       } else {
