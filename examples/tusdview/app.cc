@@ -533,7 +533,10 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // Per-mesh morph/world updates need the meshes present in the renderer; wait
   // for progressive streaming to finish (the bone texture alone is safe early).
   if (progressiveActive_ && (hasMorph || mixed)) return;
-  if (skinFrameTime_ == animTime_) return;  // already posed for this time
+  // Manual blendshape weights (Maya-like editor) force a re-pose even at the same
+  // time code, since the weights changed rather than the animation clock.
+  const bool blendDirty = hasMorph && gui_.consumeBlendDirty();
+  if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
 
   // Per-mesh vertex/world updates index the renderer by DrawScene mesh order;
   // that only holds when the renderer uploaded exactly these meshes. Guard it so
@@ -559,7 +562,8 @@ void App::updateGpuSkinningFrameIfNeeded() {
   std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
   if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
                             &skinFrame_, gui_.showSkeletonOverlay(),
-                            (hasMorph && idxOk) ? &morphed : nullptr)) {
+                            (hasMorph && idxOk) ? &morphed : nullptr,
+                            gui_.blendOverrides())) {
     skinFrameTime_ = animTime_;
     renderer_->uploadSkinningFrame(skinFrame_);
     // Upload posed buffers for actively-morphed meshes; revert any mesh that was

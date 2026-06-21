@@ -38,10 +38,21 @@ struct DrawSubmesh {
 // `vtx[i]` is the affected DrawVertex; `dpos` holds its position offset (3
 // floats, parallel to `vtx`). Normals are regenerated from the morphed
 // positions (RegenNormalsOriented), so authored normal offsets are not stored.
+// One in-between shape sample of a blendshape: its position-offset deltas at a
+// weight in (0,1). Parallel to MorphTargetCPU::vtx (same affected DrawVertices).
+struct MorphInbetweenCPU {
+  float weight{0.5f};        // USD inbetween weight (0 < w < 1, ascending order)
+  std::vector<float> dpos;   // 3 floats per MorphTargetCPU::vtx entry
+};
+
 struct MorphTargetCPU {
   std::string name;  // BlendShape prim name == SkelAnimation weight key
   std::vector<uint32_t> vtx;
-  std::vector<float> dpos;
+  std::vector<float> dpos;   // primary (weight == 1.0) offsets, 3 per vtx entry
+  // In-between shapes, sorted ascending by weight. Empty = simple linear morph
+  // (rest at w=0 -> primary at w=1). With inbetweens the morph piecewise-lerps
+  // through (0, rest), each (weight, sample), and (1, primary).
+  std::vector<MorphInbetweenCPU> inbetweens;
 };
 
 struct DrawMeshCPU {

@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
+  std::vector<std::pair<std::string, float>> wantBlend;  // --blend NAME=WEIGHT
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
@@ -152,6 +153,14 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "bvh-heatmap")) wantMode = tusdview::RenderMode::BvhHeatmap;
       else if (!std::strcmp(m, "soft-shadow")) wantMode = tusdview::RenderMode::SoftShadow;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
+    } else if (std::strcmp(argv[i], "--blend") == 0 && (i + 1) < argc) {
+      // --blend NAME=WEIGHT (repeatable): manually drive a blendshape weight,
+      // overriding the SkelAnimation. Honors in-between shapes. For headless
+      // posing + the Maya-like blend editor.
+      const char* spec = argv[++i];
+      const char* eq = std::strchr(spec, '=');
+      if (!eq) { LOGE("--blend expects NAME=WEIGHT, got '%s'", spec); return 1; }
+      wantBlend.emplace_back(std::string(spec, eq), std::atof(eq + 1));
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
     } else if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
@@ -184,6 +193,9 @@ int main(int argc, char** argv) {
           "color per material; all backends).\n"
           "  --mode NAME   Start in a render mode: shaded|wireframe|normals|"
           "material-id|geom-normal|uv|depth (all backends).\n"
+          "  --blend NAME=W  Manually set a blendshape weight (repeatable), "
+          "overriding the SkelAnimation; honors in-between shapes. Also editable "
+          "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Load via the `next` lazy loader + tydra-next converter "
@@ -313,5 +325,6 @@ int main(int argc, char** argv) {
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
+  for (const auto& bw : wantBlend) app.setBlendWeight(bw.first, bw.second);
   return app.run(file, maxFrames, screenshot);
 }

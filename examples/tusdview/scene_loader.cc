@@ -428,7 +428,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
       return false;
     }
     DeformSkinnedMeshes(out->stage, out->render, timecode);
-    BuildDrawScene(out->render, draw, ctrl);
+    BuildDrawScene(out->render, draw, ctrl, &out->stage);
     ApplyMeshPurposes(out->stage, draw);
     out->ok = true;
     return true;
@@ -520,7 +520,7 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
     return false;
   }
   DeformSkinnedMeshes(src.stage, scratch, timecode);
-  BuildDrawScene(scratch, draw, ctrl);
+  BuildDrawScene(scratch, draw, ctrl, &src.stage);
   ApplyMeshPurposes(src.stage, draw);
   return true;
 }

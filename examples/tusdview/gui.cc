@@ -1177,6 +1177,9 @@ void Gui::drawInspector() {
     }
     ImGui::TextDisabled("Type: %s", inspectorCacheType_.c_str());
 
+    // Blendshape editor (only renders when the selection has blendshape targets).
+    drawBlendShapeEditor();
+
     // Prim metadata (kind/active/hidden/displayName/doc/...).
     if (!inspectorCacheMeta_.empty() &&
         ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1399,6 +1402,76 @@ void Gui::drawInspector() {
     HintWrapped("Select a prim in the Hierarchy.");
   }
   ImGui::End();
+}
+
+void Gui::drawBlendShapeEditor() {
+  if (!draw_ || selPath_.empty()) return;
+
+  // Gather blendshapes (by name, with their in-between weights) from meshes that
+  // are the selection itself, an ancestor of it (selecting a BlendShape child),
+  // or a descendant (selecting a SkelRoot/Xform above the mesh).
+  std::map<std::string, std::vector<float>> shapes;  // name -> inbetween weights
+  const std::string selSlash = selPath_ + "/";
+  for (const DrawMeshCPU& m : draw_->meshes) {
+    if (m.morphs.empty()) continue;
+    const std::string meshSlash = m.absPath + "/";
+    const bool related = (m.absPath == selPath_) ||
+                         (m.absPath.rfind(selSlash, 0) == 0) ||
+                         (selPath_.rfind(meshSlash, 0) == 0);
+    if (!related) continue;
+    for (const MorphTargetCPU& mt : m.morphs) {
+      std::vector<float>& ib = shapes[mt.name];
+      if (ib.empty() && !mt.inbetweens.empty()) {
+        for (const MorphInbetweenCPU& s : mt.inbetweens) ib.push_back(s.weight);
+      }
+    }
+  }
+  if (shapes.empty()) return;
+
+  if (!ImGui::CollapsingHeader("Blend Shapes", ImGuiTreeNodeFlags_DefaultOpen)) {
+    return;
+  }
+
+  if (ImGui::Checkbox("Manual weights", &blendActive_)) blendDirty_ = true;
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Reset")) {
+    for (auto& kv : blendWeights_) kv.second = 0.0f;
+    blendDirty_ = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu shape%s", shapes.size(), shapes.size() == 1 ? "" : "s");
+  if (!blendActive_) {
+    ImGui::TextDisabled("Enable 'Manual weights' to drive these (overrides anim).");
+  }
+
+  ImGui::BeginDisabled(!blendActive_);
+  for (auto& kv : shapes) {
+    const std::string& name = kv.first;
+    float& w = blendWeights_[name];  // default 0 (rest)
+    ImGui::PushID(name.c_str());
+    // 0..1 slider; ctrl+click to type an overdrive value (the morph eval
+    // extrapolates beyond the end shapes, Maya-style).
+    if (ImGui::SliderFloat(name.c_str(), &w, 0.0f, 1.0f, "%.3f")) {
+      blendDirty_ = true;
+    }
+    // In-between tick marks on the slider track (amber), so authored intermediate
+    // shapes are visible like Maya's target markers.
+    if (!kv.second.empty()) {
+      const ImVec2 mn = ImGui::GetItemRectMin();
+      const ImVec2 mx = ImGui::GetItemRectMax();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      for (float iw : kv.second) {
+        const float c = iw < 0.0f ? 0.0f : (iw > 1.0f ? 1.0f : iw);
+        const float x = mn.x + (mx.x - mn.x) * c;
+        dl->AddLine(ImVec2(x, mn.y), ImVec2(x, mn.y + 3.0f),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+        dl->AddLine(ImVec2(x, mx.y - 3.0f), ImVec2(x, mx.y),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::EndDisabled();
 }
 
 void Gui::drawSelectionList() {
