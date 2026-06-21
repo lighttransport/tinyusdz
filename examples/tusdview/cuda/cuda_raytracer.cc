@@ -146,6 +146,11 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     float k=0.25f+0.85f*diff*shadow;
     outc=mk(base.x*k,base.y*k,base.z*k);
+    // Wireframe (clear[3]!=0): shade only near a triangle edge, else background.
+    if (cam.clear[3]>0.5f){
+      float e=fminf(w0,fminf(bu,bv));
+      if (e>0.02f) outc=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+    }
   }
   int idx=(py*W+px)*4;
   out[idx+0]=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
@@ -449,8 +454,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 }
 
 bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
-                          const float lightDir[3], const float clearColor[3], int w,
-                          int h, std::vector<uint8_t>* rgba, std::string* err) {
+                          const float lightDir[3], const float clearColor[3],
+                          bool wireframe, int w, int h, std::vector<uint8_t>* rgba,
+                          std::string* err) {
   if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
@@ -468,6 +474,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
     cam.lightDir[i] = lightDir[i];
     cam.clear[i] = clearColor[i];
   }
+  cam.clear[3] = wireframe ? 1.0f : 0.0f;
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dNo = dNodes_, dO = dOut_;
   void* args[] = {&dT, &dN, &dC, &dG, &dNo, &dO, &w, &h, &cam};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;

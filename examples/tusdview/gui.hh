@@ -85,6 +85,8 @@ class Gui {
   enum class TransformMode { None, Translate, Rotate, Scale };
   TransformMode transformMode() const { return xformMode_; }
   void setTransformMode(TransformMode m) { xformMode_ = m; }
+  void setRenderMode(RenderMode m) { mode_ = m; }
+  RenderMode renderMode() const { return mode_; }
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {

@@ -99,6 +99,8 @@ class App
   void setHeadless(bool on) { headless_ = on; }
   // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
   void setCudaRt(bool on) { cudaRt_ = on; }
+  // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
+  void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
 
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }

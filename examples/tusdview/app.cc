@@ -1008,8 +1008,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       const float camPos[3] = {eye.x, eye.y, eye.z};
       const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
       const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const bool wf = gui_.renderMode() == RenderMode::Wireframe;
       std::vector<uint8_t> rgba;
-      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, w, h, &rgba, &cerr)) {
+      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, wf, w, h, &rgba, &cerr)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
