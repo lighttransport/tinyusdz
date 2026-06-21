@@ -10,6 +10,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -31,12 +32,17 @@ using matrix4d = ::tinyusdz::value::matrix4d;
 
 namespace {
 
-// Convert a tinyusdz row-major matrix4d (m[row][col], row-vector p*M) into the
-// light3d/GL column-major world[16] (M*p): a straight element copy (the geometric
-// transpose and the storage swap cancel; see mesh_build.cc MatToColMajor).
-inline void Mat4dToColMajor(const matrix4d& m, float out[16]) {
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 4; ++j) out[i * 4 + j] = static_cast<float>(m.m[i][j]);
+// Pack a tinyusdz row-major matrix4d (m[row][col], row-vector p*M) into a 3x4
+// object-to-world (12 floats): row k holds the coefficients of output component
+// k, i.e. worldP.k = dot(vec4(p,1), o2w_row_k). Matches tusdrender Mat4ToObj2World
+// and the instanced vertex shader's aRow0/1/2.
+inline void Mat4dToO2W(const matrix4d& m, float out[12]) {
+  for (int k = 0; k < 3; ++k) {
+    out[k * 4 + 0] = static_cast<float>(m.m[0][k]);
+    out[k * 4 + 1] = static_cast<float>(m.m[1][k]);
+    out[k * 4 + 2] = static_cast<float>(m.m[2][k]);
+    out[k * 4 + 3] = static_cast<float>(m.m[3][k]);
+  }
 }
 
 inline matrix4d Mat4dFromArray(const double d[16]) {
@@ -212,6 +218,37 @@ void GatherMeshPrims(const tnext::UsdPrim& root,
   for (const tnext::UsdPrim& c : root.GetChildren()) GatherMeshPrims(c, out);
 }
 
+// Build a prototype mesh's local geometry (+ flat displayColor) from the
+// converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
+// by the PointInstancer and native-instance passes. Returns false if the mesh has
+// no converter geometry.
+bool BuildProtoMesh(const tnext::Stage& stage, const tydn::RenderScene& scene,
+                    const tnext::UsdPrim& mp, const matrix4d& inv_protoroot,
+                    double time, DrawMeshCPU* dm, matrix4d* mesh_rel) {
+  auto it = scene.mesh_by_path.find(mp.GetPath().str());
+  if (it == scene.mesh_by_path.end()) return false;
+  const tydn::RenderMesh& rm = scene.meshes[static_cast<size_t>(it->second)];
+  if (!FillFlatGeometry(rm, dm)) return false;
+  // Prototype displayColor -> per-draw constant (average of the mesh's colors).
+  if (!rm.colors.empty()) {
+    std::vector<float> cols = rm.colors.flatten();
+    const size_t nc = cols.size() / 3;
+    if (nc) {
+      double r = 0, g = 0, b = 0;
+      for (size_t c = 0; c < nc; ++c) {
+        r += cols[3 * c + 0]; g += cols[3 * c + 1]; b += cols[3 * c + 2];
+      }
+      dm->flatColor[0] = float(r / nc);
+      dm->flatColor[1] = float(g / nc);
+      dm->flatColor[2] = float(b / nc);
+    }
+  }
+  double mw16[16];
+  tydn::ComputeWorldTransform(stage, mp, mw16, time);
+  *mesh_rel = Mul4(Mat4dFromArray(mw16), inv_protoroot);
+  return true;
+}
+
 }  // namespace
 
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
@@ -282,6 +319,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const std::vector<float> scales = ReadFloats(p, "scales", time);
       const std::vector<int64_t> invis = ReadInt64s(p, "invisibleIds", time);
       std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
+      // Optional per-instance displayColor on the instancer (rgb/instance).
+      const std::vector<float> instCol = ReadFloats(p, "primvars:displayColor", time);
+      const bool perInstColor = (instCol.size() == 3 * n && n > 0);
 
       const std::vector<tnext::Path>* protos = p.GetRelationship("prototypes");
       if (protos) {
@@ -305,25 +345,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           std::vector<tnext::UsdPrim> protoMeshes;
           GatherMeshPrims(protoRoot, &protoMeshes);
           for (const tnext::UsdPrim& mp : protoMeshes) {
-            const std::string mpath = mp.GetPath().str();
-            consumed.insert(mpath);
+            consumed.insert(mp.GetPath().str());
             if (byProto[pi].empty()) continue;
-            auto it = scene.mesh_by_path.find(mpath);
-            if (it == scene.mesh_by_path.end()) continue;
-            const tydn::RenderMesh& rm =
-                scene.meshes[static_cast<size_t>(it->second)];
-
             DrawMeshCPU dm;
-            if (!FillFlatGeometry(rm, &dm)) continue;
-            // mesh-local -> proto-root-local (independent of the instance).
-            double mw16[16];
-            tydn::ComputeWorldTransform(stage, mp, mw16, time);
-            const matrix4d mesh_rel = Mul4(Mat4dFromArray(mw16), inv_protoroot);
+            matrix4d mesh_rel;
+            if (!BuildProtoMesh(stage, scene, mp, inv_protoroot, time, &dm,
+                                &mesh_rel))
+              continue;
 
-            dm.instanceXforms.reserve(byProto[pi].size() * 16);
+            dm.instanceXforms.reserve(byProto[pi].size() * 12);
+            if (perInstColor) dm.instanceColors.reserve(byProto[pi].size() * 3);
             for (uint32_t i : byProto[pi]) {
               if (static_cast<size_t>(instTotal) +
-                      dm.instanceXforms.size() / 16 >= instBudget)
+                      dm.instanceXforms.size() / 12 >= instBudget)
                 break;
               const float* q =
                   (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
@@ -332,16 +366,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
               const matrix4d inst_world =
                   Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world);
               const matrix4d fin = Mul4(mesh_rel, inst_world);
-              float cm[16];
-              Mat4dToColMajor(fin, cm);
-              dm.instanceXforms.insert(dm.instanceXforms.end(), cm, cm + 16);
+              float o2w[12];
+              Mat4dToO2W(fin, o2w);
+              dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
+              if (perInstColor) {
+                dm.instanceColors.push_back(instCol[i * 3 + 0]);
+                dm.instanceColors.push_back(instCol[i * 3 + 1]);
+                dm.instanceColors.push_back(instCol[i * 3 + 2]);
+              }
               const float tpos[3] = {static_cast<float>(fin.m[3][0]),
                                      static_cast<float>(fin.m[3][1]),
                                      static_cast<float>(fin.m[3][2])};
               bounds.add(tpos);
             }
             if (dm.instanceXforms.empty()) continue;
-            const size_t ninst = dm.instanceXforms.size() / 16;
+            const size_t ninst = dm.instanceXforms.size() / 12;
             instTotal += static_cast<long long>(ninst);
             effectiveTris += (dm.indices.size() / 3) * ninst;
             for (int k = 0; k < 3; ++k) {
@@ -363,6 +402,74 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     for (const tnext::UsdPrim& c : p.GetChildren()) walk(c);
   };
   for (const tnext::UsdPrim& r : stage.GetRootPrims()) walk(r);
+
+  // --- 3a-native. Scenegraph (instanceable) instances: prims that share an
+  //     instance_prototype are flattened by the converter (one mesh set per
+  //     instance). Group them and GPU-instance the prototype's geometry instead;
+  //     the prototype prim itself still renders via 3b. ---
+  {
+    std::map<std::string, std::vector<matrix4d>> nativeGroups;
+    std::function<void(const tnext::UsdPrim&)> wn = [&](const tnext::UsdPrim& p) {
+      if (p.GetTypeName() == "PointInstancer") return;  // handled above
+      const auto* s = p.GetPrimSpec();
+      if (s && !s->meta().instance_prototype().empty()) {
+        double w16[16];
+        tydn::ComputeWorldTransform(stage, p, w16, time);
+        nativeGroups[s->meta().instance_prototype()].push_back(Mat4dFromArray(w16));
+        // The instance's children are proxies of the prototype; the converter
+        // flattened them, so consume those mesh paths (excluded from 3b).
+        std::vector<tnext::UsdPrim> ms;
+        GatherMeshPrims(p, &ms);
+        for (const tnext::UsdPrim& m : ms) consumed.insert(m.GetPath().str());
+        return;
+      }
+      for (const tnext::UsdPrim& c : p.GetChildren()) wn(c);
+    };
+    for (const tnext::UsdPrim& r : stage.GetRootPrims()) wn(r);
+
+    for (const auto& kv : nativeGroups) {
+      // A single instance is just the prototype shown twice; let 3b draw it.
+      if (kv.second.size() < 2) continue;
+      tnext::UsdPrim protoRoot = stage.GetPrimAtPath(kv.first);
+      if (!protoRoot.IsValid()) continue;
+      double pr16[16];
+      tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
+      const matrix4d inv_protoroot = ::tinyusdz::inverse(Mat4dFromArray(pr16));
+      std::vector<tnext::UsdPrim> protoMeshes;
+      GatherMeshPrims(protoRoot, &protoMeshes);
+      for (const tnext::UsdPrim& mp : protoMeshes) {
+        DrawMeshCPU dm;
+        matrix4d mesh_rel;
+        if (!BuildProtoMesh(stage, scene, mp, inv_protoroot, time, &dm, &mesh_rel))
+          continue;
+        dm.instanceXforms.reserve(kv.second.size() * 12);
+        for (const matrix4d& iw : kv.second) {
+          if (static_cast<size_t>(instTotal) + dm.instanceXforms.size() / 12 >=
+              instBudget)
+            break;
+          const matrix4d fin = Mul4(mesh_rel, iw);
+          float o2w[12];
+          Mat4dToO2W(fin, o2w);
+          dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
+          const float tpos[3] = {static_cast<float>(fin.m[3][0]),
+                                 static_cast<float>(fin.m[3][1]),
+                                 static_cast<float>(fin.m[3][2])};
+          bounds.add(tpos);
+        }
+        if (dm.instanceXforms.empty()) continue;
+        const size_t ninst = dm.instanceXforms.size() / 12;
+        instTotal += static_cast<long long>(ninst);
+        effectiveTris += (dm.indices.size() / 3) * ninst;
+        for (int k = 0; k < 3; ++k) {
+          dm.aabbMin[k] = bounds.mn[k]; dm.aabbMax[k] = bounds.mx[k];
+        }
+        std::memset(dm.world, 0, sizeof(dm.world));
+        dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
+        draw->triangleCount += dm.indices.size() / 3;
+        draw->meshes.push_back(std::move(dm));
+      }
+    }
+  }
 
   // --- 3b. Non-instanced meshes: every converter Mesh node not consumed as a
   //         prototype, placed by its world transform (the original flat path). ---
@@ -419,7 +526,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   LOGI("next: '%s' -> %zu draws, %lld instances, %zu unique tris (%lld effective), "
        "instXform VRAM ~%.2f GB%s",
        path.c_str(), draw->meshes.size(), instTotal, draw->triangleCount,
-       effectiveTris, double(instTotal) * 64.0 / 1e9,
+       effectiveTris, double(instTotal) * 48.0 / 1e9,  // 3x4 = 48 B/instance
        draw->truncated ? " (truncated)" : "");
 
   if (draw->meshes.empty()) {

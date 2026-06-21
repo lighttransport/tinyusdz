@@ -69,12 +69,19 @@ struct DrawMeshCPU {
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
   std::vector<DrawSubmesh> submeshes;
 
-  // GPU instancing: per-instance model matrices, 16 floats each in light3d
-  // column-major layout (the same convention as `world`). When non-empty, the
-  // mesh is drawn with glDrawElementsInstanced and `world` is ignored (each
-  // instance carries its own placement). Empty = a single non-instanced draw.
+  // GPU instancing: per-instance 3x4 object-to-world matrices, 12 floats each
+  // (3 rows of (x,y,z,translate); the constant bottom row is implicit). When
+  // non-empty, the mesh is drawn with glDrawElementsInstanced and `world` is
+  // ignored (each instance carries its own placement). Empty = a single
+  // non-instanced draw.
   std::vector<float> instanceXforms;
-  size_t instanceCount() const { return instanceXforms.size() / 16; }
+  size_t instanceCount() const { return instanceXforms.size() / 12; }
+  // Instance/prototype displayColor for the flat instanced path. When
+  // instanceColors is non-empty (3 floats/instance) each instance is tinted
+  // individually; otherwise the whole instanced draw uses flatColor (e.g. the
+  // prototype's average displayColor). Ignored for non-instanced draws.
+  std::vector<float> instanceColors;
+  float flatColor[3]{0.8f, 0.8f, 0.8f};
 
   float world[16];  // column-major (light3d::Mat4 layout), world transform
   // USD row-vector matrix copied with the same convention as `world`.
