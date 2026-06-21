@@ -415,6 +415,14 @@ void main() {
             fragColor = vec4(normalize(T) * 0.5 + 0.5, 1.0);
             return;
         }
+        if (uRenderMode == 25) {                                                             // curvature
+            vec3 n = normalize(vNormal);
+            float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
+            // blue (flat) -> red (high curvature) heatmap
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0);
+            return;
+        }
+        if (uRenderMode == 26) { fragColor = vec4(idColor(-1), 1.0); return; }  // instance id: non-instanced -> gray
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);

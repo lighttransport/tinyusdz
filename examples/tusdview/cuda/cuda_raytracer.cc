@@ -121,6 +121,20 @@ __device__ float traverse(const Node* nodes, const float* tris, F3 o, F3 d,
   return best;
 }
 
+// Count BVH node visits for the primary ray (traversal-cost heatmap).
+__device__ int traverseSteps(const Node* nodes, const float* tris, F3 o, F3 d, float tmax){
+  F3 inv=mk(1.f/d.x,1.f/d.y,1.f/d.z);
+  int stack[64]; int sp=0; stack[sp++]=0; float best=tmax; int steps=0;
+  while (sp>0){
+    const Node* nd=&nodes[stack[--sp]]; steps++;
+    if (!hitAabb(nd,o,inv,best)) continue;
+    if (nd->count>0){
+      for (int i=0;i<nd->count;i++){ int ti=nd->left+i; float u,v; float t=triHit(&tris[ti*9],o,d,&u,&v); if (t>0.f&&t<best) best=t; }
+    } else { stack[sp++]=nd->left; stack[sp++]=nd->right; }
+  }
+  return steps;
+}
+
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const float* matPbr, int numMats,
@@ -138,7 +152,12 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
   int ht; float bu,bv;
   float t=traverse(nodes,tris,o,d,1e30f,&ht,&bu,&bv,false);
-  if (ht>=0){
+  int rmodePre=(int)(cam.clear[3]+0.5f);
+  if (rmodePre==27){  // BVH traversal-cost heatmap (per primary ray, all pixels)
+    int steps=traverseSteps(nodes,tris,o,d,1e30f);
+    float c=fminf(steps/128.0f,1.0f);
+    outc=mk(c, 1.f-fabsf(c-0.5f)*2.f, 1.f-c);
+  } else if (ht>=0){
     float w0=1.f-bu-bv;
     F3 hit=add(o,scale(d,t));
     F3 N;
@@ -224,6 +243,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       outc=mk(w0,bu,bv);
     } else if (rmode==15){  // prim id
       outc=idColor(ht);
+    } else if (rmode==26){  // instance id: CUDA flattens instances -> gray
+      outc=idColor(-1);
     } else if (rmode==19){  // missing normals
       outc=(geo[ht]&1)?mk(0.95f,0.1f,0.85f):mk(0.2f,0.2f,0.2f);
     } else if (rmode==18){  // purpose (bits1-2 of geo byte)
@@ -245,6 +266,21 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         if (sht>=0) occ+=1.f;
       }
       float a=1.f-occ/float(NS); outc=mk(a,a,a);
+    } else if (rmode==28){  // soft shadow / sky visibility toward the light
+      F3 Lc=norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]));
+      F3 tt=norm3(fabsf(Lc.x)>0.9f?mk(0.f,1.f,0.f):mk(1.f,0.f,0.f));
+      F3 bb=norm3(cross3(Lc,tt)); tt=cross3(bb,Lc);
+      unsigned seed=hashU((unsigned)px*2719u+(unsigned)py*5051u+7u);
+      const int NS=16; float vis=0.f; const float coneR=0.08f;
+      for (int s=0;s<NS;s++){
+        float ang=rndf(seed)*6.2831853f, rr=sqrtf(rndf(seed))*coneR;
+        F3 sd=norm3(add(Lc,add(scale(tt,rr*cosf(ang)),scale(bb,rr*sinf(ang)))));
+        F3 so=add(hit,scale(N,1e-3f));
+        int sht; float su,sv;
+        traverse(nodes,tris,so,sd,1e30f,&sht,&su,&sv,true);
+        if (sht<0) vis+=1.f;
+      }
+      float v=vis/float(NS); outc=mk(v,v,v);
     }
   }
   int idx=(py*W+px)*4;
