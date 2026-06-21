@@ -305,12 +305,21 @@ uniform vec3 uSceneMin;      // position AOV: scene bbox min
 uniform vec3 uSceneExtent;   // position AOV: scene bbox size (max-min)
 uniform int uMeshId;         // mesh-id AOV (per-draw mesh index)
 uniform bool uDoubleSided;   // double-sided AOV flag
+uniform int uPurpose;        // purpose AOV: 0=default/1=render/2=proxy/3=guide
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
     if (id < 0) return vec3(0.45);
     uint h = (uint(id) + 1u) * 2654435761u;
     return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// USD purpose -> distinct color (shared scheme across all backends).
+vec3 purposeColor(int p) {
+    if (p == 1) return vec3(0.2, 0.8, 0.3);    // render: green
+    if (p == 2) return vec3(0.2, 0.45, 0.95);  // proxy: blue
+    if (p == 3) return vec3(0.95, 0.75, 0.1);  // guide: amber
+    return vec3(0.5);                          // default: gray
 }
 
 void main() {
@@ -380,6 +389,7 @@ void main() {
             fragColor = uDoubleSided ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
             return;
         }
+        if (uRenderMode == 18) { fragColor = vec4(purposeColor(uPurpose), 1.0); return; }    // purpose
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);

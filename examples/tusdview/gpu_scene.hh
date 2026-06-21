@@ -104,6 +104,15 @@ struct DrawMeshCPU {
   bool doubleSided{false};
 };
 
+// USD purpose token -> compact id used by the Purpose debug AOV (consistent across
+// all backends): 0=default, 1=render, 2=proxy, 3=guide.
+inline int PurposeId(const std::string& p) {
+  if (p == "render") return 1;
+  if (p == "proxy") return 2;
+  if (p == "guide") return 3;
+  return 0;  // default / unknown
+}
+
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
 
 struct DrawMaterialCPU {
