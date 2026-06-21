@@ -20,6 +20,8 @@ layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
 layout(buffer_reference, scalar) readonly buffer Faces { uint  fc[]; }; // face id per triangle
+layout(buffer_reference, scalar) readonly buffer Joints  { uint  j[]; }; // 4 joint ids per vertex
+layout(buffer_reference, scalar) readonly buffer Weights { float w[]; }; // 4 weights per vertex
 
 struct MeshDesc {
   uint64_t vtxAddr;       // device address of the vertex buffer (DrawVertex[])
@@ -28,6 +30,8 @@ struct MeshDesc {
   uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
   uint64_t faceAddr;      // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t jointAddr;     // per-vertex 4 joint ids (uint[4]); 0 = unskinned
+  uint64_t weightAddr;    // per-vertex 4 skin weights (float[4]); 0 = unskinned
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
   uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
                              // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
@@ -77,6 +81,16 @@ vec2 fetchUV(Verts vb, uint vi) {
 }
 vec2 fetchUV1(UV1s ub, uint vi) { return vec2(ub.u[vi * 2u + 0u], ub.u[vi * 2u + 1u]); }
 float fetchInfl(Infls ib, uint vi) { return ib.f[vi]; }
+// Dominant skin joint (max weight of the 4) for a vertex; returns id, w = weight.
+int fetchDomJoint(Joints jb, Weights wb, uint vi, out float wOut) {
+  int dj = -1; float dw = 0.0;
+  for (uint k = 0u; k < 4u; ++k) {
+    float wk = wb.w[vi * 4u + k];
+    if (wk > dw) { dw = wk; dj = int(jb.j[vi * 4u + k]); }
+  }
+  wOut = dw;
+  return dj;
+}
 
 // Hash-based per-pixel RNG (PCG-ish) for the ambient-occlusion sampler.
 uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
@@ -287,6 +301,31 @@ void main() {
       float r = d1.x * d2.y - d2.x * d1.y;
       vec3 T = (abs(r) > 1e-8) ? (e1 * d2.y - e2 * d1.y) / r : e1;
       outc = normalize(T) * 0.5 + 0.5;
+    } else if (rmode == 21) {  // skin weights: dominant joint tinted by its weight
+      outc = vec3(0.45);  // unskinned -> gray
+      if (md.jointAddr != 0ul && md.weightAddr != 0ul) {
+        Joints jb = Joints(md.jointAddr);
+        Weights wb = Weights(md.weightAddr);
+        float w0d, w1d, w2d;
+        int dj = fetchDomJoint(jb, wb, i0, w0d);  // provoking vertex joint (flat, matches raster)
+        fetchDomJoint(jb, wb, i1, w1d);
+        fetchDomJoint(jb, wb, i2, w2d);
+        float wt = w0d * w0 + w1d * bc.x + w2d * bc.y;  // interpolated dominant weight
+        outc = idColor(uint(dj)) * (0.3 + 0.7 * clamp(wt, 0.0, 1.0));
+      }
+    } else if (rmode == 25) {  // curvature (geometric: vertex-normal spread across the tri)
+      if ((md.geometricNormal & 1u) != 0u) {
+        outc = vec3(0.0, 1.0, 1.0);  // flat-shaded mesh -> zero curvature
+      } else {
+        vec3 n0 = normalize(fetchNrm(vb, i0));
+        vec3 n1 = normalize(fetchNrm(vb, i1));
+        vec3 n2 = normalize(fetchNrm(vb, i2));
+        float spread = (1.0 - dot(n0, n1)) + (1.0 - dot(n1, n2)) + (1.0 - dot(n2, n0));
+        float c = clamp(spread * 4.0, 0.0, 1.0);
+        outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
+      }
+    } else if (rmode == 27) {  // bvh-heatmap: hardware ray query can't count traversal
+      outc = vec3(0.45);       // steps -> CUDA-only; neutral gray placeholder here
     } else if (rmode == 14) {  // barycentric
       outc = vec3(w0, bc.x, bc.y);
     } else if (rmode == 15) {  // prim id

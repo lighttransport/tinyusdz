@@ -101,13 +101,15 @@ struct MeshDescGPU {
   uint64_t uv1Addr;          // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;         // per-vertex blendshape influence (float[]); 0 = none
   uint64_t faceAddr;         // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t jointAddr;        // per-vertex 4 joint ids (uint[4]); 0 = unskinned
+  uint64_t weightAddr;       // per-vertex 4 skin weights (float[4]); 0 = unskinned
   uint32_t matId;
   uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 104, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 120, "MeshDescGPU must be tightly packed (scalar)");
 
 // Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
 // TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
@@ -1901,16 +1903,20 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     joints = zeroJoints.data();
     weights = zeroWeights.data();
   }
-  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t),
-                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, joints,
-                        &gm.jointVbo, &gm.jointVboMem)) {
+  // Joints/weights double as the SkinWeights AOV source in the RT path, so when RT
+  // is supported they also get a device address (raytrace.comp reads them via
+  // MeshDesc.jointAddr / weightAddr and derives the dominant joint per vertex).
+  const VkBufferUsageFlags skinUsage =
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+      (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
+  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t), skinUsage, joints,
+                        &gm.jointVbo, &gm.jointVboMem, rtSupported_)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
-  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float),
-                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, weights,
-                        &gm.weightVbo, &gm.weightVboMem)) {
+  if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
+                        &gm.weightVbo, &gm.weightVboMem, rtSupported_)) {
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
@@ -2034,6 +2040,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
     // faceBuf was created above (always); take its device address for the RT path.
     if (gm.faceBuf) gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
+    // Skin joint/weight buffers (device address taken above) for the SkinWeights AOV.
+    if (gm.skinned) {
+      gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
+      gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
+    }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
   meshes_.push_back(gm);
@@ -2151,6 +2162,8 @@ void VulkanRenderer::rebuildTlas() {
     d.uv1Addr = m.uv1Addr;
     d.inflAddr = m.inflAddr;
     d.faceAddr = m.faceAddr;
+    d.jointAddr = m.jointAddr;
+    d.weightAddr = m.weightAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose
