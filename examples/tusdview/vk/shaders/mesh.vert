@@ -22,6 +22,8 @@ layout(push_constant) uniform PushConstants {
   mat4 mvp;
   mat3 nmat;
   vec4 baseColor;
+  int matId;
+  int renderMode;
 } pc;
 
 layout(location = 0) out vec3 vNormalW;

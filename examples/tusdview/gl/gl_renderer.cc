@@ -95,6 +95,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uNormalMat_ = glGetUniformLocation(program_, "uNormalMatrix");
   uCameraPos_ = glGetUniformLocation(program_, "uCameraPos");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
+  uRenderMode_ = glGetUniformLocation(program_, "uRenderMode");
+  uMatId_ = glGetUniformLocation(program_, "uMatId");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -675,6 +677,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniformMatrix3fv(uNormalMat_, 1, GL_FALSE, nmat);
     glUniform1i(uGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+    glUniform1i(uRenderMode_, static_cast<int>(params.mode));
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
     if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
@@ -704,6 +707,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
           (sub.materialId >= 0 && static_cast<size_t>(sub.materialId) < materials_.size())
               ? materials_[static_cast<size_t>(sub.materialId)]
               : kDefault;
+      glUniform1i(uMatId_, sub.materialId);
       if (overrideEmissive) {
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
