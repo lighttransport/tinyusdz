@@ -49,6 +49,8 @@ class GLRenderer final : public Renderer {
     bool hasInstanceColors{false};   // true => attrib 9 is array-backed
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance
     GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
+    GLuint uv1Vbo{0};                // 2nd texcoord set (attrib 6, non-instanced); 0 = none
+    GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
     bool geometricNormal{false};     // shade with screen-derivative normal
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent

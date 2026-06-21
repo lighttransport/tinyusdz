@@ -463,8 +463,18 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
     }
   }
 
+  // Optional 2nd texcoord set (multi-UV AOV). The converter already extracts all
+  // material-referenced UV slots into mesh.texcoords; slot 1 is the 2nd set.
+  const tydra::VertexAttribute* uv1Attr = nullptr;
+  {
+    auto it = mesh.texcoords.find(1);
+    if (it != mesh.texcoords.end()) uv1Attr = &it->second;
+  }
+
   const bool normalsPerVertex = AttrUsableAsVertex(mesh.normals, nPoints);
   const bool uvPerVertex = uvAttr && AttrUsableAsVertex(*uvAttr, nPoints);
+  const bool uv1PerVertex = uv1Attr && AttrUsableAsVertex(*uv1Attr, nPoints);
+  const bool uv1FV = uv1Attr && !uv1Attr->empty() && uv1Attr->is_facevarying();
   bool gotNormals = false;
 
   if (mesh.is_single_indexable) {
@@ -483,6 +493,12 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
       // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
+      if (uv1Attr) {
+        float t[2] = {0, 0};
+        if (uv1PerVertex) ReadFloats(*uv1Attr, i, 2, t);
+        dm.uv1.push_back(t[0]);
+        dm.uv1.push_back(1.0f - t[1]);
+      }
       WriteSkinVertex(mesh, i, i, &dm);
       WriteSkinInfluenceVertex(mesh, i, i, &dm);
     }
@@ -520,6 +536,13 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
       // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
+      if (uv1Attr) {
+        float t[2] = {0, 0};
+        if (uv1FV) ReadFloats(*uv1Attr, k, 2, t);
+        else if (uv1PerVertex && pidx < nPoints) ReadFloats(*uv1Attr, pidx, 2, t);
+        dm.uv1.push_back(t[0]);
+        dm.uv1.push_back(1.0f - t[1]);
+      }
       if (pidx < nPoints) WriteSkinVertex(mesh, pidx, k, &dm);
       if (pidx < nPoints) WriteSkinInfluenceVertex(mesh, pidx, k, &dm);
       dm.indices[k] = static_cast<uint32_t>(k);
@@ -617,6 +640,22 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
       if (!mt.vtx.empty()) {
         mt.inbetweens = std::move(ibOut);
         dm.morphs.push_back(std::move(mt));
+      }
+    }
+  }
+
+  // Per-vertex blendshape influence: the largest single-target displacement
+  // magnitude (world units) at each vertex. Drives the BlendInfluence AOV.
+  if (!dm.morphs.empty()) {
+    dm.morphInfluence.assign(dm.vertices.size(), 0.0f);
+    for (const MorphTargetCPU& mt : dm.morphs) {
+      for (size_t e = 0; e < mt.vtx.size(); ++e) {
+        const uint32_t v = mt.vtx[e];
+        if (v >= dm.morphInfluence.size()) continue;
+        const float dx = mt.dpos[e * 3 + 0], dy = mt.dpos[e * 3 + 1],
+                    dz = mt.dpos[e * 3 + 2];
+        const float mag = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (mag > dm.morphInfluence[v]) dm.morphInfluence[v] = mag;
       }
     }
   }

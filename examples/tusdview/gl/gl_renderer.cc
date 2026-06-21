@@ -337,6 +337,8 @@ void GLRenderer::destroyScene() {
     if (m.instanceVbo) glDeleteBuffers(1, &m.instanceVbo);
     if (m.instanceColorVbo) glDeleteBuffers(1, &m.instanceColorVbo);
     if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
+    if (m.uv1Vbo) glDeleteBuffers(1, &m.uv1Vbo);
+    if (m.morphInflVbo) glDeleteBuffers(1, &m.morphInflVbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -660,6 +662,38 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     glVertexAttribDivisor(vtxColorAttrib, 0);
   } else {
     glDisableVertexAttribArray(vtxColorAttrib);  // constant white set per draw
+  }
+
+  // Multi-UV (attrib 6) + blendshape influence (attrib 7), non-instanced only --
+  // instanced meshes reuse attribs 6-8 for the per-instance rows (separate
+  // program). Default 0 when the mesh lacks the data so modes read as zero.
+  if (!gmInstanced) {
+    if (sm.uv1.size() == sm.vertices.size() * 2 && !sm.uv1.empty()) {
+      glGenBuffers(1, &gm.uv1Vbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.uv1Vbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.uv1.size() * sizeof(float)),
+                   sm.uv1.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(6);
+      glVertexAttribPointer(6, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+      glVertexAttribDivisor(6, 0);
+    } else {
+      glDisableVertexAttribArray(6);
+      glVertexAttrib2f(6, 0.0f, 0.0f);
+    }
+    if (sm.morphInfluence.size() == sm.vertices.size() && !sm.morphInfluence.empty()) {
+      glGenBuffers(1, &gm.morphInflVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.morphInflVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.morphInfluence.size() * sizeof(float)),
+                   sm.morphInfluence.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(7);
+      glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+      glVertexAttribDivisor(7, 0);
+    } else {
+      glDisableVertexAttribArray(7);
+      glVertexAttrib1f(7, 0.0f);
+    }
   }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4

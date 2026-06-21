@@ -235,6 +235,10 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       vec2 c = floor(fract(uvh) * 16.0);
       outc = vec3(mix(0.25, 0.85, mod(c.x + c.y, 2.0)));
+    } else if (rmode == 30) {  // udim tile from UV set 0
+      vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
+      int tile = int(floor(uvh.x)) + 10 * int(floor(uvh.y));
+      outc = idColor(uint(max(tile, 0)));
     } else if (rmode == 22) {  // tangent (from triangle UV gradient)
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
       vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);

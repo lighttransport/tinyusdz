@@ -54,6 +54,9 @@ enum class RenderMode : int {
   BvhHeatmap = 27,        // BVH traversal cost (CUDA software tracer)
   SoftShadow = 28,        // ray-traced soft shadow / sky visibility (RT backends)
   Kind = 29,              // USD model kind (component/group/assembly/subcomponent)
+  UdimTile = 30,          // UDIM tile id from UV set 0 (hashed color)
+  Uv1 = 31,               // texcoord set 1 (multi-UV; raster)
+  BlendInfluence = 32,    // per-vertex blendshape displacement magnitude (raster)
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 

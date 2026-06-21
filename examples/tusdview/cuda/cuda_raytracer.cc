@@ -253,6 +253,11 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==29){  // kind (bits3-5 of geo byte)
       int k=(geo[ht]>>3)&7;
       outc=(k==1)?mk(0.2f,0.8f,0.8f):(k==2)?mk(0.85f,0.3f,0.85f):(k==3)?mk(0.95f,0.6f,0.15f):(k==4)?mk(0.5f,0.85f,0.4f):mk(0.35f,0.35f,0.35f);
+    } else if (rmode==30){  // udim tile from UV set 0
+      const float* uv=&uvs[ht*6];
+      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
+      int tile=int(floorf(uu))+10*int(floorf(vv2));
+      outc=idColor(tile);
     } else if (rmode==24){  // ray-traced ambient occlusion
       const float* tv=&tris[ht*9];
       F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
