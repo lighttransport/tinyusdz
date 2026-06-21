@@ -12,6 +12,7 @@
 #include "light3d/math.h"
 #include "stage.hh"
 #include "usdGeom.hh"
+#include "usdSkel.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/render-data-shader.hh"
 
@@ -69,6 +70,48 @@ std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
     }
   }
   return "default";
+}
+
+using InbetweenSamples =
+    std::vector<std::pair<float, std::vector<tinyusdz::value::vector3f>>>;
+
+// Read a BlendShape prim's in-between shapes from its `inbetweens:*` attributes.
+// Each carries a `weight` attr-meta and a vector3f[] of position offsets parallel
+// to the BlendShape's pointIndices (same indexing as the primary `offsets`).
+// Returned ascending by weight.
+InbetweenSamples ReadInbetweensFromPrim(const tinyusdz::BlendShape& bs) {
+  InbetweenSamples out;
+  for (const auto& kv : bs.props) {
+    if (kv.first.rfind("inbetweens:", 0) != 0) continue;  // namespace prefix
+    const tinyusdz::Property& p = kv.second;
+    if (!p.is_attribute()) continue;
+    const tinyusdz::Attribute& a = p.get_attribute();
+    if (!a.metas().has_weight()) continue;
+    std::vector<tinyusdz::value::vector3f> offs;
+    if (!a.get_value(&offs)) continue;
+    out.emplace_back(static_cast<float>(a.metas().get_weight()), std::move(offs));
+  }
+  std::sort(out.begin(), out.end(),
+            [](const auto& x, const auto& y) { return x.first < y.first; });
+  return out;
+}
+
+// Collect in-between samples for every BlendShape in the stage, keyed by the
+// BlendShape's prim name (== morph target name == SkelAnimation weight key). The
+// converter records ShapeTarget.abs_path as the bare prim name, so name keying
+// matches the morph data model (and mirrors how blendshape weights are keyed).
+std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
+    const tinyusdz::Stage& stage) {
+  std::map<std::string, InbetweenSamples> out;
+  tydra::PathPrimMap<tinyusdz::BlendShape> bss;
+  if (!tydra::ListPrims(stage, bss)) return out;
+  for (auto& kv : bss) {
+    const tinyusdz::BlendShape* bs = kv.second;
+    if (!bs) continue;
+    InbetweenSamples ibs = ReadInbetweensFromPrim(*bs);
+    if (!ibs.empty()) out[bs->name] = std::move(ibs);
+  }
+  return out;
 }
 
 // USD value::matrix4d is row-major (row-vector, pre-multiply: p' = p*M).
@@ -409,7 +452,8 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
 // Build the geometry (interleaved vertices, indices, submeshes, normals) of one
 // RenderMesh into `dm`. World transform is left as identity; call PlaceDrawMesh
 // afterwards. Returns false if the mesh has no usable geometry.
-bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
+bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
+                  const std::map<std::string, InbetweenSamples>* inbetweens = nullptr) {
   const size_t nPoints = mesh.points.size();
   const std::vector<uint32_t>& srcIndices = mesh.faceVertexIndices();
   if (nPoints == 0 || srcIndices.empty()) {
@@ -551,6 +595,29 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       const size_t no = tgt.pointOffsets.size();
       MorphTargetCPU mt;
       mt.name = kv.first;
+
+      // In-between shapes (read from the source BlendShape prim; the converter
+      // does not carry them yet). Their offsets are parallel to the blendshape's
+      // pointIndices, exactly like the primary `pointOffsets`, so we remap them
+      // with the same p2v expansion below. Only samples whose offset array
+      // matches pointIndices length are usable.
+      // Keep only inbetweens whose offsets align with pointIndices; ibSrc stays
+      // index-parallel to ibOut so the expansion below is unambiguous.
+      std::vector<MorphInbetweenCPU> ibOut;
+      std::vector<const std::vector<tinyusdz::value::vector3f>*> ibSrc;
+      if (inbetweens) {
+        auto it = inbetweens->find(kv.first);  // key by blendshape name
+        if (it != inbetweens->end()) {
+          for (const auto& ib : it->second) {
+            if (ib.second.size() != tgt.pointIndices.size()) continue;
+            MorphInbetweenCPU mi;
+            mi.weight = ib.first;
+            ibOut.push_back(std::move(mi));
+            ibSrc.push_back(&ib.second);
+          }
+        }
+      }
+
       for (size_t e = 0; e < tgt.pointIndices.size() && e < no; ++e) {
         const uint32_t pidx = tgt.pointIndices[e];
         if (pidx >= nPoints) continue;
@@ -559,9 +626,19 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
           mt.dpos.push_back(tgt.pointOffsets[e][0]);
           mt.dpos.push_back(tgt.pointOffsets[e][1]);
           mt.dpos.push_back(tgt.pointOffsets[e][2]);
+          // Same expansion for each usable in-between sample.
+          for (size_t s = 0; s < ibOut.size(); ++s) {
+            const auto& src = (*ibSrc[s])[e];
+            ibOut[s].dpos.push_back(src[0]);
+            ibOut[s].dpos.push_back(src[1]);
+            ibOut[s].dpos.push_back(src[2]);
+          }
         }
       }
-      if (!mt.vtx.empty()) dm.morphs.push_back(std::move(mt));
+      if (!mt.vtx.empty()) {
+        mt.inbetweens = std::move(ibOut);
+        dm.morphs.push_back(std::move(mt));
+      }
     }
   }
 
@@ -748,8 +825,16 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
   }
 }
 
-void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out, LoadControl* ctrl) {
+void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
+                    LoadControl* ctrl, const tinyusdz::Stage* stage) {
   *out = DrawScene{};
+
+  // Blendshape in-between shapes are not carried by RenderMesh; read them once
+  // from the source Stage (keyed by BlendShape name) and remap per mesh below.
+  std::map<std::string, InbetweenSamples> inbetweens;
+  if (stage) inbetweens = CollectBlendShapeInbetweens(*stage);
+  const std::map<std::string, InbetweenSamples>* ibPtr =
+      inbetweens.empty() ? nullptr : &inbetweens;
 
   // Mesh world transforms from the node hierarchy.
   std::unordered_map<int, matrix4d> meshXform;
@@ -765,7 +850,7 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out, LoadControl* c
   for (size_t m = 0; m < rs.meshes.size(); ++m) {
     const tydra::RenderMesh& mesh = rs.meshes[m];
     DrawMeshCPU dm;
-    if (!MakeDrawMesh(mesh, &dm)) {
+    if (!MakeDrawMesh(mesh, &dm, ibPtr)) {
       out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
       continue;
     }
@@ -815,6 +900,12 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
                              LoadControl* ctrl) {
   *out = DrawScene{};
 
+  // Blendshape in-betweens (keyed by name) read once from the source Stage.
+  std::map<std::string, InbetweenSamples> inbetweens =
+      CollectBlendShapeInbetweens(env.stage);
+  const std::map<std::string, InbetweenSamples>* ibPtr =
+      inbetweens.empty() ? nullptr : &inbetweens;
+
   // Streaming state (lives for the duration of the synchronous conversion).
   std::vector<int> rsMeshToDraw;   // rs mesh index -> out->meshes index (-1 skipped)
   std::vector<bool> placed;        // per out->meshes: world applied yet?
@@ -827,7 +918,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
                      const std::string&, void*) -> bool {
     if (index >= rsMeshToDraw.size()) rsMeshToDraw.resize(index + 1, -1);
     DrawMeshCPU dm;
-    if (!MakeDrawMesh(mesh, &dm)) {
+    if (!MakeDrawMesh(mesh, &dm, ibPtr)) {
       out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
       return true;
     }

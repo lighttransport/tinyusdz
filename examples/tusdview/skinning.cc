@@ -416,6 +416,49 @@ void TransformPointWorld(const float m[16], const point3f& p, float out[3]) {
   out[2] = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
 }
 
+// Apply a blendshape target at weight `w` to `mv`, piecewise-linearly
+// interpolating its position offset through any in-between shapes. The sample
+// table is (0 -> zero offset), each in-between (ascending), (1 -> primary
+// offset). Within a segment the offset lerps between the two bracketing samples;
+// outside [0,1] the end segment is extrapolated (Maya-style overdrive). With no
+// in-betweens this reduces to the classic linear `w * primary`.
+void ApplyMorphTarget(const MorphTargetCPU& mt, float w,
+                      std::vector<DrawVertex>* mv) {
+  if (w == 0.0f) return;
+  const size_t n = mt.vtx.size();
+  struct Samp { float w; const std::vector<float>* d; };  // d == null -> zero
+  std::vector<Samp> s;
+  s.reserve(mt.inbetweens.size() + 2);
+  s.push_back({0.0f, nullptr});
+  for (const MorphInbetweenCPU& ib : mt.inbetweens) {
+    if (ib.dpos.size() == mt.dpos.size()) s.push_back({ib.weight, &ib.dpos});
+  }
+  s.push_back({1.0f, &mt.dpos});
+
+  // Bracketing segment [lo, hi] for w (clamped indices; t extrapolates at ends).
+  size_t hi = 1;
+  while (hi + 1 < s.size() && w > s[hi].w) ++hi;
+  const size_t lo = hi - 1;
+  const float denom = s[hi].w - s[lo].w;
+  const float t = (denom > 1e-12f) ? (w - s[lo].w) / denom : 0.0f;
+  const std::vector<float>* dlo = s[lo].d;
+  const std::vector<float>* dhi = s[hi].d;
+
+  for (size_t e = 0; e < n; ++e) {
+    const uint32_t v = mt.vtx[e];
+    if (v >= mv->size()) continue;
+    const float lx = dlo ? (*dlo)[e * 3 + 0] : 0.0f;
+    const float ly = dlo ? (*dlo)[e * 3 + 1] : 0.0f;
+    const float lz = dlo ? (*dlo)[e * 3 + 2] : 0.0f;
+    const float hx = dhi ? (*dhi)[e * 3 + 0] : 0.0f;
+    const float hy = dhi ? (*dhi)[e * 3 + 1] : 0.0f;
+    const float hz = dhi ? (*dhi)[e * 3 + 2] : 0.0f;
+    (*mv)[v].px += lx + (hx - lx) * t;
+    (*mv)[v].py += ly + (hy - ly) * t;
+    (*mv)[v].pz += lz + (hz - lz) * t;
+  }
+}
+
 }  // namespace
 
 bool SceneHasDeformation(const tydra::RenderScene& render) {
@@ -467,7 +510,8 @@ bool BuildGpuSkinningFrame(
     const tydra::RenderScene& render, const tinyusdz::Stage& stage,
     DrawScene* draw, double timecode, SkinningFrameCPU* frame,
     bool updateSkinnedHelpers,
-    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut) {
+    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut,
+    const std::unordered_map<std::string, float>* blendOverride) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
   if (matrices > 0) {
@@ -495,6 +539,11 @@ bool BuildGpuSkinningFrame(
       if (dm.morphs.empty()) continue;
       if (!gatheredBlend) {
         blendWeights = GatherBlendWeights(stage, timecode);
+        // Manual UI weights (Maya-like blend editor) override the animation per
+        // blendshape name, and can introduce weights the animation doesn't drive.
+        if (blendOverride) {
+          for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
+        }
         gatheredBlend = true;
       }
       std::vector<DrawVertex> mv = dm.vertices;  // start from rest
@@ -502,15 +551,8 @@ bool BuildGpuSkinningFrame(
       for (const MorphTargetCPU& mt : dm.morphs) {
         auto wit = blendWeights.find(mt.name);
         if (wit == blendWeights.end() || wit->second == 0.0f) continue;
-        const float w = wit->second;
         anyMorph = true;
-        for (size_t e = 0; e < mt.vtx.size(); ++e) {
-          const uint32_t v = mt.vtx[e];
-          if (v >= mv.size()) continue;
-          mv[v].px += w * mt.dpos[e * 3 + 0];
-          mv[v].py += w * mt.dpos[e * 3 + 1];
-          mv[v].pz += w * mt.dpos[e * 3 + 2];
-        }
+        ApplyMorphTarget(mt, wit->second, &mv);
       }
       // Only meshes with an active (non-zero) weight need a posed buffer; an
       // unweighted mesh stays at its rest vertices (the caller reverts any mesh

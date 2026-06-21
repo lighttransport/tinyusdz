@@ -27,8 +27,12 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw);
 // `ctrl` (optional) makes the build cancellable and bounds it by the triangle /
 // vertex-byte budget; when a budget is hit the build stops and out->truncated
 // is set (prevents per-frame freeze and VRAM thrashing on huge scenes).
+// `stage` (optional) supplies the source Stage so per-mesh extras not carried by
+// RenderMesh can be read -- currently blendshape in-between shapes (read from the
+// BlendShape prims and remapped to DrawVertex order alongside the primary target).
 void BuildDrawScene(const tinyusdz::tydra::RenderScene& rs, DrawScene* out,
-                    LoadControl* ctrl = nullptr);
+                    LoadControl* ctrl = nullptr,
+                    const tinyusdz::Stage* stage = nullptr);
 
 // Streaming variant: run `converter.ConvertToRenderSceneStreaming` and build the
 // DrawScene incrementally as elements are produced (mesh geometry as each mesh

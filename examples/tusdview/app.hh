@@ -101,6 +101,9 @@ class App
   void setCudaRt(bool on) { cudaRt_ = on; }
   // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
+  void setBlendWeight(const std::string& name, float w) {
+    gui_.setBlendWeight(name, w);
+  }
 
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
