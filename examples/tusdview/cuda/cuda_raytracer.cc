@@ -111,7 +111,7 @@ __device__ float traverse(const Node* nodes, const float* tris, F3 o, F3 d,
 
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
-                                 const int* mats, const Node* nodes,
+                                 const int* mats, const float* uvs, const Node* nodes,
                                  unsigned char* out, int W, int H, Cam cam){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
@@ -152,13 +152,29 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     float k=0.25f+0.85f*diff*shadow;
     outc=mk(base.x*k,base.y*k,base.z*k);
-    // Render mode (clear[3]): 1 = wireframe (edges only), 3 = material-id.
+    // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
+    // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).
     int rmode=(int)(cam.clear[3]+0.5f);
     if (rmode==1){
       float e=fminf(w0,fminf(bu,bv));
       if (e>0.02f) outc=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+    } else if (rmode==2){
+      outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
     } else if (rmode==3){
       outc=idColor(mats[ht]);
+    } else if (rmode==4){
+      const float* tv=&tris[ht*9];
+      F3 p0=mk(tv[0],tv[1],tv[2]),p1=mk(tv[3],tv[4],tv[5]),p2=mk(tv[6],tv[7],tv[8]);
+      F3 Ng=norm3(cross3(sub(p1,p0),sub(p2,p0)));
+      if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);
+      outc=mk(Ng.x*0.5f+0.5f, Ng.y*0.5f+0.5f, Ng.z*0.5f+0.5f);
+    } else if (rmode==5){
+      const float* uv=&uvs[ht*6];
+      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
+      outc=mk(uu-floorf(uu), vv2-floorf(vv2), 0.f);
+    } else if (rmode==6){
+      float dd=fminf(fmaxf(t/fmaxf(cam.lightDir[3],1e-3f),0.f),1.f);
+      outc=mk(1.f-dd,1.f-dd,1.f-dd);
     }
   }
   int idx=(py*W+px)*4;
@@ -215,7 +231,7 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dNodes_); F(dOut_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dUV_); F(dNodes_); F(dOut_);
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
 }
 
@@ -338,16 +354,17 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
   // Flatten to world-space triangles. Per tri: 9 pos, 9 normals, 9 colors, 1 geo,
   // 1 material id (for material-id visualization).
-  std::vector<float> tris, nrms, cols;
+  std::vector<float> tris, nrms, cols, uvs;
   std::vector<uint8_t> geo;
   std::vector<int> mats;
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
 
   auto emitTri = [&](const float wp[9], const float wn[9], const float wc[9],
-                     uint8_t g, int matId) {
+                     const float wuv[6], uint8_t g, int matId) {
     tris.insert(tris.end(), wp, wp + 9);
     nrms.insert(nrms.end(), wn, wn + 9);
     cols.insert(cols.end(), wc, wc + 9);
+    uvs.insert(uvs.end(), wuv, wuv + 6);
     geo.push_back(g);
     mats.push_back(matId);
   };
@@ -402,9 +419,11 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
             curTint[2] = mat->baseColor[2];
           }
         }
-        float wp[9], wn[9], wc[9];
+        float wp[9], wn[9], wc[9], wuv[6];
         for (int k = 0; k < 3; ++k) {
           const DrawVertex& vtx = m.vertices[m.indices[t + k]];
+          wuv[k * 2 + 0] = vtx.u;
+          wuv[k * 2 + 1] = vtx.v;
           if (instanced) {
             O2WPt(o2w, vtx.px, vtx.py, vtx.pz, &wp[k * 3]);
             O2WN(o2w, vtx.nx, vtx.ny, vtx.nz, &wn[k * 3]);
@@ -421,7 +440,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
           wc[k * 3 + 1] = curTint[1] * dc[1];
           wc[k * 3 + 2] = curTint[2] * dc[2];
         }
-        emitTri(wp, wn, wc, g, submeshMatId(static_cast<uint32_t>(t)));
+        emitTri(wp, wn, wc, wuv, g, submeshMatId(static_cast<uint32_t>(t)));
       }
       if (truncated_) break;
     }
@@ -446,7 +465,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   nodeCount_ = nodes.size();
 
   // Reorder tri data into BVH leaf order so leaves reference contiguous ranges.
-  std::vector<float> rt(triCount_ * 9), rn(triCount_ * 9), rc(triCount_ * 9);
+  std::vector<float> rt(triCount_ * 9), rn(triCount_ * 9), rc(triCount_ * 9),
+      ruv(triCount_ * 6);
   std::vector<uint8_t> rg(triCount_);
   std::vector<int> rm(triCount_);
   for (size_t i = 0; i < triCount_; ++i) {
@@ -454,6 +474,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     std::memcpy(&rt[i * 9], &tris[s * 9], 9 * sizeof(float));
     std::memcpy(&rn[i * 9], &nrms[s * 9], 9 * sizeof(float));
     std::memcpy(&rc[i * 9], &cols[s * 9], 9 * sizeof(float));
+    std::memcpy(&ruv[i * 6], &uvs[s * 6], 6 * sizeof(float));
     rg[i] = geo[s];
     rm[i] = mats[s];
   }
@@ -471,14 +492,15 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   if (!up(rc.data(), rc.size() * sizeof(float), &dCols_)) return false;
   if (!up(rg.data(), rg.size(), &dGeo_)) return false;
   if (!up(rm.data(), rm.size() * sizeof(int), &dMat_)) return false;
+  if (!up(ruv.data(), ruv.size() * sizeof(float), &dUV_)) return false;
   if (!up(nodes.data(), nodes.size() * sizeof(Node), &dNodes_)) return false;
   return true;
 }
 
 bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
-                          int renderMode, int w, int h, std::vector<uint8_t>* rgba,
-                          std::string* err) {
+                          int renderMode, float depthScale, int w, int h,
+                          std::vector<uint8_t>* rgba, std::string* err) {
   if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
@@ -497,9 +519,10 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
     cam.clear[i] = clearColor[i];
   }
   cam.clear[3] = static_cast<float>(renderMode);
+  cam.lightDir[3] = depthScale;  // depth AOV normalizer
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dNo = dNodes_, dO = dOut_;
-  void* args[] = {&dT, &dN, &dC, &dG, &dM, &dNo, &dO, &w, &h, &cam};
+              dU = dUV_, dNo = dNodes_, dO = dOut_;
+  void* args[] = {&dT, &dN, &dC, &dG, &dM, &dU, &dNo, &dO, &w, &h, &cam};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                        nullptr, args, nullptr),

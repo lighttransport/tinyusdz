@@ -20,7 +20,18 @@ namespace tusdview {
 
 enum class Backend { GL, Vulkan };
 
-enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2, MaterialId = 3 };
+// Shaded/Wireframe + debug AOVs. Normals = the shading normal used by the lit path;
+// GeomNormal = the geometric face normal; Uv = texcoord set 0; Depth = camera
+// distance normalized by RenderFrameParams::depthScale.
+enum class RenderMode : int {
+  Shaded = 0,
+  Wireframe = 1,
+  Normals = 2,
+  MaterialId = 3,
+  GeomNormal = 4,
+  Uv = 5,
+  Depth = 6,
+};
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
 // Unlit, vertex-colored line vertex for debug helpers (grid, axes, bboxes).
@@ -47,6 +58,7 @@ struct RenderFrameParams {
   float cameraPos[3]{0, 0, 0};
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  float depthScale{1.0f};  // Depth AOV: normalize camera distance by this (scene extent)
   int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
 
   // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested

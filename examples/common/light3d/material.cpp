@@ -298,8 +298,9 @@ uniform bool uHasEmissiveTex;
 
 out vec4 fragColor;
 
-uniform int uRenderMode;  // RenderMode: 0=shaded, 3=material-id
-uniform int uMatId;       // per-draw material id (for material-id viz; -1 = none)
+uniform int uRenderMode;     // RenderMode (0=shaded, 2=normals, 3=matId, 4=geomN, 5=uv, 6=depth)
+uniform int uMatId;          // per-draw material id (material-id viz; -1 = none)
+uniform float uDepthScale;   // depth AOV: camera-distance normalizer (scene extent)
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -309,7 +310,6 @@ vec3 idColor(int id) {
 }
 
 void main() {
-    if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }
     vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
@@ -333,6 +333,20 @@ void main() {
     if (uHasNormalTex) {
         vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
         N = normalize(N + tangentNormal * 0.1);
+    }
+
+    // Debug AOVs: override the shaded output with the requested channel.
+    if (uRenderMode != 0) {
+        vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+        if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }       // shading normal
+        if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }     // material id
+        if (uRenderMode == 4) { fragColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }    // geometric normal
+        if (uRenderMode == 6) {                                                       // depth
+            float d = clamp(length(uCameraPos - vWorldPos) / uDepthScale, 0.0, 1.0);
+            fragColor = vec4(vec3(1.0 - d), 1.0);
+            return;
+        }
+        if (uRenderMode == 5) { fragColor = vec4(fract(vUV), 0.0, 1.0); return; }      // uv set 0
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);

@@ -20,14 +20,17 @@ layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
 //   vec4 baseColor  : 16 bytes
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
+  mat4 model;
   mat3 nmat;
   vec4 baseColor;
+  vec4 camPos;
   int matId;
   int renderMode;
 } pc;
 
 layout(location = 0) out vec3 vNormalW;
 layout(location = 1) out vec2 vUV;
+layout(location = 2) out vec3 vWorldPos;
 
 mat4 fetchBone(uint idx) {
   int base = int(idx) * 4;
@@ -76,5 +79,6 @@ void main() {
   }
   vNormalW = pc.nmat * nrm;
   vUV = aUV;
+  vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
   gl_Position = pc.mvp * vec4(pos, 1.0);
 }
