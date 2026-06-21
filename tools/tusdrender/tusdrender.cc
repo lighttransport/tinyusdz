@@ -5368,6 +5368,7 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -5791,6 +5792,7 @@ void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
                           const matrix4d &parent_world,
                           tinyusdz::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -5999,6 +6001,7 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        std::vector<CurveJobNext> *curve_jobs,
                        CurveProtoCollect *curve_inst, RTPreviewStats *stats,
                        const std::unordered_set<std::string> *proto_holders) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -6112,6 +6115,7 @@ void CollectProtoMeshNestingRec(
     std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
     RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -6206,6 +6210,7 @@ void CollectProtoMeshNesting(
 // is one base-graph traversal (no instance multiplicity), not the expanded set.
 void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
                            std::unordered_set<std::string> *out) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
   if (spec && !spec->meta().instance_prototype().empty()) {
     out->insert(spec->meta().instance_prototype());
@@ -7152,6 +7157,29 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       std::vector<InstanceRT> expanded;
       expanded.reserve(instances.size());
       size_t addedM = 0, addedC = 0;
+      // Guard the expanded instance arrays against the process memory cap before
+      // materializing them (build() is memoized, so this pre-pass is cheap and the
+      // expansion loop below reuses the cached flat[]/flatC[]). Nested instancing can
+      // multiply the placement count (outer x nested), so a pathological scene could
+      // blow the budget on 48 B/placement alone.
+      {
+        size_t projM = instances.size(), projC = curve_inst.instances.size();
+        for (const InstanceRT &it : instances) {
+          build(it.blas_id);
+          if (it.blas_id < nb) {
+            projM += flat[it.blas_id].size();
+            projC += flatC[it.blas_id].size();
+          }
+        }
+        std::string why;
+        if (MemBudget::Get().WouldExceed(
+                projM * sizeof(InstanceRT) + projC * sizeof(CurveInstanceRT),
+                &why)) {
+          std::cerr << "Aborting nested-instance expansion: " << why
+                    << ".\n  Raise -maxMem or restrict with -mask.\n";
+          return false;
+        }
+      }
       for (const InstanceRT &it : instances) {
         expanded.push_back(it);  // the prototype's own base at its outer transform
         build(it.blas_id);

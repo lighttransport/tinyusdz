@@ -423,6 +423,41 @@ def Xform "World"
             raise RuntimeError(
                 f"missing nested-curve stat {expected!r}:\n{ncurve_stats.stderr}")
 
+    # active = false prunes a prim (and its subtree). Two meshes, one inactive ->
+    # only one renders.
+    active_scene = outdir / "tusdrender-active.usda"
+    active_scene.write_text("""#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World"
+{
+    def Mesh "visible"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (0, 1, 0)]
+    }
+    def Mesh "hidden" (active = false)
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(2, -1, 0), (4, -1, 0), (3, 1, 0)]
+    }
+}
+""")
+    active_out = outdir / "tusdrender-active.png"
+    active_stats = subprocess.run(
+        [exe, str(active_scene), str(active_out), "-w", "32", "-height", "32",
+         "-rtPreview", "-stats", "-autoframe"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for expected in ("rt meshes: 1", "triangles: 1"):
+        if expected not in active_stats.stderr:
+            raise RuntimeError(
+                f"active=false not honored ({expected!r}):\n{active_stats.stderr}")
+
     # BasisCurves ray tracing in the -rtPreview path (curves build into the
     # DirectScene as LightRT hair strands), including curve-prototype instancing
     # (a PointInstancer whose prototype is a BasisCurves is baked per instance).
