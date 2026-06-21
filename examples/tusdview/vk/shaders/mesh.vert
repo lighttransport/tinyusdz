@@ -6,6 +6,8 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
+layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
+layout(location = 7) in float aMorphInfl; // blendshape influence (world units)
 
 layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
   vec4 boneRows[];
@@ -37,6 +39,8 @@ layout(location = 1) out vec2 vUV;
 layout(location = 2) out vec3 vWorldPos;
 layout(location = 3) flat out int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 layout(location = 4) out float vDomWeight;
+layout(location = 5) out vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
+layout(location = 6) out float vMorphInfl;     // blendshape influence (world units)
 
 mat4 fetchBone(uint idx) {
   int base = int(idx) * 4;
@@ -93,5 +97,7 @@ void main() {
   if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
   if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
   if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
+  vUV1 = aUV1;
+  vMorphInfl = aMorphInfl;
   gl_Position = pc.mvp * vec4(pos, 1.0);
 }
