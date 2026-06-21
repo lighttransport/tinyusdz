@@ -98,13 +98,15 @@ struct MeshDescGPU {
   uint64_t vtxAddr;
   uint64_t idxAddr;
   uint64_t vtxColorAddr;     // per-vertex displayColor (vec3[]); 0 = none
+  uint64_t uv1Addr;          // per-vertex 2nd texcoord (vec2[]); 0 = none
+  uint64_t inflAddr;         // per-vertex blendshape influence (float[]); 0 = none
   uint32_t matId;
   uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 80, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 96, "MeshDescGPU must be tightly packed (scalar)");
 
 // Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
 // TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
@@ -1779,10 +1781,15 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       uv1.assign(sm.vertices.size() * 2, 0.0f);
     std::vector<float> infl = sm.morphInfluence;
     if (infl.size() != sm.vertices.size()) infl.assign(sm.vertices.size(), 0.0f);
-    createHostBuffer(uv1.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     uv1.data(), &gm.uv1Vbo, &gm.uv1VboMem);
-    createHostBuffer(infl.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     infl.data(), &gm.morphInflVbo, &gm.morphInflVboMem);
+    // Also a device-address storage buffer when RT is supported, so raytrace.comp
+    // can read them per-vertex (MeshDesc.uv1Addr / inflAddr).
+    const VkBufferUsageFlags auxUsage =
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
+    createHostBuffer(uv1.size() * sizeof(float), auxUsage, uv1.data(),
+                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_);
+    createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
+                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_);
   }
   if (gm.extendedSkinned) {
     const VkDeviceSize bytes = sm.influenceTexels.size() * sizeof(float);
@@ -1844,6 +1851,10 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
         gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
       }
     }
+    // Multi-UV + blendshape-influence per-vertex aux buffers (created above with a
+    // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
+    if (gm.uv1Vbo) gm.uv1Addr = bufferDeviceAddress(gm.uv1Vbo);
+    if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
   meshes_.push_back(gm);
@@ -1958,6 +1969,8 @@ void VulkanRenderer::rebuildTlas() {
     d.vtxAddr = m.vboAddr;
     d.idxAddr = m.eboAddr;
     d.vtxColorAddr = m.vtxColorAddr;
+    d.uv1Addr = m.uv1Addr;
+    d.inflAddr = m.inflAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose

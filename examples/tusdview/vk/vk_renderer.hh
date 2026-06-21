@@ -98,6 +98,8 @@ class VulkanRenderer final : public Renderer {
     VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
+    VkDeviceAddress uv1Addr{0};              // uv1 SSBO address (RT multi-UV AOV)
+    VkDeviceAddress inflAddr{0};             // influence SSBO address (RT influence AOV)
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
