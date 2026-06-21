@@ -104,6 +104,9 @@ class App
   void setBlendWeight(const std::string& name, float w) {
     gui_.setBlendWeight(name, w);
   }
+  void setInitialSelection(const std::string& primPath) {
+    initialSelect_ = primPath;
+  }
 
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
@@ -247,6 +250,7 @@ class App
   double reconvRequested_{0.0};    // latest requested time code
   bool reconvHasRequest_{false};   // a (re)convert is wanted
   bool blendReconvNeeded_{false};  // manual blend weights changed (non-GPU path)
+  std::string initialSelect_;      // --select: prim to select once loaded
   double reconvApplied_{0.0};      // time code currently shown
   std::unique_ptr<DrawScene> reconvDraw_;
   std::atomic<bool> reconvOk_{false};

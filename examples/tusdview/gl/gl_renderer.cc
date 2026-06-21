@@ -1004,9 +1004,21 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform1i(uHasEmissiveTex_, 0);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(mesh.vao);
-    for (const auto& sub : mesh.submeshes) {
-      glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
-                     (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+    if (params.highlightIndices && params.highlightIndexCount > 0) {
+      // Highlight only a selected GeomSubset's triangles: draw a dynamic index
+      // buffer over the mesh's vertices. Restore the VAO's element buffer after.
+      if (!highlightEbo_) glGenBuffers(1, &highlightEbo_);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, highlightEbo_);
+      glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(params.highlightIndexCount * sizeof(uint32_t)),
+                   params.highlightIndices, GL_STREAM_DRAW);
+      glDrawElements(GL_TRIANGLES, params.highlightIndexCount, GL_UNSIGNED_INT, nullptr);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);  // restore VAO state
+    } else {
+      for (const auto& sub : mesh.submeshes) {
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
+                       (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+      }
     }
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_LINE);
@@ -1141,6 +1153,7 @@ void GLRenderer::shutdown() {
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
+  if (highlightEbo_) { glDeleteBuffers(1, &highlightEbo_); highlightEbo_ = 0; }
   if (imguiInited_) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

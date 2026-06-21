@@ -119,6 +119,7 @@ class GLRenderer final : public Renderer {
   GLint uLineVP_{-1};
   GLuint lineVao_{0}, lineVbo_{0};
   size_t lineVboCap_{0};
+  GLuint highlightEbo_{0};  // dynamic index buffer for GeomSubset highlight
 
   // Offscreen target
   GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
