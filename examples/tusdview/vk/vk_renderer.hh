@@ -69,6 +69,10 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory weightVboMem{VK_NULL_HANDLE};
     VkBuffer influenceVbo{VK_NULL_HANDLE};
     VkDeviceMemory influenceVboMem{VK_NULL_HANDLE};
+    VkBuffer uv1Vbo{VK_NULL_HANDLE};         // 2nd texcoord set (binding 4, vec2/vtx)
+    VkDeviceMemory uv1VboMem{VK_NULL_HANDLE};
+    VkBuffer morphInflVbo{VK_NULL_HANDLE};   // blendshape influence (binding 5, float/vtx)
+    VkDeviceMemory morphInflVboMem{VK_NULL_HANDLE};
     VkBuffer influenceDataBuf{VK_NULL_HANDLE};
     VkDeviceMemory influenceDataMem{VK_NULL_HANDLE};
     VkDescriptorSet influenceDesc{VK_NULL_HANDLE};

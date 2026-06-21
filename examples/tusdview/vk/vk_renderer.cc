@@ -701,7 +701,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   stages[1].module = fs;
   stages[1].pName = "main";
 
-  VkVertexInputBindingDescription bind[4]{};
+  VkVertexInputBindingDescription bind[6]{};
   bind[0].binding = 0;
   bind[0].stride = sizeof(DrawVertex);
   bind[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -714,19 +714,27 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   bind[3].binding = 3;
   bind[3].stride = 2 * sizeof(uint32_t);
   bind[3].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[6]{};
+  bind[4].binding = 4;  // uv1 (multi-UV AOV)
+  bind[4].stride = 2 * sizeof(float);
+  bind[4].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  bind[5].binding = 5;  // blendshape influence
+  bind[5].stride = sizeof(float);
+  bind[5].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[8]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
   attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_UINT, 0};
   attrs[4] = {4, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
   attrs[5] = {5, 3, VK_FORMAT_R32G32_UINT, 0};
+  attrs[6] = {6, 4, VK_FORMAT_R32G32_SFLOAT, 0};  // aUV1
+  attrs[7] = {7, 5, VK_FORMAT_R32_SFLOAT, 0};     // aMorphInfl
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 4;
+  vin.vertexBindingDescriptionCount = 6;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 6;
+  vin.vertexAttributeDescriptionCount = 8;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -1536,6 +1544,10 @@ void VulkanRenderer::destroyScene() {
     if (m.weightVboMem) vkFreeMemory(device_, m.weightVboMem, nullptr);
     if (m.influenceVbo) vkDestroyBuffer(device_, m.influenceVbo, nullptr);
     if (m.influenceVboMem) vkFreeMemory(device_, m.influenceVboMem, nullptr);
+    if (m.uv1Vbo) vkDestroyBuffer(device_, m.uv1Vbo, nullptr);
+    if (m.uv1VboMem) vkFreeMemory(device_, m.uv1VboMem, nullptr);
+    if (m.morphInflVbo) vkDestroyBuffer(device_, m.morphInflVbo, nullptr);
+    if (m.morphInflVboMem) vkFreeMemory(device_, m.morphInflVboMem, nullptr);
     if (m.influenceDataBuf) vkDestroyBuffer(device_, m.influenceDataBuf, nullptr);
     if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
@@ -1757,6 +1769,20 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
+  }
+  // uv1 (multi-UV, binding 4) + blendshape influence (binding 5) per-vertex
+  // buffers. Always created (zero-filled when the mesh lacks the data) so every
+  // mesh satisfies the pipeline's 6 vertex bindings.
+  {
+    std::vector<float> uv1 = sm.uv1;
+    if (uv1.size() != sm.vertices.size() * 2)
+      uv1.assign(sm.vertices.size() * 2, 0.0f);
+    std::vector<float> infl = sm.morphInfluence;
+    if (infl.size() != sm.vertices.size()) infl.assign(sm.vertices.size(), 0.0f);
+    createHostBuffer(uv1.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     uv1.data(), &gm.uv1Vbo, &gm.uv1VboMem);
+    createHostBuffer(infl.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     infl.data(), &gm.morphInflVbo, &gm.morphInflVboMem);
   }
   if (gm.extendedSkinned) {
     const VkDeviceSize bytes = sm.influenceTexels.size() * sizeof(float);
@@ -2558,10 +2584,10 @@ void VulkanRenderer::present() {
                                 pipelineLayout_, 2, 1, &mesh.influenceDesc, 0,
                                 nullptr);
       }
-      VkDeviceSize offs[4] = {0, 0, 0, 0};
-      VkBuffer bufs[4] = {mesh.vbo, mesh.jointVbo, mesh.weightVbo,
-                          mesh.influenceVbo};
-      vkCmdBindVertexBuffers(cb, 0, 4, bufs, offs);
+      VkDeviceSize offs[6] = {0, 0, 0, 0, 0, 0};
+      VkBuffer bufs[6] = {mesh.vbo,         mesh.jointVbo,    mesh.weightVbo,
+                          mesh.influenceVbo, mesh.uv1Vbo,      mesh.morphInflVbo};
+      vkCmdBindVertexBuffers(cb, 0, 6, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
         // Bind the submesh's base-color texture (white if untextured).
