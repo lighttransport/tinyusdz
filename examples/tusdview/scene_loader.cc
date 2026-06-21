@@ -343,6 +343,9 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   mc.normal_storage =
       tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::Float3;
   mc.compute_tangents_and_binormals = false;
+  // Expose secondary UV sets (e.g. primvars:st1) for the multi-UV debug AOV even
+  // when no material shader references them.
+  mc.extract_all_texcoords = true;
 
   // Keep texels 8-bit (avoids float-image conversion) and let UDIM collapse to
   // an atlas so the renderer never sees a raw UDIM texture.

@@ -151,6 +151,12 @@ struct MeshConverterConfig {
   std::string default_texcoords_primvar_name{"st"};
   std::string default_texcoords1_primvar_name{
       "st1"};  // for multi texture(available from iOS 16/macOS 13)
+
+  // When true, additionally extract EVERY authored `texCoord2f[]` primvar into a
+  // RenderMesh.texcoords slot, not just the material-referenced ones. Lets tools
+  // expose secondary UV sets (multi-UV) even when no shader reads them. Off by
+  // default so the standard render path's slot assignment is unchanged.
+  bool extract_all_texcoords{false};
   std::string default_tangents_primvar_name{"tangents"};
   std::string default_binormals_primvar_name{"binormals"};
 
