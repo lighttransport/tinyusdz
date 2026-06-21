@@ -48,6 +48,8 @@ class GLRenderer final : public Renderer {
     GLuint instanceColorVbo{0};      // per-instance displayColor; 0 = none
     bool hasInstanceColors{false};   // true => attrib 9 is array-backed
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance
+    GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
+    bool geometricNormal{false};     // shade with screen-derivative normal
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     bool doubleSided{false};
@@ -77,7 +79,7 @@ class GLRenderer final : public Renderer {
 
   GLuint program_{0};
   // uniform locations
-  GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1};
+  GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1}, uGeometricNormal_{-1};
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uSkinningEnabled_{-1};

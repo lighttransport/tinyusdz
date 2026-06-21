@@ -131,37 +131,6 @@ std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, doubl
   return r;
 }
 
-// Area-weighted smooth vertex normals from a triangle-indexed position buffer
-// (tydra-next leaves RenderMesh::normals empty for proxy assets).
-void ComputeSmoothNormals(const std::vector<float>& pts, size_t np,
-                          const std::vector<uint32_t>& idx,
-                          std::vector<float>* out) {
-  out->assign(3 * np, 0.0f);
-  float* n = out->data();
-  const size_t ntri = idx.size() / 3;
-  for (size_t t = 0; t < ntri; ++t) {
-    const uint32_t a = idx[3 * t + 0], b = idx[3 * t + 1], c = idx[3 * t + 2];
-    if (a >= np || b >= np || c >= np) continue;
-    const float* pa = &pts[3 * a];
-    const float* pb = &pts[3 * b];
-    const float* pc = &pts[3 * c];
-    const float e0[3] = {pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]};
-    const float e1[3] = {pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]};
-    const float fn[3] = {e0[1] * e1[2] - e0[2] * e1[1],
-                         e0[2] * e1[0] - e0[0] * e1[2],
-                         e0[0] * e1[1] - e0[1] * e1[0]};
-    for (uint32_t v : {a, b, c}) {
-      n[3 * v + 0] += fn[0]; n[3 * v + 1] += fn[1]; n[3 * v + 2] += fn[2];
-    }
-  }
-  for (size_t i = 0; i < np; ++i) {
-    float* v = &n[3 * i];
-    const float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    if (len > 1e-12f) { v[0] /= len; v[1] /= len; v[2] /= len; }
-    else { v[0] = 0.0f; v[1] = 1.0f; v[2] = 0.0f; }
-  }
-}
-
 // Build interleaved DrawVertex geometry (mesh-LOCAL space) + indices from a
 // tydra-next RenderMesh. Returns false if there is no renderable geometry.
 bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
@@ -169,18 +138,36 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
   if (np == 0 || m.triangulated_indices.size() < 3) return false;
   std::vector<float> pts = m.points.flatten();
   std::vector<uint32_t> idx = m.triangulated_indices.flatten();
+  // Authored vertex normals -> smooth shading; otherwise shade geometrically in
+  // the shader (screen-derivative normal), which reads correctly on hard
+  // surfaces instead of being smeared by averaged smooth normals.
   std::vector<float> nrm;
-  if (m.has_normals() && m.normals_interp == tydn::Interpolation::Vertex &&
-      m.normals.size() == 3 * np) {
-    nrm = m.normals.flatten();
-  } else {
-    ComputeSmoothNormals(pts, np, idx, &nrm);
-  }
+  const bool authoredNormals = m.has_normals() &&
+                               m.normals_interp == tydn::Interpolation::Vertex &&
+                               m.normals.size() == 3 * np;
+  if (authoredNormals) nrm = m.normals.flatten();
+  else nrm.assign(3 * np, 0.0f);
+  dm->geometricNormal = !authoredNormals;
+
   std::vector<float> uv;
   const bool hasUV = m.has_texcoords() &&
                      m.texcoords_0_interp == tydn::Interpolation::Vertex &&
                      m.texcoords_0.size() == 2 * np;
   if (hasUV) uv = m.texcoords_0.flatten();
+
+  // Per-vertex displayColor: Vertex (per-point) directly; Constant broadcast.
+  std::vector<float> col;
+  if (!m.colors.empty()) {
+    std::vector<float> c = m.colors.flatten();
+    if (m.colors_interp == tydn::Interpolation::Vertex && c.size() >= 3 * np) {
+      col = std::move(c);
+    } else if (m.colors_interp == tydn::Interpolation::Constant && c.size() >= 3) {
+      col.resize(3 * np);
+      for (size_t i = 0; i < np; ++i) {
+        col[3 * i + 0] = c[0]; col[3 * i + 1] = c[1]; col[3 * i + 2] = c[2];
+      }
+    }
+  }
 
   dm->name = m.name;
   dm->absPath = m.prim_path;
@@ -192,6 +179,7 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
     v.u = hasUV ? uv[2 * i + 0] : 0.0f;
     v.v = hasUV ? uv[2 * i + 1] : 0.0f;
   }
+  if (!col.empty()) dm->vertexColors = std::move(col);
   dm->indices = std::move(idx);
   dm->submeshes.push_back(
       DrawSubmesh{0, static_cast<uint32_t>(dm->indices.size()), 0});

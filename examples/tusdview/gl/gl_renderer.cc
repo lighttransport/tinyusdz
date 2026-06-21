@@ -94,6 +94,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uModel_ = glGetUniformLocation(program_, "uModel");
   uNormalMat_ = glGetUniformLocation(program_, "uNormalMatrix");
   uCameraPos_ = glGetUniformLocation(program_, "uCameraPos");
+  uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -155,7 +156,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       "out vec4 FragColor;\n"
       "void main(){\n"
-      "  vec3 N = normalize(vNormal);\n"
+      // Geometric (screen-derivative) normal: instanced prototypes usually ship
+      // without authored normals, and faceted shading reads cleanly for them.
+      "  vec3 N = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));\n"
       "  if (!gl_FrontFacing) N = -N;\n"  // thin instanced geom is often 1-sided
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
       "  vec3 L = normalize(vec3(1.0, 1.0, 1.0));\n"
@@ -254,6 +257,7 @@ void GLRenderer::destroyScene() {
     if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.instanceVbo) glDeleteBuffers(1, &m.instanceVbo);
     if (m.instanceColorVbo) glDeleteBuffers(1, &m.instanceColorVbo);
+    if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -551,6 +555,25 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     glVertexAttribI2ui(5, 0, 0);
   }
 
+  gm.geometricNormal = sm.geometricNormal;
+  // Per-vertex displayColor (attrib 9, divisor 0) for non-instanced meshes; the
+  // instanced path reuses attrib 9 for per-instance color (set below). Default
+  // white (set per draw) when absent so uBaseColor*vColor is unchanged.
+  if (sm.instanceXforms.empty() &&
+      sm.vertexColors.size() == sm.vertices.size() * 3 &&
+      !sm.vertexColors.empty()) {
+    glGenBuffers(1, &gm.vertexColorVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gm.vertexColorVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.vertexColors.size() * sizeof(float)),
+                 sm.vertexColors.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(9);
+    glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribDivisor(9, 0);
+  } else if (sm.instanceXforms.empty()) {
+    glDisableVertexAttribArray(9);  // constant white set per draw
+  }
+
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
   // rows = 48 B/instance) into a second VBO; bind as instanced attribs 6-8
   // (divisor 1).
@@ -646,6 +669,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniformMatrix3fv(uNormalMat_, 1, GL_FALSE, nmat);
+    glUniform1i(uGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+    // Default per-vertex color to white when the mesh has none (so uBaseColor is
+    // unmodulated); the VAO supplies the array when vertexColorVbo is set.
+    if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
     const bool skinOn = mesh.skinned && skinningFrameEnabled_;
     glUniform1i(uSkinningEnabled_, skinOn ? 1 : 0);
     glUniform1i(uExtendedSkinningEnabled_,

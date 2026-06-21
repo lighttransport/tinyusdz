@@ -50,6 +50,14 @@ struct DrawMeshCPU {
   std::string purpose{"default"};  // USD purpose token: default/render/proxy/guide
 
   std::vector<DrawVertex> vertices;  // rest pose (GPU morph re-derives from this)
+  // Optional per-vertex displayColor (rgb, parallel to `vertices`); empty = none.
+  // Used by the flat --next preview to tint geometry; the material shader
+  // multiplies baseColor by it (default white when absent).
+  std::vector<float> vertexColors;
+  // True when the mesh has no authored normals: the shader shades it with the
+  // geometric (screen-derivative) normal instead of the per-vertex normal, so
+  // hard-surface geometry isn't smeared by averaged smooth normals.
+  bool geometricNormal{false};
   // Blendshape targets remapped to DrawVertex order; empty = no blendshapes.
   // The GPU path morphs `vertices` per frame and re-uploads them.
   std::vector<MorphTargetCPU> morphs;
