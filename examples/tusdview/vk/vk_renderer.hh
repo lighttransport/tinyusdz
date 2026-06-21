@@ -266,6 +266,8 @@ class VulkanRenderer final : public Renderer {
   bool rtActive_{false};      // RT technique currently selected
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
+  float sceneMin_[3]{0, 0, 0};      // position-AOV scene bbox
+  float sceneExtent_[3]{1, 1, 1};
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};

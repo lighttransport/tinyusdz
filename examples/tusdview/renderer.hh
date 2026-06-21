@@ -26,11 +26,29 @@ enum class Backend { GL, Vulkan };
 enum class RenderMode : int {
   Shaded = 0,
   Wireframe = 1,
-  Normals = 2,
+  Normals = 2,       // shading normal
   MaterialId = 3,
-  GeomNormal = 4,
-  Uv = 5,
-  Depth = 6,
+  GeomNormal = 4,    // geometric face normal
+  Uv = 5,            // texcoord set 0
+  Depth = 6,         // camera distance / scene-bbox diagonal
+  Albedo = 7,        // unlit base color (material baseColor x displayColor)
+  Facing = 8,        // front (green) / back (red) by face orientation
+  Roughness = 9,
+  Metallic = 10,
+  Emissive = 11,
+  Opacity = 12,
+  Position = 13,     // world position normalized to scene bbox
+  Barycentric = 14,
+  PrimId = 15,       // triangle id (hashed color)
+  MeshId = 16,       // per-mesh/prim id (hashed color)
+  Facing2 = 17,      // reserved
+  Purpose = 18,      // default/render/proxy/guide
+  MissingNormals = 19,  // meshes with no authored normals
+  DoubleSided = 20,
+  SkinWeights = 21,  // dominant joint (hashed) tinted by weight
+  Tangent = 22,
+  UvChecker = 23,
+  AmbientOcclusion = 24,  // ray-traced (RT backends)
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
@@ -59,6 +77,8 @@ struct RenderFrameParams {
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float depthScale{1.0f};  // Depth AOV: normalize camera distance by this (scene extent)
+  float sceneMin[3]{0, 0, 0};     // Position AOV: scene bbox min
+  float sceneExtent[3]{1, 1, 1};  // Position AOV: scene bbox size (max-min)
   int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
 
   // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested

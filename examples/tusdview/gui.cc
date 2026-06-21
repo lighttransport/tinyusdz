@@ -396,19 +396,38 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-      bool shaded = mode_ == RenderMode::Shaded;
-      bool wire = mode_ == RenderMode::Wireframe;
-      bool matid = mode_ == RenderMode::MaterialId;
-      if (ImGui::MenuItem("Shaded", nullptr, shaded)) mode_ = RenderMode::Shaded;
-      if (ImGui::MenuItem("Wireframe", nullptr, wire)) mode_ = RenderMode::Wireframe;
-      if (ImGui::MenuItem("Material ID", nullptr, matid)) mode_ = RenderMode::MaterialId;
-      if (ImGui::MenuItem("Normals", nullptr, mode_ == RenderMode::Normals))
-        mode_ = RenderMode::Normals;
-      if (ImGui::MenuItem("Geometric Normal", nullptr, mode_ == RenderMode::GeomNormal))
-        mode_ = RenderMode::GeomNormal;
-      if (ImGui::MenuItem("UV", nullptr, mode_ == RenderMode::Uv)) mode_ = RenderMode::Uv;
-      if (ImGui::MenuItem("Depth", nullptr, mode_ == RenderMode::Depth))
-        mode_ = RenderMode::Depth;
+      if (ImGui::MenuItem("Shaded", nullptr, mode_ == RenderMode::Shaded))
+        mode_ = RenderMode::Shaded;
+      if (ImGui::MenuItem("Wireframe", nullptr, mode_ == RenderMode::Wireframe))
+        mode_ = RenderMode::Wireframe;
+      // Debug AOV channels (grouped to keep the View menu tidy as they grow).
+      if (ImGui::BeginMenu("Debug AOV")) {
+        struct AovItem { const char* label; RenderMode m; };
+        static const AovItem kAovs[] = {
+            {"Material ID", RenderMode::MaterialId},
+            {"Normals (shading)", RenderMode::Normals},
+            {"Normals (geometric)", RenderMode::GeomNormal},
+            {"UV", RenderMode::Uv},
+            {"UV checker", RenderMode::UvChecker},
+            {"Depth", RenderMode::Depth},
+            {"Position", RenderMode::Position},
+            {"Albedo (unlit)", RenderMode::Albedo},
+            {"Facing", RenderMode::Facing},
+            {"Roughness", RenderMode::Roughness},
+            {"Metallic", RenderMode::Metallic},
+            {"Emissive", RenderMode::Emissive},
+            {"Opacity", RenderMode::Opacity},
+            {"Purpose", RenderMode::Purpose},
+            {"Missing normals", RenderMode::MissingNormals},
+            {"Double-sided", RenderMode::DoubleSided},
+            {"Skin weights", RenderMode::SkinWeights},
+            {"Tangent", RenderMode::Tangent},
+            {"Ambient occlusion (RT)", RenderMode::AmbientOcclusion},
+        };
+        for (const AovItem& a : kAovs)
+          if (ImGui::MenuItem(a.label, nullptr, mode_ == a.m)) mode_ = a.m;
+        ImGui::EndMenu();
+      }
       ImGui::Separator();
       // Ray tracing (Vulkan only; disabled when the device/build can't do it).
       // The checkmark mirrors the renderer's actual technique.
@@ -2591,12 +2610,16 @@ void Gui::renderViewportScene() {
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
-  // Depth AOV normalizer: the scene's bounding-box diagonal.
+  // Scene bbox for the depth + position AOVs.
   if (draw_ && draw_->hasBounds) {
     float dx = draw_->aabbMax[0] - draw_->aabbMin[0];
     float dy = draw_->aabbMax[1] - draw_->aabbMin[1];
     float dz = draw_->aabbMax[2] - draw_->aabbMin[2];
     p.depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      p.sceneMin[i] = draw_->aabbMin[i];
+      p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
+    }
   }
   buildViewVisibilityMask();
   if (!viewVisible_.empty()) {
