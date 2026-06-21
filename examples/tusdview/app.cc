@@ -292,6 +292,7 @@ void App::loadFileBlocking(const std::string& path) {
         LoadUSDViaNext(path, opts, &drawTmp, &tmp.warn, &tmp.err, &loadCtrl_);
     tmp.ok = ok;
     tmp.filepath = path;
+    tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
     applyLoaded(ok, /*progressive=*/false);
@@ -356,6 +357,7 @@ void App::startLoadAsync(const std::string& path) {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_);
       lp->filepath = path;
+      lp->render.meta.upAxis = dp->upAxis;  // drive camera/grid up-axis
     } else {
       LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
     }
