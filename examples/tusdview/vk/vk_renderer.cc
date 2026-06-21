@@ -2229,6 +2229,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
     for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
   }
   pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1]; pc.camPos[2] = cameraPos_[2];
+  pc.camPos[3] = rtWireframe_ ? 1.0f : 0.0f;  // wireframe flag (read as camPos.w)
   // Same fixed light direction as mesh.frag.
   float lx = 0.5f, ly = 0.8f, lz = 0.6f;
   float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
@@ -2403,6 +2404,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
   hasParams_ = (params.view && params.proj);
+  rtWireframe_ = (params.mode == RenderMode::Wireframe);
 
   // Copy helper lines (the caller's pointer is only valid during this call).
   if (params.helperLines && params.helperLineVertexCount > 0) {

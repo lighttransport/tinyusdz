@@ -158,6 +158,14 @@ void main() {
       }
     }
     outc = base * (0.25 + 0.85 * diff * shadow);
+
+    // Wireframe (camPos.w != 0): keep the nearest hit shaded only near a triangle
+    // edge (small barycentric), else fall back to the background -- the RT analogue
+    // of the raster glPolygonMode(LINE) toggle.
+    if (pc.camPos.w > 0.5) {
+      float e = min(w0, min(bc.x, bc.y));
+      if (e > 0.02) outc = pc.clearColor.rgb;
+    }
   }
 
   imageStore(outImg, px, vec4(outc, 1.0));

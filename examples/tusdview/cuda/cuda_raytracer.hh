@@ -46,8 +46,8 @@ class CudaRayTracer {
   // the light), `clearColor` is the 3-float background. Writes a top-down RGBA8
   // image (row 0 = top) of size w*h*4 into *rgba. Returns false on launch failure.
   bool trace(const float invViewProj[16], const float camPos[3],
-             const float lightDir[3], const float clearColor[3], int w, int h,
-             std::vector<uint8_t>* rgba, std::string* err);
+             const float lightDir[3], const float clearColor[3], bool wireframe,
+             int w, int h, std::vector<uint8_t>* rgba, std::string* err);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
