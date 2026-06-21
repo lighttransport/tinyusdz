@@ -113,7 +113,8 @@ __device__ float traverse(const Node* nodes, const float* tris, F3 o, F3 d,
 
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
-                                 const int* mats, const float* uvs, const Node* nodes,
+                                 const int* mats, const float* matPbr, int numMats,
+                                 const float* uvs, const Node* nodes,
                                  unsigned char* out, int W, int H, Cam cam){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
@@ -183,6 +184,15 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       const float* tv=&tris[ht*9];
       F3 p0=mk(tv[0],tv[1],tv[2]),p1=mk(tv[3],tv[4],tv[5]),p2=mk(tv[6],tv[7],tv[8]);
       outc=(dot3(cross3(sub(p1,p0),sub(p2,p0)),d)<0.f)?mk(0.1f,0.7f,0.1f):mk(0.7f,0.1f,0.1f);
+    } else if (rmode==9){  // roughness (matPbr layout: metal,rough,emitR,emitG,emitB,alpha)
+      int mid=mats[ht]; float r=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f; outc=mk(r,r,r);
+    } else if (rmode==10){  // metallic
+      int mid=mats[ht]; float mt=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f; outc=mk(mt,mt,mt);
+    } else if (rmode==11){  // emissive
+      int mid=mats[ht];
+      outc=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
+    } else if (rmode==12){  // opacity
+      int mid=mats[ht]; float a=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f; outc=mk(a,a,a);
     } else if (rmode==13){  // world position
       outc=mk(fminf(fmaxf((hit.x-cam.sceneMin[0])/fmaxf(cam.sceneExtent[0],1e-4f),0.f),1.f),
               fminf(fmaxf((hit.y-cam.sceneMin[1])/fmaxf(cam.sceneExtent[1],1e-4f),0.f),1.f),
@@ -254,7 +264,8 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dUV_); F(dNodes_); F(dOut_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dNodes_); F(dOut_);
+  numMats_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
 }
 
@@ -517,6 +528,20 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   if (!up(rm.data(), rm.size() * sizeof(int), &dMat_)) return false;
   if (!up(ruv.data(), ruv.size() * sizeof(float), &dUV_)) return false;
   if (!up(nodes.data(), nodes.size() * sizeof(Node), &dNodes_)) return false;
+
+  // Per-material PBR scalars indexed by tri matId: metal, rough, emitR/G/B, alpha.
+  numMats_ = static_cast<int>(scene.materials.size());
+  std::vector<float> matPbr(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
+  for (size_t i = 0; i < scene.materials.size(); ++i) {
+    const DrawMaterialCPU& dm = scene.materials[i];
+    matPbr[i * 6 + 0] = dm.metallic;
+    matPbr[i * 6 + 1] = dm.roughness;
+    matPbr[i * 6 + 2] = dm.emissive[0];
+    matPbr[i * 6 + 3] = dm.emissive[1];
+    matPbr[i * 6 + 4] = dm.emissive[2];
+    matPbr[i * 6 + 5] = dm.alpha;
+  }
+  if (!up(matPbr.data(), matPbr.size() * sizeof(float), &dMatPbr_)) return false;
   return true;
 }
 
@@ -546,8 +571,9 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dU = dUV_, dNo = dNodes_, dO = dOut_;
-  void* args[] = {&dT, &dN, &dC, &dG, &dM, &dU, &dNo, &dO, &w, &h, &cam};
+              dMP = dMatPbr_, dU = dUV_, dNo = dNodes_, dO = dOut_;
+  int numMats = numMats_;
+  void* args[] = {&dT, &dN, &dC, &dG, &dM, &dMP, &numMats, &dU, &dNo, &dO, &w, &h, &cam};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                        nullptr, args, nullptr),
