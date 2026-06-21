@@ -200,8 +200,11 @@ static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<uint32_t>().swap(m.indices);
   std::vector<float>().swap(m.vertexColors);
-  std::vector<float>().swap(m.instanceXforms);
-  std::vector<float>().swap(m.instanceColors);
+  // instanceXforms / instanceColors are RETAINED: per-instance frustum culling
+  // (gui) re-tests each instance's protoAabb against the frustum and re-uploads
+  // the visible subset every frame, so it needs the CPU transforms. This is the
+  // CPU-culling memory cost (one CPU + one GPU copy); GPU compute culling would
+  // drop the CPU copy -- a documented follow-up.
 }
 
 void App::applyLoaded(bool ok, bool progressive) {

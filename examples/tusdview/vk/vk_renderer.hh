@@ -116,6 +116,19 @@ class VulkanRenderer final : public Renderer {
     // the CPU and consumed in rebuildTlas (the TLAS instance array is the GPU copy).
     std::vector<float> instanceXforms;
     std::vector<float> instanceColors;
+    // Raster GPU instancing (flat --next path): per-instance 3x4 o2w (instVbo,
+    // 48B/inst, host-visible so per-instance culling can re-map the visible subset)
+    // + per-instance color (instColorBuf) + per-vertex prototype color
+    // (instVtxColorBuf, white when absent). drawInstanceCount is the count actually
+    // drawn (== instanceCount unless per-instance culling shrank it this frame).
+    VkBuffer instVbo{VK_NULL_HANDLE};
+    VkDeviceMemory instVboMem{VK_NULL_HANDLE};
+    VkBuffer instColorBuf{VK_NULL_HANDLE};
+    VkDeviceMemory instColorMem{VK_NULL_HANDLE};
+    VkBuffer instVtxColorBuf{VK_NULL_HANDLE};
+    VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
+    uint32_t instanceCount{0};
+    uint32_t drawInstanceCount{0};
   };
 
   // setup helpers
@@ -140,6 +153,7 @@ class VulkanRenderer final : public Renderer {
                    VkBuffer* buf, VkDeviceMemory* mem, VkDeviceSize* cap,
                    VkPipeline pipeline, const float vp[16]);
   bool createPipeline(std::string* err);
+  bool createInstPipeline(std::string* err);
   bool createLinePipeline(std::string* err);
   bool createSampler(std::string* err);
   bool createDescriptorInfra(std::string* err);
@@ -222,6 +236,8 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
+  VkPipeline instPipeline_{VK_NULL_HANDLE};
 
   // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
   // buffers (grow on demand) so a frame never writes a buffer still in flight.
