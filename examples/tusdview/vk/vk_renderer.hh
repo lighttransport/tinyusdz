@@ -264,7 +264,7 @@ class VulkanRenderer final : public Renderer {
   // --- Ray tracing (ray query) state ---
   bool rtSupported_{false};   // device + shader available
   bool rtActive_{false};      // RT technique currently selected
-  bool rtWireframe_{false};   // wireframe render mode for the ray-query trace
+  int rtMode_{0};             // RenderMode for the ray-query trace (wireframe/matId/..)
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};

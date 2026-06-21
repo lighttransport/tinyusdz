@@ -20,7 +20,7 @@ namespace tusdview {
 
 enum class Backend { GL, Vulkan };
 
-enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2 };
+enum class RenderMode : int { Shaded = 0, Wireframe = 1, Normals = 2, MaterialId = 3 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
 // Unlit, vertex-colored line vertex for debug helpers (grid, axes, bboxes).
