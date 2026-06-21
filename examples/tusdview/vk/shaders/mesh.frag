@@ -10,6 +10,9 @@ layout(location = 6) in float vMorphInfl;     // blendshape influence (world uni
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
+// Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
+// first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
+layout(set = 3, binding = 0, std430) readonly buffer Faces { uint faceId[]; };
 
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
@@ -107,6 +110,15 @@ void main() {
     if (pc.renderMode == 30) {  // udim tile from UV set 0
       int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
       outColor = vec4(idColor(tile), 1.0);
+      return;
+    }
+    if (pc.renderMode == 34) {  // source USD face id
+      if ((pc.flags & 0x80) != 0) {
+        int base = (pc.flags >> 8) & 0xFFFFFF;
+        outColor = vec4(idColor(int(faceId[base + gl_PrimitiveID])), 1.0);
+      } else {
+        outColor = vec4(0.45, 0.45, 0.45, 1.0);
+      }
       return;
     }
     if (pc.renderMode == 33) {  // texel density (UV/world area ratio, view-independent)
