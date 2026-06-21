@@ -69,6 +69,8 @@ class CudaRayTracer {
   uintptr_t dCols_{0};       // float[9] per-vertex color per tri (base*displayColor)
   uintptr_t dGeo_{0};        // uint8 geometricNormal flag per tri
   uintptr_t dMat_{0};        // int material id per tri (material-id viz)
+  uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
+  int numMats_{0};           // material count (matPbr index bound)
   uintptr_t dUV_{0};         // float[6] per-vertex uv per tri (uv viz)
   uintptr_t dNodes_{0};      // BVH nodes
   uintptr_t dOut_{0};        // RGBA8 output image
