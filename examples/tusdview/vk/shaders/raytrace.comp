@@ -61,6 +61,13 @@ vec3 fetchCol(Cols cb, uint vi) {
   return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
 }
 
+// Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
+vec3 idColor(uint id) {
+  if (id == 0xffffffffu) return vec3(0.45);
+  uint h = (id + 1u) * 2654435761u;
+  return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -159,12 +166,15 @@ void main() {
     }
     outc = base * (0.25 + 0.85 * diff * shadow);
 
-    // Wireframe (camPos.w != 0): keep the nearest hit shaded only near a triangle
-    // edge (small barycentric), else fall back to the background -- the RT analogue
-    // of the raster glPolygonMode(LINE) toggle.
-    if (pc.camPos.w > 0.5) {
+    // Render mode (RenderMode value in camPos.w): 1 = wireframe (shade only near a
+    // triangle edge, else background -- the RT analogue of glPolygonMode(LINE));
+    // 3 = material-id (flat distinct color per material).
+    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
       if (e > 0.02) outc = pc.clearColor.rgb;
+    } else if (rmode == 3) {
+      outc = idColor(md.matId);
     }
   }
 

@@ -398,8 +398,10 @@ void Gui::drawDockspaceAndMenu() {
     if (ImGui::BeginMenu("View")) {
       bool shaded = mode_ == RenderMode::Shaded;
       bool wire = mode_ == RenderMode::Wireframe;
+      bool matid = mode_ == RenderMode::MaterialId;
       if (ImGui::MenuItem("Shaded", nullptr, shaded)) mode_ = RenderMode::Shaded;
       if (ImGui::MenuItem("Wireframe", nullptr, wire)) mode_ = RenderMode::Wireframe;
+      if (ImGui::MenuItem("Material ID", nullptr, matid)) mode_ = RenderMode::MaterialId;
       ImGui::Separator();
       // Ray tracing (Vulkan only; disabled when the device/build can't do it).
       // The checkmark mirrors the renderer's actual technique.

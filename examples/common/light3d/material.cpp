@@ -298,7 +298,18 @@ uniform bool uHasEmissiveTex;
 
 out vec4 fragColor;
 
+uniform int uRenderMode;  // RenderMode: 0=shaded, 3=material-id
+uniform int uMatId;       // per-draw material id (for material-id viz; -1 = none)
+
+// Stable distinct color per material id (-1 -> neutral gray).
+vec3 idColor(int id) {
+    if (id < 0) return vec3(0.45);
+    uint h = (uint(id) + 1u) * 2654435761u;
+    return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
 void main() {
+    if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }
     vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
