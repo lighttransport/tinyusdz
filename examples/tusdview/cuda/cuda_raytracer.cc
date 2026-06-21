@@ -132,7 +132,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float w0=1.f-bu-bv;
     F3 hit=add(o,scale(d,t));
     F3 N;
-    if (geo[ht]){
+    if (geo[ht]&1){
       const float* tv=&tris[ht*9];
       F3 p0=mk(tv[0],tv[1],tv[2]),p1=mk(tv[3],tv[4],tv[5]),p2=mk(tv[6],tv[7],tv[8]);
       N=norm3(cross3(sub(p1,p0),sub(p2,p0)));
@@ -207,7 +207,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==15){  // prim id
       outc=idColor(ht);
     } else if (rmode==19){  // missing normals
-      outc=geo[ht]?mk(0.95f,0.1f,0.85f):mk(0.2f,0.2f,0.2f);
+      outc=(geo[ht]&1)?mk(0.95f,0.1f,0.85f):mk(0.2f,0.2f,0.2f);
+    } else if (rmode==18){  // purpose (bits1-2 of geo byte)
+      int p=(geo[ht]>>1)&3;
+      outc=(p==1)?mk(0.2f,0.8f,0.3f):(p==2)?mk(0.2f,0.45f,0.95f):(p==3)?mk(0.95f,0.75f,0.1f):mk(0.5f,0.5f,0.5f);
     }
   }
   int idx=(py*W+px)*4;
@@ -407,7 +410,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     if (m.vertices.empty() || m.indices.empty()) break;  // partial guard
     const bool instanced = m.instanceCount() > 0;
     const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
-    const uint8_t g = m.geometricNormal ? 1 : 0;
+    // geo byte: bit0 = geometricNormal, bits1-2 = USD purpose id (Purpose AOV).
+    const uint8_t g = static_cast<uint8_t>((m.geometricNormal ? 1 : 0) |
+                                           ((PurposeId(m.purpose) & 3) << 1));
 
     // Resolve the mesh's base tint (per submesh material; instanced uses flat/inst).
     auto submeshMat = [&](uint32_t triIdx0) -> const DrawMaterialCPU* {

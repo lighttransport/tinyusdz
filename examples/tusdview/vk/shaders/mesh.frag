@@ -29,6 +29,13 @@ vec3 idColor(int id) {
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
 }
 
+vec3 purposeColor(int p) {
+  if (p == 1) return vec3(0.2, 0.8, 0.3);
+  if (p == 2) return vec3(0.2, 0.45, 0.95);
+  if (p == 3) return vec3(0.95, 0.75, 0.1);
+  return vec3(0.5);
+}
+
 void main() {
   vec3 N = normalize(vNormalW);
   // Debug AOVs.
@@ -75,6 +82,10 @@ void main() {
     }
     if (pc.renderMode == 20) {  // double-sided
       outColor = ((pc.flags & 2) != 0) ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
+      return;
+    }
+    if (pc.renderMode == 18) {  // purpose (bits 2-3 of flags)
+      outColor = vec4(purposeColor((pc.flags >> 2) & 3), 1.0);
       return;
     }
   }
