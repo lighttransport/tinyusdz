@@ -245,6 +245,67 @@ def Xform "World"
     if len(set(pixels)) <= 1:
         raise RuntimeError("PointInstancer RT preview render appears blank")
 
+    # Nested instancing: a PointInstancer whose prototype ITSELF contains a
+    # PointInstancer. The TLAS expresses one level, so nested placements are
+    # flattened (composed with each outer transform) while geometry stays deduped.
+    # 2 outer clumps x 3 inner triangles = 6 visible from 1 unique triangle.
+    nest_scene = outdir / "tusdrender-nested-instancer.usda"
+    nest_scene.write_text("""#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def PointInstancer "Outer"
+    {
+        point3f[] positions = [(-4, 0, 0), (4, 0, 0)]
+        int[] protoIndices = [0, 0]
+        rel prototypes = [</World/Outer/Clump>]
+
+        def Xform "Clump"
+        {
+            def PointInstancer "Inner"
+            {
+                point3f[] positions = [(-1.5, 0, 0), (0, 0, 0), (1.5, 0, 0)]
+                int[] protoIndices = [0, 0, 0]
+                rel prototypes = [</World/Outer/Clump/Inner/Proto>]
+
+                def Mesh "Proto"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(-0.5, -0.5, 0), (0.5, -0.5, 0), (0, 0.5, 0)]
+                }
+            }
+        }
+    }
+}
+""")
+    nest_out = outdir / "tusdrender-nested-instancer.png"
+    nest_stats = subprocess.run(
+        [exe, str(nest_scene), str(nest_out), "-w", "32", "-height", "32",
+         "-rtPreview", "-stats", "-autoframe"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for expected in (
+        "rt instancing: tlas",
+        "rt nested instances: 6",
+        "rt instances: 6",
+        "rt unique triangles: 1",
+        "triangles: 6",
+    ):
+        if expected not in nest_stats.stderr:
+            raise RuntimeError(
+                f"missing nested-instancer stat {expected!r}:\n{nest_stats.stderr}")
+    w, h, rgba = read_png_rgba(nest_out)
+    pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
+    if len(set(pixels)) <= 1:
+        raise RuntimeError("nested-instancer RT preview render appears blank")
+
     # BasisCurves ray tracing in the -rtPreview path (curves build into the
     # DirectScene as LightRT hair strands), including curve-prototype instancing
     # (a PointInstancer whose prototype is a BasisCurves is baked per instance).
