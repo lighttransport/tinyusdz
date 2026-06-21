@@ -231,12 +231,13 @@ std::string ResolveNextPurpose(const tnext::Stage& stage, const std::string& abs
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
 // no converter geometry.
-bool BuildProtoMesh(const tnext::Stage& stage, const tydn::RenderScene& scene,
+bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
                     const tnext::UsdPrim& mp, const matrix4d& inv_protoroot,
                     double time, DrawMeshCPU* dm, matrix4d* mesh_rel) {
-  auto it = scene.mesh_by_path.find(mp.GetPath().str());
-  if (it == scene.mesh_by_path.end()) return false;
-  const tydn::RenderMesh& rm = scene.meshes[static_cast<size_t>(it->second)];
+  // Convert just this mesh on demand (streaming) -- avoids holding the whole
+  // RenderScene in RAM.
+  tydn::RenderMesh rm;
+  if (!conv.ConvertMesh(mp, &rm)) return false;
   if (!FillFlatGeometry(rm, dm)) return false;
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor -> per-draw constant (average of the mesh's colors).
@@ -274,8 +275,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (warn && !lwarn.empty()) *warn = lwarn;
   const double time = std::isnan(opts.timecode) ? 0.0 : opts.timecode;
 
-  // --- 2. Convert to a triangulated tydra-next RenderScene (geometry only;
-  //        PointInstancer is NOT expanded by the converter). ---
+  // --- 2. A per-mesh converter (NOT a full-scene Convert). We triangulate each
+  //        mesh on demand (ConvertMesh) as we walk the stage and free it right
+  //        after baking it into a batch, so the whole RenderScene's geometry
+  //        (~half the load peak) is never resident at once. ---
   tydn::ConverterConfig cfg;
   cfg.mesh.triangulate = true;
   cfg.mesh.triangulation_method = tydn::MeshConfig::TriangulationMethod::Fan;
@@ -283,13 +286,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.mesh.build_vertex_indices = true;
   cfg.time_code = time;
   tydn::RenderSceneConverter conv(cfg);
-  tydn::ConvertResult res = conv.Convert(stage);
-  if (!res.success) {
-    if (err) *err = "next: convert failed: " + res.error;
-    return false;
-  }
-  const tydn::RenderScene& scene = res.scene;
-  draw->upAxis = (scene.up_axis == tydn::RenderScene::UpAxis::Z) ? "Z" : "Y";
+  draw->upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
 
   draw->meshes.clear();
   draw->materials.clear();
@@ -360,7 +357,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             if (byProto[pi].empty()) continue;
             DrawMeshCPU dm;
             matrix4d mesh_rel;
-            if (!BuildProtoMesh(stage, scene, mp, inv_protoroot, time, &dm,
+            if (!BuildProtoMesh(stage, conv, mp, inv_protoroot, time, &dm,
                                 &mesh_rel))
               continue;
 
@@ -451,7 +448,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       for (const tnext::UsdPrim& mp : protoMeshes) {
         DrawMeshCPU dm;
         matrix4d mesh_rel;
-        if (!BuildProtoMesh(stage, scene, mp, inv_protoroot, time, &dm, &mesh_rel))
+        if (!BuildProtoMesh(stage, conv, mp, inv_protoroot, time, &dm, &mesh_rel))
           continue;
         dm.instanceXforms.reserve(kv.second.size() * 12);
         for (const matrix4d& iw : kv.second) {
@@ -508,28 +505,32 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     b = Batch();
   };
 
+  // Gather the non-prototype mesh prims by walking the stage (there is no
+  // RenderScene node list now); convert + bake each one streaming.
+  std::vector<tnext::UsdPrim> meshPrims;
+  {
+    std::function<void(const tnext::UsdPrim&)> g = [&](const tnext::UsdPrim& p) {
+      if (p.GetTypeName() == "Mesh" && !consumed.count(p.GetPath().str()))
+        meshPrims.push_back(p);
+      for (const tnext::UsdPrim& c : p.GetChildren()) g(c);
+    };
+    for (const tnext::UsdPrim& r : stage.GetRootPrims()) g(r);
+  }
+
   bool capped = false;
-  for (const tydn::SceneNode& node : scene.nodes) {
+  for (const tnext::UsdPrim& mp : meshPrims) {
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
-    if (node.type != tydn::NodeType::Mesh) continue;
-    if (consumed.count(node.prim_path)) continue;
-    int32_t mesh_id = -1;
-    if (node.data_id >= 0 &&
-        static_cast<size_t>(node.data_id) < scene.meshes.size()) {
-      mesh_id = node.data_id;
-    } else {
-      auto mit = scene.mesh_by_path.find(node.prim_path);
-      if (mit != scene.mesh_by_path.end()) mesh_id = mit->second;
-    }
-    if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= scene.meshes.size())
-      continue;
-    const tydn::RenderMesh& m = scene.meshes[static_cast<size_t>(mesh_id)];
-
+    tydn::RenderMesh m;
+    if (!conv.ConvertMesh(mp, &m)) continue;
     DrawMeshCPU loc;
     if (!FillFlatGeometry(m, &loc)) continue;
-    const std::string purpose = ResolveNextPurpose(stage, node.prim_path);
-    const float* M = node.world_transform.m;  // row-major, p*M
+    const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
+    double mw16[16];
+    tydn::ComputeWorldTransform(stage, mp, mw16, time);
+    float Mf[16];
+    for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
+    const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
 
     Batch& b = open[{purpose, loc.geometricNormal}];
     if (!b.dm.vertices.empty() &&
