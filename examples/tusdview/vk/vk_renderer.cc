@@ -2590,13 +2590,25 @@ void VulkanRenderer::present() {
           pc.nmat[c * 4 + 3] = 0.0f;
         }
         if (sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) * 12 + 3 < matColor_.size()) {
+            static_cast<size_t>(sub.materialId) * 12 + 10 < matColor_.size()) {
+          // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,
+          // [5]=roughness, [8..10]=emissive. Pack the scalar AOVs into otherwise-
+          // unused push-constant lanes (the block is already at the 256 B limit):
+          // metallic->sceneMin.w, roughness->sceneExtent.w, emissive->nmat[*].w.
           const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
+          pc.sceneMin[3] = mc[4];        // metallic
+          pc.sceneExtent[3] = mc[5];     // roughness
+          pc.nmat[3] = mc[8];            // emissive.r
+          pc.nmat[7] = mc[9];            // emissive.g
+          pc.nmat[11] = mc[10];          // emissive.b
         } else {
           pc.baseColor[0] = pc.baseColor[1] = pc.baseColor[2] = 0.6f;
           pc.baseColor[3] = 1.0f;
+          pc.sceneMin[3] = 0.0f;         // metallic default
+          pc.sceneExtent[3] = 0.5f;      // roughness default
+          pc.nmat[3] = pc.nmat[7] = pc.nmat[11] = 0.0f;  // emissive default
         }
         pc.matId = sub.materialId;
         pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)

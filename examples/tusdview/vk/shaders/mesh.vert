@@ -21,7 +21,7 @@ layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
   mat4 model;
-  mat3 nmat;
+  vec4 nmat[3];   // normal matrix columns in .xyz; .w packs emissive.rgb (AOV)
   vec4 baseColor;
   vec4 camPos;
   vec4 sceneMin;
@@ -81,7 +81,7 @@ void main() {
     pos = (skin * vec4(aPos, 1.0)).xyz;
     nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
   }
-  vNormalW = pc.nmat * nrm;
+  vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
   vUV = aUV;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
   gl_Position = pc.mvp * vec4(pos, 1.0);
