@@ -298,9 +298,11 @@ uniform bool uHasEmissiveTex;
 
 out vec4 fragColor;
 
-uniform int uRenderMode;     // RenderMode (0=shaded, 2=normals, 3=matId, 4=geomN, 5=uv, 6=depth)
+uniform int uRenderMode;     // RenderMode (see renderer.hh)
 uniform int uMatId;          // per-draw material id (material-id viz; -1 = none)
 uniform float uDepthScale;   // depth AOV: camera-distance normalizer (scene extent)
+uniform vec3 uSceneMin;      // position AOV: scene bbox min
+uniform vec3 uSceneExtent;   // position AOV: scene bbox size (max-min)
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -347,6 +349,25 @@ void main() {
             return;
         }
         if (uRenderMode == 5) { fragColor = vec4(fract(vUV), 0.0, 1.0); return; }      // uv set 0
+        if (uRenderMode == 7) { fragColor = vec4(baseColor, 1.0); return; }            // albedo (unlit)
+        if (uRenderMode == 8) {                                                        // facing
+            fragColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
+            return;
+        }
+        if (uRenderMode == 9)  { fragColor = vec4(vec3(roughness), 1.0); return; }     // roughness
+        if (uRenderMode == 10) { fragColor = vec4(vec3(metallic), 1.0); return; }      // metallic
+        if (uRenderMode == 11) { fragColor = vec4(emissive, 1.0); return; }            // emissive
+        if (uRenderMode == 12) { fragColor = vec4(vec3(uAlpha), 1.0); return; }        // opacity
+        if (uRenderMode == 13) {                                                       // world position
+            fragColor = vec4(clamp((vWorldPos - uSceneMin) / uSceneExtent, 0.0, 1.0), 1.0);
+            return;
+        }
+        if (uRenderMode == 23) {                                                       // uv checker
+            vec2 c = floor(fract(vUV) * 16.0);
+            float chk = mod(c.x + c.y, 2.0);
+            fragColor = vec4(vec3(mix(0.25, 0.85, chk)), 1.0);
+            return;
+        }
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);

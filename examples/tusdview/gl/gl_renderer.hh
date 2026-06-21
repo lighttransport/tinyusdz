@@ -81,6 +81,7 @@ class GLRenderer final : public Renderer {
   // uniform locations
   GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1}, uGeometricNormal_{-1};
   GLint uRenderMode_{-1}, uMatId_{-1}, uDepthScale_{-1};  // AOV visualizations
+  GLint uSceneMin_{-1}, uSceneExtent_{-1};                // position AOV bounds
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uSkinningEnabled_{-1};

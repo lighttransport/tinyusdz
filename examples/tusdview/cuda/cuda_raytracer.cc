@@ -27,13 +27,15 @@ struct Node {
 struct Cam {
   float invVP[16];
   float camPos[4];
-  float lightDir[4];
-  float clear[4];
+  float lightDir[4];   // xyz light, w depthScale
+  float clear[4];      // rgb clear, w RenderMode
+  float sceneMin[4];   // position AOV bbox
+  float sceneExtent[4];
 };
 
 const char* kKernelSrc = R"CUDA(
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
-struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; };
+struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; };
 
 typedef struct { float x, y, z; } F3;
 __device__ F3 mk(float x, float y, float z){ F3 r; r.x=x; r.y=y; r.z=z; return r; }
@@ -175,6 +177,21 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==6){
       float dd=fminf(fmaxf(t/fmaxf(cam.lightDir[3],1e-3f),0.f),1.f);
       outc=mk(1.f-dd,1.f-dd,1.f-dd);
+    } else if (rmode==7){
+      outc=base;  // albedo (pre-lighting)
+    } else if (rmode==8){  // facing
+      const float* tv=&tris[ht*9];
+      F3 p0=mk(tv[0],tv[1],tv[2]),p1=mk(tv[3],tv[4],tv[5]),p2=mk(tv[6],tv[7],tv[8]);
+      outc=(dot3(cross3(sub(p1,p0),sub(p2,p0)),d)<0.f)?mk(0.1f,0.7f,0.1f):mk(0.7f,0.1f,0.1f);
+    } else if (rmode==13){  // world position
+      outc=mk(fminf(fmaxf((hit.x-cam.sceneMin[0])/fmaxf(cam.sceneExtent[0],1e-4f),0.f),1.f),
+              fminf(fmaxf((hit.y-cam.sceneMin[1])/fmaxf(cam.sceneExtent[1],1e-4f),0.f),1.f),
+              fminf(fmaxf((hit.z-cam.sceneMin[2])/fmaxf(cam.sceneExtent[2],1e-4f),0.f),1.f));
+    } else if (rmode==23){  // uv checker
+      const float* uv=&uvs[ht*6];
+      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
+      float cx=floorf((uu-floorf(uu))*16.f), cy=floorf((vv2-floorf(vv2))*16.f);
+      float kk=fmodf(cx+cy,2.f); float g=0.25f+0.6f*kk; outc=mk(g,g,g);
     }
   }
   int idx=(py*W+px)*4;
@@ -499,7 +516,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
 bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
-                          int renderMode, float depthScale, int w, int h,
+                          int renderMode, float depthScale, const float sceneMin[3],
+                          const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err) {
   if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
@@ -520,6 +538,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   }
   cam.clear[3] = static_cast<float>(renderMode);
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
+  for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
               dU = dUV_, dNo = dNodes_, dO = dOut_;
   void* args[] = {&dT, &dN, &dC, &dG, &dM, &dU, &dNo, &dO, &w, &h, &cam};

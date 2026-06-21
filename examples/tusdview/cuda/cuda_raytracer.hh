@@ -49,8 +49,8 @@ class CudaRayTracer {
   // 4=geom normal, 5=uv, 6=depth). depthScale normalizes the depth AOV.
   bool trace(const float invViewProj[16], const float camPos[3],
              const float lightDir[3], const float clearColor[3], int renderMode,
-             float depthScale, int w, int h, std::vector<uint8_t>* rgba,
-             std::string* err);
+             float depthScale, const float sceneMin[3], const float sceneExtent[3],
+             int w, int h, std::vector<uint8_t>* rgba, std::string* err);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
