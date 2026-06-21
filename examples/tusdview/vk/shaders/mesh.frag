@@ -3,6 +3,8 @@
 layout(location = 0) in vec3 vNormalW;
 layout(location = 1) in vec2 vUV;
 layout(location = 2) in vec3 vWorldPos;
+layout(location = 3) flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
+layout(location = 4) in float vDomWeight;
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
@@ -86,6 +88,10 @@ void main() {
     }
     if (pc.renderMode == 18) {  // purpose (bits 2-3 of flags)
       outColor = vec4(purposeColor((pc.flags >> 2) & 3), 1.0);
+      return;
+    }
+    if (pc.renderMode == 21) {  // skin weights: dominant joint tinted by weight
+      outColor = vec4(idColor(vDomJoint) * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
       return;
     }
   }
