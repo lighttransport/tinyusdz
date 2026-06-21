@@ -4182,10 +4182,13 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   // Free triangulation intermediates — only needed during attribute
-  // triangulation above. Safe to free unconditionally since nothing
-  // downstream reads these vectors.
+  // triangulation above. Tools that map triangles back to source faces can ask
+  // to keep triangulatedFaceCounts via keep_triangulation_intermediates.
   { std::vector<uint32_t> tmp; dst.triangulatedToOrigFaceVertexIndexMap.swap(tmp); }
-  { std::vector<uint32_t> tmp; dst.triangulatedFaceCounts.swap(tmp); }
+  if (!env.mesh_config.keep_triangulation_intermediates) {
+    std::vector<uint32_t> tmp;
+    dst.triangulatedFaceCounts.swap(tmp);
+  }
 
   // Free pre-triangulation topology under lowmem guard.
   // faceVertexIndices()/faceVertexCounts() accessors return the triangulated

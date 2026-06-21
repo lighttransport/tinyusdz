@@ -157,6 +157,12 @@ struct MeshConverterConfig {
   // expose secondary UV sets (multi-UV) even when no shader reads them. Off by
   // default so the standard render path's slot assignment is unchanged.
   bool extract_all_texcoords{false};
+
+  // When true, retain RenderMesh.triangulatedFaceCounts (per original face, the
+  // number of triangles it produced) instead of freeing it after triangulation.
+  // Lets tools map each output triangle back to its source USD face. Off by
+  // default (the data is freed as before).
+  bool keep_triangulation_intermediates{false};
   std::string default_tangents_primvar_name{"tangents"};
   std::string default_binormals_primvar_name{"binormals"};
 

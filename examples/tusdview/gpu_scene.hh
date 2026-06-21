@@ -121,6 +121,10 @@ struct DrawMeshCPU {
   // units) any single morph target applies to that vertex. Computed at load from
   // `morphs`; empty when the mesh has no blendshapes. Drives the influence AOV.
   std::vector<float> morphInfluence;
+  // Optional per-TRIANGLE original USD face id (the polygon each triangle was
+  // triangulated from), parallel to the triangles of `indices` (grouped order).
+  // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
+  std::vector<uint32_t> sourceFaceId;
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across

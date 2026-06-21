@@ -57,6 +57,8 @@ enum class RenderMode : int {
   UdimTile = 30,          // UDIM tile id from UV set 0 (hashed color)
   Uv1 = 31,               // texcoord set 1 (multi-UV; raster)
   BlendInfluence = 32,    // per-vertex blendshape displacement magnitude (raster)
+  TexelDensity = 33,      // UV-to-world area ratio (view-independent texel density)
+  SourceFaceId = 34,      // original USD face id before triangulation (hashed)
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
