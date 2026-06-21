@@ -1584,13 +1584,21 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   whiteDesc_ = allocTexDescriptor(whiteView_);
   texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
 
-  matColor_.resize(materials.size() * 4);
+  // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
+  // (metallic, roughness, 0, 0), emissive.rgb+0. The raster path's per-draw push
+  // constants still carry only baseColor (matColor_ row 0), read with stride 12.
+  matColor_.resize(materials.size() * 12);
   matBaseTex_.resize(materials.size());
   for (size_t i = 0; i < materials.size(); ++i) {
-    matColor_[i * 4 + 0] = materials[i].baseColor[0];
-    matColor_[i * 4 + 1] = materials[i].baseColor[1];
-    matColor_[i * 4 + 2] = materials[i].baseColor[2];
-    matColor_[i * 4 + 3] = materials[i].alpha;
+    matColor_[i * 12 + 0] = materials[i].baseColor[0];
+    matColor_[i * 12 + 1] = materials[i].baseColor[1];
+    matColor_[i * 12 + 2] = materials[i].baseColor[2];
+    matColor_[i * 12 + 3] = materials[i].alpha;
+    matColor_[i * 12 + 4] = materials[i].metallic;
+    matColor_[i * 12 + 5] = materials[i].roughness;
+    matColor_[i * 12 + 8] = materials[i].emissive[0];
+    matColor_[i * 12 + 9] = materials[i].emissive[1];
+    matColor_[i * 12 + 10] = materials[i].emissive[2];
     matBaseTex_[i] = materials[i].baseColorTex;
   }
 }
@@ -2032,8 +2040,8 @@ void VulkanRenderer::rebuildTlas() {
   // Per-mesh descriptor SSBO + materials SSBO.
   createHostBuffer(descs.size() * sizeof(MeshDescGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    descs.data(), &meshDescBuf_, &meshDescMem_);
-  std::vector<float> mats = matColor_;       // vec4 baseColor per material
-  if (mats.empty()) mats.assign(4, 0.6f);    // dummy so the SSBO is non-empty
+  std::vector<float> mats = matColor_;       // 3 vec4 per material (see beginScene)
+  if (mats.empty()) mats.assign(12, 0.0f);   // dummy 1-material block (non-empty SSBO)
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
@@ -2582,8 +2590,8 @@ void VulkanRenderer::present() {
           pc.nmat[c * 4 + 3] = 0.0f;
         }
         if (sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) * 4 + 3 < matColor_.size()) {
-          const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 4];
+            static_cast<size_t>(sub.materialId) * 12 + 3 < matColor_.size()) {
+          const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
         } else {
