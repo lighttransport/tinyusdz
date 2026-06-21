@@ -412,6 +412,8 @@ void Gui::drawDockspaceAndMenu() {
             {"UDIM tile", RenderMode::UdimTile},
             {"UV set 1", RenderMode::Uv1},
             {"Blendshape influence", RenderMode::BlendInfluence},
+            {"Texel density", RenderMode::TexelDensity},
+            {"Source face id", RenderMode::SourceFaceId},
             {"Depth", RenderMode::Depth},
             {"Position", RenderMode::Position},
             {"Albedo (unlit)", RenderMode::Albedo},

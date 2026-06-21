@@ -104,6 +104,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uDoubleSided_ = glGetUniformLocation(program_, "uDoubleSided");
   uPurpose_ = glGetUniformLocation(program_, "uPurpose");
   uKind_ = glGetUniformLocation(program_, "uKind");
+  uFaceIdTex_ = glGetUniformLocation(program_, "uFaceIdTex");
+  uFaceBase_ = glGetUniformLocation(program_, "uFaceBase");
+  uHasFaceId_ = glGetUniformLocation(program_, "uHasFaceId");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -125,6 +128,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
+  glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
   glUseProgram(0);
 
   // Instanced flat-shaded program: per-instance 3x4 object-to-world (attribs 6-8,
@@ -339,6 +343,8 @@ void GLRenderer::destroyScene() {
     if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
     if (m.uv1Vbo) glDeleteBuffers(1, &m.uv1Vbo);
     if (m.morphInflVbo) glDeleteBuffers(1, &m.morphInflVbo);
+    if (m.faceIdTex) glDeleteTextures(1, &m.faceIdTex);
+    if (m.faceIdBuf) glDeleteBuffers(1, &m.faceIdBuf);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -694,6 +700,20 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(7);
       glVertexAttrib1f(7, 0.0f);
     }
+    // Per-triangle source face id as a texture buffer (source-face-id AOV),
+    // fetched in the FS by gl_PrimitiveID + the submesh's first-triangle offset.
+    if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
+      glGenBuffers(1, &gm.faceIdBuf);
+      glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
+      glBufferData(GL_TEXTURE_BUFFER,
+                   static_cast<GLsizeiptr>(sm.sourceFaceId.size() * sizeof(uint32_t)),
+                   sm.sourceFaceId.data(), GL_STATIC_DRAW);
+      glGenTextures(1, &gm.faceIdTex);
+      glBindTexture(GL_TEXTURE_BUFFER, gm.faceIdTex);
+      glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gm.faceIdBuf);
+      glBindBuffer(GL_TEXTURE_BUFFER, 0);
+      glBindTexture(GL_TEXTURE_BUFFER, 0);
+    }
   }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
@@ -800,6 +820,12 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1i(uDoubleSided_, mesh.doubleSided ? 1 : 0);
     glUniform1i(uPurpose_, mesh.purposeId);
     glUniform1i(uKind_, mesh.kindId);
+    glUniform1i(uHasFaceId_, mesh.faceIdTex ? 1 : 0);
+    if (mesh.faceIdTex) {
+      glActiveTexture(GL_TEXTURE6);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.faceIdTex);
+      glActiveTexture(GL_TEXTURE0);
+    }
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
     if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
@@ -830,6 +856,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
               ? materials_[static_cast<size_t>(sub.materialId)]
               : kDefault;
       glUniform1i(uMatId_, sub.materialId);
+      glUniform1i(uFaceBase_, static_cast<int>(sub.indexOffset / 3));
       if (overrideEmissive) {
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);

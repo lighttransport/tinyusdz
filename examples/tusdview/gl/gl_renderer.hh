@@ -51,6 +51,8 @@ class GLRenderer final : public Renderer {
     GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
     GLuint uv1Vbo{0};                // 2nd texcoord set (attrib 6, non-instanced); 0 = none
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
+    GLuint faceIdBuf{0};             // texture buffer: per-triangle source face id; 0 = none
+    GLuint faceIdTex{0};             // GL_TEXTURE_BUFFER view (R32UI) of faceIdBuf
     bool geometricNormal{false};     // shade with screen-derivative normal
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
@@ -89,6 +91,7 @@ class GLRenderer final : public Renderer {
   GLint uMeshId_{-1}, uDoubleSided_{-1};                  // mesh-id / double-sided AOV
   GLint uPurpose_{-1};                                    // purpose AOV (per-draw)
   GLint uKind_{-1};                                       // kind AOV (per-draw)
+  GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uSkinningEnabled_{-1};

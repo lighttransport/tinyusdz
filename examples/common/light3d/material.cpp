@@ -326,6 +326,9 @@ uniform int uMeshId;         // mesh-id AOV (per-draw mesh index)
 uniform bool uDoubleSided;   // double-sided AOV flag
 uniform int uPurpose;        // purpose AOV: 0=default/1=render/2=proxy/3=guide
 uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
+uniform usamplerBuffer uFaceIdTex;  // per-triangle source face id (source-face-id AOV)
+uniform int uFaceBase;       // first triangle of this submesh (gl_PrimitiveID is submesh-local)
+uniform bool uHasFaceId;
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -423,6 +426,18 @@ void main() {
         if (uRenderMode == 30) {                                                             // udim tile
             int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
             fragColor = vec4(idColor(tile), 1.0); return;
+        }
+        if (uRenderMode == 34) {                                                             // source USD face id
+            int fid = uHasFaceId ? int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r) : -1;
+            fragColor = vec4(idColor(fid), 1.0); return;
+        }
+        if (uRenderMode == 33) {                                                             // texel density (UV/world area ratio)
+            vec2 du = dFdx(vUV), dv = dFdy(vUV);
+            float uvArea = abs(du.x * dv.y - dv.x * du.y);
+            float worldArea = length(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+            float td = sqrt(uvArea / max(worldArea, 1e-12));
+            float c = clamp(td * uDepthScale * 0.5, 0.0, 1.0);  // scene-relative
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
         }
         if (uRenderMode == 31) { fragColor = vec4(fract(vUV1), 0.0, 1.0); return; }          // uv set 1
         if (uRenderMode == 32) {                                                             // blendshape influence
