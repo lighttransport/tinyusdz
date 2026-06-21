@@ -90,6 +90,17 @@ class VulkanRenderer final : public Renderer {
     float normalMat[9];  // inverse-transpose of world 3x3 (object->world normals)
     bool skinned{false};
     bool extendedSkinned{false};
+    // RT instancing + displayColor + authored-normal flag (mirrors the GL path).
+    VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
+    VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
+    VkDeviceAddress vtxColorAddr{0};
+    bool geometricNormal{false};            // no authored normals -> geometric face normal
+    float flatColor[3]{0.8f, 0.8f, 0.8f};   // per-draw constant tint (instanced path)
+    // GPU instancing: one TLAS instance per 3x4 o2w in instanceXforms (12 floats
+    // each); instanceColors is 3 floats/instance (empty -> use flatColor). Held on
+    // the CPU and consumed in rebuildTlas (the TLAS instance array is the GPU copy).
+    std::vector<float> instanceXforms;
+    std::vector<float> instanceColors;
   };
 
   // setup helpers
@@ -276,6 +287,8 @@ class VulkanRenderer final : public Renderer {
   VkBuffer rtMatBuf_{VK_NULL_HANDLE};       // vec4 baseColor[]
   VkDeviceMemory rtMatMem_{VK_NULL_HANDLE};
   VkDeviceSize rtMatCap_{0};
+  VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
+  VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};
 
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};

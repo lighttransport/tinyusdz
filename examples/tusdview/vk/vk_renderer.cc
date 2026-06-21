@@ -87,13 +87,25 @@ struct RtPushC {
 struct MeshDescGPU {
   uint64_t vtxAddr;
   uint64_t idxAddr;
+  uint64_t vtxColorAddr;     // per-vertex displayColor (vec3[]); 0 = none
   uint32_t matId;
-  uint32_t pad;
-  float nrm0[4];  // normal matrix columns (xyz used)
+  uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
+  float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 72, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 80, "MeshDescGPU must be tightly packed (scalar)");
+
+// Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
+// TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
+// back to its mesh + carries the per-instance tint.
+struct InstanceInfoGPU {
+  uint32_t meshId;       // index into the MeshDesc SSBO
+  uint32_t useMaterial;  // 1 = non-instanced (material base + normalMat); 0 = tint + o2w
+  uint32_t pad0, pad1;
+  float tint[4];         // per-instance color or flatColor (xyz used)
+};
+static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
 
 // General column-major 4x4 inverse (for the camera's inverse view-projection).
 bool Mat4Inverse(const float m[16], float out[16]) {
@@ -1506,6 +1518,8 @@ void VulkanRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.vbo) vkDestroyBuffer(device_, m.vbo, nullptr);
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
+    if (m.vtxColorBuf) vkDestroyBuffer(device_, m.vtxColorBuf, nullptr);
+    if (m.vtxColorMem) vkFreeMemory(device_, m.vtxColorMem, nullptr);
     if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
@@ -1534,6 +1548,8 @@ void VulkanRenderer::destroyScene() {
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
   if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
+  if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   tlasDirty_ = true;
 
   for (auto v : texViews_) vkDestroyImageView(device_, v, nullptr);
@@ -1768,6 +1784,19 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.eboAddr = bufferDeviceAddress(gm.ebo);
     gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
     NormalMatrix3(gm.world, gm.normalMat);
+    gm.geometricNormal = sm.geometricNormal;
+    std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    gm.instanceXforms = sm.instanceXforms;
+    gm.instanceColors = sm.instanceColors;
+    // Per-vertex displayColor (packed vec3[]) as a device-address SSBO for the
+    // shader; only when it is per-vertex aligned (matches the GL attrib-10 path).
+    if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
+      if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
+                           &gm.vtxColorBuf, &gm.vtxColorMem, /*deviceAddress=*/true)) {
+        gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
+      }
+    }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
   meshes_.push_back(gm);
@@ -1859,17 +1888,31 @@ void VulkanRenderer::rebuildTlas() {
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
   if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
+  if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
 
-  // Ensure every mesh has a BLAS, and build the instance + descriptor arrays.
+  // Ensure every mesh has a BLAS, and build the instance + descriptor arrays. A
+  // non-instanced mesh contributes ONE TLAS instance at its world transform; an
+  // instanced mesh (instanceXforms) contributes one TLAS instance per 3x4 o2w, all
+  // sharing the prototype's single BLAS -- geometry stored once. instInfos[] is
+  // parallel to the TLAS instances (indexed by gl_InstanceID in the shader, which is
+  // full-range, unlike the 24-bit instanceCustomIndex).
   std::vector<VkAccelerationStructureInstanceKHR> insts;
+  std::vector<InstanceInfoGPU> instInfos;
   std::vector<MeshDescGPU> descs(meshes_.size());
+  auto setRow3x4 = [](VkAccelerationStructureInstanceKHR& inst, const float o2w[12]) {
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 4; ++c) inst.transform.matrix[r][c] = o2w[r * 4 + c];
+  };
   for (uint32_t i = 0; i < meshes_.size(); ++i) {
     VkMeshGPU& m = meshes_[i];
     buildBlas(m);
     MeshDescGPU& d = descs[i];
     d.vtxAddr = m.vboAddr;
     d.idxAddr = m.eboAddr;
+    d.vtxColorAddr = m.vtxColorAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
+    d.geometricNormal = m.geometricNormal ? 1u : 0u;
     for (int k = 0; k < 3; ++k) {
       d.nrm0[k] = m.normalMat[0 * 3 + k];
       d.nrm1[k] = m.normalMat[1 * 3 + k];
@@ -1877,14 +1920,42 @@ void VulkanRenderer::rebuildTlas() {
     }
     if (m.blas == VK_NULL_HANDLE) continue;
     VkAccelerationStructureInstanceKHR inst{};
-    for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 4; ++c)
-        inst.transform.matrix[r][c] = m.world[c * 4 + r];  // col-major -> row 3x4
-    inst.instanceCustomIndex = i;
+    inst.instanceCustomIndex = i;  // 24-bit; informational (shader uses gl_InstanceID)
     inst.mask = 0xFF;
     inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
     inst.accelerationStructureReference = m.blasAddr;
-    insts.push_back(inst);
+    const size_t ninst = m.instanceXforms.size() / 12;
+    if (ninst == 0) {
+      // Non-instanced: world transform baked into the TLAS instance.
+      float o2w[12];
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 4; ++c) o2w[r * 4 + c] = m.world[c * 4 + r];
+      setRow3x4(inst, o2w);
+      insts.push_back(inst);
+      InstanceInfoGPU info{};
+      info.meshId = i;
+      info.useMaterial = 1u;  // material base + the mesh's normal matrix
+      instInfos.push_back(info);
+    } else {
+      const bool perInstColor = m.instanceColors.size() == ninst * 3;
+      for (size_t k = 0; k < ninst; ++k) {
+        setRow3x4(inst, &m.instanceXforms[k * 12]);
+        insts.push_back(inst);
+        InstanceInfoGPU info{};
+        info.meshId = i;
+        info.useMaterial = 0u;  // tint + the per-instance object->world for normals
+        if (perInstColor) {
+          info.tint[0] = m.instanceColors[k * 3 + 0];
+          info.tint[1] = m.instanceColors[k * 3 + 1];
+          info.tint[2] = m.instanceColors[k * 3 + 2];
+        } else {
+          info.tint[0] = m.flatColor[0];
+          info.tint[1] = m.flatColor[1];
+          info.tint[2] = m.flatColor[2];
+        }
+        instInfos.push_back(info);
+      }
+    }
   }
   if (insts.empty()) return;
 
@@ -1954,15 +2025,20 @@ void VulkanRenderer::rebuildTlas() {
   if (mats.empty()) mats.assign(4, 0.6f);    // dummy so the SSBO is non-empty
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
+  createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
+                   &instInfoBuf_, &instInfoMem_);
 
-  // Update descriptors: TLAS(0), meshDesc(2), material(3). Image(1) set elsewhere.
+  // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4). Image(1)
+  // is set elsewhere.
   VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
   asInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
   asInfo.accelerationStructureCount = 1;
   asInfo.pAccelerationStructures = &tlas_;
   VkDescriptorBufferInfo descInfo{meshDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matInfo{rtMatBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[3]{};
+  VkDescriptorBufferInfo instInfo{instInfoBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[4]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -1981,14 +2057,20 @@ void VulkanRenderer::rebuildTlas() {
   w[2].descriptorCount = 1;
   w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   w[2].pBufferInfo = &matInfo;
-  vkUpdateDescriptorSets(device_, 3, w, 0, nullptr);
+  w[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[3].dstSet = rtSet_;
+  w[3].dstBinding = 4;
+  w[3].descriptorCount = 1;
+  w[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[3].pBufferInfo = &instInfo;
+  vkUpdateDescriptorSets(device_, 4, w, 0, nullptr);
 
   tlasDirty_ = false;
 }
 
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
-  VkDescriptorSetLayoutBinding b[4]{};
+  VkDescriptorSetLayoutBinding b[5]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = 1;
@@ -2003,9 +2085,11 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   b[3] = b[2];
   b[3].binding = 3;
+  b[4] = b[2];
+  b[4].binding = 4;  // per-TLAS-instance info SSBO
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 4;
+  lci.bindingCount = 5;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -2013,7 +2097,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
-  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pci.maxSets = 1;
@@ -2214,6 +2298,8 @@ void VulkanRenderer::destroyRt() {
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
   if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
+  if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
