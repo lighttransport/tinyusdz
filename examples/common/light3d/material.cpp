@@ -206,6 +206,8 @@ out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
 out vec3 vColor;
+flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
+out float vDomWeight;      // its weight
 
 mat4 fetchBone(uint idx) {
     int base = int(idx) * 4;
@@ -260,6 +262,13 @@ void main() {
     vNormal = normalize(uNormalMatrix * nrm);
     vUV = aUV.xy;
     vColor = aColor;
+    // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
+    vDomJoint = -1;
+    vDomWeight = 0.0;
+    if (aWeight.x > vDomWeight) { vDomWeight = aWeight.x; vDomJoint = int(aJoint.x); }
+    if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
+    if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
+    if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
     gl_Position = uModelViewProj * vec4(pos, 1.0);
 }
 )glsl";
@@ -272,6 +281,8 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
 in vec3 vColor;
+flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
+in float vDomWeight;
 
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
@@ -390,6 +401,11 @@ void main() {
             return;
         }
         if (uRenderMode == 18) { fragColor = vec4(purposeColor(uPurpose), 1.0); return; }    // purpose
+        if (uRenderMode == 21) {                                                             // skin weights
+            vec3 jc = idColor(vDomJoint);                  // dominant joint -> hashed color
+            fragColor = vec4(jc * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
+            return;
+        }
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);
