@@ -189,6 +189,7 @@ layout(location = 2) in vec3 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
+layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
@@ -204,6 +205,7 @@ uniform int uInfluenceTexWidth;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
+out vec3 vColor;
 
 mat4 fetchBone(uint idx) {
     int base = int(idx) * 4;
@@ -257,6 +259,7 @@ void main() {
     vWorldPos = worldPos.xyz;
     vNormal = normalize(uNormalMatrix * nrm);
     vUV = aUV.xy;
+    vColor = aColor;
     gl_Position = uModelViewProj * vec4(pos, 1.0);
 }
 )glsl";
@@ -268,6 +271,7 @@ const char* getMaterialFragmentShaderGL330() {
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
+in vec3 vColor;
 
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
@@ -275,6 +279,10 @@ uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform float uAlpha;
+// When set, shade with the geometric (screen-derivative) normal -- used for
+// meshes without authored normals so hard surfaces aren't smeared by smooth
+// (averaged) normals.
+uniform bool uGeometricNormal;
 
 uniform vec3 uCameraPos;
 
@@ -291,7 +299,7 @@ uniform bool uHasEmissiveTex;
 out vec4 fragColor;
 
 void main() {
-    vec3 baseColor = uBaseColor;
+    vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
@@ -308,7 +316,9 @@ void main() {
         emissive *= texture(uEmissiveTex, vUV).rgb;
     }
 
-    vec3 N = normalize(vNormal);
+    vec3 N = uGeometricNormal
+                 ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
+                 : normalize(vNormal);
     if (uHasNormalTex) {
         vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
         N = normalize(N + tangentNormal * 0.1);
