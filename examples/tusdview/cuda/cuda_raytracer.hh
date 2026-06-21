@@ -77,11 +77,18 @@ class CudaRayTracer {
   uintptr_t dFace_{0};       // int source USD face id per tri (source-face-id AOV)
   uintptr_t dDomW_{0};       // float[3] per-vertex dominant skin weight per tri
   uintptr_t dDomJoint_{0};   // int provoking-vertex dominant joint per tri (skin-weights)
-  uintptr_t dNodes_{0};      // BVH nodes
+  // 2-level instancing: per-prototype BLAS nodes (concatenated, global-rebased) +
+  // a TLAS over per-instance world AABBs + the instance table.
+  uintptr_t dBlasNodes_{0};  // concatenated BLAS nodes (local-space geometry)
+  uintptr_t dTlasNodes_{0};  // TLAS nodes over instance world AABBs
+  uintptr_t dInstances_{0};  // Inst[] table (w2o,o2w,tint,blasRoot,instId)
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_
 
-  size_t triCount_{0};
+  size_t triCount_{0};       // unique prototype triangles (geometry stored once)
+  size_t instCount_{0};      // total instances (TLAS leaves)
+  size_t blasNodeCount_{0};
+  size_t tlasNodeCount_{0};
   size_t nodeCount_{0};
   bool truncated_{false};
   std::string deviceName_;
