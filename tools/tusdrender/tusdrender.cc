@@ -1845,6 +1845,7 @@ struct RTPreviewStats {
   uint64_t purpose_guide_triangles{0};
   size_t point_instancers{0};  // UsdGeomPointInstancer prims expanded
   size_t point_instances{0};   // visible instances they emitted (TLAS placements)
+  size_t nested_instances{0};  // extra placements from flattening nested instancing
   size_t curve_strands{0};     // top-level BasisCurves/NurbsCurves prims
   size_t curve_instances{0};   // instanced curve-prototype placements (TLAS)
   double build_seconds{0.0};
@@ -3770,6 +3771,26 @@ inline Vec3 TransformDirO2W(const float o[12], const Vec3 &v) {
               o[8] * v.x + o[9] * v.y + o[10] * v.z};
 }
 
+// Compose two 3x4 object->world transforms (same column-vector layout as
+// TransformPointO2W: world = A*p + t). out = outer * inner, i.e. out maps a point
+// by applying `inner` first then `outer`: out(p) = outer(inner(p)). Used to flatten
+// nested instancing (a prototype that itself contains instancers) into the single
+// level a TLAS can express: a leaf's nested-local placement composed with each
+// outer placement of its containing prototype.
+inline void Compose3x4(const float outer[12], const float inner[12],
+                       float out[12]) {
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      out[r * 4 + c] = outer[r * 4 + 0] * inner[0 * 4 + c] +
+                       outer[r * 4 + 1] * inner[1 * 4 + c] +
+                       outer[r * 4 + 2] * inner[2 * 4 + c];
+    }
+    out[r * 4 + 3] = outer[r * 4 + 0] * inner[0 * 4 + 3] +
+                     outer[r * 4 + 1] * inner[1 * 4 + 3] +
+                     outer[r * 4 + 2] * inner[2 * 4 + 3] + outer[r * 4 + 3];
+  }
+}
+
 // One placement of a BLAS, stored as a compact 3x4 float object->world (48 B vs a
 // 128 B matrix4d) — instance arrays dominate footprint on heavily-instanced
 // scenes (e.g. Island's 22 M instances). instances[0] is the base at identity.
@@ -5367,6 +5388,17 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     }
   }
 
+  // Nested instancing: a prototype subtree may itself contain a PointInstancer or a
+  // scenegraph (instanceable) instance. That geometry is NOT baked into this
+  // prototype's base BLAS -- CollectProtoMeshNesting records those placements
+  // separately and the TLAS flattens them (one level, composed per outer
+  // placement). So do not descend here (mirror CollectSceneSplit). No-op for the
+  // common leaf prototype (plain meshes), so non-nested scenes are byte-identical.
+  if (prim.GetTypeName() == "PointInstancer") return;
+  {
+    const tinyusdz::next::PrimSpec *ispec = prim.GetPrimSpec();
+    if (ispec && !ispec->meta().instance_prototype().empty()) return;
+  }
   if (prim.GetTypeName() == "Mesh" &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
     MeshJobNext job;
@@ -6045,6 +6077,100 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
   }
 }
 
+// Recurse a prototype subtree collecting its NESTED instance placements (nested
+// PointInstancer expansions + scenegraph-instanceable instances), recorded in
+// prototype-LOCAL space. Each placement references a deduped leaf-prototype BLAS
+// queued into the shared proto_ids/protos pool, so deeper nesting is collected on
+// later iterations of the proto loop and composed by the TLAS expansion. Mesh-only:
+// nested instanced curves are routed to a throwaway collector (their geometry still
+// renders once via the per-prototype curve BLAS). Mirrors the instance branches of
+// CollectSceneSplit; base meshes are left to CollectProtoJobs.
+void CollectProtoMeshNestingRec(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
+    const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
+    const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *throwaway_curves,
+    RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") purpose = tinyusdz::Purpose::Render;
+      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
+      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+    }
+  }
+
+  // Nested scenegraph instance: record a placement + queue its prototype.
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const std::string proto_path =
+      spec ? spec->meta().instance_prototype() : std::string();
+  if (!proto_path.empty()) {
+    if (PathMatchesMask(prim.GetPath().str(), mask)) {
+      const std::string key =
+          proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+      auto it = proto_ids->find(key);
+      uint32_t blas_id;
+      if (it == proto_ids->end()) {
+        blas_id = uint32_t(protos->size()) + 1;
+        (*proto_ids)[key] = blas_id;
+        protos->push_back({proto_path, purpose, blas_id});
+      } else {
+        blas_id = it->second;
+      }
+      InstanceRT inst;
+      inst.blas_id = blas_id;
+      Mat4ToObj2World(world, inst.o2w);
+      nested->push_back(inst);
+    }
+    return;
+  }
+
+  // Nested PointInstancer: reuse the top-level expander, directing its mesh
+  // placements into `nested` (prototype-local) and mesh protos into the shared
+  // pool. Instanced curves go to a throwaway collector (not placed -- follow-up).
+  if (prim.GetTypeName() == "PointInstancer") {
+    CollectPointInstancer(stage, prim, world, purpose, time, mask, nested,
+                          proto_ids, protos, throwaway_curves, stats);
+    return;
+  }
+
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
+    CollectProtoMeshNestingRec(stage, child, world, purpose, time, mask, nested,
+                               proto_ids, protos, throwaway_curves, stats,
+                               proto_holders);
+  }
+}
+
+// Entry: root the nested-instance walk at the prototype's CHILDREN with an identity
+// world (the prototype root's own transform is replaced by each outer placement,
+// matching CollectProtoJobs). Appends prototype-local placements to `nested`.
+void CollectProtoMeshNesting(
+    const tinyusdz::next::Stage &stage, const std::string &proto_path,
+    tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
+    std::vector<InstanceRT> *nested,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  CurveProtoCollect throwaway;  // nested instanced curves not placed (follow-up)
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
+    if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
+    CollectProtoMeshNestingRec(stage, child, matrix4d::identity(), purpose, time,
+                               mask, nested, proto_ids, protos, &throwaway, stats,
+                               proto_holders);
+  }
+}
+
 // Pre-pass: gather the paths of native-instance prototype holders (the targets
 // of instance_prototype()). Walks the same prims CollectSceneSplit collects as
 // base geometry -- it stops at instance proxies and PointInstancers, so its cost
@@ -6577,10 +6703,25 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // placed by a TLAS. Geometry is stored once per prototype.
   // -------------------------------------------------------------------------
   ctx.use_tlas = true;
-  std::vector<std::vector<MeshJobNext>> proto_jobs(protos.size());
+  // proto_jobs[i] = prototype i's base meshes; proto_nested[i] = its nested-instance
+  // placements (prototype-local, referencing other prototype BLASes). `protos` GROWS
+  // here as nested prototypes are queued, so iterate by index and extend the
+  // parallel arrays. Copy path/purpose to locals first: collecting nesting can
+  // reallocate `protos`, dangling a `protos[i]` reference mid-call.
+  std::vector<std::vector<MeshJobNext>> proto_jobs;
+  std::vector<std::vector<InstanceRT>> proto_nested;
   for (size_t i = 0; i < protos.size(); ++i) {
-    CollectProtoJobs(ctx.stage, protos[i].path, protos[i].purpose, time,
-                     &proto_jobs[i]);
+    const std::string ppath = protos[i].path;
+    const tinyusdz::Purpose ppurpose = protos[i].purpose;
+    std::vector<MeshJobNext> jobs;
+    std::vector<InstanceRT> nested;
+    CollectProtoJobs(ctx.stage, ppath, ppurpose, time, &jobs);
+    CollectProtoMeshNesting(ctx.stage, ppath, ppurpose, time, opt.mask, &nested,
+                            &proto_ids, &protos, &ctx.stats, &proto_holders);
+    if (proto_jobs.size() < protos.size()) proto_jobs.resize(protos.size());
+    if (proto_nested.size() < protos.size()) proto_nested.resize(protos.size());
+    proto_jobs[i] = std::move(jobs);
+    proto_nested[i] = std::move(nested);
   }
   // Material resolution over base + every prototype's meshes (shared cache).
   {
@@ -6914,6 +7055,65 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       cp.reserve(cn);
       for (unsigned t = 0; t < cn; ++t) cp.emplace_back(cworker);
       for (std::thread &th : cp) th.join();
+    }
+  }
+
+  // Flatten nested instancing into the single level a TLAS expresses. A prototype
+  // whose subtree contains instancers contributed nested placements (in that
+  // prototype's local space, `proto_nested[blas-1]`). Each top-level placement of
+  // such a prototype must ALSO place that prototype's nested geometry, composed with
+  // the outer transform -- recursively, to any depth. Geometry stays deduped (each
+  // leaf BLAS is stored once); only the 48 B/placement instance list grows. No-op
+  // (byte-identical) when nothing nests.
+  {
+    const size_t nb = ctx.blas.size();
+    bool any_nested = false;
+    for (const std::vector<InstanceRT> &v : proto_nested)
+      if (!v.empty()) { any_nested = true; break; }
+    if (any_nested) {
+      std::vector<std::vector<InstanceRT>> flat(nb);
+      std::vector<uint8_t> visit(nb, 0);  // 0=unvisited 1=in-progress 2=done
+      std::function<const std::vector<InstanceRT> &(uint32_t)> flatten =
+          [&](uint32_t b) -> const std::vector<InstanceRT> & {
+        if (b >= nb) return flat[0];          // defensive (base is empty)
+        if (visit[b]) return flat[b];         // done -> cached; in-progress -> cycle, empty
+        visit[b] = 1;
+        std::vector<InstanceRT> out;
+        const size_t pi = size_t(b) - 1;      // proto index for blas b (base=0: none)
+        if (b >= 1 && pi < proto_nested.size()) {
+          for (const InstanceRT &d : proto_nested[pi]) {  // child placed at d.o2w in b-local
+            const uint32_t cb = d.blas_id;
+            if (cb < nb && ctx.blas[cb].scene) out.push_back(d);  // child's own base
+            for (const InstanceRT &g : flatten(cb)) {             // child's nested (cb-local)
+              InstanceRT e;
+              e.blas_id = g.blas_id;
+              Compose3x4(d.o2w, g.o2w, e.o2w);  // R-local -> b-local: apply g then d
+              out.push_back(e);
+            }
+          }
+        }
+        flat[b] = std::move(out);
+        visit[b] = 2;
+        return flat[b];
+      };
+
+      std::vector<InstanceRT> expanded;
+      expanded.reserve(instances.size());
+      size_t added = 0;
+      for (const InstanceRT &it : instances) {
+        expanded.push_back(it);  // the prototype's own base at its outer transform
+        for (const InstanceRT &g : flatten(it.blas_id)) {
+          InstanceRT e;
+          e.blas_id = g.blas_id;
+          Compose3x4(it.o2w, g.o2w, e.o2w);  // leaf-local -> world: apply g then it
+          expanded.push_back(e);
+          ++added;
+        }
+      }
+      if (added) {
+        instances = std::move(expanded);
+        ctx.stats.nested_instances = added;
+      }
     }
   }
 
@@ -7301,6 +7501,7 @@ void PrintRTStats(const RenderContext &ctx) {
     std::cerr << "rt instances: " << ctx.instances.size() << "\n";
     std::cerr << "rt point instancers: " << ctx.stats.point_instancers << "\n";
     std::cerr << "rt point instances: " << ctx.stats.point_instances << "\n";
+    std::cerr << "rt nested instances: " << ctx.stats.nested_instances << "\n";
     std::cerr << "rt unique triangles: " << unique_tris << "\n";
   } else {
     lrt_tri_stats st;
