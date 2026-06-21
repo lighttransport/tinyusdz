@@ -510,6 +510,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   std::vector<tnext::UsdPrim> meshPrims;
   {
     std::function<void(const tnext::UsdPrim&)> g = [&](const tnext::UsdPrim& p) {
+      // Geometry under PointInstancer prototypes and scenegraph-instance proxies
+      // was already consumed + GPU-instanced above, so do NOT descend into those
+      // subtrees. GetChildren() on an instanceable prim expands the prototype as
+      // instance proxies, so recursing here costs O(instances x prototype-meshes)
+      // of pure wasted traversal -- pathological on heavily-instanced scenes
+      // (e.g. the full Moana Island). The standalone prototype prim is still
+      // reached via the normal hierarchy below.
+      if (p.GetTypeName() == "PointInstancer") return;
+      const auto* s = p.GetPrimSpec();
+      if (s && !s->meta().instance_prototype().empty()) return;
       if (p.GetTypeName() == "Mesh" && !consumed.count(p.GetPath().str()))
         meshPrims.push_back(p);
       for (const tnext::UsdPrim& c : p.GetChildren()) g(c);
