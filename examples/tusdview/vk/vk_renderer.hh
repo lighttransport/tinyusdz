@@ -103,6 +103,7 @@ class VulkanRenderer final : public Renderer {
     VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
     VkDeviceMemory faceMem{VK_NULL_HANDLE};
     VkDeviceAddress faceAddr{0};             // RT source-face-id AOV
+    VkDescriptorSet faceDesc{VK_NULL_HANDLE}; // raster source-face-id (set 3); else dummy
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
@@ -235,9 +236,17 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSetLayout texSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout skinSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout influenceSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout faceSetLayout_{VK_NULL_HANDLE};  // set 3: source-face-id SSBO
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
   VkDescriptorPool skinPool_{VK_NULL_HANDLE};
   VkDescriptorPool influencePool_{VK_NULL_HANDLE};
+  VkDescriptorPool facePool_{VK_NULL_HANDLE};
+  // Shared 1-element dummy face buffer + descriptor, bound when a mesh has no
+  // source-face data (or on pool overflow), so set 3 is always present.
+  VkBuffer dummyFaceBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory dummyFaceMem_{VK_NULL_HANDLE};
+  VkDescriptorSet dummyFaceDesc_{VK_NULL_HANDLE};
+  VkDescriptorSet allocFaceDescriptor(VkBuffer buffer, VkDeviceSize size);
   VkImage whiteImg_{VK_NULL_HANDLE};
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};

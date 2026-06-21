@@ -678,9 +678,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  VkDescriptorSetLayout setLayouts[3] = {texSetLayout_, skinSetLayout_,
-                                         influenceSetLayout_};
-  plci.setLayoutCount = 3;
+  VkDescriptorSetLayout setLayouts[4] = {texSetLayout_, skinSetLayout_,
+                                         influenceSetLayout_, faceSetLayout_};
+  plci.setLayoutCount = 4;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1008,6 +1008,19 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
                                        &influenceSetLayout_),
            "influence descriptor set layout");
 
+  // Set 3: per-mesh source-face-id SSBO, read in the FRAGMENT stage.
+  VkDescriptorSetLayoutBinding fb{};
+  fb.binding = 0;
+  fb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  fb.descriptorCount = 1;
+  fb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  VkDescriptorSetLayoutCreateInfo flci{};
+  flci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  flci.bindingCount = 1;
+  flci.pBindings = &fb;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &flci, nullptr, &faceSetLayout_),
+           "face descriptor set layout");
+
   // One combined-image-sampler set per texture (cap = pool size); reset+realloc
   // on each uploadScene.
   const uint32_t kMaxTexSets = 1024;
@@ -1043,6 +1056,28 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   ipci.pPoolSizes = &ips;
   VK_CHECK(vkCreateDescriptorPool(device_, &ipci, nullptr, &influencePool_),
            "influence descriptor pool");
+
+  // Face-id descriptor pool: one set per mesh (source-face-id AOV). Generous cap;
+  // meshes beyond it fall back to the shared dummy.
+  const uint32_t kMaxFaceSets = 16384;
+  VkDescriptorPoolSize fps{};
+  fps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  fps.descriptorCount = kMaxFaceSets;
+  VkDescriptorPoolCreateInfo fpci{};
+  fpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  fpci.maxSets = kMaxFaceSets;
+  fpci.poolSizeCount = 1;
+  fpci.pPoolSizes = &fps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &fpci, nullptr, &facePool_),
+           "face descriptor pool");
+
+  // Shared dummy face buffer (1 element) + its descriptor, bound for meshes with
+  // no source-face data so set 3 is always present.
+  const uint32_t dummyFace = 0u;
+  if (createHostBuffer(sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       &dummyFace, &dummyFaceBuf_, &dummyFaceMem_)) {
+    dummyFaceDesc_ = allocFaceDescriptor(dummyFaceBuf_, sizeof(uint32_t));
+  }
   return true;
 }
 
@@ -1131,6 +1166,31 @@ VkDescriptorSet VulkanRenderer::allocInfluenceDescriptor(VkBuffer buffer,
   ai.descriptorPool = influencePool_;
   ai.descriptorSetCount = 1;
   ai.pSetLayouts = &influenceSetLayout_;
+  VkDescriptorSet ds = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
+  VkDescriptorBufferInfo info{};
+  info.buffer = buffer;
+  info.offset = 0;
+  info.range = size;
+  VkWriteDescriptorSet w{};
+  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w.dstSet = ds;
+  w.dstBinding = 0;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w.pBufferInfo = &info;
+  vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  return ds;
+}
+
+VkDescriptorSet VulkanRenderer::allocFaceDescriptor(VkBuffer buffer,
+                                                    VkDeviceSize size) {
+  if (!facePool_ || !faceSetLayout_ || !buffer || size == 0) return VK_NULL_HANDLE;
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = facePool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &faceSetLayout_;
   VkDescriptorSet ds = VK_NULL_HANDLE;
   if (vkAllocateDescriptorSets(device_, &ai, &ds) != VK_SUCCESS) return VK_NULL_HANDLE;
   VkDescriptorBufferInfo info{};
@@ -1589,6 +1649,13 @@ void VulkanRenderer::destroyScene() {
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
   if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
+  if (facePool_) {
+    vkResetDescriptorPool(device_, facePool_, 0);
+    // Re-allocate the shared dummy face descriptor (the reset freed it).
+    dummyFaceDesc_ = (dummyFaceBuf_ != VK_NULL_HANDLE)
+                         ? allocFaceDescriptor(dummyFaceBuf_, sizeof(uint32_t))
+                         : VK_NULL_HANDLE;
+  }
   whiteDesc_ = VK_NULL_HANDLE;
 }
 
@@ -1835,6 +1902,21 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     return;
   }
 
+  // Per-triangle source USD face id buffer (source-face-id AOV). Always created so
+  // the raster path can bind it at set 3; the raster FS reads it by gl_PrimitiveID
+  // + the submesh's first-triangle offset (packed into flags). A device address is
+  // also taken when RT is supported (raytrace.comp reads it via MeshDesc.faceAddr).
+  if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
+    const VkBufferUsageFlags fu = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if (createHostBuffer(sm.sourceFaceId.size() * sizeof(uint32_t), fu,
+                         sm.sourceFaceId.data(), &gm.faceBuf, &gm.faceMem,
+                         rtSupported_)) {
+      gm.faceDesc = allocFaceDescriptor(
+          gm.faceBuf, sm.sourceFaceId.size() * sizeof(uint32_t));
+    }
+  }
+  if (gm.faceDesc == VK_NULL_HANDLE) gm.faceDesc = dummyFaceDesc_;
+
   if (rtSupported_) {
     gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
     gm.indexCount = static_cast<uint32_t>(sm.indices.size());
@@ -1858,14 +1940,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
     if (gm.uv1Vbo) gm.uv1Addr = bufferDeviceAddress(gm.uv1Vbo);
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
-    // Per-triangle source USD face id (uint[]) as a device-address SSBO.
-    if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
-      if (createHostBuffer(sm.sourceFaceId.size() * sizeof(uint32_t),
-                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.sourceFaceId.data(),
-                           &gm.faceBuf, &gm.faceMem, /*deviceAddress=*/true)) {
-        gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
-      }
-    }
+    // faceBuf was created above (always); take its device address for the RT path.
+    if (gm.faceBuf) gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
   meshes_.push_back(gm);
@@ -2609,6 +2685,13 @@ void VulkanRenderer::present() {
                                 pipelineLayout_, 2, 1, &mesh.influenceDesc, 0,
                                 nullptr);
       }
+      // Set 3: source-face-id SSBO (real or shared dummy -- always present).
+      VkDescriptorSet faceDs =
+          mesh.faceDesc != VK_NULL_HANDLE ? mesh.faceDesc : dummyFaceDesc_;
+      if (faceDs != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 3, 1, &faceDs, 0, nullptr);
+      }
       VkDeviceSize offs[6] = {0, 0, 0, 0, 0, 0};
       VkBuffer bufs[6] = {mesh.vbo,         mesh.jointVbo,    mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,      mesh.morphInflVbo};
@@ -2670,6 +2753,12 @@ void VulkanRenderer::present() {
         pc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
                    ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
                    ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
+        // bit 7: source-face data present; bits 8-31: this submesh's first triangle
+        // (gl_PrimitiveID is submesh-local) for the source-face-id SSBO lookup.
+        if (mesh.faceBuf != VK_NULL_HANDLE) {
+          pc.flags |= (1 << 7) |
+                      (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
+        }
         pc.meshId = static_cast<int>(mi);
         vkCmdPushConstants(cb, pipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -2973,9 +3062,13 @@ void VulkanRenderer::shutdown() {
   if (texPool_) { vkDestroyDescriptorPool(device_, texPool_, nullptr); texPool_ = VK_NULL_HANDLE; }
   if (skinPool_) { vkDestroyDescriptorPool(device_, skinPool_, nullptr); skinPool_ = VK_NULL_HANDLE; }
   if (influencePool_) { vkDestroyDescriptorPool(device_, influencePool_, nullptr); influencePool_ = VK_NULL_HANDLE; }
+  if (facePool_) { vkDestroyDescriptorPool(device_, facePool_, nullptr); facePool_ = VK_NULL_HANDLE; }
+  if (dummyFaceBuf_) { vkDestroyBuffer(device_, dummyFaceBuf_, nullptr); dummyFaceBuf_ = VK_NULL_HANDLE; }
+  if (dummyFaceMem_) { vkFreeMemory(device_, dummyFaceMem_, nullptr); dummyFaceMem_ = VK_NULL_HANDLE; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
+  if (faceSetLayout_) { vkDestroyDescriptorSetLayout(device_, faceSetLayout_, nullptr); faceSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
