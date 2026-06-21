@@ -268,6 +268,12 @@ void App::applyLoaded(bool ok, bool progressive) {
     const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
     camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
     camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
+    // peripheral geometry leaves the frustum -- exercises culling headlessly).
+    if (camDolly_ > 0.0f && camDolly_ != 1.0f) {
+      camera_.setOrbit(camera_.target(), camera_.yaw(), camera_.pitch(),
+                       camera_.distance() * camDolly_);
+    }
   }
   gui_.setScene(&loaded_, &draw_);
   // Apply a one-shot --select (prim path) once the scene + draw meshes exist.
@@ -1011,6 +1017,16 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (!reconvActive_ && !blendReconvNeeded_) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+  }
+
+  // Headless: report the last frame's frustum-cull stats (visible vs total) so
+  // large-scene culling can be measured without the interactive HUD.
+  if (maxFrames >= 0) {
+    const Gui::RenderStats rs = gui_.renderStats();
+    LOGI("render stats: meshes %zu/%zu visible, instances %zu/%zu visible, "
+         "drawn tris %zu, draw calls %zu",
+         rs.visibleMeshes, rs.totalMeshes, rs.visibleInstances,
+         rs.totalInstances, rs.drawnTriangles, rs.drawCalls);
   }
 
   auto shot = [&](const std::string& path, bool window) {

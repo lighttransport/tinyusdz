@@ -107,6 +107,7 @@ class Gui {
   void setTransformMode(TransformMode m) { xformMode_ = m; }
   void setRenderMode(RenderMode m) { mode_ = m; }
   RenderMode renderMode() const { return mode_; }
+  void setCullEnabled(bool on) { cullEnabled_ = on; }
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -118,6 +119,22 @@ class Gui {
     wantTogglePlay_ = wantStop_ = hasSeek_ = false;
     wantStepForward_ = wantStepBackward_ = false;
     hasSkinningModeRequest_ = false;
+  }
+
+  // Per-frame render stats (after the last renderViewportScene). Used by the
+  // headless path to report frustum-cull effectiveness on large scenes.
+  struct RenderStats {
+    size_t visibleMeshes{0};
+    size_t totalMeshes{0};
+    size_t visibleInstances{0};
+    size_t totalInstances{0};
+    size_t drawnTriangles{0};
+    size_t drawCalls{0};
+  };
+  RenderStats renderStats() const {
+    return {statVisibleMeshes_, draw_ ? draw_->meshes.size() : 0,
+            statVisibleInstances_, statTotalInstances_, statDrawnTriangles_,
+            statDrawCalls_};
   }
 
   void selectByPath(const std::string& absPath, int meshIndex);
@@ -254,6 +271,14 @@ class Gui {
   bool showPurposeGuide_{false};
   bool showNavHelp_{true};
   bool showAbout_{false};
+  bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
+  // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance
+  // cull pass; rendered by drawStats). "visible" reflects frustum culling.
+  size_t statVisibleMeshes_{0};
+  size_t statTotalInstances_{0};
+  size_t statVisibleInstances_{0};
+  size_t statDrawnTriangles_{0};
+  size_t statDrawCalls_{0};
   float tessQuality_{1.0f};
   std::vector<HelperVertex> helperLines_;
   std::vector<HelperVertex> overlayLines_;
