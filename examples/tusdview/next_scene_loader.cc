@@ -240,19 +240,12 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   if (!conv.ConvertMesh(mp, &rm)) return false;
   if (!FillFlatGeometry(rm, dm)) return false;
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
-  // Prototype displayColor -> per-draw constant (average of the mesh's colors).
-  if (!rm.colors.empty()) {
-    std::vector<float> cols = rm.colors.flatten();
-    const size_t nc = cols.size() / 3;
-    if (nc) {
-      double r = 0, g = 0, b = 0;
-      for (size_t c = 0; c < nc; ++c) {
-        r += cols[3 * c + 0]; g += cols[3 * c + 1]; b += cols[3 * c + 2];
-      }
-      dm->flatColor[0] = float(r / nc);
-      dm->flatColor[1] = float(g / nc);
-      dm->flatColor[2] = float(b / nc);
-    }
+  // Prototype displayColor is carried PER-VERTEX (FillFlatGeometry filled
+  // dm->vertexColors -- uploaded to GL attrib 10 for instanced draws, shared by all
+  // instances). Keep the per-instance constant neutral (white) so it doesn't tint
+  // the per-vertex color; the instanced shader multiplies the two.
+  if (!dm->vertexColors.empty()) {
+    dm->flatColor[0] = dm->flatColor[1] = dm->flatColor[2] = 1.0f;
   }
   double mw16[16];
   tydn::ComputeWorldTransform(stage, mp, mw16, time);
