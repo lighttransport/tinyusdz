@@ -250,6 +250,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==18){  // purpose (bits1-2 of geo byte)
       int p=(geo[ht]>>1)&3;
       outc=(p==1)?mk(0.2f,0.8f,0.3f):(p==2)?mk(0.2f,0.45f,0.95f):(p==3)?mk(0.95f,0.75f,0.1f):mk(0.5f,0.5f,0.5f);
+    } else if (rmode==29){  // kind (bits3-5 of geo byte)
+      int k=(geo[ht]>>3)&7;
+      outc=(k==1)?mk(0.2f,0.8f,0.8f):(k==2)?mk(0.85f,0.3f,0.85f):(k==3)?mk(0.95f,0.6f,0.15f):(k==4)?mk(0.5f,0.85f,0.4f):mk(0.35f,0.35f,0.35f);
     } else if (rmode==24){  // ray-traced ambient occlusion
       const float* tv=&tris[ht*9];
       F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
@@ -482,7 +485,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
     // geo byte: bit0 = geometricNormal, bits1-2 = USD purpose id (Purpose AOV).
     const uint8_t g = static_cast<uint8_t>((m.geometricNormal ? 1 : 0) |
-                                           ((PurposeId(m.purpose) & 3) << 1));
+                                           ((PurposeId(m.purpose) & 3) << 1) |
+                                           ((m.kindId & 7) << 3));
 
     // Resolve the mesh's base tint (per submesh material; instanced uses flat/inst).
     auto submeshMat = [&](uint32_t triIdx0) -> const DrawMaterialCPU* {

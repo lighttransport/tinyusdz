@@ -113,6 +113,7 @@ struct DrawMeshCPU {
   float aabbMin[3]{0, 0, 0};
   float aabbMax[3]{0, 0, 0};
   bool doubleSided{false};
+  int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across
@@ -122,6 +123,16 @@ inline int PurposeId(const std::string& p) {
   if (p == "proxy") return 2;
   if (p == "guide") return 3;
   return 0;  // default / unknown
+}
+
+// USD model kind token -> compact id for the Kind debug AOV (consistent across all
+// backends): 0=none/unknown, 1=component, 2=group, 3=assembly, 4=subcomponent.
+inline int KindId(const std::string& k) {
+  if (k == "component") return 1;
+  if (k == "group") return 2;
+  if (k == "assembly") return 3;
+  if (k == "subcomponent") return 4;
+  return 0;  // no authored kind on this prim or any ancestor
 }
 
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };

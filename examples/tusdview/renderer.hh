@@ -53,6 +53,7 @@ enum class RenderMode : int {
   InstanceId = 26,        // per-instance hashed color (instanced geom)
   BvhHeatmap = 27,        // BVH traversal cost (CUDA software tracer)
   SoftShadow = 28,        // ray-traced soft shadow / sky visibility (RT backends)
+  Kind = 29,              // USD model kind (component/group/assembly/subcomponent)
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 

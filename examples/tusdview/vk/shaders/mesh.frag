@@ -38,6 +38,14 @@ vec3 purposeColor(int p) {
   return vec3(0.5);
 }
 
+vec3 kindColor(int k) {
+  if (k == 1) return vec3(0.2, 0.8, 0.8);
+  if (k == 2) return vec3(0.85, 0.3, 0.85);
+  if (k == 3) return vec3(0.95, 0.6, 0.15);
+  if (k == 4) return vec3(0.5, 0.85, 0.4);
+  return vec3(0.35);
+}
+
 void main() {
   vec3 N = normalize(vNormalW);
   // Debug AOVs.
@@ -88,6 +96,10 @@ void main() {
     }
     if (pc.renderMode == 18) {  // purpose (bits 2-3 of flags)
       outColor = vec4(purposeColor((pc.flags >> 2) & 3), 1.0);
+      return;
+    }
+    if (pc.renderMode == 29) {  // kind (bits 4-6 of flags)
+      outColor = vec4(kindColor((pc.flags >> 4) & 7), 1.0);
       return;
     }
     if (pc.renderMode == 21) {  // skin weights: dominant joint tinted by weight

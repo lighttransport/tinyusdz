@@ -152,6 +152,7 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "instance-id")) wantMode = tusdview::RenderMode::InstanceId;
       else if (!std::strcmp(m, "bvh-heatmap")) wantMode = tusdview::RenderMode::BvhHeatmap;
       else if (!std::strcmp(m, "soft-shadow")) wantMode = tusdview::RenderMode::SoftShadow;
+      else if (!std::strcmp(m, "kind")) wantMode = tusdview::RenderMode::Kind;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--blend") == 0 && (i + 1) < argc) {
       // --blend NAME=WEIGHT (repeatable): manually drive a blendshape weight,

@@ -418,6 +418,7 @@ void Gui::drawDockspaceAndMenu() {
             {"Emissive", RenderMode::Emissive},
             {"Opacity", RenderMode::Opacity},
             {"Purpose", RenderMode::Purpose},
+            {"Kind", RenderMode::Kind},
             {"Missing normals", RenderMode::MissingNormals},
             {"Double-sided", RenderMode::DoubleSided},
             {"Skin weights", RenderMode::SkinWeights},

@@ -51,6 +51,7 @@ class GLRenderer final : public Renderer {
     GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
     bool geometricNormal{false};     // shade with screen-derivative normal
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
+    int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     bool doubleSided{false};
@@ -85,6 +86,7 @@ class GLRenderer final : public Renderer {
   GLint uSceneMin_{-1}, uSceneExtent_{-1};                // position AOV bounds
   GLint uMeshId_{-1}, uDoubleSided_{-1};                  // mesh-id / double-sided AOV
   GLint uPurpose_{-1};                                    // purpose AOV (per-draw)
+  GLint uKind_{-1};                                       // kind AOV (per-draw)
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uSkinningEnabled_{-1};
@@ -99,7 +101,7 @@ class GLRenderer final : public Renderer {
   GLint iUViewProj_{-1}, iCameraPos_{-1}, iEmissive_{-1};
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
-  GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1};
+  GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
