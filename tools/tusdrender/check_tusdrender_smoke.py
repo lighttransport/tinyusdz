@@ -366,6 +366,63 @@ def Xform "World"
             raise RuntimeError(
                 f"missing holder stat {expected!r}:\n{holder_stats.stderr}")
 
+    # Nested instanced CURVES: a PointInstancer whose prototype contains both a mesh
+    # and a nested PointInstancer scattering a BasisCurves prototype. The nested
+    # curve scatter must be flattened with the outer placements (2 clumps x 3 hair =
+    # 6 curve instances), not collapsed to one curve per clump.
+    ncurve_scene = outdir / "tusdrender-nested-curve.usda"
+    ncurve_scene.write_text("""#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World"
+{
+    def PointInstancer "outer"
+    {
+        point3f[] positions = [(0, 0, 0), (10, 0, 0)]
+        int[] protoIndices = [0, 0]
+        rel prototypes = [</World/outer/Clump>]
+        def Xform "Clump"
+        {
+            def Mesh "trunk"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(-1, -1, 0), (1, -1, 0), (0, 1, 0)]
+            }
+            def PointInstancer "hair"
+            {
+                point3f[] positions = [(0, 0, 0), (0.5, 0, 0), (1, 0, 0)]
+                int[] protoIndices = [0, 0, 0]
+                rel prototypes = [</World/outer/Clump/hair/Strand>]
+                def BasisCurves "Strand"
+                {
+                    uniform token type = "linear"
+                    int[] curveVertexCounts = [2]
+                    point3f[] points = [(0, 0, 0), (0, 2, 0)]
+                    float[] widths = [0.1, 0.1]
+                }
+            }
+        }
+    }
+}
+""")
+    ncurve_out = outdir / "tusdrender-nested-curve.png"
+    ncurve_stats = subprocess.run(
+        [exe, str(ncurve_scene), str(ncurve_out), "-w", "48", "-height", "32",
+         "-rtPreview", "-stats", "-autoframe"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for expected in (
+        "rt instancing: tlas",
+        "rt curve instances: 6",
+        "triangles: 2",
+    ):
+        if expected not in ncurve_stats.stderr:
+            raise RuntimeError(
+                f"missing nested-curve stat {expected!r}:\n{ncurve_stats.stderr}")
+
     # BasisCurves ray tracing in the -rtPreview path (curves build into the
     # DirectScene as LightRT hair strands), including curve-prototype instancing
     # (a PointInstancer whose prototype is a BasisCurves is baked per instance).

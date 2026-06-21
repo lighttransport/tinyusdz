@@ -5804,6 +5804,15 @@ void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
       else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
     }
   }
+  // Nested instancers under a prototype are NOT baked into its curve BLAS -- their
+  // (curve) instancing is flattened separately, like the mesh path (else the nested
+  // instancer's scatter collapses to a single curve copy). No-op for plain curve
+  // prototypes.
+  if (prim.GetTypeName() == "PointInstancer") return;
+  {
+    const tinyusdz::next::PrimSpec *s = prim.GetPrimSpec();
+    if (s && !s->meta().instance_prototype().empty()) return;
+  }
   if (IsCurvePrimNext(prim)) {
     CurveJobNext cj;
     cj.prim = prim;
@@ -5873,8 +5882,13 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
                            std::vector<InstanceRT> *instances,
                            std::unordered_map<std::string, uint32_t> *proto_ids,
                            std::vector<ProtoBuildReq> *protos,
-                           CurveProtoCollect *curve_inst,
-                           RTPreviewStats *stats) {
+                           CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                           // When set, curve placements go here (in `instancer_world`
+                           // space) instead of curve_inst->instances -- used to
+                           // capture a NESTED instancer's curve placements per
+                           // prototype for later flattening. Curve prototypes are
+                           // still deduped into curve_inst.
+                           std::vector<CurveInstanceRT> *curve_out = nullptr) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
   const std::vector<tinyusdz::next::Path> *targets =
       instancer.GetRelationship("prototypes");
@@ -5956,7 +5970,7 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
       CurveInstanceRT ci;
       ci.curve_proto_idx = uint32_t(curve_idx);
       std::memcpy(ci.o2w, o2w, sizeof(o2w));
-      curve_inst->instances.push_back(ci);
+      (curve_out ? *curve_out : curve_inst->instances).push_back(ci);
     }
     emitted++;
   }
@@ -6093,8 +6107,9 @@ void CollectProtoMeshNestingRec(
     const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
     const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
+    std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
-    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *throwaway_curves,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
     RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders) {
   double dmat[16];
@@ -6133,23 +6148,33 @@ void CollectProtoMeshNestingRec(
       inst.blas_id = blas_id;
       Mat4ToObj2World(world, inst.o2w);
       nested->push_back(inst);
+      // Curves under the nested native instance's prototype, placed (proto-local)
+      // via a deduped curve BLAS -- flattened with the outer placements later.
+      const int32_t curve_idx =
+          ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+      if (curve_idx >= 0 && nested_curves) {
+        CurveInstanceRT ci;
+        ci.curve_proto_idx = uint32_t(curve_idx);
+        std::memcpy(ci.o2w, inst.o2w, sizeof(inst.o2w));
+        nested_curves->push_back(ci);
+      }
     }
     return;
   }
 
   // Nested PointInstancer: reuse the top-level expander, directing its mesh
-  // placements into `nested` (prototype-local) and mesh protos into the shared
-  // pool. Instanced curves go to a throwaway collector (not placed -- follow-up).
+  // placements into `nested` and curve placements into `nested_curves` (both
+  // prototype-local); mesh + curve protos dedup into the shared pools.
   if (prim.GetTypeName() == "PointInstancer") {
     CollectPointInstancer(stage, prim, world, purpose, time, mask, nested,
-                          proto_ids, protos, throwaway_curves, stats);
+                          proto_ids, protos, curve_inst, stats, nested_curves);
     return;
   }
 
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
     if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
     CollectProtoMeshNestingRec(stage, child, world, purpose, time, mask, nested,
-                               proto_ids, protos, throwaway_curves, stats,
+                               nested_curves, proto_ids, protos, curve_inst, stats,
                                proto_holders);
   }
 }
@@ -6160,18 +6185,18 @@ void CollectProtoMeshNestingRec(
 void CollectProtoMeshNesting(
     const tinyusdz::next::Stage &stage, const std::string &proto_path,
     tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
-    std::vector<InstanceRT> *nested,
+    std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
-    std::vector<ProtoBuildReq> *protos, RTPreviewStats *stats,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
+    RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders) {
   tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
-  CurveProtoCollect throwaway;  // nested instanced curves not placed (follow-up)
   for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
     if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
     CollectProtoMeshNestingRec(stage, child, matrix4d::identity(), purpose, time,
-                               mask, nested, proto_ids, protos, &throwaway, stats,
-                               proto_holders);
+                               mask, nested, nested_curves, proto_ids, protos,
+                               curve_inst, stats, proto_holders);
   }
 }
 
@@ -6714,18 +6739,24 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // reallocate `protos`, dangling a `protos[i]` reference mid-call.
   std::vector<std::vector<MeshJobNext>> proto_jobs;
   std::vector<std::vector<InstanceRT>> proto_nested;
+  std::vector<std::vector<CurveInstanceRT>> proto_nested_curves;
   for (size_t i = 0; i < protos.size(); ++i) {
     const std::string ppath = protos[i].path;
     const tinyusdz::Purpose ppurpose = protos[i].purpose;
     std::vector<MeshJobNext> jobs;
     std::vector<InstanceRT> nested;
+    std::vector<CurveInstanceRT> nested_curves;
     CollectProtoJobs(ctx.stage, ppath, ppurpose, time, &jobs);
     CollectProtoMeshNesting(ctx.stage, ppath, ppurpose, time, opt.mask, &nested,
-                            &proto_ids, &protos, &ctx.stats, &proto_holders);
+                            &nested_curves, &proto_ids, &protos, &curve_inst,
+                            &ctx.stats, &proto_holders);
     if (proto_jobs.size() < protos.size()) proto_jobs.resize(protos.size());
     if (proto_nested.size() < protos.size()) proto_nested.resize(protos.size());
+    if (proto_nested_curves.size() < protos.size())
+      proto_nested_curves.resize(protos.size());
     proto_jobs[i] = std::move(jobs);
     proto_nested[i] = std::move(nested);
+    proto_nested_curves[i] = std::move(nested_curves);
   }
   // Material resolution over base + every prototype's meshes (shared cache).
   {
@@ -7074,50 +7105,76 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     bool any_nested = false;
     for (const std::vector<InstanceRT> &v : proto_nested)
       if (!v.empty()) { any_nested = true; break; }
+    for (const std::vector<CurveInstanceRT> &v : proto_nested_curves)
+      if (!v.empty()) { any_nested = true; break; }
     if (any_nested) {
+      // Per-blas flattened nested placements (mesh + curve), in blas-local space.
+      // flat[b]/flatC[b] = ALL geometry reachable through nested instancing under b.
       std::vector<std::vector<InstanceRT>> flat(nb);
+      std::vector<std::vector<CurveInstanceRT>> flatC(nb);
       std::vector<uint8_t> visit(nb, 0);  // 0=unvisited 1=in-progress 2=done
-      std::function<const std::vector<InstanceRT> &(uint32_t)> flatten =
-          [&](uint32_t b) -> const std::vector<InstanceRT> & {
-        if (b >= nb) return flat[0];          // defensive (base is empty)
-        if (visit[b]) return flat[b];         // done -> cached; in-progress -> cycle, empty
+      std::function<void(uint32_t)> build = [&](uint32_t b) {
+        if (b >= nb || visit[b]) return;  // done -> cached; in-progress -> cycle
         visit[b] = 1;
-        std::vector<InstanceRT> out;
-        const size_t pi = size_t(b) - 1;      // proto index for blas b (base=0: none)
-        if (b >= 1 && pi < proto_nested.size()) {
-          for (const InstanceRT &d : proto_nested[pi]) {  // child placed at d.o2w in b-local
-            const uint32_t cb = d.blas_id;
-            if (cb < nb && ctx.blas[cb].scene) out.push_back(d);  // child's own base
-            for (const InstanceRT &g : flatten(cb)) {             // child's nested (cb-local)
-              InstanceRT e;
-              e.blas_id = g.blas_id;
-              Compose3x4(d.o2w, g.o2w, e.o2w);  // R-local -> b-local: apply g then d
-              out.push_back(e);
+        std::vector<InstanceRT> outM;
+        std::vector<CurveInstanceRT> outC;
+        const size_t pi = size_t(b) - 1;  // proto index for blas b (base=0: none)
+        if (b >= 1) {
+          if (pi < proto_nested_curves.size())  // curves directly nested in b
+            for (const CurveInstanceRT &c : proto_nested_curves[pi]) outC.push_back(c);
+          if (pi < proto_nested.size()) {
+            for (const InstanceRT &d : proto_nested[pi]) {  // child placed at d.o2w
+              const uint32_t cb = d.blas_id;
+              if (cb < nb && ctx.blas[cb].scene) outM.push_back(d);  // child's base
+              build(cb);
+              if (cb < nb) {
+                for (const InstanceRT &g : flat[cb]) {  // child's nested meshes
+                  InstanceRT e;
+                  e.blas_id = g.blas_id;
+                  Compose3x4(d.o2w, g.o2w, e.o2w);  // apply g (cb-local) then d
+                  outM.push_back(e);
+                }
+                for (const CurveInstanceRT &g : flatC[cb]) {  // child's nested curves
+                  CurveInstanceRT e;
+                  e.curve_proto_idx = g.curve_proto_idx;
+                  Compose3x4(d.o2w, g.o2w, e.o2w);
+                  outC.push_back(e);
+                }
+              }
             }
           }
         }
-        flat[b] = std::move(out);
+        flat[b] = std::move(outM);
+        flatC[b] = std::move(outC);
         visit[b] = 2;
-        return flat[b];
       };
 
       std::vector<InstanceRT> expanded;
       expanded.reserve(instances.size());
-      size_t added = 0;
+      size_t addedM = 0, addedC = 0;
       for (const InstanceRT &it : instances) {
         expanded.push_back(it);  // the prototype's own base at its outer transform
-        for (const InstanceRT &g : flatten(it.blas_id)) {
-          InstanceRT e;
-          e.blas_id = g.blas_id;
-          Compose3x4(it.o2w, g.o2w, e.o2w);  // leaf-local -> world: apply g then it
-          expanded.push_back(e);
-          ++added;
+        build(it.blas_id);
+        if (it.blas_id < nb) {
+          for (const InstanceRT &g : flat[it.blas_id]) {
+            InstanceRT e;
+            e.blas_id = g.blas_id;
+            Compose3x4(it.o2w, g.o2w, e.o2w);  // leaf-local -> world: apply g then it
+            expanded.push_back(e);
+            ++addedM;
+          }
+          for (const CurveInstanceRT &g : flatC[it.blas_id]) {
+            CurveInstanceRT e;
+            e.curve_proto_idx = g.curve_proto_idx;
+            Compose3x4(it.o2w, g.o2w, e.o2w);
+            curve_inst.instances.push_back(e);  // nested curve placed in world space
+            ++addedC;
+          }
         }
       }
-      if (added) {
-        instances = std::move(expanded);
-        ctx.stats.nested_instances = added;
-      }
+      if (addedM) instances = std::move(expanded);
+      ctx.stats.nested_instances = addedM;
+      ctx.stats.curve_instances = curve_inst.instances.size();
     }
   }
 
