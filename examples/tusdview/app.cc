@@ -270,6 +270,11 @@ void App::applyLoaded(bool ok, bool progressive) {
     camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
   }
   gui_.setScene(&loaded_, &draw_);
+  // Apply a one-shot --select (prim path) once the scene + draw meshes exist.
+  if (!initialSelect_.empty()) {
+    gui_.selectByPath(initialSelect_, -1);
+    initialSelect_.clear();
+  }
 }
 
 void App::stepProgressiveUpload() {

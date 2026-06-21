@@ -635,6 +635,15 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
         break;
       }
     }
+    // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
+    // GeomSubset children); fall back to the stage's path lookup.
+    if (!selPrim_ && !absPath.empty()) {
+      const tinyusdz::Prim* p = nullptr;
+      std::string err;
+      if (loaded_->stage.find_prim_at_path(tinyusdz::Path(absPath, ""), p, &err) && p) {
+        selPrim_ = p;
+      }
+    }
   }
   if (meshIndex < 0 && draw_) {
     for (size_t i = 0; i < draw_->meshes.size(); ++i) {
@@ -650,6 +659,52 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
     inspectorCachePath_.clear();
     inspectorCacheRows_.clear();
   }
+  rebuildSubsetHighlight();
+}
+
+// When the selection is a GeomSubset (elementType=face), gather the triangle
+// vertex indices of its faces from the parent mesh's sourceFaceId, so the
+// highlight overlay outlines exactly the subset's faces.
+void Gui::rebuildSubsetHighlight() {
+  highlightSubsetIndices_.clear();
+  highlightSubsetMesh_ = -1;
+  if (!draw_ || !selPrim_) return;
+  const auto* gs = selPrim_->as<tinyusdz::GeomSubset>();
+  if (!gs) return;
+  if (gs->elementType.get_value() != tinyusdz::GeomSubset::ElementType::Face) return;
+
+  // Face indices the subset covers.
+  std::set<uint32_t> faces;
+  if (auto opt = gs->indices.get_value()) {
+    std::vector<int32_t> fi;
+    if (opt.value().get_scalar(&fi)) {
+      for (int32_t f : fi)
+        if (f >= 0) faces.insert(static_cast<uint32_t>(f));
+    }
+  }
+  if (faces.empty()) return;
+
+  // Parent mesh = the GeomSubset's owning prim (its path minus the last element).
+  std::string meshPath = selPath_;
+  const size_t slash = meshPath.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return;
+  meshPath.resize(slash);
+  int mi = -1;
+  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+    if (draw_->meshes[i].absPath == meshPath) { mi = static_cast<int>(i); break; }
+  }
+  if (mi < 0) return;
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+  if (m.sourceFaceId.size() != m.indices.size() / 3) return;  // need the face map
+
+  for (size_t t = 0; t < m.sourceFaceId.size(); ++t) {
+    if (faces.count(m.sourceFaceId[t])) {
+      highlightSubsetIndices_.push_back(m.indices[t * 3 + 0]);
+      highlightSubsetIndices_.push_back(m.indices[t * 3 + 1]);
+      highlightSubsetIndices_.push_back(m.indices[t * 3 + 2]);
+    }
+  }
+  if (!highlightSubsetIndices_.empty()) highlightSubsetMesh_ = mi;
 }
 
 void Gui::clearSelection() {
@@ -2692,6 +2747,13 @@ void Gui::renderViewportScene() {
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
+  // A selected GeomSubset highlights just its faces on the parent mesh.
+  if (highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
+      meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
+    p.highlightMeshIndex = highlightSubsetMesh_;
+    p.highlightIndices = highlightSubsetIndices_.data();
+    p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
+  }
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
   // Scene bbox for the depth + position AOVs.
   if (draw_ && draw_->hasBounds) {

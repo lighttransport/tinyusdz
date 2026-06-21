@@ -90,6 +90,10 @@ struct RenderFrameParams {
   float sceneMin[3]{0, 0, 0};     // Position AOV: scene bbox min
   float sceneExtent[3]{1, 1, 1};  // Position AOV: scene bbox size (max-min)
   int highlightMeshIndex{-1};  // draw a wireframe overlay on this mesh (-1 = none)
+  // When set, the highlight overlay draws only these triangle vertex indices (a
+  // selected GeomSubset of highlightMeshIndex) instead of the whole mesh.
+  const uint32_t* highlightIndices{nullptr};
+  int highlightIndexCount{0};
 
   // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested
   // so geometry occludes them.
