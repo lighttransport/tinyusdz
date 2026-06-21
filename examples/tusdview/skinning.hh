@@ -10,6 +10,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -51,11 +52,17 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
 // caller can re-upload them; the GPU vertex shader then skins the morphed
 // input. Bounds account for the morph. Pass `morphedOut == nullptr` to skip
 // blendshapes (skeletal only).
+//
+// `blendOverride` (optional, keyed by BlendShape name) supplies manual weights
+// from the Maya-like blend editor; they replace the animated weight per name and
+// may add weights the animation does not drive. In-between shapes are honored:
+// the per-target offset is piecewise-linearly interpolated through them.
 bool BuildGpuSkinningFrame(
     const tinyusdz::tydra::RenderScene& render, const tinyusdz::Stage& stage,
     DrawScene* draw, double timecode, SkinningFrameCPU* frame,
     bool updateSkinnedHelpers,
-    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut);
+    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut,
+    const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
 // from the Stage's xform hierarchy. For scenes whose node transforms animate

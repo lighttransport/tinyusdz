@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -82,6 +83,25 @@ class Gui {
   float playSpeed() const { return speed_; }
   float tessellationQuality() const { return tessQuality_; }
   bool showSkeletonOverlay() const { return showSkeleton_; }
+  // Manual blendshape weights from the blend-shape editor (Maya-like). Returns
+  // the override map when manual mode is active, else nullptr (use animation).
+  const std::unordered_map<std::string, float>* blendOverrides() const {
+    return blendActive_ ? &blendWeights_ : nullptr;
+  }
+  // True once since the last call if a blendshape weight (or manual mode) changed
+  // -- the app uses this to force a morph re-pose at the same time code.
+  bool consumeBlendDirty() {
+    const bool d = blendDirty_;
+    blendDirty_ = false;
+    return d;
+  }
+  // Programmatically set a manual blendshape weight (e.g. the --blend CLI option
+  // for headless posing); enables manual mode and marks the morph dirty.
+  void setBlendWeight(const std::string& name, float w) {
+    blendWeights_[name] = w;
+    blendActive_ = true;
+    blendDirty_ = true;
+  }
   enum class TransformMode { None, Translate, Rotate, Scale };
   TransformMode transformMode() const { return xformMode_; }
   void setTransformMode(TransformMode m) { xformMode_ = m; }
@@ -127,6 +147,9 @@ class Gui {
   bool drawPrimTree(const tinyusdz::Prim& prim);
   bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
+  // Maya-like blendshape weight editor for the selected prim (shown when the
+  // selection, an ancestor, or a descendant mesh carries blendshape targets).
+  void drawBlendShapeEditor();
   void drawSelectionList();
   void drawCameraPanel();
   void drawStats();
@@ -181,6 +204,12 @@ class Gui {
   const tinyusdz::Prim* selPrim_{nullptr};
   std::string selPath_;
   int selMeshIndex_{-1};
+
+  // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when
+  // blendActive_ it overrides the SkelAnimation-driven weights in the morph pass.
+  std::unordered_map<std::string, float> blendWeights_;
+  bool blendActive_{false};
+  bool blendDirty_{false};
   std::vector<std::pair<std::string, int>> selectionList_;
   std::array<CameraBookmark, 3> cameraBookmarks_{};
   std::vector<std::string> selectionHistory_;
