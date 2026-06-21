@@ -212,6 +212,14 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       vec2 c = floor(fract(uvh) * 16.0);
       outc = vec3(mix(0.25, 0.85, mod(c.x + c.y, 2.0)));
+    } else if (rmode == 14) {  // barycentric
+      outc = vec3(w0, bc.x, bc.y);
+    } else if (rmode == 15) {  // prim id
+      outc = idColor(uint(prim));
+    } else if (rmode == 16) {  // mesh id
+      outc = idColor(ii.meshId);
+    } else if (rmode == 19) {  // missing normals
+      outc = (md.geometricNormal != 0u) ? vec3(0.95, 0.1, 0.85) : vec3(0.2);
     }
   }
 

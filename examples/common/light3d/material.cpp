@@ -303,6 +303,8 @@ uniform int uMatId;          // per-draw material id (material-id viz; -1 = none
 uniform float uDepthScale;   // depth AOV: camera-distance normalizer (scene extent)
 uniform vec3 uSceneMin;      // position AOV: scene bbox min
 uniform vec3 uSceneExtent;   // position AOV: scene bbox size (max-min)
+uniform int uMeshId;         // mesh-id AOV (per-draw mesh index)
+uniform bool uDoubleSided;   // double-sided AOV flag
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -366,6 +368,16 @@ void main() {
             vec2 c = floor(fract(vUV) * 16.0);
             float chk = mod(c.x + c.y, 2.0);
             fragColor = vec4(vec3(mix(0.25, 0.85, chk)), 1.0);
+            return;
+        }
+        if (uRenderMode == 15) { fragColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
+        if (uRenderMode == 16) { fragColor = vec4(idColor(uMeshId), 1.0); return; }         // mesh id
+        if (uRenderMode == 19) {                                                            // missing normals
+            fragColor = uGeometricNormal ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
+            return;
+        }
+        if (uRenderMode == 20) {                                                            // double-sided
+            fragColor = uDoubleSided ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
             return;
         }
     }

@@ -17,6 +17,8 @@ layout(push_constant) uniform PushConstants {
   vec4 sceneExtent;
   int matId;
   int renderMode;
+  int flags;
+  int meshId;
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -58,6 +60,16 @@ void main() {
       vec2 c = floor(fract(vUV) * 16.0);
       float k = mod(c.x + c.y, 2.0);
       outColor = vec4(vec3(mix(0.25, 0.85, k)), 1.0);
+      return;
+    }
+    if (pc.renderMode == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
+    if (pc.renderMode == 16) { outColor = vec4(idColor(pc.meshId), 1.0); return; }        // mesh id
+    if (pc.renderMode == 19) {  // missing normals
+      outColor = ((pc.flags & 1) != 0) ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
+      return;
+    }
+    if (pc.renderMode == 20) {  // double-sided
+      outColor = ((pc.flags & 2) != 0) ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
       return;
     }
   }
