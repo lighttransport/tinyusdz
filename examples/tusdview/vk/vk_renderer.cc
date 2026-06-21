@@ -2226,6 +2226,33 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   meshes_.push_back(gm);
 }
 
+void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
+                                              const float* colors, uint32_t count) {
+  if (meshIndex >= meshes_.size()) return;
+  VkMeshGPU& m = meshes_[meshIndex];
+  if (m.instanceCount == 0) return;
+  if (count > m.instanceCount) count = m.instanceCount;  // never grow past capacity
+  m.drawInstanceCount = count;
+  if (count == 0) return;
+  // Re-map the host-visible instance buffer(s) with the compacted visible subset.
+  if (m.instVbo && m.instVboMem && xforms) {
+    void* p = nullptr;
+    if (vkMapMemory(device_, m.instVboMem, 0, VkDeviceSize(count) * 12 * sizeof(float),
+                    0, &p) == VK_SUCCESS) {
+      std::memcpy(p, xforms, size_t(count) * 12 * sizeof(float));
+      vkUnmapMemory(device_, m.instVboMem);
+    }
+  }
+  if (m.instColorBuf && m.instColorMem && colors) {
+    void* p = nullptr;
+    if (vkMapMemory(device_, m.instColorMem, 0, VkDeviceSize(count) * 3 * sizeof(float),
+                    0, &p) == VK_SUCCESS) {
+      std::memcpy(p, colors, size_t(count) * 3 * sizeof(float));
+      vkUnmapMemory(device_, m.instColorMem);
+    }
+  }
+}
+
 void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   if (m.blas != VK_NULL_HANDLE || m.indexCount < 3 || !pfnCreateAS_) return;
 
