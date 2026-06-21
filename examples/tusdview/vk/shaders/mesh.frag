@@ -102,6 +102,11 @@ void main() {
       outColor = vec4(kindColor((pc.flags >> 4) & 7), 1.0);
       return;
     }
+    if (pc.renderMode == 30) {  // udim tile from UV set 0
+      int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
+      outColor = vec4(idColor(tile), 1.0);
+      return;
+    }
     if (pc.renderMode == 21) {  // skin weights: dominant joint tinted by weight
       outColor = vec4(idColor(vDomJoint) * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
       return;

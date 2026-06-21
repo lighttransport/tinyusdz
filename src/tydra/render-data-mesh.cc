@@ -3039,6 +3039,29 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  // Optionally expose EVERY authored texCoord2f[] primvar as a UV slot (secondary
+  // UV sets that no shader references), for multi-UV tools. Off by default so the
+  // standard slot assignment is untouched.
+  if (env.mesh_config.extract_all_texcoords) {
+    std::set<std::string> have_uv_names;
+    uint32_t next_uv_slot = 0;
+    for (const auto &kv : uvAttrs) {
+      have_uv_names.insert(kv.second.name);
+      next_uv_slot = (std::max)(next_uv_slot, kv.first + 1u);
+    }
+    for (const GeomPrimvar &pv : mesh.get_primvars()) {
+      if (pv.type_name() != "texCoord2f[]") continue;  // strict UV role only
+      const std::string pv_name = pv.name();
+      if (have_uv_names.count(pv_name)) continue;
+      auto ret = GetTextureCoordinate(env.stage, mesh, pv_name, env.timecode,
+                                      env.tinterp, prim_path_str, &_warn);
+      if (ret) {
+        have_uv_names.insert(pv_name);
+        uvAttrs.emplace(next_uv_slot++, std::move(ret.value()));
+      }
+    }
+  }
+
   //
   // Gather displayColor/displayOpacity primvars (validated against the base
   // topology) so they can refine through subdivision together with the

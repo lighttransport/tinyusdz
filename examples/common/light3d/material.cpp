@@ -189,6 +189,8 @@ layout(location = 2) in vec3 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
+layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
+layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
 layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
 
 uniform mat4 uModelViewProj;
@@ -208,6 +210,8 @@ out vec2 vUV;
 out vec3 vColor;
 flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
 out float vDomWeight;      // its weight
+out vec2 vUV1;             // 2nd texcoord set (multi-UV AOV)
+out float vMorphInfl;      // blendshape influence (world units)
 
 mat4 fetchBone(uint idx) {
     int base = int(idx) * 4;
@@ -262,6 +266,8 @@ void main() {
     vNormal = normalize(uNormalMatrix * nrm);
     vUV = aUV.xy;
     vColor = aColor;
+    vUV1 = aUV1;
+    vMorphInfl = aMorphInfl;
     // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
     vDomJoint = -1;
     vDomWeight = 0.0;
@@ -283,6 +289,8 @@ in vec2 vUV;
 in vec3 vColor;
 flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 in float vDomWeight;
+in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
+in float vMorphInfl;     // blendshape influence (world units)
 
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
@@ -412,6 +420,16 @@ void main() {
         }
         if (uRenderMode == 18) { fragColor = vec4(purposeColor(uPurpose), 1.0); return; }    // purpose
         if (uRenderMode == 29) { fragColor = vec4(kindColor(uKind), 1.0); return; }          // kind
+        if (uRenderMode == 30) {                                                             // udim tile
+            int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
+            fragColor = vec4(idColor(tile), 1.0); return;
+        }
+        if (uRenderMode == 31) { fragColor = vec4(fract(vUV1), 0.0, 1.0); return; }          // uv set 1
+        if (uRenderMode == 32) {                                                             // blendshape influence
+            // Normalize by ~10% of the scene extent into a blue->red heatmap.
+            float c = clamp(vMorphInfl / max(uDepthScale * 0.1, 1e-4), 0.0, 1.0);
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
+        }
         if (uRenderMode == 21) {                                                             // skin weights
             vec3 jc = idColor(vDomJoint);                  // dominant joint -> hashed color
             fragColor = vec4(jc * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);

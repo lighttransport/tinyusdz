@@ -114,6 +114,13 @@ struct DrawMeshCPU {
   float aabbMax[3]{0, 0, 0};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
+  // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =
+  // none. Drives the UV-set-1 (multi-UV) debug AOV. V is flipped like uv set 0.
+  std::vector<float> uv1;
+  // Optional per-vertex blendshape "influence": the largest displacement (world
+  // units) any single morph target applies to that vertex. Computed at load from
+  // `morphs`; empty when the mesh has no blendshapes. Drives the influence AOV.
+  std::vector<float> morphInfluence;
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across
