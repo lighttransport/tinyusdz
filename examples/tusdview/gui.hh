@@ -211,7 +211,7 @@ class Gui {
   bool showPurposeDefault_{true};
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
-  bool showPurposeGuide_{true};
+  bool showPurposeGuide_{false};
   bool showNavHelp_{true};
   bool showAbout_{false};
   float tessQuality_{1.0f};
