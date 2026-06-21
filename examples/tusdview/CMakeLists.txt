@@ -63,9 +63,11 @@ set(TUSDVIEW_SOURCES
     gui_stringify.cc
     gui_style.cc
     gl/gl_util.cc
-    gl/gl_renderer.cc)
+    gl/gl_renderer.cc
+    cuda/cuda_raytracer.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
+    ${COMMON_DIR}/cuew/cuew.c
     ${COMMON_DIR}/glad/src/glad.c
     ${COMMON_DIR}/imgui/imgui.cpp
     ${COMMON_DIR}/imgui/imgui_draw.cpp
@@ -91,6 +93,7 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/external
     ${COMMON_DIR}
+    ${COMMON_DIR}/cuew
     ${COMMON_DIR}/glad/include
     ${COMMON_DIR}/imgui)
 

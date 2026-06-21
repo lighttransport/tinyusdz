@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
+  bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
@@ -111,6 +112,8 @@ int main(int argc, char** argv) {
       }
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
+    } else if (std::strcmp(argv[i], "--cuda") == 0) {
+      wantCuda = true;
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
     } else if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
@@ -135,6 +138,8 @@ int main(int argc, char** argv) {
           "and available, otherwise OpenGL).\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
+          "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
+          "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Load via the `next` lazy loader + tydra-next converter "
@@ -260,5 +265,6 @@ int main(int argc, char** argv) {
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setHeadless(headless);
+  app.setCudaRt(wantCuda);
   return app.run(file, maxFrames, screenshot);
 }

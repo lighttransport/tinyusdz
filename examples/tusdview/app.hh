@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "camera_nav.hh"
+#include "cuda/cuda_raytracer.hh"
 #include "gpu_scene.hh"
 #include "gui.hh"
 #include "load_control.hh"
@@ -96,6 +97,8 @@ class App
   // Windowless rendering: no GLFW window, surface or swapchain (Vulkan only).
   // Renders frames offscreen for --screenshot / --window-shot. Requires --frames.
   void setHeadless(bool on) { headless_ = on; }
+  // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
+  void setCudaRt(bool on) { cudaRt_ = on; }
 
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
@@ -185,6 +188,9 @@ class App
   int windowHeight_{0};
   std::string windowShot_;
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
+  bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  CudaRayTracer cudaTracer_;
+  size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
 
   // Ray tracing: requested via --rt; rtPath_ is the effective state after the
   // renderer reports capability (drives the RT-friendly conversion config).
