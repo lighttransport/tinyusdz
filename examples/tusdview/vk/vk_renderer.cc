@@ -71,10 +71,12 @@ void NormalMatrix3(const float m[16], float out9[9]) {
 
 struct PushC {
   float mvp[16];
-  float nmat[12];  // 3 columns padded to vec4
+  float model[16];     // world matrix (for world-space AOVs: geom normal, depth)
+  float nmat[12];      // 3 columns padded to vec4
   float baseColor[4];
+  float camPos[4];     // xyz camera position + .w depth-AOV normalizer
   int32_t matId;       // material id (material-id visualization)
-  int32_t renderMode;  // RenderMode (0=shaded, 3=material-id)
+  int32_t renderMode;  // RenderMode (0=shaded, 2=normals, 3=matId, 4=geomN, 5=uv, 6=depth)
 };
 
 // Ray-tracing compute push constants (must match raytrace.comp).
@@ -2236,6 +2238,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   float lx = 0.5f, ly = 0.8f, lz = 0.6f;
   float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
   pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
+  pc.lightDir[3] = depthScale_;  // depth AOV normalizer
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
@@ -2407,6 +2410,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
   hasParams_ = (params.view && params.proj);
   rtMode_ = static_cast<int>(params.mode);
+  depthScale_ = params.depthScale;
 
   // Copy helper lines (the caller's pointer is only valid during this call).
   if (params.helperLines && params.helperLineVertexCount > 0) {
@@ -2551,6 +2555,9 @@ void VulkanRenderer::present() {
         }
         PushC pc{};
         std::memcpy(pc.mvp, MVP.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, W.m, sizeof(pc.model));
+        pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1];
+        pc.camPos[2] = cameraPos_[2]; pc.camPos[3] = depthScale_;
         // mat3 columns padded to vec4
         for (int c = 0; c < 3; ++c) {
           pc.nmat[c * 4 + 0] = nmat9[c * 3 + 0];

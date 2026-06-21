@@ -45,10 +45,12 @@ class CudaRayTracer {
   // floats), `camPos`/`lightDir` are 3-float world vectors (lightDir points toward
   // the light), `clearColor` is the 3-float background. Writes a top-down RGBA8
   // image (row 0 = top) of size w*h*4 into *rgba. Returns false on launch failure.
-  // renderMode mirrors RenderMode (0=shaded, 1=wireframe, 3=material-id).
+  // renderMode mirrors RenderMode (0=shaded, 1=wireframe, 2=normals, 3=material-id,
+  // 4=geom normal, 5=uv, 6=depth). depthScale normalizes the depth AOV.
   bool trace(const float invViewProj[16], const float camPos[3],
              const float lightDir[3], const float clearColor[3], int renderMode,
-             int w, int h, std::vector<uint8_t>* rgba, std::string* err);
+             float depthScale, int w, int h, std::vector<uint8_t>* rgba,
+             std::string* err);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
@@ -67,6 +69,7 @@ class CudaRayTracer {
   uintptr_t dCols_{0};       // float[9] per-vertex color per tri (base*displayColor)
   uintptr_t dGeo_{0};        // uint8 geometricNormal flag per tri
   uintptr_t dMat_{0};        // int material id per tri (material-id viz)
+  uintptr_t dUV_{0};         // float[6] per-vertex uv per tri (uv viz)
   uintptr_t dNodes_{0};      // BVH nodes
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_

@@ -60,6 +60,9 @@ vec3 fetchNrm(Verts vb, uint vi) {
 vec3 fetchCol(Cols cb, uint vi) {
   return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
 }
+vec2 fetchUV(Verts vb, uint vi) {
+  return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
+}
 
 // Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
 vec3 idColor(uint id) {
@@ -166,15 +169,30 @@ void main() {
     }
     outc = base * (0.25 + 0.85 * diff * shadow);
 
-    // Render mode (RenderMode value in camPos.w): 1 = wireframe (shade only near a
-    // triangle edge, else background -- the RT analogue of glPolygonMode(LINE));
-    // 3 = material-id (flat distinct color per material).
+    // Render mode (RenderMode in camPos.w): 1=wireframe (edges only), 2=shading
+    // normal, 3=material-id, 4=geometric normal, 5=uv set 0, 6=depth (t /
+    // depthScale in lightDir.w).
     int rmode = int(pc.camPos.w + 0.5);
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
       if (e > 0.02) outc = pc.clearColor.rgb;
+    } else if (rmode == 2) {
+      outc = N * 0.5 + 0.5;
     } else if (rmode == 3) {
       outc = idColor(md.matId);
+    } else if (rmode == 4) {
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
+      if (dot(Ng, dir) > 0.0) Ng = -Ng;
+      outc = Ng * 0.5 + 0.5;
+    } else if (rmode == 5) {
+      vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
+      outc = vec3(fract(uvh), 0.0);
+    } else if (rmode == 6) {
+      float d = clamp(t / max(pc.lightDir.w, 1e-3), 0.0, 1.0);
+      outc = vec3(1.0 - d);
     }
   }
 

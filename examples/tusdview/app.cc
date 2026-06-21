@@ -1009,8 +1009,16 @@ int App::run(const std::string& initialFile, int maxFrames,
       const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
       const float clear[3] = {0.12f, 0.12f, 0.13f};
       const int rmode = static_cast<int>(gui_.renderMode());
+      float depthScale = 1.0f;
+      if (draw_.hasBounds) {
+        const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+        const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+        const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+        depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+      }
       std::vector<uint8_t> rgba;
-      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, rmode, w, h, &rgba, &cerr)) {
+      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, w, h,
+                            &rgba, &cerr)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
