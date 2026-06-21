@@ -97,6 +97,7 @@ class VulkanRenderer final : public Renderer {
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
+    int kindId{0};                          // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     float flatColor[3]{0.8f, 0.8f, 0.8f};   // per-draw constant tint (instanced path)
     // GPU instancing: one TLAS instance per 3x4 o2w in instanceXforms (12 floats
     // each); instanceColors is 3 floats/instance (empty -> use flatColor). Held on

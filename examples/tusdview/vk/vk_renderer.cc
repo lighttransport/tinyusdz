@@ -1692,6 +1692,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   gm.geometricNormal = sm.geometricNormal;  // also feeds the RT MeshDesc + AOV flags
   gm.doubleSided = sm.doubleSided;
   gm.purposeId = PurposeId(sm.purpose);
+  gm.kindId = sm.kindId;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -1933,7 +1934,8 @@ void VulkanRenderer::rebuildTlas() {
     d.vtxColorAddr = m.vtxColorAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
-                        ((static_cast<uint32_t>(m.purposeId) & 3u) << 1);  // bits1-2 purpose
+                        ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose
+                        ((static_cast<uint32_t>(m.kindId) & 7u) << 3);      // bits3-5 kind
     for (int k = 0; k < 3; ++k) {
       d.nrm0[k] = m.normalMat[0 * 3 + k];
       d.nrm1[k] = m.normalMat[1 * 3 + k];
@@ -2615,7 +2617,8 @@ void VulkanRenderer::present() {
         pc.matId = sub.materialId;
         pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)
         pc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
-                   ((mesh.purposeId & 3) << 2);  // bits 2-3: purpose AOV
+                   ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
+                   ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
         pc.meshId = static_cast<int>(mi);
         vkCmdPushConstants(cb, pipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
