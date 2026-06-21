@@ -39,6 +39,8 @@ class VulkanRenderer final : public Renderer {
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
+  void updateInstanceVisibility(size_t meshIndex, const float* xforms,
+                                const float* colors, uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;

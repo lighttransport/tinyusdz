@@ -25,6 +25,8 @@ class GLRenderer final : public Renderer {
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
+  void updateInstanceVisibility(size_t meshIndex, const float* xforms,
+                                const float* colors, uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
   void replaceMesh(int meshIndex, const DrawMeshCPU& mesh) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
@@ -45,6 +47,7 @@ class GLRenderer final : public Renderer {
     GLuint influenceVbo{0}, influenceTex{0};
     GLuint instanceVbo{0};   // per-instance 3x4 model matrices; 0 = none
     int instanceCount{0};    // >0 => drawn with glDrawElementsInstanced
+    int drawInstanceCount{0};  // visible subset drawn this frame (per-instance cull)
     GLuint instanceColorVbo{0};      // per-instance displayColor; 0 = none
     bool hasInstanceColors{false};   // true => attrib 9 is array-backed
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance

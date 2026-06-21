@@ -2094,7 +2094,7 @@ void Gui::drawStats() {
       ImGui::Text("Visible instances: %zu / %zu", statVisibleInstances_,
                   statTotalInstances_);
     }
-    ImGui::Text("Drawn triangles: %zu", statDrawnTriangles_);
+    ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
     ImGui::Text("Draw calls: %zu", statDrawCalls_);
     ImGui::Text("Materials: %zu", draw_->materials.size());
     ImGui::Text("Textures: %zu", draw_->textures.size());
@@ -2300,10 +2300,11 @@ void Gui::buildViewVisibilityMask() {
     const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
     fr = light3d::Frustum::fromViewProjection(vp);
   }
+  // Per-mesh stats here; per-instance stats (visible instances + instanced tris)
+  // are owned by cullInstances (dirty-gated, so not recomputed every frame).
   statVisibleMeshes_ = 0;
   statTotalInstances_ = 0;
-  statVisibleInstances_ = 0;
-  statDrawnTriangles_ = 0;
+  statNonInstTris_ = 0;
   statDrawCalls_ = 0;
   for (size_t i = 0; i < draw_->meshes.size(); ++i) {
     const DrawMeshCPU& m = draw_->meshes[i];
@@ -2318,22 +2319,108 @@ void Gui::buildViewVisibilityMask() {
     viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
     if (!vis) continue;
     ++statVisibleMeshes_;
-    // Triangle count from submesh metadata: DrawMeshCPU.indices is freed after the
-    // GPU upload, but submeshes (small) survive.
-    size_t tris = 0;
-    for (const DrawSubmesh& s : m.submeshes) tris += s.indexCount / 3;
     if (ninst > 0) {
-      // Baseline: all instances of a visible prototype. The per-instance cull
-      // pass (A4) overwrites statVisibleInstances_/statDrawnTriangles_ with the
-      // culled counts.
-      statVisibleInstances_ += ninst;
-      statDrawnTriangles_ += tris * ninst;
-      ++statDrawCalls_;  // one instanced draw per prototype mesh
+      ++statDrawCalls_;  // one instanced draw per visible prototype mesh
     } else {
-      statDrawnTriangles_ += tris;
+      // Triangle count from submesh metadata (DrawMeshCPU.indices is freed after
+      // GPU upload, but submeshes survive).
+      for (const DrawSubmesh& s : m.submeshes) statNonInstTris_ += s.indexCount / 3;
       statDrawCalls_ += m.submeshes.size();
     }
   }
+}
+
+void Gui::cullInstances() {
+  if (!draw_ || !renderer_ || !cam_) return;
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  bool anyInstanced = false;
+  for (const auto& m : draw_->meshes) {
+    if (m.instanceCount() > 0) { anyInstanced = true; break; }
+  }
+  if (!anyInstanced) {
+    statVisibleInstances_ = 0;
+    statInstTris_ = 0;
+    return;
+  }
+
+  // GL-convention P*V (matches per-mesh culling). Recull only when it, the cull
+  // toggle, or the scene changed -- on a static camera this is a no-op.
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_;
+  if (!changed) {
+    for (int i = 0; i < 16; ++i) {
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+    }
+  }
+  if (!changed) return;
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
+  size_t visInstances = 0, instTris = 0;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    const size_t ninst = m.instanceCount();
+    if (ninst == 0) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    const bool meshVisible =
+        mi >= viewVisible_.size() || viewVisible_[mi] != 0;
+    if (!meshVisible) continue;  // whole prototype culled/hidden; skip instances
+    const bool hasColors = m.instanceColors.size() == ninst * 3;
+
+    if (!cullEnabled_) {
+      // Restore the full set (a prior cull may have compacted the buffer).
+      renderer_->updateInstanceVisibility(
+          mi, m.instanceXforms.data(), hasColors ? m.instanceColors.data() : nullptr,
+          static_cast<uint32_t>(ninst));
+      visInstances += ninst;
+      instTris += protoTris * ninst;
+      continue;
+    }
+
+    cullXformScratch_.clear();
+    if (hasColors) cullColorScratch_.clear();
+    const float* lo = m.protoAabbMin;
+    const float* hi = m.protoAabbMax;
+    for (size_t k = 0; k < ninst; ++k) {
+      const float* o2w = &m.instanceXforms[k * 12];
+      // Transform the 8 prototype-local AABB corners to world; take min/max.
+      float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+      for (int c = 0; c < 8; ++c) {
+        const float px = (c & 1) ? hi[0] : lo[0];
+        const float py = (c & 2) ? hi[1] : lo[1];
+        const float pz = (c & 4) ? hi[2] : lo[2];
+        for (int r = 0; r < 3; ++r) {
+          const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                          o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+          wmn[r] = std::min(wmn[r], w);
+          wmx[r] = std::max(wmx[r], w);
+        }
+      }
+      if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+          light3d::CullResult::Outside) {
+        continue;
+      }
+      cullXformScratch_.insert(cullXformScratch_.end(), o2w, o2w + 12);
+      if (hasColors) {
+        cullColorScratch_.insert(cullColorScratch_.end(),
+                                 &m.instanceColors[k * 3], &m.instanceColors[k * 3] + 3);
+      }
+    }
+    const uint32_t visCount =
+        static_cast<uint32_t>(cullXformScratch_.size() / 12);
+    renderer_->updateInstanceVisibility(
+        mi, cullXformScratch_.data(),
+        hasColors ? cullColorScratch_.data() : nullptr, visCount);
+    visInstances += visCount;
+    instTris += protoTris * visCount;
+  }
+  statVisibleInstances_ = visInstances;
+  statInstTris_ = instTris;
 }
 
 void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) {
@@ -2870,6 +2957,7 @@ void Gui::renderViewportScene() {
     }
   }
   buildViewVisibilityMask();
+  cullInstances();  // per-instance frustum cull (updates renderer instance buffers)
   if (!viewVisible_.empty()) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());

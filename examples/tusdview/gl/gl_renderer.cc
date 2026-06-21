@@ -721,11 +721,13 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   // (divisor 1).
   if (!sm.instanceXforms.empty()) {
     gm.instanceCount = static_cast<int>(sm.instanceXforms.size() / 12);
+    gm.drawInstanceCount = gm.instanceCount;
     glGenBuffers(1, &gm.instanceVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.instanceVbo);
+    // GL_DYNAMIC_DRAW: per-instance culling re-uploads the visible subset.
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.instanceXforms.size() * sizeof(float)),
-                 sm.instanceXforms.data(), GL_STATIC_DRAW);
+                 sm.instanceXforms.data(), GL_DYNAMIC_DRAW);
     const GLsizei mstride = 12 * sizeof(float);
     for (int r = 0; r < 3; ++r) {
       const GLuint loc = 6 + r;
@@ -744,7 +746,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindBuffer(GL_ARRAY_BUFFER, gm.instanceColorVbo);
       glBufferData(GL_ARRAY_BUFFER,
                    static_cast<GLsizeiptr>(sm.instanceColors.size() * sizeof(float)),
-                   sm.instanceColors.data(), GL_STATIC_DRAW);
+                   sm.instanceColors.data(), GL_DYNAMIC_DRAW);
       glEnableVertexAttribArray(9);
       glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
       glVertexAttribDivisor(9, 1);
@@ -757,6 +759,29 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
   meshes_.push_back(gm);
+}
+
+void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
+                                          const float* colors, uint32_t count) {
+  if (meshIndex >= meshes_.size()) return;
+  GLMesh& m = meshes_[meshIndex];
+  if (m.instanceCount <= 0) return;
+  if (count > static_cast<uint32_t>(m.instanceCount))
+    count = static_cast<uint32_t>(m.instanceCount);
+  m.drawInstanceCount = static_cast<int>(count);
+  if (count == 0) return;
+  // Re-upload the compacted visible subset to the front of the dynamic buffers.
+  if (m.instanceVbo && xforms) {
+    glBindBuffer(GL_ARRAY_BUFFER, m.instanceVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    static_cast<GLsizeiptr>(count) * 12 * sizeof(float), xforms);
+  }
+  if (m.instanceColorVbo && colors) {
+    glBindBuffer(GL_ARRAY_BUFFER, m.instanceColorVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    static_cast<GLsizeiptr>(count) * 3 * sizeof(float), colors);
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void GLRenderer::ensureFbo(int w, int h) {
@@ -924,7 +949,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         continue;
       }
       const GLMesh& mesh = meshes_[mi];
-      if (mesh.instanceCount <= 0) continue;
+      if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
       glUniform1i(iMeshId_, static_cast<int>(mi));
       glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
@@ -947,7 +972,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glDrawElementsInstanced(
             GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
             (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)),
-            mesh.instanceCount);
+            mesh.drawInstanceCount);
       }
     }
     glUseProgram(program_);  // restore for any caller that assumes program_

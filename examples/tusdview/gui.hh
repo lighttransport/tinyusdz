@@ -133,8 +133,8 @@ class Gui {
   };
   RenderStats renderStats() const {
     return {statVisibleMeshes_, draw_ ? draw_->meshes.size() : 0,
-            statVisibleInstances_, statTotalInstances_, statDrawnTriangles_,
-            statDrawCalls_};
+            statVisibleInstances_, statTotalInstances_,
+            statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
   void selectByPath(const std::string& absPath, int meshIndex);
@@ -276,9 +276,20 @@ class Gui {
   // cull pass; rendered by drawStats). "visible" reflects frustum culling.
   size_t statVisibleMeshes_{0};
   size_t statTotalInstances_{0};
-  size_t statVisibleInstances_{0};
-  size_t statDrawnTriangles_{0};
+  size_t statVisibleInstances_{0};  // owned by cullInstances
+  size_t statNonInstTris_{0};       // visible non-instanced triangles (per-mesh pass)
+  size_t statInstTris_{0};          // visible instanced triangles (cullInstances)
   size_t statDrawCalls_{0};
+  // Per-instance frustum culling (A4): compact each instanced prototype's visible
+  // instances into the renderer's instance buffer. Re-run only when the view or
+  // cull state changes (cullInstances), keyed by lastCull*.
+  void cullInstances();
+  std::vector<float> cullXformScratch_;
+  std::vector<float> cullColorScratch_;
+  float lastCullVP_[16]{};
+  bool lastCullValid_{false};
+  bool lastCullEnabled_{false};
+  const DrawScene* lastCullDraw_{nullptr};
   float tessQuality_{1.0f};
   std::vector<HelperVertex> helperLines_;
   std::vector<HelperVertex> overlayLines_;

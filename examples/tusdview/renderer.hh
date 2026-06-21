@@ -150,6 +150,15 @@ class Renderer {
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
+  // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set
+  // with `count` visible instances (xforms = 12 floats/instance, 3x4 o2w row-major;
+  // colors = 3 floats/instance or null to keep the existing per-instance colors).
+  // count == instanceCount restores the full set. No-op for non-instanced meshes
+  // or backends that flatten instances. Called each frame the view changes.
+  virtual void updateInstanceVisibility(size_t /*meshIndex*/,
+                                        const float* /*xforms*/,
+                                        const float* /*colors*/,
+                                        uint32_t /*count*/) {}
   // Replace mesh `meshIndex`'s vertex buffer in place (same vertex count) — used
   // for per-frame GPU blendshape morph (positions/normals re-derived on the CPU
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
