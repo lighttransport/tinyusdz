@@ -52,6 +52,16 @@ __device__ F3 idColor(int id){
   return mk((h&255u)*(1.f/255.f), ((h>>8)&255u)*(1.f/255.f), ((h>>16)&255u)*(1.f/255.f));
 }
 
+// Hash RNG + cosine-weighted hemisphere sampler for ambient occlusion.
+__device__ unsigned hashU(unsigned x){ x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; x^=x>>16; return x; }
+__device__ float rndf(unsigned& s){ s=s*747796405u+2891336453u; unsigned r=((s>>((s>>28)+4u))^s)*277803737u; return float((r>>22)^r)/4294967296.0f; }
+__device__ F3 cosHemi(F3 n, float u1, float u2){
+  float r=sqrtf(u1), phi=6.2831853f*u2;
+  F3 t=norm3(fabsf(n.x)>0.9f?mk(0.f,1.f,0.f):mk(1.f,0.f,0.f));
+  F3 b=norm3(cross3(n,t)); t=cross3(b,n);
+  return norm3(add(add(scale(t,r*cosf(phi)),scale(b,r*sinf(phi))),scale(n,sqrtf(fmaxf(0.f,1.f-u1)))));
+}
+
 // column-major mat4 (invVP) times (ndc.x, ndc.y, z, 1) -> homogeneous xyz/w.
 __device__ F3 unproject(const float* m, float nx, float ny, float z){
   float x = m[0]*nx + m[4]*ny + m[8]*z + m[12];
@@ -211,6 +221,22 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==18){  // purpose (bits1-2 of geo byte)
       int p=(geo[ht]>>1)&3;
       outc=(p==1)?mk(0.2f,0.8f,0.3f):(p==2)?mk(0.2f,0.45f,0.95f):(p==3)?mk(0.95f,0.75f,0.1f):mk(0.5f,0.5f,0.5f);
+    } else if (rmode==24){  // ray-traced ambient occlusion
+      const float* tv=&tris[ht*9];
+      F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
+      F3 Ng=norm3(cross3(sub(q1,q0),sub(q2,q0)));
+      if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);
+      float aoR=fmaxf(cam.lightDir[3],1e-3f)*0.15f;
+      unsigned seed=hashU((unsigned)px*1973u+(unsigned)py*9277u+1u);
+      const int NS=24; float occ=0.f;
+      for (int s=0;s<NS;s++){
+        F3 sd=cosHemi(Ng,rndf(seed),rndf(seed));
+        F3 so=add(hit,scale(Ng,aoR*1e-2f));
+        int sht; float su,sv;
+        traverse(nodes,tris,so,sd,aoR,&sht,&su,&sv,true);
+        if (sht>=0) occ+=1.f;
+      }
+      float a=1.f-occ/float(NS); outc=mk(a,a,a);
     }
   }
   int idx=(py*W+px)*4;
