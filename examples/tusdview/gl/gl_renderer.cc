@@ -103,6 +103,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uMeshId_ = glGetUniformLocation(program_, "uMeshId");
   uDoubleSided_ = glGetUniformLocation(program_, "uDoubleSided");
   uPurpose_ = glGetUniformLocation(program_, "uPurpose");
+  uKind_ = glGetUniformLocation(program_, "uKind");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -178,6 +179,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform bool uGeometricNormal;\n"
       "uniform bool uDoubleSided;\n"
       "uniform int uPurpose;\n"
+      "uniform int uKind;\n"
       "out vec4 FragColor;\n"
       "vec3 idColor(int id){\n"
       "  if (id < 0) return vec3(0.45);\n"
@@ -189,6 +191,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  if (p==2) return vec3(0.2,0.45,0.95);\n"
       "  if (p==3) return vec3(0.95,0.75,0.1);\n"
       "  return vec3(0.5);\n"
+      "}\n"
+      "vec3 kindColor(int k){\n"
+      "  if (k==1) return vec3(0.2,0.8,0.8);\n"
+      "  if (k==2) return vec3(0.85,0.3,0.85);\n"
+      "  if (k==3) return vec3(0.95,0.6,0.15);\n"
+      "  if (k==4) return vec3(0.5,0.85,0.4);\n"
+      "  return vec3(0.35);\n"
       "}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
@@ -211,6 +220,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "    if (uRenderMode == 19) { FragColor = uGeometricNormal ? vec4(0.95,0.1,0.85,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
       "    if (uRenderMode == 20) { FragColor = uDoubleSided ? vec4(0.95,0.55,0.1,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
       "    if (uRenderMode == 18) { FragColor = vec4(purposeColor(uPurpose), 1.0); return; }\n"
+      "    if (uRenderMode == 29) { FragColor = vec4(kindColor(uKind), 1.0); return; }\n"  // kind
       "    if (uRenderMode == 26) { FragColor = vec4(idColor(vInstanceId), 1.0); return; }\n"  // instance id
       "    if (uRenderMode == 25) {\n"  // curvature (screen-space geometric normal variation)
       "      vec3 n = Ngeo; float c = clamp((length(dFdx(n))+length(dFdy(n)))*8.0, 0.0, 1.0);\n"
@@ -245,6 +255,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iGeometricNormal_ = glGetUniformLocation(instProgram_, "uGeometricNormal");
   iDoubleSided_ = glGetUniformLocation(instProgram_, "uDoubleSided");
   iPurpose_ = glGetUniformLocation(instProgram_, "uPurpose");
+  iKind_ = glGetUniformLocation(instProgram_, "uKind");
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -466,6 +477,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
   gm.doubleSided = sm.doubleSided;
   gm.purposeId = PurposeId(sm.purpose);
+  gm.kindId = sm.kindId;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -550,6 +562,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
   gm.doubleSided = sm.doubleSided;
   gm.purposeId = PurposeId(sm.purpose);
+  gm.kindId = sm.kindId;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -627,6 +640,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
 
   gm.geometricNormal = sm.geometricNormal;
   gm.purposeId = PurposeId(sm.purpose);
+  gm.kindId = sm.kindId;
   // Per-vertex displayColor (divisor 0). Non-instanced meshes bind it at attrib 9
   // (the shared material shader's aColor); instanced meshes bind it at attrib 10
   // (the instanced shader multiplies per-vertex x per-instance color, since attrib
@@ -751,6 +765,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1i(uMeshId_, static_cast<int>(mi));
     glUniform1i(uDoubleSided_, mesh.doubleSided ? 1 : 0);
     glUniform1i(uPurpose_, mesh.purposeId);
+    glUniform1i(uKind_, mesh.kindId);
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
     if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
@@ -853,6 +868,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
+      glUniform1i(iKind_, mesh.kindId);
       if (mesh.doubleSided || wireframe) {
         glDisable(GL_CULL_FACE);
       } else {

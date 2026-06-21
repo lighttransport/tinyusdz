@@ -260,6 +260,12 @@ void main() {
       outc = (p == 1u) ? vec3(0.2, 0.8, 0.3)
            : (p == 2u) ? vec3(0.2, 0.45, 0.95)
            : (p == 3u) ? vec3(0.95, 0.75, 0.1) : vec3(0.5);
+    } else if (rmode == 29) {  // kind (bits 3-5 of geometricNormal)
+      uint k = (md.geometricNormal >> 3) & 7u;
+      outc = (k == 1u) ? vec3(0.2, 0.8, 0.8)
+           : (k == 2u) ? vec3(0.85, 0.3, 0.85)
+           : (k == 3u) ? vec3(0.95, 0.6, 0.15)
+           : (k == 4u) ? vec3(0.5, 0.85, 0.4) : vec3(0.35);
     } else if (rmode == 24) {  // ray-traced ambient occlusion
       // Front-facing geometric normal for the hemisphere (independent of shading N).
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);

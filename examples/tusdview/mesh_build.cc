@@ -72,6 +72,27 @@ std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
   return "default";
 }
 
+// USD `kind` is authored on the model prim (component/group/assembly), usually an
+// ancestor of the mesh, so walk up to the nearest prim carrying a kind.
+int ResolveInheritedKind(const tinyusdz::Stage& stage, const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim) {
+      if (prim->metas().has_kind()) return KindId(prim->metas().get_kind_str());
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) {
+      path = "/";
+    } else {
+      path.resize(slash);
+    }
+  }
+  return 0;
+}
+
 // USD value::matrix4d is row-major (row-vector, pre-multiply: p' = p*M).
 // light3d::Mat4 is column-major (column-vector: p' = M*p). For the same
 // geometric transform M_gl = transpose(M_usd); combined with the storage-order
@@ -780,6 +801,8 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
   for (DrawMeshCPU& mesh : draw->meshes) {
     mesh.purpose = mesh.absPath.empty() ? "default"
                                         : ResolveInheritedPurpose(stage, mesh.absPath);
+    mesh.kindId =
+        mesh.absPath.empty() ? 0 : ResolveInheritedKind(stage, mesh.absPath);
   }
 }
 

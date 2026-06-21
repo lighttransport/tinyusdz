@@ -317,6 +317,7 @@ uniform vec3 uSceneExtent;   // position AOV: scene bbox size (max-min)
 uniform int uMeshId;         // mesh-id AOV (per-draw mesh index)
 uniform bool uDoubleSided;   // double-sided AOV flag
 uniform int uPurpose;        // purpose AOV: 0=default/1=render/2=proxy/3=guide
+uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -331,6 +332,15 @@ vec3 purposeColor(int p) {
     if (p == 2) return vec3(0.2, 0.45, 0.95);  // proxy: blue
     if (p == 3) return vec3(0.95, 0.75, 0.1);  // guide: amber
     return vec3(0.5);                          // default: gray
+}
+
+// USD model kind -> distinct color (shared scheme across all backends).
+vec3 kindColor(int k) {
+    if (k == 1) return vec3(0.2, 0.8, 0.8);    // component: cyan
+    if (k == 2) return vec3(0.85, 0.3, 0.85);  // group: magenta
+    if (k == 3) return vec3(0.95, 0.6, 0.15);  // assembly: orange
+    if (k == 4) return vec3(0.5, 0.85, 0.4);   // subcomponent: green
+    return vec3(0.35);                         // no kind: dark gray
 }
 
 void main() {
@@ -401,6 +411,7 @@ void main() {
             return;
         }
         if (uRenderMode == 18) { fragColor = vec4(purposeColor(uPurpose), 1.0); return; }    // purpose
+        if (uRenderMode == 29) { fragColor = vec4(kindColor(uKind), 1.0); return; }          // kind
         if (uRenderMode == 21) {                                                             // skin weights
             vec3 jc = idColor(vDomJoint);                  // dominant joint -> hashed color
             fragColor = vec4(jc * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
