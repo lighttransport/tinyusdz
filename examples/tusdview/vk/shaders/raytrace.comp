@@ -70,6 +70,17 @@ vec2 fetchUV(Verts vb, uint vi) {
   return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
 }
 
+// Hash-based per-pixel RNG (PCG-ish) for the ambient-occlusion sampler.
+uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+float rnd(inout uint s) { s = s * 747796405u + 2891336453u; uint r = ((s >> ((s >> 28) + 4u)) ^ s) * 277803737u; return float((r >> 22) ^ r) / 4294967296.0; }
+// Cosine-weighted hemisphere direction around normal n.
+vec3 cosHemi(vec3 n, float u1, float u2) {
+  float r = sqrt(u1); float phi = 6.2831853 * u2;
+  vec3 t = normalize(abs(n.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
+  vec3 b = normalize(cross(n, t)); t = cross(b, n);
+  return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(0.0, 1.0 - u1)));
+}
+
 // Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
 vec3 idColor(uint id) {
   if (id == 0xffffffffu) return vec3(0.45);
@@ -237,6 +248,28 @@ void main() {
       outc = (p == 1u) ? vec3(0.2, 0.8, 0.3)
            : (p == 2u) ? vec3(0.2, 0.45, 0.95)
            : (p == 3u) ? vec3(0.95, 0.75, 0.1) : vec3(0.5);
+    } else if (rmode == 24) {  // ray-traced ambient occlusion
+      // Front-facing geometric normal for the hemisphere (independent of shading N).
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
+      if (dot(Ng, dir) > 0.0) Ng = -Ng;
+      float aoRadius = max(pc.lightDir.w, 1e-3) * 0.15;  // 15% of scene extent
+      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + 1u);
+      const int NS = 24;
+      float occ = 0.0;
+      for (int s = 0; s < NS; ++s) {
+        vec3 sd = cosHemi(Ng, rnd(seed), rnd(seed));
+        rayQueryEXT aq;
+        rayQueryInitializeEXT(aq, TLAS,
+                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              0xFF, hit + Ng * (aoRadius * 1e-2), 1e-4, sd, aoRadius);
+        while (rayQueryProceedEXT(aq)) {}
+        if (rayQueryGetIntersectionTypeEXT(aq, true) !=
+            gl_RayQueryCommittedIntersectionNoneEXT) occ += 1.0;
+      }
+      outc = vec3(1.0 - occ / float(NS));
     }
   }
 
