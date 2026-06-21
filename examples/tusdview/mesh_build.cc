@@ -10,9 +10,9 @@
 #include <unordered_map>
 
 #include "light3d/math.h"
+#include "skinning.hh"  // InbetweenSamples, CollectBlendShapeInbetweens
 #include "stage.hh"
 #include "usdGeom.hh"
-#include "usdSkel.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/render-data-shader.hh"
 
@@ -70,48 +70,6 @@ std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
     }
   }
   return "default";
-}
-
-using InbetweenSamples =
-    std::vector<std::pair<float, std::vector<tinyusdz::value::vector3f>>>;
-
-// Read a BlendShape prim's in-between shapes from its `inbetweens:*` attributes.
-// Each carries a `weight` attr-meta and a vector3f[] of position offsets parallel
-// to the BlendShape's pointIndices (same indexing as the primary `offsets`).
-// Returned ascending by weight.
-InbetweenSamples ReadInbetweensFromPrim(const tinyusdz::BlendShape& bs) {
-  InbetweenSamples out;
-  for (const auto& kv : bs.props) {
-    if (kv.first.rfind("inbetweens:", 0) != 0) continue;  // namespace prefix
-    const tinyusdz::Property& p = kv.second;
-    if (!p.is_attribute()) continue;
-    const tinyusdz::Attribute& a = p.get_attribute();
-    if (!a.metas().has_weight()) continue;
-    std::vector<tinyusdz::value::vector3f> offs;
-    if (!a.get_value(&offs)) continue;
-    out.emplace_back(static_cast<float>(a.metas().get_weight()), std::move(offs));
-  }
-  std::sort(out.begin(), out.end(),
-            [](const auto& x, const auto& y) { return x.first < y.first; });
-  return out;
-}
-
-// Collect in-between samples for every BlendShape in the stage, keyed by the
-// BlendShape's prim name (== morph target name == SkelAnimation weight key). The
-// converter records ShapeTarget.abs_path as the bare prim name, so name keying
-// matches the morph data model (and mirrors how blendshape weights are keyed).
-std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
-    const tinyusdz::Stage& stage) {
-  std::map<std::string, InbetweenSamples> out;
-  tydra::PathPrimMap<tinyusdz::BlendShape> bss;
-  if (!tydra::ListPrims(stage, bss)) return out;
-  for (auto& kv : bss) {
-    const tinyusdz::BlendShape* bs = kv.second;
-    if (!bs) continue;
-    InbetweenSamples ibs = ReadInbetweensFromPrim(*bs);
-    if (!ibs.empty()) out[bs->name] = std::move(ibs);
-  }
-  return out;
 }
 
 // USD value::matrix4d is row-major (row-vector, pre-multiply: p' = p*M).

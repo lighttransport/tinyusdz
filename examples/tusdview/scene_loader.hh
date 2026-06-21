@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gpu_scene.hh"  // DrawScene
@@ -129,8 +130,13 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 // are rebuilt; callers keep the textures from the initial load. `draw->materials`
 // and `draw->textures` are therefore left empty — only `draw->meshes` (+ bounds)
 // are produced. Returns false with `*err` set on failure.
+// `blendOverride` (optional, by BlendShape name) applies manual blendshape
+// weights (the blend editor) when deforming -- the ray-traced / CPU-skinned
+// equivalent of the GPU path's override; honors in-between shapes.
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
-                       LoadControl* ctrl = nullptr);
+                       LoadControl* ctrl = nullptr,
+                       const std::unordered_map<std::string, float>* blendOverride =
+                           nullptr);
 
 }  // namespace tusdview

@@ -157,6 +157,9 @@ class App
   void readAnimationRange();
   void updateSkinningEffective();
   void updateGpuSkinningFrameIfNeeded();
+  // Non-GPU (ray-traced / CPU-skinned) path: when manual blendshape weights
+  // change, re-bake the deformed geometry + BLAS via an async reconvert.
+  void maybeReconvertForManualBlend();
   bool wantsGpuSkinningLoad() const;
   const char* skinningModeName(SkinningMode mode) const;
   // Advance the playback clock by `dtSec` and request a re-evaluation at the new
@@ -243,6 +246,7 @@ class App
   double reconvInFlight_{0.0};     // time code the running worker computes
   double reconvRequested_{0.0};    // latest requested time code
   bool reconvHasRequest_{false};   // a (re)convert is wanted
+  bool blendReconvNeeded_{false};  // manual blend weights changed (non-GPU path)
   double reconvApplied_{0.0};      // time code currently shown
   std::unique_ptr<DrawScene> reconvDraw_;
   std::atomic<bool> reconvOk_{false};

@@ -506,7 +506,8 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
-                       LoadControl* ctrl) {
+                       LoadControl* ctrl,
+                       const std::unordered_map<std::string, float>* blendOverride) {
   if (draw) *draw = DrawScene{};
   // Convert the scene at `timecode` WITHOUT packing (draw=nullptr): node
   // transforms / time-sampled points / value clips are resolved by Tydra, but
@@ -519,7 +520,7 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                                /*draw=*/nullptr, warn, err, ctrl)) {
     return false;
   }
-  DeformSkinnedMeshes(src.stage, scratch, timecode);
+  DeformSkinnedMeshes(src.stage, scratch, timecode, blendOverride);
   BuildDrawScene(scratch, draw, ctrl, &src.stage);
   ApplyMeshPurposes(src.stage, draw);
   return true;

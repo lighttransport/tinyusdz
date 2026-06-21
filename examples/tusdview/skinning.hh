@@ -9,8 +9,10 @@
 // points in place so the existing pack + upload path renders the posed mesh.
 #pragma once
 
+#include <map>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -19,6 +21,19 @@
 #include "value-types.hh"
 
 namespace tusdview {
+
+// In-between blendshape samples for one BlendShape: (weight, offsets) ascending
+// by weight; offsets are parallel to the BlendShape's pointIndices (USD inbetween
+// semantics, same indexing as the primary `offsets`).
+using InbetweenSamples =
+    std::vector<std::pair<float, std::vector<tinyusdz::value::vector3f>>>;
+
+// Collect in-between samples for every BlendShape in the stage, keyed by the
+// BlendShape's prim name (== morph target name == SkelAnimation weight key). The
+// tydra converter does not carry in-betweens, so they are read here from the
+// `inbetweens:*` attributes (vector3f[] value + a `weight` attr-meta).
+std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
+    const tinyusdz::Stage& stage);
 
 // True if any mesh in `render` carries skeletal skinning data or blendshape
 // targets (i.e. would deform over time). Cheap topology check.
@@ -79,7 +94,14 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
 // `normals` are cleared so the packer regenerates them from the posed geometry.
 // No-op for meshes without skinning/blendshapes. `stage` must be the source of
 // `render`.
-void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
-                         tinyusdz::tydra::RenderScene& render, double timecode);
+//
+// `blendOverride` (optional, by BlendShape name) supplies manual weights from the
+// blend editor that replace the animated weight -- this is the ray-traced /
+// CPU-skinned path's equivalent of BuildGpuSkinningFrame's override. In-between
+// shapes are honored (the baked offset is interpolated through them).
+void DeformSkinnedMeshes(
+    const tinyusdz::Stage& stage, tinyusdz::tydra::RenderScene& render,
+    double timecode,
+    const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
 }  // namespace tusdview
