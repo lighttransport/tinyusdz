@@ -1,0 +1,484 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "cuda_raytracer.hh"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include "cuew.h"
+
+namespace tusdview {
+
+namespace {
+
+// Flattened BVH node (must match the `Node` struct in the kernel). count>0 -> leaf
+// (left = first triangle in the reordered arrays); count==0 -> interior (left/right
+// = child node indices -- stored explicitly since a recursive build does not place
+// the right child at left+1).
+struct Node {
+  float bmin[3];
+  float bmax[3];
+  int left;
+  int right;
+  int count;
+};
+
+// Camera/light block passed by value to the kernel (must match `Cam` there).
+struct Cam {
+  float invVP[16];
+  float camPos[4];
+  float lightDir[4];
+  float clear[4];
+};
+
+const char* kKernelSrc = R"CUDA(
+struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
+struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; };
+
+typedef struct { float x, y, z; } F3;
+__device__ F3 mk(float x, float y, float z){ F3 r; r.x=x; r.y=y; r.z=z; return r; }
+__device__ F3 sub(F3 a, F3 b){ return mk(a.x-b.x, a.y-b.y, a.z-b.z); }
+__device__ F3 add(F3 a, F3 b){ return mk(a.x+b.x, a.y+b.y, a.z+b.z); }
+__device__ F3 scale(F3 a, float s){ return mk(a.x*s, a.y*s, a.z*s); }
+__device__ float dot3(F3 a, F3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+__device__ F3 cross3(F3 a, F3 b){ return mk(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
+__device__ F3 norm3(F3 a){ float l=sqrtf(dot3(a,a)); return l>0.f?scale(a,1.f/l):a; }
+
+// column-major mat4 (invVP) times (ndc.x, ndc.y, z, 1) -> homogeneous xyz/w.
+__device__ F3 unproject(const float* m, float nx, float ny, float z){
+  float x = m[0]*nx + m[4]*ny + m[8]*z + m[12];
+  float y = m[1]*nx + m[5]*ny + m[9]*z + m[13];
+  float w3= m[2]*nx + m[6]*ny + m[10]*z + m[14];
+  float w = m[3]*nx + m[7]*ny + m[11]*z + m[15];
+  return mk(x/w, y/w, w3/w);
+}
+
+// slab test; returns true if [0,tmax] overlaps the node AABB along the ray.
+__device__ bool hitAabb(const Node* nd, F3 o, F3 inv, float tmax){
+  float t1=(nd->bmin[0]-o.x)*inv.x, t2=(nd->bmax[0]-o.x)*inv.x;
+  float tmin=fminf(t1,t2), tmx=fmaxf(t1,t2);
+  t1=(nd->bmin[1]-o.y)*inv.y; t2=(nd->bmax[1]-o.y)*inv.y;
+  tmin=fmaxf(tmin,fminf(t1,t2)); tmx=fminf(tmx,fmaxf(t1,t2));
+  t1=(nd->bmin[2]-o.z)*inv.z; t2=(nd->bmax[2]-o.z)*inv.z;
+  tmin=fmaxf(tmin,fminf(t1,t2)); tmx=fminf(tmx,fmaxf(t1,t2));
+  return tmx>=fmaxf(tmin,0.f) && tmin<tmax;
+}
+
+// Moller-Trumbore. Returns t (>0) on hit and the barycentrics, else -1.
+__device__ float triHit(const float* tv, F3 o, F3 d, float* bu, float* bv){
+  F3 p0=mk(tv[0],tv[1],tv[2]), p1=mk(tv[3],tv[4],tv[5]), p2=mk(tv[6],tv[7],tv[8]);
+  F3 e1=sub(p1,p0), e2=sub(p2,p0);
+  F3 pv=cross3(d,e2); float det=dot3(e1,pv);
+  if (fabsf(det)<1e-12f) return -1.f;
+  float inv=1.f/det;
+  F3 tv0=sub(o,p0); float u=dot3(tv0,pv)*inv;
+  if (u<0.f||u>1.f) return -1.f;
+  F3 qv=cross3(tv0,e1); float v=dot3(d,qv)*inv;
+  if (v<0.f||u+v>1.f) return -1.f;
+  float t=dot3(e2,qv)*inv;
+  if (t<=1e-4f) return -1.f;
+  *bu=u; *bv=v; return t;
+}
+
+// Traverse the BVH for the nearest hit (anyHit=skip on first for shadow rays).
+__device__ float traverse(const Node* nodes, const float* tris, F3 o, F3 d,
+                          float tmax, int* hitTri, float* bu, float* bv, bool anyHit){
+  F3 inv = mk(1.f/d.x, 1.f/d.y, 1.f/d.z);
+  int stack[64]; int sp=0; stack[sp++]=0;
+  float best=tmax; *hitTri=-1;
+  while (sp>0){
+    const Node* nd=&nodes[stack[--sp]];
+    if (!hitAabb(nd,o,inv,best)) continue;
+    if (nd->count>0){
+      for (int i=0;i<nd->count;i++){
+        int ti=nd->left+i;
+        float u,v; float t=triHit(&tris[ti*9],o,d,&u,&v);
+        if (t>0.f && t<best){ best=t; *hitTri=ti; *bu=u; *bv=v; if (anyHit) return best; }
+      }
+    } else {
+      stack[sp++]=nd->left;
+      stack[sp++]=nd->right;
+    }
+  }
+  return best;
+}
+
+extern "C" __global__ void trace(const float* tris, const float* nrms,
+                                 const float* cols, const unsigned char* geo,
+                                 const Node* nodes, unsigned char* out,
+                                 int W, int H, Cam cam){
+  int px=blockIdx.x*blockDim.x+threadIdx.x;
+  int py=blockIdx.y*blockDim.y+threadIdx.y;
+  if (px>=W||py>=H) return;
+  float u=(px+0.5f)/W, vv=(py+0.5f)/H;
+  float ndcx=u*2.f-1.f, ndcy=1.f-vv*2.f;
+  F3 nearW=unproject(cam.invVP,ndcx,ndcy,0.f);
+  F3 farW =unproject(cam.invVP,ndcx,ndcy,1.f);
+  F3 o=nearW; F3 d=norm3(sub(farW,nearW));
+
+  F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+  int ht; float bu,bv;
+  float t=traverse(nodes,tris,o,d,1e30f,&ht,&bu,&bv,false);
+  if (ht>=0){
+    float w0=1.f-bu-bv;
+    F3 hit=add(o,scale(d,t));
+    F3 N;
+    if (geo[ht]){
+      const float* tv=&tris[ht*9];
+      F3 p0=mk(tv[0],tv[1],tv[2]),p1=mk(tv[3],tv[4],tv[5]),p2=mk(tv[6],tv[7],tv[8]);
+      N=norm3(cross3(sub(p1,p0),sub(p2,p0)));
+      if (dot3(N,d)>0.f) N=scale(N,-1.f);  // two-sided
+    } else {
+      const float* nv=&nrms[ht*9];
+      N=norm3(mk(nv[0]*w0+nv[3]*bu+nv[6]*bv, nv[1]*w0+nv[4]*bu+nv[7]*bv, nv[2]*w0+nv[5]*bu+nv[8]*bv));
+    }
+    const float* cv=&cols[ht*9];
+    F3 base=mk(cv[0]*w0+cv[3]*bu+cv[6]*bv, cv[1]*w0+cv[4]*bu+cv[7]*bv, cv[2]*w0+cv[5]*bu+cv[8]*bv);
+
+    F3 L=norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]));
+    float diff=fmaxf(dot3(N,L),0.f);
+    float shadow=1.f;
+    if (diff>0.f){
+      int sht; float su,sv;
+      F3 so=add(hit,scale(N,1e-3f));
+      traverse(nodes,tris,so,L,1e30f,&sht,&su,&sv,true);
+      if (sht>=0) shadow=0.f;
+    }
+    float k=0.25f+0.85f*diff*shadow;
+    outc=mk(base.x*k,base.y*k,base.z*k);
+  }
+  int idx=(py*W+px)*4;
+  out[idx+0]=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
+  out[idx+1]=(unsigned char)(fminf(fmaxf(outc.y,0.f),1.f)*255.f+0.5f);
+  out[idx+2]=(unsigned char)(fminf(fmaxf(outc.z,0.f),1.f)*255.f+0.5f);
+  out[idx+3]=255;
+}
+)CUDA";
+
+#define CU_OK(call, what)                                          \
+  do {                                                             \
+    CUresult _r = (call);                                          \
+    if (_r != CUDA_SUCCESS) {                                      \
+      const char* _s = nullptr;                                    \
+      if (cuGetErrorString) cuGetErrorString(_r, &_s);             \
+      if (err) *err = std::string("CUDA ") + (what) + ": " + (_s ? _s : "error"); \
+      return false;                                                \
+    }                                                              \
+  } while (0)
+
+// world (column-major mat4) * point.
+inline void XformPt(const float m[16], float x, float y, float z, float o[3]) {
+  o[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+  o[1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+  o[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+}
+inline void XformN(const float m[16], float x, float y, float z, float o[3]) {
+  o[0] = m[0] * x + m[4] * y + m[8] * z;
+  o[1] = m[1] * x + m[5] * y + m[9] * z;
+  o[2] = m[2] * x + m[6] * y + m[10] * z;
+}
+// 3x4 row-major o2w (instanceXforms) * point.
+inline void O2WPt(const float o2w[12], float x, float y, float z, float o[3]) {
+  o[0] = o2w[0] * x + o2w[1] * y + o2w[2] * z + o2w[3];
+  o[1] = o2w[4] * x + o2w[5] * y + o2w[6] * z + o2w[7];
+  o[2] = o2w[8] * x + o2w[9] * y + o2w[10] * z + o2w[11];
+}
+inline void O2WN(const float o2w[12], float x, float y, float z, float o[3]) {
+  o[0] = o2w[0] * x + o2w[1] * y + o2w[2] * z;
+  o[1] = o2w[4] * x + o2w[5] * y + o2w[6] * z;
+  o[2] = o2w[8] * x + o2w[9] * y + o2w[10] * z;
+}
+
+}  // namespace
+
+CudaRayTracer::~CudaRayTracer() {
+  if (ctx_) {
+    freeScene();
+    if (module_) cuModuleUnload(reinterpret_cast<CUmodule>(module_));
+    cuCtxDestroy(reinterpret_cast<CUcontext>(ctx_));
+  }
+}
+
+void CudaRayTracer::freeScene() {
+  auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dNodes_); F(dOut_);
+  outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
+}
+
+bool CudaRayTracer::init(std::string* err) {
+  if (ctx_) return true;
+  if (cuewInit(CUEW_INIT_CUDA) != CUEW_SUCCESS) {
+    if (err) *err = "cuew: CUDA driver not available";
+    return false;
+  }
+  if (cuewInit(CUEW_INIT_NVRTC) != CUEW_SUCCESS) {
+    if (err) *err = "cuew: NVRTC not available (needed for runtime kernel compile)";
+    return false;
+  }
+  CU_OK(cuInit(0), "cuInit");
+  int count = 0;
+  CU_OK(cuDeviceGetCount(&count), "cuDeviceGetCount");
+  if (count < 1) { if (err) *err = "no CUDA device"; return false; }
+  CUdevice dev;
+  CU_OK(cuDeviceGet(&dev, 0), "cuDeviceGet");
+  device_ = dev;
+  char name[256] = {0};
+  cuDeviceGetName(name, sizeof(name), dev);
+  deviceName_ = name;
+  int major = 0, minor = 0;
+  cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
+  cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
+  CUcontext ctx;
+  CU_OK(cuCtxCreate(&ctx, 0, dev), "cuCtxCreate");
+  ctx_ = ctx;
+
+  // NVRTC compile the kernel for this device's architecture.
+  nvrtcProgram prog;
+  if (nvrtcCreateProgram(&prog, kKernelSrc, "trace.cu", 0, nullptr, nullptr) !=
+      NVRTC_SUCCESS) {
+    if (err) *err = "nvrtcCreateProgram failed";
+    return false;
+  }
+  std::string arch = "--gpu-architecture=compute_" + std::to_string(major) +
+                     std::to_string(minor);
+  const char* opts[] = {arch.c_str(), "--use_fast_math"};
+  nvrtcResult nr = nvrtcCompileProgram(prog, 2, opts);
+  if (nr != NVRTC_SUCCESS) {
+    size_t logSize = 0;
+    nvrtcGetProgramLogSize(prog, &logSize);
+    std::string log(logSize, '\0');
+    if (logSize) nvrtcGetProgramLog(prog, &log[0]);
+    if (err) *err = "NVRTC compile failed:\n" + log;
+    nvrtcDestroyProgram(&prog);
+    return false;
+  }
+  size_t ptxSize = 0;
+  nvrtcGetPTXSize(prog, &ptxSize);
+  std::string ptx(ptxSize, '\0');
+  nvrtcGetPTX(prog, &ptx[0]);
+  nvrtcDestroyProgram(&prog);
+
+  CUmodule mod;
+  CU_OK(cuModuleLoadData(&mod, ptx.c_str()), "cuModuleLoadData");
+  module_ = mod;
+  CUfunction fn;
+  CU_OK(cuModuleGetFunction(&fn, mod, "trace"), "cuModuleGetFunction(trace)");
+  kernel_ = fn;
+  return true;
+}
+
+namespace {
+// Recursive median-split BVH over triangle centroids. Reorders `idx` so leaves
+// reference contiguous ranges; appends nodes to `nodes`. Returns the node index.
+int BuildBvh(std::vector<Node>& nodes, std::vector<int>& idx, int first, int count,
+             const std::vector<float>& cent, const std::vector<float>& tris) {
+  int self = static_cast<int>(nodes.size());
+  nodes.push_back({});
+  Node nd{};
+  float bmin[3] = {1e30f, 1e30f, 1e30f}, bmax[3] = {-1e30f, -1e30f, -1e30f};
+  for (int i = 0; i < count; ++i) {
+    const float* tv = &tris[idx[first + i] * 9];
+    for (int v = 0; v < 3; ++v)
+      for (int k = 0; k < 3; ++k) {
+        bmin[k] = std::min(bmin[k], tv[v * 3 + k]);
+        bmax[k] = std::max(bmax[k], tv[v * 3 + k]);
+      }
+  }
+  for (int k = 0; k < 3; ++k) { nd.bmin[k] = bmin[k]; nd.bmax[k] = bmax[k]; }
+  if (count <= 4) {
+    nd.left = first;
+    nd.right = 0;
+    nd.count = count;
+    nodes[self] = nd;
+    return self;
+  }
+  // Split on the widest centroid axis at the median.
+  float cmin[3] = {1e30f, 1e30f, 1e30f}, cmax[3] = {-1e30f, -1e30f, -1e30f};
+  for (int i = 0; i < count; ++i)
+    for (int k = 0; k < 3; ++k) {
+      float c = cent[idx[first + i] * 3 + k];
+      cmin[k] = std::min(cmin[k], c);
+      cmax[k] = std::max(cmax[k], c);
+    }
+  int axis = 0;
+  if (cmax[1] - cmin[1] > cmax[axis] - cmin[axis]) axis = 1;
+  if (cmax[2] - cmin[2] > cmax[axis] - cmin[axis]) axis = 2;
+  int mid = first + count / 2;
+  std::nth_element(idx.begin() + first, idx.begin() + mid, idx.begin() + first + count,
+                   [&](int a, int b) { return cent[a * 3 + axis] < cent[b * 3 + axis]; });
+  int left = BuildBvh(nodes, idx, first, count / 2, cent, tris);
+  int right = BuildBvh(nodes, idx, mid, count - count / 2, cent, tris);
+  nd.left = left;
+  nd.right = right;
+  nd.count = 0;
+  nodes[self] = nd;
+  return self;
+}
+}  // namespace
+
+bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err) {
+  if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
+  cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+  freeScene();
+  truncated_ = false;
+
+  // Flatten to world-space triangles. Per tri: 9 pos, 9 normals, 9 colors, 1 geo.
+  std::vector<float> tris, nrms, cols;
+  std::vector<uint8_t> geo;
+  const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
+
+  auto emitTri = [&](const float wp[9], const float wn[9], const float wc[9], uint8_t g) {
+    tris.insert(tris.end(), wp, wp + 9);
+    nrms.insert(nrms.end(), wn, wn + 9);
+    cols.insert(cols.end(), wc, wc + 9);
+    geo.push_back(g);
+  };
+
+  for (const DrawMeshCPU& m : scene.meshes) {
+    if (m.vertices.empty() || m.indices.empty()) break;  // partial guard
+    const bool instanced = m.instanceCount() > 0;
+    const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
+    const uint8_t g = m.geometricNormal ? 1 : 0;
+
+    // Resolve the mesh's base tint (per submesh material; instanced uses flat/inst).
+    auto submeshMat = [&](uint32_t triIdx0) -> const DrawMaterialCPU* {
+      for (const DrawSubmesh& s : m.submeshes)
+        if (triIdx0 >= s.indexOffset && triIdx0 < s.indexOffset + s.indexCount)
+          return (s.materialId >= 0 && size_t(s.materialId) < scene.materials.size())
+                     ? &scene.materials[s.materialId]
+                     : nullptr;
+      return nullptr;
+    };
+
+    const size_t ninst = instanced ? m.instanceCount() : 1;
+    for (size_t inst = 0; inst < ninst; ++inst) {
+      if (tris.size() / 9 >= cap) { truncated_ = true; break; }
+      const float* o2w = instanced ? &m.instanceXforms[inst * 12] : nullptr;
+      // Base tint for this instance.
+      float tint[3];
+      if (instanced) {
+        if (m.instanceColors.size() == ninst * 3) {
+          tint[0] = m.instanceColors[inst * 3 + 0];
+          tint[1] = m.instanceColors[inst * 3 + 1];
+          tint[2] = m.instanceColors[inst * 3 + 2];
+        } else {
+          tint[0] = m.flatColor[0]; tint[1] = m.flatColor[1]; tint[2] = m.flatColor[2];
+        }
+      } else {
+        tint[0] = tint[1] = tint[2] = 0.6f;  // default gray (overridden per submesh)
+      }
+
+      for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        if (tris.size() / 9 >= cap) { truncated_ = true; break; }
+        float curTint[3] = {tint[0], tint[1], tint[2]};
+        if (!instanced) {
+          if (const DrawMaterialCPU* mat = submeshMat(static_cast<uint32_t>(t))) {
+            curTint[0] = mat->baseColor[0];
+            curTint[1] = mat->baseColor[1];
+            curTint[2] = mat->baseColor[2];
+          }
+        }
+        float wp[9], wn[9], wc[9];
+        for (int k = 0; k < 3; ++k) {
+          const DrawVertex& vtx = m.vertices[m.indices[t + k]];
+          if (instanced) {
+            O2WPt(o2w, vtx.px, vtx.py, vtx.pz, &wp[k * 3]);
+            O2WN(o2w, vtx.nx, vtx.ny, vtx.nz, &wn[k * 3]);
+          } else {
+            XformPt(m.world, vtx.px, vtx.py, vtx.pz, &wp[k * 3]);
+            XformN(m.world, vtx.nx, vtx.ny, vtx.nz, &wn[k * 3]);
+          }
+          float dc[3] = {1, 1, 1};
+          if (hasVtxCol) {
+            const float* c = &m.vertexColors[m.indices[t + k] * 3];
+            dc[0] = c[0]; dc[1] = c[1]; dc[2] = c[2];
+          }
+          wc[k * 3 + 0] = curTint[0] * dc[0];
+          wc[k * 3 + 1] = curTint[1] * dc[1];
+          wc[k * 3 + 2] = curTint[2] * dc[2];
+        }
+        emitTri(wp, wn, wc, g);
+      }
+      if (truncated_) break;
+    }
+    if (truncated_) break;
+  }
+
+  triCount_ = tris.size() / 9;
+  if (triCount_ == 0) { if (err) *err = "CUDA: no triangles"; return false; }
+
+  // Build the BVH (reorders a triangle-index permutation).
+  std::vector<float> cent(triCount_ * 3);
+  for (size_t i = 0; i < triCount_; ++i) {
+    const float* tv = &tris[i * 9];
+    for (int k = 0; k < 3; ++k)
+      cent[i * 3 + k] = (tv[0 * 3 + k] + tv[1 * 3 + k] + tv[2 * 3 + k]) / 3.f;
+  }
+  std::vector<int> idx(triCount_);
+  for (size_t i = 0; i < triCount_; ++i) idx[i] = static_cast<int>(i);
+  std::vector<Node> nodes;
+  nodes.reserve(triCount_ * 2);
+  BuildBvh(nodes, idx, 0, static_cast<int>(triCount_), cent, tris);
+  nodeCount_ = nodes.size();
+
+  // Reorder tri data into BVH leaf order so leaves reference contiguous ranges.
+  std::vector<float> rt(triCount_ * 9), rn(triCount_ * 9), rc(triCount_ * 9);
+  std::vector<uint8_t> rg(triCount_);
+  for (size_t i = 0; i < triCount_; ++i) {
+    int s = idx[i];
+    std::memcpy(&rt[i * 9], &tris[s * 9], 9 * sizeof(float));
+    std::memcpy(&rn[i * 9], &nrms[s * 9], 9 * sizeof(float));
+    std::memcpy(&rc[i * 9], &cols[s * 9], 9 * sizeof(float));
+    rg[i] = geo[s];
+  }
+
+  // Upload.
+  auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
+    CUdeviceptr p;
+    CU_OK(cuMemAlloc(&p, bytes), "cuMemAlloc");
+    CU_OK(cuMemcpyHtoD(p, host, bytes), "cuMemcpyHtoD");
+    *dptr = static_cast<uintptr_t>(p);
+    return true;
+  };
+  if (!up(rt.data(), rt.size() * sizeof(float), &dTris_)) return false;
+  if (!up(rn.data(), rn.size() * sizeof(float), &dNrms_)) return false;
+  if (!up(rc.data(), rc.size() * sizeof(float), &dCols_)) return false;
+  if (!up(rg.data(), rg.size(), &dGeo_)) return false;
+  if (!up(nodes.data(), nodes.size() * sizeof(Node), &dNodes_)) return false;
+  return true;
+}
+
+bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
+                          const float lightDir[3], const float clearColor[3], int w,
+                          int h, std::vector<uint8_t>* rgba, std::string* err) {
+  if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
+  cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+  const size_t bytes = size_t(w) * h * 4;
+  if (outCap_ < bytes) {
+    if (dOut_) cuMemFree(static_cast<CUdeviceptr>(dOut_));
+    CUdeviceptr p;
+    CU_OK(cuMemAlloc(&p, bytes), "cuMemAlloc(out)");
+    dOut_ = static_cast<uintptr_t>(p);
+    outCap_ = bytes;
+  }
+  Cam cam{};
+  std::memcpy(cam.invVP, invViewProj, 16 * sizeof(float));
+  for (int i = 0; i < 3; ++i) {
+    cam.camPos[i] = camPos[i];
+    cam.lightDir[i] = lightDir[i];
+    cam.clear[i] = clearColor[i];
+  }
+  CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dNo = dNodes_, dO = dOut_;
+  void* args[] = {&dT, &dN, &dC, &dG, &dNo, &dO, &w, &h, &cam};
+  unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
+  CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
+                       nullptr, args, nullptr),
+        "cuLaunchKernel");
+  CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
+  rgba->resize(bytes);
+  CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
+        "cuMemcpyDtoH");
+  return true;
+}
+
+}  // namespace tusdview

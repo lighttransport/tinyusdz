@@ -240,7 +240,7 @@ void App::applyLoaded(bool ok, bool progressive) {
     // Synchronous full upload (headless / failure). draw_ is empty when !ok.
     std::string uerr;
     renderer_->uploadScene(draw_, &uerr);
-    if (ok && useNextLoader_) {
+    if (ok && useNextLoader_ && !cudaRt_) {  // CUDA RT needs the CPU geometry later
       for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
     }
     if (ok) {
@@ -281,7 +281,7 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, ~4ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
-    if (useNextLoader_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+    if (useNextLoader_ && !cudaRt_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
     if (elapsedMs() > 4.0) break;
   }
@@ -988,6 +988,43 @@ int App::run(const std::string& initialFile, int maxFrames,
       LOGW("capture not supported by this backend");
     }
   };
+  // CUDA ray tracing: trace the loaded scene on the GPU (CUDA driver API + NVRTC
+  // loaded at runtime via cuew) and write it in place of the rasterized capture.
+  if (cudaRt_ && !screenshot.empty() && !draw_.empty()) {
+    std::string cerr;
+    if (!cudaTracer_.init(&cerr)) {
+      LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
+    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, &cerr)) {
+      LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
+    } else {
+      std::vector<uint8_t> sizeProbe;
+      int w = 0, h = 0;
+      renderer_->captureViewport(&sizeProbe, &w, &h);
+      if (w <= 0 || h <= 0) { w = 1024; h = 768; }
+      camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+      const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+      const light3d::Mat4 inv = pv.inverse();
+      const light3d::Vec3 eye = camera_.eye();
+      const float camPos[3] = {eye.x, eye.y, eye.z};
+      const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
+      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      std::vector<uint8_t> rgba;
+      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, w, h, &rgba, &cerr)) {
+        std::string werr;
+        if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
+          LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
+               cudaTracer_.triangleCount(),
+               cudaTracer_.truncated() ? ", truncated" : "", cudaTracer_.deviceName());
+        } else {
+          LOGW("CUDA RT screenshot write failed: %s", werr.c_str());
+        }
+      } else {
+        LOGW("CUDA ray trace failed: %s", cerr.c_str());
+      }
+    }
+    return 0;  // CUDA path owns the screenshot; skip the rasterized capture.
+  }
+
   shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
   return 0;
