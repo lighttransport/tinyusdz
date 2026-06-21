@@ -132,7 +132,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=6) in vec4 aRow0;\n"
       "layout(location=7) in vec4 aRow1;\n"
       "layout(location=8) in vec4 aRow2;\n"
-      "layout(location=9) in vec3 aColor;\n"  // per-instance or constant
+      "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
+      "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
       "uniform mat4 uViewProj;\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
@@ -144,7 +145,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "                dot(aNormal, aRow2.xyz));\n"
       "  vWorldPos = wp;\n"
       "  vNormal = normalize(n);\n"
-      "  vColor = aColor;\n"
+      // Prototype per-vertex displayColor x per-instance color (both default 1).
+      "  vColor = aColor * aVtxColor;\n"
       "  gl_Position = uViewProj * vec4(wp, 1.0);\n"
       "}\n";
   static const char* kInstancedFS =
@@ -556,22 +558,25 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
 
   gm.geometricNormal = sm.geometricNormal;
-  // Per-vertex displayColor (attrib 9, divisor 0) for non-instanced meshes; the
-  // instanced path reuses attrib 9 for per-instance color (set below). Default
-  // white (set per draw) when absent so uBaseColor*vColor is unchanged.
-  if (sm.instanceXforms.empty() &&
-      sm.vertexColors.size() == sm.vertices.size() * 3 &&
-      !sm.vertexColors.empty()) {
+  // Per-vertex displayColor (divisor 0). Non-instanced meshes bind it at attrib 9
+  // (the shared material shader's aColor); instanced meshes bind it at attrib 10
+  // (the instanced shader multiplies per-vertex x per-instance color, since attrib
+  // 9 there carries the per-instance color set below). Default white (set per draw)
+  // when absent so the base color is unmodulated.
+  const bool gmInstanced = !sm.instanceXforms.empty();
+  const GLuint vtxColorAttrib = gmInstanced ? 10u : 9u;
+  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
     glGenBuffers(1, &gm.vertexColorVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.vertexColorVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.vertexColors.size() * sizeof(float)),
                  sm.vertexColors.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(9);
-    glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glVertexAttribDivisor(9, 0);
-  } else if (sm.instanceXforms.empty()) {
-    glDisableVertexAttribArray(9);  // constant white set per draw
+    glEnableVertexAttribArray(vtxColorAttrib);
+    glVertexAttribPointer(vtxColorAttrib, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(vtxColorAttrib, 0);
+  } else {
+    glDisableVertexAttribArray(vtxColorAttrib);  // constant white set per draw
   }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
@@ -773,6 +778,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // Constant per-draw color when there is no per-instance color array (the
       // generic vertex-attribute value feeds aColor for every instance).
       if (!mesh.hasInstanceColors) glVertexAttrib3fv(9, mesh.flatColor);
+      // Default per-vertex color to white when the prototype has none (the VAO
+      // supplies attrib 10 from vertexColorVbo otherwise).
+      if (!mesh.vertexColorVbo) glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);
       for (const auto& sub : mesh.submeshes) {
         glDrawElementsInstanced(
             GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
