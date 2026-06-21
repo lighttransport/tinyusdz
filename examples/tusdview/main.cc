@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
   std::vector<std::pair<std::string, float>> wantBlend;  // --blend NAME=WEIGHT
+  std::string wantSelect;  // --select <prim path>
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
@@ -159,6 +160,10 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "texel-density")) wantMode = tusdview::RenderMode::TexelDensity;
       else if (!std::strcmp(m, "source-face-id")) wantMode = tusdview::RenderMode::SourceFaceId;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
+    } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
+      // Select a prim by absolute path once loaded (highlights it; a GeomSubset
+      // highlights just its faces). Also handy for headless screenshots.
+      wantSelect = argv[++i];
     } else if (std::strcmp(argv[i], "--blend") == 0 && (i + 1) < argc) {
       // --blend NAME=WEIGHT (repeatable): manually drive a blendshape weight,
       // overriding the SkelAnimation. Honors in-between shapes. For headless
@@ -332,5 +337,6 @@ int main(int argc, char** argv) {
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
   for (const auto& bw : wantBlend) app.setBlendWeight(bw.first, bw.second);
+  if (!wantSelect.empty()) app.setInitialSelection(wantSelect);
   return app.run(file, maxFrames, screenshot);
 }

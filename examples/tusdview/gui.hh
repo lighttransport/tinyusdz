@@ -204,6 +204,12 @@ class Gui {
   const tinyusdz::Prim* selPrim_{nullptr};
   std::string selPath_;
   int selMeshIndex_{-1};
+  // When the selection is a GeomSubset, the triangle vertex indices of its faces
+  // (built via the parent mesh's sourceFaceId) so the highlight outlines just the
+  // subset; highlightSubsetMesh_ is that parent mesh's draw index.
+  std::vector<uint32_t> highlightSubsetIndices_;
+  int highlightSubsetMesh_{-1};
+  void rebuildSubsetHighlight();
 
   // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when
   // blendActive_ it overrides the SkelAnimation-driven weights in the morph pass.
