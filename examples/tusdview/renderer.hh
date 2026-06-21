@@ -49,6 +49,10 @@ enum class RenderMode : int {
   Tangent = 22,
   UvChecker = 23,
   AmbientOcclusion = 24,  // ray-traced (RT backends)
+  Curvature = 25,         // screen-space normal variation (raster)
+  InstanceId = 26,        // per-instance hashed color (instanced geom)
+  BvhHeatmap = 27,        // BVH traversal cost (CUDA software tracer)
+  SoftShadow = 28,        // ray-traced soft shadow / sky visibility (RT backends)
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 

@@ -146,7 +146,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
+      "flat out int vInstanceId;\n"
       "void main(){\n"
+      "  vInstanceId = gl_InstanceID;\n"
       "  vec4 p = vec4(aPosition, 1.0);\n"
       "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
       "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
@@ -162,6 +164,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "in vec3 vWorldPos;\n"
       "in vec3 vNormal;\n"
       "in vec3 vColor;\n"
+      "flat in int vInstanceId;\n"
       "uniform vec3 uCameraPos;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
@@ -208,6 +211,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "    if (uRenderMode == 19) { FragColor = uGeometricNormal ? vec4(0.95,0.1,0.85,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
       "    if (uRenderMode == 20) { FragColor = uDoubleSided ? vec4(0.95,0.55,0.1,1.0) : vec4(0.2,0.2,0.2,1.0); return; }\n"
       "    if (uRenderMode == 18) { FragColor = vec4(purposeColor(uPurpose), 1.0); return; }\n"
+      "    if (uRenderMode == 26) { FragColor = vec4(idColor(vInstanceId), 1.0); return; }\n"  // instance id
+      "    if (uRenderMode == 25) {\n"  // curvature (screen-space geometric normal variation)
+      "      vec3 n = Ngeo; float c = clamp((length(dFdx(n))+length(dFdy(n)))*8.0, 0.0, 1.0);\n"
+      "      FragColor = vec4(c, 1.0-abs(c-0.5)*2.0, 1.0-c, 1.0); return; }\n"
       // Modes instanced geometry cannot supply (UV/material scalars): neutral gray
       // so it is visually obvious the channel has no data here, vs masquerading as
       // a lit render.

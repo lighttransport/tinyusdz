@@ -103,6 +103,13 @@ void main() {
       outColor = vec4(normalize(T) * 0.5 + 0.5, 1.0);
       return;
     }
+    if (pc.renderMode == 25) {  // curvature (screen-space normal variation)
+      vec3 n = normalize(vNormalW);
+      float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
+      outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0);
+      return;
+    }
+    if (pc.renderMode == 26) { outColor = vec4(idColor(-1), 1.0); return; }  // instance id: raster non-instanced -> gray
   }
   vec3 base = pc.baseColor.rgb * texture(uBaseColorTex, vUV).rgb;
   // Headlight-ish fixed directional light + ambient (matches the GL look roughly).
