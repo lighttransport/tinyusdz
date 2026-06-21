@@ -94,6 +94,15 @@ void main() {
       outColor = vec4(idColor(vDomJoint) * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
       return;
     }
+    if (pc.renderMode == 22) {  // tangent (from UV gradient)
+      vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+      vec2 du1 = dFdx(vUV), du2 = dFdy(vUV);
+      float r = du1.x * du2.y - du2.x * du1.y;
+      vec3 T = dp1 * du2.y - dp2 * du1.y;
+      T = (abs(r) > 1e-8) ? T / r : dp1;
+      outColor = vec4(normalize(T) * 0.5 + 0.5, 1.0);
+      return;
+    }
   }
   vec3 base = pc.baseColor.rgb * texture(uBaseColorTex, vUV).rgb;
   // Headlight-ish fixed directional light + ambient (matches the GL look roughly).

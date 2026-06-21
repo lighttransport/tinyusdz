@@ -212,6 +212,14 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       float cx=floorf((uu-floorf(uu))*16.f), cy=floorf((vv2-floorf(vv2))*16.f);
       float kk=fmodf(cx+cy,2.f); float g=0.25f+0.6f*kk; outc=mk(g,g,g);
+    } else if (rmode==22){  // tangent (from triangle UV gradient)
+      const float* tv=&tris[ht*9]; const float* uv=&uvs[ht*6];
+      F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
+      F3 e1=sub(q1,q0), e2=sub(q2,q0);
+      float d1x=uv[2]-uv[0], d1y=uv[3]-uv[1], d2x=uv[4]-uv[0], d2y=uv[5]-uv[1];
+      float r=d1x*d2y-d2x*d1y;
+      F3 T = (fabsf(r)>1e-8f) ? scale(sub(scale(e1,d2y),scale(e2,d1y)),1.f/r) : e1;
+      T=norm3(T); outc=mk(T.x*0.5f+0.5f,T.y*0.5f+0.5f,T.z*0.5f+0.5f);
     } else if (rmode==14){  // barycentric
       outc=mk(w0,bu,bv);
     } else if (rmode==15){  // prim id
