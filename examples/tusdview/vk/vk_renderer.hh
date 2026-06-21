@@ -103,6 +103,8 @@ class VulkanRenderer final : public Renderer {
     VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
     VkDeviceMemory faceMem{VK_NULL_HANDLE};
     VkDeviceAddress faceAddr{0};             // RT source-face-id AOV
+    VkDeviceAddress jointAddr{0};            // RT skin-weights AOV (joint ids)
+    VkDeviceAddress weightAddr{0};           // RT skin-weights AOV (weights)
     VkDescriptorSet faceDesc{VK_NULL_HANDLE}; // raster source-face-id (set 3); else dummy
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag

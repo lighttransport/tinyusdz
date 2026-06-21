@@ -140,6 +140,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const int* mats, const float* matPbr, int numMats,
                                  const float* uvs, const float* uvs1,
                                  const float* infls, const int* faces,
+                                 const float* domw, const int* domj,
                                  const Node* nodes,
                                  unsigned char* out, int W, int H, Cam cam){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
@@ -281,6 +282,23 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float infl=f[0]*w0+f[1]*bu+f[2]*bv;
       float c=fminf(fmaxf(infl/fmaxf(cam.lightDir[3]*0.1f,1e-4f),0.f),1.f);
       outc=mk(c, 1.f-fabsf(c-0.5f)*2.f, 1.f-c);
+    } else if (rmode==21){  // skin weights: dominant joint tinted by its weight
+      int dj=domj[ht];                          // provoking-vertex dominant joint (flat)
+      const float* dw=&domw[ht*3];
+      float wt=dw[0]*w0+dw[1]*bu+dw[2]*bv;        // interpolated dominant weight
+      F3 ic=idColor(dj);
+      float k2=0.3f+0.7f*fminf(fmaxf(wt,0.f),1.f);
+      outc=(dj<0)?mk(0.45f,0.45f,0.45f):mk(ic.x*k2,ic.y*k2,ic.z*k2);
+    } else if (rmode==25){  // curvature (geometric: vertex-normal spread across the tri)
+      if (geo[ht]&1){
+        outc=mk(0.f,1.f,1.f);                     // flat-shaded mesh -> zero curvature
+      } else {
+        const float* nv=&nrms[ht*9];
+        F3 n0=norm3(mk(nv[0],nv[1],nv[2])), n1=norm3(mk(nv[3],nv[4],nv[5])), n2=norm3(mk(nv[6],nv[7],nv[8]));
+        float spread=(1.f-dot3(n0,n1))+(1.f-dot3(n1,n2))+(1.f-dot3(n2,n0));
+        float c=fminf(fmaxf(spread*4.f,0.f),1.f);
+        outc=mk(c, 1.f-fabsf(c-0.5f)*2.f, 1.f-c);
+      }
     } else if (rmode==24){  // ray-traced ambient occlusion
       const float* tv=&tris[ht*9];
       F3 q0=mk(tv[0],tv[1],tv[2]),q1=mk(tv[3],tv[4],tv[5]),q2=mk(tv[6],tv[7],tv[8]);
@@ -368,7 +386,7 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dNodes_); F(dOut_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_); F(dNodes_); F(dOut_);
   numMats_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
 }
@@ -492,20 +510,23 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
   // Flatten to world-space triangles. Per tri: 9 pos, 9 normals, 9 colors, 1 geo,
   // 1 material id (for material-id visualization).
-  std::vector<float> tris, nrms, cols, uvs, uvs1, infls;
+  std::vector<float> tris, nrms, cols, uvs, uvs1, infls, domw;
   std::vector<uint8_t> geo;
-  std::vector<int> mats, faces;
+  std::vector<int> mats, faces, domj;
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
 
   auto emitTri = [&](const float wp[9], const float wn[9], const float wc[9],
                      const float wuv[6], const float wuv1[6], const float winfl[3],
-                     uint8_t g, int matId, int faceId) {
+                     const float wdomw[3], int domJoint, uint8_t g, int matId,
+                     int faceId) {
     tris.insert(tris.end(), wp, wp + 9);
     nrms.insert(nrms.end(), wn, wn + 9);
     cols.insert(cols.end(), wc, wc + 9);
     uvs.insert(uvs.end(), wuv, wuv + 6);
     uvs1.insert(uvs1.end(), wuv1, wuv1 + 6);
     infls.insert(infls.end(), winfl, winfl + 3);
+    domw.insert(domw.end(), wdomw, wdomw + 3);  // per-vertex dominant skin weight
+    domj.push_back(domJoint);                   // provoking-vertex dominant joint
     geo.push_back(g);
     mats.push_back(matId);
     faces.push_back(faceId);
@@ -517,6 +538,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
     const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
     const bool hasInfl = m.morphInfluence.size() == m.vertices.size();
+    const bool hasSkin = m.jointIdx.size() == m.vertices.size() * 4 &&
+                         m.jointWt.size() == m.vertices.size() * 4;
     const bool hasFace = m.sourceFaceId.size() == m.indices.size() / 3;
     // geo byte: bit0 = geometricNormal, bits1-2 = USD purpose id (Purpose AOV).
     const uint8_t g = static_cast<uint8_t>((m.geometricNormal ? 1 : 0) |
@@ -567,7 +590,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
             curTint[2] = mat->baseColor[2];
           }
         }
-        float wp[9], wn[9], wc[9], wuv[6], wuv1[6], winfl[3];
+        float wp[9], wn[9], wc[9], wuv[6], wuv1[6], winfl[3], wdomw[3];
+        int domJoint = -1;
         for (int k = 0; k < 3; ++k) {
           const uint32_t vidx = m.indices[t + k];
           const DrawVertex& vtx = m.vertices[vidx];
@@ -576,6 +600,18 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
           wuv1[k * 2 + 0] = hasUV1 ? m.uv1[vidx * 2 + 0] : 0.0f;
           wuv1[k * 2 + 1] = hasUV1 ? m.uv1[vidx * 2 + 1] : 0.0f;
           winfl[k] = hasInfl ? m.morphInfluence[vidx] : 0.0f;
+          // Dominant skin joint/weight (max of the 4) per vertex; the provoking
+          // vertex (k==0) joint id is kept flat, matching the raster + RT paths.
+          int dj = -1;
+          float dw = 0.0f;
+          if (hasSkin) {
+            for (int b = 0; b < 4; ++b) {
+              const float wb = m.jointWt[vidx * 4 + b];
+              if (wb > dw) { dw = wb; dj = static_cast<int>(m.jointIdx[vidx * 4 + b]); }
+            }
+          }
+          wdomw[k] = dw;
+          if (k == 0) domJoint = dj;
           if (instanced) {
             O2WPt(o2w, vtx.px, vtx.py, vtx.pz, &wp[k * 3]);
             O2WN(o2w, vtx.nx, vtx.ny, vtx.nz, &wn[k * 3]);
@@ -592,7 +628,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
           wc[k * 3 + 1] = curTint[1] * dc[1];
           wc[k * 3 + 2] = curTint[2] * dc[2];
         }
-        emitTri(wp, wn, wc, wuv, wuv1, winfl, g,
+        emitTri(wp, wn, wc, wuv, wuv1, winfl, wdomw, domJoint, g,
                 submeshMatId(static_cast<uint32_t>(t)),
                 hasFace ? static_cast<int>(m.sourceFaceId[t / 3]) : -1);
       }
@@ -620,9 +656,10 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
   // Reorder tri data into BVH leaf order so leaves reference contiguous ranges.
   std::vector<float> rt(triCount_ * 9), rn(triCount_ * 9), rc(triCount_ * 9),
-      ruv(triCount_ * 6), ruv1(triCount_ * 6), rinfl(triCount_ * 3);
+      ruv(triCount_ * 6), ruv1(triCount_ * 6), rinfl(triCount_ * 3),
+      rdomw(triCount_ * 3);
   std::vector<uint8_t> rg(triCount_);
-  std::vector<int> rm(triCount_), rf(triCount_);
+  std::vector<int> rm(triCount_), rf(triCount_), rdomj(triCount_);
   for (size_t i = 0; i < triCount_; ++i) {
     int s = idx[i];
     std::memcpy(&rt[i * 9], &tris[s * 9], 9 * sizeof(float));
@@ -631,9 +668,11 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
     std::memcpy(&ruv[i * 6], &uvs[s * 6], 6 * sizeof(float));
     std::memcpy(&ruv1[i * 6], &uvs1[s * 6], 6 * sizeof(float));
     std::memcpy(&rinfl[i * 3], &infls[s * 3], 3 * sizeof(float));
+    std::memcpy(&rdomw[i * 3], &domw[s * 3], 3 * sizeof(float));
     rg[i] = geo[s];
     rm[i] = mats[s];
     rf[i] = faces[s];
+    rdomj[i] = domj[s];
   }
 
   // Upload.
@@ -653,6 +692,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   if (!up(ruv.data(), ruv.size() * sizeof(float), &dUV_)) return false;
   if (!up(ruv1.data(), ruv1.size() * sizeof(float), &dUV1_)) return false;
   if (!up(rinfl.data(), rinfl.size() * sizeof(float), &dInfl_)) return false;
+  if (!up(rdomw.data(), rdomw.size() * sizeof(float), &dDomW_)) return false;
+  if (!up(rdomj.data(), rdomj.size() * sizeof(int), &dDomJoint_)) return false;
   if (!up(nodes.data(), nodes.size() * sizeof(Node), &dNodes_)) return false;
 
   // Per-material PBR scalars indexed by tri matId: metal, rough, emitR/G/B, alpha.
@@ -698,10 +739,10 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
               dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
-              dNo = dNodes_, dO = dOut_;
+              dDw = dDomW_, dDj = dDomJoint_, dNo = dNodes_, dO = dOut_;
   int numMats = numMats_;
-  void* args[] = {&dT,  &dN, &dC,  &dG, &dM, &dMP, &numMats, &dU, &dU1,
-                  &dIn, &dF, &dNo, &dO, &w,  &h,   &cam};
+  void* args[] = {&dT,  &dN, &dC,  &dG,  &dM,  &dMP, &numMats, &dU, &dU1,
+                  &dIn, &dF, &dDw, &dDj, &dNo, &dO,  &w,       &h,  &cam};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                        nullptr, args, nullptr),
