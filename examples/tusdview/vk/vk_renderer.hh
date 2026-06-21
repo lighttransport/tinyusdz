@@ -132,6 +132,11 @@ class VulkanRenderer final : public Renderer {
   bool createCommands(std::string* err);
   bool createSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
+  bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
+  // Upload + draw one HelperVertex line set with the given pipeline.
+  void drawLineSet(VkCommandBuffer cb, const std::vector<HelperVertex>& copy,
+                   VkBuffer* buf, VkDeviceMemory* mem, VkDeviceSize* cap,
+                   VkPipeline pipeline, const float vp[16]);
   bool createPipeline(std::string* err);
   bool createLinePipeline(std::string* err);
   bool createSampler(std::string* err);
@@ -198,6 +203,7 @@ class VulkanRenderer final : public Renderer {
 
   // Offscreen target (3D scene)
   VkRenderPass offscreenPass_{VK_NULL_HANDLE};
+  VkRenderPass overlayLoadPass_{VK_NULL_HANDLE};  // draw overlays over the RT image
   VkImage colorImg_{VK_NULL_HANDLE};
   VkDeviceMemory colorMem_{VK_NULL_HANDLE};
   VkImageView colorView_{VK_NULL_HANDLE};

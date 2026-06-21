@@ -660,6 +660,97 @@ bool VulkanRenderer::createOffscreenRenderPass(std::string* err) {
   return true;
 }
 
+// Render pass that LOADs (preserves) the offscreen color image -- used to draw
+// line overlays on top of the ray-traced image (which traceRt left in
+// SHADER_READ_ONLY). Attachment formats match offscreenPass_ so the line pipelines
+// are compatible; depth is unused (RT produces none, so only no-depth lines draw).
+bool VulkanRenderer::createOverlayLoadPass(std::string* err) {
+  VkAttachmentDescription atts[2]{};
+  atts[0].format = colorFormat_;
+  atts[0].samples = VK_SAMPLE_COUNT_1_BIT;
+  atts[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  atts[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  atts[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  atts[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  atts[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  atts[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  atts[1].format = depthFormat_;
+  atts[1].samples = VK_SAMPLE_COUNT_1_BIT;
+  atts[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  atts[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  atts[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  atts[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  atts[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  atts[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+  VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+  VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+  VkSubpassDescription sub{};
+  sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  sub.colorAttachmentCount = 1;
+  sub.pColorAttachments = &colorRef;
+  sub.pDepthStencilAttachment = &depthRef;
+
+  // The traced image is in SHADER_READ (frag stage) coming in; ImGui samples it
+  // (frag stage) going out.
+  VkSubpassDependency deps[2]{};
+  deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+  deps[0].dstSubpass = 0;
+  deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  deps[1].srcSubpass = 0;
+  deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+  deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  VkRenderPassCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  ci.attachmentCount = 2;
+  ci.pAttachments = atts;
+  ci.subpassCount = 1;
+  ci.pSubpasses = &sub;
+  ci.dependencyCount = 2;
+  ci.pDependencies = deps;
+  VK_CHECK(vkCreateRenderPass(device_, &ci, nullptr, &overlayLoadPass_),
+           "overlay load render pass");
+  return true;
+}
+
+void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
+                                 const std::vector<HelperVertex>& copy, VkBuffer* buf,
+                                 VkDeviceMemory* mem, VkDeviceSize* cap,
+                                 VkPipeline pipeline, const float vp[16]) {
+  if (copy.empty() || !pipeline) return;
+  const VkDeviceSize bytes = copy.size() * sizeof(HelperVertex);
+  if (bytes > *cap) {
+    if (*buf) vkDestroyBuffer(device_, *buf, nullptr);
+    if (*mem) vkFreeMemory(device_, *mem, nullptr);
+    *buf = VK_NULL_HANDLE;
+    *mem = VK_NULL_HANDLE;
+    if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, copy.data(), buf,
+                         mem)) {
+      *cap = bytes;
+    }
+  } else {
+    void* p = nullptr;
+    vkMapMemory(device_, *mem, 0, bytes, 0, &p);
+    std::memcpy(p, copy.data(), static_cast<size_t>(bytes));
+    vkUnmapMemory(device_, *mem);
+  }
+  if (*buf) {
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(float) * 16, vp);
+    VkDeviceSize off = 0;
+    vkCmdBindVertexBuffers(cb, 0, 1, buf, &off);
+    vkCmdDraw(cb, static_cast<uint32_t>(copy.size()), 1, 0, 0);
+  }
+}
+
 VkShaderModule VulkanRenderer::createShader(const uint32_t* code, size_t bytes) {
   VkShaderModuleCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -1473,6 +1564,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createSwapchainRenderPass(err)) return false;
   if (!createSwapchainFramebuffers(err)) return false;
   if (!createOffscreenRenderPass(err)) return false;
+  if (!createOverlayLoadPass(err)) return false;
   if (!createCommands(err)) return false;
   if (!createSync(err)) return false;
   if (!createSampler(err)) return false;
@@ -2648,6 +2740,48 @@ void VulkanRenderer::present() {
   // ---- Offscreen 3D pass: ray query (compute) or rasterization ----
   if (rtFrame && tlas_ != VK_NULL_HANDLE) {
     traceRt(cb);
+    // Overlay pass: ray query writes the offscreen color image via compute (no
+    // render pass), so helpers/skeleton/selection-highlight would be missing.
+    // LOAD-preserve the traced image and draw the same line sets on top. There is
+    // no RT depth buffer, so everything draws no-depth (x-ray) -- which is what
+    // the overlay/highlight lines already do in the raster path anyway.
+    const bool anyOverlay = !helperCopy_.empty() || !overlayCopy_.empty() ||
+                            !highlightLineCopy_.empty();
+    if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
+      VkRenderPassBeginInfo orp{};
+      orp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+      orp.renderPass = overlayLoadPass_;
+      orp.framebuffer = offscreenFb_;
+      orp.renderArea.extent = {static_cast<uint32_t>(vpW_),
+                               static_cast<uint32_t>(vpH_)};
+      orp.clearValueCount = 0;  // both attachments LOAD/DONT_CARE
+      vkCmdBeginRenderPass(cb, &orp, VK_SUBPASS_CONTENTS_INLINE);
+
+      // Y-flipped viewport so lines align with the upright traced image.
+      VkViewport vpRect{};
+      vpRect.x = 0.0f;
+      vpRect.y = static_cast<float>(vpH_);
+      vpRect.width = static_cast<float>(vpW_);
+      vpRect.height = -static_cast<float>(vpH_);
+      vpRect.minDepth = 0.0f;
+      vpRect.maxDepth = 1.0f;
+      vkCmdSetViewport(cb, 0, 1, &vpRect);
+      VkRect2D sc{{0, 0},
+                  {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_)}};
+      vkCmdSetScissor(cb, 0, 1, &sc);
+
+      const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+      // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
+      // as x-ray here (a reasonable RT-overlay compromise).
+      drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
+                  &helperCap_[frame_], linePipelineNoDepth_, VP.m);
+      drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
+                  &overlayCap_[frame_], linePipelineNoDepth_, VP.m);
+      drawLineSet(cb, highlightLineCopy_, &highlightLineBuf_[frame_],
+                  &highlightLineMem_[frame_], &highlightLineCap_[frame_],
+                  linePipelineNoDepth_, VP.m);
+      vkCmdEndRenderPass(cb);
+    }
   } else if (offscreenFb_ && hasParams_) {
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
@@ -2775,95 +2909,16 @@ void VulkanRenderer::present() {
         vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
       }
     }
-    // Helper lines (grid/axes/bbox) within the offscreen pass.
-    if (!helperCopy_.empty() && linePipeline_) {
-      const VkDeviceSize bytes = helperCopy_.size() * sizeof(HelperVertex);
-      if (bytes > helperCap_[frame_]) {
-        if (helperBuf_[frame_]) vkDestroyBuffer(device_, helperBuf_[frame_], nullptr);
-        if (helperMem_[frame_]) vkFreeMemory(device_, helperMem_[frame_], nullptr);
-        helperBuf_[frame_] = VK_NULL_HANDLE;
-        helperMem_[frame_] = VK_NULL_HANDLE;
-        if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                             helperCopy_.data(), &helperBuf_[frame_],
-                             &helperMem_[frame_])) {
-          helperCap_[frame_] = bytes;
-        }
-      } else {
-        void* p = nullptr;
-        vkMapMemory(device_, helperMem_[frame_], 0, bytes, 0, &p);
-        std::memcpy(p, helperCopy_.data(), static_cast<size_t>(bytes));
-        vkUnmapMemory(device_, helperMem_[frame_]);
-      }
-      if (helperBuf_[frame_]) {
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipeline_);
-        const light3d::Mat4 VP = P * V;
-        vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(float) * 16, VP.m);
-        VkDeviceSize off = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &helperBuf_[frame_], &off);
-        vkCmdDraw(cb, static_cast<uint32_t>(helperCopy_.size()), 1, 0, 0);
-      }
-    }
-    // Overlay (skeleton X-ray) lines: depth-test-disabled pipeline, on top.
-    if (!overlayCopy_.empty() && linePipelineNoDepth_) {
-      const VkDeviceSize bytes = overlayCopy_.size() * sizeof(HelperVertex);
-      if (bytes > overlayCap_[frame_]) {
-        if (overlayBuf_[frame_]) vkDestroyBuffer(device_, overlayBuf_[frame_], nullptr);
-        if (overlayMem_[frame_]) vkFreeMemory(device_, overlayMem_[frame_], nullptr);
-        overlayBuf_[frame_] = VK_NULL_HANDLE;
-        overlayMem_[frame_] = VK_NULL_HANDLE;
-        if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                             overlayCopy_.data(), &overlayBuf_[frame_],
-                             &overlayMem_[frame_])) {
-          overlayCap_[frame_] = bytes;
-        }
-      } else {
-        void* p = nullptr;
-        vkMapMemory(device_, overlayMem_[frame_], 0, bytes, 0, &p);
-        std::memcpy(p, overlayCopy_.data(), static_cast<size_t>(bytes));
-        vkUnmapMemory(device_, overlayMem_[frame_]);
-      }
-      if (overlayBuf_[frame_]) {
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipelineNoDepth_);
-        const light3d::Mat4 VP = P * V;
-        vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(float) * 16, VP.m);
-        VkDeviceSize off = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &overlayBuf_[frame_], &off);
-        vkCmdDraw(cb, static_cast<uint32_t>(overlayCopy_.size()), 1, 0, 0);
-      }
-    }
-    // Selection-highlight edge lines (X-ray, always visible like GL's overlay).
-    if (!highlightLineCopy_.empty() && linePipelineNoDepth_) {
-      const VkDeviceSize bytes = highlightLineCopy_.size() * sizeof(HelperVertex);
-      if (bytes > highlightLineCap_[frame_]) {
-        if (highlightLineBuf_[frame_])
-          vkDestroyBuffer(device_, highlightLineBuf_[frame_], nullptr);
-        if (highlightLineMem_[frame_])
-          vkFreeMemory(device_, highlightLineMem_[frame_], nullptr);
-        highlightLineBuf_[frame_] = VK_NULL_HANDLE;
-        highlightLineMem_[frame_] = VK_NULL_HANDLE;
-        if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                             highlightLineCopy_.data(), &highlightLineBuf_[frame_],
-                             &highlightLineMem_[frame_])) {
-          highlightLineCap_[frame_] = bytes;
-        }
-      } else {
-        void* p = nullptr;
-        vkMapMemory(device_, highlightLineMem_[frame_], 0, bytes, 0, &p);
-        std::memcpy(p, highlightLineCopy_.data(), static_cast<size_t>(bytes));
-        vkUnmapMemory(device_, highlightLineMem_[frame_]);
-      }
-      if (highlightLineBuf_[frame_]) {
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipelineNoDepth_);
-        const light3d::Mat4 VP = P * V;
-        vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(float) * 16, VP.m);
-        VkDeviceSize off = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &highlightLineBuf_[frame_], &off);
-        vkCmdDraw(cb, static_cast<uint32_t>(highlightLineCopy_.size()), 1, 0, 0);
-      }
-    }
+    // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
+    // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
+    const light3d::Mat4 VP = P * V;
+    drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
+                &helperCap_[frame_], linePipeline_, VP.m);
+    drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
+                &overlayCap_[frame_], linePipelineNoDepth_, VP.m);
+    drawLineSet(cb, highlightLineCopy_, &highlightLineBuf_[frame_],
+                &highlightLineMem_[frame_], &highlightLineCap_[frame_],
+                linePipelineNoDepth_, VP.m);
     vkCmdEndRenderPass(cb);
   }
 
@@ -3130,6 +3185,7 @@ void VulkanRenderer::shutdown() {
     highlightLineMem_[i] = VK_NULL_HANDLE;
   }
   if (offscreenPass_) { vkDestroyRenderPass(device_, offscreenPass_, nullptr); offscreenPass_ = VK_NULL_HANDLE; }
+  if (overlayLoadPass_) { vkDestroyRenderPass(device_, overlayLoadPass_, nullptr); overlayLoadPass_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {
     if (imageAvailable_[i]) vkDestroySemaphore(device_, imageAvailable_[i], nullptr);
     if (renderFinished_[i]) vkDestroySemaphore(device_, renderFinished_[i], nullptr);
