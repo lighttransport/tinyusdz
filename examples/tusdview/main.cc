@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
+  std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
@@ -120,6 +121,16 @@ int main(int argc, char** argv) {
       wantWireframe = true;
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
+    } else if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
+      const char* m = argv[++i];
+      if (!std::strcmp(m, "shaded")) wantMode = tusdview::RenderMode::Shaded;
+      else if (!std::strcmp(m, "wireframe")) wantMode = tusdview::RenderMode::Wireframe;
+      else if (!std::strcmp(m, "normals")) wantMode = tusdview::RenderMode::Normals;
+      else if (!std::strcmp(m, "material-id")) wantMode = tusdview::RenderMode::MaterialId;
+      else if (!std::strcmp(m, "geom-normal")) wantMode = tusdview::RenderMode::GeomNormal;
+      else if (!std::strcmp(m, "uv")) wantMode = tusdview::RenderMode::Uv;
+      else if (!std::strcmp(m, "depth")) wantMode = tusdview::RenderMode::Depth;
+      else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
     } else if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
@@ -150,6 +161,8 @@ int main(int argc, char** argv) {
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
           "color per material; all backends).\n"
+          "  --mode NAME   Start in a render mode: shaded|wireframe|normals|"
+          "material-id|geom-normal|uv|depth (all backends).\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Load via the `next` lazy loader + tydra-next converter "
@@ -278,5 +291,6 @@ int main(int argc, char** argv) {
   app.setCudaRt(wantCuda);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
+  if (wantMode) app.setRenderMode(*wantMode);
   return app.run(file, maxFrames, screenshot);
 }

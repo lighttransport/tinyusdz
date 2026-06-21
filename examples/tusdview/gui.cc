@@ -402,6 +402,13 @@ void Gui::drawDockspaceAndMenu() {
       if (ImGui::MenuItem("Shaded", nullptr, shaded)) mode_ = RenderMode::Shaded;
       if (ImGui::MenuItem("Wireframe", nullptr, wire)) mode_ = RenderMode::Wireframe;
       if (ImGui::MenuItem("Material ID", nullptr, matid)) mode_ = RenderMode::MaterialId;
+      if (ImGui::MenuItem("Normals", nullptr, mode_ == RenderMode::Normals))
+        mode_ = RenderMode::Normals;
+      if (ImGui::MenuItem("Geometric Normal", nullptr, mode_ == RenderMode::GeomNormal))
+        mode_ = RenderMode::GeomNormal;
+      if (ImGui::MenuItem("UV", nullptr, mode_ == RenderMode::Uv)) mode_ = RenderMode::Uv;
+      if (ImGui::MenuItem("Depth", nullptr, mode_ == RenderMode::Depth))
+        mode_ = RenderMode::Depth;
       ImGui::Separator();
       // Ray tracing (Vulkan only; disabled when the device/build can't do it).
       // The checkmark mirrors the renderer's actual technique.
@@ -2584,6 +2591,13 @@ void Gui::renderViewportScene() {
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
+  // Depth AOV normalizer: the scene's bounding-box diagonal.
+  if (draw_ && draw_->hasBounds) {
+    float dx = draw_->aabbMax[0] - draw_->aabbMin[0];
+    float dy = draw_->aabbMax[1] - draw_->aabbMin[1];
+    float dz = draw_->aabbMax[2] - draw_->aabbMin[2];
+    p.depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+  }
   buildViewVisibilityMask();
   if (!viewVisible_.empty()) {
     p.meshVisible = viewVisible_.data();
