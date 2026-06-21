@@ -19,6 +19,8 @@
 #include "line_frag.spv.h"
 #include "line_vert.spv.h"
 #include "mesh_frag.spv.h"
+#include "mesh_inst_frag.spv.h"
+#include "mesh_inst_vert.spv.h"
 #include "mesh_vert.spv.h"
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
@@ -82,6 +84,20 @@ struct PushC {
   int32_t flags;       // bit0 = geometric (no authored) normals, bit1 = double-sided
   int32_t meshId;      // per-draw mesh index (mesh-id AOV)
 };
+
+// Instanced flat-shaded prototype push constants (must match mesh_inst.vert/.frag).
+struct InstPushC {
+  float viewProj[16];
+  float camPos[4];      // xyz camera + .w depthScale
+  float sceneMin[4];    // position-AOV bbox min
+  float sceneExtent[4]; // position-AOV bbox size
+  float emissive[4];    // xyz selection-highlight override (else 0)
+  int32_t renderMode;
+  int32_t meshId;
+  int32_t flags;        // bit0=geomNormal, bit1=doubleSided, bits2-3=purpose, bits4-6=kind
+  int32_t pad;
+};
+static_assert(sizeof(InstPushC) == 144, "InstPushC must match mesh_inst shaders");
 
 // Ray-tracing compute push constants (must match raytrace.comp).
 struct RtPushC {
@@ -899,6 +915,122 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   return true;
 }
 
+// Instanced flat-shaded prototype pipeline (large-scene --next path). Mirrors the
+// GL instanced program: per-instance 3x4 o2w + instance color + per-vertex color,
+// drawn with vkCmdDrawIndexed(indexCount, instanceCount, ...). Uses only push
+// constants (no descriptor sets), so it has its own pipeline layout.
+bool VulkanRenderer::createInstPipeline(std::string* err) {
+  VkPushConstantRange pcr{};
+  pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pcr.offset = 0;
+  pcr.size = sizeof(InstPushC);
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pcr;
+  VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &instPipelineLayout_),
+           "inst pipeline layout");
+
+  VkShaderModule vs = createShader(mesh_inst_vert_spv, sizeof(mesh_inst_vert_spv));
+  VkShaderModule fs = createShader(mesh_inst_frag_spv, sizeof(mesh_inst_frag_spv));
+  if (!vs || !fs) {
+    if (err) *err = "inst shader module creation failed";
+    return false;
+  }
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vs;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fs;
+  stages[1].pName = "main";
+
+  // binding 0 = DrawVertex (vertex-rate); 1 = per-instance 3x4 o2w (instance-rate,
+  // 48B); 2 = per-instance color (instance-rate, 12B); 3 = per-vertex prototype
+  // color (vertex-rate, 12B).
+  VkVertexInputBindingDescription bind[4]{};
+  bind[0] = {0, sizeof(DrawVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+  bind[1] = {1, 12 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
+  bind[2] = {2, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
+  bind[3] = {3, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
+  VkVertexInputAttributeDescription attrs[7]{};
+  attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                   // aPos
+  attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};   // aNormal
+  attrs[2] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};               // aRow0
+  attrs[3] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 4 * sizeof(float)};  // aRow1
+  attrs[4] = {8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 8 * sizeof(float)};  // aRow2
+  attrs[5] = {9, 2, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // aInstColor
+  attrs[6] = {10, 3, VK_FORMAT_R32G32B32_SFLOAT, 0};                 // aVtxColor
+
+  VkPipelineVertexInputStateCreateInfo vin{};
+  vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vin.vertexBindingDescriptionCount = 4;
+  vin.pVertexBindingDescriptions = bind;
+  vin.vertexAttributeDescriptionCount = 7;
+  vin.pVertexAttributeDescriptions = attrs;
+
+  VkPipelineInputAssemblyStateCreateInfo ia{};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkPipelineViewportStateCreateInfo vp{};
+  vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vp.viewportCount = 1;
+  vp.scissorCount = 1;
+  VkPipelineRasterizationStateCreateInfo rs{};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  rs.cullMode = VK_CULL_MODE_NONE;
+  rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rs.lineWidth = 1.0f;
+  VkPipelineMultisampleStateCreateInfo ms{};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineDepthStencilStateCreateInfo ds{};
+  ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  ds.depthTestEnable = VK_TRUE;
+  ds.depthWriteEnable = VK_TRUE;
+  ds.depthCompareOp = VK_COMPARE_OP_LESS;
+  VkPipelineColorBlendAttachmentState cba{};
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo cb{};
+  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  cb.attachmentCount = 1;
+  cb.pAttachments = &cba;
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynState{};
+  dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynState.dynamicStateCount = 2;
+  dynState.pDynamicStates = dyn;
+
+  VkGraphicsPipelineCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  ci.stageCount = 2;
+  ci.pStages = stages;
+  ci.pVertexInputState = &vin;
+  ci.pInputAssemblyState = &ia;
+  ci.pViewportState = &vp;
+  ci.pRasterizationState = &rs;
+  ci.pMultisampleState = &ms;
+  ci.pDepthStencilState = &ds;
+  ci.pColorBlendState = &cb;
+  ci.pDynamicState = &dynState;
+  ci.layout = instPipelineLayout_;
+  ci.renderPass = offscreenPass_;
+  ci.subpass = 0;
+  VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                         &instPipeline_);
+  vkDestroyShaderModule(device_, vs, nullptr);
+  vkDestroyShaderModule(device_, fs, nullptr);
+  if (r != VK_SUCCESS) {
+    if (err) *err = "vkCreateGraphicsPipelines (inst) failed";
+    return false;
+  }
+  return true;
+}
+
 bool VulkanRenderer::createLinePipeline(std::string* err) {
   VkPushConstantRange pcr{};
   pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1572,6 +1704,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createSampler(err)) return false;
   if (!createDescriptorInfra(err)) return false;
   if (!createPipeline(err)) return false;       // needs texSetLayout_
+  if (!createInstPipeline(err)) return false;   // instanced flat prototypes
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
   {
@@ -1707,6 +1840,12 @@ void VulkanRenderer::destroyScene() {
     if (m.uv1VboMem) vkFreeMemory(device_, m.uv1VboMem, nullptr);
     if (m.morphInflVbo) vkDestroyBuffer(device_, m.morphInflVbo, nullptr);
     if (m.morphInflVboMem) vkFreeMemory(device_, m.morphInflVboMem, nullptr);
+    if (m.instVbo) vkDestroyBuffer(device_, m.instVbo, nullptr);
+    if (m.instVboMem) vkFreeMemory(device_, m.instVboMem, nullptr);
+    if (m.instColorBuf) vkDestroyBuffer(device_, m.instColorBuf, nullptr);
+    if (m.instColorMem) vkFreeMemory(device_, m.instColorMem, nullptr);
+    if (m.instVtxColorBuf) vkDestroyBuffer(device_, m.instVtxColorBuf, nullptr);
+    if (m.instVtxColorMem) vkFreeMemory(device_, m.instVtxColorMem, nullptr);
     if (m.influenceDataBuf) vkDestroyBuffer(device_, m.influenceDataBuf, nullptr);
     if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
@@ -2046,6 +2185,43 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
     }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
+  }
+
+  // Raster GPU instancing buffers (flat --next path; independent of RT support).
+  // The VK raster pipeline draws these prototypes with vkCmdDrawIndexed(...,
+  // instanceCount, ...) using per-instance rows + colors as instance-rate vertex
+  // attributes -- mirroring the GL instanced program.
+  if (!sm.instanceXforms.empty()) {
+    std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    const size_t ni = sm.instanceXforms.size() / 12;
+    gm.instanceCount = static_cast<uint32_t>(ni);
+    gm.drawInstanceCount = gm.instanceCount;
+    // Per-instance 3x4 o2w rows (host-visible so per-instance culling can re-map
+    // the visible subset in place).
+    createHostBuffer(sm.instanceXforms.size() * sizeof(float),
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.instanceXforms.data(),
+                     &gm.instVbo, &gm.instVboMem);
+    // Per-instance color: authored instanceColors, else the prototype's flatColor
+    // repeated (matches the GL aColor path).
+    std::vector<float> icol;
+    if (sm.instanceColors.size() == ni * 3) {
+      icol = sm.instanceColors;
+    } else {
+      icol.resize(ni * 3);
+      for (size_t k = 0; k < ni; ++k) {
+        icol[k * 3 + 0] = sm.flatColor[0];
+        icol[k * 3 + 1] = sm.flatColor[1];
+        icol[k * 3 + 2] = sm.flatColor[2];
+      }
+    }
+    createHostBuffer(icol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     icol.data(), &gm.instColorBuf, &gm.instColorMem);
+    // Per-vertex prototype color (binding 3; white when the prototype has none).
+    std::vector<float> vcol = sm.vertexColors;
+    if (vcol.size() != sm.vertices.size() * 3)
+      vcol.assign(sm.vertices.size() * 3, 1.0f);
+    createHostBuffer(vcol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem);
   }
   meshes_.push_back(gm);
 }
@@ -2831,6 +3007,7 @@ void VulkanRenderer::present() {
       if (mi < meshVisible_.size() && !meshVisible_[mi]) {
         continue;  // hidden by the viewer's per-mesh visibility mask
       }
+      if (meshes_[mi].instanceCount > 0) continue;  // drawn in the instanced pass
       const auto& mesh = meshes_[mi];
       light3d::Mat4 W = ToMat4(mesh.world);
       light3d::Mat4 MVP = P * V * W;
@@ -2920,6 +3097,47 @@ void VulkanRenderer::present() {
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(PushC), &pc);
         vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+      }
+    }
+
+    // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--next path) ----
+    bool anyInstanced = false;
+    for (const auto& m : meshes_) {
+      if (m.instanceCount > 0) { anyInstanced = true; break; }
+    }
+    if (anyInstanced && instPipeline_) {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+      InstPushC ipc{};
+      const light3d::Mat4 VPi = P * V;
+      std::memcpy(ipc.viewProj, VPi.m, sizeof(ipc.viewProj));
+      ipc.camPos[0] = cameraPos_[0]; ipc.camPos[1] = cameraPos_[1];
+      ipc.camPos[2] = cameraPos_[2]; ipc.camPos[3] = depthScale_;
+      for (int e = 0; e < 3; ++e) {
+        ipc.sceneMin[e] = sceneMin_[e];
+        ipc.sceneExtent[e] = sceneExtent_[e];
+      }
+      ipc.emissive[0] = ipc.emissive[1] = ipc.emissive[2] = 0.0f;
+      ipc.renderMode = rtMode_;
+      for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+        if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+        const auto& mesh = meshes_[mi];
+        if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
+        if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
+        ipc.meshId = static_cast<int>(mi);
+        ipc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
+                    ((mesh.purposeId & 3) << 2) | ((mesh.kindId & 7) << 4);
+        vkCmdPushConstants(cb, instPipelineLayout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(InstPushC), &ipc);
+        VkBuffer bufs[4] = {mesh.vbo, mesh.instVbo, mesh.instColorBuf,
+                            mesh.instVtxColorBuf};
+        VkDeviceSize offs[4] = {0, 0, 0, 0};
+        vkCmdBindVertexBuffers(cb, 0, 4, bufs, offs);
+        vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
+        for (const auto& sub : mesh.submeshes) {
+          vkCmdDrawIndexed(cb, sub.indexCount, mesh.drawInstanceCount,
+                           sub.indexOffset, 0, 0);
+        }
       }
     }
     // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
@@ -3180,6 +3398,8 @@ void VulkanRenderer::shutdown() {
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
+  if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
+  if (instPipelineLayout_) { vkDestroyPipelineLayout(device_, instPipelineLayout_, nullptr); instPipelineLayout_ = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
