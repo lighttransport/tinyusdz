@@ -13,6 +13,8 @@ layout(push_constant) uniform PushConstants {
   mat3 nmat;
   vec4 baseColor;
   vec4 camPos;
+  vec4 sceneMin;
+  vec4 sceneExtent;
   int matId;
   int renderMode;
 } pc;
@@ -39,6 +41,25 @@ void main() {
       return;
     }
     if (pc.renderMode == 5) { outColor = vec4(fract(vUV), 0.0, 1.0); return; }
+    if (pc.renderMode == 7) {  // albedo (unlit)
+      outColor = vec4(pc.baseColor.rgb * texture(uBaseColorTex, vUV).rgb, 1.0);
+      return;
+    }
+    if (pc.renderMode == 8) {  // facing
+      outColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
+      return;
+    }
+    if (pc.renderMode == 12) { outColor = vec4(vec3(pc.baseColor.a), 1.0); return; }  // opacity
+    if (pc.renderMode == 13) {  // world position
+      outColor = vec4(clamp((vWorldPos - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0), 1.0);
+      return;
+    }
+    if (pc.renderMode == 23) {  // uv checker
+      vec2 c = floor(fract(vUV) * 16.0);
+      float k = mod(c.x + c.y, 2.0);
+      outColor = vec4(vec3(mix(0.25, 0.85, k)), 1.0);
+      return;
+    }
   }
   vec3 base = pc.baseColor.rgb * texture(uBaseColorTex, vUV).rgb;
   // Headlight-ish fixed directional light + ambient (matches the GL look roughly).

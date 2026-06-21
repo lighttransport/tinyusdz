@@ -24,6 +24,8 @@ layout(push_constant) uniform PushConstants {
   mat3 nmat;
   vec4 baseColor;
   vec4 camPos;
+  vec4 sceneMin;
+  vec4 sceneExtent;
   int matId;
   int renderMode;
 } pc;

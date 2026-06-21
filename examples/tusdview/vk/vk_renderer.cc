@@ -75,16 +75,20 @@ struct PushC {
   float nmat[12];      // 3 columns padded to vec4
   float baseColor[4];
   float camPos[4];     // xyz camera position + .w depth-AOV normalizer
+  float sceneMin[4];   // position AOV: scene bbox min
+  float sceneExtent[4];// position AOV: scene bbox size
   int32_t matId;       // material id (material-id visualization)
-  int32_t renderMode;  // RenderMode (0=shaded, 2=normals, 3=matId, 4=geomN, 5=uv, 6=depth)
+  int32_t renderMode;  // RenderMode (see renderer.hh)
 };
 
 // Ray-tracing compute push constants (must match raytrace.comp).
 struct RtPushC {
   float invViewProj[16];
-  float camPos[4];
-  float lightDir[4];
+  float camPos[4];      // xyz + .w RenderMode
+  float lightDir[4];    // xyz + .w depthScale
   float clearColor[4];
+  float sceneMin[4];    // position AOV bbox
+  float sceneExtent[4];
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -2240,6 +2244,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
   pc.lightDir[3] = depthScale_;  // depth AOV normalizer
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
+  for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -2411,6 +2416,10 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   hasParams_ = (params.view && params.proj);
   rtMode_ = static_cast<int>(params.mode);
   depthScale_ = params.depthScale;
+  for (int i = 0; i < 3; ++i) {
+    sceneMin_[i] = params.sceneMin[i];
+    sceneExtent_[i] = params.sceneExtent[i];
+  }
 
   // Copy helper lines (the caller's pointer is only valid during this call).
   if (params.helperLines && params.helperLineVertexCount > 0) {
@@ -2558,6 +2567,10 @@ void VulkanRenderer::present() {
         std::memcpy(pc.model, W.m, sizeof(pc.model));
         pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1];
         pc.camPos[2] = cameraPos_[2]; pc.camPos[3] = depthScale_;
+        for (int e = 0; e < 3; ++e) {
+          pc.sceneMin[e] = sceneMin_[e];
+          pc.sceneExtent[e] = sceneExtent_[e];
+        }
         // mat3 columns padded to vec4
         for (int c = 0; c < 3; ++c) {
           pc.nmat[c * 4 + 0] = nmat9[c * 3 + 0];

@@ -130,6 +130,23 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "geom-normal")) wantMode = tusdview::RenderMode::GeomNormal;
       else if (!std::strcmp(m, "uv")) wantMode = tusdview::RenderMode::Uv;
       else if (!std::strcmp(m, "depth")) wantMode = tusdview::RenderMode::Depth;
+      else if (!std::strcmp(m, "albedo")) wantMode = tusdview::RenderMode::Albedo;
+      else if (!std::strcmp(m, "facing")) wantMode = tusdview::RenderMode::Facing;
+      else if (!std::strcmp(m, "roughness")) wantMode = tusdview::RenderMode::Roughness;
+      else if (!std::strcmp(m, "metallic")) wantMode = tusdview::RenderMode::Metallic;
+      else if (!std::strcmp(m, "emissive")) wantMode = tusdview::RenderMode::Emissive;
+      else if (!std::strcmp(m, "opacity")) wantMode = tusdview::RenderMode::Opacity;
+      else if (!std::strcmp(m, "position")) wantMode = tusdview::RenderMode::Position;
+      else if (!std::strcmp(m, "barycentric")) wantMode = tusdview::RenderMode::Barycentric;
+      else if (!std::strcmp(m, "prim-id")) wantMode = tusdview::RenderMode::PrimId;
+      else if (!std::strcmp(m, "mesh-id")) wantMode = tusdview::RenderMode::MeshId;
+      else if (!std::strcmp(m, "purpose")) wantMode = tusdview::RenderMode::Purpose;
+      else if (!std::strcmp(m, "missing-normals")) wantMode = tusdview::RenderMode::MissingNormals;
+      else if (!std::strcmp(m, "double-sided")) wantMode = tusdview::RenderMode::DoubleSided;
+      else if (!std::strcmp(m, "skin-weights")) wantMode = tusdview::RenderMode::SkinWeights;
+      else if (!std::strcmp(m, "tangent")) wantMode = tusdview::RenderMode::Tangent;
+      else if (!std::strcmp(m, "uv-checker")) wantMode = tusdview::RenderMode::UvChecker;
+      else if (!std::strcmp(m, "ao")) wantMode = tusdview::RenderMode::AmbientOcclusion;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
