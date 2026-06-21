@@ -306,6 +306,66 @@ def Xform "World"
     if len(set(pixels)) <= 1:
         raise RuntimeError("nested-instancer RT preview render appears blank")
 
+    # Native-instance prototype HOLDER: when N instanceable siblings share a
+    # prototype, composition designates one as the prototype source ("holder"). It
+    # is still a placed instance (Pixar renders all N), so it must render at its own
+    # transform -- 2 siblings -> 2 visible, 1 unique. (Regression: the holder used to
+    # be skipped, dropping one of the N.)
+    holder_proto = outdir / "tusdrender-holder-proto.usda"
+    holder_proto.write_text("""#usda 1.0
+(defaultPrim = "Proto")
+def Xform "Proto"
+{
+    def Mesh "M"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (0, 1, 0)]
+    }
+}
+""")
+    holder_scene = outdir / "tusdrender-holder.usda"
+    holder_scene.write_text("""#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World"
+{
+    def Xform "A" (
+        instanceable = true
+        references = @./tusdrender-holder-proto.usda@</Proto>
+    )
+    {
+        double3 xformOp:translate = (-2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Xform "B" (
+        instanceable = true
+        references = @./tusdrender-holder-proto.usda@</Proto>
+    )
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+""")
+    holder_out = outdir / "tusdrender-holder.png"
+    holder_stats = subprocess.run(
+        [exe, str(holder_scene), str(holder_out), "-w", "48", "-height", "32",
+         "-rtPreview", "-stats", "-autoframe"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for expected in (
+        "rt instancing: tlas",
+        "rt instances: 2",
+        "rt unique triangles: 1",
+        "triangles: 2",
+    ):
+        if expected not in holder_stats.stderr:
+            raise RuntimeError(
+                f"missing holder stat {expected!r}:\n{holder_stats.stderr}")
+
     # BasisCurves ray tracing in the -rtPreview path (curves build into the
     # DirectScene as LightRT hair strands), including curve-prototype instancing
     # (a PointInstancer whose prototype is a BasisCurves is baked per instance).
