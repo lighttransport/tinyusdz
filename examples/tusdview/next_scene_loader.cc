@@ -482,10 +482,36 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
   }
 
-  // --- 3b. Non-instanced meshes: every converter Mesh node not consumed as a
-  //         prototype, placed by its world transform (the original flat path). ---
+  // --- 3b. Non-instanced meshes: STATIC BATCHING. Each mesh's vertices are baked
+  //         to world space and merged into a few big buffers keyed by (purpose,
+  //         geometric-normal), so a 33k-mesh scene draws in a handful of calls
+  //         (one VAO/VBO/EBO per batch) instead of 33k -- far less draw-call + GL
+  //         object overhead. Purpose stays per-batch so the GUI toggles still
+  //         work; per-mesh pick/hide is not a goal of the flat large-scene path.
+  struct Batch { DrawMeshCPU dm; bool anyColor = false; };
+  std::map<std::pair<std::string, bool>, Batch> open;  // key -> current batch
+  const size_t kBatchVtxCap = size_t(8) << 20;  // 8M verts/batch (indices stay 32-bit)
+
+  auto flushBatch = [&](Batch& b) {
+    if (b.dm.vertices.empty()) return;
+    if (!b.anyColor) b.dm.vertexColors.clear();
+    if (bounds.has)
+      for (int k = 0; k < 3; ++k) {
+        b.dm.aabbMin[k] = bounds.mn[k]; b.dm.aabbMax[k] = bounds.mx[k];
+      }
+    b.dm.submeshes.push_back(
+        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), 0});
+    std::memset(b.dm.world, 0, sizeof(b.dm.world));
+    b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
+    draw->triangleCount += b.dm.indices.size() / 3;
+    draw->meshes.push_back(std::move(b.dm));
+    b = Batch();
+  };
+
+  bool capped = false;
   for (const tydn::SceneNode& node : scene.nodes) {
     if (ctrl && ctrl->cancel.load()) break;
+    if (capped) break;
     if (node.type != tydn::NodeType::Mesh) continue;
     if (consumed.count(node.prim_path)) continue;
     int32_t mesh_id = -1;
@@ -500,33 +526,77 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       continue;
     const tydn::RenderMesh& m = scene.meshes[static_cast<size_t>(mesh_id)];
 
-    DrawMeshCPU dm;
-    if (!FillFlatGeometry(m, &dm)) continue;
-    dm.purpose = ResolveNextPurpose(stage, node.prim_path);
-    // node.world_transform.m is row-major float[16]; the row->column storage swap
-    // + geometric transpose cancel, so copy element-wise (see Mat4dToColMajor).
-    for (int k = 0; k < 16; ++k) dm.world[k] = node.world_transform.m[k];
+    DrawMeshCPU loc;
+    if (!FillFlatGeometry(m, &loc)) continue;
+    const std::string purpose = ResolveNextPurpose(stage, node.prim_path);
+    const float* M = node.world_transform.m;  // row-major, p*M
 
-    // World-space AABB from the 8 local-bbox corners.
+    Batch& b = open[{purpose, loc.geometricNormal}];
+    if (!b.dm.vertices.empty() &&
+        b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
+      flushBatch(b);  // resets b in the map slot
+    }
+    b.dm.purpose = purpose;
+    b.dm.geometricNormal = loc.geometricNormal;
+    const bool hasC = !loc.vertexColors.empty();
+    // Allocate the batch color buffer only once a mesh actually contributes a
+    // color: back-fill white for the vertices already in the batch. No-color
+    // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
+    if (hasC && !b.anyColor) {
+      b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
+      b.anyColor = true;
+    }
+
+    // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
+    // reserve(size()+n) per mesh would reallocate the whole batch every mesh (O(N^2)).
+    const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
+    for (size_t i = 0; i < loc.vertices.size(); ++i) {
+      DrawVertex v = loc.vertices[i];
+      float wp[3], wn[3];
+      for (int c = 0; c < 3; ++c) {
+        wp[c] = v.px * M[0 * 4 + c] + v.py * M[1 * 4 + c] + v.pz * M[2 * 4 + c] +
+                M[3 * 4 + c];
+        wn[c] = v.nx * M[0 * 4 + c] + v.ny * M[1 * 4 + c] + v.nz * M[2 * 4 + c];
+      }
+      v.px = wp[0]; v.py = wp[1]; v.pz = wp[2];
+      const float nl = std::sqrt(wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]);
+      if (nl > 1e-12f) { v.nx = wn[0] / nl; v.ny = wn[1] / nl; v.nz = wn[2] / nl; }
+      else { v.nx = 0; v.ny = 0; v.nz = 0; }
+      b.dm.vertices.push_back(v);
+      // Only emit per-vertex color once the batch has any (back-filled above);
+      // white for this mesh when it has none, to stay aligned.
+      if (b.anyColor) {
+        if (hasC) {
+          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
+          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 1]);
+          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 2]);
+        } else {
+          b.dm.vertexColors.push_back(1.0f);
+          b.dm.vertexColors.push_back(1.0f);
+          b.dm.vertexColors.push_back(1.0f);
+        }
+      }
+    }
+    for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+
+    // World-space AABB from the 8 local-bbox corners (scene bounds for framing).
     const tydn::Float3& lo = m.bbox_min;
     const tydn::Float3& hi = m.bbox_max;
-    Bounds mb;
     for (int corner = 0; corner < 8; ++corner) {
       float lp[3] = {(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y,
                      (corner & 4) ? hi.z : lo.z};
       float wp[3];
-      const float* M = node.world_transform.m;
       for (int c = 0; c < 3; ++c)
         wp[c] = lp[0] * M[0 * 4 + c] + lp[1] * M[1 * 4 + c] +
                 lp[2] * M[2 * 4 + c] + M[3 * 4 + c];
-      mb.add(wp);
       bounds.add(wp);
     }
-    for (int k = 0; k < 3; ++k) { dm.aabbMin[k] = mb.mn[k]; dm.aabbMax[k] = mb.mx[k]; }
-    draw->triangleCount += dm.indices.size() / 3;
-    draw->meshes.push_back(std::move(dm));
-    if (draw->triangleCount > triCap) { draw->truncated = true; break; }
+    if (draw->triangleCount + b.dm.indices.size() / 3 > triCap) {
+      draw->truncated = true;
+      capped = true;
+    }
   }
+  for (auto& kv : open) flushBatch(kv.second);
 
   if (bounds.has) {
     for (int k = 0; k < 3; ++k) {

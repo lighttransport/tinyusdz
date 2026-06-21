@@ -189,6 +189,19 @@ bool App::initImGui(std::string* err) {
   return renderer_->initImGui(err);
 }
 
+// Release a mesh's CPU geometry after it's been uploaded to the GPU. Used only
+// for the static --next preview, where the CPU copy is dead weight (no
+// animation re-pose, GPU skinning, or meaningful per-mesh pick on batched
+// geometry). Halves resident RAM for large scenes. Keeps small metadata
+// (name/purpose/world/aabb/submeshes) the GUI's visibility mask still reads.
+static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
+  std::vector<DrawVertex>().swap(m.vertices);
+  std::vector<uint32_t>().swap(m.indices);
+  std::vector<float>().swap(m.vertexColors);
+  std::vector<float>().swap(m.instanceXforms);
+  std::vector<float>().swap(m.instanceColors);
+}
+
 void App::applyLoaded(bool ok, bool progressive) {
   progressiveActive_ = false;
   nextMesh_ = 0;
@@ -227,6 +240,9 @@ void App::applyLoaded(bool ok, bool progressive) {
     // Synchronous full upload (headless / failure). draw_ is empty when !ok.
     std::string uerr;
     renderer_->uploadScene(draw_, &uerr);
+    if (ok && useNextLoader_) {
+      for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
+    }
     if (ok) {
       LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s", loaded_.filepath.c_str(),
            draw_.meshes.size(), draw_.triangleCount,
@@ -264,7 +280,9 @@ void App::stepProgressiveUpload() {
   };
   // Geometry first so meshes appear, ~4ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
-    renderer_->appendMesh(draw_.meshes[nextMesh_++]);
+    renderer_->appendMesh(draw_.meshes[nextMesh_]);
+    if (useNextLoader_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+    ++nextMesh_;
     if (elapsedMs() > 4.0) break;
   }
   // Then stream textures (meshes show base color until their texture lands).
