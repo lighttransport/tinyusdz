@@ -313,6 +313,42 @@ std::unordered_map<std::string, float> GatherBlendWeights(
   return out;
 }
 
+// Read a BlendShape prim's in-between shapes from its `inbetweens:*` attributes
+// (vector3f[] offsets + a `weight` attr-meta). Sorted ascending by weight.
+InbetweenSamples ReadInbetweensFromPrim(const tinyusdz::BlendShape& bs) {
+  InbetweenSamples out;
+  for (const auto& kv : bs.props) {
+    if (kv.first.rfind("inbetweens:", 0) != 0) continue;  // namespace prefix
+    const tinyusdz::Property& p = kv.second;
+    if (!p.is_attribute()) continue;
+    const tinyusdz::Attribute& a = p.get_attribute();
+    if (!a.metas().has_weight()) continue;
+    std::vector<tinyusdz::value::vector3f> offs;
+    if (!a.get_value(&offs)) continue;
+    out.emplace_back(static_cast<float>(a.metas().get_weight()), std::move(offs));
+  }
+  std::sort(out.begin(), out.end(),
+            [](const auto& x, const auto& y) { return x.first < y.first; });
+  return out;
+}
+
+// Bracket a target weight `w` within the implied sample table {0, ibWeights..., 1}
+// (ibWeights ascending). Returns table indices [lo, hi] (0 == implicit zero, last
+// == primary) and the lerp parameter t (extrapolates outside [0,1]).
+struct MorphBracket { int lo; int hi; float t; };
+MorphBracket FindMorphBracket(const std::vector<float>& ibWeights, float w) {
+  const int N = static_cast<int>(ibWeights.size());
+  auto wAt = [&](int i) -> float {
+    return i == 0 ? 0.0f : (i == N + 1 ? 1.0f : ibWeights[i - 1]);
+  };
+  int hi = 1;
+  while (hi < N + 1 && w > wAt(hi)) ++hi;
+  const int lo = hi - 1;
+  const float denom = wAt(hi) - wAt(lo);
+  const float t = denom > 1e-12f ? (w - wAt(lo)) / denom : 0.0f;
+  return {lo, hi, t};
+}
+
 bool MeshIsSkinned(const tydra::RenderMesh& m) {
   return m.skel_id >= 0 && !m.joint_and_weights.jointIndices.empty();
 }
@@ -426,23 +462,21 @@ void ApplyMorphTarget(const MorphTargetCPU& mt, float w,
                       std::vector<DrawVertex>* mv) {
   if (w == 0.0f) return;
   const size_t n = mt.vtx.size();
-  struct Samp { float w; const std::vector<float>* d; };  // d == null -> zero
-  std::vector<Samp> s;
-  s.reserve(mt.inbetweens.size() + 2);
-  s.push_back({0.0f, nullptr});
+  // Sample offset sources parallel to the bracket table {0, inbetweens..., 1}.
+  std::vector<const std::vector<float>*> src;  // null -> zero offset
+  std::vector<float> ibW;
+  src.push_back(nullptr);
   for (const MorphInbetweenCPU& ib : mt.inbetweens) {
-    if (ib.dpos.size() == mt.dpos.size()) s.push_back({ib.weight, &ib.dpos});
+    if (ib.dpos.size() != mt.dpos.size()) continue;
+    ibW.push_back(ib.weight);
+    src.push_back(&ib.dpos);
   }
-  s.push_back({1.0f, &mt.dpos});
+  src.push_back(&mt.dpos);
 
-  // Bracketing segment [lo, hi] for w (clamped indices; t extrapolates at ends).
-  size_t hi = 1;
-  while (hi + 1 < s.size() && w > s[hi].w) ++hi;
-  const size_t lo = hi - 1;
-  const float denom = s[hi].w - s[lo].w;
-  const float t = (denom > 1e-12f) ? (w - s[lo].w) / denom : 0.0f;
-  const std::vector<float>* dlo = s[lo].d;
-  const std::vector<float>* dhi = s[hi].d;
+  const MorphBracket br = FindMorphBracket(ibW, w);
+  const float t = br.t;
+  const std::vector<float>* dlo = src[br.lo];
+  const std::vector<float>* dhi = src[br.hi];
 
   for (size_t e = 0; e < n; ++e) {
     const uint32_t v = mt.vtx[e];
@@ -460,6 +494,20 @@ void ApplyMorphTarget(const MorphTargetCPU& mt, float w,
 }
 
 }  // namespace
+
+std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
+    const tinyusdz::Stage& stage) {
+  std::map<std::string, InbetweenSamples> out;
+  tydra::PathPrimMap<tinyusdz::BlendShape> bss;
+  if (!tydra::ListPrims(stage, bss)) return out;
+  for (auto& kv : bss) {
+    const tinyusdz::BlendShape* bs = kv.second;
+    if (!bs) continue;
+    InbetweenSamples ibs = ReadInbetweensFromPrim(*bs);
+    if (!ibs.empty()) out[bs->name] = std::move(ibs);
+  }
+  return out;
+}
 
 bool SceneHasDeformation(const tydra::RenderScene& render) {
   for (const tydra::RenderMesh& m : render.meshes) {
@@ -769,13 +817,17 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
   return changed;
 }
 
-void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
-                         tydra::RenderScene& render, double timecode) {
+void DeformSkinnedMeshes(
+    const tinyusdz::Stage& stage, tydra::RenderScene& render, double timecode,
+    const std::unordered_map<std::string, float>* blendOverride) {
   if (!SceneHasDeformation(render)) return;
   const double t = timecode;  // time codes (matches Tydra sampler times)
 
   std::unordered_map<std::string, float> blendWeights;
   bool gatheredBlend = false;
+  // In-between samples (by name); read once on first morphed mesh. Matches the
+  // GPU raster path so ray-traced geometry interpolates through in-betweens too.
+  std::map<std::string, InbetweenSamples> inbetweens;
 
   // Cache skinning matrices per skeleton (shared across meshes).
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
@@ -796,10 +848,15 @@ void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
       pts[i].z = mesh.points[i][2];
     }
 
-    // (1) Blendshapes: accumulate weighted offsets onto the rest points.
+    // (1) Blendshapes: accumulate interpolated offsets onto the rest points.
     if (morphed) {
       if (!gatheredBlend) {
         blendWeights = GatherBlendWeights(stage, t);
+        // Manual weights (blend editor) override the animation per name.
+        if (blendOverride) {
+          for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
+        }
+        inbetweens = CollectBlendShapeInbetweens(stage);
         gatheredBlend = true;
       }
       for (const auto& kv : mesh.targets) {
@@ -809,12 +866,40 @@ void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
         if (w == 0.0f) continue;
         const tydra::ShapeTarget& tgt = kv.second;
         const size_t no = tgt.pointOffsets.size();
+
+        // In-between samples aligned to this target's pointIndices.
+        std::vector<float> ibW;
+        std::vector<const std::vector<tinyusdz::value::vector3f>*> ibOff;
+        auto iit = inbetweens.find(kv.first);
+        if (iit != inbetweens.end()) {
+          for (const auto& s : iit->second) {
+            if (s.second.size() != tgt.pointIndices.size()) continue;
+            ibW.push_back(s.first);
+            ibOff.push_back(&s.second);
+          }
+        }
+        const MorphBracket br = FindMorphBracket(ibW, w);
+        const int last = static_cast<int>(ibOff.size()) + 1;  // primary index
+        // Offset of table-index `si` at point `k` (0 -> zero, last -> primary).
+        auto off = [&](int si, size_t k, float o[3]) {
+          if (si == 0) { o[0] = o[1] = o[2] = 0.0f; }
+          else if (si == last) {
+            o[0] = tgt.pointOffsets[k][0]; o[1] = tgt.pointOffsets[k][1];
+            o[2] = tgt.pointOffsets[k][2];
+          } else {
+            const auto& a = (*ibOff[si - 1])[k];
+            o[0] = a[0]; o[1] = a[1]; o[2] = a[2];
+          }
+        };
         for (size_t k = 0; k < tgt.pointIndices.size() && k < no; ++k) {
           const uint32_t vid = tgt.pointIndices[k];
           if (vid >= np) continue;
-          pts[vid].x += w * tgt.pointOffsets[k][0];
-          pts[vid].y += w * tgt.pointOffsets[k][1];
-          pts[vid].z += w * tgt.pointOffsets[k][2];
+          float lo[3], hi[3];
+          off(br.lo, k, lo);
+          off(br.hi, k, hi);
+          pts[vid].x += lo[0] + (hi[0] - lo[0]) * br.t;
+          pts[vid].y += lo[1] + (hi[1] - lo[1]) * br.t;
+          pts[vid].z += lo[2] + (hi[2] - lo[2]) * br.t;
         }
       }
     }
