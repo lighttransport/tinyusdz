@@ -117,34 +117,55 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUseProgram(0);
 
-  // Instanced flat-shaded program: per-instance mat4 model matrix in vertex
-  // attributes 6-9 (one vec4 per column, divisor 1), drawn with
-  // glDrawElementsInstanced. Reuses the material fragment shader (same vWorldPos/
-  // vNormal/vUV varyings + material/camera uniforms), so flat shading + the
-  // hardcoded headlight match the non-instanced path.
+  // Instanced flat-shaded program: per-instance 3x4 object-to-world (attribs 6-8,
+  // divisor 1) + per-instance/prototype displayColor (attrib 9), drawn with
+  // glDrawElementsInstanced. Self-contained flat shader (Lambert + ambient +
+  // Blinn spec, same hardcoded headlight as the material shader) so it needs no
+  // material uniforms -- the base color comes from the per-instance vColor.
   static const char* kInstancedVS =
       "#version 330 core\n"
       "layout(location=0) in vec3 aPosition;\n"
       "layout(location=1) in vec3 aNormal;\n"
-      "layout(location=2) in vec3 aUV;\n"
-      "layout(location=6) in vec4 aInst0;\n"
-      "layout(location=7) in vec4 aInst1;\n"
-      "layout(location=8) in vec4 aInst2;\n"
-      "layout(location=9) in vec4 aInst3;\n"
+      // Per-instance 3x4 object-to-world (row-major o2w; rows = output x/y/z):
+      // worldP.c = dot(vec4(pos,1), aRow[c]).  48 B/instance vs a full mat4's 64.
+      "layout(location=6) in vec4 aRow0;\n"
+      "layout(location=7) in vec4 aRow1;\n"
+      "layout(location=8) in vec4 aRow2;\n"
+      "layout(location=9) in vec3 aColor;\n"  // per-instance or constant
       "uniform mat4 uViewProj;\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
-      "out vec2 vUV;\n"
+      "out vec3 vColor;\n"
       "void main(){\n"
-      "  mat4 model = mat4(aInst0, aInst1, aInst2, aInst3);\n"
-      "  vec4 wp = model * vec4(aPosition, 1.0);\n"
-      "  vWorldPos = wp.xyz;\n"
-      "  vNormal = normalize(mat3(model) * aNormal);\n"
-      "  vUV = aUV.xy;\n"
-      "  gl_Position = uViewProj * wp;\n"
+      "  vec4 p = vec4(aPosition, 1.0);\n"
+      "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
+      "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
+      "                dot(aNormal, aRow2.xyz));\n"
+      "  vWorldPos = wp;\n"
+      "  vNormal = normalize(n);\n"
+      "  vColor = aColor;\n"
+      "  gl_Position = uViewProj * vec4(wp, 1.0);\n"
       "}\n";
-  instProgram_ =
-      glutil::CompileProgram(kInstancedVS, light3d::getMaterialFragmentShaderGL330(), err);
+  static const char* kInstancedFS =
+      "#version 330 core\n"
+      "in vec3 vWorldPos;\n"
+      "in vec3 vNormal;\n"
+      "in vec3 vColor;\n"
+      "uniform vec3 uCameraPos;\n"
+      "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
+      "out vec4 FragColor;\n"
+      "void main(){\n"
+      "  vec3 N = normalize(vNormal);\n"
+      "  if (!gl_FrontFacing) N = -N;\n"  // thin instanced geom is often 1-sided
+      "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
+      "  vec3 L = normalize(vec3(1.0, 1.0, 1.0));\n"
+      "  float NdotL = max(dot(N, L), 0.0);\n"
+      "  vec3 H = normalize(L + V);\n"
+      "  float NdotH = max(dot(N, H), 0.0);\n"
+      "  vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);\n"
+      "  FragColor = vec4(col + uEmissive, 1.0);\n"
+      "}\n";
+  instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
     if (err && err->empty()) *err = "Failed to build GL instanced program";
     return false;
@@ -152,16 +173,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUseProgram(instProgram_);
   iUViewProj_ = glGetUniformLocation(instProgram_, "uViewProj");
   iCameraPos_ = glGetUniformLocation(instProgram_, "uCameraPos");
-  iBaseColor_ = glGetUniformLocation(instProgram_, "uBaseColor");
-  iMetallic_ = glGetUniformLocation(instProgram_, "uMetallic");
-  iRoughness_ = glGetUniformLocation(instProgram_, "uRoughness");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
-  iAlpha_ = glGetUniformLocation(instProgram_, "uAlpha");
-  iHasBaseColorTex_ = glGetUniformLocation(instProgram_, "uHasBaseColorTex");
-  iHasMetalRoughTex_ = glGetUniformLocation(instProgram_, "uHasMetalRoughTex");
-  iHasNormalTex_ = glGetUniformLocation(instProgram_, "uHasNormalTex");
-  iHasEmissiveTex_ = glGetUniformLocation(instProgram_, "uHasEmissiveTex");
-  glUniform1i(glGetUniformLocation(instProgram_, "uBaseColorTex"), 0);
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -241,6 +253,7 @@ void GLRenderer::destroyScene() {
     if (m.weightVbo) glDeleteBuffers(1, &m.weightVbo);
     if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.instanceVbo) glDeleteBuffers(1, &m.instanceVbo);
+    if (m.instanceColorVbo) glDeleteBuffers(1, &m.instanceColorVbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -538,22 +551,40 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     glVertexAttribI2ui(5, 0, 0);
   }
 
-  // GPU instancing: upload per-instance model matrices (mat4 = 4 vec4 columns)
-  // into a second VBO and bind them as instanced attributes 6-9 (divisor 1).
+  // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
+  // rows = 48 B/instance) into a second VBO; bind as instanced attribs 6-8
+  // (divisor 1).
   if (!sm.instanceXforms.empty()) {
-    gm.instanceCount = static_cast<int>(sm.instanceXforms.size() / 16);
+    gm.instanceCount = static_cast<int>(sm.instanceXforms.size() / 12);
     glGenBuffers(1, &gm.instanceVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.instanceVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.instanceXforms.size() * sizeof(float)),
                  sm.instanceXforms.data(), GL_STATIC_DRAW);
-    const GLsizei mstride = 16 * sizeof(float);
-    for (int c = 0; c < 4; ++c) {
-      const GLuint loc = 6 + c;
+    const GLsizei mstride = 12 * sizeof(float);
+    for (int r = 0; r < 3; ++r) {
+      const GLuint loc = 6 + r;
       glEnableVertexAttribArray(loc);
       glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, mstride,
-                            (void*)(static_cast<uintptr_t>(c * 4 * sizeof(float))));
+                            (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
       glVertexAttribDivisor(loc, 1);
+    }
+    // Per-instance displayColor (attrib 9, divisor 1) when present; otherwise a
+    // per-draw constant set at draw time (see flatColor in the instanced pass).
+    std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    if (sm.instanceColors.size() == sm.instanceXforms.size() / 12 * 3 &&
+        !sm.instanceColors.empty()) {
+      gm.hasInstanceColors = true;
+      glGenBuffers(1, &gm.instanceColorVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.instanceColorVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.instanceColors.size() * sizeof(float)),
+                   sm.instanceColors.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(9);
+      glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+      glVertexAttribDivisor(9, 1);
+    } else {
+      glDisableVertexAttribArray(9);  // constant color set per draw
     }
   }
 
@@ -696,19 +727,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUseProgram(instProgram_);
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
-    const float gray[3] = {0.8f, 0.8f, 0.8f};
     const float black[3] = {0.0f, 0.0f, 0.0f};
-    glUniform3fv(iBaseColor_, 1, overrideEmissive ? black : gray);
-    glUniform1f(iMetallic_, 0.0f);
-    glUniform1f(iRoughness_, overrideEmissive ? 1.0f : 0.5f);
     glUniform3fv(iEmissive_, 1, overrideEmissive ? overrideEmissive : black);
-    glUniform1f(iAlpha_, 1.0f);
-    glUniform1i(iHasBaseColorTex_, 0);
-    glUniform1i(iHasMetalRoughTex_, 0);
-    glUniform1i(iHasNormalTex_, 0);
-    glUniform1i(iHasEmissiveTex_, 0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, whiteTex_);
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
           !params.meshVisible[mi]) {
@@ -723,6 +743,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glCullFace(GL_BACK);
       }
       glBindVertexArray(mesh.vao);
+      // Constant per-draw color when there is no per-instance color array (the
+      // generic vertex-attribute value feeds aColor for every instance).
+      if (!mesh.hasInstanceColors) glVertexAttrib3fv(9, mesh.flatColor);
       for (const auto& sub : mesh.submeshes) {
         glDrawElementsInstanced(
             GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
