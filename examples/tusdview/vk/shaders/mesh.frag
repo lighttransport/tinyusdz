@@ -10,11 +10,11 @@ layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
   mat4 model;
-  mat3 nmat;
+  vec4 nmat[3];        // normal-matrix cols in .xyz; .w = emissive.rgb (AOV)
   vec4 baseColor;
   vec4 camPos;
-  vec4 sceneMin;
-  vec4 sceneExtent;
+  vec4 sceneMin;       // .w = metallic (AOV)
+  vec4 sceneExtent;    // .w = roughness (AOV)
   int matId;
   int renderMode;
   int flags;
@@ -50,6 +50,11 @@ void main() {
     if (pc.renderMode == 8) {  // facing
       outColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
       return;
+    }
+    if (pc.renderMode == 9) { outColor = vec4(vec3(pc.sceneExtent.w), 1.0); return; }   // roughness
+    if (pc.renderMode == 10) { outColor = vec4(vec3(pc.sceneMin.w), 1.0); return; }      // metallic
+    if (pc.renderMode == 11) {                                                            // emissive
+      outColor = vec4(pc.nmat[0].w, pc.nmat[1].w, pc.nmat[2].w, 1.0); return;
     }
     if (pc.renderMode == 12) { outColor = vec4(vec3(pc.baseColor.a), 1.0); return; }  // opacity
     if (pc.renderMode == 13) {  // world position
