@@ -5985,13 +5985,6 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        std::vector<CurveJobNext> *curve_jobs,
                        CurveProtoCollect *curve_inst, RTPreviewStats *stats,
                        const std::unordered_set<std::string> *proto_holders) {
-  // A native-instance prototype holder is rendered only through its instance
-  // proxies (queued as a prototype BLAS below). Skipping its subtree here keeps
-  // it from also being collected as base geometry -- the holder's `instanceable`
-  // flag is cleared during composition, so it is identified instead as the
-  // target of some instance_prototype() (gathered in proto_holders).
-  if (proto_holders && proto_holders->count(prim.GetPath().str())) return;
-
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -6008,11 +6001,22 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
   }
 
   const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
-  const std::string proto_path =
-      spec ? spec->meta().instance_prototype() : std::string();
+  std::string proto_path = spec ? spec->meta().instance_prototype() : std::string();
+  // A prototype HOLDER (the target of some instance_prototype) is itself a placed
+  // instanceable prim -- Pixar renders every instanceable sibling, including the one
+  // composition picked as the prototype source. So emit it as an instance of its OWN
+  // geometry (keyed by its own path, the same BLAS its siblings reference) rather
+  // than skipping it. Its subtree is the prototype geometry (collected once via
+  // CollectProtoJobs), so do not descend. (Without this, one of N instanceable
+  // siblings -- e.g. one of isIronwoodA1's two trees -- silently vanished.)
+  if (proto_path.empty() && proto_holders &&
+      proto_holders->count(prim.GetPath().str())) {
+    proto_path = prim.GetPath().str();
+  }
   if (!proto_path.empty()) {
-    // Native instance: record placement + queue its prototype. Do not descend
-    // (the instance proxy's children come from the prototype).
+    // Native instance (or self-instancing holder): record placement + queue its
+    // prototype. Do not descend (the instance proxy's children come from the
+    // prototype).
     if (PathMatchesMask(prim.GetPath().str(), mask)) {
       const std::string key =
           proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
