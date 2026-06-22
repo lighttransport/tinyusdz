@@ -457,8 +457,8 @@ bool VulkanRenderer::createSwapchain(std::string* err) {
 
   VkExtent2D extent = caps.currentExtent;
   if (extent.width == 0xFFFFFFFFu) {
-    int w = 0, h = 0;
-    glfwGetFramebufferSize(window_, &w, &h);
+    int w = winFbW_, h = winFbH_;  // render-thread-supplied size (threaded path)
+    if (w <= 0 || h <= 0) glfwGetFramebufferSize(window_, &w, &h);
     extent.width = static_cast<uint32_t>(w);
     extent.height = static_cast<uint32_t>(h);
   }
@@ -1735,6 +1735,30 @@ bool VulkanRenderer::initImGui(std::string* err) {
     if (err) *err = "ImGui_ImplGlfw_InitForVulkan failed";
     return false;
   }
+  return initVulkanImGuiBackend(err);
+}
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+bool VulkanRenderer::initImGuiPlatform(GLFWwindow* window, std::string* err) {
+  // GLFW callbacks + input: main thread (GLFW is main-thread-affine). init() runs
+  // later on the render thread, so capture the window here on the main thread.
+  window_ = window;
+  if (window_ && !ImGui_ImplGlfw_InitForVulkan(window_, true)) {
+    if (err) *err = "ImGui_ImplGlfw_InitForVulkan failed";
+    return false;
+  }
+  return true;
+}
+bool VulkanRenderer::initImGuiBackend(std::string* err) {
+  return initVulkanImGuiBackend(err);
+}
+#endif
+
+// The Vulkan ImGui render backend (device objects: descriptor pool, font texture,
+// pipeline). Needs device_/queue_/swapRenderPass_ from init(), so on the threaded
+// path it runs on the render thread (after init()), split from the GLFW platform
+// half above. Single-threaded initImGui() also calls it.
+bool VulkanRenderer::initVulkanImGuiBackend(std::string* err) {
   ImGui_ImplVulkan_InitInfo info{};
   info.ApiVersion = VK_API_VERSION_1_2;
   info.Instance = instance_;
@@ -2913,7 +2937,15 @@ ViewportTexHandle VulkanRenderer::viewportTexture() const {
 bool VulkanRenderer::recreateSwapchain() {
   std::string* err = nullptr;
   int w = 0, h = 0;
-  glfwGetFramebufferSize(window_, &w, &h);
+  // On the render thread (threaded path) the main thread supplies the framebuffer
+  // size via presentImpl(); glfwGetFramebufferSize is main-thread-only. Fall back to
+  // the GLFW query on the single-threaded path (winFbW_ == 0).
+  if (winFbW_ > 0 && winFbH_ > 0) {
+    w = winFbW_;
+    h = winFbH_;
+  } else {
+    glfwGetFramebufferSize(window_, &w, &h);
+  }
   if (w == 0 || h == 0) return true;  // minimized; skip
   vkDeviceWaitIdle(device_);
   destroySwapchain();
@@ -2923,8 +2955,19 @@ bool VulkanRenderer::recreateSwapchain() {
   return true;
 }
 
-void VulkanRenderer::present() {
+void VulkanRenderer::present() { presentImpl(ImGui::GetDrawData(), 0, 0); }
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+void VulkanRenderer::presentThreaded(ImDrawData* drawData, int fbW, int fbH) {
+  presentImpl(drawData, fbW, fbH);
+}
+#endif
+
+void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   if (!device_) return;
+  // Remember the main-thread framebuffer size so a swapchain recreate on the render
+  // thread needs no glfwGetFramebufferSize. 0 on the single-threaded path.
+  if (fbW > 0 && fbH > 0) { winFbW_ = fbW; winFbH_ = fbH; }
 
   // Build/refresh the acceleration structure before the frame (synchronous; uses
   // its own one-shot submissions) so the trace below sees a ready TLAS.
@@ -3191,7 +3234,7 @@ void VulkanRenderer::present() {
   rp.clearValueCount = 1;
   rp.pClearValues = &clear;
   vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
-  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cb);
+  ImGui_ImplVulkan_RenderDrawData(drawData, cb);
   vkCmdEndRenderPass(cb);
 
   vkEndCommandBuffer(cb);

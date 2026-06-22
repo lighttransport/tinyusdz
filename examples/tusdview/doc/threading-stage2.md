@@ -1,10 +1,11 @@
 # tusdview Stage 2: GL render-thread decouple — follow-up task
 
-> **Status (2026-06): LANDED for GL.** The render-thread path is implemented and
-> verified byte-identical to the single-threaded path, gated behind the default-OFF
-> CMake option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The
-> previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
-> — RESOLVED" below for the root cause. The VK render-thread port remains a follow-up.
+> **Status (2026-06): LANDED for GL and Vulkan.** The render-thread path is
+> implemented and verified byte-identical to the single-threaded path on both
+> backends (GL; VK raster + VK ray-query `--rt`), gated behind the default-OFF CMake
+> option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The previously-
+> unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG —
+> RESOLVED" below. VK port notes are in "VK render-thread port" near the end.
 
 ## Goal
 
@@ -187,5 +188,39 @@ geometry-sized "resize".
 - Keep the single-threaded path the default and untouched (it's the verified one).
 - Headless (`--frames`/`--screenshot` without a window) stays single-threaded for
   deterministic screenshots — gate the render thread behind `renderThreadActive_`.
-- Out of scope for this task: VK render-thread port; progressive-threaded streaming;
-  VK-RT `rebuildTlas` async + "tracing…" HUD; window-shot in threaded mode.
+- Out of scope for this task: progressive-threaded streaming; animation/GPU-skinning
+  through the op-queue (still issued from the main thread); VK-RT `rebuildTlas` async
+  + "tracing…" HUD; window-shot in threaded mode.
+
+## VK render-thread port (LANDED 2026-06)
+
+Vulkan is actually *more* thread-amenable than GL: there is no per-thread "current
+context", so the only rule is **single-queue-owner** — every `vkQueueSubmit` /
+`vkQueuePresentKHR` (present, the per-frame one-shot upload submits, and the
+synchronous `rebuildTlas` AS builds) must come from one thread. The render thread
+owns them; all uploads already route through the `gpu()` op-queue (drained on the
+render thread), and the main thread issues no queue work.
+
+What the port changed (all in `vk/vk_renderer.{cc,hh}` + a few `app.cc` guards):
+
+- `present()` → thin wrapper over `presentImpl(ImDrawData*, fbW, fbH)`; the threaded
+  `presentThreaded()` passes the packet's deep-copied draw data + main-thread fb size.
+  The one `ImGui::GetDrawData()` use inside the swapchain pass now takes the param.
+- `glfwGetFramebufferSize` is main-thread-only, so `recreateSwapchain()` and the
+  `createSwapchain` `currentExtent==0xFFFFFFFF` fallback use `winFbW_/winFbH_` carried
+  in by `presentImpl` (0 ⇒ single-threaded ⇒ GLFW query as before). On X11
+  `currentExtent` is the real size, so init needs no GLFW query.
+- `initImGui` split: `initImGuiPlatform(window)` = `ImGui_ImplGlfw_InitForVulkan` on
+  the main thread (captures `window_`, same null-window-segfault fix as GL);
+  `initImGuiBackend` = `ImGui_ImplVulkan_Init` on the render thread (needs
+  device/queue/render pass from `init()`); shared body factored to
+  `initVulkanImGuiBackend()`.
+- `app.cc`: `renderThreadActive_` now also true for `Backend::Vulkan`;
+  `renderThreadMain` skips the `glfwMakeContextCurrent` calls when not GL; `--rt` is
+  activated after the render thread inits, via `postGpu(setRayTracing)` so the
+  RT/`tlasDirty_` flags are written on the thread that reads them.
+
+Verified byte-identical (`maxdiff 0`) threaded-vs-single on `suzanne.usdc` and
+`suzanne-pbr.usda` for VK raster and VK `--rt`. (No validation layer on the dev box;
+verification is the pixel-identity + the RT path exercising the AS build on the
+render thread.)

@@ -48,6 +48,11 @@ class VulkanRenderer final : public Renderer {
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
   void present() override;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  void presentThreaded(ImDrawData* drawData, int fbW, int fbH) override;
+  bool initImGuiPlatform(GLFWwindow* window, std::string* err) override;
+  bool initImGuiBackend(std::string* err) override;
+#endif
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
   const RendererCaps& caps() const override { return caps_; }
@@ -175,6 +180,14 @@ class VulkanRenderer final : public Renderer {
 
   void destroySwapchain();
   bool recreateSwapchain();
+  // Shared body of present()/presentThreaded(): records + submits the frame using
+  // the supplied ImGui draw data. present() passes ImGui::GetDrawData(); the threaded
+  // path passes the packet's deep-copied draw data (+ the main-thread framebuffer
+  // size) so it can run on the render thread.
+  void presentImpl(ImDrawData* drawData, int fbW, int fbH);
+  // ImGui Vulkan render-backend init (device objects); shared by initImGui() and the
+  // threaded initImGuiBackend(). Needs init()'s device/queue/render pass.
+  bool initVulkanImGuiBackend(std::string* err);
   void destroyOffscreen();
   void destroyScene();
 
@@ -196,6 +209,12 @@ class VulkanRenderer final : public Renderer {
   VkShaderModule createShader(const uint32_t* code, size_t bytes);
 
   GLFWwindow* window_{nullptr};
+  // Window framebuffer size carried in from the main thread by presentThreaded()
+  // (glfwGetFramebufferSize is main-thread-only). When >0, recreateSwapchain()/the
+  // createSwapchain currentExtent fallback use it instead of a GLFW query, so
+  // swapchain recreation needs no GLFW call on the render thread. 0 on the
+  // single-threaded path (then glfwGetFramebufferSize is used as before).
+  int winFbW_{0}, winFbH_{0};
   bool headless_{false};       // windowless: no surface/swapchain, render offscreen
   int headlessW_{1280}, headlessH_{800};  // composite size when headless
   uint32_t lastSwapIndex_{0};  // last composite image written (for captureWindow)
