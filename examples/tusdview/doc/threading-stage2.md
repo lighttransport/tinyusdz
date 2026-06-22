@@ -7,18 +7,59 @@
 > previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
 > — RESOLVED". VK port notes are in "VK render-thread port" near the end.
 >
-> **Known limitation — VK ray tracing (`--rt`) is NOT threaded.** Threaded VK-RT has
-> an unresolved race: the offscreen RT trace + the render-thread screenshot capture
-> intermittently read a blank frame (~40% of fixed-frame runs). Each path is
-> internally deterministic (single≡single, threaded≡threaded) but threaded≠single,
-> and capture-after-present + a present-retry did not resolve it (`colorImg_` is still
-> intermittently unwritten — root cause not found). So `--threaded` + `--backend vk`
-> + `--rt` transparently falls back to the single-threaded path with a `LOGW`
-> (`app.cc renderThreadActive_`). Re-enabling needs the race root-caused first. A
-> separate, also-unresolved issue: threaded GPU **blendshape** at load differs from
-> single-threaded (the per-mesh morph upload path interacts badly with the threaded
-> load ordering) — interactive skeletal/skinning through the op-queue is still a
-> follow-up (see "Notes / scope").
+> **Known limitation — VK ray tracing (`--rt`) is NOT threaded.** Threaded VK-RT
+> intermittently captures a blank frame (~40% of fixed-frame runs), so `--threaded` +
+> `--backend vk` + `--rt` transparently falls back to single-threaded with a `LOGW`
+> (`app.cc renderThreadActive_`). The race is **localized** (see "VK-RT capture race —
+> root-cause analysis" below) to the offscreen image being destroyed+recreated by a
+> viewport resize on the render thread vs. the capture handshake; a full fix needs a
+> capture "settle" handshake, not a one-line reorder. A separate, also-unresolved
+> issue: threaded GPU **blendshape** at load differs from single-threaded (the
+> per-mesh morph upload interacts badly with the threaded load ordering) — interactive
+> skeletal/skinning through the op-queue is still a follow-up (see "Notes / scope").
+
+## VK-RT capture race — root-cause analysis (2026-06)
+
+**Symptom.** `--threaded --backend vk --rt --frames N --screenshot` reads an
+all-black viewport ~40% of runs. Each path is internally deterministic
+(single≡single across runs, threaded≡threaded *within* the same outcome) but
+threaded run-to-run flips between a correct image and fully black.
+
+**Instrumented findings (logging in `traceRt`/`rebuildTlas`/`captureViewport`, gate
+temporarily off):**
+- Black runs deterministically correlate with **`rebuildTlas` running twice — once at
+  the initial dock size `64×20`, then at `1469×1284`** — i.e. a viewport resize
+  happened *after* a first RT frame. Good runs rebuild **once** (only `1469×1284`).
+- In black runs the TLAS is valid (`insts=1`, valid BLAS + vertex addresses) and
+  `traceRt` runs every frame (`rtActive=1`, valid `rtImage_`/`colorImg_` handles).
+- A **decisive clear-test** — pre-clearing `rtImage_` to red before the compute
+  dispatch — showed **zero red pixels** in the black capture. So the captured
+  `colorImg_` is *not* the image the trace wrote into, even though the logged handle
+  value matches (VkImage handles are **recycled** after destroy/recreate, masking it).
+
+**Mechanism.** A viewport resize (dock layout settling, driven from `drawViewport`
+→ `gpu(resizeViewport)`) runs on the render thread and **destroys + recreates the
+offscreen `colorImg_` + the RT `rtImage_`** (`resizeViewport` → `createRtImage`,
+re-pointing descriptor binding 1). In the threaded screenshot path the capture
+handshake can then read a freshly-recreated (UNDEFINED → blank) offscreen rather than
+a fully-rendered one. It is **VK-RT-specific in practice** because (a) the VK
+offscreen is rendered in `present()`, not synchronously in `renderFrame()` like GL,
+and (b) RT additionally tears down + rebuilds `rtImage_` and its descriptor on
+resize, widening the window. The single-threaded path is immune: its capture runs
+once, after the whole loop, with the offscreen long settled.
+
+**What did NOT fix it (so the fix is more than a reorder):** moving the capture to
+*after* `present()`, and a present-retry on swapchain `OUT_OF_DATE` early-return,
+both still left ~40–50% black — the recreate can also coincide with present's own
+swapchain-recreate (no offscreen render that frame) and/or the binding-1 re-point not
+being ordered against the next trace.
+
+**Fix direction (future work).** Gate the threaded capture on a *settle* condition:
+capture only once the offscreen has been rendered at the current size with **no
+pending resize op in the queue and no swapchain recreate**, retrying render until
+then. This is a real handshake (needs `presentThreaded` to report "rendered" + a
+"gpu-ops drained & size stable" check) and must be validated interactively, so it is
+deferred; the single-threaded fallback ships meanwhile.
 
 ## Goal
 
