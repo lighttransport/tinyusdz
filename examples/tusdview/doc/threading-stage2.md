@@ -10,10 +10,13 @@
 > **Known limitation — VK ray tracing (`--rt`) is NOT threaded.** Threaded VK-RT
 > intermittently captures a blank frame (~40% of fixed-frame runs), so `--threaded` +
 > `--backend vk` + `--rt` transparently falls back to single-threaded with a `LOGW`
-> (`app.cc renderThreadActive_`). The race is **localized** (see "VK-RT capture race —
-> root-cause analysis" below) to the offscreen image being destroyed+recreated by a
-> viewport resize on the render thread vs. the capture handshake; a full fix needs a
-> capture "settle" handshake, not a one-line reorder. A separate, also-unresolved
+> (`app.cc renderThreadActive_`). The race is **localized** to the offscreen image
+> being destroyed+recreated by a viewport resize on the render thread (see "VK-RT
+> capture race — root-cause analysis" below), but the capture "settle" handshake that
+> this localization suggested was implemented and **did not fix it** (8/20 still
+> black): in black runs the RT trace still renders the offscreen yet the readback is
+> blank, so it is a **GPU sync/memory hazard** needing validation layers / RenderDoc
+> (unavailable here) to close — not a CPU-side capture-ordering bug. A separate, also-unresolved
 > issue: threaded GPU **blendshape** at load differs from single-threaded (the
 > per-mesh morph upload interacts badly with the threaded load ordering) — interactive
 > skeletal/skinning through the op-queue is still a follow-up (see "Notes / scope").
@@ -48,18 +51,33 @@ and (b) RT additionally tears down + rebuilds `rtImage_` and its descriptor on
 resize, widening the window. The single-threaded path is immune: its capture runs
 once, after the whole loop, with the offscreen long settled.
 
-**What did NOT fix it (so the fix is more than a reorder):** moving the capture to
-*after* `present()`, and a present-retry on swapchain `OUT_OF_DATE` early-return,
-both still left ~40–50% black — the recreate can also coincide with present's own
-swapchain-recreate (no offscreen render that frame) and/or the binding-1 re-point not
-being ordered against the next trace.
+**Fixes attempted that do NOT work (so it is a GPU hazard, not capture timing):**
+1. Capture *after* `present()` instead of before — still ~40% black.
+2. `present`-retry on swapchain `OUT_OF_DATE` early-return — still ~40% black.
+3. **Full "settle" handshake** (`presentThreaded` returns whether the offscreen
+   rendered; on the capture frame, loop: drain pending resize → `renderFrame` →
+   `presentThreaded`, until a present rendered the offscreen *and* the gpu-op queue is
+   empty, then capture) — **8/20 still black**. Implemented and reverted.
 
-**Fix direction (future work).** Gate the threaded capture on a *settle* condition:
-capture only once the offscreen has been rendered at the current size with **no
-pending resize op in the queue and no swapchain recreate**, retrying render until
-then. This is a real handshake (needs `presentThreaded` to report "rendered" + a
-"gpu-ops drained & size stable" check) and must be validated interactively, so it is
-deferred; the single-threaded fallback ships meanwhile.
+**Decisive negative finding.** Logging inside `presentImpl` on the capture frame shows
+`hasParams=1, rtFrame=1, offscreenRendered=1` in the *black* runs too — i.e. the RT
+trace **does** run and write `colorImg_` that very frame — yet the capture of that same
+`colorImg_` is black, and the red-clear test shows none of the cleared red either. So
+the CPU command stream is correct (right image, right size, render happens); the bytes
+the GPU produces in `colorImg_` are simply not what the capture reads back. That is the
+signature of a **GPU-side synchronization/memory hazard** in the resize→recreate path
+(offscreen `colorImg_`/`rtImage_` torn down + reallocated while prior frame work or a
+descriptor update is still in flight), not anything fixable from the CPU-side capture
+ordering.
+
+**Why it can't be closed here.** Pinpointing a GPU memory hazard needs the Vulkan
+**validation layers** (`VK_LAYER_KHRONOS_validation`) or **RenderDoc** — neither is
+available on this dev box (no validation layer JSON installed; headless X only). The
+likely culprits to check once a validation-layer/RenderDoc setup exists: missing
+queue-family/ownership or memory barriers around `destroyOffscreen()`+`createRtImage()`
+on resize, and the `rtSet_` binding-1 descriptor update vs. an in-flight trace. Until
+then `--rt` + `--threaded` keeps the verified single-threaded path (the fallback in
+`app.cc renderThreadActive_`), which is deterministic and correct.
 
 ## Goal
 
