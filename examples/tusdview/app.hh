@@ -5,12 +5,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <set>
 #include <string>
 #include <thread>
+
+#include "frame_packet.hh"
 
 #include "camera_nav.hh"
 #include "cuda/cuda_raytracer.hh"
@@ -86,6 +92,13 @@ class App
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setCamDolly(float f) { camDolly_ = f; }
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // --threaded: run GL rendering on a dedicated thread so the UI loop never blocks
+  // on GPU work (experimental; default off). No-op unless built with the option.
+  void setThreaded(bool on) { threaded_ = on; }
+#else
+  void setThreaded(bool /*on*/) {}
+#endif
 
   // Request the Vulkan ray-tracing technique at startup (honored only when the
   // device supports it; otherwise the viewer stays on rasterization).
@@ -179,6 +192,22 @@ class App
   void cancelAndJoinReconvert();   // stop a running reconvert worker
   void registerParametricPrims();  // scan stage for parametric prims for adaptive tess
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // --- Experimental threaded GL rendering ---
+  // The render thread owns the GL context and runs every GPU op: it drains the
+  // GPU-op queue (uploads), then renders the latest frame packet (scene draw +
+  // ImGui composite + swap). The main thread only does events + ImGui UI build,
+  // posting GPU ops + frame packets and never blocking on the GPU.
+  bool startRenderThread();
+  void joinRenderThread();
+  void renderThreadMain();
+  void postGpu(std::function<void()> op);  // queued when threaded, else inline
+  void drainGpuOps();
+  void submitFramePacket(std::unique_ptr<FramePacket> pkt, bool blockUntilDone);
+#else
+  void postGpu(std::function<void()> op) { op(); }  // inline (single-threaded build)
+#endif
+
   Backend backend_;
   bool allowBackendFallback_{false};
   GLFWwindow* window_{nullptr};
@@ -262,6 +291,30 @@ class App
   bool progressiveActive_{false};
   size_t nextMesh_{0};
   size_t nextTex_{0};
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // Experimental threaded rendering. renderThreadActive_ is true only when
+  // threaded_ AND windowed GL; headless/non-threaded keep the inline path.
+  bool threaded_{false};
+  bool renderThreadActive_{false};
+  std::thread renderThread_;
+  std::atomic<bool> renderRunning_{false};
+  std::atomic<bool> renderInitOk_{false};
+  std::atomic<bool> renderInitDone_{false};
+  std::mutex gpuOpMutex_;
+  std::queue<std::function<void()>> gpuOps_;
+  std::mutex pktMutex_;
+  std::condition_variable pktCv_;
+  std::unique_ptr<FramePacket> pendingPacket_;
+  std::condition_variable pktDoneCv_;
+  std::uint64_t pktRenderedSeq_{0};
+  std::uint64_t pktSubmitSeq_{0};
+  std::vector<uint8_t> renderCapture_;
+  int renderCaptureW_{0};
+  int renderCaptureH_{0};
+#else
+  static constexpr bool renderThreadActive_ = false;
+#endif
 
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};

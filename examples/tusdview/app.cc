@@ -115,7 +115,14 @@ App::~App() {
   if (mcp_) mcp_->stop();
 #endif
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
-  if (renderer_) renderer_->shutdown();
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_) {
+    joinRenderThread();  // the render thread runs renderer_->shutdown() on its context
+  } else
+#endif
+      if (renderer_) {
+    renderer_->shutdown();
+  }
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
   if (window_) glfwDestroyWindow(window_);
   glfwTerminate();
@@ -188,6 +195,11 @@ bool App::initImGui(std::string* err) {
   StyleMaya();
   ImGui::GetStyle().ScaleAllSizes(uiScale_);
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // Threaded: only the platform half (GLFW callbacks/input) on the main thread; the
+  // GL backend half runs on the render thread in renderThreadMain().
+  if (renderThreadActive_) return renderer_->initImGuiPlatform(window_, err);
+#endif
   return renderer_->initImGui(err);
 }
 
@@ -208,6 +220,11 @@ static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
 }
 
 void App::applyLoaded(bool ok, bool progressive) {
+  // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
+  // main thread before the render thread drains the queued appendMesh ops (a
+  // use-after-free). Use the one-shot uploadScene path instead (load stays async);
+  // progressive-threaded streaming is a follow-up.
+  if (renderThreadActive_) progressive = false;
   progressiveActive_ = false;
   nextMesh_ = 0;
   nextTex_ = 0;
@@ -242,12 +259,16 @@ void App::applyLoaded(bool ok, bool progressive) {
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
          draw_.truncated ? " [truncated]" : "");
   } else {
-    // Synchronous full upload (headless / failure). draw_ is empty when !ok.
-    std::string uerr;
-    renderer_->uploadScene(draw_, &uerr);
-    if (ok && useNextLoader_ && !cudaRt_) {  // CUDA RT needs the CPU geometry later
-      for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
-    }
+    // One-shot upload (headless / threaded / failure). draw_ is empty when !ok.
+    // Threaded: post upload + the CPU-geometry free together so they run, in order,
+    // on the render thread (the free must not precede the upload it feeds).
+    const bool freeCpu = ok && useNextLoader_ && !cudaRt_;
+    postGpu([this, freeCpu] {
+      std::string uerr;
+      renderer_->uploadScene(draw_, &uerr);
+      if (freeCpu)
+        for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
+    });
     if (ok) {
       LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s", loaded_.filepath.c_str(),
            draw_.meshes.size(), draw_.triangleCount,
@@ -726,6 +747,114 @@ void App::openFileDialog() {
 #endif
 }
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+// --- Experimental threaded GL rendering: the render thread owns the GL context ---
+
+void App::postGpu(std::function<void()> op) {
+  if (!renderThreadActive_) { op(); return; }  // inline on the single-threaded path
+  std::lock_guard<std::mutex> lk(gpuOpMutex_);
+  gpuOps_.push(std::move(op));
+}
+
+void App::drainGpuOps() {
+  for (;;) {
+    std::function<void()> op;
+    {
+      std::lock_guard<std::mutex> lk(gpuOpMutex_);
+      if (gpuOps_.empty()) break;
+      op = std::move(gpuOps_.front());
+      gpuOps_.pop();
+    }
+    op();
+  }
+}
+
+bool App::startRenderThread() {
+  renderRunning_.store(true);
+  renderInitDone_.store(false);
+  renderInitOk_.store(false);
+  renderThread_ = std::thread(&App::renderThreadMain, this);
+  while (!renderInitDone_.load(std::memory_order_acquire))
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!renderInitOk_.load()) { joinRenderThread(); return false; }
+  return true;
+}
+
+void App::joinRenderThread() {
+  renderRunning_.store(false);
+  pktCv_.notify_all();
+  pktDoneCv_.notify_all();
+  if (renderThread_.joinable()) renderThread_.join();
+}
+
+void App::submitFramePacket(std::unique_ptr<FramePacket> pkt, bool blockUntilDone) {
+  const std::uint64_t seq = pkt->seq;
+  {
+    std::lock_guard<std::mutex> lk(pktMutex_);
+    if (pendingPacket_ && pendingPacket_->drawData)
+      FreeImDrawData(pendingPacket_->drawData);  // latest-wins: drop the stale frame
+    pendingPacket_ = std::move(pkt);
+  }
+  pktCv_.notify_one();
+  if (blockUntilDone) {  // capture/deterministic mode
+    std::unique_lock<std::mutex> lk(pktMutex_);
+    pktDoneCv_.wait(lk, [&] {
+      return pktRenderedSeq_ >= seq || !renderRunning_.load();
+    });
+  }
+}
+
+void App::renderThreadMain() {
+  // Acquire the GL context (released by the main thread), then create all GL
+  // objects (FBO/shaders + the ImGui GL backend) on this thread's current context.
+  glfwMakeContextCurrent(window_);
+  std::string err;
+  bool ok = renderer_->init(window_, &err);
+  if (!ok) LOGE("render thread: renderer init: %s", err.c_str());
+  else if (!(ok = renderer_->initImGuiBackend(&err)))
+    LOGE("render thread: ImGui GL backend init: %s", err.c_str());
+  renderInitOk_.store(ok);
+  renderInitDone_.store(true, std::memory_order_release);
+  if (!ok) { glfwMakeContextCurrent(nullptr); return; }
+
+  while (renderRunning_.load()) {
+    drainGpuOps();  // uploads/resize/instance-visibility, FIFO, before the frame
+    std::unique_ptr<FramePacket> pkt;
+    {
+      std::unique_lock<std::mutex> lk(pktMutex_);
+      pktCv_.wait_for(lk, std::chrono::milliseconds(4), [&] {
+        return pendingPacket_ != nullptr || !renderRunning_.load();
+      });
+      if (pendingPacket_) pkt = std::move(pendingPacket_);
+    }
+    if (!pkt) continue;
+    renderer_->newFrame();  // ImGui_ImplOpenGL3_NewFrame (ensures GL objects exist)
+    if (pkt->hasParams) {
+      RenderFrameParams params = pkt->params();
+      renderer_->renderFrame(params);
+    }
+    if (pkt->wantCapture)  // read the 3D FBO before ImGui present touches GL state
+      renderer_->captureViewport(&renderCapture_, &renderCaptureW_, &renderCaptureH_);
+    renderer_->presentThreaded(pkt->drawData, pkt->fbW, pkt->fbH);
+    FreeImDrawData(pkt->drawData);
+    pkt->drawData = nullptr;
+    {
+      std::lock_guard<std::mutex> lk(pktMutex_);
+      pktRenderedSeq_ = pkt->seq;
+    }
+    pktDoneCv_.notify_all();
+  }
+  {
+    std::lock_guard<std::mutex> lk(pktMutex_);
+    if (pendingPacket_ && pendingPacket_->drawData)
+      FreeImDrawData(pendingPacket_->drawData);
+    pendingPacket_.reset();
+  }
+  renderer_->shutdown();
+  glfwMakeContextCurrent(nullptr);
+}
+#endif  // TUSDVIEW_ENABLE_GL_THREAD
+
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   std::string err;
@@ -734,6 +863,11 @@ int App::run(const std::string& initialFile, int maxFrames,
   int winW = 0;
   int winH = 0;
   getRequestedWindowSize(&winW, &winH);
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // Threaded rendering applies only to the windowed GL path (experimental);
+  // headless + VK keep the inline single-threaded path.
+  renderThreadActive_ = threaded_ && !headless_ && backend_ == Backend::GL;
+#endif
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
@@ -759,44 +893,67 @@ int App::run(const std::string& initialFile, int maxFrames,
     return 1;
   }
   if (headless_) renderer_->setHeadlessSize(winW, winH);
-  if (!renderer_->init(headless_ ? nullptr : window_, &err)) {
-    if (backend_ == Backend::Vulkan && allowBackendFallback_ && !headless_) {
-      LOGW("Vulkan renderer init failed: %s; falling back to OpenGL.", err.c_str());
-      renderer_->shutdown();
-      renderer_.reset();
-      backend_ = Backend::GL;
-      err.clear();
-      renderer_ = CreateGLRenderer();
-      if (!renderer_ || !renderer_->init(window_, &err)) {
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_) {
+    // Threaded GL: ImGui's GLFW platform init runs on the main thread (context
+    // current). renderer_->init() (FBO/shaders) + the ImGui GL backend run on the
+    // render thread, which owns the context. Release the context here so the render
+    // thread can make it current; startRenderThread blocks until its init completes.
+    if (!initImGui(&err)) {
+      LOGE("ImGui init failed: %s", err.c_str());
+      return 1;
+    }
+    glfwMakeContextCurrent(nullptr);
+    if (!startRenderThread()) {
+      LOGE("render thread init failed: %s", err.c_str());
+      return 1;
+    }
+  } else
+#endif
+  {
+    if (!renderer_->init(headless_ ? nullptr : window_, &err)) {
+      if (backend_ == Backend::Vulkan && allowBackendFallback_ && !headless_) {
+        LOGW("Vulkan renderer init failed: %s; falling back to OpenGL.", err.c_str());
+        renderer_->shutdown();
+        renderer_.reset();
+        backend_ = Backend::GL;
+        err.clear();
+        renderer_ = CreateGLRenderer();
+        if (!renderer_ || !renderer_->init(window_, &err)) {
+          LOGE("renderer init failed: %s", err.c_str());
+          return 1;
+        }
+      } else {
         LOGE("renderer init failed: %s", err.c_str());
         return 1;
       }
-    } else {
-      LOGE("renderer init failed: %s", err.c_str());
+    }
+
+    // Activate Vulkan ray tracing if requested and supported; else stay on raster.
+    if (rtRequested_) {
+      if (renderer_->rayTracingAvailable()) {
+        rtPath_ = true;
+        renderer_->setRayTracing(true);
+        LOGI("Vulkan ray tracing (ray query) enabled.");
+      } else {
+        LOGW("--rt requested but ray tracing is unavailable (needs the Vulkan "
+             "backend on an RT-capable GPU + an RT-capable glslang at build time); "
+             "using rasterization.");
+      }
+    }
+
+    if (!initImGui(&err)) {
+      LOGE("ImGui init failed: %s", err.c_str());
       return 1;
     }
   }
 
-  // Activate Vulkan ray tracing if requested and supported; else stay on raster.
-  if (rtRequested_) {
-    if (renderer_->rayTracingAvailable()) {
-      rtPath_ = true;
-      renderer_->setRayTracing(true);
-      LOGI("Vulkan ray tracing (ray query) enabled.");
-    } else {
-      LOGW("--rt requested but ray tracing is unavailable (needs the Vulkan "
-           "backend on an RT-capable GPU + an RT-capable glslang at build time); "
-           "using rasterization.");
-    }
-  }
-
-  if (!initImGui(&err)) {
-    LOGE("ImGui init failed: %s", err.c_str());
-    return 1;
-  }
-
   gui_.setScene(&loaded_, &draw_);
   gui_.setBudget(&loadCtrl_);
+  // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
+  // render thread; runs inline on the single-threaded path.
+  gui_.setPostGpu([this](std::function<void()> op) { postGpu(std::move(op)); });
   // Only the truly-interactive run-until-quit loop offloads per-instance culling to
   // a worker (UI responsiveness). Any fixed-frame-count run (headless or windowed
   // --frames/--screenshot) culls synchronously so screenshots stay deterministic.
@@ -897,7 +1054,9 @@ int App::run(const std::string& initialFile, int maxFrames,
                              : 0.0f;
     gui_.setLoadStatus(ls);
 
-    renderer_->newFrame();
+    // In threaded GL, newFrame() is a GL op that runs on the render thread (just
+    // before it draws the packet); the main thread only builds ImGui + the packet.
+    if (!renderThreadActive_) renderer_->newFrame();
     if (!headless_) ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
@@ -964,15 +1123,35 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Render after same-frame action consumption but before ImGui submit. The
     // viewport window already emitted ImGui::Image with the texture handle; both
     // GL and Vulkan sample the texture contents later during present().
-    gui_.renderViewportScene();
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+    if (renderThreadActive_) {
+      // Build the CPU-side frame packet (camera/params + compacted instance data)
+      // on the main thread, deep-copy the ImGui draw lists, and hand it to the
+      // render thread. The main loop never touches GL or blocks on the GPU.
+      auto pkt = std::make_unique<FramePacket>();
+      gui_.renderViewportScene(pkt.get());
+      glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
+      pkt->wantCapture =
+          (maxFrames >= 0 && frameCount == maxFrames - 1 && !screenshot.empty());
+      pkt->seq = ++pktSubmitSeq_;
+      ImGui::Render();
+      pkt->drawData = CloneImDrawData(ImGui::GetDrawData());
+      // Fixed-frame runs block until the render thread has drawn this packet so
+      // the screenshot is deterministic; interactive runs never wait.
+      submitFramePacket(std::move(pkt), maxFrames >= 0);
+    } else
+#endif
+    {
+      gui_.renderViewportScene();
 
-    // Grab the composited window on the final frame (--window-shot).
-    if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
-      renderer_->requestWindowCapture();
+      // Grab the composited window on the final frame (--window-shot).
+      if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
+        renderer_->requestWindowCapture();
+      }
+
+      ImGui::Render();
+      renderer_->present();
     }
-
-    ImGui::Render();
-    renderer_->present();
 
     // Deferred actions (after the frame, outside the ImGui frame state).
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -1040,8 +1219,22 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (path.empty()) return;
     std::vector<uint8_t> rgba;
     int w = 0, h = 0;
-    const bool ok = window ? renderer_->captureWindow(&rgba, &w, &h)
-                           : renderer_->captureViewport(&rgba, &w, &h);
+    bool ok;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+    if (renderThreadActive_ && !window) {
+      // The render thread owns the GL context, so it grabbed the viewport into
+      // renderCapture_ when the packet's wantCapture was set (above). Use it
+      // instead of calling captureViewport from this (context-less) thread.
+      rgba = renderCapture_;
+      w = renderCaptureW_;
+      h = renderCaptureH_;
+      ok = !rgba.empty();
+    } else
+#endif
+    {
+      ok = window ? renderer_->captureWindow(&rgba, &w, &h)
+                  : renderer_->captureViewport(&rgba, &w, &h);
+    }
     if (ok && w > 0 && h > 0) {
       std::string err;
       if (WriteScreenshotImage(path, rgba, w, h, &err)) {
