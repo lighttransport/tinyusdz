@@ -1174,9 +1174,25 @@ bool VulkanRenderer::createSync(std::string* err) {
   fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
   for (int i = 0; i < kFramesInFlight; ++i) {
     VK_CHECK(vkCreateSemaphore(device_, &si, nullptr, &imageAvailable_[i]), "sem");
-    VK_CHECK(vkCreateSemaphore(device_, &si, nullptr, &renderFinished_[i]), "sem");
     VK_CHECK(vkCreateFence(device_, &fi, nullptr, &inFlight_[i]), "fence");
   }
+  return createPerImageSync(err);
+}
+
+bool VulkanRenderer::createPerImageSync(std::string* err) {
+  // Tear down any existing per-image semaphores (device must be idle). Recreate one
+  // present-wait semaphore per swapchain image and reset the per-image fence tracker.
+  for (VkSemaphore s : renderFinished_) {
+    if (s) vkDestroySemaphore(device_, s, nullptr);
+  }
+  renderFinished_.clear();
+  VkSemaphoreCreateInfo si{};
+  si.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  renderFinished_.resize(swapImages_.size(), VK_NULL_HANDLE);
+  for (size_t i = 0; i < renderFinished_.size(); ++i) {
+    VK_CHECK(vkCreateSemaphore(device_, &si, nullptr, &renderFinished_[i]), "sem");
+  }
+  imagesInFlight_.assign(swapImages_.size(), VK_NULL_HANDLE);
   return true;
 }
 
@@ -2795,10 +2811,13 @@ void VulkanRenderer::destroyRt() {
 }
 
 void VulkanRenderer::destroyOffscreen() {
-  if (offscreenTexId_ && imguiInited_) {
-    ImGui_ImplVulkan_RemoveTexture(offscreenTexId_);
-    offscreenTexId_ = VK_NULL_HANDLE;
-  }
+  // NOTE: offscreenTexId_ (the ImGui descriptor set for the viewport image) is
+  // deliberately NOT freed here. On a resize this function runs to tear down the
+  // offscreen images, but the threaded path may have already recorded ImGui draw data
+  // that binds offscreenTexId_; freeing + recreating it would leave that draw data
+  // pointing at a destroyed descriptor set -> GPU page fault / VK_ERROR_DEVICE_LOST ->
+  // black capture. resizeViewport() instead re-points the SAME descriptor set at the
+  // new image view (stable handle). The descriptor is freed once, in shutdown().
   if (offscreenFb_) { vkDestroyFramebuffer(device_, offscreenFb_, nullptr); offscreenFb_ = VK_NULL_HANDLE; }
   if (colorView_) { vkDestroyImageView(device_, colorView_, nullptr); colorView_ = VK_NULL_HANDLE; }
   if (colorImg_) { vkDestroyImage(device_, colorImg_, nullptr); colorImg_ = VK_NULL_HANDLE; }
@@ -2877,8 +2896,28 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   vkCreateFramebuffer(device_, &fci, nullptr, &offscreenFb_);
 
   if (imguiInited_) {
-    offscreenTexId_ = ImGui_ImplVulkan_AddTexture(
-        sampler_, colorView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (offscreenTexId_ == VK_NULL_HANDLE) {
+      offscreenTexId_ = ImGui_ImplVulkan_AddTexture(
+          sampler_, colorView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    } else {
+      // Re-point the EXISTING descriptor set at the new image view, keeping the handle
+      // stable (see destroyOffscreen). ImGui 1.92's backend binds the user texture as a
+      // single VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE at binding 0 (the sampler is a separate
+      // immutable binding), so the write must match that type exactly -- a
+      // COMBINED_IMAGE_SAMPLER write is rejected (VUID-VkWriteDescriptorSet-descriptorType-00319)
+      // and leaves the descriptor empty. Device is idle here, so the update is safe.
+      VkDescriptorImageInfo dii{};
+      dii.imageView = colorView_;
+      dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      VkWriteDescriptorSet w{};
+      w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      w.dstSet = offscreenTexId_;
+      w.dstBinding = 0;
+      w.descriptorCount = 1;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+      w.pImageInfo = &dii;
+      vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+    }
   }
 
   // Ray-trace storage image (same size); the compute shader writes it and we copy
@@ -2959,6 +2998,12 @@ bool VulkanRenderer::recreateSwapchain() {
   if (!createSwapchain(err)) return false;
   if (!createSwapchainViews(err)) return false;
   if (!createSwapchainFramebuffers(err)) return false;
+  // The image count can change, and the old present-wait semaphores belonged to the
+  // destroyed images, so rebuild the per-image sync (device is idle here). Without
+  // this, the next frames reuse stale/pending semaphores across the new images and the
+  // queue desyncs (the threaded VK-RT black: VUID-vkAcquireNextImageKHR-semaphore-01779,
+  // -vkQueueSubmit-00071, -VkPresentInfoKHR-pImageIndices-01430).
+  if (!createPerImageSync(err)) return false;
   return true;
 }
 
@@ -2994,6 +3039,17 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       recreateSwapchain();
       return;
     }
+    // (SUBOPTIMAL still yields a usable image; render it and recreate after present.)
+  }
+  // The acquired swapchain image may still be in use by an earlier in-flight frame
+  // (present has no fence); wait on that frame's render fence before reusing the image,
+  // then mark this image as now owned by this frame's fence.
+  if (imageIndex < imagesInFlight_.size() &&
+      imagesInFlight_[imageIndex] != VK_NULL_HANDLE) {
+    vkWaitForFences(device_, 1, &imagesInFlight_[imageIndex], VK_TRUE, UINT64_MAX);
+  }
+  if (imageIndex < imagesInFlight_.size()) {
+    imagesInFlight_[imageIndex] = inFlight_[frame_];
   }
   vkResetFences(device_, 1, &inFlight_[frame_]);
 
@@ -3048,6 +3104,25 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                   linePipelineNoDepth_, VP.m);
       vkCmdEndRenderPass(cb);
     }
+  } else if (rtFrame && offscreenFb_) {
+    // RT is the active technique but the TLAS isn't built yet (e.g. the scene just
+    // finished uploading on the render thread): just clear the offscreen so it shows
+    // the clear color, then let the next frame trace. Do NOT fall through to the raster
+    // mesh path here -- in RT mode the per-mesh material descriptors aren't guaranteed
+    // bound, and an unbound set-0 fragment sample GPU-faults (intermittent device loss
+    // -> black). The next present (TLAS ready) renders via traceRt.
+    VkClearValue clears[2];
+    clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
+    clears[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = offscreenPass_;
+    rp.framebuffer = offscreenFb_;
+    rp.renderArea.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_)};
+    rp.clearValueCount = 2;
+    rp.pClearValues = clears;
+    vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdEndRenderPass(cb);
   } else if (offscreenFb_ && hasParams_) {
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
@@ -3258,7 +3333,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     si.pWaitSemaphores = &imageAvailable_[frame_];
     si.pWaitDstStageMask = &waitStage;
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &renderFinished_[frame_];
+    si.pSignalSemaphores = &renderFinished_[imageIndex];  // per-image present-wait
   }
   vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
 
@@ -3269,7 +3344,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &renderFinished_[frame_];
+    pi.pWaitSemaphores = &renderFinished_[imageIndex];  // per-image present-wait
     pi.swapchainCount = 1;
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
@@ -3451,6 +3526,13 @@ void VulkanRenderer::shutdown() {
   destroyRt();
   destroyOffscreen();
   if (imguiInited_) {
+    // The viewport texture descriptor is kept stable across resizes (see
+    // destroyOffscreen / resizeViewport), so free it here, once, before the backend
+    // shuts down.
+    if (offscreenTexId_) {
+      ImGui_ImplVulkan_RemoveTexture(offscreenTexId_);
+      offscreenTexId_ = VK_NULL_HANDLE;
+    }
     ImGui_ImplVulkan_Shutdown();
     if (!headless_) ImGui_ImplGlfw_Shutdown();
     imguiInited_ = false;
@@ -3498,11 +3580,15 @@ void VulkanRenderer::shutdown() {
   if (overlayLoadPass_) { vkDestroyRenderPass(device_, overlayLoadPass_, nullptr); overlayLoadPass_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {
     if (imageAvailable_[i]) vkDestroySemaphore(device_, imageAvailable_[i], nullptr);
-    if (renderFinished_[i]) vkDestroySemaphore(device_, renderFinished_[i], nullptr);
     if (inFlight_[i]) vkDestroyFence(device_, inFlight_[i], nullptr);
-    imageAvailable_[i] = renderFinished_[i] = VK_NULL_HANDLE;
+    imageAvailable_[i] = VK_NULL_HANDLE;
     inFlight_[i] = VK_NULL_HANDLE;
   }
+  for (VkSemaphore s : renderFinished_) {
+    if (s) vkDestroySemaphore(device_, s, nullptr);
+  }
+  renderFinished_.clear();
+  imagesInFlight_.clear();
   if (commandPool_) { vkDestroyCommandPool(device_, commandPool_, nullptr); commandPool_ = VK_NULL_HANDLE; }
   destroySwapchain();
   if (swapRenderPass_) { vkDestroyRenderPass(device_, swapRenderPass_, nullptr); swapRenderPass_ = VK_NULL_HANDLE; }

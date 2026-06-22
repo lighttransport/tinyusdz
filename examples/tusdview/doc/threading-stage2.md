@@ -1,24 +1,27 @@
 # tusdview Stage 2: GL render-thread decouple — follow-up task
 
-> **Status (2026-06): LANDED for GL + Vulkan rasterization. VK ray tracing is
-> excluded.** The render-thread path is implemented and verified byte-identical to
-> the single-threaded path for GL and Vulkan *rasterization*, gated behind the
-> default-OFF CMake option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The
-> previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
-> — RESOLVED". VK port notes are in "VK render-thread port" near the end.
+> **Status (2026-06): LANDED for GL + Vulkan, including VK ray tracing.** The
+> render-thread path is implemented and verified **byte-identical** (`maxdiff 0`) to
+> the single-threaded path for GL, VK rasterization, AND VK ray tracing (`--rt`),
+> gated behind the default-OFF CMake option `TUSDVIEW_ENABLE_GL_THREAD` + the
+> `--threaded` flag. Headless stays single-threaded. Validation-clean (built the
+> Khronos validation layers from source; 15/15 threaded VK-RT runs render correctly
+> with zero validation errors).
 >
-> **Known limitation — VK ray tracing (`--rt`) is NOT threaded (one of two root
-> causes fixed).** Validation layers (built from source) found two bugs behind the
-> intermittent blank capture. **Fixed:** the offscreen `colorImg_` lacked
-> `TRANSFER_SRC/DST` usage, making the RT copy-in and the capture copy-out undefined
-> behavior (driver returned black). **Still open:** the present/swapchain-recreate
-> sync is incomplete (semaphore + command-buffer + image-index reuse across a resize),
-> which corrupts the render → black; threaded VK-RT black correlates *perfectly* with
-> these sync VUIDs. So `--threaded` + `--backend vk` + `--rt` still falls back to
-> single-threaded with a `LOGW` (`app.cc renderThreadActive_`) until the swapchain
-> recreate is reworked. Details in "Validation-layer findings" below. A separate, also-unresolved
-> issue: threaded GPU **blendshape** at load differs from single-threaded (the
-> per-mesh morph upload interacts badly with the threaded load ordering) — interactive
+> **The threaded VK-RT blank-capture bug is FULLY RESOLVED** — see "Validation-layer
+> findings" below. It was a chain of five distinct bugs, found with the validation
+> layers + GPU-Assisted Validation: (1) `colorImg_` missing `TRANSFER_SRC/DST` usage;
+> (2) the ImGui draw-data deep-copy dropped `ImDrawData::Textures` (ImGui 1.92 dynamic
+> font atlas), so the font descriptor was never set up on the render thread → every
+> ImGui draw sampled an out-of-bounds descriptor → `VK_ERROR_DEVICE_LOST`; (3) the
+> per-frame present-wait semaphore was reused across swapchain images (now per-image)
+> + no `imagesInFlight_` tracking + swapchain recreate didn't rebuild the per-image
+> sync; (4) the viewport ImGui texture descriptor (`offscreenTexId_`) was freed +
+> recreated on resize while in-flight draw data still referenced it (now a stable
+> handle, re-pointed in place); (5) in RT mode with the TLAS not yet built, the raster
+> mesh path ran with unbound material descriptors. A separate, still-unresolved issue:
+> threaded GPU **blendshape** at load differs from single-threaded (the per-mesh morph
+> upload interacts badly with the threaded load ordering) — interactive
 > skeletal/skinning through the op-queue is still a follow-up (see "Notes / scope").
 
 ## VK-RT capture race — root-cause analysis (2026-06)
