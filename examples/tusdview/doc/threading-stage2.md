@@ -7,16 +7,16 @@
 > previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
 > — RESOLVED". VK port notes are in "VK render-thread port" near the end.
 >
-> **Known limitation — VK ray tracing (`--rt`) is NOT threaded.** Threaded VK-RT
-> intermittently captures a blank frame (~40% of fixed-frame runs), so `--threaded` +
-> `--backend vk` + `--rt` transparently falls back to single-threaded with a `LOGW`
-> (`app.cc renderThreadActive_`). The race is **localized** to the offscreen image
-> being destroyed+recreated by a viewport resize on the render thread (see "VK-RT
-> capture race — root-cause analysis" below), but the capture "settle" handshake that
-> this localization suggested was implemented and **did not fix it** (8/20 still
-> black): in black runs the RT trace still renders the offscreen yet the readback is
-> blank, so it is a **GPU sync/memory hazard** needing validation layers / RenderDoc
-> (unavailable here) to close — not a CPU-side capture-ordering bug. A separate, also-unresolved
+> **Known limitation — VK ray tracing (`--rt`) is NOT threaded (one of two root
+> causes fixed).** Validation layers (built from source) found two bugs behind the
+> intermittent blank capture. **Fixed:** the offscreen `colorImg_` lacked
+> `TRANSFER_SRC/DST` usage, making the RT copy-in and the capture copy-out undefined
+> behavior (driver returned black). **Still open:** the present/swapchain-recreate
+> sync is incomplete (semaphore + command-buffer + image-index reuse across a resize),
+> which corrupts the render → black; threaded VK-RT black correlates *perfectly* with
+> these sync VUIDs. So `--threaded` + `--backend vk` + `--rt` still falls back to
+> single-threaded with a `LOGW` (`app.cc renderThreadActive_`) until the swapchain
+> recreate is reworked. Details in "Validation-layer findings" below. A separate, also-unresolved
 > issue: threaded GPU **blendshape** at load differs from single-threaded (the
 > per-mesh morph upload interacts badly with the threaded load ordering) — interactive
 > skeletal/skinning through the op-queue is still a follow-up (see "Notes / scope").
@@ -70,14 +70,46 @@ signature of a **GPU-side synchronization/memory hazard** in the resize→recrea
 descriptor update is still in flight), not anything fixable from the CPU-side capture
 ordering.
 
-**Why it can't be closed here.** Pinpointing a GPU memory hazard needs the Vulkan
-**validation layers** (`VK_LAYER_KHRONOS_validation`) or **RenderDoc** — neither is
-available on this dev box (no validation layer JSON installed; headless X only). The
-likely culprits to check once a validation-layer/RenderDoc setup exists: missing
-queue-family/ownership or memory barriers around `destroyOffscreen()`+`createRtImage()`
-on resize, and the `rtSet_` binding-1 descriptor update vs. an in-flight trace. Until
-then `--rt` + `--threaded` keeps the verified single-threaded path (the fallback in
-`app.cc renderThreadActive_`), which is deterministic and correct.
+### Validation-layer findings (2026-06) — built KhronosGroup/Vulkan-ValidationLayers (vulkan-sdk-1.3.275.0) from source and re-ran
+
+Two distinct root causes, both confirmed by the layer:
+
+**1. `colorImg_` missing transfer usage — a real undefined-behavior bug. FIXED.**
+The offscreen `colorImg_` was created with only `COLOR_ATTACHMENT | SAMPLED`, but the
+ray-query path copies `rtImage_` INTO it (`vkCmdCopyImage`, needs `TRANSFER_DST`) and
+`captureViewport` copies it OUT to a readback buffer (`vkCmdCopyImageToBuffer`, needs
+`TRANSFER_SRC`). The layer flagged `VUID-vkCmdCopyImageToBuffer-srcImage-00186`,
+`VUID-vkCmdCopyImage-...-TRANSFER_DST`, and the matching `oldLayout-01212/01213`
+barriers. Both copies were therefore spec-invalid → the NVIDIA driver returned garbage
+(all-black) non-deterministically. Fix: add `TRANSFER_SRC_BIT | TRANSFER_DST_BIT` to
+`colorImg_`'s usage in `resizeViewport` (`vk_renderer.cc`). This makes single-threaded
+VK-RT **validation-clean** and is output-identical (`maxdiff 0`) — it was relying on
+UB before. The single-threaded path "worked" only by luck.
+
+**2. Remaining threaded black ⟺ swapchain-recreate sync errors. STILL OPEN.**
+After fix #1, threaded VK-RT is still ~40% black, and the layer shows a *perfect*
+correlation (6/6 runs): the black runs — and only the black runs — emit a cluster of
+per-frame sync errors when a swapchain recreate happens (a window/dock resize during
+warmup):
+- `VUID-vkAcquireNextImageKHR-semaphore-01779` — `imageAvailable_` semaphore reused
+  while it still has pending operations.
+- `VUID-vkQueueSubmit-pCommandBuffers-00071` / `-vkBeginCommandBuffer-00049` /
+  `-vkResetCommandBuffer-00045` — `cmd_[frame_]` reused while still in flight.
+- `VUID-VkPresentInfoKHR-pImageIndices-01430` — presenting a stale image index.
+
+So the present/swapchain-recreate path's semaphore + command-buffer + image-index
+lifecycle is incomplete: when the swapchain goes out-of-date mid-run, the recreate
+doesn't fully reset the per-frame sync, and the next frames submit/acquire out of order
+→ the offscreen render is corrupted → black. (The single-threaded path is immune
+because its full main-loop rhythm recreates the swapchain cleanly between frames.)
+Recreating the sync semaphores inside `recreateSwapchain()` was tried and is **not
+sufficient** on its own — the stale image-index and the SUBOPTIMAL-acquire path also
+need handling. A proper, interactively-validated swapchain-recreate rework (per-image
+acquire semaphores or a clean acquire→render→present state machine that bails without
+presenting a stale index) is the remaining task.
+
+Until then `--rt` + `--threaded` keeps the verified single-threaded path (the fallback
+in `app.cc renderThreadActive_`), which is deterministic and correct.
 
 ## Goal
 
