@@ -2,15 +2,18 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "camera_nav.hh"
 #include "gpu_scene.hh"
+#include "light3d/camera.h"  // light3d::Frustum (cull worker)
 #include "gui_stringify.hh"
 #include "imgui.h"  // ImGuiTextFilter
 #include "load_control.hh"
@@ -28,6 +31,8 @@ namespace tusdview {
 
 class Gui {
  public:
+  ~Gui();  // joins the per-instance cull worker
+
   struct LoadStatus {
     bool active{false};
     std::string path;
@@ -108,6 +113,9 @@ class Gui {
   void setRenderMode(RenderMode m) { mode_ = m; }
   RenderMode renderMode() const { return mode_; }
   void setCullEnabled(bool on) { cullEnabled_ = on; }
+  // Offload per-instance culling to a worker thread (interactive responsiveness).
+  // Disabled in headless so screenshots stay synchronous/deterministic.
+  void setCullAsync(bool on) { cullAsync_ = on; }
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -282,14 +290,42 @@ class Gui {
   size_t statDrawCalls_{0};
   // Per-instance frustum culling (A4): compact each instanced prototype's visible
   // instances into the renderer's instance buffer. Re-run only when the view or
-  // cull state changes (cullInstances), keyed by lastCull*.
+  // cull state changes (cullInstances), keyed by lastCull*. The CPU frustum
+  // test + compaction runs on a WORKER thread (Stage-1 offload, large instanced
+  // scenes); cullInstances() polls the worker, applies its compacted result on the
+  // main thread (updateInstanceVisibility is a GPU call), and relaunches on change.
   void cullInstances();
-  std::vector<float> cullXformScratch_;
-  std::vector<float> cullColorScratch_;
+  void cullInstancesSync();  // synchronous compaction + apply (headless / cullAsync_ off)
+  void joinCullWorker();     // join + reset; called from setScene + ~Gui
+  void cullWorkerMain();     // runs on the worker thread (CPU only, reads snapshots)
+  bool cullAsync_{true};
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
   const DrawScene* lastCullDraw_{nullptr};
+  // One mesh's compacted visible instances, produced by the worker, applied on main.
+  struct CullJobMesh {
+    size_t meshIndex{0};
+    std::vector<float> xforms;   // 12 floats/visible-instance
+    std::vector<float> colors;   // 3 floats/visible-instance (empty when none)
+    uint32_t count{0};
+    bool hasColors{false};
+  };
+  // Frustum-test + compact one instanced mesh's visible instances into `out`
+  // (shared by the sync + worker paths). cullEnabled=false -> the full set.
+  static void compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
+                                   bool cullEnabled, CullJobMesh* out);
+  std::thread cullThread_;
+  std::atomic<bool> cullRunning_{false};
+  std::atomic<bool> cullDone_{false};
+  std::vector<CullJobMesh> cullJobResult_;     // worker writes, main reads after done
+  size_t cullJobVisInstances_{0};
+  size_t cullJobInstTris_{0};
+  // Worker inputs snapshotted by main before launch (so the worker races nothing).
+  light3d::Mat4 cullJobVP_{};
+  std::vector<uint8_t> cullJobViewVisible_;
+  bool cullJobEnabled_{false};
+  const DrawScene* cullJobDraw_{nullptr};
   float tessQuality_{1.0f};
   std::vector<HelperVertex> helperLines_;
   std::vector<HelperVertex> overlayLines_;

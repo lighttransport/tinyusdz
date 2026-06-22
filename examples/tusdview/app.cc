@@ -797,6 +797,10 @@ int App::run(const std::string& initialFile, int maxFrames,
 
   gui_.setScene(&loaded_, &draw_);
   gui_.setBudget(&loadCtrl_);
+  // Only the truly-interactive run-until-quit loop offloads per-instance culling to
+  // a worker (UI responsiveness). Any fixed-frame-count run (headless or windowed
+  // --frames/--screenshot) culls synchronously so screenshots stay deterministic.
+  gui_.setCullAsync(maxFrames < 0);
 
 #if defined(TUSDVIEW_HAVE_MCP)
   // Start the embedded MCP server (tool calls are drained on the main thread).
