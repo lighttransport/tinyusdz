@@ -274,7 +274,7 @@ jobs:
       run: cmake --build build
 
     - name: Upload ARM64 tusdcat binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: tusdcat-linux-arm64-gcc
         path: build/tusdcat
@@ -319,7 +319,7 @@ jobs:
       run: cmake --build build
 
     - name: Upload ARM64 tusdcat binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: tusdcat-linux-arm64-clang
         path: build/tusdcat
