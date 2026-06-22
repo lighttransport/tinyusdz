@@ -2852,8 +2852,15 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     return vkCreateImageView(device_, &vci, nullptr, view) == VK_SUCCESS;
   };
 
+  // colorImg_ is rendered as a color attachment, sampled by ImGui, AND used as a
+  // transfer target/source: the ray-query path copies rtImage_ INTO it
+  // (TRANSFER_DST) and captureViewport copies it OUT to a readback buffer
+  // (TRANSFER_SRC). Without these usage bits both copies are undefined behavior --
+  // which surfaced as an intermittent all-black viewport capture on the threaded
+  // VK-RT path (the driver returned garbage for the spec-invalid copy/barrier).
   makeImage(colorFormat_,
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             VK_IMAGE_ASPECT_COLOR_BIT, &colorImg_, &colorMem_, &colorView_);
   makeImage(depthFormat_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
             VK_IMAGE_ASPECT_DEPTH_BIT, &depthImg_, &depthMem_, &depthView_);
