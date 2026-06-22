@@ -35,6 +35,11 @@ class GLRenderer final : public Renderer {
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
   void present() override;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  void presentThreaded(ImDrawData* drawData, int fbW, int fbH) override;
+  bool initImGuiPlatform(GLFWwindow* window, std::string* err) override;
+  bool initImGuiBackend(std::string* err) override;
+#endif
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   void requestWindowCapture() override { wantWindowCapture_ = true; }
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;
@@ -81,6 +86,9 @@ class GLRenderer final : public Renderer {
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
                   const float* overrideEmissive);
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  void presentImpl(ImDrawData* drawData, int fbw, int fbh);
+#endif
 
   GLFWwindow* window_{nullptr};
   RendererCaps caps_{};

@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <thread>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "camera_nav.hh"
+#include "frame_packet.hh"
 #include "gpu_scene.hh"
 #include "light3d/camera.h"  // light3d::Frustum (cull worker)
 #include "gui_stringify.hh"
@@ -65,7 +67,15 @@ class Gui {
   void setBudget(LoadControl* b) { budget_ = b; }
 
   void frame(Renderer* renderer, OrbitCamera* camera);
-  void renderViewportScene();
+  // Build the viewport render inputs. `packet` null (single-threaded) renders the
+  // scene inline via renderer_->renderFrame; non-null (threaded) copies the inputs
+  // into the packet and routes GPU side-effects (resize, instance visibility)
+  // through postGpu_ for the render thread (renderFrame is NOT called here).
+  void renderViewportScene(FramePacket* packet = nullptr);
+  // Route a GPU op to the render thread (threaded); runs inline if unset.
+  void setPostGpu(std::function<void(std::function<void()>)> fn) {
+    postGpu_ = std::move(fn);
+  }
 
   bool wantOpen() const { return wantOpen_; }
   bool wantReload() const { return wantReload_; }
@@ -294,6 +304,11 @@ class Gui {
   // test + compaction runs on a WORKER thread (Stage-1 offload, large instanced
   // scenes); cullInstances() polls the worker, applies its compacted result on the
   // main thread (updateInstanceVisibility is a GPU call), and relaunches on change.
+  // Run a GPU op on the render thread when threaded, else inline.
+  std::function<void(std::function<void()>)> postGpu_;
+  void gpu(std::function<void()> op) {
+    if (postGpu_) postGpu_(std::move(op)); else op();
+  }
   void cullInstances();
   void cullInstancesSync();  // synchronous compaction + apply (headless / cullAsync_ off)
   void joinCullWorker();     // join + reset; called from setScene + ~Gui

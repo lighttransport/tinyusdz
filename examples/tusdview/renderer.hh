@@ -15,6 +15,7 @@
 #include "gpu_scene.hh"
 
 struct GLFWwindow;
+struct ImDrawData;
 
 namespace tusdview {
 
@@ -204,6 +205,21 @@ class Renderer {
   // Composite: draw the current ImGui draw data to the window and present/swap.
   // Must be called after ImGui::Render().
   virtual void present() = 0;
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  // --- Experimental threaded GL rendering (TUSDVIEW_ENABLE_GL_THREAD) ---
+  // Threaded composite: like present() but renders the supplied (deep-copied) ImGui
+  // draw data using the framebuffer size queried on the main thread, so it can run
+  // on the render thread (glfwGetFramebufferSize is main-thread-only).
+  virtual void presentThreaded(ImDrawData* /*drawData*/, int /*fbW*/, int /*fbH*/) {}
+  // Threaded init split: the platform half (GLFW callbacks/input) runs on the main
+  // thread; the backend half (GL/VK objects) on the render thread which owns the
+  // context. Default = combined initImGui (single-thread path). `window` is passed
+  // here (not just to init()) because init() runs later on the render thread, so the
+  // backend must capture the window handle on the main thread for the GLFW backend.
+  virtual bool initImGuiPlatform(GLFWwindow* /*window*/, std::string* /*err*/) { return true; }
+  virtual bool initImGuiBackend(std::string* /*err*/) { return true; }
+#endif
 
   // Read back the offscreen 3D viewport as top-down RGBA8 (headless QA).
   // Returns false if unsupported.

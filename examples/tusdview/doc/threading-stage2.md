@@ -1,5 +1,11 @@
 # tusdview Stage 2: GL render-thread decouple — follow-up task
 
+> **Status (2026-06): LANDED for GL.** The render-thread path is implemented and
+> verified byte-identical to the single-threaded path, gated behind the default-OFF
+> CMake option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The
+> previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
+> — RESOLVED" below for the root cause. The VK render-thread port remains a follow-up.
+
 ## Goal
 
 Make the tusdview window/UI stay responsive while the GPU works: move 3D drawing +
@@ -10,10 +16,10 @@ single-threaded path stays the default). **GL backend first**; VK + the RT "busy
 UX are later follow-ups.
 
 This is Stage 2 of the threading work. **Stage 1 (per-instance cull offload to a
-worker) is already shipped** (commit `8d3fe987` on branch `tusdview`). A full Stage 2
-prototype was written and **reverted** because it hit an unresolved render bug that
-needs an interactive display + a GL debugger — this doc captures what was learned so
-the next attempt starts ~80% of the way in.
+worker) is already shipped** (commit `8d3fe987` on branch `tusdview`). The Stage 2 GL
+render-thread path is now **implemented and verified** behind `TUSDVIEW_ENABLE_GL_THREAD`
+(the prototype's unresolved render bug was a main-thread `resizeViewport` GL call —
+fixed; see below). This doc remains the reference for the design and for the VK port.
 
 ## Why a render thread (and not the literal "imgui thread + draw thread")
 
@@ -96,33 +102,52 @@ These were validated to build + run; reuse them.
    draw data + packet fb size). `glfwGetFramebufferSize` is main-thread-only, so the
    render thread MUST use the packet's `fbW/fbH`.
 
-## THE UNRESOLVED BUG (start here)
+## THE OFFSCREEN-RENDER BUG — RESOLVED (2026-06)
 
-With all the above, the threaded path **builds, does not crash, uploads the scene
-(`meshCount==1`), and `renderFrame` runs with `glGetError()==0`** — yet the offscreen
-FBO read back via `captureViewport` is **white** (~20 non-bg px), so
-`--threaded --frames --screenshot models/suzanne.usdc` fails the pixel-compare vs the
-single-threaded screenshot. Capturing before vs after `present` made no difference;
-creating `fbo_` on the render thread (vs main) made no difference.
+**Status: FIXED.** The whole Stage 2 GL render-thread path now produces a
+**byte-identical** screenshot to the single-threaded path (`--threaded --backend gl
+--frames 8 --screenshot` vs the non-threaded baseline, `maxdiff == 0` on `suzanne`
+and `suzanne-pbr`). It is shipped gated behind the default-OFF CMake option
+`TUSDVIEW_ENABLE_GL_THREAD` and the runtime `--threaded` flag.
 
-Hypotheses to investigate with **RenderDoc / apitrace** (needs a display):
-- Does `renderFrame`'s `glBindFramebuffer(fbo_)` + `glClear` + draws actually land in
-  `fbo_`'s color attachment *on the render thread*, or silently go to the default
-  framebuffer? (Capture the render thread's GL stream and inspect `fbo_`'s texture.)
-- Is `resizeViewport` (posted op) recreating `fbo_`/`colorTex_` between the draw and
-  the readback within the same iteration, so the capture reads a fresh (undefined =
-  white) texture? Check the op-drain vs renderFrame ordering and whether the FBO id
-  the draw binds matches the one `captureViewport` reads (log `fbo_` in both).
-- Is the FBO actually complete on the render thread
-  (`glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE`) at draw
-  time? Add an assert.
-- Is a stale ImGui scissor (`GL_SCISSOR_TEST`) from the previous frame's
-  `RenderDrawData` clipping `glClear`/draws on the render thread? Try
-  `glDisable(GL_SCISSOR_TEST)` at the top of `renderFrame`.
+### Root cause
 
-The white-with-a-tiny-dark-corner look specifically suggests draws hitting a small
-region of an otherwise-uncleared/undefined attachment — i.e. a viewport/scissor/FBO
-mismatch, not missing geometry (the geometry *is* uploaded).
+`Gui::drawViewport()` (`gui.cc`) runs during the ImGui UI build on the **main
+thread** and called `renderer_->resizeViewport(w, h)` **directly**. `resizeViewport`
+is a GL op (it re-allocates the offscreen FBO's color texture + depth renderbuffer
+via `ensureFbo`). On the threaded path the GL context is owned by the **render
+thread**, so this `glTexImage2D`/`glRenderbufferStorage` ran on the main thread with
+**no context current** and silently did nothing — leaving the color texture at its
+first-frame size (64×20) while the FBO was reported `GL_FRAMEBUFFER_COMPLETE` at the
+nominal viewport size (1469×1284). The render thread then cleared+drew into that
+stale 64×20 texture, so the readback showed only `64*20 = 1280` cleared pixels in an
+otherwise-black (undefined) attachment.
+
+### How it was found (apitrace, as planned)
+
+`apitrace trace` + `apitrace dump --thread-ids` showed the smoking gun: the resize
+`glTexImage2D(width=1469, height=1284)` was tagged `@0` (main thread) while the
+`glClear`/`glDrawElements` were `@1` (render thread). `glretrace` also emitted
+`no current context` warnings around the resize calls. A temporary
+`glCheckFramebufferStatus` + non-black-pixel count in `captureViewport` confirmed
+`nonblack == 1280 == 64*20` with `fbstatus == GL_FRAMEBUFFER_COMPLETE, glerr == 0`.
+
+### The fix
+
+Route the `drawViewport()` resize through the GPU op-queue:
+`gpu([this, w, h] { renderer_->resizeViewport(w, h); });` (inline on the
+single-threaded path; queued to the render thread when threaded). `viewportTexture()`
+returns a stable `colorTex_` id across resizes, so `ImGui::Image` can reference it
+immediately and the render thread fills it. (`gui.cc renderViewportScene()` already
+routed its own resize through `gpu()`; `drawViewport()` was the one direct call that
+slipped through.)
+
+### Lesson for the VK port
+
+Audit **every** `renderer_->*` call reachable from `gui_.frame()` / the main-thread
+UI build for GL/VK side-effects — any that touch the device must go through `gpu()`.
+`resizeViewport` was the non-obvious one because it hides a GL allocation behind a
+geometry-sized "resize".
 
 ## Implementation checklist (files)
 

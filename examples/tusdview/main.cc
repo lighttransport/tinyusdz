@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
+  bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = false;             // --next: next loader + flat GL preview
   bool noCull = false;                     // --no-cull: disable frustum culling
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
@@ -91,6 +92,8 @@ int main(int argc, char** argv) {
       windowShot = argv[++i];
     } else if (std::strcmp(argv[i], "--headless") == 0) {
       headless = true;
+    } else if (std::strcmp(argv[i], "--threaded") == 0) {
+      threaded = true;
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
@@ -340,6 +343,7 @@ int main(int argc, char** argv) {
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setHeadless(headless);
+  app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
