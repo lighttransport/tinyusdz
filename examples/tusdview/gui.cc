@@ -207,6 +207,10 @@ const char* SkinningModeLabel(SkinningMode mode) {
 }  // namespace
 
 void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
+  // The cull worker reads the current DrawScene; join it before draw_ changes so
+  // it never touches freed geometry.
+  joinCullWorker();
+  lastCullValid_ = false;  // force a re-cull for the new scene
   loaded_ = loaded;
   draw_ = draw;
   selPrim_ = nullptr;
@@ -2093,6 +2097,10 @@ void Gui::drawStats() {
     if (statTotalInstances_ > 0) {
       ImGui::Text("Visible instances: %zu / %zu", statVisibleInstances_,
                   statTotalInstances_);
+      if (cullRunning_.load()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.1f, 1.0f), "(culling\xE2\x80\xA6)");
+      }
     }
     ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
     ImGui::Text("Draw calls: %zu", statDrawCalls_);
@@ -2330,29 +2338,94 @@ void Gui::buildViewVisibilityMask() {
   }
 }
 
-void Gui::cullInstances() {
-  if (!draw_ || !renderer_ || !cam_) return;
-  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
-  bool anyInstanced = false;
-  for (const auto& m : draw_->meshes) {
-    if (m.instanceCount() > 0) { anyInstanced = true; break; }
-  }
-  if (!anyInstanced) {
-    statVisibleInstances_ = 0;
-    statInstTris_ = 0;
+Gui::~Gui() { joinCullWorker(); }
+
+void Gui::joinCullWorker() {
+  if (cullThread_.joinable()) cullThread_.join();
+  cullRunning_.store(false);
+  cullDone_.store(false);
+}
+
+// Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
+// color) to `out`. cullEnabled=false restores the full set. Static + snapshot-only,
+// so it is safe to run on the worker thread.
+void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
+                               bool cullEnabled, CullJobMesh* out) {
+  const size_t ninst = m.instanceCount();
+  out->hasColors = m.instanceColors.size() == ninst * 3;
+  out->xforms.clear();
+  out->colors.clear();
+  if (!cullEnabled) {
+    out->xforms = m.instanceXforms;  // full set (a prior cull may have compacted)
+    if (out->hasColors) out->colors = m.instanceColors;
+    out->count = static_cast<uint32_t>(ninst);
     return;
   }
+  const float* lo = m.protoAabbMin;
+  const float* hi = m.protoAabbMax;
+  for (size_t k = 0; k < ninst; ++k) {
+    const float* o2w = &m.instanceXforms[k * 12];
+    // Transform the 8 prototype-local AABB corners to world; take min/max.
+    float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+    for (int c = 0; c < 8; ++c) {
+      const float px = (c & 1) ? hi[0] : lo[0];
+      const float py = (c & 2) ? hi[1] : lo[1];
+      const float pz = (c & 4) ? hi[2] : lo[2];
+      for (int r = 0; r < 3; ++r) {
+        const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                        o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+        wmn[r] = std::min(wmn[r], w);
+        wmx[r] = std::max(wmx[r], w);
+      }
+    }
+    if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+        light3d::CullResult::Outside) {
+      continue;
+    }
+    out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
+    if (out->hasColors)
+      out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
+                         &m.instanceColors[k * 3] + 3);
+  }
+  out->count = static_cast<uint32_t>(out->xforms.size() / 12);
+}
 
-  // GL-convention P*V (matches per-mesh culling). Recull only when it, the cull
-  // toggle, or the scene changed -- on a static camera this is a no-op.
+// Worker thread: compact every visible instanced mesh into cullJobResult_ from the
+// main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
+void Gui::cullWorkerMain() {
+  const DrawScene* d = cullJobDraw_;
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
+  cullJobResult_.clear();
+  size_t visInstances = 0, instTris = 0;
+  for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = d->meshes[mi];
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible =
+        mi >= cullJobViewVisible_.size() || cullJobViewVisible_[mi] != 0;
+    if (!meshVisible) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    CullJobMesh r;
+    r.meshIndex = mi;
+    compactMeshInstances(m, fr, cullJobEnabled_, &r);
+    visInstances += r.count;
+    instTris += protoTris * r.count;
+    cullJobResult_.push_back(std::move(r));
+  }
+  cullJobVisInstances_ = visInstances;
+  cullJobInstTris_ = instTris;
+  cullDone_.store(true, std::memory_order_release);
+}
+
+// Synchronous path (headless / cullAsync_ off): compact + apply inline, exact
+// original behavior so screenshots stay deterministic.
+void Gui::cullInstancesSync() {
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
                  draw_ != lastCullDraw_;
-  if (!changed) {
-    for (int i = 0; i < 16; ++i) {
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
-    }
-  }
   if (!changed) return;
   std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
   lastCullValid_ = true;
@@ -2361,66 +2434,73 @@ void Gui::cullInstances() {
 
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
   size_t visInstances = 0, instTris = 0;
+  CullJobMesh r;
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
     const DrawMeshCPU& m = draw_->meshes[mi];
-    const size_t ninst = m.instanceCount();
-    if (ninst == 0) continue;
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible = mi >= viewVisible_.size() || viewVisible_[mi] != 0;
+    if (!meshVisible) continue;
     size_t protoTris = 0;
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
-    const bool meshVisible =
-        mi >= viewVisible_.size() || viewVisible_[mi] != 0;
-    if (!meshVisible) continue;  // whole prototype culled/hidden; skip instances
-    const bool hasColors = m.instanceColors.size() == ninst * 3;
-
-    if (!cullEnabled_) {
-      // Restore the full set (a prior cull may have compacted the buffer).
-      renderer_->updateInstanceVisibility(
-          mi, m.instanceXforms.data(), hasColors ? m.instanceColors.data() : nullptr,
-          static_cast<uint32_t>(ninst));
-      visInstances += ninst;
-      instTris += protoTris * ninst;
-      continue;
-    }
-
-    cullXformScratch_.clear();
-    if (hasColors) cullColorScratch_.clear();
-    const float* lo = m.protoAabbMin;
-    const float* hi = m.protoAabbMax;
-    for (size_t k = 0; k < ninst; ++k) {
-      const float* o2w = &m.instanceXforms[k * 12];
-      // Transform the 8 prototype-local AABB corners to world; take min/max.
-      float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
-      for (int c = 0; c < 8; ++c) {
-        const float px = (c & 1) ? hi[0] : lo[0];
-        const float py = (c & 2) ? hi[1] : lo[1];
-        const float pz = (c & 4) ? hi[2] : lo[2];
-        for (int r = 0; r < 3; ++r) {
-          const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
-                          o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
-          wmn[r] = std::min(wmn[r], w);
-          wmx[r] = std::max(wmx[r], w);
-        }
-      }
-      if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
-          light3d::CullResult::Outside) {
-        continue;
-      }
-      cullXformScratch_.insert(cullXformScratch_.end(), o2w, o2w + 12);
-      if (hasColors) {
-        cullColorScratch_.insert(cullColorScratch_.end(),
-                                 &m.instanceColors[k * 3], &m.instanceColors[k * 3] + 3);
-      }
-    }
-    const uint32_t visCount =
-        static_cast<uint32_t>(cullXformScratch_.size() / 12);
+    compactMeshInstances(m, fr, cullEnabled_, &r);
     renderer_->updateInstanceVisibility(
-        mi, cullXformScratch_.data(),
-        hasColors ? cullColorScratch_.data() : nullptr, visCount);
-    visInstances += visCount;
-    instTris += protoTris * visCount;
+        mi, r.xforms.data(), r.hasColors ? r.colors.data() : nullptr, r.count);
+    visInstances += r.count;
+    instTris += protoTris * r.count;
   }
   statVisibleInstances_ = visInstances;
   statInstTris_ = instTris;
+}
+
+void Gui::cullInstances() {
+  if (!draw_ || !renderer_ || !cam_) return;
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  bool anyInstanced = false;
+  for (const auto& m : draw_->meshes) {
+    if (m.instanceCount() > 0) { anyInstanced = true; break; }
+  }
+  if (!anyInstanced) {
+    if (!cullRunning_.load()) { statVisibleInstances_ = 0; statInstTris_ = 0; }
+    return;
+  }
+  if (!cullAsync_) { cullInstancesSync(); return; }
+
+  // (1) Apply a finished worker result on the main thread (the GPU upload).
+  if (cullDone_.load(std::memory_order_acquire)) {
+    if (cullThread_.joinable()) cullThread_.join();
+    for (const CullJobMesh& r : cullJobResult_) {
+      renderer_->updateInstanceVisibility(
+          r.meshIndex, r.xforms.data(),
+          r.hasColors ? r.colors.data() : nullptr, r.count);
+    }
+    statVisibleInstances_ = cullJobVisInstances_;
+    statInstTris_ = cullJobInstTris_;
+    cullDone_.store(false);
+    cullRunning_.store(false);
+  }
+
+  // (2) (Re)launch the worker when the view / cull toggle / scene changed. While a
+  // worker runs the renderer keeps the previous visible set, so the UI never blocks.
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_;
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+  if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+  // Snapshot worker inputs: instanceXforms/protoAabb are static after load,
+  // viewVisible_ is copied, so the worker races nothing the main thread mutates.
+  cullJobVP_ = vp;
+  cullJobViewVisible_ = viewVisible_;
+  cullJobEnabled_ = cullEnabled_;
+  cullJobDraw_ = draw_;
+  cullRunning_.store(true);
+  cullDone_.store(false);
+  cullThread_ = std::thread(&Gui::cullWorkerMain, this);
 }
 
 void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) {
