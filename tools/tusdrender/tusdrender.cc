@@ -6471,9 +6471,12 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
   size_t est_tris = 0;
   for (const MeshJobNext &job : jobs) est_tris += EstimateTrisForJob(job.prim, time);
   try {
-    if (indexed)
+    // Test the pointers directly (not the `indexed` bool) so the compiler's
+    // -Wnonnull analysis can prove the dereferenced output is non-null -- it does
+    // not propagate `indexed == (out_uverts && out_indices)` to these sites.
+    if (out_uverts && out_indices)
       out_indices->reserve(out_indices->size() + est_tris * 3);
-    else
+    else if (out_vertices)
       out_vertices->reserve(out_vertices->size() + est_tris * 9);
     out_tris->reserve(out_tris->size() + est_tris);
     if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + est_tris * 6);
@@ -6533,14 +6536,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
       // Append this chunk in job order into the (reserved) outputs; free as we go.
       for (size_t i = cstart; i < cend; ++i) {
         R &r = results[i];
-        if (indexed) {
+        // Direct pointer test (== indexed) so -Wnonnull can prove the appends below
+        // dereference non-null outputs.
+        if (out_uverts && out_indices) {
           // Rebase this job's local vertex indices by the BLAS-global vertex
           // count, then append its unique verts. Byte-identical triangle set to
           // the soup path (same vertices, same per-tri order).
           const uint32_t base = uint32_t(out_uverts->size() / 3);
           out_uverts->insert(out_uverts->end(), r.uvv.begin(), r.uvv.end());
           for (uint32_t id : r.idx) out_indices->push_back(base + id);
-        } else {
+        } else if (out_vertices) {
           out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
         }
         // Slim store: assign each of this job's triangles a global material id and
