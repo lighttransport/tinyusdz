@@ -2825,7 +2825,13 @@ void Gui::drawViewport() {
     const bool flip = renderer_->caps().flipViewportV;
     const ImVec2 uv0 = flip ? ImVec2(0, 1) : ImVec2(0, 0);
     const ImVec2 uv1 = flip ? ImVec2(1, 0) : ImVec2(1, 1);
-    ImGui::Image(tex, avail, uv0, uv1);
+    // Only draw the viewport image once the backend has a real texture handle. On the
+    // threaded path the offscreen target (and its ImGui descriptor) is created on the
+    // render thread; before its first frame viewportTexture() can be 0, and emitting
+    // ImGui::Image(0) binds an empty descriptor set that the ImGui fragment shader then
+    // samples out-of-bounds -> GPU fault / device loss (VK). Skip it until it's ready.
+    if (tex) ImGui::Image(tex, avail, uv0, uv1);
+    else ImGui::Dummy(avail);
     vpHovered_ = ImGui::IsItemHovered();
     handleNavigation();
     const ImVec2 imageMin = ImGui::GetItemRectMin();

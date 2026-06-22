@@ -867,18 +867,10 @@ int App::run(const std::string& initialFile, int maxFrames,
   int winH = 0;
   getRequestedWindowSize(&winW, &winH);
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
-  // Threaded rendering applies to the windowed GL or Vulkan path (experimental);
-  // headless keeps the inline single-threaded path. Vulkan ray tracing is excluded:
-  // its offscreen RT trace + the render-thread capture handshake have an unresolved
-  // race (the captured frame is intermittently blank), so --rt keeps the verified
-  // single-threaded path. GL and Vulkan rasterization are threaded as usual.
+  // Threaded rendering applies to the windowed GL or Vulkan path (experimental;
+  // includes Vulkan ray tracing). Headless keeps the inline single-threaded path.
   renderThreadActive_ = threaded_ && !headless_ &&
-                        (backend_ == Backend::GL || backend_ == Backend::Vulkan) &&
-                        !(backend_ == Backend::Vulkan && rtRequested_);
-  if (threaded_ && !headless_ && backend_ == Backend::Vulkan && rtRequested_) {
-    LOGW("--threaded is not yet supported with Vulkan ray tracing (--rt); "
-         "using the single-threaded render path for this session.");
-  }
+                        (backend_ == Backend::GL || backend_ == Backend::Vulkan);
 #endif
   if (headless_) {
     if (backend_ != Backend::Vulkan) {

@@ -153,6 +153,10 @@ class VulkanRenderer final : public Renderer {
   bool createSwapchainFramebuffers(std::string* err);
   bool createCommands(std::string* err);
   bool createSync(std::string* err);
+  // (Re)create the per-swapchain-image sync (renderFinished_ semaphores + clear
+  // imagesInFlight_). Destroys any existing ones first; call after the swapchain (and
+  // its image count) is (re)created. Requires the device to be idle.
+  bool createPerImageSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
   // Upload + draw one HelperVertex line set with the given pipeline.
@@ -316,9 +320,16 @@ class VulkanRenderer final : public Renderer {
   // Commands & sync
   VkCommandPool commandPool_{VK_NULL_HANDLE};
   VkCommandBuffer cmd_[kFramesInFlight]{};
-  VkSemaphore imageAvailable_[kFramesInFlight]{};
-  VkSemaphore renderFinished_[kFramesInFlight]{};
-  VkFence inFlight_[kFramesInFlight]{};
+  VkSemaphore imageAvailable_[kFramesInFlight]{};  // acquire->render, per frame-in-flight
+  VkFence inFlight_[kFramesInFlight]{};            // render-done fence, per frame-in-flight
+  // Present-wait semaphore, ONE PER SWAPCHAIN IMAGE (not per frame): vkQueuePresentKHR
+  // has no fence, so a present's wait semaphore must not be reused until that image is
+  // acquired again -- reusing a per-frame semaphore across images corrupts the queue
+  // (the threaded VK-RT black). imagesInFlight_ tracks which frame's fence last rendered
+  // each swapchain image, so we wait before reusing the image. Both are sized to the
+  // swapchain image count and (re)built with the swapchain.
+  std::vector<VkSemaphore> renderFinished_;
+  std::vector<VkFence> imagesInFlight_;
   uint32_t frame_{0};
 
   // Scene
