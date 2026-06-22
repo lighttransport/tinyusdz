@@ -1,11 +1,24 @@
 # tusdview Stage 2: GL render-thread decouple — follow-up task
 
-> **Status (2026-06): LANDED for GL and Vulkan.** The render-thread path is
-> implemented and verified byte-identical to the single-threaded path on both
-> backends (GL; VK raster + VK ray-query `--rt`), gated behind the default-OFF CMake
-> option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The previously-
-> unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG —
-> RESOLVED" below. VK port notes are in "VK render-thread port" near the end.
+> **Status (2026-06): LANDED for GL + Vulkan rasterization. VK ray tracing is
+> excluded.** The render-thread path is implemented and verified byte-identical to
+> the single-threaded path for GL and Vulkan *rasterization*, gated behind the
+> default-OFF CMake option `TUSDVIEW_ENABLE_GL_THREAD` + the `--threaded` flag. The
+> previously-unresolved offscreen-render bug is fixed — see "THE OFFSCREEN-RENDER BUG
+> — RESOLVED". VK port notes are in "VK render-thread port" near the end.
+>
+> **Known limitation — VK ray tracing (`--rt`) is NOT threaded.** Threaded VK-RT has
+> an unresolved race: the offscreen RT trace + the render-thread screenshot capture
+> intermittently read a blank frame (~40% of fixed-frame runs). Each path is
+> internally deterministic (single≡single, threaded≡threaded) but threaded≠single,
+> and capture-after-present + a present-retry did not resolve it (`colorImg_` is still
+> intermittently unwritten — root cause not found). So `--threaded` + `--backend vk`
+> + `--rt` transparently falls back to the single-threaded path with a `LOGW`
+> (`app.cc renderThreadActive_`). Re-enabling needs the race root-caused first. A
+> separate, also-unresolved issue: threaded GPU **blendshape** at load differs from
+> single-threaded (the per-mesh morph upload path interacts badly with the threaded
+> load ordering) — interactive skeletal/skinning through the op-queue is still a
+> follow-up (see "Notes / scope").
 
 ## Goal
 
@@ -221,6 +234,8 @@ What the port changed (all in `vk/vk_renderer.{cc,hh}` + a few `app.cc` guards):
   RT/`tlasDirty_` flags are written on the thread that reads them.
 
 Verified byte-identical (`maxdiff 0`) threaded-vs-single on `suzanne.usdc` and
-`suzanne-pbr.usda` for VK raster and VK `--rt`. (No validation layer on the dev box;
-verification is the pixel-identity + the RT path exercising the AS build on the
-render thread.)
+`suzanne-pbr.usda` for VK **rasterization**. VK **ray tracing** is excluded from the
+threaded path (see the "Known limitation" note at the top): an earlier claim that
+threaded VK-RT was byte-identical turned out to rest on a flaky run — re-testing shows
+a ~40% blank-capture race, so `--rt` now falls back to single-threaded. (No validation
+layer on the dev box; verification is pixel-identity.)
