@@ -195,19 +195,20 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Experimental multi-threaded GL rendering (--threaded): the render thread owns
-# the GL context so the UI loop never blocks on the GPU. WIP -- an unresolved
-# offscreen-render bug remains (see doc/threading-stage2.md), so this is OFF by
-# default and the verified single-threaded path is unchanged when it is off.
+# Experimental multi-threaded rendering (--threaded): a dedicated render thread owns
+# the GL context / Vulkan queue so the UI loop never blocks on the GPU. Covers both
+# the GL and Vulkan (raster + ray-query) backends; verified byte-identical to the
+# single-threaded path. OFF by default — the single-threaded path is unchanged when
+# off. See doc/threading-stage2.md. (Macro name kept GL_THREAD for compat.)
 # ---------------------------------------------------------------------------
 option(TUSDVIEW_ENABLE_GL_THREAD
-       "Build the experimental threaded GL render path (--threaded)" OFF)
+       "Build the experimental threaded GL/Vulkan render path (--threaded)" OFF)
 if(TUSDVIEW_ENABLE_GL_THREAD)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_ENABLE_GL_THREAD=1)
   if(UNIX)
     target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
   endif()
-  message(STATUS "tusdview: experimental threaded GL render path ENABLED (--threaded)")
+  message(STATUS "tusdview: experimental threaded GL/Vulkan render path ENABLED (--threaded)")
 endif()
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES

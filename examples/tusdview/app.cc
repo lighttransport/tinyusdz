@@ -805,9 +805,12 @@ void App::submitFramePacket(std::unique_ptr<FramePacket> pkt, bool blockUntilDon
 }
 
 void App::renderThreadMain() {
-  // Acquire the GL context (released by the main thread), then create all GL
-  // objects (FBO/shaders + the ImGui GL backend) on this thread's current context.
-  glfwMakeContextCurrent(window_);
+  // GL: acquire the context (released by the main thread) so all GL objects
+  // (FBO/shaders + ImGui GL backend) are created on this thread's current context.
+  // Vulkan has no per-thread "current context" — the only rule is that one thread
+  // owns the queue submits, which this thread does — so it skips the GLFW calls.
+  const bool glBackend = (backend_ == Backend::GL);
+  if (glBackend) glfwMakeContextCurrent(window_);
   std::string err;
   bool ok = renderer_->init(window_, &err);
   if (!ok) LOGE("render thread: renderer init: %s", err.c_str());
@@ -815,7 +818,7 @@ void App::renderThreadMain() {
     LOGE("render thread: ImGui GL backend init: %s", err.c_str());
   renderInitOk_.store(ok);
   renderInitDone_.store(true, std::memory_order_release);
-  if (!ok) { glfwMakeContextCurrent(nullptr); return; }
+  if (!ok) { if (glBackend) glfwMakeContextCurrent(nullptr); return; }
 
   while (renderRunning_.load()) {
     drainGpuOps();  // uploads/resize/instance-visibility, FIFO, before the frame
@@ -828,12 +831,12 @@ void App::renderThreadMain() {
       if (pendingPacket_) pkt = std::move(pendingPacket_);
     }
     if (!pkt) continue;
-    renderer_->newFrame();  // ImGui_ImplOpenGL3_NewFrame (ensures GL objects exist)
+    renderer_->newFrame();  // ImGui backend NewFrame (GL: ImGui_ImplOpenGL3, VK: ImGui_ImplVulkan)
     if (pkt->hasParams) {
       RenderFrameParams params = pkt->params();
       renderer_->renderFrame(params);
     }
-    if (pkt->wantCapture)  // read the 3D FBO before ImGui present touches GL state
+    if (pkt->wantCapture)  // read the 3D offscreen target (GL FBO / VK offscreen img)
       renderer_->captureViewport(&renderCapture_, &renderCaptureW_, &renderCaptureH_);
     renderer_->presentThreaded(pkt->drawData, pkt->fbW, pkt->fbH);
     FreeImDrawData(pkt->drawData);
@@ -851,7 +854,7 @@ void App::renderThreadMain() {
     pendingPacket_.reset();
   }
   renderer_->shutdown();
-  glfwMakeContextCurrent(nullptr);
+  if (glBackend) glfwMakeContextCurrent(nullptr);
 }
 #endif  // TUSDVIEW_ENABLE_GL_THREAD
 
@@ -864,9 +867,10 @@ int App::run(const std::string& initialFile, int maxFrames,
   int winH = 0;
   getRequestedWindowSize(&winW, &winH);
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
-  // Threaded rendering applies only to the windowed GL path (experimental);
-  // headless + VK keep the inline single-threaded path.
-  renderThreadActive_ = threaded_ && !headless_ && backend_ == Backend::GL;
+  // Threaded rendering applies to the windowed GL or Vulkan path (experimental);
+  // headless keeps the inline single-threaded path.
+  renderThreadActive_ = threaded_ && !headless_ &&
+                        (backend_ == Backend::GL || backend_ == Backend::Vulkan);
 #endif
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
@@ -896,18 +900,32 @@ int App::run(const std::string& initialFile, int maxFrames,
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   if (renderThreadActive_) {
-    // Threaded GL: ImGui's GLFW platform init runs on the main thread (context
-    // current). renderer_->init() (FBO/shaders) + the ImGui GL backend run on the
-    // render thread, which owns the context. Release the context here so the render
-    // thread can make it current; startRenderThread blocks until its init completes.
+    // Threaded: ImGui's GLFW platform init runs on the main thread; renderer_->init()
+    // (device/FBO/shaders) + the ImGui render backend run on the render thread.
+    // GL: release the context here so the render thread can make it current. VK has
+    // no per-thread context, so there is nothing to release. startRenderThread blocks
+    // until the render thread finishes init.
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
       return 1;
     }
-    glfwMakeContextCurrent(nullptr);
+    if (backend_ == Backend::GL) glfwMakeContextCurrent(nullptr);
     if (!startRenderThread()) {
       LOGE("render thread init failed: %s", err.c_str());
       return 1;
+    }
+    // Vulkan ray tracing: rayTracingAvailable() reads device support set by init()
+    // (already finished — startRenderThread joined on it). setRayTracing() only flips
+    // flags + marks the TLAS dirty (built lazily in present() on the render thread),
+    // but those fields are read there, so post it to run on the render thread.
+    if (rtRequested_) {
+      if (renderer_->rayTracingAvailable()) {
+        rtPath_ = true;
+        postGpu([this] { renderer_->setRayTracing(true); });
+        LOGI("Vulkan ray tracing (ray query) enabled.");
+      } else {
+        LOGW("--rt requested but ray tracing is unavailable; using rasterization.");
+      }
     }
   } else
 #endif
