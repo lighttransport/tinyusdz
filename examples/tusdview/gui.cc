@@ -2443,8 +2443,13 @@ void Gui::cullInstancesSync() {
     size_t protoTris = 0;
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
     compactMeshInstances(m, fr, cullEnabled_, &r);
-    renderer_->updateInstanceVisibility(
-        mi, r.xforms.data(), r.hasColors ? r.colors.data() : nullptr, r.count);
+    // Route the GPU upload to the render thread when threaded (else inline).
+    uint32_t cnt = r.count;
+    bool hc = r.hasColors;
+    std::vector<float> xf = r.xforms, col = r.colors;
+    gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
+      renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+    });
     visInstances += r.count;
     instTris += protoTris * r.count;
   }
@@ -2468,10 +2473,14 @@ void Gui::cullInstances() {
   // (1) Apply a finished worker result on the main thread (the GPU upload).
   if (cullDone_.load(std::memory_order_acquire)) {
     if (cullThread_.joinable()) cullThread_.join();
-    for (const CullJobMesh& r : cullJobResult_) {
-      renderer_->updateInstanceVisibility(
-          r.meshIndex, r.xforms.data(),
-          r.hasColors ? r.colors.data() : nullptr, r.count);
+    for (CullJobMesh& r : cullJobResult_) {
+      size_t mi = r.meshIndex;
+      uint32_t cnt = r.count;
+      bool hc = r.hasColors;
+      std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors);
+      gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
+        renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+      });
     }
     statVisibleInstances_ = cullJobVisInstances_;
     statInstTris_ = cullJobInstTris_;
@@ -2805,7 +2814,12 @@ void Gui::drawViewport() {
   viewportH_ = h;
 
   if (renderer_ && cam_ && w > 0 && h > 0) {
-    renderer_->resizeViewport(w, h);
+    // resizeViewport is a GL op (re-allocates the offscreen FBO textures); in the
+    // threaded path it must run on the render thread that owns the context, not
+    // here on the UI thread. gpu() routes it to the op-queue (inline when single
+    // threaded). viewportTexture()'s id is stable across resizes, so ImGui::Image
+    // can reference it now and the render thread fills it.
+    gpu([this, w, h] { renderer_->resizeViewport(w, h); });
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
     const bool flip = renderer_->caps().flipViewportV;
@@ -2989,11 +3003,12 @@ void Gui::drawViewport() {
   ImGui::End();
 }
 
-void Gui::renderViewportScene() {
+void Gui::renderViewportScene(FramePacket* packet) {
   if (!renderer_ || !cam_ || viewportW_ <= 0 || viewportH_ <= 0) return;
 
   cam_->setAspect(static_cast<float>(viewportW_) / static_cast<float>(viewportH_));
-  renderer_->resizeViewport(viewportW_, viewportH_);
+  const int vpW = viewportW_, vpH = viewportH_;
+  gpu([this, vpW, vpH] { renderer_->resizeViewport(vpW, vpH); });
 
   const light3d::Mat4 viewM = cam_->view();
   const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
@@ -3047,7 +3062,33 @@ void Gui::renderViewportScene() {
   p.helperLineVertexCount = static_cast<int>(helperLines_.size());
   p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
   p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
-  renderer_->renderFrame(p);
+
+  if (!packet) {
+    renderer_->renderFrame(p);  // single-threaded: render inline
+    return;
+  }
+  // Threaded: copy everything the render thread needs into the owned packet.
+  std::memcpy(packet->view, viewM.m, sizeof(packet->view));
+  std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
+  packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->mode = p.mode;
+  for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
+  packet->depthScale = p.depthScale;
+  for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
+  packet->highlightMeshIndex = p.highlightMeshIndex;
+  if (p.highlightIndices)
+    packet->highlightIndices.assign(p.highlightIndices, p.highlightIndices + p.highlightIndexCount);
+  if (p.highlightLines)
+    packet->highlightLines.assign(p.highlightLines, p.highlightLines + p.highlightLineVertexCount);
+  if (p.helperLines)
+    packet->helperLines.assign(p.helperLines, p.helperLines + p.helperLineVertexCount);
+  if (p.overlayLines)
+    packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
+  if (p.meshVisible)
+    packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  packet->viewportW = vpW;
+  packet->viewportH = vpH;
+  packet->hasParams = true;
 }
 
 void Gui::buildHelpers() {

@@ -59,6 +59,7 @@ set(TUSDVIEW_SOURCES
     parametric_tess.cc
     skinning.cc
     camera_nav.cc
+    frame_packet.cc
     gui.cc
     gui_stringify.cc
     gui_style.cc
@@ -191,6 +192,22 @@ if(TUSDVIEW_ENABLE_MCP)
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()
   message(STATUS "tusdview: embedded MCP server disabled")
+endif()
+
+# ---------------------------------------------------------------------------
+# Experimental multi-threaded GL rendering (--threaded): the render thread owns
+# the GL context so the UI loop never blocks on the GPU. WIP -- an unresolved
+# offscreen-render bug remains (see doc/threading-stage2.md), so this is OFF by
+# default and the verified single-threaded path is unchanged when it is off.
+# ---------------------------------------------------------------------------
+option(TUSDVIEW_ENABLE_GL_THREAD
+       "Build the experimental threaded GL render path (--threaded)" OFF)
+if(TUSDVIEW_ENABLE_GL_THREAD)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_ENABLE_GL_THREAD=1)
+  if(UNIX)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+  endif()
+  message(STATUS "tusdview: experimental threaded GL render path ENABLED (--threaded)")
 endif()
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES

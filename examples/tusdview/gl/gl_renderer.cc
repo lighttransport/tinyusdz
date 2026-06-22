@@ -318,6 +318,30 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   return true;
 }
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+bool GLRenderer::initImGuiPlatform(GLFWwindow* window, std::string* err) {
+  // GLFW callbacks + input: main thread (GLFW is main-thread-affine). init() runs
+  // later on the render thread, so capture the window here on the main thread.
+  window_ = window;
+  if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
+    if (err) *err = "ImGui_ImplGlfw_InitForOpenGL failed";
+    return false;
+  }
+  return true;
+}
+bool GLRenderer::initImGuiBackend(std::string* err) {
+  // GL objects (shaders, font texture): the context-owning thread.
+  if (!ImGui_ImplOpenGL3_Init("#version 330")) {
+    if (err) *err = "ImGui_ImplOpenGL3_Init failed";
+    return false;
+  }
+  imguiInited_ = true;
+  return true;
+}
+bool GLRenderer::initImGui(std::string* err) {
+  return initImGuiPlatform(window_, err) && initImGuiBackend(err);
+}
+#else
 bool GLRenderer::initImGui(std::string* err) {
   if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
     if (err) *err = "ImGui_ImplGlfw_InitForOpenGL failed";
@@ -330,6 +354,7 @@ bool GLRenderer::initImGui(std::string* err) {
   imguiInited_ = true;
   return true;
 }
+#endif
 
 void GLRenderer::destroyScene() {
   for (auto& m : meshes_) {
@@ -1107,6 +1132,38 @@ ViewportTexHandle GLRenderer::viewportTexture() const {
   return static_cast<ViewportTexHandle>(colorTex_);
 }
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+// Shared composite: draw `drawData` to the default framebuffer + swap. Used by
+// present() (live, main thread) and presentThreaded() (render thread).
+void GLRenderer::presentImpl(ImDrawData* drawData, int fbw, int fbh) {
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, fbw, fbh);
+  glDisable(GL_DEPTH_TEST);
+  glClearColor(0.06f, 0.06f, 0.07f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  ImGui_ImplOpenGL3_RenderDrawData(drawData);
+  if (wantWindowCapture_) {
+    winCapW_ = fbw;
+    winCapH_ = fbh;
+    windowCapture_.resize(static_cast<size_t>(fbw) * static_cast<size_t>(fbh) * 4);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, fbw, fbh, GL_RGBA, GL_UNSIGNED_BYTE, windowCapture_.data());
+    wantWindowCapture_ = false;
+  }
+  glfwSwapBuffers(window_);
+}
+
+void GLRenderer::presentThreaded(ImDrawData* drawData, int fbW, int fbH) {
+  presentImpl(drawData, fbW, fbH);  // fb size queried on the main thread
+}
+
+void GLRenderer::present() {
+  int fbw = 0, fbh = 0;
+  glfwGetFramebufferSize(window_, &fbw, &fbh);
+  presentImpl(ImGui::GetDrawData(), fbw, fbh);
+}
+#else
 void GLRenderer::present() {
   int fbw = 0, fbh = 0;
   glfwGetFramebufferSize(window_, &fbw, &fbh);
@@ -1131,6 +1188,7 @@ void GLRenderer::present() {
 
   glfwSwapBuffers(window_);
 }
+#endif
 
 bool GLRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   if (!fbo_ || vpW_ < 1 || vpH_ < 1) return false;
