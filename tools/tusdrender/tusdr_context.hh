@@ -138,4 +138,48 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
 
 void CollectLights(const RenderScene &scene, LightCache *cache);
 
+// ---- tusdr_geom.cc ----
+bool BuildNodeMatrixMap(const Node &node,
+                        std::unordered_map<std::string, matrix4d> *map);
+
+std::unordered_map<std::string, matrix4d> BuildNodeMatrixMap(
+    const RenderScene &scene);
+
+matrix4d MatrixForPath(const std::unordered_map<std::string, matrix4d> &map,
+                       const std::string &path);
+
+Vec3 TransformNormal(const matrix4d &inv_world, const Vec3 &n);
+
+int AxisIndex(tinyusdz::Axis axis);
+
+Vec3 AxisVec(tinyusdz::Axis axis);
+
+float Coord(const Vec3 &v, int axis);
+
+Vec3 WithCoord(Vec3 v, int axis, float c);
+
+Vec3 RadialPart(Vec3 v, int axis);
+
+bool SolveQuadratic(float a, float b, float c, float *t0, float *t1);
+
+bool IntersectTriangleMT(const Vec3 &o, const Vec3 &d, const Vec3 &a,
+                         const Vec3 &b, const Vec3 &c, float tmin,
+                         float tmax, float *t);
+
+bool IntersectTetPrim(const TetPrim &tet, const Vec3 &o, const Vec3 &d,
+                      float tmin, float tmax, float *best_t, Vec3 *normal);
+
+int TetUserIntersect(const lrt_ray *ray, uint32_t prim_id, void *user,
+                     float *t, float *u, float *v);
+
+int TetUserOccluded(const lrt_ray *ray, uint32_t prim_id, void *user);
+
+bool AcceptT(float t, float tmin, float tmax, float *best);
+
+bool IntersectDirectShape(const DirectShape &shape, const Vec3 &ray_org,
+                          const Vec3 &ray_dir, float tmin, float tmax,
+                          DirectHit *hit);
+
+float TriangleArea(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2);
+
 }  // namespace tusdr
