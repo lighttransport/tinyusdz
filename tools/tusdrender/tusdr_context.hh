@@ -503,4 +503,125 @@ void MergeStats(RTPreviewStats *dst, const RTPreviewStats &src);
 void MergeBounds(Bounds *dst, const Bounds &src);
 inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
+// ---- tusdr_legacy.cc (legacy loader + shared utils) ----
+std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
+
+void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
+                      const matrix4d &world, std::vector<float> *vertices,
+                      std::vector<TriInfo> *tris, Bounds *bounds,
+                      LightCache *lights = nullptr);
+
+void CollectGeometry(const RenderScene &scene, const Node &node,
+                     std::vector<float> *vertices, std::vector<TriInfo> *tris,
+                     Bounds *bounds,
+                     const std::unordered_set<std::string> *skip_paths,
+                     LightCache *lights);
+
+void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
+                        std::vector<TriInfo> *tris, Bounds *bounds,
+                        const std::unordered_set<std::string> *skip_paths,
+                        LightCache *lights);
+
+matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
+                               bool *reset);
+
+tinyusdz::Purpose ResolvePurpose(const tinyusdz::Prim &prim,
+                                 tinyusdz::Purpose inherited);
+
+bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path,
+                      const tinyusdz::GeomMesh &mesh, const matrix4d &world,
+                      double time, tinyusdz::Purpose purpose,
+                      uint32_t purpose_mask,
+                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
+                      Bounds *bounds, RTPreviewStats *stats);
+
+void CollectRTPreviewMeshes(const tinyusdz::Prim &prim,
+                            const matrix4d &parent_world, double time,
+                            tinyusdz::Purpose inherited_purpose,
+                            std::vector<MeshJob> *jobs);
+
+bool BuildRTPreviewScene(const tinyusdz::Stage &stage, const Options &opt,
+                         std::vector<float> *vertices,
+                         std::vector<TriInfo> *tris, Bounds *bounds,
+                         RTPreviewStats *stats, std::string *err);
+
+bool MatchPrimNameOrPath(const tinyusdz::Prim &prim, const std::string &query);
+
+bool CameraFrameFromGeomCamera(const tinyusdz::Stage &stage,
+                               const tinyusdz::GeomCamera &cam,
+                               const matrix4d &world, double time,
+                               CameraFrame *frame);
+
+bool FindStageCameraFrameRecursive(const tinyusdz::Stage &stage,
+                                   const tinyusdz::Prim &prim,
+                                   const std::string &query,
+                                   const matrix4d &parent_world, double time,
+                                   CameraFrame *frame);
+
+bool FindStageCameraFrame(const tinyusdz::Stage &stage, const std::string &query,
+                          double time, CameraFrame *frame);
+
+bool EvalAxis(const tinyusdz::TypedAttributeWithFallback<tinyusdz::Axis> &attr,
+              tinyusdz::Axis *out);
+
+std::string PrimPathString(const tinyusdz::Prim &prim);
+
+float ApproxScale(const matrix4d &m);
+
+void AddNurbsTriangle(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
+                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
+                      Bounds *bounds);
+
+void AddDirectTriangle(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
+                       const Vec3 &color, std::vector<float> *vertices,
+                       std::vector<TriInfo> *tris, Bounds *bounds);
+
+void AddDirectCube(double size, const matrix4d &world, std::vector<float> *vertices,
+                   std::vector<TriInfo> *tris, Bounds *bounds);
+
+void AddDirectPlane(double width, double length, tinyusdz::Axis axis,
+                    const matrix4d &world, std::vector<float> *vertices,
+                    std::vector<TriInfo> *tris, Bounds *bounds);
+
+double BSplineBasis(int i, int degree, double u, const std::vector<double> &knots);
+
+Vec3 EvalNurbsPatchPoint(const std::vector<tinyusdz::value::point3f> &points,
+                         const std::vector<double> &weights, int u_count,
+                         int v_count, int u_order, int v_order,
+                         const std::vector<double> &u_knots,
+                         const std::vector<double> &v_knots, double u, double v);
+
+void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
+                            const tinyusdz::GeomNurbsPatch &patch,
+                            const matrix4d &world, double time,
+                            std::vector<float> *vertices,
+                            std::vector<TriInfo> *tris, Bounds *bounds);
+
+void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+                         const std::unordered_map<std::string, matrix4d> &matrices,
+                         double time, DirectScene *direct,
+                         std::vector<float> *vertices, std::vector<TriInfo> *tris,
+                         Bounds *bounds, std::vector<float> *sphere_data,
+                         std::vector<float> *round_points,
+                         std::vector<float> *round_radii,
+                         std::vector<uint32_t> *round_first,
+                         std::vector<uint32_t> *round_count,
+                         std::vector<float> *flat_points,
+                         std::vector<float> *flat_radii,
+                         std::vector<uint32_t> *flat_first,
+                         std::vector<uint32_t> *flat_count,
+                         std::vector<float> *point_centers,
+                         std::vector<float> *point_radii,
+                         std::vector<float> *bez_cps,
+                         std::vector<float> *tet_aabbs);
+
+bool BuildDirectScene(const tinyusdz::Stage &stage, const RenderScene &render_scene,
+                      const Options &opt, std::vector<float> *vertices,
+                      std::vector<TriInfo> *tris, Bounds *bounds,
+                      DirectScene *direct, std::string *err);
+
+bool FindCameraNode(const RenderScene &scene, const Node &node,
+                    const std::string &query, const Node **node_out);
+const Node *FindCameraNode(const RenderScene &scene, const std::string &query);
+
 }  // namespace tusdr
