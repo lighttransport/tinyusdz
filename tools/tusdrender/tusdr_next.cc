@@ -80,6 +80,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           float clearcoat, float clearcoat_roughness,
                           const ScalarTex &clearcoat_tex,
                           const ScalarTex &clearcoat_rough_tex,
+                          const Vec3 &specular_color, int32_t specular_tex_id,
+                          float ior, uint8_t use_specular_workflow,
                           const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
@@ -119,6 +121,10 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     out_job_mat->opacity_ch = opacity_tex.ch;
     out_job_mat->clearcoat_ch = clearcoat_tex.ch;
     out_job_mat->clearcoat_rough_ch = clearcoat_rough_tex.ch;
+    out_job_mat->specular_color = specular_color;
+    out_job_mat->specular_tex_id = specular_tex_id;
+    out_job_mat->ior = ior;
+    out_job_mat->use_specular_workflow = use_specular_workflow;
   }
   // Read geometry without permanently materializing it into the stage.
   const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
@@ -154,7 +160,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   if (want_uvs && (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
                    metal_tex.id >= 0 || emission_tex_id >= 0 ||
                    occ_tex.id >= 0 || opacity_tex.id >= 0 ||
-                   clearcoat_tex.id >= 0 || clearcoat_rough_tex.id >= 0)) {
+                   clearcoat_tex.id >= 0 || clearcoat_rough_tex.id >= 0 ||
+                   specular_tex_id >= 0)) {
     st = ReadFloatArrayLazy(prim, "primvars:st", time);
     if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
     if (!st.empty()) {
@@ -313,6 +320,10 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   tmpl.clearcoat_ch = clearcoat_tex.ch;
   tmpl.clearcoat_rough_tex_id = clearcoat_rough_tex.id;
   tmpl.clearcoat_rough_ch = clearcoat_rough_tex.ch;
+  tmpl.specular_color = specular_color;
+  tmpl.specular_tex_id = specular_tex_id;
+  tmpl.ior = ior;
+  tmpl.use_specular_workflow = use_specular_workflow;
   tmpl.purpose_bit = purpose_bit;
 
   size_t cursor = 0;
@@ -612,7 +623,9 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              float *opacity, ScalarTex *opacity_tex,
                              float *opacity_threshold, float *clearcoat,
                              float *clearcoat_roughness, ScalarTex *clearcoat_tex,
-                             ScalarTex *clearcoat_rough_tex,
+                             ScalarTex *clearcoat_rough_tex, Vec3 *specular_color,
+                             int32_t *specular_tex_id, float *ior,
+                             uint8_t *use_specular_workflow,
                              bool *vertex_color) {
   // Geometry display primvars: the unmaterialed base color/opacity (e.g. ALab
   // geom-only meshes). The first value seeds the constant base; a >1-element
@@ -696,6 +709,50 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   if (clearcoat_rough_tex)
     ResolveScalarTextureNext(stage, surf, "inputs:clearcoatRoughness", tc,
                              clearcoat_rough_tex);
+
+  // Specular workflow: inputs:useSpecularWorkflow swaps the metallic F0 derivation
+  // for an explicit inputs:specularColor (constant + optional color texture).
+  // inputs:ior sets the dielectric F0 in the (default) metallic workflow; ior 1.5
+  // reproduces the fixed 0.04 used before, so the default is byte-identical.
+  if (const tinyusdz::next::Value *uw =
+          surf.GetPropertyValue("inputs:useSpecularWorkflow")) {
+    if (const int32_t *i = uw->as_int())
+      if (use_specular_workflow) *use_specular_workflow = (*i != 0) ? 1 : 0;
+  }
+  if (const tinyusdz::next::Value *iv = surf.GetPropertyValue("inputs:ior"))
+    if (const float *f = iv->as_float())
+      if (ior && *f > 0.0f) *ior = *f;
+  if (const tinyusdz::next::Value *sc =
+          surf.GetPropertyValue("inputs:specularColor"))
+    if (const float *f = sc->as_float3())
+      if (specular_color) *specular_color = Vec3{f[0], f[1], f[2]};
+  if (specular_tex_id) {
+    tinyusdz::next::UsdPrim stex =
+        ConnectedPrimNext(stage, surf, "inputs:specularColor");
+    if (stex.IsValid()) {
+      if (const tinyusdz::next::Value *fv =
+              stex.GetPropertyValue("inputs:file")) {
+        const std::string *ap = fv->as_asset_path();
+        if (!ap) ap = fv->as_string();
+        if (ap && !ap->empty()) {
+          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
+            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
+            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          bool srgb = true;
+          if (const tinyusdz::next::Value *v =
+                  stex.GetPropertyValue("inputs:sourceColorSpace"))
+            if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+          int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb);
+          if (id >= 0) {
+            *specular_tex_id = id;
+            if (specular_color) *specular_color = Vec3{1.0f, 1.0f, 1.0f};
+          }
+        }
+      }
+    }
+  }
 
   // Emissive color: constant + optional UsdUVTexture (sRGB color).
   if (const tinyusdz::next::Value *e =
@@ -841,6 +898,10 @@ void ResolveMeshMaterialCached(
       job->clearcoat_roughness = r.clearcoat_roughness;
       job->clearcoat_tex = r.clearcoat_tex;
       job->clearcoat_rough_tex = r.clearcoat_rough_tex;
+      job->specular_color = r.specular_color;
+      job->specular_tex_id = r.specular_tex_id;
+      job->ior = r.ior;
+      job->use_specular_workflow = r.use_specular_workflow;
       job->vertex_color = r.vertex_color;
       return;
     }
@@ -852,7 +913,9 @@ void ResolveMeshMaterialCached(
                           &job->occ_tex, &job->opacity, &job->opacity_tex,
                           &job->opacity_threshold, &job->clearcoat,
                           &job->clearcoat_roughness, &job->clearcoat_tex,
-                          &job->clearcoat_rough_tex, &job->vertex_color);
+                          &job->clearcoat_rough_tex, &job->specular_color,
+                          &job->specular_tex_id, &job->ior,
+                          &job->use_specular_workflow, &job->vertex_color);
   if (!key.empty()) {
     ResolvedMat r;
     r.base_color = job->base_color;
@@ -874,6 +937,10 @@ void ResolveMeshMaterialCached(
     r.clearcoat_roughness = job->clearcoat_roughness;
     r.clearcoat_tex = job->clearcoat_tex;
     r.clearcoat_rough_tex = job->clearcoat_rough_tex;
+    r.specular_color = job->specular_color;
+    r.specular_tex_id = job->specular_tex_id;
+    r.ior = job->ior;
+    r.use_specular_workflow = job->use_specular_workflow;
     r.vertex_color = job->vertex_color;
     cache.emplace(key, r);
   }
@@ -2107,7 +2174,9 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.emission_tex_id, job.occlusion, job.occ_tex,
                 job.opacity_tex, job.opacity_threshold, job.clearcoat,
                 job.clearcoat_roughness, job.clearcoat_tex,
-                job.clearcoat_rough_tex, job.uv_xform,
+                job.clearcoat_rough_tex, job.specular_color,
+                job.specular_tex_id, job.ior, job.use_specular_workflow,
+                job.uv_xform,
                 want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,

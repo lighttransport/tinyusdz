@@ -519,6 +519,10 @@ struct MeshJobNext {
   float clearcoat_roughness{0.01f};      // inputs:clearcoatRoughness
   ScalarTex clearcoat_tex;               // clearcoat-weight texture + channel
   ScalarTex clearcoat_rough_tex;         // clearcoat-roughness texture + channel
+  Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor
+  int32_t specular_tex_id{-1};           // specularColor texture
+  float ior{1.5f};                       // inputs:ior
+  uint8_t use_specular_workflow{0};      // inputs:useSpecularWorkflow
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
 };
 
@@ -549,6 +553,10 @@ struct ResolvedMat {
   float clearcoat_roughness{0.01f};
   ScalarTex clearcoat_tex;
   ScalarTex clearcoat_rough_tex;
+  Vec3 specular_color{0.0f, 0.0f, 0.0f};
+  int32_t specular_tex_id{-1};
+  float ior{1.5f};
+  uint8_t use_specular_workflow{0};
   bool vertex_color{false};
 };
 

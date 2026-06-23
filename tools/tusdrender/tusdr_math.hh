@@ -304,6 +304,10 @@ struct TriInfo {
   int32_t clearcoat_rough_tex_id{-1}; // clearcoat-roughness texture, or -1
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow F0)
+  int32_t specular_tex_id{-1};       // specularColor texture, or -1
+  float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
+  uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -336,6 +340,10 @@ struct TriMat {
   uint8_t opacity_ch{0};
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow)
+  int32_t specular_tex_id{-1};
+  float ior{1.5f};
+  uint8_t use_specular_workflow{0};
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -375,6 +383,10 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.opacity_ch = m.opacity_ch;
   t.clearcoat_ch = m.clearcoat_ch;
   t.clearcoat_rough_ch = m.clearcoat_rough_ch;
+  t.specular_color = m.specular_color;
+  t.specular_tex_id = m.specular_tex_id;
+  t.ior = m.ior;
+  t.use_specular_workflow = m.use_specular_workflow;
   return t;
 }
 
@@ -408,6 +420,10 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.opacity_ch = t.opacity_ch;
   m.clearcoat_ch = t.clearcoat_ch;
   m.clearcoat_rough_ch = t.clearcoat_rough_ch;
+  m.specular_color = t.specular_color;
+  m.specular_tex_id = t.specular_tex_id;
+  m.ior = t.ior;
+  m.use_specular_workflow = t.use_specular_workflow;
   return m;
 }
 
@@ -429,7 +445,12 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.rough_ch == b.rough_ch && a.metal_ch == b.metal_ch &&
          a.occ_ch == b.occ_ch && a.opacity_ch == b.opacity_ch &&
          a.clearcoat_ch == b.clearcoat_ch &&
-         a.clearcoat_rough_ch == b.clearcoat_rough_ch;
+         a.clearcoat_rough_ch == b.clearcoat_rough_ch &&
+         a.specular_color.x == b.specular_color.x &&
+         a.specular_color.y == b.specular_color.y &&
+         a.specular_color.z == b.specular_color.z &&
+         a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
+         a.use_specular_workflow == b.use_specular_workflow;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
