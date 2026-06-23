@@ -148,6 +148,9 @@ class Renderer {
                           int textureCount) = 0;
   // Append one mesh (uploaded immediately). Rendered from the next frame on.
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
+  // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
+  // support yet; GL implements raymarching, VK/CUDA are placeholders).
+  virtual void appendVolume(const DrawVolumeCPU& /*vol*/) {}
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
@@ -186,6 +189,7 @@ class Renderer {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
     for (const auto& m : scene.meshes) appendMesh(m);
+    for (const auto& v : scene.volumes) appendVolume(v);
     return true;
   }
 

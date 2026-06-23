@@ -24,6 +24,8 @@
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
+#include "io-util.hh"                  // io::GetBaseDir
+#include "usdVol.hh"                   // OpenVDB (.vdb) loader
 
 namespace tusdview {
 
@@ -436,6 +438,84 @@ void EmitInstancedProto(const tnext::Stage& stage,
 
 }  // namespace
 
+// UsdVol volumes for the `next` path: walk the stage, find Volume prims,
+// resolve each `field:*` relationship to its field-asset prim, load the .vdb
+// (relative to the USD file dir), and emit a DrawVolumeCPU. Extends `bounds`
+// with the volume world-AABB so the camera frames it.
+void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
+                      double time, DrawScene* draw, Bounds* bounds) {
+  const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
+
+  std::function<void(const tnext::UsdPrim&)> rec = [&](const tnext::UsdPrim& p) {
+    if (p.GetTypeName() == "Volume") {
+      double w16[16];
+      tydn::ComputeWorldTransform(stage, p, w16, time);
+
+      for (const std::string& relName : p.GetRelationshipNames()) {
+        if (relName.rfind("field:", 0) != 0) continue;
+        const std::vector<tnext::Path>* targets = p.GetRelationship(relName);
+        if (!targets || targets->empty()) continue;
+        tnext::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
+        if (!field) continue;
+
+        const tnext::Value* fp = field.GetPropertyValue("filePath");
+        const std::string* ap = fp ? fp->as_asset_path() : nullptr;
+        if (!ap || ap->empty()) continue;
+        std::string fieldName = relName.substr(std::strlen("field:"));
+        if (const tnext::Value* fn = field.GetPropertyValue("fieldName")) {
+          if (const std::string* tk = fn->as_token()) fieldName = *tk;
+        }
+
+        // Resolve the asset path relative to the USD file directory.
+        std::string vpath = *ap;
+        if (!vpath.empty() && vpath[0] != '/' && !baseDir.empty()) {
+          vpath = baseDir + "/" + vpath;
+        }
+        std::vector<tinyusdz::usdVol::VDBGrid> grids;
+        std::string vw, ve;
+        if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
+          continue;
+        }
+        const tinyusdz::usdVol::VDBGrid* g = nullptr;
+        for (const auto& gg : grids)
+          if (gg.name == fieldName) { g = &gg; break; }
+        if (!g) g = &grids[0];
+        if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+          continue;
+
+        DrawVolumeCPU dv;
+        dv.name = p.GetName();
+        for (int k = 0; k < 16; ++k) dv.world[k] = static_cast<float>(w16[k]);
+        dv.density = g->data;
+        for (int a = 0; a < 3; ++a) {
+          dv.dim[a] = g->dim[a];
+          dv.aabbMin[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
+                          float(g->world_translation[a]);
+          dv.aabbMax[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
+                          float(g->world_translation[a]);
+        }
+        dv.background = g->background;
+
+        // Extend scene bounds with the volume world-AABB (8 corners). World
+        // matrix is stored row-major-USD in w16 (p' = p * M), matching meshes.
+        for (int corner = 0; corner < 8; ++corner) {
+          float lp[3] = {(corner & 1) ? dv.aabbMax[0] : dv.aabbMin[0],
+                         (corner & 2) ? dv.aabbMax[1] : dv.aabbMin[1],
+                         (corner & 4) ? dv.aabbMax[2] : dv.aabbMin[2]};
+          float wp[3];
+          for (int c = 0; c < 3; ++c)
+            wp[c] = lp[0] * float(w16[0 * 4 + c]) + lp[1] * float(w16[1 * 4 + c]) +
+                    lp[2] * float(w16[2 * 4 + c]) + float(w16[3 * 4 + c]);
+          bounds->add(wp);
+        }
+        draw->volumes.push_back(std::move(dv));
+      }
+    }
+    for (const tnext::UsdPrim& c : p.GetChildren()) rec(c);
+  };
+  for (const tnext::UsdPrim& r : stage.GetRootPrims()) rec(r);
+}
+
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl) {
@@ -727,6 +807,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   for (auto& kv : open) flushBatch(kv.second);
 
+  // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
+  BuildNextVolumes(stage, path, time, draw, &bounds);
+
   if (bounds.has) {
     for (int k = 0; k < 3; ++k) {
       draw->aabbMin[k] = bounds.mn[k]; draw->aabbMax[k] = bounds.mx[k];
@@ -747,7 +830,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
        draw->triangleCount, effectiveTris, double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
 
-  if (draw->meshes.empty()) {
+  if (draw->meshes.empty() && draw->volumes.empty()) {
     if (err) *err = "next: no renderable mesh produced";
     return false;
   }

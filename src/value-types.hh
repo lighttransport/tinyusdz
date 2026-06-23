@@ -534,6 +534,10 @@ enum TypeId {
 
   // Types for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
+  TYPE_ID_VOLUME,
+  TYPE_ID_FIELD_ASSET,
+  TYPE_ID_OPENVDB_ASSET,
+  TYPE_ID_FIELD3D_ASSET,
   TYPE_ID_VOL_END,
 
   // Types for usdSkel

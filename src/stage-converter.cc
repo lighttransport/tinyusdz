@@ -83,6 +83,10 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
   GET_PRIM_PROPS(Xform)
   GET_PRIM_PROPS(GPrim)
   GET_PRIM_PROPS(GeomMesh)
+  GET_PRIM_PROPS(Volume)
+  GET_PRIM_PROPS(FieldAsset)
+  GET_PRIM_PROPS(OpenVDBAsset)
+  GET_PRIM_PROPS(Field3DAsset)
   GET_PRIM_PROPS(GeomPoints)
   GET_PRIM_PROPS(GeomCube)
   GET_PRIM_PROPS(GeomCapsule)
@@ -172,6 +176,10 @@ const Collection *GetPrimCollection(const value::Value &v) {
   GET_PRIM_COLLECTION(Xform)
   GET_PRIM_COLLECTION(GPrim)
   GET_PRIM_COLLECTION(GeomMesh)
+  GET_PRIM_COLLECTION(Volume)
+  GET_PRIM_COLLECTION(FieldAsset)
+  GET_PRIM_COLLECTION(OpenVDBAsset)
+  GET_PRIM_COLLECTION(Field3DAsset)
   GET_PRIM_COLLECTION(GeomPoints)
   GET_PRIM_COLLECTION(GeomCube)
   GET_PRIM_COLLECTION(GeomCapsule)
@@ -1336,6 +1344,10 @@ bool CrateWriter::ExtractPrimProperties(
 #define GET_SPEC(__TY) if (auto *t = v.as<__TY>()) { spec = t->spec; goto spec_resolved; }
     GET_SPEC(Xform)
     GET_SPEC(GeomMesh)
+    GET_SPEC(Volume)
+    GET_SPEC(FieldAsset)
+    GET_SPEC(OpenVDBAsset)
+    GET_SPEC(Field3DAsset)
     GET_SPEC(GeomSphere)
     GET_SPEC(GeomCube)
     GET_SPEC(GeomCylinder)
@@ -1431,6 +1443,14 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractXformProperties(prim, prim_path, fields, err);
   } else if (type_name == "Mesh") {
     return ExtractMeshProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Volume") {
+    return ExtractVolumeProperties(prim, prim_path, fields, err);
+  } else if (type_name == "FieldAsset") {
+    return ExtractFieldAssetProperties(prim, prim_path, fields, err);
+  } else if (type_name == "OpenVDBAsset") {
+    return ExtractOpenVDBAssetProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Field3DAsset") {
+    return ExtractField3DAssetProperties(prim, prim_path, fields, err);
   } else if (type_name == "Cube") {
     return ExtractCubeProperties(prim, prim_path, fields, err);
   } else if (type_name == "Sphere") {

@@ -41,6 +41,7 @@
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
+#include "usdVol.hh"  // OpenVDB (.vdb) loader
 #include "usdShade.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
@@ -810,6 +811,8 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   switch (nodeType) {
     case NodeType::Xform:
       return NodeCategory::Group;
+    case NodeType::Volume:
+      return NodeCategory::Geom;
     case NodeType::Mesh:
       return NodeCategory::Geom;
     case NodeType::Camera:
@@ -827,6 +830,157 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
       return NodeCategory::Light;
   }
   return NodeCategory::Group;  // Default
+}
+
+// Extract the common FieldAsset attributes (filePath / fieldName) from a
+// field-asset prim (OpenVDBAsset / Field3DAsset / FieldAsset). Returns false if
+// the prim is not a field-asset type.
+static bool GetFieldAssetInfo(const tinyusdz::Prim &prim,
+                              value::AssetPath *filePath,
+                              std::string *fieldName) {
+  const FieldAsset *fa = nullptr;
+  if (const auto *p = prim.as<OpenVDBAsset>()) {
+    fa = p;
+  } else if (const auto *p = prim.as<Field3DAsset>()) {
+    fa = p;
+  } else if (const auto *p = prim.as<FieldAsset>()) {
+    fa = p;
+  }
+  if (!fa) return false;
+
+  if (auto fpv = fa->filePath.get_value()) {
+    fpv.value().get_scalar(filePath);
+  }
+  if (auto fnv = fa->fieldName.get_value()) {
+    value::token tk;
+    if (fnv.value().get_scalar(&tk)) {
+      *fieldName = tk.str();
+    }
+  }
+  return true;
+}
+
+bool RenderSceneConverter::ConvertVolume(
+    const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
+    const Volume &volume, RenderVolume *dst) {
+  if (!dst) return false;
+
+  dst->abs_path = volume_abs_path;
+
+  const AssetResolutionResolver &assetResolver = env.asset_resolver;
+
+  for (const auto &item : volume.fieldRelationships) {
+    const std::string &field_name = item.first;
+    const Relationship &rel = item.second;
+
+    // Resolve the field-asset prim path from the relationship target.
+    Path target_path;
+    if (!rel.targetPathVector.empty()) {
+      target_path = rel.targetPathVector[0];
+    } else {
+      target_path = rel.targetPath;
+    }
+    const std::string target_prim = target_path.prim_part();
+    if (target_prim.empty()) {
+      DCOUT("field:" << field_name << " relationship has no target; skip.");
+      continue;
+    }
+
+    const Prim *fieldPrim = nullptr;
+    {
+      auto pv = env.stage.GetPrimAtPath(Path(target_prim, /* prop */ ""));
+      if (pv) {
+        fieldPrim = pv.value();
+      }
+    }
+    if (!fieldPrim) {
+      DCOUT("field-asset prim not found: " << target_prim);
+      continue;
+    }
+
+    value::AssetPath filePath;
+    std::string vdb_field_name = field_name;  // default to the rel name
+    if (!GetFieldAssetInfo(*fieldPrim, &filePath, &vdb_field_name)) {
+      DCOUT("target prim is not a field-asset: " << target_prim);
+      continue;
+    }
+    if (filePath.GetAssetPath().empty()) {
+      DCOUT("field-asset has empty filePath: " << target_prim);
+      continue;
+    }
+
+    // Resolve + open the .vdb asset.
+    std::string sanitized = utils::SanitizeAssetPath(filePath.GetAssetPath());
+    if (sanitized.empty()) {
+      DCOUT("Unsafe vdb asset path: " << filePath.GetAssetPath());
+      continue;
+    }
+    std::string resolvedPath = assetResolver.resolve(sanitized);
+    if (resolvedPath.empty()) {
+      DCOUT("Failed to resolve vdb asset path: " << filePath.GetAssetPath());
+      continue;
+    }
+
+    Asset asset;
+    std::string aerr, awarn;
+    if (!assetResolver.open_asset(resolvedPath, sanitized, &asset, &awarn,
+                                  &aerr)) {
+      DCOUT("Failed to open vdb asset: " << resolvedPath << " : " << aerr);
+      continue;
+    }
+
+    // Decode the .vdb into dense float grids.
+    std::vector<usdVol::VDBGrid> grids;
+    std::string vwarn, verr;
+    if (!usdVol::ReadVDBFromMemory(asset.data(), asset.size(), resolvedPath,
+                                   &grids, &vwarn, &verr)) {
+      DCOUT("Failed to decode vdb: " << resolvedPath << " : " << verr);
+      continue;
+    }
+    if (grids.empty()) continue;
+
+    // Pick the grid whose name matches the requested field, else the first.
+    const usdVol::VDBGrid *g = nullptr;
+    for (const auto &gg : grids) {
+      if (gg.name == vdb_field_name) {
+        g = &gg;
+        break;
+      }
+    }
+    if (!g) g = &grids[0];
+    if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0) {
+      continue;
+    }
+
+    RenderVolumeField f;
+    f.field_name = field_name;
+    f.field_data_type = g->value_type;
+    f.background = g->background;
+    for (int a = 0; a < 3; a++) {
+      f.dim[a] = g->dim[a];
+      f.origin[a] = g->origin[a];
+      f.voxel_size[a] = float(g->voxel_size[a]);
+      f.world_translation[a] = float(g->world_translation[a]);
+      // Object-space AABB of the grid.
+      f.bounds_min[a] =
+          float(g->origin[a]) * f.voxel_size[a] + f.world_translation[a];
+      f.bounds_max[a] = float(g->origin[a] + g->dim[a]) * f.voxel_size[a] +
+                        f.world_translation[a];
+    }
+
+    // Store the dense float voxels in a BufferData.
+    BufferData buf;
+    buf.componentType = ComponentType::Float;
+    std::vector<uint8_t> bytes(g->data.size() * sizeof(float));
+    std::memcpy(bytes.data(), g->data.data(), bytes.size());
+    SetBufferDataBytes(buf, std::move(bytes));
+    f.buffer_id = int64_t(buffers.size());
+    buffers.push_back(std::move(buf));
+
+    dst->fields.push_back(std::move(f));
+  }
+
+  return true;
 }
 
 bool RenderSceneConverter::BuildSingleNode(
@@ -862,6 +1016,32 @@ bool RenderSceneConverter::BuildSingleNode(
 
       // Note: MeshLightAPI is now handled in ConvertMesh, which sets
       // mesh.is_area_light = true and stores light properties directly in RenderMesh
+    } else if (prim->type_id() == value::TYPE_ID_VOLUME) {
+      // UsdVol Volume: decode referenced .vdb field(s) into a RenderVolume.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Volume;
+
+      const Volume *vol = prim->as<Volume>();
+      if (vol) {
+        RenderVolume rvol;
+        rvol.prim_name = prim->element_name();
+        rvol.abs_path = primPath;
+        rvol.display_name = prim->metas().has_displayName()
+                                ? prim->metas().get_displayName()
+                                : "";
+        rvol.world_matrix = node.get_world_matrix();
+        // Best-effort: keep the node even if some/all fields fail to decode.
+        ConvertVolume(env, primPath, *vol, &rvol);
+
+        size_t vol_id = volumes.size();
+        volumeMap.add(primPath, vol_id);
+        volumes.push_back(std::move(rvol));
+        rnode.id = int32_t(vol_id);
+      } else {
+        rnode.id = -1;
+      }
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -1955,6 +2135,7 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
   render_scene.instances = std::move(instances);
+  render_scene.volumes = std::move(volumes);
 
   // Populate scene metadata from Stage
   {

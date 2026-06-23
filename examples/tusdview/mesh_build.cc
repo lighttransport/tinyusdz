@@ -765,15 +765,35 @@ void PlaceDrawMesh(DrawMeshCPU* dm, const matrix4d& worldMat) {
 // Union the world AABB of every built mesh into the scene bounds.
 void ComputeSceneBounds(DrawScene* out) {
   bool first = true;
-  for (const auto& dm : out->meshes) {
+  auto extend = [&](const float p[3]) {
     if (first) {
-      for (int c = 0; c < 3; ++c) { out->aabbMin[c] = dm.aabbMin[c]; out->aabbMax[c] = dm.aabbMax[c]; }
+      for (int c = 0; c < 3; ++c) { out->aabbMin[c] = p[c]; out->aabbMax[c] = p[c]; }
       first = false;
     } else {
       for (int c = 0; c < 3; ++c) {
-        out->aabbMin[c] = std::min(out->aabbMin[c], dm.aabbMin[c]);
-        out->aabbMax[c] = std::max(out->aabbMax[c], dm.aabbMax[c]);
+        out->aabbMin[c] = std::min(out->aabbMin[c], p[c]);
+        out->aabbMax[c] = std::max(out->aabbMax[c], p[c]);
       }
+    }
+  };
+  for (const auto& dm : out->meshes) {
+    extend(dm.aabbMin);
+    extend(dm.aabbMax);
+  }
+  // Include UsdVol volumes: transform their object-space AABB corners to world
+  // (DrawVolumeCPU::world is column-major: p' = M*p).
+  for (const auto& dv : out->volumes) {
+    for (int corner = 0; corner < 8; ++corner) {
+      float o[3] = {(corner & 1) ? dv.aabbMax[0] : dv.aabbMin[0],
+                    (corner & 2) ? dv.aabbMax[1] : dv.aabbMin[1],
+                    (corner & 4) ? dv.aabbMax[2] : dv.aabbMin[2]};
+      const float* M = dv.world;
+      float w[3];
+      for (int i = 0; i < 3; ++i) {
+        w[i] = M[0 * 4 + i] * o[0] + M[1 * 4 + i] * o[1] +
+               M[2 * 4 + i] * o[2] + M[3 * 4 + i];
+      }
+      extend(w);
     }
   }
   out->hasBounds = !first;
@@ -868,6 +888,38 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
   }
 }
 
+void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
+  for (const auto& v : rs.volumes) {
+    int fi = v.density_field_index();
+    if (fi < 0) continue;
+    const auto& f = v.fields[static_cast<size_t>(fi)];
+    if (f.buffer_id < 0 || static_cast<size_t>(f.buffer_id) >= rs.buffers.size())
+      continue;
+    const auto& buf = rs.buffers[static_cast<size_t>(f.buffer_id)];
+    const size_t n =
+        size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
+    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+
+    DrawVolumeCPU dv;
+    dv.name = v.prim_name;
+    dv.dim[0] = f.dim[0];
+    dv.dim[1] = f.dim[1];
+    dv.dim[2] = f.dim[2];
+    dv.density.resize(n);
+    std::memcpy(dv.density.data(), buf.data.data(), n * sizeof(float));
+    MatToColMajor(v.world_matrix, dv.world);
+    for (int a = 0; a < 3; a++) {
+      dv.aabbMin[a] = f.bounds_min[a];
+      dv.aabbMax[a] = f.bounds_max[a];
+      dv.albedo[a] = v.albedo[a];
+      dv.emission[a] = v.emission_color[a] * v.emission_scale;
+    }
+    dv.densityScale = v.density_scale;
+    dv.background = f.background;
+    out->volumes.push_back(std::move(dv));
+  }
+}
+
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl, const tinyusdz::Stage* stage) {
   *out = DrawScene{};
@@ -932,6 +984,8 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
     out->triangleCount += dm.indices.size() / 3;
     out->meshes.push_back(std::move(dm));
   }
+
+  BuildDrawVolumes(rs, out);
 
   FinalizeSkinningLayout(rs, out);
   ComputeSceneBounds(out);
@@ -1015,6 +1069,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     for (size_t i = 0; i < out->meshes.size(); ++i) {
       if (!placed[i]) PlaceDrawMesh(&out->meshes[i], ident);
     }
+    BuildDrawVolumes(scene, out);
     FinalizeSkinningLayout(scene, out);
     ComputeSceneBounds(out);
     return true;

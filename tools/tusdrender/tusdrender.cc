@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
+                    // unconditionally (was only included under TINYUSDZ_WITH_QJS)
 #include <iostream>
 #include <mutex>
 #include <new>
@@ -37,6 +39,7 @@
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
+#include "usdVol.hh"  // OpenVDB (.vdb) loader for the `next` volume path
 #include "usdGeom.hh"
 #include "value-types.hh"
 #include "xform.hh"
@@ -4351,6 +4354,164 @@ void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
   *dir = Normalize(d);
 }
 
+// ===========================================================================
+// UsdVol volume rendering (simple emission/absorption raymarch).
+//
+// Each RenderVolume's density field is a dense float grid spanning an
+// object-space AABB [bmin, bmax]. We transform the primary camera ray into the
+// volume's object space, ray-march front-to-back accumulating absorption +
+// (albedo) single-scatter + emission, and composite over the surface color.
+//
+// Limitation ("simple firstly"): no depth sorting against surfaces inside the
+// volume (the surface color is treated as the background behind the whole
+// volume). Good for isolated volumes; refine later.
+// ===========================================================================
+struct VolumeData {
+  std::vector<float> density;  // dense grid, x-contiguous
+  int dim[3] = {0, 0, 0};
+  Vec3 bmin{0.0f, 0.0f, 0.0f};  // object-space AABB
+  Vec3 bmax{0.0f, 0.0f, 0.0f};
+  matrix4d inv_world{matrix4d::identity()};  // world -> object
+  float density_scale = 1.0f;
+  Vec3 albedo{0.6f, 0.6f, 0.65f};
+  Vec3 emission{0.0f, 0.0f, 0.0f};
+  float background = 0.0f;
+};
+
+std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
+  std::vector<VolumeData> out;
+  for (const auto &v : scene.volumes) {
+    int fi = v.density_field_index();
+    if (fi < 0) continue;
+    const auto &f = v.fields[size_t(fi)];
+    if (f.buffer_id < 0 || size_t(f.buffer_id) >= scene.buffers.size()) continue;
+    const auto &buf = scene.buffers[size_t(f.buffer_id)];
+    const size_t n = size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
+    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+
+    VolumeData vd;
+    vd.dim[0] = f.dim[0];
+    vd.dim[1] = f.dim[1];
+    vd.dim[2] = f.dim[2];
+    vd.density.resize(n);
+    std::memcpy(vd.density.data(), buf.data.data(), n * sizeof(float));
+    vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
+    vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
+    matrix4d invw;
+    if (!tinyusdz::inverse(v.world_matrix, invw, 1.0e-12)) {
+      invw = matrix4d::identity();
+    }
+    vd.inv_world = invw;
+    vd.density_scale = v.density_scale;
+    vd.albedo = Vec3{v.albedo[0], v.albedo[1], v.albedo[2]};
+    vd.emission = Vec3{v.emission_color[0] * v.emission_scale,
+                       v.emission_color[1] * v.emission_scale,
+                       v.emission_color[2] * v.emission_scale};
+    vd.background = f.background;
+    out.push_back(std::move(vd));
+  }
+  return out;
+}
+
+// Trilinear density sample at an object-space point.
+static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
+  const float ex = vd.bmax.x - vd.bmin.x;
+  const float ey = vd.bmax.y - vd.bmin.y;
+  const float ez = vd.bmax.z - vd.bmin.z;
+  if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
+  // fractional voxel index, voxel-center convention.
+  float gx = (p.x - vd.bmin.x) / ex * float(vd.dim[0]) - 0.5f;
+  float gy = (p.y - vd.bmin.y) / ey * float(vd.dim[1]) - 0.5f;
+  float gz = (p.z - vd.bmin.z) / ez * float(vd.dim[2]) - 0.5f;
+  int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
+  float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
+  auto fetch = [&](int x, int y, int z) -> float {
+    if (x < 0) x = 0; else if (x >= vd.dim[0]) x = vd.dim[0] - 1;
+    if (y < 0) y = 0; else if (y >= vd.dim[1]) y = vd.dim[1] - 1;
+    if (z < 0) z = 0; else if (z >= vd.dim[2]) z = vd.dim[2] - 1;
+    return vd.density[size_t(x) + size_t(vd.dim[0]) *
+                                      (size_t(y) + size_t(vd.dim[1]) * size_t(z))];
+  };
+  float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
+  float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
+  float c01 = fetch(x0, y0, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0, z0 + 1) * fx;
+  float c11 = fetch(x0, y0 + 1, z0 + 1) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0 + 1) * fx;
+  float c0 = c00 * (1 - fy) + c10 * fy;
+  float c1 = c01 * (1 - fy) + c11 * fy;
+  return c0 * (1 - fz) + c1 * fz;
+}
+
+// Slab ray/AABB intersection. Returns the [t0,t1] overlap (t in `o`/`d` units).
+static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
+                       const Vec3 &bmax, float *t0, float *t1) {
+  float tmin = -1e30f, tmax = 1e30f;
+  const float od[3] = {o.x, o.y, o.z};
+  const float dd[3] = {d.x, d.y, d.z};
+  const float lo[3] = {bmin.x, bmin.y, bmin.z};
+  const float hi[3] = {bmax.x, bmax.y, bmax.z};
+  for (int a = 0; a < 3; a++) {
+    if (std::fabs(dd[a]) < 1e-12f) {
+      if (od[a] < lo[a] || od[a] > hi[a]) return false;
+    } else {
+      float inv = 1.0f / dd[a];
+      float ta = (lo[a] - od[a]) * inv;
+      float tb = (hi[a] - od[a]) * inv;
+      if (ta > tb) std::swap(ta, tb);
+      if (ta > tmin) tmin = ta;
+      if (tb < tmax) tmax = tb;
+      if (tmin > tmax) return false;
+    }
+  }
+  *t0 = tmin;
+  *t1 = tmax;
+  return true;
+}
+
+// Composite all volumes along the world-space primary ray over `bg`.
+Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
+                      const Vec3 &wdir, Vec3 bg) {
+  Vec3 result = bg;
+  for (const VolumeData &vd : vols) {
+    // World -> object space.
+    Vec3 o = TransformPoint(vd.inv_world, worg);
+    Vec3 d = TransformVector(vd.inv_world, wdir);
+    float t0, t1;
+    if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &t0, &t1)) continue;
+    if (t0 < 0.0f) t0 = 0.0f;
+    if (t1 <= t0) continue;
+
+    const float ex = vd.bmax.x - vd.bmin.x;
+    const float ey = vd.bmax.y - vd.bmin.y;
+    const float ez = vd.bmax.z - vd.bmin.z;
+    float vsx = (vd.dim[0] > 0) ? ex / float(vd.dim[0]) : ex;
+    float vsy = (vd.dim[1] > 0) ? ey / float(vd.dim[1]) : ey;
+    float vsz = (vd.dim[2] > 0) ? ez / float(vd.dim[2]) : ez;
+    float vmin = std::min(vsx, std::min(vsy, vsz));
+    float step = (vmin > 0.0f) ? vmin * 0.5f : (t1 - t0) / 128.0f;
+    if (step <= 0.0f) step = (t1 - t0) / 128.0f;
+    // Cap iterations to keep this bounded.
+    int max_steps = 4096;
+
+    float T = 1.0f;
+    Vec3 L{0.0f, 0.0f, 0.0f};
+    float t = t0;
+    for (int i = 0; i < max_steps && t < t1; i++, t += step) {
+      Vec3 p = Add(o, Mul(d, t + 0.5f * step));
+      float dens = (SampleVolumeDensity(vd, p) - vd.background) * vd.density_scale;
+      if (dens > 1.0e-5f) {
+        float a = 1.0f - std::exp(-dens * step);
+        Vec3 src = Add(Mul(vd.albedo, a), Mul(vd.emission, dens * step));
+        L = Add(L, Mul(src, T));
+        T *= (1.0f - a);
+        if (T < 0.003f) break;
+      }
+    }
+    // Composite this volume over the accumulated background.
+    result = Add(L, Mul(result, T));
+  }
+  return result;
+}
+
 tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<TriInfo> &tris,
                             const LightCache &lights, const IblCache *ibl,
@@ -4362,7 +4523,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<Blas> *blas = nullptr,
                             const std::vector<InstanceRT> *instances = nullptr,
                             const ByteVec *tri_colors = nullptr,
-                            const std::vector<float> *tri_normals = nullptr) {
+                            const std::vector<float> *tri_normals = nullptr,
+                            const std::vector<VolumeData> *volumes = nullptr) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -4397,10 +4559,13 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                     &rd.dy);
             rd.valid = true;
-            color = Add(color, Shade(scene, direct, tris, lights, ibl, camera,
-                                     opt, org, dir, textures, tri_uvs, tlas,
-                                     blas, instances, rd, 0, tri_colors,
-                                     tri_normals));
+            Vec3 surf = Shade(scene, direct, tris, lights, ibl, camera, opt,
+                              org, dir, textures, tri_uvs, tlas, blas, instances,
+                              rd, 0, tri_colors, tri_normals);
+            if (volumes && !volumes->empty()) {
+              surf = CompositeVolumes(*volumes, org, dir, surf);
+            }
+            color = Add(color, surf);
           }
         }
         color = Mul(color, 1.0f / float(spp));
@@ -5413,6 +5578,80 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
   }
 }
 
+// `next`-path UsdVol volumes: serial walk resolving world matrices; for each
+// Volume prim, follow `field:*` -> field-asset prim -> filePath, load the .vdb
+// (relative to `baseDir`), and build a VolumeData for raymarching.
+void CollectVolumesNext(const tinyusdz::next::Stage &stage,
+                        const tinyusdz::next::UsdPrim &prim,
+                        const matrix4d &parent_world, double time,
+                        const std::string &baseDir,
+                        std::vector<VolumeData> *out) {
+  if (!prim.IsActive()) return;
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  if (prim.GetTypeName() == "Volume") {
+    for (const std::string &relName : prim.GetRelationshipNames()) {
+      if (relName.rfind("field:", 0) != 0) continue;
+      const std::vector<tinyusdz::next::Path> *targets =
+          prim.GetRelationship(relName);
+      if (!targets || targets->empty()) continue;
+      tinyusdz::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
+      if (!field) continue;
+
+      const tinyusdz::next::Value *fp = field.GetPropertyValue("filePath");
+      const std::string *ap = fp ? fp->as_asset_path() : nullptr;
+      if (!ap || ap->empty()) continue;
+      std::string fieldName = relName.substr(std::strlen("field:"));
+      if (const tinyusdz::next::Value *fn = field.GetPropertyValue("fieldName")) {
+        if (const std::string *tk = fn->as_token()) fieldName = *tk;
+      }
+      std::string vpath = *ap;
+      if (!vpath.empty() && vpath[0] != '/' && !baseDir.empty()) {
+        vpath = baseDir + "/" + vpath;
+      }
+      std::vector<tinyusdz::usdVol::VDBGrid> grids;
+      std::string vw, ve;
+      if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
+          grids.empty()) {
+        continue;
+      }
+      const tinyusdz::usdVol::VDBGrid *g = nullptr;
+      for (const auto &gg : grids)
+        if (gg.name == fieldName) { g = &gg; break; }
+      if (!g) g = &grids[0];
+      if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+        continue;
+
+      VolumeData vd;
+      vd.dim[0] = g->dim[0];
+      vd.dim[1] = g->dim[1];
+      vd.dim[2] = g->dim[2];
+      vd.density = g->data;
+      float lo[3], hi[3];
+      for (int a = 0; a < 3; a++) {
+        lo[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
+                float(g->world_translation[a]);
+        hi[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
+                float(g->world_translation[a]);
+      }
+      vd.bmin = Vec3{lo[0], lo[1], lo[2]};
+      vd.bmax = Vec3{hi[0], hi[1], hi[2]};
+      matrix4d invw;
+      if (!tinyusdz::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
+      vd.inv_world = invw;
+      vd.background = g->background;
+      out->push_back(std::move(vd));
+    }
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    CollectVolumesNext(stage, child, world, time, baseDir, out);
+  }
+}
+
 // Read a UsdGeomCamera attribute (float, with double fallback).
 float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
                        float fallback) {
@@ -5571,6 +5810,7 @@ struct RenderContext {
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
+  std::vector<VolumeData> volumes;  // UsdVol volumes (OpenVDB) for raymarching
   Bounds bounds;
   RTPreviewStats stats;
   lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
@@ -7534,6 +7774,33 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
   if (opt.stats && !ctx.lights.finite.empty())
     std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
+
+  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
+  // each volume's world AABB so a volume-only scene still frames + renders.
+  ctx.volumes.clear();
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
+                       DirName(opt.input), &ctx.volumes);
+  for (const VolumeData &vd : ctx.volumes) {
+    matrix4d world;
+    if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12))
+      world = matrix4d::identity();
+    for (int c = 0; c < 8; c++) {
+      Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
+                  (c & 2) ? vd.bmax.y : vd.bmin.y,
+                  (c & 4) ? vd.bmax.z : vd.bmin.z};
+      Vec3 w = TransformPoint(world, corner);
+      ctx.bounds.lo.x = std::min(ctx.bounds.lo.x, w.x);
+      ctx.bounds.lo.y = std::min(ctx.bounds.lo.y, w.y);
+      ctx.bounds.lo.z = std::min(ctx.bounds.lo.z, w.z);
+      ctx.bounds.hi.x = std::max(ctx.bounds.hi.x, w.x);
+      ctx.bounds.hi.y = std::max(ctx.bounds.hi.y, w.y);
+      ctx.bounds.hi.z = std::max(ctx.bounds.hi.z, w.z);
+      ctx.bounds.valid = true;
+    }
+  }
+  if (opt.stats && !ctx.volumes.empty())
+    std::cerr << "rt volumes: " << ctx.volumes.size() << "\n";
   return true;
 }
 
@@ -7552,7 +7819,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.use_tlas ? &ctx.blas : nullptr,
       ctx.use_tlas ? &ctx.instances : nullptr,
       ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors,
-      ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals);
+      ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals,
+      ctx.volumes.empty() ? nullptr : &ctx.volumes);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
@@ -8783,7 +9051,31 @@ int main(int argc, char **argv) {
                           direct_scene.flat_curves || direct_scene.points ||
                           direct_scene.bez_curves || direct_scene.tets ||
                           !direct_scene.shapes.empty();
-  if (tris.empty() && !has_direct) {
+
+  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Built here so a
+  // volume-only scene still renders and contributes to camera-framing bounds.
+  std::vector<VolumeData> volumes = BuildVolumes(render_scene);
+  for (const VolumeData &vd : volumes) {
+    // Extend scene bounds with the volume's world-space AABB (8 corners).
+    for (int c = 0; c < 8; c++) {
+      Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
+                  (c & 2) ? vd.bmax.y : vd.bmin.y,
+                  (c & 4) ? vd.bmax.z : vd.bmin.z};
+      matrix4d world;
+      if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12)) {
+        world = matrix4d::identity();
+      }
+      Vec3 w = TransformPoint(world, corner);
+      bounds.lo.x = std::min(bounds.lo.x, w.x);
+      bounds.lo.y = std::min(bounds.lo.y, w.y);
+      bounds.lo.z = std::min(bounds.lo.z, w.z);
+      bounds.hi.x = std::max(bounds.hi.x, w.x);
+      bounds.hi.y = std::max(bounds.hi.y, w.y);
+      bounds.hi.z = std::max(bounds.hi.z, w.z);
+    }
+  }
+
+  if (tris.empty() && !has_direct && volumes.empty()) {
     std::cerr << "No renderable geometry found.\n";
     return EXIT_FAILURE;
   }
@@ -8870,10 +9162,17 @@ int main(int argc, char **argv) {
     std::cerr << "load seconds: " << load_seconds << "\n";
   }
 
+  if (opt.stats) {
+    std::cerr << "volumes: " << volumes.size() << "\n";
+  }
+
   const auto render_t0 = std::chrono::steady_clock::now();
   tinyusdz::Image img =
       RenderImage(lrt_scene, &direct_scene, tris, light_cache,
-                  ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height);
+                  ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
+                  /*textures*/ nullptr, /*tri_uvs*/ nullptr, /*tlas*/ nullptr,
+                  /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
+                  /*tri_normals*/ nullptr, &volumes);
   const auto render_t1 = std::chrono::steady_clock::now();
   if (opt.stats) {
     std::cerr << "render seconds: "
