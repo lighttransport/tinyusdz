@@ -226,6 +226,14 @@ inline float ChannelOf(const Vec3 &c, uint8_t ch) {
   return ch == 1 ? c.y : ch == 2 ? c.z : c.x;  // r/g/b (a not sampled -> r)
 }
 
+// Map a world-space direction into the DomeLight's local frame before the
+// lat-long lookup, so an authored dome rotation orients the environment. A no-op
+// (identity passthrough) when the dome carries no non-identity rotation.
+inline Vec3 EnvDir(const IblCache &ibl, const Vec3 &d) {
+  if (!ibl.rotated) return d;
+  return Vec3{Dot(d, ibl.rx), Dot(d, ibl.ry), Dot(d, ibl.rz)};
+}
+
 // Sample a scalar (roughness/metallic) texture's channel into [0,1].
 inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
                              uint8_t ch, float u, float v, float lod) {
@@ -680,7 +688,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
   if (!tri_hit && !direct_hit.hit) {
     if (ibl && ibl->valid) {
-      return Add(opt.bg, SampleEnv(ibl->env, ray_dir));
+      return Add(opt.bg, SampleEnv(ibl->env, EnvDir(*ibl, ray_dir)));
     }
     return lights.has_dome ? Add(opt.bg, lights.env_color) : opt.bg;
   }
@@ -710,7 +718,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), tri.emission);
   if (ibl && ibl->valid) {
     Vec3 view = Normalize(Mul(ray_dir, -1.0f));
-    Vec3 diffuse = SampleEnv(ibl->diffuse, n);
+    Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
     // F0 (normal-incidence reflectance): specular workflow uses specularColor
     // directly; metallic workflow lerps the dielectric F0 (from IOR; ior 1.5 ->
@@ -733,7 +741,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       kd_metal = tri.metallic;
     }
     Vec3 refl = Reflect(Mul(view, -1.0f), n);
-    Vec3 spec_env = SampleIblMip(ibl->prefiltered, refl, tri.roughness);
+    Vec3 env_refl = EnvDir(*ibl, refl);  // reflection in the dome's frame
+    Vec3 spec_env = SampleIblMip(ibl->prefiltered, env_refl, tri.roughness);
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
     SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
@@ -746,7 +755,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // its own (usually low) roughness, layered on top and weighted by the coat
     // amount. Skipped entirely when clearcoat==0 (byte-identical default).
     if (tri.clearcoat > 0.0f) {
-      Vec3 cc_env = SampleIblMip(ibl->prefiltered, refl, tri.clearcoat_roughness);
+      Vec3 cc_env =
+          SampleIblMip(ibl->prefiltered, env_refl, tri.clearcoat_roughness);
       float cc_a = 1.0f, cc_b = 0.0f;
       SampleBrdfLut(*ibl, ndotv, tri.clearcoat_roughness, &cc_a, &cc_b);
       float cc_spec = 0.04f * cc_a + cc_b;

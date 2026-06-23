@@ -490,7 +490,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
 tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim);
 
 bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
-                  const std::string &base_dir, IblCache *ibl);
+                  const std::string &base_dir, double time, IblCache *ibl);
 
 bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
 
