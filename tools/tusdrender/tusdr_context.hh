@@ -184,4 +184,89 @@ bool IntersectDirectShape(const DirectShape &shape, const Vec3 &ray_org,
 
 float TriangleArea(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2);
 
+// ---- tusdr_integrator.cc ----
+bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
+unsigned WorkerThreadCount(int requested);
+int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float);
+
+bool IntersectVisibleTriangles(lrt_tri_scene *scene,
+                               const std::vector<TriInfo> &tris,
+                               const lrt_ray &ray, uint32_t purpose_mask,
+                               lrt_hit *hit);
+
+bool Occluded(lrt_tri_scene *scene, const std::vector<TriInfo> &tris,
+              const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
+              const DirectScene *direct, uint32_t purpose_mask);
+
+bool OccludedTLAS(const lrt_tlas *tlas, const Vec3 &p, const Vec3 &n,
+                  const Vec3 &l, float max_t);
+
+bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
+                          const Vec3 &ray_dir, float tmin, float tmax,
+                          DirectHit *best);
+
+Vec3 PerturbNormalStorm(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
+                        const Vec3 &N, float u0, float v0, float u1, float v1,
+                        float u2, float v2, const Vec3 &Nt);
+
+Vec3 SampleTangentNormal(const Texture &nm, float u, float v, float lod);
+
+float TextureLod(float dudx, float dvdx, float dudy, float dvdy, int w, int h);
+
+bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
+                        const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
+                        const Vec3 &N, float u0, float v0, float u1, float v1,
+                        float u2, float v2, float *dudx, float *dvdx,
+                        float *dudy, float *dvdy);
+
+bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
+                    const std::vector<InstanceRT> &instances,
+                    const std::vector<Texture> *textures, const Vec3 &ray_org,
+                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out);
+
+Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
+           const std::vector<TriInfo> &tris,
+           const LightCache &lights, const IblCache *ibl,
+           const CameraFrame &camera,
+           const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
+           const std::vector<Texture> *textures = nullptr,
+           const std::vector<float> *tri_uvs = nullptr,
+           const lrt_tlas *tlas = nullptr,
+           const std::vector<Blas> *blas = nullptr,
+           const std::vector<InstanceRT> *instances = nullptr,
+           const RayDiff &rd = RayDiff{}, int depth = 0,
+           const ByteVec *tri_colors = nullptr,
+           const std::vector<float> *tri_normals = nullptr);
+
+uint8_t ToSRGB8(float linear);
+
+void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
+             Vec3 *org, Vec3 *dir);
+
+std::vector<VolumeData> BuildVolumes(const RenderScene &scene);
+
+static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p);
+
+static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
+                       const Vec3 &bmax, float *t0, float *t1);
+
+Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
+                      const Vec3 &wdir, Vec3 bg);
+
+tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
+                            const std::vector<TriInfo> &tris,
+                            const LightCache &lights, const IblCache *ibl,
+                            const CameraFrame &camera, const Options &opt,
+                            int height,
+                            const std::vector<Texture> *textures = nullptr,
+                            const std::vector<float> *tri_uvs = nullptr,
+                            const lrt_tlas *tlas = nullptr,
+                            const std::vector<Blas> *blas = nullptr,
+                            const std::vector<InstanceRT> *instances = nullptr,
+                            const ByteVec *tri_colors = nullptr,
+                            const std::vector<float> *tri_normals = nullptr,
+                            const std::vector<VolumeData> *volumes = nullptr);
+
+bool LoadProgress(float progress, void *);
+
 }  // namespace tusdr
