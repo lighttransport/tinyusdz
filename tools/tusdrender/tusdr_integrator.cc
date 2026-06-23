@@ -234,11 +234,13 @@ inline Vec3 EnvDir(const IblCache &ibl, const Vec3 &d) {
   return Vec3{Dot(d, ibl.rx), Dot(d, ibl.ry), Dot(d, ibl.rz)};
 }
 
-// Sample a scalar (roughness/metallic) texture's channel into [0,1].
+// Sample a scalar (roughness/metallic/opacity) texture's channel into [0,1].
+// Reads the channel directly (incl. alpha, ch=3), so an opacity/scalar input
+// connected to a UsdUVTexture's outputs:a reads alpha rather than red.
 inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
                              uint8_t ch, float u, float v, float lod) {
   if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
-  return ChannelOf(textures[size_t(id)].sample(u, v, lod), ch);
+  return textures[size_t(id)].sample_channel(u, v, lod, int(ch));
 }
 
 // Anisotropic scalar sample: when a ray-differential footprint is available, the
@@ -252,9 +254,9 @@ inline float SampleScalarTexAniso(const std::vector<Texture> &textures,
                                   float dudy, float dvdy, int max_aniso) {
   if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
   const Texture &tx = textures[size_t(id)];
-  Vec3 c = have_fp ? tx.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, max_aniso)
-                   : tx.sample(u, v, 0.0f);
-  return ChannelOf(c, ch);
+  return have_fp ? tx.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                           max_aniso, int(ch))
+                 : tx.sample_channel(u, v, 0.0f, int(ch));
 }
 
 // Anisotropic tangent-space normal sample (footprint-filtered raw RGB, then the

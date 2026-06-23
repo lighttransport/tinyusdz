@@ -206,6 +206,86 @@ struct Texture {
     const float inv = 1.0f / float(n);
     return Vec3{acc.x * inv, acc.y * inv, acc.z * inv};
   }
+
+  // Bilinear lookup of a SINGLE channel `ch` (0=r,1=g,2=b,3=a) in one level, raw.
+  // Unlike bilinear_level (which packs only RGB into a Vec3), this reaches the
+  // alpha channel -- needed for scalar inputs connected to a UsdUVTexture's
+  // outputs:a (e.g. opacity from a diffuse map's alpha). A channel beyond the
+  // image's component count returns the UsdUVTexture fallback (1 for alpha, else
+  // 0). Same lerp order as bilinear_level, so r/g/b stay bit-identical.
+  float bilinear_channel(int lvl, float wu, float wv, int ch) const {
+    int w, h;
+    const uint8_t *d;
+    if (lvl <= 0 || mips.empty()) {
+      w = width; h = height; d = pixels.data();
+    } else {
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      w = m.w; h = m.h; d = m.data.data();
+    }
+    if (ch >= channels) return ch == 3 ? 1.0f : 0.0f;
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> float {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      return float(d[(size_t(y) * w + x) * size_t(channels) + size_t(ch)]) /
+             255.0f;
+    };
+    float c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    float c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    float a = c00 + (c10 - c00) * tx;
+    float b = c01 + (c11 - c01) * tx;
+    return a + (b - a) * ty;
+  }
+
+  // Trilinear single-channel sample (incl. alpha). Raw (scalar inputs are always
+  // sourceColorSpace=raw), so no sRGB. Matches ChannelOf(sample(...)) bit-for-bit
+  // for r/g/b on a raw texture; additionally exposes alpha (ch=3).
+  float sample_channel(float u, float v, float lod, int ch) const {
+    if (width <= 0 || height <= 0 || pixels.empty()) return 0.5f;
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return 0.0f;  // Black wrap, out of bounds
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    float c = bilinear_channel(l0, wu, wv, ch);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      float c1 = bilinear_channel(l0 + 1, wu, wv, ch);
+      c = c + (c1 - c) * f;
+    }
+    return c;
+  }
+
+  // Anisotropic single-channel sample: mirrors sample_aniso's footprint/tap logic
+  // exactly (so r/g/b match ChannelOf(sample_aniso(...)) bit-for-bit) on one
+  // channel, including alpha.
+  float sample_channel_aniso(float u, float v, float dudx, float dvdx, float dudy,
+                             float dvdy, int max_aniso, int ch) const {
+    const float W = float(width), H = float(height);
+    const float lx = std::sqrt(dudx * dudx * W * W + dvdx * dvdx * H * H);
+    const float ly = std::sqrt(dudy * dudy * W * W + dvdy * dvdy * H * H);
+    float Pmax, Pmin, mdu, mdv;
+    if (lx >= ly) {
+      Pmax = lx; Pmin = ly; mdu = dudx; mdv = dvdx;
+    } else {
+      Pmax = ly; Pmin = lx; mdu = dudy; mdv = dvdy;
+    }
+    if (Pmax < 1.0e-8f) return sample_channel(u, v, 0.0f, ch);
+    int n = int(std::ceil(Pmax / std::max(Pmin, 1.0e-8f)));
+    n = std::min(std::max(n, 1), std::max(1, max_aniso));
+    const float lod = std::log2(std::max(Pmax / float(n), 1.0e-8f));
+    if (n <= 1) return sample_channel(u, v, lod, ch);
+    float acc = 0.0f;
+    for (int i = 0; i < n; ++i) {
+      const float t = (float(i) + 0.5f) / float(n) - 0.5f;
+      acc += sample_channel(u + t * mdu, v + t * mdv, lod, ch);
+    }
+    return acc / float(n);
+  }
 };
 
 // 2D UV transform (UsdTransform2d): out = Rotate(rotation) * (st * scale) +
