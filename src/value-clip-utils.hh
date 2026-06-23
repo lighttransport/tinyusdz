@@ -121,7 +121,9 @@ inline bool ExpandTemplateClipMetadata(
   for (double t = templateStartTime; t <= templateEndTime + templateStride * 0.5;
        t += templateStride) {
     // Clamp to end
-    double clampedT = std::min(t, templateEndTime);
+    // Parenthesize to defeat the MSVC <windows.h> min/max function-like macros
+    // (C2589) when this header is compiled in a TU that pulls in windows.h.
+    double clampedT = (std::min)(t, templateEndTime);
 
     // Format the time value into the placeholder
     std::ostringstream pathss;
