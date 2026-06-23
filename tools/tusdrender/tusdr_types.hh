@@ -501,7 +501,7 @@ struct MeshJob {
 };
 
 struct PurposeFilter {
-  const std::vector<TriInfo> *tris{nullptr};
+  const std::vector<FlatTri> *tris{nullptr};
   uint32_t mask{kPurposeDefaultMask};
 };
 

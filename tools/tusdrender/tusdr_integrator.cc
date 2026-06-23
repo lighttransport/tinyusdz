@@ -25,7 +25,7 @@ int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
 }
 
 bool IntersectVisibleTriangles(lrt_tri_scene *scene,
-                               const std::vector<TriInfo> &tris,
+                               const std::vector<FlatTri> &tris,
                                const lrt_ray &ray, uint32_t purpose_mask,
                                lrt_hit *hit) {
   if (!scene || !hit) return false;
@@ -51,7 +51,7 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
   return false;
 }
 
-bool Occluded(lrt_tri_scene *scene, const std::vector<TriInfo> &tris,
+bool Occluded(lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
               const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
               const DirectScene *direct, uint32_t purpose_mask) {
   // Self-intersection offset must scale with the surface point's magnitude: at
@@ -520,7 +520,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
 }
 
 Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
-           const std::vector<TriInfo> &tris,
+           const std::vector<FlatTri> &tris, const std::vector<TriMat> &mats,
            const LightCache &lights, const IblCache *ibl,
            const CameraFrame &camera,
            const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
@@ -558,7 +558,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     lrt_hit hit;
     if (IntersectVisibleTriangles(scene, tris, ray, opt.purpose_mask, &hit) &&
         hit.prim_id != LRT_TRI_NO_HIT && size_t(hit.prim_id) < tris.size()) {
-      hit_tri = tris[size_t(hit.prim_id)];
+      // Rebuild the full TriInfo from the slim FlatTri (geometry + purpose) and
+      // its material table entry, exactly the record the flat path stored inline
+      // before the material was hoisted into flat_mats.
+      const FlatTri &ft = tris[size_t(hit.prim_id)];
+      hit_tri = (size_t(ft.mat_id) < mats.size()) ? CombineTriMat(mats[ft.mat_id])
+                                                  : TriInfo{};
+      hit_tri.p0 = ft.p0;
+      hit_tri.p1 = ft.p1;
+      hit_tri.p2 = ft.p2;
+      hit_tri.n = ft.n;
+      hit_tri.purpose_bit = ft.purpose_bit;
       // Per-corner displayColor/displayOpacity (RGBA), barycentric-interpolated.
       if (tri_colors && size_t(hit.prim_id) * 12 + 11 < tri_colors->size()) {
         const uint8_t *cc = &(*tri_colors)[size_t(hit.prim_id) * 12];
@@ -775,9 +785,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const float a = std::max(0.0f, tri.opacity);
     const Vec3 behind_org = Add(ray_org, Mul(ray_dir, hit_t + 0.01f));
     const Vec3 behind =
-        Shade(scene, direct, tris, lights, ibl, camera, opt, behind_org, ray_dir,
-              textures, tri_uvs, tlas, blas, instances, rd, depth + 1, tri_colors,
-              tri_normals);
+        Shade(scene, direct, tris, mats, lights, ibl, camera, opt, behind_org,
+              ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
+              tri_colors, tri_normals);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
@@ -1013,7 +1023,8 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
 }
 
 tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
-                            const std::vector<TriInfo> &tris,
+                            const std::vector<FlatTri> &tris,
+                            const std::vector<TriMat> &mats,
                             const LightCache &lights, const IblCache *ibl,
                             const CameraFrame &camera, const Options &opt,
                             int height,
@@ -1059,7 +1070,7 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                     &rd.dy);
             rd.valid = true;
-            Vec3 surf = Shade(scene, direct, tris, lights, ibl, camera, opt,
+            Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
                               org, dir, textures, tri_uvs, tlas, blas, instances,
                               rd, 0, tri_colors, tri_normals);
             if (volumes && !volumes->empty()) {

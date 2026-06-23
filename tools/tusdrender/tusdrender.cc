@@ -436,9 +436,12 @@ int main(int argc, char **argv) {
     }
 
     const auto render_t0 = std::chrono::steady_clock::now();
+    std::vector<FlatTri> flat_tris;
+    std::vector<TriMat> flat_mats;
+    SplitTriInfos(tris, &flat_tris, &flat_mats);
     tinyusdz::Image img =
-        RenderImage(lrt_scene, &direct_scene, tris, light_cache, nullptr, camera,
-                    opt, height);
+        RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
+                    nullptr, camera, opt, height);
     const auto render_t1 = std::chrono::steady_clock::now();
     if (opt.stats) {
       std::cerr << "render seconds: "
@@ -593,8 +596,11 @@ int main(int argc, char **argv) {
   }
 
   const auto render_t0 = std::chrono::steady_clock::now();
+  std::vector<FlatTri> flat_tris;
+  std::vector<TriMat> flat_mats;
+  SplitTriInfos(tris, &flat_tris, &flat_mats);
   tinyusdz::Image img =
-      RenderImage(lrt_scene, &direct_scene, tris, light_cache,
+      RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
                   ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
                   /*textures*/ nullptr, /*tri_uvs*/ nullptr, /*tlas*/ nullptr,
                   /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
