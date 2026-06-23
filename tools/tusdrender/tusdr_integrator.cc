@@ -233,6 +233,34 @@ inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
   return ChannelOf(textures[size_t(id)].sample(u, v, lod), ch);
 }
 
+// Anisotropic scalar sample: when a ray-differential footprint is available, the
+// channel is read from the same parallelogram-footprint filter the color textures
+// use (so a grazing roughness/metallic/occlusion/opacity map is anti-aliased along
+// its major axis instead of over-blurred by isotropic trilinear). Falls back to a
+// full-res lookup when no footprint (lod 0), matching the prior result there.
+inline float SampleScalarTexAniso(const std::vector<Texture> &textures,
+                                  int32_t id, uint8_t ch, float u, float v,
+                                  bool have_fp, float dudx, float dvdx,
+                                  float dudy, float dvdy, int max_aniso) {
+  if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
+  const Texture &tx = textures[size_t(id)];
+  Vec3 c = have_fp ? tx.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, max_aniso)
+                   : tx.sample(u, v, 0.0f);
+  return ChannelOf(c, ch);
+}
+
+// Anisotropic tangent-space normal sample (footprint-filtered raw RGB, then the
+// UsdPreviewSurface scale/bias unpack). Falls back to a full-res lookup with no
+// footprint.
+Vec3 SampleTangentNormalAniso(const Texture &nm, float u, float v, bool have_fp,
+                              float dudx, float dvdx, float dudy, float dvdy,
+                              int max_aniso) {
+  Vec3 s = have_fp ? nm.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, max_aniso)
+                   : nm.sample(u, v, 0.0f);
+  return Vec3{s.x * nm.scale.x + nm.bias.x, s.y * nm.scale.y + nm.bias.y,
+              s.z * nm.scale.z + nm.bias.z};
+}
+
 // Per-pixel ray differential: the camera rays for the +1 pixel neighbors in
 // screen x and y (origin + direction each, to cover both pinhole and ortho).
 
@@ -402,10 +430,6 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
           ComputeUVFootprint(ray_org, ray_dir, rd, wp0, wp1, wp2, out->n, uv[0],
                              uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
                              &dudy, &dvdy);
-      auto scalar_lod = [&](const Texture &tx) {
-        return have_fp ? TextureLod(dudx, dvdx, dudy, dvdy, tx.width, tx.height)
-                       : 0.0f;
-      };
       if (lt.tex_id >= 0 && size_t(lt.tex_id) < textures->size()) {
         const Texture &dt = (*textures)[size_t(lt.tex_id)];
         Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
@@ -416,13 +440,15 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                lt.base_color.z * t.z};
       }
       if (lt.rough_tex_id >= 0) {
-        float r = SampleScalarTex(*textures, lt.rough_tex_id, lt.rough_ch, u, v,
-                                  scalar_lod((*textures)[size_t(lt.rough_tex_id)]));
+        float r = SampleScalarTexAniso(*textures, lt.rough_tex_id, lt.rough_ch, u,
+                                       v, have_fp, dudx, dvdx, dudy, dvdy,
+                                       kMaxAniso);
         if (r >= 0.0f) out->roughness = r;
       }
       if (lt.metal_tex_id >= 0) {
-        float m = SampleScalarTex(*textures, lt.metal_tex_id, lt.metal_ch, u, v,
-                                  scalar_lod((*textures)[size_t(lt.metal_tex_id)]));
+        float m = SampleScalarTexAniso(*textures, lt.metal_tex_id, lt.metal_ch, u,
+                                       v, have_fp, dudx, dvdx, dudy, dvdy,
+                                       kMaxAniso);
         if (m >= 0.0f) out->metallic = m;
       }
       if (lt.emission_tex_id >= 0 &&
@@ -443,31 +469,33 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                    lt.specular_color.z * s.z};
       }
       if (lt.occ_tex_id >= 0) {
-        float o = SampleScalarTex(*textures, lt.occ_tex_id, lt.occ_ch, u, v,
-                                  scalar_lod((*textures)[size_t(lt.occ_tex_id)]));
+        float o = SampleScalarTexAniso(*textures, lt.occ_tex_id, lt.occ_ch, u, v,
+                                       have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
         if (o >= 0.0f) out->occlusion = o;
       }
       if (lt.opacity_tex_id >= 0) {
-        float a = SampleScalarTex(*textures, lt.opacity_tex_id, lt.opacity_ch, u,
-                                  v, scalar_lod((*textures)[size_t(lt.opacity_tex_id)]));
+        float a = SampleScalarTexAniso(*textures, lt.opacity_tex_id,
+                                       lt.opacity_ch, u, v, have_fp, dudx, dvdx,
+                                       dudy, dvdy, kMaxAniso);
         if (a >= 0.0f) out->opacity *= a;
       }
       if (lt.clearcoat_tex_id >= 0) {
-        float cc = SampleScalarTex(
-            *textures, lt.clearcoat_tex_id, lt.clearcoat_ch, u, v,
-            scalar_lod((*textures)[size_t(lt.clearcoat_tex_id)]));
+        float cc = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
+                                        lt.clearcoat_ch, u, v, have_fp, dudx, dvdx,
+                                        dudy, dvdy, kMaxAniso);
         if (cc >= 0.0f) out->clearcoat = cc;
       }
       if (lt.clearcoat_rough_tex_id >= 0) {
-        float cr = SampleScalarTex(
-            *textures, lt.clearcoat_rough_tex_id, lt.clearcoat_rough_ch, u, v,
-            scalar_lod((*textures)[size_t(lt.clearcoat_rough_tex_id)]));
+        float cr = SampleScalarTexAniso(*textures, lt.clearcoat_rough_tex_id,
+                                        lt.clearcoat_rough_ch, u, v, have_fp,
+                                        dudx, dvdx, dudy, dvdy, kMaxAniso);
         if (cr >= 0.0f) out->clearcoat_roughness = cr;
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
         const Texture &nt = (*textures)[size_t(lt.normal_tex_id)];
-        Vec3 Nt = SampleTangentNormal(nt, u, v, scalar_lod(nt));
+        Vec3 Nt = SampleTangentNormalAniso(nt, u, v, have_fp, dudx, dvdx, dudy,
+                                           dvdy, kMaxAniso);
         out->n = PerturbNormalStorm(wp0, wp1, wp2, out->n, uv[0], uv[1], uv[2],
                                     uv[3], uv[4], uv[5], Nt);
       }
@@ -560,11 +588,6 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1, hit_tri.p2,
               hit_tri.n, uv[0], uv[1], uv[2], uv[3], uv[4], uv[5], &dudx, &dvdx,
               &dudy, &dvdy);
-          auto scalar_lod = [&](const Texture &tx) {
-            return have_fp
-                       ? TextureLod(dudx, dvdx, dudy, dvdy, tx.width, tx.height)
-                       : 0.0f;
-          };
           if (hit_tri.tex_id >= 0 && size_t(hit_tri.tex_id) < textures->size()) {
             const Texture &dt = (*textures)[size_t(hit_tri.tex_id)];
             Vec3 t = have_fp ? dt.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
@@ -577,15 +600,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                                       hit_tri.base_color.z * t.z};
           }
           if (hit_tri.rough_tex_id >= 0) {
-            float r = SampleScalarTex(
-                *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.rough_tex_id)]));
+            float r = SampleScalarTexAniso(
+                *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v, have_fp,
+                dudx, dvdx, dudy, dvdy, kMaxAniso);
             if (r >= 0.0f) hit_tri.roughness = r;
           }
           if (hit_tri.metal_tex_id >= 0) {
-            float m = SampleScalarTex(
-                *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.metal_tex_id)]));
+            float m = SampleScalarTexAniso(
+                *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v, have_fp,
+                dudx, dvdx, dudy, dvdy, kMaxAniso);
             if (m >= 0.0f) hit_tri.metallic = m;
           }
           if (hit_tri.emission_tex_id >= 0 &&
@@ -609,34 +632,35 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                                           hit_tri.specular_color.z * s.z};
           }
           if (hit_tri.occ_tex_id >= 0) {
-            float o = SampleScalarTex(
-                *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.occ_tex_id)]));
+            float o = SampleScalarTexAniso(
+                *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v, have_fp,
+                dudx, dvdx, dudy, dvdy, kMaxAniso);
             if (o >= 0.0f) hit_tri.occlusion = o;
           }
           if (hit_tri.opacity_tex_id >= 0) {
-            float a = SampleScalarTex(
+            float a = SampleScalarTexAniso(
                 *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.opacity_tex_id)]));
+                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
             if (a >= 0.0f) hit_tri.opacity *= a;
           }
           if (hit_tri.clearcoat_tex_id >= 0) {
-            float cc = SampleScalarTex(
+            float cc = SampleScalarTexAniso(
                 *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.clearcoat_tex_id)]));
+                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
             if (cc >= 0.0f) hit_tri.clearcoat = cc;
           }
           if (hit_tri.clearcoat_rough_tex_id >= 0) {
-            float cr = SampleScalarTex(
+            float cr = SampleScalarTexAniso(
                 *textures, hit_tri.clearcoat_rough_tex_id,
-                hit_tri.clearcoat_rough_ch, u, v,
-                scalar_lod((*textures)[size_t(hit_tri.clearcoat_rough_tex_id)]));
+                hit_tri.clearcoat_rough_ch, u, v, have_fp, dudx, dvdx, dudy,
+                dvdy, kMaxAniso);
             if (cr >= 0.0f) hit_tri.clearcoat_roughness = cr;
           }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
             const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
-            Vec3 Nt = SampleTangentNormal(nt, u, v, scalar_lod(nt));
+            Vec3 Nt = SampleTangentNormalAniso(nt, u, v, have_fp, dudx, dvdx,
+                                               dudy, dvdy, kMaxAniso);
             hit_tri.n = PerturbNormalStorm(hit_tri.p0, hit_tri.p1, hit_tri.p2,
                                            hit_tri.n, uv[0], uv[1], uv[2], uv[3],
                                            uv[4], uv[5], Nt);
