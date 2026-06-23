@@ -386,7 +386,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
-                        lt.opacity_tex_id >= 0);
+                        lt.opacity_tex_id >= 0 || lt.clearcoat_tex_id >= 0 ||
+                        lt.clearcoat_rough_tex_id >= 0);
   if (has_tex && textures && !b.tri_uvs.empty()) {
     const size_t base = size_t(th.prim_id) * 6;
     if (base + 5 < b.tri_uvs.size()) {
@@ -440,6 +441,18 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         float a = SampleScalarTex(*textures, lt.opacity_tex_id, lt.opacity_ch, u,
                                   v, scalar_lod((*textures)[size_t(lt.opacity_tex_id)]));
         if (a >= 0.0f) out->opacity *= a;
+      }
+      if (lt.clearcoat_tex_id >= 0) {
+        float cc = SampleScalarTex(
+            *textures, lt.clearcoat_tex_id, lt.clearcoat_ch, u, v,
+            scalar_lod((*textures)[size_t(lt.clearcoat_tex_id)]));
+        if (cc >= 0.0f) out->clearcoat = cc;
+      }
+      if (lt.clearcoat_rough_tex_id >= 0) {
+        float cr = SampleScalarTex(
+            *textures, lt.clearcoat_rough_tex_id, lt.clearcoat_rough_ch, u, v,
+            scalar_lod((*textures)[size_t(lt.clearcoat_rough_tex_id)]));
+        if (cr >= 0.0f) out->clearcoat_roughness = cr;
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
@@ -523,7 +536,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
            hit_tri.rough_tex_id >= 0 || hit_tri.metal_tex_id >= 0 ||
            hit_tri.emission_tex_id >= 0 || hit_tri.occ_tex_id >= 0 ||
-           hit_tri.opacity_tex_id >= 0) &&
+           hit_tri.opacity_tex_id >= 0 || hit_tri.clearcoat_tex_id >= 0 ||
+           hit_tri.clearcoat_rough_tex_id >= 0) &&
           textures && tri_uvs) {
         const size_t base = size_t(hit.prim_id) * 6;
         if (base + 5 < tri_uvs->size()) {
@@ -585,6 +599,19 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
                 scalar_lod((*textures)[size_t(hit_tri.opacity_tex_id)]));
             if (a >= 0.0f) hit_tri.opacity *= a;
+          }
+          if (hit_tri.clearcoat_tex_id >= 0) {
+            float cc = SampleScalarTex(
+                *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
+                scalar_lod((*textures)[size_t(hit_tri.clearcoat_tex_id)]));
+            if (cc >= 0.0f) hit_tri.clearcoat = cc;
+          }
+          if (hit_tri.clearcoat_rough_tex_id >= 0) {
+            float cr = SampleScalarTex(
+                *textures, hit_tri.clearcoat_rough_tex_id,
+                hit_tri.clearcoat_rough_ch, u, v,
+                scalar_lod((*textures)[size_t(hit_tri.clearcoat_rough_tex_id)]));
+            if (cr >= 0.0f) hit_tri.clearcoat_roughness = cr;
           }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
@@ -652,6 +679,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                   1.0f - tri.metallic);
     Vec3 diff = Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
     c = Add(c, Add(diff, spec));
+    // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
+    // its own (usually low) roughness, layered on top and weighted by the coat
+    // amount. Skipped entirely when clearcoat==0 (byte-identical default).
+    if (tri.clearcoat > 0.0f) {
+      Vec3 cc_env = SampleIblMip(ibl->prefiltered, refl, tri.clearcoat_roughness);
+      float cc_a = 1.0f, cc_b = 0.0f;
+      SampleBrdfLut(*ibl, ndotv, tri.clearcoat_roughness, &cc_a, &cc_b);
+      float cc_spec = 0.04f * cc_a + cc_b;
+      c = Add(c, Mul(cc_env, cc_spec * tri.clearcoat));
+    }
   } else if (lights.has_dome) {
     c = Add(c, Mul(Mul(tri.base_color, lights.env_color), 0.25f));
   }
