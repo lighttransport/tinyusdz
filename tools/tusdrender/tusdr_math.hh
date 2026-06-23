@@ -298,6 +298,12 @@ struct TriInfo {
   int32_t opacity_tex_id{-1};   // UsdPreviewSurface inputs:opacity texture, or -1
   uint8_t opacity_ch{0};        // opacity texture source channel (often 'a')
   float opacity_threshold{0.0f}; // inputs:opacityThreshold; >0 = alpha cutout (mask)
+  float clearcoat{0.0f};        // inputs:clearcoat weight (2nd specular lobe)
+  float clearcoat_roughness{0.01f}; // inputs:clearcoatRoughness
+  int32_t clearcoat_tex_id{-1};      // clearcoat-weight texture, or -1
+  int32_t clearcoat_rough_tex_id{-1}; // clearcoat-roughness texture, or -1
+  uint8_t clearcoat_ch{0};
+  uint8_t clearcoat_rough_ch{0};
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -320,10 +326,16 @@ struct TriMat {
   float opacity{1.0f};  // displayOpacity / UsdPreviewSurface opacity; <1 = see-through
   int32_t opacity_tex_id{-1};   // UsdPreviewSurface inputs:opacity texture, or -1
   float opacity_threshold{0.0f}; // inputs:opacityThreshold; >0 = alpha cutout (mask)
+  float clearcoat{0.0f};        // inputs:clearcoat weight (2nd specular lobe)
+  float clearcoat_roughness{0.01f}; // inputs:clearcoatRoughness
+  int32_t clearcoat_tex_id{-1};      // clearcoat-weight texture, or -1
+  int32_t clearcoat_rough_tex_id{-1}; // clearcoat-roughness texture, or -1
   uint8_t rough_ch{0};
   uint8_t metal_ch{0};
   uint8_t occ_ch{0};
   uint8_t opacity_ch{0};
+  uint8_t clearcoat_ch{0};
+  uint8_t clearcoat_rough_ch{0};
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -353,10 +365,16 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.opacity = m.opacity;
   t.opacity_tex_id = m.opacity_tex_id;
   t.opacity_threshold = m.opacity_threshold;
+  t.clearcoat = m.clearcoat;
+  t.clearcoat_roughness = m.clearcoat_roughness;
+  t.clearcoat_tex_id = m.clearcoat_tex_id;
+  t.clearcoat_rough_tex_id = m.clearcoat_rough_tex_id;
   t.rough_ch = m.rough_ch;
   t.metal_ch = m.metal_ch;
   t.occ_ch = m.occ_ch;
   t.opacity_ch = m.opacity_ch;
+  t.clearcoat_ch = m.clearcoat_ch;
+  t.clearcoat_rough_ch = m.clearcoat_rough_ch;
   return t;
 }
 
@@ -380,10 +398,16 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.opacity = t.opacity;
   m.opacity_tex_id = t.opacity_tex_id;
   m.opacity_threshold = t.opacity_threshold;
+  m.clearcoat = t.clearcoat;
+  m.clearcoat_roughness = t.clearcoat_roughness;
+  m.clearcoat_tex_id = t.clearcoat_tex_id;
+  m.clearcoat_rough_tex_id = t.clearcoat_rough_tex_id;
   m.rough_ch = t.rough_ch;
   m.metal_ch = t.metal_ch;
   m.occ_ch = t.occ_ch;
   m.opacity_ch = t.opacity_ch;
+  m.clearcoat_ch = t.clearcoat_ch;
+  m.clearcoat_rough_ch = t.clearcoat_rough_ch;
   return m;
 }
 
@@ -398,8 +422,14 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.occlusion == b.occlusion && a.opacity == b.opacity &&
          a.opacity_tex_id == b.opacity_tex_id &&
          a.opacity_threshold == b.opacity_threshold &&
+         a.clearcoat == b.clearcoat &&
+         a.clearcoat_roughness == b.clearcoat_roughness &&
+         a.clearcoat_tex_id == b.clearcoat_tex_id &&
+         a.clearcoat_rough_tex_id == b.clearcoat_rough_tex_id &&
          a.rough_ch == b.rough_ch && a.metal_ch == b.metal_ch &&
-         a.occ_ch == b.occ_ch && a.opacity_ch == b.opacity_ch;
+         a.occ_ch == b.occ_ch && a.opacity_ch == b.opacity_ch &&
+         a.clearcoat_ch == b.clearcoat_ch &&
+         a.clearcoat_rough_ch == b.clearcoat_rough_ch;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
