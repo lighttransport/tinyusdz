@@ -80,4 +80,62 @@ float MaterialMetallic(const RenderScene &scene, int material_id);
 Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
                        int material_id, float total_area);
 
+// ---- tusdr_lighting.cc ----
+void AppendPowerCdf(std::vector<PreviewLight> *lights, std::vector<float> *cdf);
+
+Vec3 DirectionFromLatlong(float u, float v);
+
+void LatlongUV(const Vec3 &dir, float *u, float *v);
+
+Vec3 SampleEnvNearest(const EnvImage &img, float u, float v);
+
+Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir);
+
+bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
+                             EnvImage *out);
+
+EnvImage ConvolveDiffuseEnv(const EnvImage &env, int width, int height);
+
+EnvImage PrefilterEnvMip(const EnvImage &env, int width, int height,
+                         float roughness);
+
+float RadicalInverseVdc(uint32_t bits);
+
+Vec3 ImportanceSampleGGX(float xi0, float xi1, float roughness, const Vec3 &n);
+
+float GeometrySchlickGGX(float ndotv, float roughness);
+
+float GeometrySmith(float ndotv, float ndotl, float roughness);
+
+void BuildBrdfLut(int size, IblCache *ibl);
+
+bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl);
+
+bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
+                   IblCache *ibl);
+
+bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
+                          EnvImage *out);
+
+Vec3 SampleIblMip(const std::vector<EnvImage> &mips, const Vec3 &dir,
+                  float roughness);
+
+void SampleBrdfLut(const IblCache &ibl, float ndotv, float roughness, float *a,
+                   float *b);
+
+float RectArea(const RenderLight &light);
+
+float DiskArea(const RenderLight &light);
+
+float SphereArea(const RenderLight &light);
+
+float CylinderArea(const RenderLight &light);
+
+Vec3 LightColor(const RenderLight &light);
+
+void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
+                    LightCache *cache);
+
+void CollectLights(const RenderScene &scene, LightCache *cache);
+
 }  // namespace tusdr

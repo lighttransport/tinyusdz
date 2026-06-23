@@ -52,6 +52,7 @@ add_executable(tusdrender
   tusdrender.cc
   tusdr_args.cc
   tusdr_material.cc
+  tusdr_lighting.cc
 )
 
 target_link_libraries(tusdrender
