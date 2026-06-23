@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: CmakeAndBuild
         run: |
             cmake -B build_next -S . \
@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: CmakeAndBuild
         run: |
             ./scripts/bootstrap-cmake-macos.sh

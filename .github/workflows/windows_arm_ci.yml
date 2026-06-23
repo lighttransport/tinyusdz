@@ -23,7 +23,7 @@ jobs:
     # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: Configure
         run: |
           mkdir build_arm64
@@ -42,7 +42,7 @@ jobs:
   #   # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v1
+  #       uses: actions/checkout@v5
   #     - name: Configure
   #       run: |
   #         mkdir build_arm32
