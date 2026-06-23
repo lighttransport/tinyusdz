@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: Configure
         # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
@@ -45,7 +45,7 @@ jobs:
     # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: Configure
         run: .\vcsetup.bat
       - name: Build
@@ -148,7 +148,7 @@ jobs:
     # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
       - name: Configure
         run: .\vcsetup-32bit.bat
       - name: Build
