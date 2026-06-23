@@ -392,6 +392,108 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
   return ss.str();
 }
 
+// --- UsdVol ---
+
+// Shared printer for FieldAsset-derived field-asset attributes.
+static void print_field_asset_attrs(std::stringstream &ss,
+                                    const FieldAsset &field,
+                                    const uint32_t indent) {
+  ss << print_typed_attr(field.filePath, "filePath", indent);
+  ss << print_typed_attr(field.fieldName, "fieldName", indent);
+  ss << print_typed_attr(field.fieldDataType, "fieldDataType", indent);
+  ss << print_typed_attr(field.fieldIndex, "fieldIndex", indent);
+}
+
+std::string to_string(const FieldAsset &field, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(field.spec) << " FieldAsset \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, field, indent + 1);
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const OpenVDBAsset &asset, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(asset.spec) << " OpenVDBAsset \""
+     << asset.name << "\"\n";
+  if (asset.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(asset.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, asset, indent + 1);
+  ss << print_typed_attr(asset.fieldClass, "fieldClass", indent + 1);
+  ss << print_gprim_predefined(asset, indent + 1);
+  ss << print_props(asset.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const Field3DAsset &asset, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(asset.spec) << " Field3DAsset \""
+     << asset.name << "\"\n";
+  if (asset.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(asset.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, asset, indent + 1);
+  ss << print_typed_attr(asset.fieldPurpose, "fieldPurpose", indent + 1);
+  ss << print_gprim_predefined(asset, indent + 1);
+  ss << print_props(asset.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const Volume &volume, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(volume.spec) << " Volume \""
+     << volume.name << "\"\n";
+  if (volume.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(volume.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // `field:<name>` relationships -> field-asset prim paths.
+  for (const auto &item : volume.fieldRelationships) {
+    ss << print_relationship(item.second, item.second.get_listedit_qual(),
+                             /* custom */ false, "field:" + item.first,
+                             indent + 1);
+  }
+
+  ss << print_gprim_predefined(volume, indent + 1);
+  ss << print_props(volume.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
 std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;

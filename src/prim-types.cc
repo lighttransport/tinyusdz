@@ -1333,6 +1333,13 @@ bool IsXformablePrim(const Prim &prim) {
     case value::TYPE_ID_GEOM_MESH: {
       return true;
     }
+    // UsdVol (GPrim / Xformable-derived)
+    case value::TYPE_ID_VOLUME:
+    case value::TYPE_ID_FIELD_ASSET:
+    case value::TYPE_ID_OPENVDB_ASSET:
+    case value::TYPE_ID_FIELD3D_ASSET: {
+      return true;
+    }
     case value::TYPE_ID_GEOM_BASIS_CURVES: {
       return true;
     }

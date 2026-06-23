@@ -228,6 +228,7 @@ void App::applyLoaded(bool ok, bool progressive) {
   progressiveActive_ = false;
   nextMesh_ = 0;
   nextTex_ = 0;
+  nextVolume_ = 0;
   gpuMorphedMeshes_.clear();  // renderer re-uploads rest meshes for this scene
 
   if (ok) {
@@ -330,7 +331,16 @@ void App::stepProgressiveUpload() {
       if (elapsedMs() > 7.0) break;
     }
   }
+  // UsdVol volumes (OpenVDB) after meshes + textures.
   if (nextMesh_ >= draw_.meshes.size() && nextTex_ >= draw_.textures.size()) {
+    while (nextVolume_ < draw_.volumes.size()) {
+      renderer_->appendVolume(draw_.volumes[nextVolume_]);
+      ++nextVolume_;
+      if (elapsedMs() > 7.0) break;
+    }
+  }
+  if (nextMesh_ >= draw_.meshes.size() && nextTex_ >= draw_.textures.size() &&
+      nextVolume_ >= draw_.volumes.size()) {
     progressiveActive_ = false;
   }
 }

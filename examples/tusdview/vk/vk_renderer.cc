@@ -22,6 +22,8 @@
 #include "mesh_inst_frag.spv.h"
 #include "mesh_inst_vert.spv.h"
 #include "mesh_vert.spv.h"
+#include "volume_frag.spv.h"
+#include "volume_vert.spv.h"
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
 #endif
@@ -1149,6 +1151,357 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   return true;
 }
 
+// std140 layout matching VolumeUBO in volume.vert/frag (3 mat4 + 5 vec4).
+struct VkVolumeUBO {
+  float vp[16];
+  float model[16];
+  float invModel[16];
+  float camPos[4];
+  float bmin[4];
+  float bmax[4];
+  float albedo[4];    // .xyz albedo, .w densityScale
+  float emission[4];  // .xyz emission, .w background
+};
+
+bool VulkanRenderer::createVolumePipeline(std::string* err) {
+  // Descriptor set layout: binding 0 = UBO (VS+FS), binding 1 = sampler3D (FS).
+  VkDescriptorSetLayoutBinding b[2]{};
+  b[0].binding = 0;
+  b[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  b[0].descriptorCount = 1;
+  b[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  b[1].binding = 1;
+  b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  b[1].descriptorCount = 1;
+  b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  VkDescriptorSetLayoutCreateInfo slci{};
+  slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  slci.bindingCount = 2;
+  slci.pBindings = b;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &slci, nullptr, &volumeSetLayout_),
+           "volume set layout");
+
+  const uint32_t kMaxVolumes = 64;
+  VkDescriptorPoolSize ps[2]{};
+  ps[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  ps[0].descriptorCount = kMaxVolumes;
+  ps[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  ps[1].descriptorCount = kMaxVolumes;
+  VkDescriptorPoolCreateInfo dpci{};
+  dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  dpci.maxSets = kMaxVolumes;
+  dpci.poolSizeCount = 2;
+  dpci.pPoolSizes = ps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &dpci, nullptr, &volumePool_),
+           "volume desc pool");
+
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &volumeSetLayout_;
+  VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &volumeLayout_),
+           "volume pipeline layout");
+
+  VkShaderModule vs = createShader(volume_vert_spv, sizeof(volume_vert_spv));
+  VkShaderModule fs = createShader(volume_frag_spv, sizeof(volume_frag_spv));
+  if (!vs || !fs) {
+    if (err) *err = "volume shader module creation failed";
+    return false;
+  }
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vs;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fs;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription bind{};
+  bind.binding = 0;
+  bind.stride = 3 * sizeof(float);
+  bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attr = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+  VkPipelineVertexInputStateCreateInfo vin{};
+  vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vin.vertexBindingDescriptionCount = 1;
+  vin.pVertexBindingDescriptions = &bind;
+  vin.vertexAttributeDescriptionCount = 1;
+  vin.pVertexAttributeDescriptions = &attr;
+
+  VkPipelineInputAssemblyStateCreateInfo ia{};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo vp{};
+  vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vp.viewportCount = 1;
+  vp.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rs{};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  // Draw back faces only (one fragment/pixel; works with camera inside the box).
+  rs.cullMode = VK_CULL_MODE_FRONT_BIT;
+  rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rs.lineWidth = 1.0f;
+
+  VkPipelineMultisampleStateCreateInfo ms{};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo ds{};
+  ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  ds.depthTestEnable = VK_TRUE;
+  ds.depthWriteEnable = VK_FALSE;  // translucent: test against scene, don't write
+  ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+  // Premultiplied "over": src=ONE, dst=ONE_MINUS_SRC_ALPHA.
+  VkPipelineColorBlendAttachmentState cba{};
+  cba.blendEnable = VK_TRUE;
+  cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  cba.colorBlendOp = VK_BLEND_OP_ADD;
+  cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  cba.alphaBlendOp = VK_BLEND_OP_ADD;
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo cb{};
+  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  cb.attachmentCount = 1;
+  cb.pAttachments = &cba;
+
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynState{};
+  dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynState.dynamicStateCount = 2;
+  dynState.pDynamicStates = dyn;
+
+  VkGraphicsPipelineCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  ci.stageCount = 2;
+  ci.pStages = stages;
+  ci.pVertexInputState = &vin;
+  ci.pInputAssemblyState = &ia;
+  ci.pViewportState = &vp;
+  ci.pRasterizationState = &rs;
+  ci.pMultisampleState = &ms;
+  ci.pDepthStencilState = &ds;
+  ci.pColorBlendState = &cb;
+  ci.pDynamicState = &dynState;
+  ci.layout = volumeLayout_;
+  ci.renderPass = offscreenPass_;
+  ci.subpass = 0;
+  VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                         &volumePipeline_);
+  // No-depth variant for the ray-query overlay pass (RT produces no depth).
+  VkPipelineDepthStencilStateCreateInfo dsNo = ds;
+  dsNo.depthTestEnable = VK_FALSE;
+  dsNo.depthWriteEnable = VK_FALSE;
+  ci.pDepthStencilState = &dsNo;
+  VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                          &volumePipelineNoDepth_);
+  vkDestroyShaderModule(device_, vs, nullptr);
+  vkDestroyShaderModule(device_, fs, nullptr);
+  if (r != VK_SUCCESS || r2 != VK_SUCCESS) {
+    if (err) *err = "vkCreateGraphicsPipelines(volume) failed";
+    return false;
+  }
+
+  // 36-vertex unit-cube proxy (CCW-outward); the FS reconstructs the ray.
+  static const float kCube[36 * 3] = {
+      0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0,  // -Z
+      0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1,  // +Z
+      0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1,  // -Y
+      0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1,  // +Y
+      0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0,  // -X
+      1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1}; // +X
+  if (!createHostBuffer(sizeof(kCube), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kCube,
+                        &volumeCubeBuf_, &volumeCubeMem_)) {
+    if (err) *err = "volume cube buffer";
+    return false;
+  }
+  return true;
+}
+
+void VulkanRenderer::recordVolumePass(VkCommandBuffer cb, VkPipeline pipe) {
+  if (!pipe || volumes_.empty()) return;
+  const light3d::Mat4 vp = ToMat4(proj_) * ToMat4(view_);
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+  for (auto& gv : volumes_) {
+    VkVolumeUBO ubo{};
+    std::memcpy(ubo.vp, vp.m, sizeof(ubo.vp));
+    std::memcpy(ubo.model, gv.model, sizeof(ubo.model));
+    std::memcpy(ubo.invModel, gv.invModel, sizeof(ubo.invModel));
+    ubo.camPos[0] = cameraPos_[0];
+    ubo.camPos[1] = cameraPos_[1];
+    ubo.camPos[2] = cameraPos_[2];
+    ubo.camPos[3] = 0.0f;
+    for (int a = 0; a < 3; a++) {
+      ubo.bmin[a] = gv.bmin[a];
+      ubo.bmax[a] = gv.bmax[a];
+      ubo.albedo[a] = gv.albedo[a];
+      ubo.emission[a] = gv.emission[a];
+    }
+    ubo.albedo[3] = gv.densityScale;
+    ubo.emission[3] = gv.background;
+    if (gv.uboMapped) std::memcpy(gv.uboMapped, &ubo, sizeof(ubo));
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, volumeLayout_, 0, 1,
+                            &gv.set, 0, nullptr);
+    VkDeviceSize off = 0;
+    vkCmdBindVertexBuffers(cb, 0, 1, &volumeCubeBuf_, &off);
+    vkCmdDraw(cb, 36, 1, 0, 0);
+  }
+}
+
+void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
+  if (v.density.empty() || v.dim[0] <= 0 || v.dim[1] <= 0 || v.dim[2] <= 0) return;
+  if (volumes_.size() >= 64) return;  // pool cap
+
+  VkVolumeGPU gv;
+  std::memcpy(gv.model, v.world, sizeof(gv.model));
+  light3d::Mat4 W;
+  std::memcpy(W.m, v.world, sizeof(W.m));
+  light3d::Mat4 inv = W.inverse();
+  std::memcpy(gv.invModel, inv.m, sizeof(gv.invModel));
+  for (int a = 0; a < 3; a++) {
+    gv.bmin[a] = v.aabbMin[a];
+    gv.bmax[a] = v.aabbMax[a];
+    gv.albedo[a] = v.albedo[a];
+    gv.emission[a] = v.emission[a];
+  }
+  gv.densityScale = v.densityScale;
+  gv.background = v.background;
+
+  // 3D density image (R32_SFLOAT) via staging.
+  const VkDeviceSize bytes = VkDeviceSize(v.density.size()) * sizeof(float);
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, v.density.data(),
+                        &staging, &stagingMem)) {
+    return;
+  }
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_3D;
+  ici.format = VK_FORMAT_R32_SFLOAT;
+  ici.extent = {uint32_t(v.dim[0]), uint32_t(v.dim[1]), uint32_t(v.dim[2])};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, &gv.img) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, gv.img, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device_, &mai, nullptr, &gv.mem);
+  vkBindImageMemory(device_, gv.img, gv.mem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = gv.img;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {uint32_t(v.dim[0]), uint32_t(v.dim[1]), uint32_t(v.dim[2])};
+  vkCmdCopyBufferToImage(cb, staging, gv.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                         &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                       1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = gv.img;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_3D;
+  vci.format = VK_FORMAT_R32_SFLOAT;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  if (vkCreateImageView(device_, &vci, nullptr, &gv.view) != VK_SUCCESS) return;
+
+  VkSamplerCreateInfo sci{};
+  sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  sci.magFilter = VK_FILTER_LINEAR;
+  sci.minFilter = VK_FILTER_LINEAR;
+  sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sci.maxLod = 0.0f;
+  if (vkCreateSampler(device_, &sci, nullptr, &gv.sampler) != VK_SUCCESS) return;
+
+  // Per-volume UBO (host-visible, persistently mapped; updated each frame).
+  VkVolumeUBO zero{};
+  if (!createHostBuffer(sizeof(VkVolumeUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        &zero, &gv.ubo, &gv.uboMem)) {
+    return;
+  }
+  vkMapMemory(device_, gv.uboMem, 0, sizeof(VkVolumeUBO), 0, &gv.uboMapped);
+
+  // Descriptor set.
+  VkDescriptorSetAllocateInfo dai{};
+  dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  dai.descriptorPool = volumePool_;
+  dai.descriptorSetCount = 1;
+  dai.pSetLayouts = &volumeSetLayout_;
+  if (vkAllocateDescriptorSets(device_, &dai, &gv.set) != VK_SUCCESS) return;
+
+  VkDescriptorBufferInfo bi{};
+  bi.buffer = gv.ubo;
+  bi.range = sizeof(VkVolumeUBO);
+  VkDescriptorImageInfo ii{};
+  ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  ii.imageView = gv.view;
+  ii.sampler = gv.sampler;
+  VkWriteDescriptorSet w[2]{};
+  w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[0].dstSet = gv.set;
+  w[0].dstBinding = 0;
+  w[0].descriptorCount = 1;
+  w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  w[0].pBufferInfo = &bi;
+  w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[1].dstSet = gv.set;
+  w[1].dstBinding = 1;
+  w[1].descriptorCount = 1;
+  w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[1].pImageInfo = &ii;
+  vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+
+  volumes_.push_back(gv);
+}
+
 bool VulkanRenderer::createCommands(std::string* err) {
   VkCommandPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1722,6 +2075,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createPipeline(err)) return false;       // needs texSetLayout_
   if (!createInstPipeline(err)) return false;   // instanced flat prototypes
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
+  if (!createVolumePipeline(err)) return false; // UsdVol volume raymarch
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
   {
     SkinningFrameCPU ident;
@@ -1897,6 +2251,19 @@ void VulkanRenderer::destroyScene() {
   meshes_.clear();
   matColor_.clear();
   matBaseTex_.clear();
+
+  // UsdVol volumes (3D images + UBOs + descriptor sets).
+  for (auto& gv : volumes_) {
+    if (gv.uboMapped && gv.uboMem) vkUnmapMemory(device_, gv.uboMem);
+    if (gv.sampler) vkDestroySampler(device_, gv.sampler, nullptr);
+    if (gv.view) vkDestroyImageView(device_, gv.view, nullptr);
+    if (gv.img) vkDestroyImage(device_, gv.img, nullptr);
+    if (gv.mem) vkFreeMemory(device_, gv.mem, nullptr);
+    if (gv.ubo) vkDestroyBuffer(device_, gv.ubo, nullptr);
+    if (gv.uboMem) vkFreeMemory(device_, gv.uboMem, nullptr);
+  }
+  volumes_.clear();
+  if (volumePool_) vkResetDescriptorPool(device_, volumePool_, 0);
 
   // Per-scene acceleration structure + RT scene buffers (rebuilt on next trace).
   if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
@@ -3068,7 +3435,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // no RT depth buffer, so everything draws no-depth (x-ray) -- which is what
     // the overlay/highlight lines already do in the raster path anyway.
     const bool anyOverlay = !helperCopy_.empty() || !overlayCopy_.empty() ||
-                            !highlightLineCopy_.empty();
+                            !highlightLineCopy_.empty() || !volumes_.empty();
     if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
       VkRenderPassBeginInfo orp{};
       orp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3093,6 +3460,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdSetScissor(cb, 0, 1, &sc);
 
       const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+      // UsdVol volumes composited over the traced image (no depth: the RT image
+      // carries no depth buffer, so volumes are not occluded by traced surfaces).
+      recordVolumePass(cb, volumePipelineNoDepth_);
       // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
       // as x-ray here (a reasonable RT-overlay compromise).
       drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
@@ -3292,6 +3662,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
       }
     }
+    // UsdVol volume raymarch (proxy-box, translucent "over" opaque geometry).
+    recordVolumePass(cb, volumePipeline_);
+
     // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
     // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
     const light3d::Mat4 VP = P * V;
@@ -3562,6 +3935,24 @@ void VulkanRenderer::shutdown() {
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
+  // UsdVol volume resources.
+  for (auto& gv : volumes_) {
+    if (gv.uboMapped && gv.uboMem) vkUnmapMemory(device_, gv.uboMem);
+    if (gv.sampler) vkDestroySampler(device_, gv.sampler, nullptr);
+    if (gv.view) vkDestroyImageView(device_, gv.view, nullptr);
+    if (gv.img) vkDestroyImage(device_, gv.img, nullptr);
+    if (gv.mem) vkFreeMemory(device_, gv.mem, nullptr);
+    if (gv.ubo) vkDestroyBuffer(device_, gv.ubo, nullptr);
+    if (gv.uboMem) vkFreeMemory(device_, gv.uboMem, nullptr);
+  }
+  volumes_.clear();
+  if (volumeCubeBuf_) { vkDestroyBuffer(device_, volumeCubeBuf_, nullptr); volumeCubeBuf_ = VK_NULL_HANDLE; }
+  if (volumeCubeMem_) { vkFreeMemory(device_, volumeCubeMem_, nullptr); volumeCubeMem_ = VK_NULL_HANDLE; }
+  if (volumePipeline_) { vkDestroyPipeline(device_, volumePipeline_, nullptr); volumePipeline_ = VK_NULL_HANDLE; }
+  if (volumePipelineNoDepth_) { vkDestroyPipeline(device_, volumePipelineNoDepth_, nullptr); volumePipelineNoDepth_ = VK_NULL_HANDLE; }
+  if (volumeLayout_) { vkDestroyPipelineLayout(device_, volumeLayout_, nullptr); volumeLayout_ = VK_NULL_HANDLE; }
+  if (volumePool_) { vkDestroyDescriptorPool(device_, volumePool_, nullptr); volumePool_ = VK_NULL_HANDLE; }
+  if (volumeSetLayout_) { vkDestroyDescriptorSetLayout(device_, volumeSetLayout_, nullptr); volumeSetLayout_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {
     if (helperBuf_[i]) vkDestroyBuffer(device_, helperBuf_[i], nullptr);
     if (helperMem_[i]) vkFreeMemory(device_, helperMem_[i], nullptr);

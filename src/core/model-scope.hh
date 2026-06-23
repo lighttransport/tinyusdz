@@ -70,25 +70,14 @@ struct Model : public Collection, MaterialBinding {
 // USDZ Schemas for AR — full definitions in usdAR.hh
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
 
-// Simple volume class.
-// Currently this is just an placeholder. Not implemented.
+// NOTE: The UsdVol schema prims (Volume, FieldAsset, OpenVDBAsset,
+// Field3DAsset) are GPrim-derived and defined in usdGeom.hh.
 
-struct OpenVDBAsset {
-  std::string fieldDataType{"float"};
-  std::string fieldName{"density"};
-  std::string filePath;  // asset
-};
-
-// MagicaVoxel Vox
+// MagicaVoxel Vox (used by the usdVox .vox import path).
 struct VoxAsset {
   std::string fieldDataType{"float"};
   std::string fieldName{"density"};
   std::string filePath;  // asset
-};
-
-struct Volume {
-  OpenVDBAsset vdb;
-  VoxAsset vox;
 };
 
 // `Scope` is uncommon in graphics community, its something like `Group`.

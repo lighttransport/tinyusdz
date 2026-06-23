@@ -44,9 +44,23 @@ class GLRenderer final : public Renderer {
   void requestWindowCapture() override { wantWindowCapture_ = true; }
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;
   const RendererCaps& caps() const override { return caps_; }
+  void appendVolume(const DrawVolumeCPU& vol) override;
   void shutdown() override;
 
  private:
+  // UsdVol volume (OpenVDB): density grid as a GL_TEXTURE_3D, raymarched in a
+  // proxy-box pass over its object-space AABB.
+  struct GLVolume {
+    GLuint tex3d{0};
+    float world[16];     // object -> world (column-major)
+    float invWorld[16];  // world -> object (column-major)
+    float bmin[3]{0, 0, 0};
+    float bmax[3]{0, 0, 0};
+    float densityScale{1.0f};
+    float albedo[3]{0.6f, 0.6f, 0.65f};
+    float emission[3]{0, 0, 0};
+    float background{0.0f};
+  };
   struct GLMesh {
     GLuint vao{0}, vbo{0}, ebo{0}, jointVbo{0}, weightVbo{0};
     GLuint influenceVbo{0}, influenceTex{0};
@@ -131,6 +145,14 @@ class GLRenderer final : public Renderer {
   GLuint lineVao_{0}, lineVbo_{0};
   size_t lineVboCap_{0};
   GLuint highlightEbo_{0};  // dynamic index buffer for GeomSubset highlight
+
+  // UsdVol volume raymarch pass.
+  GLuint volumeProgram_{0};
+  GLuint volumeCubeVao_{0}, volumeCubeVbo_{0}, volumeCubeEbo_{0};
+  GLint uVolVP_{-1}, uVolModel_{-1}, uVolInvModel_{-1}, uVolCameraPos_{-1};
+  GLint uVolBmin_{-1}, uVolBmax_{-1}, uVolDensity_{-1}, uVolDensityScale_{-1};
+  GLint uVolAlbedo_{-1}, uVolEmission_{-1}, uVolBackground_{-1};
+  std::vector<GLVolume> volumes_;
 
   // Offscreen target
   GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};

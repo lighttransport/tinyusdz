@@ -45,6 +45,15 @@ std::string to_string(const Xform &xform, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0,
                       bool closing_brace = true);
+// UsdVol
+std::string to_string(const Volume &volume, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const FieldAsset &field, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const OpenVDBAsset &asset, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Field3DAsset &asset, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const GeomMesh &mesh, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomPoints &pts, const uint32_t indent = 0,

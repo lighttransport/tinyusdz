@@ -903,6 +903,7 @@ class RenderSceneConverter {
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
   StringAndIdMap animationMap;
+  StringAndIdMap volumeMap;  ///< UsdVol Volume prim path -> volumes index
 
   // UDIM info cache, keyed by the (un-resolved) `<UDIM>` asset path. Used to
   // restore UDIM remap / sparse-texture linkage when a UDIM texture image is
@@ -930,6 +931,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<AnimationClip> animations;
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -943,6 +945,7 @@ class RenderSceneConverter {
   std::vector<SkelHierarchy> skeletons;
   std::vector<AnimationClip> animations;
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   // Pre-discovered skeleton/animation prims for ancestor-based discovery
@@ -1109,6 +1112,16 @@ class RenderSceneConverter {
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
+
+  ///
+  /// Convert a UsdVol Volume prim into a RenderVolume: resolve each `field:*`
+  /// relationship to its field-asset prim, read that prim's `filePath` via the
+  /// env asset resolver, decode the referenced `.vdb` grid (usdVol loader) into
+  /// a dense float buffer (appended to `buffers`), and fill the RenderVolume.
+  ///
+  bool ConvertVolume(
+      const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
+      const tinyusdz::Volume &volume, RenderVolume *dst);
 
   ///
   /// Compute tangents/binormals for a RenderMesh that had deferred tangent

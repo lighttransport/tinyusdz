@@ -424,6 +424,15 @@ private:
   /// Extract Mesh-specific properties (points, normals, etc.)
   bool ExtractMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// UsdVol: extract Volume `field:*` relationships
+  bool ExtractVolumeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract FieldAsset attributes (filePath, fieldName, ...)
+  bool ExtractFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract OpenVDBAsset attributes
+  bool ExtractOpenVDBAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract Field3DAsset attributes
+  bool ExtractField3DAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Cube-specific properties (size, extent)
   bool ExtractCubeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
