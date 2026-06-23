@@ -5515,9 +5515,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   }
   MemBudget::Get().SnapshotBase();
 
-  ctx.up_axis = tinyusdz::Axis::Y;
-  if (ctx.stage.GetUpAxis() == "X") ctx.up_axis = tinyusdz::Axis::X;
-  else if (ctx.stage.GetUpAxis() == "Z") ctx.up_axis = tinyusdz::Axis::Z;
+  ctx.up_axis = GetUpAxis(ctx.stage.GetUpAxis());
 
   // Initial time: default value unless -timecode was given. -defaultTime forces
   // the default (NaN) explicitly.
@@ -5535,24 +5533,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
                        DirName(opt.input), &ctx.volumes);
-  for (const VolumeData &vd : ctx.volumes) {
-    matrix4d world;
-    if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12))
-      world = matrix4d::identity();
-    for (int c = 0; c < 8; c++) {
-      Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
-                  (c & 2) ? vd.bmax.y : vd.bmin.y,
-                  (c & 4) ? vd.bmax.z : vd.bmin.z};
-      Vec3 w = TransformPoint(world, corner);
-      ctx.bounds.lo.x = std::min(ctx.bounds.lo.x, w.x);
-      ctx.bounds.lo.y = std::min(ctx.bounds.lo.y, w.y);
-      ctx.bounds.lo.z = std::min(ctx.bounds.lo.z, w.z);
-      ctx.bounds.hi.x = std::max(ctx.bounds.hi.x, w.x);
-      ctx.bounds.hi.y = std::max(ctx.bounds.hi.y, w.y);
-      ctx.bounds.hi.z = std::max(ctx.bounds.hi.z, w.z);
-      ctx.bounds.valid = true;
-    }
-  }
+  ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
   if (opt.stats && !ctx.volumes.empty())
     std::cerr << "rt volumes: " << ctx.volumes.size() << "\n";
 
@@ -6834,29 +6815,7 @@ int main(int argc, char **argv) {
   // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Built here so a
   // volume-only scene still renders and contributes to camera-framing bounds.
   std::vector<VolumeData> volumes = BuildVolumes(render_scene);
-  for (const VolumeData &vd : volumes) {
-    // Extend scene bounds with the volume's world-space AABB (8 corners).
-    for (int c = 0; c < 8; c++) {
-      Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
-                  (c & 2) ? vd.bmax.y : vd.bmin.y,
-                  (c & 4) ? vd.bmax.z : vd.bmin.z};
-      matrix4d world;
-      if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12)) {
-        world = matrix4d::identity();
-      }
-      Vec3 w = TransformPoint(world, corner);
-      bounds.lo.x = std::min(bounds.lo.x, w.x);
-      bounds.lo.y = std::min(bounds.lo.y, w.y);
-      bounds.lo.z = std::min(bounds.lo.z, w.z);
-      bounds.hi.x = std::max(bounds.hi.x, w.x);
-      bounds.hi.y = std::max(bounds.hi.y, w.y);
-      bounds.hi.z = std::max(bounds.hi.z, w.z);
-      // Mark the bounds valid: without this the auto-camera ignores a volume-only
-      // scene's extent and frames the origin, so a volume offset from the origin
-      // (e.g. an explosion/fire sim) is never in view.
-      bounds.valid = true;
-    }
-  }
+  ExpandBoundsByVolume(volumes, &bounds);
 
   if (tris.empty() && !has_direct && volumes.empty()) {
     std::cerr << "No renderable geometry found.\n";
@@ -6893,12 +6852,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  tinyusdz::Axis up_axis = tinyusdz::Axis::Y;
-  if (render_scene.meta.upAxis == "X") {
-    up_axis = tinyusdz::Axis::X;
-  } else if (render_scene.meta.upAxis == "Z") {
-    up_axis = tinyusdz::Axis::Z;
-  }
+  tinyusdz::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
   CameraFrame camera = MakeCameraFrame(render_scene, opt, bounds, height,
                                        up_axis);
   CollectLights(render_scene, &light_cache);

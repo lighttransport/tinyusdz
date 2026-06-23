@@ -295,4 +295,37 @@ float TriangleArea(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2) {
   return 0.5f * Length(Cross(Sub(p1, p0), Sub(p2, p0)));
 }
 
+// Extend `b` with the world-space AABB (8 transformed corners) of every volume.
+// Shared by the next and legacy loaders so a volume-only scene — or one whose
+// volume sits away from the origin — still contributes to the camera-framing
+// bounds (without bounds.valid the auto-camera would frame the empty origin).
+void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b) {
+  if (!b) return;
+  for (const VolumeData &vd : vols) {
+    matrix4d world;
+    if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12))
+      world = matrix4d::identity();
+    for (int c = 0; c < 8; c++) {
+      Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
+                  (c & 2) ? vd.bmax.y : vd.bmin.y,
+                  (c & 4) ? vd.bmax.z : vd.bmin.z};
+      Vec3 w = TransformPoint(world, corner);
+      b->lo.x = std::min(b->lo.x, w.x);
+      b->lo.y = std::min(b->lo.y, w.y);
+      b->lo.z = std::min(b->lo.z, w.z);
+      b->hi.x = std::max(b->hi.x, w.x);
+      b->hi.y = std::max(b->hi.y, w.y);
+      b->hi.z = std::max(b->hi.z, w.z);
+      b->valid = true;
+    }
+  }
+}
+
+// USD upAxis token -> tinyusdz::Axis (default Y). Shared by both loaders.
+tinyusdz::Axis GetUpAxis(const std::string &up) {
+  if (up == "X") return tinyusdz::Axis::X;
+  if (up == "Z") return tinyusdz::Axis::Z;
+  return tinyusdz::Axis::Y;
+}
+
 }  // namespace tusdr
