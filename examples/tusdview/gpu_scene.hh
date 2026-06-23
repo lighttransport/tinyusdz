@@ -180,10 +180,27 @@ struct DrawTextureCPU {
   int wrapT{static_cast<int>(WrapMode::Repeat)};
 };
 
+// A UsdVol volume (OpenVDB) as a dense scalar (density) grid, for GPU 3D-texture
+// raymarching. `data` is the dense float grid (x-contiguous), `world` maps the
+// object-space box [aabbMin, aabbMax] into world space.
+struct DrawVolumeCPU {
+  std::string name;
+  int dim[3]{0, 0, 0};
+  std::vector<float> density;  // dense, length dim[0]*dim[1]*dim[2]
+  float world[16];             // column-major 4x4 (light3d::Mat4 layout)
+  float aabbMin[3]{0, 0, 0};   // object-space grid bounds
+  float aabbMax[3]{0, 0, 0};
+  float densityScale{1.0f};
+  float albedo[3]{0.6f, 0.6f, 0.65f};
+  float emission[3]{0.0f, 0.0f, 0.0f};
+  float background{0.0f};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawMaterialCPU> materials;
   std::vector<DrawTextureCPU> textures;
+  std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
 
   // World-space bounds over all meshes.
@@ -203,7 +220,7 @@ struct DrawScene {
   // partially built to avoid freezing / VRAM thrashing.
   bool truncated{false};
 
-  bool empty() const { return meshes.empty(); }
+  bool empty() const { return meshes.empty() && volumes.empty(); }
 };
 
 struct SkinningFrameCPU {

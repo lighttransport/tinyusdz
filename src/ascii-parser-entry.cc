@@ -578,6 +578,12 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("SkelAnimation");
   d.insert("BlendShape");
 
+  // UsdVol
+  d.insert("Volume");
+  d.insert("FieldAsset");
+  d.insert("OpenVDBAsset");
+  d.insert("Field3DAsset");
+
   d.insert("GPrim");
 }
 

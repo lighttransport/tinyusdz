@@ -184,6 +184,8 @@ option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
         OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+option(TINYUSDZ_WITH_USDVOL
+       "Build with usdVol support(import OpenVDB .vdb via tinyvdb)" ON)
 
 # Subdivision surfaces: tinysubdiv (src/tsd) is always built (dependency-free).
 # Optional verification of tsd against an OpenSubdiv source checkout:
@@ -546,6 +548,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-vol.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-lightprim.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader2.cc
@@ -892,6 +895,10 @@ endif()
 
 if(TINYUSDZ_WITH_USDVOX)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
+endif()
+
+if(TINYUSDZ_WITH_USDVOL)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
@@ -1670,6 +1677,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDVOX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDVOX")
+  endif()
+
+  if(TINYUSDZ_WITH_USDVOL)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDVOL")
   endif()
 
   if(TINYUSDZ_WITH_PCP)

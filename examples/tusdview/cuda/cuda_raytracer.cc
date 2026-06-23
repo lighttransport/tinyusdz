@@ -213,6 +213,86 @@ __device__ int traverseSteps(const Node* tlas, const Inst* insts, const Node* bl
   return steps;
 }
 
+// --- UsdVol volume (dense float grid, object-space AABB) ---
+// invModel: column-major mat4 (world->object). dim[3]=voxel dims, dim.w (packed
+// as a 4th int) = float offset into the shared `volDens` buffer.
+struct VolParam {
+  float invModel[16];
+  float bmin[4];      // .xyz aabb min
+  float bmax[4];      // .xyz aabb max
+  int   dim[4];       // .xyz dims, .w = data offset (floats) into volDens
+  float albedo[4];    // .xyz albedo, .w densityScale
+  float emission[4];  // .xyz emission, .w background
+};
+__device__ F3 xfPt4(const float* m, F3 p){  // column-major mat4 * point
+  float x = m[0]*p.x + m[4]*p.y + m[8]*p.z + m[12];
+  float y = m[1]*p.x + m[5]*p.y + m[9]*p.z + m[13];
+  float z = m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14];
+  float w = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
+  if (w==0.f) w=1.f;
+  return mk(x/w, y/w, z/w);
+}
+__device__ F3 xfDir4(const float* m, F3 v){
+  return mk(m[0]*v.x + m[4]*v.y + m[8]*v.z,
+            m[1]*v.x + m[5]*v.y + m[9]*v.z,
+            m[2]*v.x + m[6]*v.y + m[10]*v.z);
+}
+__device__ float volFetch(const float* dens, int off, int dx, int dy, int dz,
+                          int x, int y, int z){
+  x = x<0?0:(x>=dx?dx-1:x);
+  y = y<0?0:(y>=dy?dy-1:y);
+  z = z<0?0:(z>=dz?dz-1:z);
+  return dens[off + x + dx*(y + dy*z)];
+}
+__device__ float sampleVol(const float* dens, const VolParam* vp, F3 p){
+  float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
+  if (ex<=0.f||ey<=0.f||ez<=0.f) return 0.f;
+  int dx=vp->dim[0], dy=vp->dim[1], dz=vp->dim[2], off=vp->dim[3];
+  float gx=(p.x-vp->bmin[0])/ex*dx-0.5f;
+  float gy=(p.y-vp->bmin[1])/ey*dy-0.5f;
+  float gz=(p.z-vp->bmin[2])/ez*dz-0.5f;
+  int x0=(int)floorf(gx), y0=(int)floorf(gy), z0=(int)floorf(gz);
+  float fx=gx-x0, fy=gy-y0, fz=gz-z0;
+  float c00=volFetch(dens,off,dx,dy,dz,x0,y0,z0)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0,z0)*fx;
+  float c10=volFetch(dens,off,dx,dy,dz,x0,y0+1,z0)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0+1,z0)*fx;
+  float c01=volFetch(dens,off,dx,dy,dz,x0,y0,z0+1)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0,z0+1)*fx;
+  float c11=volFetch(dens,off,dx,dy,dz,x0,y0+1,z0+1)*(1-fx)+volFetch(dens,off,dx,dy,dz,x0+1,y0+1,z0+1)*fx;
+  float c0=c00*(1-fy)+c10*fy, c1=c01*(1-fy)+c11*fy;
+  return c0*(1-fz)+c1*fz;
+}
+// Emission/absorption composite of one volume over background color `bg`.
+__device__ F3 compositeVolume(const float* dens, const VolParam* vp, F3 worg, F3 wdir, F3 bg){
+  F3 oo=xfPt4(vp->invModel, worg);
+  F3 od=norm3(xfDir4(vp->invModel, wdir));
+  F3 inv=mk(1.f/od.x, 1.f/od.y, 1.f/od.z);
+  float t1a=(vp->bmin[0]-oo.x)*inv.x, t2a=(vp->bmax[0]-oo.x)*inv.x;
+  float tmin=fminf(t1a,t2a), tmax=fmaxf(t1a,t2a);
+  t1a=(vp->bmin[1]-oo.y)*inv.y; t2a=(vp->bmax[1]-oo.y)*inv.y;
+  tmin=fmaxf(tmin,fminf(t1a,t2a)); tmax=fminf(tmax,fmaxf(t1a,t2a));
+  t1a=(vp->bmin[2]-oo.z)*inv.z; t2a=(vp->bmax[2]-oo.z)*inv.z;
+  tmin=fmaxf(tmin,fminf(t1a,t2a)); tmax=fminf(tmax,fmaxf(t1a,t2a));
+  if (tmax<=fmaxf(tmin,0.f)) return bg;
+  float t0=fmaxf(tmin,0.f);
+  float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
+  float vmin=fminf(ex/vp->dim[0], fminf(ey/vp->dim[1], ez/vp->dim[2]));
+  float step=vmin*0.5f; if (step<=0.f) step=(tmax-t0)/256.f;
+  float scaleD=vp->albedo[3], background=vp->emission[3];
+  float T=1.f; F3 L=mk(0.f,0.f,0.f);
+  float t=t0;
+  for (int i=0;i<256 && t<tmax;i++,t+=step){
+    F3 p=add(oo, scale(od, t+0.5f*step));
+    float dn=(sampleVol(dens,vp,p)-background)*scaleD;
+    if (dn>0.f){
+      float a=1.f-expf(-dn*step);
+      L=add(L, scale(add(scale(mk(vp->albedo[0],vp->albedo[1],vp->albedo[2]),a),
+                         scale(mk(vp->emission[0],vp->emission[1],vp->emission[2]),dn*step)), T));
+      T*=(1.f-a);
+      if (T<0.003f) break;
+    }
+  }
+  return add(L, scale(bg, T));
+}
+
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const float* matPbr, int numMats,
@@ -220,7 +300,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* infls, const int* faces,
                                  const float* domw, const int* domj,
                                  const Node* blas, const Node* tlas, const Inst* insts,
-                                 unsigned char* out, int W, int H, Cam cam){
+                                 unsigned char* out, int W, int H, Cam cam,
+                                 const float* volDens, const VolParam* volParams,
+                                 int numVols){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
@@ -408,6 +490,12 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float v=vis/float(NS); outc=mk(v,v,v);
     }
   }
+  // UsdVol volumes: composite over the shaded color (default mode only).
+  if (rmodePre==0){
+    for (int vi=0; vi<numVols; vi++){
+      outc=compositeVolume(volDens, &volParams[vi], o, d, outc);
+    }
+  }
   int idx=(py*W+px)*4;
   out[idx+0]=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
   out[idx+1]=(unsigned char)(fminf(fmaxf(outc.y,0.f),1.f)*255.f+0.5f);
@@ -506,6 +594,8 @@ void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
+  F(dVolDens_); F(dVolParams_);
+  numVols_ = 0;
   numMats_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
@@ -891,6 +981,54 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   if (!up(tnodes.data(), tnodes.size() * sizeof(Node), &dTlasNodes_)) return false;
   if (!up(orderedInsts.data(), orderedInsts.size() * sizeof(Inst), &dInstances_)) return false;
 
+  // UsdVol volumes: concatenate dense density grids + per-volume params
+  // (layout must match `struct VolParam` in the kernel source).
+  numVols_ = 0;
+  {
+    struct HostVolParam {
+      float invModel[16];
+      float bmin[4];
+      float bmax[4];
+      int dim[4];  // .xyz dims, .w = float offset into volDens
+      float albedo[4];
+      float emission[4];
+    };
+    std::vector<float> volDens;
+    std::vector<HostVolParam> vps;
+    for (const DrawVolumeCPU& dv : scene.volumes) {
+      const size_t n = size_t(dv.dim[0]) * size_t(dv.dim[1]) * size_t(dv.dim[2]);
+      if (n == 0 || dv.density.size() < n) continue;
+      float o2w[12], w2o[12];
+      Mat4ToO2W(dv.world, o2w);  // column-major mat4 -> row-major 3x4
+      if (!Affine3x4Inverse(o2w, w2o)) continue;
+      HostVolParam vp{};
+      // row-major 3x4 w2o -> column-major mat4 invModel.
+      for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 4; c++) vp.invModel[c * 4 + r] = w2o[r * 4 + c];
+      vp.invModel[3] = 0.f; vp.invModel[7] = 0.f; vp.invModel[11] = 0.f;
+      vp.invModel[15] = 1.f;
+      for (int a = 0; a < 3; a++) {
+        vp.bmin[a] = dv.aabbMin[a];
+        vp.bmax[a] = dv.aabbMax[a];
+        vp.albedo[a] = dv.albedo[a];
+        vp.emission[a] = dv.emission[a];
+        vp.dim[a] = dv.dim[a];
+      }
+      vp.dim[3] = static_cast<int>(volDens.size());  // float offset
+      vp.albedo[3] = dv.densityScale;
+      vp.emission[3] = dv.background;
+      volDens.insert(volDens.end(), dv.density.begin(), dv.density.begin() + n);
+      vps.push_back(vp);
+    }
+    if (!vps.empty()) {
+      if (!up(volDens.data(), volDens.size() * sizeof(float), &dVolDens_))
+        return false;
+      if (!up(vps.data(), vps.size() * sizeof(HostVolParam), &dVolParams_))
+        return false;
+      numVols_ = static_cast<int>(vps.size());
+    }
+  }
+
   // Per-material PBR scalars indexed by tri matId: metal, rough, emitR/G/B, alpha.
   numMats_ = static_cast<int>(scene.materials.size());
   std::vector<float> matPbr(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
@@ -936,11 +1074,15 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
               dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
               dI = dInstances_, dO = dOut_;
+  CUdeviceptr dVD = dVolDens_, dVP = dVolParams_;
   int numMats = numMats_;
+  int numVols = numVols_;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
-  // uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam.
+  // uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
+  // volDens,volParams,numVols.
   void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dU, &dU1, &dIn,
-                  &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam};
+                  &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
+                  &dVD, &dVP, &numVols};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                        nullptr, args, nullptr),

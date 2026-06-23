@@ -291,6 +291,7 @@ class App
   bool progressiveActive_{false};
   size_t nextMesh_{0};
   size_t nextTex_{0};
+  size_t nextVolume_{0};  // UsdVol volumes uploaded so far
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Experimental threaded rendering. renderThreadActive_ is true only when

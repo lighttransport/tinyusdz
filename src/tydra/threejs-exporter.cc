@@ -966,6 +966,10 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::Xform:
       obj["type"] = "Group";
       break;
+    case NodeType::Volume:
+      // three.js has no native VDB volume; emit a Group placeholder.
+      obj["type"] = "Group";
+      break;
     case NodeType::Camera:
       obj["type"] = "Camera";
       break;

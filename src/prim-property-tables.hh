@@ -144,6 +144,23 @@
   X("radius", radius)
 
 // ============================================================================
+// UsdVol field-asset Properties (FieldAsset / OpenVDBAsset / Field3DAsset)
+// ============================================================================
+#define FIELD_ASSET_TYPED_ATTRS(X) \
+  X("filePath", filePath) \
+  X("fieldName", fieldName) \
+  X("fieldDataType", fieldDataType) \
+  X("fieldIndex", fieldIndex)
+
+#define OPENVDB_ASSET_TYPED_ATTRS(X) \
+  FIELD_ASSET_TYPED_ATTRS(X) \
+  X("fieldClass", fieldClass)
+
+#define FIELD3D_ASSET_TYPED_ATTRS(X) \
+  FIELD_ASSET_TYPED_ATTRS(X) \
+  X("fieldPurpose", fieldPurpose)
+
+// ============================================================================
 // GeomCube Properties
 // ============================================================================
 #define GEOM_CUBE_TYPED_ATTRS(X) \

@@ -34,6 +34,9 @@ void BuildDrawScene(const tinyusdz::tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl = nullptr,
                     const tinyusdz::Stage* stage = nullptr);
 
+// Build DrawVolumeCPU entries from RenderScene::volumes (UsdVol / OpenVDB).
+void BuildDrawVolumes(const tinyusdz::tydra::RenderScene& rs, DrawScene* out);
+
 // Streaming variant: run `converter.ConvertToRenderSceneStreaming` and build the
 // DrawScene incrementally as elements are produced (mesh geometry as each mesh
 // converts, world placement when the node hierarchy is built, textures and

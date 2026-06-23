@@ -315,6 +315,106 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                           (void*)(3 * sizeof(float)));
     glBindVertexArray(0);
   }
+
+  // UsdVol volume raymarch program + unit-cube proxy geometry.
+  {
+    static const char* kVolumeVS =
+        "#version 330 core\n"
+        "layout(location=0) in vec3 aPos;\n"  // unit cube [0,1]^3
+        "uniform mat4 uVP;\n"
+        "uniform mat4 uModel;\n"  // object -> world
+        "uniform vec3 uBmin;\n"
+        "uniform vec3 uBmax;\n"
+        "out vec3 vWorld;\n"
+        "void main(){\n"
+        "  vec3 objp = uBmin + aPos*(uBmax-uBmin);\n"
+        "  vec4 wp = uModel*vec4(objp,1.0);\n"
+        "  vWorld = wp.xyz;\n"
+        "  gl_Position = uVP*wp;\n"
+        "}\n";
+    static const char* kVolumeFS =
+        "#version 330 core\n"
+        "in vec3 vWorld; out vec4 fragColor;\n"
+        "uniform vec3 uCameraPos;\n"
+        "uniform mat4 uInvModel;\n"  // world -> object
+        "uniform vec3 uBmin; uniform vec3 uBmax;\n"
+        "uniform sampler3D uDensity;\n"
+        "uniform float uDensityScale;\n"
+        "uniform vec3 uAlbedo; uniform vec3 uEmission;\n"
+        "uniform float uBackground;\n"
+        "bool rayAABB(vec3 o, vec3 d, vec3 lo, vec3 hi, out float t0, out float t1){\n"
+        "  vec3 inv = 1.0/d;\n"
+        "  vec3 ta=(lo-o)*inv, tb=(hi-o)*inv;\n"
+        "  vec3 tmin=min(ta,tb), tmax=max(ta,tb);\n"
+        "  t0=max(max(tmin.x,tmin.y),tmin.z);\n"
+        "  t1=min(min(tmax.x,tmax.y),tmax.z);\n"
+        "  return t1>max(t0,0.0);\n"
+        "}\n"
+        "void main(){\n"
+        "  vec3 oo=(uInvModel*vec4(uCameraPos,1.0)).xyz;\n"
+        "  vec3 od=normalize((uInvModel*vec4(vWorld,1.0)).xyz - oo);\n"
+        "  float t0,t1;\n"
+        "  if(!rayAABB(oo,od,uBmin,uBmax,t0,t1)) discard;\n"
+        "  t0=max(t0,0.0);\n"
+        "  vec3 ext=uBmax-uBmin;\n"
+        "  float step=min(ext.x,min(ext.y,ext.z))/128.0;\n"
+        "  if(step<=0.0) step=(t1-t0)/256.0;\n"
+        "  float T=1.0; vec3 L=vec3(0.0);\n"
+        "  for(int i=0;i<256;i++){\n"
+        "    float t=t0+(float(i)+0.5)*step;\n"
+        "    if(t>=t1) break;\n"
+        "    vec3 p=oo+od*t;\n"
+        "    vec3 uvw=(p-uBmin)/ext;\n"
+        "    float dens=(texture(uDensity,uvw).r - uBackground)*uDensityScale;\n"
+        "    if(dens>0.0){\n"
+        "      float a=1.0-exp(-dens*step);\n"
+        "      vec3 src=uAlbedo*a + uEmission*(dens*step);\n"
+        "      L+=T*src; T*=(1.0-a);\n"
+        "      if(T<0.003) break;\n"
+        "    }\n"
+        "  }\n"
+        "  float alpha=1.0-T;\n"
+        "  if(alpha<=0.001) discard;\n"
+        "  fragColor=vec4(L,alpha);\n"  // premultiplied
+        "}\n";
+    std::string verr;
+    volumeProgram_ = glutil::CompileProgram(kVolumeVS, kVolumeFS, &verr);
+    if (volumeProgram_) {
+      uVolVP_ = glGetUniformLocation(volumeProgram_, "uVP");
+      uVolModel_ = glGetUniformLocation(volumeProgram_, "uModel");
+      uVolInvModel_ = glGetUniformLocation(volumeProgram_, "uInvModel");
+      uVolCameraPos_ = glGetUniformLocation(volumeProgram_, "uCameraPos");
+      uVolBmin_ = glGetUniformLocation(volumeProgram_, "uBmin");
+      uVolBmax_ = glGetUniformLocation(volumeProgram_, "uBmax");
+      uVolDensity_ = glGetUniformLocation(volumeProgram_, "uDensity");
+      uVolDensityScale_ = glGetUniformLocation(volumeProgram_, "uDensityScale");
+      uVolAlbedo_ = glGetUniformLocation(volumeProgram_, "uAlbedo");
+      uVolEmission_ = glGetUniformLocation(volumeProgram_, "uEmission");
+      uVolBackground_ = glGetUniformLocation(volumeProgram_, "uBackground");
+    }
+    static const float kCube[24] = {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+                                    0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1};
+    static const unsigned int kCubeIdx[36] = {
+        0, 1, 2, 0, 2, 3,  // -z
+        4, 6, 5, 4, 7, 6,  // +z
+        0, 4, 5, 0, 5, 1,  // -y
+        3, 2, 6, 3, 6, 7,  // +y
+        0, 3, 7, 0, 7, 4,  // -x
+        1, 5, 6, 1, 6, 2}; // +x
+    glGenVertexArrays(1, &volumeCubeVao_);
+    glGenBuffers(1, &volumeCubeVbo_);
+    glGenBuffers(1, &volumeCubeEbo_);
+    glBindVertexArray(volumeCubeVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, volumeCubeVbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(kCube), kCube, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, volumeCubeEbo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kCubeIdx), kCubeIdx,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+                          (void*)0);
+    glBindVertexArray(0);
+  }
   return true;
 }
 
@@ -374,6 +474,10 @@ void GLRenderer::destroyScene() {
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
   meshes_.clear();
+  for (GLVolume& gv : volumes_) {
+    if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
+  }
+  volumes_.clear();
   if (!textures_.empty()) {
     glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
   }
@@ -1006,6 +1110,40 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
   glBindVertexArray(0);
 }
 
+void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
+  if (v.density.empty() || v.dim[0] <= 0 || v.dim[1] <= 0 || v.dim[2] <= 0)
+    return;
+
+  GLVolume gv;
+  std::memcpy(gv.world, v.world, sizeof(gv.world));
+  light3d::Mat4 W;
+  std::memcpy(W.m, v.world, sizeof(W.m));
+  light3d::Mat4 inv = W.inverse();
+  std::memcpy(gv.invWorld, inv.m, sizeof(gv.invWorld));
+  for (int a = 0; a < 3; a++) {
+    gv.bmin[a] = v.aabbMin[a];
+    gv.bmax[a] = v.aabbMax[a];
+    gv.albedo[a] = v.albedo[a];
+    gv.emission[a] = v.emission[a];
+  }
+  gv.densityScale = v.densityScale;
+  gv.background = v.background;
+
+  glGenTextures(1, &gv.tex3d);
+  glBindTexture(GL_TEXTURE_3D, gv.tex3d);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, v.dim[0], v.dim[1], v.dim[2], 0,
+               GL_RED, GL_FLOAT, v.density.data());
+  glBindTexture(GL_TEXTURE_3D, 0);
+
+  volumes_.push_back(gv);
+}
+
 void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (!fbo_ || !program_ || !params.view || !params.proj) return;
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
@@ -1075,6 +1213,49 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   }
 
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+  // UsdVol volume raymarch pass (proxy-box; emission/absorption). Drawn after
+  // opaque geometry with premultiplied-alpha "over" blending. Back faces only
+  // (cull front) so each covered pixel marches once and the camera may be inside
+  // the box. Depth-tested (no depth write) so opaque geometry in front occludes.
+  if (volumeProgram_ && !volumes_.empty()) {
+    const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
+    glUseProgram(volumeProgram_);
+    glUniformMatrix4fv(uVolVP_, 1, GL_FALSE, VP.m);
+    glUniform3fv(uVolCameraPos_, 1, params.cameraPos);
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(uVolDensity_, 0);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // premultiplied "over"
+    glDepthMask(GL_FALSE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+    glBindVertexArray(volumeCubeVao_);
+    for (const GLVolume& gv : volumes_) {
+      glUniformMatrix4fv(uVolModel_, 1, GL_FALSE, gv.world);
+      glUniformMatrix4fv(uVolInvModel_, 1, GL_FALSE, gv.invWorld);
+      glUniform3fv(uVolBmin_, 1, gv.bmin);
+      glUniform3fv(uVolBmax_, 1, gv.bmax);
+      glUniform1f(uVolDensityScale_, gv.densityScale);
+      glUniform3fv(uVolAlbedo_, 1, gv.albedo);
+      glUniform3fv(uVolEmission_, 1, gv.emission);
+      glUniform1f(uVolBackground_, gv.background);
+      glBindTexture(GL_TEXTURE_3D, gv.tex3d);
+      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+    }
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_3D, 0);
+
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_BLEND);
+  }
 
   // Debug helper lines (grid/axes/bbox), world space, depth-tested so they are
   // occluded by geometry.
@@ -1236,6 +1417,14 @@ void GLRenderer::shutdown() {
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
+  for (GLVolume& gv : volumes_) {
+    if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
+  }
+  volumes_.clear();
+  if (volumeProgram_) { glDeleteProgram(volumeProgram_); volumeProgram_ = 0; }
+  if (volumeCubeVbo_) { glDeleteBuffers(1, &volumeCubeVbo_); volumeCubeVbo_ = 0; }
+  if (volumeCubeEbo_) { glDeleteBuffers(1, &volumeCubeEbo_); volumeCubeEbo_ = 0; }
+  if (volumeCubeVao_) { glDeleteVertexArrays(1, &volumeCubeVao_); volumeCubeVao_ = 0; }
   if (highlightEbo_) { glDeleteBuffers(1, &highlightEbo_); highlightEbo_ = 0; }
   if (imguiInited_) {
     ImGui_ImplOpenGL3_Shutdown();

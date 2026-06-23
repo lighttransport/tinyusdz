@@ -35,6 +35,7 @@ class VulkanRenderer final : public Renderer {
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
@@ -269,6 +270,34 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
+
+  // --- UsdVol volume raymarch (proxy-box, 3D density texture) ---
+  struct VkVolumeGPU {
+    VkImage img{VK_NULL_HANDLE};
+    VkDeviceMemory mem{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+    VkSampler sampler{VK_NULL_HANDLE};
+    VkBuffer ubo{VK_NULL_HANDLE};
+    VkDeviceMemory uboMem{VK_NULL_HANDLE};
+    void* uboMapped{nullptr};
+    VkDescriptorSet set{VK_NULL_HANDLE};
+    float model[16];
+    float invModel[16];
+    float bmin[3], bmax[3];
+    float albedo[3], densityScale;
+    float emission[3], background;
+  };
+  bool createVolumePipeline(std::string* err);
+  // Record the volume raymarch draws (UBO update + proxy boxes) with `pipe`.
+  void recordVolumePass(VkCommandBuffer cb, VkPipeline pipe);
+  VkPipelineLayout volumeLayout_{VK_NULL_HANDLE};
+  VkPipeline volumePipeline_{VK_NULL_HANDLE};
+  VkPipeline volumePipelineNoDepth_{VK_NULL_HANDLE};  // RT overlay (no depth)
+  VkDescriptorSetLayout volumeSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool volumePool_{VK_NULL_HANDLE};
+  VkBuffer volumeCubeBuf_{VK_NULL_HANDLE};      // 36-vertex proxy cube
+  VkDeviceMemory volumeCubeMem_{VK_NULL_HANDLE};
+  std::vector<VkVolumeGPU> volumes_;
   VkBuffer helperBuf_[kFramesInFlight]{};
   VkDeviceMemory helperMem_[kFramesInFlight]{};
   VkDeviceSize helperCap_[kFramesInFlight]{};

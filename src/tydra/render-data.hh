@@ -301,6 +301,7 @@ enum class NodeType {
   DiskLight,
   CylinderLight,
   GeometryLight,
+  Volume,  // UsdVol Volume (OpenVDB / Field3D)
 };
 
 // High-level categorization of USD Prim types
@@ -1663,6 +1664,61 @@ struct SceneMetadata
   // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas()
 };
 
+///
+/// One scalar field (e.g. "density") of a UsdVol Volume, decoded into a DENSE
+/// float voxel grid. The voxel data lives in RenderScene::buffers[buffer_id]
+/// (componentType Float, length dim[0]*dim[1]*dim[2], x-contiguous:
+/// index = x + dim[0]*(y + dim[1]*z)).
+///
+struct RenderVolumeField {
+  std::string field_name;        // "density", "temperature", ...
+  std::string field_data_type;   // logical type ("float")
+  int32_t dim[3] = {0, 0, 0};    // voxel dimensions (x, y, z)
+  int32_t origin[3] = {0, 0, 0}; // index-space origin (min voxel coord)
+  float voxel_size[3] = {1.0f, 1.0f, 1.0f};
+  float world_translation[3] = {0.0f, 0.0f, 0.0f};
+  float background = 0.0f;
+  int64_t buffer_id = -1;        // index into RenderScene::buffers (dense floats)
+  // Object-space (pre prim-xform) AABB derived from origin/dim/voxel_size +
+  // world_translation. The prim's world matrix (RenderVolume::world_matrix)
+  // maps this box into world space.
+  float bounds_min[3] = {0.0f, 0.0f, 0.0f};
+  float bounds_max[3] = {0.0f, 0.0f, 0.0f};
+};
+
+///
+/// A UsdVol Volume prim converted for rendering. Carries its own world matrix
+/// (renderers may iterate RenderScene::volumes directly) plus simple
+/// emission/absorption shading parameters. (Full volume-material shading is a
+/// TODO; "simple volume shading" per the initial scope.)
+///
+struct RenderVolume {
+  std::string prim_name;
+  std::string abs_path;
+  std::string display_name;
+
+  value::matrix4d world_matrix{value::matrix4d::identity()};
+
+  std::vector<RenderVolumeField> fields;  // density, temperature, ...
+
+  // Simple shading params.
+  float density_scale = 1.0f;
+  float albedo[3] = {0.5f, 0.5f, 0.5f};
+  float emission_color[3] = {0.0f, 0.0f, 0.0f};
+  float emission_scale = 0.0f;
+
+  int material_id = -1;  // optional volume material (unused for now)
+  uint64_t handle = 0;   // graphics API handle. 0 = invalid
+
+  // Convenience: index of the "density" field, or first field, or -1.
+  int density_field_index() const {
+    for (size_t i = 0; i < fields.size(); i++) {
+      if (fields[i].field_name == "density") return int(i);
+    }
+    return fields.empty() ? -1 : 0;
+  }
+};
+
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
@@ -1686,6 +1742,7 @@ class RenderScene {
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
@@ -1700,6 +1757,7 @@ class RenderScene {
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   ///

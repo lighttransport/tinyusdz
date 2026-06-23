@@ -82,6 +82,9 @@ class CudaRayTracer {
   uintptr_t dBlasNodes_{0};  // concatenated BLAS nodes (local-space geometry)
   uintptr_t dTlasNodes_{0};  // TLAS nodes over instance world AABBs
   uintptr_t dInstances_{0};  // Inst[] table (w2o,o2w,tint,blasRoot,instId)
+  uintptr_t dVolDens_{0};    // UsdVol: concatenated dense float density grids
+  uintptr_t dVolParams_{0};  // UsdVol: VolParam[] (one per volume)
+  int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_
 
