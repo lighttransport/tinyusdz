@@ -50,6 +50,8 @@ endif()
 
 add_executable(tusdrender
   tusdrender.cc
+  tusdr_args.cc
+  tusdr_material.cc
 )
 
 target_link_libraries(tusdrender
