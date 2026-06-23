@@ -7755,28 +7755,12 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
                                ? std::numeric_limits<double>::quiet_NaN()
                                : opt.timecode;
   if (!ExtractAndBuildBVH(ctx, init_time)) return false;
-  ResolveCameraNext(ctx);
-
-  // Image-based lighting: an explicit --env override wins, else the first
-  // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
-  // BRDF (roughness/metallic) + env background; absent -> camera headlight.
-  BuildNextIbl(ctx.stage, opt, DirName(opt.input), &ctx.ibl);
-  if (opt.stats && ctx.ibl.valid) {
-    std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
-              << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
-  }
-  // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
-  // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
-  ctx.lights.finite.clear();
-  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
-    CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
-                      &ctx.lights);
-  AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
-  if (opt.stats && !ctx.lights.finite.empty())
-    std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
 
   // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
-  // each volume's world AABB so a volume-only scene still frames + renders.
+  // each volume's world AABB BEFORE resolving the camera, so a volume-only scene
+  // (or one whose volume sits away from the origin, e.g. an explosion sim) is
+  // framed and rendered instead of leaving the auto-camera looking at an empty
+  // origin.
   ctx.volumes.clear();
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
@@ -7801,6 +7785,27 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   }
   if (opt.stats && !ctx.volumes.empty())
     std::cerr << "rt volumes: " << ctx.volumes.size() << "\n";
+
+  ResolveCameraNext(ctx);
+
+  // Image-based lighting: an explicit --env override wins, else the first
+  // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
+  // BRDF (roughness/metallic) + env background; absent -> camera headlight.
+  BuildNextIbl(ctx.stage, opt, DirName(opt.input), &ctx.ibl);
+  if (opt.stats && ctx.ibl.valid) {
+    std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
+              << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
+  }
+  // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
+  // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
+  ctx.lights.finite.clear();
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
+                      &ctx.lights);
+  AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
+  if (opt.stats && !ctx.lights.finite.empty())
+    std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
+
   return true;
 }
 
@@ -9072,6 +9077,10 @@ int main(int argc, char **argv) {
       bounds.hi.x = std::max(bounds.hi.x, w.x);
       bounds.hi.y = std::max(bounds.hi.y, w.y);
       bounds.hi.z = std::max(bounds.hi.z, w.z);
+      // Mark the bounds valid: without this the auto-camera ignores a volume-only
+      // scene's extent and frames the origin, so a volume offset from the origin
+      // (e.g. an explosion/fire sim) is never in view.
+      bounds.valid = true;
     }
   }
 
