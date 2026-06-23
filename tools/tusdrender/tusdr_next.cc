@@ -3091,11 +3091,27 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
 
 // Load the scene via next, then stream + build the BVH at the initial time.
 // First UsdLuxDomeLight in the composed stage (depth-first), or an invalid prim.
-tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim) {
-  if (prim.GetTypeName() == "DomeLight") return prim;
+// Accumulates the world transform along the way so the caller can read the dome's
+// world-space orientation (out_world is the found dome's local-to-world matrix).
+tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim,
+                                         const matrix4d &parent_world,
+                                         double time, matrix4d *out_world) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+  if (prim.GetTypeName() == "DomeLight") {
+    if (out_world) *out_world = world;
+    return prim;
+  }
   for (const tinyusdz::next::UsdPrim &c : prim.GetChildren()) {
-    tinyusdz::next::UsdPrim r = FindDomeLightRec(c);
-    if (r.IsValid()) return r;
+    matrix4d cw;
+    tinyusdz::next::UsdPrim r = FindDomeLightRec(c, world, time, &cw);
+    if (r.IsValid()) {
+      if (out_world) *out_world = cw;
+      return r;
+    }
   }
   return tinyusdz::next::UsdPrim();
 }
@@ -3104,12 +3120,16 @@ tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim) {
 // leaves ibl invalid) if there is no env, so the renderer falls back to the
 // headlight.
 bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
-                  const std::string &base_dir, IblCache *ibl) {
+                  const std::string &base_dir, double time, IblCache *ibl) {
   std::string env_path = opt.env_file;
   Vec3 scale{1.0f, 1.0f, 1.0f};
+  bool rotated = false;
+  Vec3 rx{1.0f, 0.0f, 0.0f}, ry{0.0f, 1.0f, 0.0f}, rz{0.0f, 0.0f, 1.0f};
   if (env_path.empty()) {
     for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
-      tinyusdz::next::UsdPrim dome = FindDomeLightRec(root);
+      matrix4d dome_world = matrix4d::identity();
+      tinyusdz::next::UsdPrim dome =
+          FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
       if (!dome.IsValid()) continue;
       if (const tinyusdz::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
@@ -3124,6 +3144,31 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
       if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:color"))
         if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
       scale = Vec3{color.x * intensity, color.y * intensity, color.z * intensity};
+      // Dome orientation: the dome's local axes in world space (rows of the world
+      // rotation, normalized to drop any scale). A world direction is mapped into
+      // the dome frame by projecting onto them. Only flagged when meaningfully
+      // non-identity, so untransformed domes stay byte-identical.
+      Vec3 ax{float(dome_world.m[0][0]), float(dome_world.m[0][1]),
+              float(dome_world.m[0][2])};
+      Vec3 ay{float(dome_world.m[1][0]), float(dome_world.m[1][1]),
+              float(dome_world.m[1][2])};
+      Vec3 az{float(dome_world.m[2][0]), float(dome_world.m[2][1]),
+              float(dome_world.m[2][2])};
+      float la = Length(ax), lb = Length(ay), lc = Length(az);
+      if (la > 1.0e-8f && lb > 1.0e-8f && lc > 1.0e-8f) {
+        ax = Mul(ax, 1.0f / la);
+        ay = Mul(ay, 1.0f / lb);
+        az = Mul(az, 1.0f / lc);
+        float dev = std::fabs(ax.x - 1.0f) + std::fabs(ax.y) + std::fabs(ax.z) +
+                    std::fabs(ay.x) + std::fabs(ay.y - 1.0f) + std::fabs(ay.z) +
+                    std::fabs(az.x) + std::fabs(az.y) + std::fabs(az.z - 1.0f);
+        if (dev > 1.0e-6f) {
+          rotated = true;
+          rx = ax;
+          ry = ay;
+          rz = az;
+        }
+      }
       break;
     }
   }
@@ -3132,7 +3177,12 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
   EnvImage env;
   if (!LoadEnvImageFromFile(path, scale, &env)) return false;
-  return BuildIblFromEnv(std::move(env), ibl);
+  if (!BuildIblFromEnv(std::move(env), ibl)) return false;
+  ibl->rotated = rotated;
+  ibl->rx = rx;
+  ibl->ry = ry;
+  ibl->rz = rz;
+  return true;
 }
 
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
@@ -3196,7 +3246,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // Image-based lighting: an explicit --env override wins, else the first
   // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
   // BRDF (roughness/metallic) + env background; absent -> camera headlight.
-  BuildNextIbl(ctx.stage, opt, DirName(opt.input), &ctx.ibl);
+  BuildNextIbl(ctx.stage, opt, DirName(opt.input), init_time, &ctx.ibl);
   if (opt.stats && ctx.ibl.valid) {
     std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
               << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
