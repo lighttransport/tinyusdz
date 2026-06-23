@@ -967,10 +967,10 @@ bool Stage::RemovePrim(const Path &path, std::string *err) {
     return false;
   }
 
-  const std::string name = std::string((*sib)[idx].element_name());
+  const std::string prim_name = std::string((*sib)[idx].element_name());
   sib->erase(sib->begin() + static_cast<std::ptrdiff_t>(idx));
   RemoveFromPrimChildren(
-      parent ? parent->metas().primChildren : stage_metas.primChildren, name);
+      parent ? parent->metas().primChildren : stage_metas.primChildren, prim_name);
 
   if (!parent) _root_node_nameSet.clear();
   _dirty = true;
