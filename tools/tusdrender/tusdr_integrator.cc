@@ -387,7 +387,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
                         lt.opacity_tex_id >= 0 || lt.clearcoat_tex_id >= 0 ||
-                        lt.clearcoat_rough_tex_id >= 0);
+                        lt.clearcoat_rough_tex_id >= 0 ||
+                        lt.specular_tex_id >= 0);
   if (has_tex && textures && !b.tri_uvs.empty()) {
     const size_t base = size_t(th.prim_id) * 6;
     if (base + 5 < b.tri_uvs.size()) {
@@ -431,6 +432,15 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                          : et.sample(u, v, 0.0f);
         out->emission = Vec3{lt.emission.x * e.x, lt.emission.y * e.y,
                              lt.emission.z * e.z};
+      }
+      if (lt.specular_tex_id >= 0 &&
+          size_t(lt.specular_tex_id) < textures->size()) {
+        const Texture &st = (*textures)[size_t(lt.specular_tex_id)];
+        Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy, kMaxAniso)
+                         : st.sample(u, v, 0.0f);
+        out->specular_color = Vec3{lt.specular_color.x * s.x,
+                                   lt.specular_color.y * s.y,
+                                   lt.specular_color.z * s.z};
       }
       if (lt.occ_tex_id >= 0) {
         float o = SampleScalarTex(*textures, lt.occ_tex_id, lt.occ_ch, u, v,
@@ -588,6 +598,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                                     hit_tri.emission.y * e.y,
                                     hit_tri.emission.z * e.z};
           }
+          if (hit_tri.specular_tex_id >= 0 &&
+              size_t(hit_tri.specular_tex_id) < textures->size()) {
+            const Texture &st = (*textures)[size_t(hit_tri.specular_tex_id)];
+            Vec3 s = have_fp ? st.sample_aniso(u, v, dudx, dvdx, dudy, dvdy,
+                                               kMaxAniso)
+                             : st.sample(u, v, 0.0f);
+            hit_tri.specular_color = Vec3{hit_tri.specular_color.x * s.x,
+                                          hit_tri.specular_color.y * s.y,
+                                          hit_tri.specular_color.z * s.z};
+          }
           if (hit_tri.occ_tex_id >= 0) {
             float o = SampleScalarTex(
                 *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v,
@@ -668,7 +688,26 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     Vec3 view = Normalize(Mul(ray_dir, -1.0f));
     Vec3 diffuse = SampleEnv(ibl->diffuse, n);
     float ndotv = std::max(0.0f, Dot(n, view));
-    Vec3 f0 = Lerp(Vec3{0.04f, 0.04f, 0.04f}, tri.base_color, tri.metallic);
+    // F0 (normal-incidence reflectance): specular workflow uses specularColor
+    // directly; metallic workflow lerps the dielectric F0 (from IOR; ior 1.5 ->
+    // 0.04) toward the base color by metalness. The specular workflow ignores
+    // metallic, so its diffuse weight isn't dimmed by it.
+    Vec3 f0;
+    float kd_metal;
+    if (tri.use_specular_workflow) {
+      f0 = tri.specular_color;
+      kd_metal = 0.0f;
+    } else {
+      // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
+      // bit-for-bit; only an authored non-default IOR takes the derived path.
+      float df0 = 0.04f;
+      if (tri.ior != 1.5f) {
+        df0 = (tri.ior - 1.0f) / (tri.ior + 1.0f);
+        df0 *= df0;
+      }
+      f0 = Lerp(Vec3{df0, df0, df0}, tri.base_color, tri.metallic);
+      kd_metal = tri.metallic;
+    }
     Vec3 refl = Reflect(Mul(view, -1.0f), n);
     Vec3 spec_env = SampleIblMip(ibl->prefiltered, refl, tri.roughness);
     float brdf_a = 1.0f;
@@ -676,7 +715,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
     Vec3 spec = Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
-                  1.0f - tri.metallic);
+                  1.0f - kd_metal);
     Vec3 diff = Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
     c = Add(c, Add(diff, spec));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
