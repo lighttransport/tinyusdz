@@ -514,4 +514,67 @@ inline void Expand(Bounds *b, const Vec3 &p) {
   b->valid = true;
 }
 
+// 3x4 object->world matrix helpers (compact instance transforms).
+inline void Mat4ToObj2World(const matrix4d &m, float out[12]) {
+  for (int k = 0; k < 3; ++k) {
+    out[k * 4 + 0] = float(m.m[0][k]);
+    out[k * 4 + 1] = float(m.m[1][k]);
+    out[k * 4 + 2] = float(m.m[2][k]);
+    out[k * 4 + 3] = float(m.m[3][k]);
+  }
+}
+
+// Apply a 3x4 object->world (same layout as Mat4ToObj2World) to a point. Matches
+// TransformPoint(matrix4d, p) for affine transforms (instances are affine), in
+// float — the same precision LightRT uses for traversal.
+inline Vec3 TransformPointO2W(const float o[12], const Vec3 &p) {
+  return Vec3{o[0] * p.x + o[1] * p.y + o[2] * p.z + o[3],
+              o[4] * p.x + o[5] * p.y + o[6] * p.z + o[7],
+              o[8] * p.x + o[9] * p.y + o[10] * p.z + o[11]};
+}
+
+// Transform a direction (e.g. a normal) by the 3x3 part of a 3x4 object->world.
+// Exact for rigid/uniform-scale instances (the common case); non-uniform scale
+// is approximate (true normals need the inverse-transpose) — fine for preview.
+inline Vec3 TransformDirO2W(const float o[12], const Vec3 &v) {
+  return Vec3{o[0] * v.x + o[1] * v.y + o[2] * v.z,
+              o[4] * v.x + o[5] * v.y + o[6] * v.z,
+              o[8] * v.x + o[9] * v.y + o[10] * v.z};
+}
+
+// Compose two 3x4 object->world transforms (same column-vector layout as
+// TransformPointO2W: world = A*p + t). out = outer * inner, i.e. out maps a point
+// by applying `inner` first then `outer`: out(p) = outer(inner(p)). Used to flatten
+// nested instancing (a prototype that itself contains instancers) into the single
+// level a TLAS can express: a leaf's nested-local placement composed with each
+// outer placement of its containing prototype.
+inline void Compose3x4(const float outer[12], const float inner[12],
+                       float out[12]) {
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      out[r * 4 + c] = outer[r * 4 + 0] * inner[0 * 4 + c] +
+                       outer[r * 4 + 1] * inner[1 * 4 + c] +
+                       outer[r * 4 + 2] * inner[2 * 4 + c];
+    }
+    out[r * 4 + 3] = outer[r * 4 + 0] * inner[0 * 4 + 3] +
+                     outer[r * 4 + 1] * inner[1 * 4 + 3] +
+                     outer[r * 4 + 2] * inner[2 * 4 + 3] + outer[r * 4 + 3];
+  }
+}
+
+// One placement of a BLAS, stored as a compact 3x4 float object->world (48 B vs a
+// 128 B matrix4d) — instance arrays dominate footprint on heavily-instanced
+// scenes (e.g. Island's 22 M instances). instances[0] is the base at identity.
+
+// Resolve a primary TLAS hit into a world-space TriInfo (positions transformed,
+// normal recomputed, diffuse texture sampled). Returns false if the hit indices
+// are out of range. `textures` is the shared global texture table.
+// CPU port of Storm's ComputeTBNMatrix/PerturbNormal
+// (pxr/imaging/hdSt/shaders/surfaceHelpers.glslfx, "Surface Gradient-Based Bump
+// Mapping Framework" 2020): the per-fragment screen-space derivatives dFdx/dFdy
+// of position and st are replaced by this (planar) triangle's edge and UV deltas,
+// which give the same constant gradient across the face. `N` is the geometric
+// normal; `Nt` is the tangent-space normal already unpacked to [-1,1]. Returns
+// the perturbed world normal, or `N` if the UV parameterization is degenerate.
+
 }  // namespace tusdr
