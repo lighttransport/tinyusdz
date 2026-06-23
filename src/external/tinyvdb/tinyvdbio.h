@@ -672,6 +672,15 @@ class GridDescriptor {
 
   tinyvdb_uint64 EndPos() const { return end_pos_; }
 
+  const std::string &GridType() const { return grid_type_; }
+
+  // Only dense FloatTree grids are decodable; other grid types (point-index,
+  // vector, bool, ...) are parsed at the descriptor level but their data is
+  // skipped rather than failing the whole file.
+  bool IsSupported() const {
+    return grid_type_.compare("Tree_float_5_4_3") == 0;
+  }
+
   static std::string AddSuffix(const std::string &name, int n);
   static std::string StripSuffix(const std::string &name);
 
@@ -1283,13 +1292,37 @@ VDBStatus ReadDenseGrids(const unsigned char *data, const size_t data_len,
 #ifdef TINYVDBIO_IMPLEMENTATION
 
 #if !defined(TINYVDBIO_USE_SYSTEM_ZLIB)
+// miniz header location defaults to <miniz.h> on the include path; a host project
+// can override it by defining TINYVDBIO_MINIZ_INCLUDE before including.
+#if !defined(TINYVDBIO_MINIZ_INCLUDE)
+#define TINYVDBIO_MINIZ_INCLUDE "miniz.h"
+#endif
 extern "C" {
-#include "../miniz.h"
+#include TINYVDBIO_MINIZ_INCLUDE
 }
 #endif
 
 #if defined(TINYVDBIO_USE_BLOSC)
 #include "blosc.h"
+#endif
+
+// Self-contained BLOSC1 decode (OpenVDB's DEFAULT write compression) using a
+// vendored LZ4 / zstd. TINYVDBIO_NO_VENDORED_BLOSC disables it (falls back to
+// "unsupported"). The LZ4 / zstd header locations default to <lz4.h>/<zstd.h>
+// on the include path; a host project can override them by defining
+// TINYVDBIO_LZ4_INCLUDE / TINYVDBIO_ZSTD_INCLUDE before including this header.
+#if !defined(TINYVDBIO_NO_VENDORED_BLOSC)
+#define TINYVDBIO_VENDORED_BLOSC 1
+#if !defined(TINYVDBIO_LZ4_INCLUDE)
+#define TINYVDBIO_LZ4_INCLUDE "lz4.h"
+#endif
+#if !defined(TINYVDBIO_ZSTD_INCLUDE)
+#define TINYVDBIO_ZSTD_INCLUDE "zstd.h"
+#endif
+extern "C" {
+#include TINYVDBIO_LZ4_INCLUDE
+}
+#include TINYVDBIO_ZSTD_INCLUDE
 #endif
 
 #include <iostream>  // HACK
@@ -1964,6 +1997,163 @@ static bool DecompressBlosc(unsigned char *dst, unsigned long uncompressed_size,
 }
 #endif
 
+#if defined(TINYVDBIO_VENDORED_BLOSC)
+// tinyusdz patch: decode a Blosc1 container (the format c-blosc / OpenVDB write)
+// into `dst` (`dst_size` bytes). Supports the LZ4 and zstd internal codecs (what
+// OpenVDB uses) and no-codec/memcpy, with optional byte-shuffle. Bit-shuffle and
+// the blosclz/snappy/zlib internal codecs are not supported. Returns false on an
+// unsupported/malformed container.
+//
+// Container layout (little-endian):
+//   [0]=version [1]=versionlz [2]=flags [3]=typesize
+//   [4:8)=nbytes [8:12)=blocksize [12:16)=cbytes
+//   flags: bit0 byte-shuffle, bit1 memcpyed, bit2 bit-shuffle, bits5-7 codec
+//          (0 blosclz, 1 lz4, 2 snappy, 3 zlib, 4 zstd)
+//   after the header: int32 bstarts[nblocks]; each block = nstreams sub-streams,
+//   each [int32 csize][csize compressed bytes] -> neblock = bsize/nstreams bytes.
+static bool DecompressBlosc1(unsigned char *dst, size_t dst_size,
+                             const unsigned char *src, size_t src_size,
+                             std::string *err) {
+  if (src_size < 16) {
+    if (err) (*err) += "Blosc: truncated header.\n";
+    return false;
+  }
+  const unsigned char flags = src[2];
+  unsigned char typesize = src[3];
+  uint32_t nbytes = 0, blocksize = 0, cbytes = 0;
+  std::memcpy(&nbytes, src + 4, 4);
+  std::memcpy(&blocksize, src + 8, 4);
+  std::memcpy(&cbytes, src + 12, 4);
+
+  const bool doshuffle = (flags & 0x01) != 0;
+  const bool memcpyed = (flags & 0x02) != 0;
+  const bool dobitshuffle = (flags & 0x04) != 0;
+  const int codec = (flags >> 5) & 0x07;
+  (void)cbytes;
+
+  if (dobitshuffle) {
+    if (err) (*err) += "Blosc: bit-shuffle not supported.\n";
+    return false;
+  }
+  if (nbytes != dst_size) {
+    if (err) (*err) += "Blosc: nbytes mismatch.\n";
+    return false;
+  }
+  if (typesize == 0) typesize = 1;
+
+  // memcpyed blocks store the ORIGINAL (already-unshuffled) data, so the shuffle
+  // flag does not apply — copy straight to dst.
+  if (memcpyed) {
+    if (16 + size_t(nbytes) > src_size) return false;
+    std::memcpy(dst, src + 16, nbytes);
+    return true;
+  }
+
+  if (blocksize == 0) {
+    if (err) (*err) += "Blosc: zero block size.\n";
+    return false;
+  }
+
+  const int nblocks = int((size_t(nbytes) + blocksize - 1) / blocksize);
+  const unsigned char *src_end = src + src_size;
+
+  // c-blosc applies the byte-shuffle filter INDEPENDENTLY within each block, so
+  // each block must be decoded into a block-local temp and un-shuffled on its
+  // own. (A global un-shuffle only happens to be correct for single-block
+  // buffers.) The split streams of a block ARE its shuffle partitions.
+  std::vector<unsigned char> blk;
+  for (int b = 0; b < nblocks; b++) {
+    int32_t bstart = 0;
+    std::memcpy(&bstart, src + 16 + size_t(b) * 4, 4);
+    if (bstart < 0 || size_t(bstart) >= src_size) return false;
+    const unsigned char *bsrc = src + bstart;
+    const size_t boff = size_t(b) * blocksize;
+    const size_t bsize = std::min(size_t(blocksize), size_t(nbytes) - boff);
+
+    // The compressed extent of this block is [bstart, next-bstart) (or to the
+    // end of the buffer for the last block).
+    size_t block_end = src_size;
+    if (b + 1 < nblocks) {
+      int32_t bnext = 0;
+      std::memcpy(&bnext, src + 16 + size_t(b + 1) * 4, 4);
+      if (bnext >= 0 && size_t(bnext) <= src_size && size_t(bnext) >= size_t(bstart))
+        block_end = size_t(bnext);
+    }
+    const size_t block_compr = block_end - size_t(bstart);
+
+    // Auto-detect the per-block stream count. c-blosc stores a block as EITHER
+    // one stream covering the whole block, OR `typesize` independently
+    // compressed shuffle-partition streams. The compressor's split heuristic
+    // varies by c-blosc version (block-size and element-count thresholds differ),
+    // so derive the choice from the data: if the first stream's framed length
+    // fills the whole block extent it is unsplit, else it is split typesize-ways.
+    int nstreams = 1;
+    if (doshuffle && typesize > 1 && block_compr >= 4) {
+      int32_t csize0 = 0;
+      std::memcpy(&csize0, bsrc, 4);
+      if (csize0 >= 0 && (size_t(4) + size_t(csize0)) != block_compr)
+        nstreams = int(typesize);
+    }
+
+    // Decode straight into dst when there is no shuffle; otherwise into a temp
+    // that we then un-shuffle into dst.
+    unsigned char *shuf = dst + boff;
+    if (doshuffle) {
+      blk.resize(bsize);
+      shuf = blk.data();
+    }
+
+    const size_t neblock = bsize / size_t(nstreams);
+    unsigned char *bdst = shuf;
+    for (int s = 0; s < nstreams; s++) {
+      if (bsrc + 4 > src_end) return false;
+      int32_t csize = 0;
+      std::memcpy(&csize, bsrc, 4);
+      bsrc += 4;
+      if (csize < 0 || bsrc + csize > src_end) return false;
+      const size_t elen = (s == nstreams - 1) ? (bsize - neblock * s) : neblock;
+      if (size_t(csize) == elen) {
+        std::memcpy(bdst, bsrc, elen);  // stored uncompressed
+      } else if (codec == 1) {          // LZ4
+        int got = LZ4_decompress_safe(reinterpret_cast<const char *>(bsrc),
+                                      reinterpret_cast<char *>(bdst), csize,
+                                      int(elen));
+        if (got != int(elen)) {
+          if (err) (*err) += "Blosc: LZ4 block decode failed.\n";
+          return false;
+        }
+      } else if (codec == 4) {  // zstd
+        size_t got = ZSTD_decompress(bdst, elen, bsrc, size_t(csize));
+        if (got != elen) {
+          if (err) (*err) += "Blosc: zstd block decode failed.\n";
+          return false;
+        }
+      } else {
+        if (err)
+          (*err) += "Blosc: internal codec not supported (only LZ4/zstd).\n";
+        return false;
+      }
+      bsrc += csize;
+      bdst += elen;
+    }
+
+    // Reverse the byte-shuffle filter within this block.
+    if (doshuffle) {
+      const size_t nelem = bsize / typesize;
+      for (size_t j = 0; j < typesize; j++) {
+        const unsigned char *srcj = shuf + j * nelem;
+        for (size_t i = 0; i < nelem; i++)
+          dst[boff + i * typesize + j] = srcj[i];
+      }
+      const size_t tail = bsize - nelem * typesize;  // un-shuffled remainder
+      if (tail) std::memcpy(dst + boff + nelem * typesize,
+                            shuf + nelem * typesize, tail);
+    }
+  }
+  return true;
+}
+#endif  // TINYVDBIO_VENDORED_BLOSC
+
 static bool ReadAndDecompressData(StreamReader *sr, unsigned char *dst_data,
                                   size_t element_size, size_t count,
                                   unsigned int compression_mask,
@@ -1972,15 +2162,23 @@ static bool ReadAndDecompressData(StreamReader *sr, unsigned char *dst_data,
   (void)warn;
 
   if (compression_mask & COMPRESS_BLOSC) {
-    TINYVDB_LOG << "HACK: BLOSLC" << std::endl;
-
-#if defined(TINYVDBIO_USE_BLOSC)
     // Read the size of the compressed data.
     // A negative size indicates uncompressed data.
     tinyvdb_int64 numCompressedBytes;
     sr->read8(&numCompressedBytes);
 
     TINYVDB_LOG << "numCompressedBytes " << numCompressedBytes << std::endl;
+    // Guard against a corrupt / misaligned length: a compressed buffer can never
+    // exceed the bytes remaining in the stream. Without this a garbage value
+    // (e.g. from a stream-position drift) triggers a multi-exabyte allocation
+    // and std::bad_alloc instead of a clean decode error.
+    if (numCompressedBytes > 0 &&
+        size_t(numCompressedBytes) > sr->size() - sr->tell()) {
+      if (err)
+        (*err) += "Blosc: compressed size exceeds remaining stream (corrupt "
+                  "or unsupported VDB).\n";
+      return false;
+    }
     if (numCompressedBytes <= 0) {
       if (dst_data == NULL) {
         // seek over this data.
@@ -1989,7 +2187,7 @@ static bool ReadAndDecompressData(StreamReader *sr, unsigned char *dst_data,
         sr->read(element_size * count, element_size * count, dst_data);
       }
     } else {
-      unsigned long uncompressed_size = element_size * count;
+      const unsigned long uncompressed_size = element_size * count;
       std::vector<unsigned char> buf;
       buf.resize(size_t(numCompressedBytes));
 
@@ -2001,25 +2199,30 @@ static bool ReadAndDecompressData(StreamReader *sr, unsigned char *dst_data,
         return false;
       }
 
-      if (!DecompressBlosc(dst_data, uncompressed_size, buf.data(),
-                           size_t(numCompressedBytes))) {
-        if (err) {
-          (*err) += "Failed to decode BLOSC data.\n";
+      if (dst_data != NULL) {
+#if defined(TINYVDBIO_VENDORED_BLOSC)
+        // tinyusdz patch: self-contained Blosc1 decode (LZ4/zstd) — no external
+        // c-blosc dependency. This is OpenVDB's DEFAULT write compression.
+        if (!DecompressBlosc1(dst_data, size_t(uncompressed_size), buf.data(),
+                              size_t(numCompressedBytes), err)) {
+          if (err) (*err) += "Failed to decode BLOSC data.\n";
+          return false;
         }
+#elif defined(TINYVDBIO_USE_BLOSC)
+        if (!DecompressBlosc(dst_data, uncompressed_size, buf.data(),
+                             size_t(numCompressedBytes))) {
+          if (err) (*err) += "Failed to decode BLOSC data.\n";
+          return false;
+        }
+#else
+        if (err) (*err) += "Decoding BLOSC is not supported in this build.\n";
         return false;
+#endif
       }
     }
 
     TINYVDB_LOG << "blosc decode ok" << std::endl;
 
-#else
-    TINYVDB_LOG << "HACK: BLOSLC is TODO" << std::endl;
-    // TODO(syoyo):
-    if (err) {
-      (*err) += "Decoding BLOSC is not supported in this build.\n";
-    }
-    return false;
-#endif
   } else if (compression_mask & COMPRESS_ZIP) {
     // Read the size of the compressed data.
     // A negative size indicates uncompressed data.
@@ -2027,6 +2230,13 @@ static bool ReadAndDecompressData(StreamReader *sr, unsigned char *dst_data,
     sr->read8(&numZippedBytes);
     TINYVDB_LOG << "numZippedBytes = " << numZippedBytes << std::endl;
 
+    if (numZippedBytes > 0 &&
+        size_t(numZippedBytes) > sr->size() - sr->tell()) {
+      if (err)
+        (*err) += "Zip: compressed size exceeds remaining stream (corrupt "
+                  "or unsupported VDB).\n";
+      return false;
+    }
     if (numZippedBytes <= 0) {
       if (dst_data == NULL) {
         // seek over this data.
@@ -2117,12 +2327,26 @@ static bool ReadMaskValues(StreamReader *sr,
                            const Value background, size_t num_values,
                            ValueType value_type, NodeMask value_mask,
                            std::vector<unsigned char> *values,
+                           const bool half_precision,
                            std::string *warn,
                            std::string *err) {
   // Advance stream position when destination buffer is null.
   const bool seek = (values == NULL);
 
   const bool mask_compressed = compression_flags & COMPRESS_ACTIVE_MASK;
+
+  // tinyusdz patch: in a save-float-as-half grid EVERY float value is stored on
+  // disk as a 16-bit half -- not only the leaf voxels but also the INTERNAL node
+  // tile values (which the layout types as FLOAT). Reading those tiles as 4-byte
+  // floats over-reads the stream and misaligns the whole tree (this is what broke
+  // dense half fog volumes like bunny_cloud, whose internal nodes carry active
+  // tiles). `file_elem` is the on-disk element size; `dst_elem` is the in-memory
+  // size; `promote` means decode 2-byte half -> 4-byte float on store.
+  const bool is_half = (value_type == VALUE_TYPE_HALF) ||
+                       (half_precision && value_type == VALUE_TYPE_FLOAT);
+  const size_t dst_elem = GetValueTypeSize(value_type);
+  const size_t file_elem = is_half ? 2 : dst_elem;
+  const bool promote = is_half && (dst_elem == 4);
 
   char per_node_flag = NO_MASK_AND_ALL_VALS;
   if (file_version >= TINYVDB_FILE_VERSION_NODE_MASK_COMPRESSION) {
@@ -2142,9 +2366,15 @@ static bool ReadMaskValues(StreamReader *sr,
   if (per_node_flag == NO_MASK_AND_ONE_INACTIVE_VAL ||
       per_node_flag == MASK_AND_ONE_INACTIVE_VAL ||
       per_node_flag == MASK_AND_TWO_INACTIVE_VALS) {
-    // inactive val
+    // tinyusdz patch: the inactive value(s) are stored at the on-disk element
+    // size -- HALF (2 bytes) for save-float-as-half grids, not float. The
+    // upstream read_value() always read a 4-byte float, misaligning the stream.
     if (seek) {
-      sr->seek_set(sr->tell() + sizeof(inactiveVal0));
+      sr->seek_set(sr->tell() + file_elem);
+    } else if (is_half) {
+      unsigned short h = 0;
+      sr->read2(&h);
+      inactiveVal0 = Value(TinyVDBHalfBitsToFloat(h));
     } else {
       sr->read_value(&inactiveVal0);
     }
@@ -2152,7 +2382,11 @@ static bool ReadMaskValues(StreamReader *sr,
     if (per_node_flag == MASK_AND_TWO_INACTIVE_VALS) {
       // Read the second of two distinct inactive values.
       if (seek) {
-        sr->seek_set(sr->tell() + inactiveVal1.Size());
+        sr->seek_set(sr->tell() + file_elem);
+      } else if (is_half) {
+        unsigned short h = 0;
+        sr->read2(&h);
+        inactiveVal1 = Value(TinyVDBHalfBitsToFloat(h));
       } else {
         sr->read_value(&inactiveVal1);
       }
@@ -2182,28 +2416,52 @@ static bool ReadMaskValues(StreamReader *sr,
 
   TINYVDB_LOG << "read num = " << read_count << std::endl;
 
-  std::vector<unsigned char> tmp_buf(read_count * GetValueTypeSize(value_type));
+  std::vector<unsigned char> tmp_buf(read_count * file_elem);
 
-  // Read mask data.
-  if (!ReadAndDecompressData(sr, tmp_buf.data(), GetValueTypeSize(value_type),
-                             size_t(read_count), compression_flags, warn, err)) {
-    return false;
+  // Read the active-value buffer. tinyusdz patch: OpenVDB's HalfReader::read has
+  // an `if (count < 1) return;` guard, so a half-precision value buffer emits
+  // NOTHING when the active count is zero (e.g. an internal node whose tiles are
+  // all inactive in a flood-filled level set). The non-half path always runs
+  // through readData/bloscFromStream, which writes the 8-byte length header even
+  // for count 0. So skip the read ONLY for the half + count-0 case; otherwise
+  // always read. (This matches the reference tinyvdb C implementation and is
+  // codec/version agnostic.)
+  const bool skip_zero = is_half && (read_count == 0);
+  if (!skip_zero) {
+    if (!ReadAndDecompressData(sr, tmp_buf.data(), file_elem,
+                               size_t(read_count), compression_flags, warn,
+                               err)) {
+      return false;
+    }
   }
 
+  if (seek) {
+    return true;
+  }
+
+  // Scatter the active values into the dense node buffer, promoting 2-byte half
+  // -> 4-byte float when `promote` (save-float-as-half), else a plain copy.
   // If mask compression is enabled and the number of active values read into
   // the temp buffer is smaller than the size of the destination buffer,
   // then there are missing (inactive) values.
-  if (!seek && mask_compressed && read_count != num_values) {
+  if (mask_compressed && read_count != num_values) {
     // Restore inactive values, using the background value and, if available,
     // the inside/outside mask.  (For fog volumes, the destination buffer is
     // assumed to be initialized to background value zero, so inactive values
     // can be ignored.)
-    size_t sz = GetValueTypeSize(value_type);
     for (size_t destIdx = 0, tempIdx = 0; destIdx < selection_mask.SIZE;
          ++destIdx) {
       if (value_mask.isOn(int32(destIdx))) {
         // Copy a saved active value into this node's buffer.
-        memcpy(&values->at(destIdx * sz), &tmp_buf.at(tempIdx * sz), sz);
+        if (promote) {
+          unsigned short hv;
+          memcpy(&hv, &tmp_buf.at(tempIdx * file_elem), 2);
+          float fv = TinyVDBHalfBitsToFloat(hv);
+          memcpy(&values->at(destIdx * dst_elem), &fv, 4);
+        } else {
+          memcpy(&values->at(destIdx * dst_elem), &tmp_buf.at(tempIdx * file_elem),
+                 dst_elem);
+        }
         ++tempIdx;
       } else {
         // Reconstruct an unsaved inactive value and copy it into this node's
@@ -2218,15 +2476,21 @@ static bool ReadMaskValues(StreamReader *sr,
                                                  : 0.0f);
         if (value_type == VALUE_TYPE_HALF) {
           unsigned short hv = TinyVDBFloatToHalfBits(fv);
-          memcpy(&values->at(destIdx * sz), &hv, sz);
+          memcpy(&values->at(destIdx * dst_elem), &hv, dst_elem);
         } else {
-          memcpy(&values->at(destIdx * sz), &fv, sz);
+          memcpy(&values->at(destIdx * dst_elem), &fv, dst_elem);
         }
       }
     }
+  } else if (promote) {
+    for (size_t i = 0; i < num_values; ++i) {
+      unsigned short hv;
+      memcpy(&hv, &tmp_buf.at(i * 2), 2);
+      float fv = TinyVDBHalfBitsToFloat(hv);
+      memcpy(&values->at(i * 4), &fv, 4);
+    }
   } else {
-    memcpy(values->data(), tmp_buf.data(),
-           num_values * GetValueTypeSize(value_type));
+    memcpy(values->data(), tmp_buf.data(), num_values * dst_elem);
   }
 
   return true;
@@ -2380,7 +2644,8 @@ bool InternalOrLeafNode::ReadTopology(StreamReader *sr,
 
       if (!ReadMaskValues(sr, params.compression_flags, params.file_version,
                           params.background, size_t(num_values),
-                          grid_layout_info_.GetNodeInfo(level).value_type(), value_mask_, &values, warn, err)) {
+                          grid_layout_info_.GetNodeInfo(level).value_type(), value_mask_, &values,
+                          params.half_precision, warn, err)) {
         if (err) {
           std::stringstream ss;
           ss << "Failed to read mask values in ReadTopology. level = " << level << std::endl;
@@ -2520,7 +2785,8 @@ bool InternalOrLeafNode::ReadBuffer(StreamReader *sr, int level, const Deseriali
 
     bool ret = ReadMaskValues(sr, params.compression_flags, params.file_version,
                               params.background, size_t(num_voxels_), value_type,
-                              value_mask_, &data_, warn, err);
+                              value_mask_, &data_, params.half_precision, warn,
+                              err);
 
     return ret;
   }
@@ -2572,13 +2838,13 @@ bool GridDescriptor::Read(StreamReader *sr, const unsigned int file_version,
     grid_type_ = tmp;
   }
 
-  // FIXME(syoyo): Currently only `Tree_float_5_4_3` type is supported.
-  if (grid_type_.compare("Tree_float_5_4_3") != 0) {
-    if (err) {
-      (*err) = "Unsupported grid type: " + grid_type_;
-    }
-    return false;
-  }
+  // tinyusdz patch: do NOT fail here on an unsupported grid type. The descriptor
+  // layout (instance parent + grid/block/end offsets below) is identical for all
+  // grid types, so we read it fully and let the grid-data reader skip grids whose
+  // type we can't decode (see GridDescriptor::IsSupported). This lets a multi-grid
+  // file (e.g. density FloatTree + a vector/point grid) still load its float grids
+  // instead of failing outright.
+  (void)err;
 
   TINYVDB_LOG << "grid_type = " << grid_type_ << std::endl;
   TINYVDB_LOG << "half = " << save_float_as_half_ << std::endl;
@@ -3265,6 +3531,7 @@ static bool ReadDenseGrid(StreamReader *sr, const VDBHeader &header,
 
   // read compression per grid(optional)
   unsigned int grid_compression = ReadGridCompression(sr, file_version);
+#if !defined(TINYVDBIO_VENDORED_BLOSC) && !defined(TINYVDBIO_USE_BLOSC)
   if (grid_compression & COMPRESS_BLOSC) {
     if (err) {
       (*err) += "BLOSC-compressed VDB grids are not supported (grid: " +
@@ -3272,11 +3539,16 @@ static bool ReadDenseGrid(StreamReader *sr, const VDBHeader &header,
     }
     return false;
   }
+#endif
 
   DeserializeParams params;
   params.file_version = file_version;
   params.compression_flags = grid_compression;
-  params.half_precision = header.half_precision;
+  // Half-ness is per-GRID (SaveFloatAsHalf), not the file-level
+  // header.half_precision hint. In a save-float-as-half grid BOTH the leaf
+  // voxels and the internal-node tile values are stored as 16-bit half, so the
+  // whole tree must read at half element size (see ReadMaskValues).
+  params.half_precision = is_half;
 
   if (!ReadMeta(sr)) {
     return false;
@@ -3359,7 +3631,11 @@ static bool ReadDenseGrid(StreamReader *sr, const VDBHeader &header,
 
   const int dim[3] = {maxc[0] - minc[0], maxc[1] - minc[1], maxc[2] - minc[2]};
   const size_t total = size_t(dim[0]) * size_t(dim[1]) * size_t(dim[2]);
-  const size_t cap = (max_voxels == 0) ? (size_t(512) * 512 * 512) : max_voxels;
+  // Default per-grid voxel cap: 640^3 (~262M voxels, ~1 GiB as dense float).
+  // Large enough for production fog volumes (e.g. bunny_cloud 584x576x440,
+  // explosion) while still rejecting huge narrow-band level sets that should not
+  // be densified (dragon/armadillo are 2-2.5 billion voxels). Override per call.
+  const size_t cap = (max_voxels == 0) ? (size_t(640) * 640 * 640) : max_voxels;
   if (total > cap) {
     if (err) {
       std::stringstream ss;
@@ -3431,6 +3707,16 @@ VDBStatus ReadDenseGrids(const unsigned char *data, const size_t data_len,
   for (; it != itEnd; it++) {
     const GridDescriptor &gd = it->second;
     if (gd.IsInstance()) continue;
+
+    // Skip grids we cannot decode (non-FloatTree: point-index, vector, bool, ...)
+    // rather than failing the whole file.
+    if (!gd.IsSupported()) {
+      if (warn) {
+        (*warn) += "Skipping unsupported VDB grid '" + gd.GridName() +
+                   "' of type '" + gd.GridType() + "'.\n";
+      }
+      continue;
+    }
 
     sr.seek_set(gd.GridPos());
 

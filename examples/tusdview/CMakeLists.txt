@@ -89,6 +89,29 @@ endif()
 
 target_compile_features(${EXAMPLE_TARGET} PRIVATE cxx_std_17)
 
+# tusdview uses no C++ RTTI and (outside the optional MCP server) no C++
+# exceptions; disable both to match the tinyusdz library build (TINYUSDZ_CXX_RTTI
+# / _EXCEPTIONS default Off). Scoped to C++ so vendored C sources (glad.c, cuew,
+# civetweb.c, ...) don't warn. The MCP server TUs re-enable exceptions below.
+if(NOT TINYUSDZ_CXX_RTTI)
+  if(MSVC)
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+  else()
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+  endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+  if(MSVC)
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+  else()
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+  endif()
+endif()
+
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/src
@@ -181,6 +204,18 @@ if(TUSDVIEW_ENABLE_MCP)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
       TUSDVIEW_HAVE_MCP=1
       NO_SSL NO_CGI USE_WEBSOCKET=0)  # civetweb: no OpenSSL / CGI / websockets
+  # The MCP server uses try/catch around JSON-RPC handling, so it needs C++
+  # exceptions even when the rest of tusdview is built -fno-exceptions. The
+  # per-source flag is appended after the target option and therefore wins.
+  if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "/EHsc")
+  endif()
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
   if(UNIX)
     target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)

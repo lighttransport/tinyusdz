@@ -33,7 +33,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   warnings_.clear();
 
-  try {
+  // Built with -fno-exceptions: the conversion helpers report failures via
+  // return codes / the warnings_ list rather than throwing, so no try/catch.
+  {
     // Report progress
     if (config_.progress_callback) {
       config_.progress_callback(0.0f, "Starting conversion...");
@@ -133,10 +135,6 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     result.success = true;
     result.warnings = std::move(warnings_);
-
-  } catch (const std::exception& e) {
-    result.success = false;
-    result.error = std::string("Exception during conversion: ") + e.what();
   }
 
   return result;

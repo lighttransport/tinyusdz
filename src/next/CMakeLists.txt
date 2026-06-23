@@ -218,6 +218,25 @@ else()
     set_source_files_properties(${LZ4_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 endif()
 
+# tinyusdz_next uses no C++ RTTI and no C++ exceptions; disable both (C++ sources
+# only so the vendored C code does not warn). TINYUSDZ_CXX_RTTI / _EXCEPTIONS are
+# inherited from the parent project when built as a subdirectory, and undefined
+# (-> disabled) when built standalone.
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+endif()
+
 # Optional: Create test executable
 #
 # EXPERIMENTAL / under-construction module. `next` is a standalone CMake project
@@ -425,6 +444,24 @@ if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# tydra_next uses no C++ RTTI and no C++ exceptions; disable both (this is the
+# tydra_next definition actually used when src/next is built; the standalone
+# src/tydra/next/CMakeLists.txt carries the same flags).
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
 endif()
 
 # Tydra Next test
