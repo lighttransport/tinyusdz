@@ -512,7 +512,9 @@ struct MeshJobNext {
   float occlusion{1.0f};                 // resolved inputs:occlusion
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
-  float opacity{1.0f};                   // resolved primvars:displayOpacity
+  float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
+  ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
+  float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
 };
 
@@ -537,6 +539,8 @@ struct ResolvedMat {
   float occlusion{1.0f};
   ScalarTex occ_tex;
   float opacity{1.0f};
+  ScalarTex opacity_tex;
+  float opacity_threshold{0.0f};
   bool vertex_color{false};
 };
 
