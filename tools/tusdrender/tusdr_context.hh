@@ -334,6 +334,8 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              Vec3 *emission, int32_t *emission_tex_id,
                              float *occlusion, ScalarTex *occ_tex,
                              float *opacity = nullptr,
+                             ScalarTex *opacity_tex = nullptr,
+                             float *opacity_threshold = nullptr,
                              bool *vertex_color = nullptr);
 
 void ResolveMeshMaterialCached(
