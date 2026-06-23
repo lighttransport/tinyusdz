@@ -139,6 +139,8 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
 void CollectLights(const RenderScene &scene, LightCache *cache);
 
 // ---- tusdr_geom.cc ----
+void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b);
+tinyusdz::Axis GetUpAxis(const std::string &up);
 bool BuildNodeMatrixMap(const Node &node,
                         std::unordered_map<std::string, matrix4d> *map);
 
