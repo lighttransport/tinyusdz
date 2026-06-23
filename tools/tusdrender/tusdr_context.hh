@@ -340,6 +340,10 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              float *clearcoat_roughness = nullptr,
                              ScalarTex *clearcoat_tex = nullptr,
                              ScalarTex *clearcoat_rough_tex = nullptr,
+                             Vec3 *specular_color = nullptr,
+                             int32_t *specular_tex_id = nullptr,
+                             float *ior = nullptr,
+                             uint8_t *use_specular_workflow = nullptr,
                              bool *vertex_color = nullptr);
 
 void ResolveMeshMaterialCached(
