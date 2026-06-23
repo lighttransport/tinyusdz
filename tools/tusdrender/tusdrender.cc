@@ -74,7 +74,7 @@ extern "C" {
 }
 #endif
 
-namespace {
+namespace tusdr {
 
 using tinyusdz::value::color3f;
 using tinyusdz::value::float3;
@@ -8460,7 +8460,11 @@ int RunMCPMode(const Options &opt) {
 }
 #endif  // TINYUSDZ_WITH_QJS
 
-}  // namespace
+}  // namespace tusdr
+
+// The Vulkan backend and main() below live in the global namespace; pull in the
+// tusdr names they use (Vec3, Options, RTPreviewStats, qjs::*, ...).
+using namespace tusdr;
 
 // ---------------------------------------------------------------------------
 // LightRT Vulkan backend: uses the LightRT C API (lightrt_c_vk.h) for GPU
