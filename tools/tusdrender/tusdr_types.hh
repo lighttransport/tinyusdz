@@ -264,6 +264,16 @@ struct IblCache {
   std::vector<EnvImage> prefiltered;
   int brdf_size{0};
   std::vector<float> brdf_lut;
+  // DomeLight orientation: when the dome prim carries a non-identity world
+  // rotation, these are its local axes in world space (the rows of the world
+  // rotation). A world direction is mapped into the dome's local frame by
+  // projecting onto them (d_local = {d.rx, d.ry, d.rz}) before the lat-long
+  // lookup, so the environment rotates with the dome. Identity when !rotated
+  // (--env override and untransformed domes stay byte-identical).
+  bool rotated{false};
+  Vec3 rx{1.0f, 0.0f, 0.0f};
+  Vec3 ry{0.0f, 1.0f, 0.0f};
+  Vec3 rz{0.0f, 0.0f, 1.0f};
 };
 
 struct CameraFrame {
