@@ -269,4 +269,16 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
 
 bool LoadProgress(float progress, void *);
 
+// ---- next-loader / driver (defined in tusdrender.cc for now) ----
+bool BuildRenderContext(const Options &opt, RenderContext &ctx);
+bool ExtractAndBuildBVH(RenderContext &ctx, double time);
+void PrintRTStats(const RenderContext &ctx);
+double RenderFrameTo(RenderContext &ctx, const std::string &path);
+void ResolveCameraNext(RenderContext &ctx);
+
+#ifdef TINYUSDZ_WITH_QJS
+int RunJSScriptMode(const Options &opt, const std::string &script_path);
+int RunMCPMode(const Options &opt);
+#endif
+
 }  // namespace tusdr
