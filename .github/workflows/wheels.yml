@@ -74,7 +74,10 @@ jobs:
     name: Publish to PyPI
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Only publish FINAL release tags (e.g. v0.9.9). Pre-release tags carry a
+    # hyphenated suffix (-rc*, -dev*, -alpha*, -beta*); skip PyPI publish for
+    # them. The wheels/sdist are still built and uploaded as run artifacts.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
     # Uses PyPI Trusted Publishing (OIDC). No API token is configured — the
     # GitHub-issued OIDC token is exchanged for a short-lived upload token by
     # PyPI. The pypi.org project must have a matching publisher registered:
