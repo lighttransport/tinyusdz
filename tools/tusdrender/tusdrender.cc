@@ -74,6 +74,10 @@ extern "C" {
 }
 #endif
 
+#include "tusdr_math.hh"
+#include "tusdr_types.hh"
+#include "tusdr_context.hh"
+
 namespace tusdr {
 
 using tinyusdz::value::color3f;
@@ -102,766 +106,10 @@ using tinyusdz::tydra::RenderScene;
 //      into `tracked_` and throws std::bad_alloc when our allocations would push
 //      RSS past the cap (covers the triangle stream precisely, mid-flight).
 // ===========================================================================
-class MemBudget {
- public:
-  static constexpr size_t kDefaultCapBytes = size_t(32) << 30;  // 32 GiB
-
-  static MemBudget &Get() {
-    static MemBudget inst;
-    return inst;
-  }
-
-  // cap_override_gib <= 0 -> auto: min(32 GiB, 0.5 * MemAvailable).
-  void Init(double cap_override_gib) {
-    if (cap_override_gib > 0.0) {
-      cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
-    } else {
-      size_t avail = AvailableSystemMemory();
-      size_t half = avail ? avail / 2 : 0;
-      cap_ = half ? std::min(kDefaultCapBytes, half) : kDefaultCapBytes;
-    }
-    base_.store(0);
-    tracked_.store(0);
-    peak_tracked_.store(0);
-  }
-
-  size_t Cap() const { return cap_; }
-  size_t Tracked() const { return tracked_.load(std::memory_order_relaxed); }
-  size_t PeakTracked() const {
-    return peak_tracked_.load(std::memory_order_relaxed);
-  }
-
-  // Snapshot the non-tracked RSS (everything except our render buffers), so the
-  // pool allocator can bound OUR allocations to cap_ - base_ with pure atomics
-  // (no /proc read per allocation). Call at the start of a streaming phase.
-  void SnapshotBase() {
-    size_t rss = ProcessRSS();
-    size_t tr = tracked_.load(std::memory_order_relaxed);
-    base_.store(rss > tr ? rss - tr : 0, std::memory_order_relaxed);
-  }
-
-  // Atomically reserve `bytes` of tracked allocation; false if it would exceed
-  // the cap (cap_ - base_). Used by PoolAlloc::allocate.
-  bool TryAdd(size_t bytes) {
-    if (!cap_) {  // no limit configured
-      size_t v = tracked_.fetch_add(bytes, std::memory_order_relaxed) + bytes;
-      BumpPeak(v);
-      return true;
-    }
-    size_t base = base_.load(std::memory_order_relaxed);
-    size_t limit = cap_ > base ? cap_ - base : 0;
-    size_t prev = tracked_.fetch_add(bytes, std::memory_order_relaxed);
-    if (prev + bytes > limit) {
-      tracked_.fetch_sub(bytes, std::memory_order_relaxed);
-      return false;
-    }
-    BumpPeak(prev + bytes);
-    return true;
-  }
-  void Sub(size_t bytes) {
-    tracked_.fetch_sub(bytes, std::memory_order_relaxed);
-  }
-
-  // Phase guard: would the process RSS plus `extra_estimate` untracked bytes bust
-  // the cap right now? `phase`/extra are for the diagnostic message.
-  bool WouldExceed(size_t extra_estimate, std::string *why = nullptr) const {
-    if (!cap_) return false;
-    size_t rss = ProcessRSS();
-    if (rss + extra_estimate <= cap_) return false;
-    if (why) {
-      *why = "memory cap " + GiB(cap_) + " would be exceeded (current RSS " +
-             GiB(rss) + " + estimated " + GiB(extra_estimate) + ")";
-    }
-    return true;
-  }
-
-  // Linux RSS via /proc/self/statm (pages); 0 if unavailable.
-  static size_t ProcessRSS() {
-    std::ifstream f("/proc/self/statm");
-    if (!f) return 0;
-    size_t total_pages = 0, rss_pages = 0;
-    f >> total_pages >> rss_pages;
-    if (!f) return 0;
-    long pg = sysconf(_SC_PAGESIZE);
-    return rss_pages * size_t(pg > 0 ? pg : 4096);
-  }
-
-  // Linux MemAvailable via /proc/meminfo (bytes); 0 if unavailable.
-  static size_t AvailableSystemMemory() {
-    std::ifstream f("/proc/meminfo");
-    if (!f) return 0;
-    std::string key;
-    while (f >> key) {
-      if (key == "MemAvailable:") {
-        size_t kib = 0;
-        f >> kib;
-        return kib * size_t(1024);
-      }
-      std::string rest;
-      std::getline(f, rest);
-    }
-    return 0;
-  }
-
-  static std::string GiB(size_t bytes) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.2f GiB",
-                  double(bytes) / double(size_t(1) << 30));
-    return std::string(buf);
-  }
-
- private:
-  MemBudget() = default;
-  void BumpPeak(size_t v) {
-    size_t p = peak_tracked_.load(std::memory_order_relaxed);
-    while (v > p &&
-           !peak_tracked_.compare_exchange_weak(p, v, std::memory_order_relaxed)) {
-    }
-  }
-  size_t cap_{kDefaultCapBytes};
-  std::atomic<size_t> base_{0};
-  std::atomic<size_t> tracked_{0};
-  std::atomic<size_t> peak_tracked_{0};
-};
-
-// Conservative estimate of the extra memory LightRT's BVH build adds per
-// triangle (the re-swizzled vertex copy ~36 B + wide-BVH nodes/leaves). Used by
-// the pre-build RSS guards; intentionally an over-estimate so the guard trips
-// before an OOM rather than after.
-static constexpr size_t kBvhBytesPerTri = 80;
-
-// Max anisotropic taps for diffuse texture sampling (GPU-style; 1 = isotropic
-// trilinear). Each tap is a trilinear lookup, so this bounds the per-hit cost.
-static constexpr int kMaxAniso = 8;
-
-// Thread-safe size-bucketed free-list pool. Cuts malloc/free traffic for the
-// render buffers (which are freed + reallocated across animation frames / re-
-// renders) and recycles whole bucket-sized blocks so reuse is always safe.
-// Oversize requests bypass the pool. A retained-free-bytes cap prevents hoarding.
-class MemPool {
- public:
-  static MemPool &Get() {
-    static MemPool p;
-    return p;
-  }
-  void *Alloc(size_t bytes) {
-    int b = Bucket(bytes);
-    if (b < 0) return std::malloc(bytes);  // oversize: exact size
-    {
-      std::lock_guard<std::mutex> lk(mu_[b]);
-      if (!free_[b].empty()) {
-        void *p = free_[b].back();
-        free_[b].pop_back();
-        pooled_.fetch_sub(BucketBytes(b), std::memory_order_relaxed);
-        return p;
-      }
-    }
-    return std::malloc(BucketBytes(b));  // full bucket size -> safe to recycle
-  }
-  void Free(void *p, size_t bytes) {
-    if (!p) return;
-    int b = Bucket(bytes);
-    if (b >= 0 &&
-        pooled_.load(std::memory_order_relaxed) + BucketBytes(b) <= kMaxPooled) {
-      std::lock_guard<std::mutex> lk(mu_[b]);
-      free_[b].push_back(p);
-      pooled_.fetch_add(BucketBytes(b), std::memory_order_relaxed);
-      return;
-    }
-    std::free(p);
-  }
-
- private:
-  static constexpr int kMinShift = 6;   // 64 B
-  static constexpr int kMaxShift = 20;  // 1 MiB
-  static constexpr int kNumBuckets = kMaxShift - kMinShift + 1;
-  static constexpr size_t kMaxPooled = size_t(256) << 20;  // retain <=256 MiB
-  static int Bucket(size_t bytes) {
-    if (bytes == 0) bytes = 1;
-    int s = kMinShift;
-    while ((size_t(1) << s) < bytes) ++s;
-    if (s > kMaxShift) return -1;
-    return s - kMinShift;
-  }
-  static size_t BucketBytes(int b) { return size_t(1) << (b + kMinShift); }
-  std::mutex mu_[kNumBuckets];
-  std::vector<void *> free_[kNumBuckets];
-  std::atomic<size_t> pooled_{0};
-};
-
-// Allocator that routes std::vector storage through MemPool and accounts every
-// byte into MemBudget — so the triangle buffers are tracked precisely and a
-// stream that would bust the cap throws std::bad_alloc mid-flight (caught by the
-// stream workers -> clean abort) instead of OOM-killing the process.
-template <class T>
-struct PoolAlloc {
-  using value_type = T;
-  PoolAlloc() noexcept = default;
-  template <class U>
-  PoolAlloc(const PoolAlloc<U> &) noexcept {}
-  T *allocate(std::size_t n) {
-    std::size_t bytes = n * sizeof(T);
-    if (!MemBudget::Get().TryAdd(bytes)) throw std::bad_alloc();
-    void *p = MemPool::Get().Alloc(bytes);
-    if (!p) {
-      MemBudget::Get().Sub(bytes);
-      throw std::bad_alloc();
-    }
-    return static_cast<T *>(p);
-  }
-  void deallocate(T *p, std::size_t n) noexcept {
-    std::size_t bytes = n * sizeof(T);
-    MemPool::Get().Free(p, bytes);
-    MemBudget::Get().Sub(bytes);
-  }
-  template <class U>
-  bool operator==(const PoolAlloc<U> &) const noexcept {
-    return true;
-  }
-  template <class U>
-  bool operator!=(const PoolAlloc<U> &) const noexcept {
-    return false;
-  }
-};
-
-struct Vec3 {
-  float x{0.0f};
-  float y{0.0f};
-  float z{0.0f};
-};
-
-struct Bounds {
-  Vec3 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
-          std::numeric_limits<float>::max()};
-  Vec3 hi{-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(),
-          -std::numeric_limits<float>::max()};
-  bool valid{false};
-};
-
-static constexpr uint32_t kPurposeDefaultBit = 1u << 0u;
-static constexpr uint32_t kPurposeRenderBit = 1u << 1u;
-static constexpr uint32_t kPurposeProxyBit = 1u << 2u;
-static constexpr uint32_t kPurposeGuideBit = 1u << 3u;
-static constexpr uint32_t kPurposeDefaultMask =
-    kPurposeDefaultBit | kPurposeRenderBit | kPurposeProxyBit;
-
-struct TriInfo {
-  Vec3 p0;
-  Vec3 p1;
-  Vec3 p2;
-  Vec3 n;
-  Vec3 base_color{0.18f, 0.18f, 0.18f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-  float roughness{0.55f};
-  float metallic{0.0f};
-  uint32_t purpose_bit{kPurposeDefaultBit};
-  int32_t tex_id{-1};  // diffuse texture index, or -1 for a flat base_color
-  int32_t normal_tex_id{-1};  // tangent-space normal map, or -1
-  int32_t rough_tex_id{-1};   // roughness texture, or -1
-  int32_t metal_tex_id{-1};   // metallic texture, or -1
-  int32_t emission_tex_id{-1};  // emissive color texture (sRGB), or -1
-  int32_t occ_tex_id{-1};       // occlusion (AO) texture, or -1
-  float occlusion{1.0f};        // ambient-occlusion scalar
-  uint8_t rough_ch{0};          // source channel (0=r,1=g,2=b,3=a)
-  uint8_t metal_ch{0};
-  uint8_t occ_ch{0};
-  float opacity{1.0f};          // primvars:displayOpacity (constant); <1 = blend
-};
-
-// Per-material shading parameters, factored out of the per-triangle record. A
-// scene with many meshes sharing few materials (e.g. Island's coral) stores one
-// of these per mesh-job instead of replicating ~64 B of material data on every
-// triangle. The instanced (TLAS) BLAS arrays store the slim TriStore below + a
-// side table of TriMat, cutting per-triangle memory ~2× on geometry-heavy scenes.
-struct TriMat {
-  Vec3 base_color{0.18f, 0.18f, 0.18f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-  float roughness{0.55f};
-  float metallic{0.0f};
-  int32_t tex_id{-1};
-  int32_t normal_tex_id{-1};
-  int32_t rough_tex_id{-1};
-  int32_t metal_tex_id{-1};
-  int32_t emission_tex_id{-1};
-  int32_t occ_tex_id{-1};
-  float occlusion{1.0f};
-  float opacity{1.0f};  // primvars:displayOpacity (constant); <1 = see-through
-  uint8_t rough_ch{0};
-  uint8_t metal_ch{0};
-  uint8_t occ_ch{0};
-};
-
-// Slim per-triangle record for instanced BLAS storage: just a material id into
-// the BLAS's TriMat table. Triangle positions are read from the BLAS's vertex
-// soup (`Blas::vertices`, which LightRT aliases so it stays resident) at hit
-// time, and the geometric normal is recomputed there — so the instanced
-// per-triangle record is only 4 bytes (down from a 124 B TriInfo).
-struct TriStore {
-  uint32_t mat_id{0};
-};
-
-// Build a full TriInfo from a material record (positions/normal are filled by the
-// caller from the vertex soup). Used by ResolveTLASHit for instanced mesh hits.
-inline TriInfo CombineTriMat(const TriMat &m) {
-  TriInfo t;
-  t.base_color = m.base_color;
-  t.emission = m.emission;
-  t.roughness = m.roughness;
-  t.metallic = m.metallic;
-  t.tex_id = m.tex_id;
-  t.normal_tex_id = m.normal_tex_id;
-  t.rough_tex_id = m.rough_tex_id;
-  t.metal_tex_id = m.metal_tex_id;
-  t.emission_tex_id = m.emission_tex_id;
-  t.occ_tex_id = m.occ_tex_id;
-  t.occlusion = m.occlusion;
-  t.opacity = m.opacity;
-  t.rough_ch = m.rough_ch;
-  t.metal_ch = m.metal_ch;
-  t.occ_ch = m.occ_ch;
-  return t;
-}
-
-// Inverse of CombineTriMat: pull the shading parameters out of a full TriInfo so
-// a curve BLAS can store one TriMat per material instead of replicating ~64 B of
-// material on every hair segment (the geometry p0/p1 stay per-segment; p2/n are
-// synthetic/recomputed). Mirrors the mesh TriStore + TriMat split.
-inline TriMat ExtractTriMat(const TriInfo &t) {
-  TriMat m;
-  m.base_color = t.base_color;
-  m.emission = t.emission;
-  m.roughness = t.roughness;
-  m.metallic = t.metallic;
-  m.tex_id = t.tex_id;
-  m.normal_tex_id = t.normal_tex_id;
-  m.rough_tex_id = t.rough_tex_id;
-  m.metal_tex_id = t.metal_tex_id;
-  m.emission_tex_id = t.emission_tex_id;
-  m.occ_tex_id = t.occ_tex_id;
-  m.occlusion = t.occlusion;
-  m.opacity = t.opacity;
-  m.rough_ch = t.rough_ch;
-  m.metal_ch = t.metal_ch;
-  m.occ_ch = t.occ_ch;
-  return m;
-}
-
-inline bool SameTriMat(const TriMat &a, const TriMat &b) {
-  return a.base_color.x == b.base_color.x && a.base_color.y == b.base_color.y &&
-         a.base_color.z == b.base_color.z && a.emission.x == b.emission.x &&
-         a.emission.y == b.emission.y && a.emission.z == b.emission.z &&
-         a.roughness == b.roughness && a.metallic == b.metallic &&
-         a.tex_id == b.tex_id && a.normal_tex_id == b.normal_tex_id &&
-         a.rough_tex_id == b.rough_tex_id && a.metal_tex_id == b.metal_tex_id &&
-         a.emission_tex_id == b.emission_tex_id && a.occ_tex_id == b.occ_tex_id &&
-         a.occlusion == b.occlusion && a.opacity == b.opacity &&
-         a.rough_ch == b.rough_ch && a.metal_ch == b.metal_ch &&
-         a.occ_ch == b.occ_ch;
-}
-
-// A scalar texture binding: texture index + source channel (UsdUVTexture
-// outputs:r/g/b/a; for ORM packing roughness=g, metallic=b in one texture).
-struct ScalarTex {
-  int32_t id{-1};
-  uint8_t ch{0};
-};
-
-// Budget-tracked, pooled vectors for the big render buffers (triangle positions,
-// TriInfo, UVs). All other vectors keep the default allocator.
-using FloatVec = std::vector<float, PoolAlloc<float>>;
-// Per-corner displayColor/Opacity stored as RGBA8 (12 B/tri vs 48 B as float):
-// the rendered difference is <=1/255 (1 LSB), well below output precision.
-using ByteVec = std::vector<uint8_t, PoolAlloc<uint8_t>>;
-using TriVec = std::vector<TriInfo, PoolAlloc<TriInfo>>;
-// Indexed geometry (Phase 2): unique vertex ids, 3 per triangle, into a BLAS's
-// uverts array. Lets the stream hand 1x unique verts + indices to the indexed
-// LightRT build instead of a 3x-expanded soup.
-using IdxVec = std::vector<uint32_t, PoolAlloc<uint32_t>>;
-using TriStoreVec = std::vector<TriStore, PoolAlloc<TriStore>>;
 
 // Decoded RGB(A) texture (8-bit) sampled by the diffuse texture pipeline.
 // UsdUVTexture wrap mode (inputs:wrapS / inputs:wrapT).
-enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
-struct Texture {
-  int width{0}, height{0}, channels{0};
-  std::vector<uint8_t> pixels;  // mip 0: width*height*channels, top-left
-  // Box-filtered mip chain (levels 1..N); level k halves the previous. Built on
-  // load so ray-differential LOD can avoid texture minification aliasing.
-  struct Mip {
-    int w, h;
-    std::vector<uint8_t> data;
-  };
-  std::vector<Mip> mips;
-  WrapMode wrap_s{WrapMode::Repeat};
-  WrapMode wrap_t{WrapMode::Repeat};
-  bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
-  // UsdUVTexture inputs:scale / inputs:bias (applied post-sample by the caller,
-  // e.g. (2,2,2)/(-1,-1,-1) to unpack a [0,1] normal map to [-1,1]).
-  Vec3 scale{1.0f, 1.0f, 1.0f};
-  Vec3 bias{0.0f, 0.0f, 0.0f};
-
-  static float ApplyWrap(float x, WrapMode m, bool *in_bounds) {
-    *in_bounds = true;
-    switch (m) {
-      case WrapMode::Repeat:
-        return x - std::floor(x);
-      case WrapMode::Clamp:
-        return std::min(1.0f, std::max(0.0f, x));
-      case WrapMode::Mirror: {
-        float t = std::fabs(x);
-        int k = int(std::floor(t));
-        float f = t - float(k);
-        return (k & 1) ? (1.0f - f) : f;
-      }
-      case WrapMode::Black:
-        if (x < 0.0f || x > 1.0f) *in_bounds = false;
-        return std::min(1.0f, std::max(0.0f, x));
-    }
-    return x - std::floor(x);
-  }
-  static float SrgbToLinear(float c) {
-    return c <= 0.04045f ? c / 12.92f
-                         : std::pow((c + 0.055f) / 1.055f, 2.4f);
-  }
-
-  // Box-filter mip 0 down to 1x1 (filtered in the stored space).
-  void build_mips() {
-    mips.clear();
-    int sw = width, sh = height;
-    const uint8_t *src = pixels.data();
-    while (sw > 1 || sh > 1) {
-      int dw = std::max(1, sw / 2), dh = std::max(1, sh / 2);
-      Mip m;
-      m.w = dw;
-      m.h = dh;
-      m.data.resize(size_t(dw) * size_t(dh) * size_t(channels));
-      for (int y = 0; y < dh; ++y) {
-        int y0 = std::min(2 * y, sh - 1), y1 = std::min(2 * y + 1, sh - 1);
-        for (int x = 0; x < dw; ++x) {
-          int x0 = std::min(2 * x, sw - 1), x1 = std::min(2 * x + 1, sw - 1);
-          for (int c = 0; c < channels; ++c) {
-            int s = src[(size_t(y0) * sw + x0) * channels + c] +
-                    src[(size_t(y0) * sw + x1) * channels + c] +
-                    src[(size_t(y1) * sw + x0) * channels + c] +
-                    src[(size_t(y1) * sw + x1) * channels + c];
-            m.data[(size_t(y) * dw + x) * channels + c] = uint8_t((s + 2) / 4);
-          }
-        }
-      }
-      mips.push_back(std::move(m));
-      sw = dw;
-      sh = dh;
-      src = mips.back().data.data();
-    }
-  }
-
-  // Bilinear lookup in a single level (raw, no sRGB), at pre-wrapped (wu,wv).
-  Vec3 bilinear_level(int lvl, float wu, float wv) const {
-    int w, h;
-    const uint8_t *d;
-    if (lvl <= 0 || mips.empty()) {
-      w = width;
-      h = height;
-      d = pixels.data();
-    } else {
-      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
-      w = m.w;
-      h = m.h;
-      d = m.data.data();
-    }
-    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> Vec3 {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(channels)];
-      return Vec3{float(p[0]) / 255.0f,
-                  float(channels > 1 ? p[1] : p[0]) / 255.0f,
-                  float(channels > 2 ? p[2] : p[0]) / 255.0f};
-    };
-    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
-      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t};
-    };
-    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
-  }
-
-  // Trilinear sample at mip level `lod` (lod<=0 = full res); wrap + sRGB applied.
-  // (USD UV origin is bottom-left, so v is flipped.)
-  Vec3 sample(float u, float v, float lod = 0.0f) const {
-    if (width <= 0 || height <= 0 || pixels.empty()) {
-      return Vec3{0.5f, 0.5f, 0.5f};
-    }
-    bool su = true, sv = true;
-    float wu = ApplyWrap(u, wrap_s, &su);
-    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
-    if (!su || !sv) return Vec3{0.0f, 0.0f, 0.0f};  // Black wrap, out of bounds
-    const float maxlvl = float(mips.size());
-    const float L = std::max(0.0f, std::min(lod, maxlvl));
-    const int l0 = int(std::floor(L));
-    const float f = L - float(l0);
-    Vec3 c = bilinear_level(l0, wu, wv);
-    if (f > 0.0f && float(l0) < maxlvl) {
-      Vec3 c1 = bilinear_level(l0 + 1, wu, wv);
-      c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
-               c.z + (c1.z - c.z) * f};
-    }
-    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
-    return c;
-  }
-
-  // Anisotropic sample: the UV footprint is a parallelogram whose axes are the
-  // per-screen-axis UV derivatives. Pick the mip from the MINOR axis (so the
-  // result stays sharp across the narrow direction) and average up to
-  // `max_aniso` trilinear taps stepped along the MAJOR axis (anti-aliasing the
-  // long direction). Reduces to plain trilinear when the footprint is isotropic.
-  Vec3 sample_aniso(float u, float v, float dudx, float dvdx, float dudy,
-                    float dvdy, int max_aniso) const {
-    const float W = float(width), H = float(height);
-    const float lx = std::sqrt(dudx * dudx * W * W + dvdx * dvdx * H * H);
-    const float ly = std::sqrt(dudy * dudy * W * W + dvdy * dvdy * H * H);
-    float Pmax, Pmin, mdu, mdv;  // major-axis length (texels) + UV step
-    if (lx >= ly) {
-      Pmax = lx; Pmin = ly; mdu = dudx; mdv = dvdx;
-    } else {
-      Pmax = ly; Pmin = lx; mdu = dudy; mdv = dvdy;
-    }
-    if (Pmax < 1.0e-8f) return sample(u, v, 0.0f);
-    int n = int(std::ceil(Pmax / std::max(Pmin, 1.0e-8f)));
-    n = std::min(std::max(n, 1), std::max(1, max_aniso));
-    const float lod = std::log2(std::max(Pmax / float(n), 1.0e-8f));
-    if (n <= 1) return sample(u, v, lod);
-    Vec3 acc{0.0f, 0.0f, 0.0f};
-    for (int i = 0; i < n; ++i) {
-      const float t = (float(i) + 0.5f) / float(n) - 0.5f;  // [-0.5, 0.5)
-      Vec3 s = sample(u + t * mdu, v + t * mdv, lod);
-      acc.x += s.x;
-      acc.y += s.y;
-      acc.z += s.z;
-    }
-    const float inv = 1.0f / float(n);
-    return Vec3{acc.x * inv, acc.y * inv, acc.z * inv};
-  }
-};
-
-// 2D UV transform (UsdTransform2d): out = Rotate(rotation) * (st * scale) +
-// translation. Baked into tri_uvs at build time (no per-hit cost).
-struct UvXform {
-  bool identity{true};
-  float rc{1.0f}, rs{0.0f};  // cos/sin(rotation)
-  float sx{1.0f}, sy{1.0f}, tx{0.0f}, ty{0.0f};
-  void apply(float *u, float *v) const {
-    if (identity) return;
-    float a = *u * sx, b = *v * sy;
-    *u = a * rc - b * rs + tx;
-    *v = a * rs + b * rc + ty;
-  }
-};
-
-struct PreviewLight {
-  enum class Kind { Point, Distant, Sphere, Rect, Disk, Cylinder, Mesh, Dome };
-  Kind kind{Kind::Point};
-  Vec3 position{0.0f, 0.0f, 0.0f};
-  Vec3 direction{0.0f, -1.0f, 0.0f};
-  Vec3 radiance{1.0f, 1.0f, 1.0f};
-  Vec3 normal{0.0f, 1.0f, 0.0f};
-  float radius{0.0f};
-  float width{1.0f};
-  float height{1.0f};
-  float area{0.0f};
-  float power{0.0f};
-  float cdf{0.0f};
-  int tri_id{-1};
-  int texture_id{-1};
-  std::string texture_file;
-};
-
-struct LightCache {
-  std::vector<PreviewLight> finite;
-  std::vector<PreviewLight> mesh;
-  std::vector<float> finite_cdf;
-  std::vector<float> mesh_cdf;
-  std::vector<float> env_cdf;
-  bool has_dome{false};
-  PreviewLight dome;
-  Vec3 env_color{0.0f, 0.0f, 0.0f};
-};
-
-struct EnvImage {
-  int width{0};
-  int height{0};
-  std::vector<Vec3> pixels;
-};
-
-struct IblCache {
-  bool valid{false};
-  EnvImage env;
-  EnvImage diffuse;
-  std::vector<EnvImage> prefiltered;
-  int brdf_size{0};
-  std::vector<float> brdf_lut;
-};
-
-struct CameraFrame {
-  Vec3 origin;
-  Vec3 right{1.0f, 0.0f, 0.0f};
-  Vec3 up{0.0f, 1.0f, 0.0f};
-  Vec3 forward{0.0f, 0.0f, -1.0f};
-  float yfov{45.0f * 3.14159265358979323846f / 180.0f};
-  float xmag{1.0f};
-  float ymag{1.0f};
-  float znear{0.001f};
-  float zfar{1.0e30f};
-  bool ortho{false};
-};
-
-struct Options {
-  std::string input;
-  std::string output;
-  std::string camera;
-  int width{960};
-  int height{0};
-  float fit_scale{1.8f};
-  Vec3 view_dir{0.0f, 0.0f, 0.0f};
-  bool has_view_dir{false};
-  uint32_t purpose_mask{kPurposeDefaultMask};
-  double timecode{tinyusdz::value::TimeCode::Default()};
-  int samples{1};
-  Vec3 bg{0.0f, 0.0f, 0.0f};
-  float ambient{0.05f};
-  bool shadows{true};
-  bool no_assetresolver{false};
-  bool stats{false};
-  bool direct_prims{true};
-  bool rt_preview{false};
-  bool legacy_load{false};  // use the legacy eager loader instead of `next`
-  bool smooth{false};       // interpolate authored normals (smooth shading)
-  bool progress{false};
-  lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
-  int threads{0};
-  int subdivision_level{0};
-  bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
-  std::string js_script;  // -js <file>: drive rendering from a JS script
-  bool mcp{false};        // -mcp: run an MCP stdio control server
-  std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
-  std::string frames;             // -frames FRAMESPEC: render an animation
-  bool default_time{false};       // -defaultTime: evaluate at the default time
-  double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
-  std::map<std::string, std::string> variant_overrides;  // --variant set=selection
-  bool vulkan{false};              // -vk: use Vulkan backend
-  bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
-  std::string env_file;            // --env <hdr>: IBL environment map override
-};
-
-float Dot(const Vec3 &a, const Vec3 &b) {
-  return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-Vec3 Cross(const Vec3 &a, const Vec3 &b) {
-  return Vec3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
-              a.x * b.y - a.y * b.x};
-}
-
-Vec3 Add(const Vec3 &a, const Vec3 &b) {
-  return Vec3{a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-Vec3 Sub(const Vec3 &a, const Vec3 &b) {
-  return Vec3{a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3 Mul(const Vec3 &a, float s) { return Vec3{a.x * s, a.y * s, a.z * s}; }
-
-Vec3 Mul(const Vec3 &a, const Vec3 &b) {
-  return Vec3{a.x * b.x, a.y * b.y, a.z * b.z};
-}
-
-Vec3 Div(const Vec3 &a, float s) {
-  if (std::abs(s) <= 1.0e-20f) return Vec3{0.0f, 0.0f, 0.0f};
-  return Vec3{a.x / s, a.y / s, a.z / s};
-}
-
-float Length(const Vec3 &v) { return std::sqrt(std::max(0.0f, Dot(v, v))); }
-
-float Luminance(const Vec3 &v) {
-  return 0.2126f * v.x + 0.7152f * v.y + 0.0722f * v.z;
-}
-
-Vec3 Normalize(const Vec3 &v) {
-  float len = Length(v);
-  if (len <= 1.0e-20f) {
-    return Vec3{0.0f, 0.0f, 0.0f};
-  }
-  return Mul(v, 1.0f / len);
-}
-
-Vec3 Clamp01(const Vec3 &v) {
-  return Vec3{std::max(0.0f, std::min(1.0f, v.x)),
-              std::max(0.0f, std::min(1.0f, v.y)),
-              std::max(0.0f, std::min(1.0f, v.z))};
-}
-
-Vec3 Lerp(const Vec3 &a, const Vec3 &b, float t) {
-  return Add(Mul(a, 1.0f - t), Mul(b, t));
-}
-
-Vec3 Reflect(const Vec3 &v, const Vec3 &n) {
-  return Sub(v, Mul(n, 2.0f * Dot(v, n)));
-}
-
-float ClampFloat(float v, float lo, float hi) {
-  return std::max(lo, std::min(hi, v));
-}
-
-Vec3 FromFloat3(const float3 &v) { return Vec3{v[0], v[1], v[2]}; }
-Vec3 FromPoint3(const tinyusdz::value::point3f &v) {
-  return Vec3{v[0], v[1], v[2]};
-}
-Vec3 FromVector3(const tinyusdz::value::vector3f &v) {
-  return Vec3{v[0], v[1], v[2]};
-}
-
-Vec3 TransformPoint(const matrix4d &m, const Vec3 &p) {
-  double x = m.m[0][0] * double(p.x) + m.m[1][0] * double(p.y) +
-             m.m[2][0] * double(p.z) + m.m[3][0];
-  double y = m.m[0][1] * double(p.x) + m.m[1][1] * double(p.y) +
-             m.m[2][1] * double(p.z) + m.m[3][1];
-  double z = m.m[0][2] * double(p.x) + m.m[1][2] * double(p.y) +
-             m.m[2][2] * double(p.z) + m.m[3][2];
-  double w = m.m[0][3] * double(p.x) + m.m[1][3] * double(p.y) +
-             m.m[2][3] * double(p.z) + m.m[3][3];
-  if (std::abs(w) > 1.0e-20) {
-    x /= w;
-    y /= w;
-    z /= w;
-  }
-  return Vec3{float(x), float(y), float(z)};
-}
-
-Vec3 TransformVector(const matrix4d &m, const Vec3 &v) {
-  return Vec3{
-      float(m.m[0][0] * double(v.x) + m.m[1][0] * double(v.y) +
-            m.m[2][0] * double(v.z)),
-      float(m.m[0][1] * double(v.x) + m.m[1][1] * double(v.y) +
-            m.m[2][1] * double(v.z)),
-      float(m.m[0][2] * double(v.x) + m.m[1][2] * double(v.y) +
-            m.m[2][2] * double(v.z))};
-}
-
-void Expand(Bounds *b, const Vec3 &p) {
-  if (!b) return;
-  b->lo.x = std::min(b->lo.x, p.x);
-  b->lo.y = std::min(b->lo.y, p.y);
-  b->lo.z = std::min(b->lo.z, p.z);
-  b->hi.x = std::max(b->hi.x, p.x);
-  b->hi.y = std::max(b->hi.y, p.y);
-  b->hi.z = std::max(b->hi.z, p.z);
-  b->valid = true;
-}
 
 bool ParseIntStrict(const std::string &s, int *out) {
   if (!out || s.empty()) return false;
@@ -1340,54 +588,6 @@ Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
   return result;
 }
 
-struct DirectShape {
-  enum class Type { Cylinder, Cone, Capsule };
-  Type type{Type::Cylinder};
-  matrix4d world{matrix4d::identity()};
-  matrix4d inv_world{matrix4d::identity()};
-  double radius{1.0};
-  double height{2.0};
-  tinyusdz::Axis axis{tinyusdz::Axis::Z};
-  Vec3 base_color{0.18f, 0.18f, 0.18f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-};
-
-struct DirectHit {
-  float t{std::numeric_limits<float>::max()};
-  Vec3 n{0.0f, 1.0f, 0.0f};
-  Vec3 base_color{0.18f, 0.18f, 0.18f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-  bool hit{false};
-};
-
-struct TetPrim {
-  Vec3 p[4];
-  Vec3 base_color{0.56f, 0.36f, 0.64f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-};
-
-struct DirectScene {
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> spheres{nullptr,
-                                                                    lrt_tri_scene_free};
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> round_curves{nullptr,
-                                                                        lrt_tri_scene_free};
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> flat_curves{nullptr,
-                                                                       lrt_tri_scene_free};
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> points{nullptr,
-                                                                   lrt_tri_scene_free};
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> bez_curves{nullptr,
-                                                                       lrt_tri_scene_free};
-  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> tets{nullptr,
-                                                                 lrt_tri_scene_free};
-  std::vector<TriInfo> sphere_info;
-  std::vector<TriInfo> round_curve_info;
-  std::vector<TriInfo> flat_curve_info;
-  std::vector<TriInfo> bez_curve_info;
-  std::vector<TriInfo> point_info;
-  std::vector<TetPrim> tet_prims;
-  std::vector<DirectShape> shapes;
-  std::unordered_set<std::string> direct_paths;
-};
 
 bool BuildNodeMatrixMap(const Node &node,
                         std::unordered_map<std::string, matrix4d> *map) {
@@ -1826,42 +1026,6 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
   }
 }
 
-struct RTPreviewStats {
-  struct MeshGeometry {
-    std::vector<float> positions;
-    std::vector<float> normals;
-    std::vector<float> uvs;
-    std::vector<uint32_t> indices;
-  };
-  size_t meshes{0};
-  size_t meshes_with_mmap_points{0};
-  size_t meshes_with_owned_points{0};
-  size_t skipped_meshes{0};
-  size_t triangles{0};
-  uint64_t mmap_deferred_bytes{0};
-  uint64_t copied_point_bytes{0};
-  uint64_t copied_topology_bytes{0};
-  uint64_t packed_triangle_bytes{0};
-  uint64_t purpose_default_triangles{0};
-  uint64_t purpose_render_triangles{0};
-  uint64_t purpose_proxy_triangles{0};
-  uint64_t purpose_guide_triangles{0};
-  size_t point_instancers{0};  // UsdGeomPointInstancer prims expanded
-  size_t point_instances{0};   // visible instances they emitted (TLAS placements)
-  size_t nested_instances{0};  // extra placements from flattening nested instancing
-  size_t curve_strands{0};     // top-level BasisCurves/NurbsCurves prims
-  size_t curve_instances{0};   // instanced curve-prototype placements (TLAS)
-  double build_seconds{0.0};
-};
-
-template <typename T>
-struct BorrowedArrayView {
-  const T *data{nullptr};
-  const uint8_t *bytes{nullptr};
-  size_t count{0};
-  bool mmap{false};
-  std::vector<T> owned;
-};
 
 template <typename T>
 bool BorrowMMapArray(const tinyusdz::Stage &stage, const std::string &prim_path,
@@ -2160,12 +1324,6 @@ bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path
 
 // A single mesh-extraction work item produced by the (serial) tree walk and
 // consumed by the parallel mesh-stream workers.
-struct MeshJob {
-  const tinyusdz::GeomMesh *mesh{nullptr};
-  matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
-  std::string prim_path;
-};
 
 // Serial: resolve world matrices / purpose (parent-dependent) and flatten the
 // renderable GeomMesh prims into `jobs`. The per-triangle work happens later in
@@ -3504,10 +2662,6 @@ void CollectLights(const RenderScene &scene, LightCache *cache) {
   AppendPowerCdf(&cache->mesh, &cache->mesh_cdf);
 }
 
-struct PurposeFilter {
-  const std::vector<TriInfo> *tris{nullptr};
-  uint32_t mask{kPurposeDefaultMask};
-};
 
 int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
   const PurposeFilter *filter = reinterpret_cast<const PurposeFilter *>(user);
@@ -3687,63 +2841,6 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
 // scene's) geometry in its OWN local space, with the parallel per-triangle
 // attributes. Instanced via a TLAS; the prototype geometry is stored once
 // regardless of how many times it is placed.
-struct Blas {
-  FloatVec vertices;  // packed local-space triangle positions (soup; empty when indexed)
-  // Indexed geometry (Phase 2b): when `indices` is non-empty the BLAS streamed
-  // 1x unique verts (uverts, 3 floats each) + 3 indices/tri and is built via
-  // lrt_tri_scene_build_indexed. `vertices` (soup) stays empty in that case.
-  // Both are freed after the BVH build (positions live in the de-indexed leaf).
-  FloatVec uverts;
-  IdxVec indices;
-  TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
-  std::vector<TriMat> mat_table;  // one entry per source mesh-job
-  FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
-  ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
-  // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
-  // for cache-coherent hit reads -- adjacent leaf triangles -> adjacent entries.
-  // When non-empty, tri_colors is freed and the hit indexes this by lrt_tri_get_slot.
-  ByteVec tri_colors_slot;
-  FloatVec tri_normals; // 9 floats/tri (per-corner authored normals) or empty
-  // Curve BLAS (is_curve): the scene is a LightRT round-hair scene. Per segment
-  // we keep only the local-space endpoints (curve_seg, 6 floats: p0 p1) + a
-  // material id into mat_table (curve_seg_mat) -- the material is shared by all of
-  // a curve job's segments, so storing one TriMat instead of a 120 B TriInfo per
-  // segment cuts a 3M-segment hair BLAS ~360 -> ~84 MB. p2 (a normal helper) is
-  // synthetic (p0 + +Y) and the geometric normal is recomputed at hit, matching
-  // the old full-TriInfo path byte-for-byte.
-  bool is_curve{false};
-  std::vector<float> curve_seg;         // 6 floats/segment: p0.xyz p1.xyz
-  std::vector<uint32_t> curve_seg_mat;  // mat_id into mat_table, per segment
-  lrt_tri_scene *scene{nullptr};
-
-  Blas() = default;
-  Blas(Blas &&o) noexcept { *this = std::move(o); }
-  Blas &operator=(Blas &&o) noexcept {
-    if (this != &o) {
-      vertices = std::move(o.vertices);
-      uverts = std::move(o.uverts);
-      indices = std::move(o.indices);
-      tris = std::move(o.tris);
-      mat_table = std::move(o.mat_table);
-      tri_uvs = std::move(o.tri_uvs);
-      tri_colors = std::move(o.tri_colors);
-      tri_colors_slot = std::move(o.tri_colors_slot);
-      tri_normals = std::move(o.tri_normals);
-      is_curve = o.is_curve;
-      curve_seg = std::move(o.curve_seg);
-      curve_seg_mat = std::move(o.curve_seg_mat);
-      if (scene) lrt_tri_scene_free(scene);
-      scene = o.scene;
-      o.scene = nullptr;
-    }
-    return *this;
-  }
-  Blas(const Blas &) = delete;
-  Blas &operator=(const Blas &) = delete;
-  ~Blas() {
-    if (scene) lrt_tri_scene_free(scene);
-  }
-};
 
 // 3x4 row-major object->world for LightRT (p' = L*p + t), derived from a
 // row-vector matrix4d so it matches TransformPoint(m, p) exactly.
@@ -3797,10 +2894,6 @@ inline void Compose3x4(const float outer[12], const float inner[12],
 // One placement of a BLAS, stored as a compact 3x4 float object->world (48 B vs a
 // 128 B matrix4d) — instance arrays dominate footprint on heavily-instanced
 // scenes (e.g. Island's 22 M instances). instances[0] is the base at identity.
-struct InstanceRT {
-  uint32_t blas_id{0};
-  float o2w[12]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-};
 
 // Resolve a primary TLAS hit into a world-space TriInfo (positions transformed,
 // normal recomputed, diffuse texture sampled). Returns false if the hit indices
@@ -3853,11 +2946,6 @@ inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
 
 // Per-pixel ray differential: the camera rays for the +1 pixel neighbors in
 // screen x and y (origin + direction each, to cover both pinhole and ortho).
-struct RayDiff {
-  Vec3 ox, dx;  // ray for pixel (x+1, y)
-  Vec3 oy, dy;  // ray for pixel (x, y+1)
-  bool valid{false};
-};
 
 // Barycentric (e1,e2 coords) of point Q on triangle p0,p1,p2 -> interpolated UV.
 inline void TriPointUV(const Vec3 &Q, const Vec3 &p0, const Vec3 &e1,
@@ -4366,17 +3454,6 @@ void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
 // volume (the surface color is treated as the background behind the whole
 // volume). Good for isolated volumes; refine later.
 // ===========================================================================
-struct VolumeData {
-  std::vector<float> density;  // dense grid, x-contiguous
-  int dim[3] = {0, 0, 0};
-  Vec3 bmin{0.0f, 0.0f, 0.0f};  // object-space AABB
-  Vec3 bmax{0.0f, 0.0f, 0.0f};
-  matrix4d inv_world{matrix4d::identity()};  // world -> object
-  float density_scale = 1.0f;
-  Vec3 albedo{0.6f, 0.6f, 0.65f};
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-  float background = 0.0f;
-};
 
 std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
   std::vector<VolumeData> out;
@@ -5006,25 +4083,6 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   }
 }
 
-struct MeshJobNext {
-  tinyusdz::next::UsdPrim prim;
-  matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
-  Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
-  int32_t tex_id{-1};                    // resolved diffuse texture, or -1
-  float roughness{0.55f};                // resolved inputs:roughness
-  float metallic{0.0f};                  // resolved inputs:metallic
-  int32_t normal_tex_id{-1};             // resolved tangent-space normal map
-  ScalarTex rough_tex;                   // roughness texture + channel
-  ScalarTex metal_tex;                   // metallic texture + channel
-  Vec3 emission{0.0f, 0.0f, 0.0f};       // resolved inputs:emissiveColor
-  int32_t emission_tex_id{-1};           // emissive color texture
-  float occlusion{1.0f};                 // resolved inputs:occlusion
-  ScalarTex occ_tex;                     // occlusion texture + channel
-  UvXform uv_xform;                      // UsdTransform2d on the st chain
-  float opacity{1.0f};                   // resolved primvars:displayOpacity
-  bool vertex_color{false};              // displayColor/Opacity is per-vertex
-};
 
 // ---------------------------------------------------------------------------
 // Material/texture resolution for the `next` render path.
@@ -5046,12 +4104,6 @@ std::string DirName(const std::string &path) {
 // Loaded RGB(A) textures + a key->index cache so each (file, wrap, colorspace)
 // loads once. `usdz`, when set, is searched first so textures packed inside a
 // .usdz archive resolve without touching the filesystem.
-struct TextureCache {
-  std::vector<Texture> *textures{nullptr};
-  std::unordered_map<std::string, int32_t> by_key;
-  std::string base_dir;  // directory of the input file, for relative paths
-  const tinyusdz::next::USDZReader *usdz{nullptr};
-};
 
 // True if a usdz entry name refers to the same asset as `asset_path` (which may
 // be relative, "./tex.png", or "tex.png"). Matches on full path or basename.
@@ -5383,22 +4435,6 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
 // with many meshes sharing few materials (e.g. Island's 605k coral meshes over a
 // handful of coral materials) resolves each material — and its shader-graph walk
 // + texture lookups — exactly once instead of per mesh.
-struct ResolvedMat {
-  Vec3 base_color{0.55f, 0.55f, 0.55f};
-  int32_t tex_id{-1};
-  float roughness{0.55f};
-  float metallic{0.0f};
-  int32_t normal_tex_id{-1};
-  UvXform uv_xform;
-  ScalarTex rough_tex;
-  ScalarTex metal_tex;
-  Vec3 emission{0.0f, 0.0f, 0.0f};
-  int32_t emission_tex_id{-1};
-  float occlusion{1.0f};
-  ScalarTex occ_tex;
-  float opacity{1.0f};
-  bool vertex_color{false};
-};
 
 // Resolve a mesh job's material with per-material memoization. The result is a
 // pure function of the bound material (+ shared texture cache), so a cache hit
@@ -5799,50 +4835,6 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
 // built BVH are kept alive so the camera/render parameters can be changed and
 // the scene re-rendered repeatedly without re-parsing or rebuilding the BVH
 // (memory-persistent rendering, e.g. animation with a moving camera).
-struct RenderContext {
-  tinyusdz::next::Stage stage;  // keeps the lazy point/index arrays alive
-  // Flat (no-instance) path buffers: default allocator so the shared
-  // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced
-  // geometry lives in the budget-tracked Blas buffers below.
-  std::vector<float> vertices;  // packed triangle positions (flat-path BVH input)
-  std::vector<TriInfo> tris;
-  std::vector<Texture> textures;  // diffuse textures referenced by tris[].tex_id
-  std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
-  ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
-  std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
-  std::vector<VolumeData> volumes;  // UsdVol volumes (OpenVDB) for raymarching
-  Bounds bounds;
-  RTPreviewStats stats;
-  lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
-  // Two-level (instanced) BVH path: built when the composed scene has native
-  // instances. blas[0] is the base (non-instanced) geometry; blas[1..] are the
-  // unique prototypes. instances[] place them; tlas is the top-level BVH.
-  std::vector<Blas> blas;
-  std::vector<InstanceRT> instances;
-  lrt_tlas *tlas{nullptr};
-  bool use_tlas{false};
-  DirectScene direct;             // empty for the next path
-  LightCache lights;              // empty -> camera-headlight fallback
-  IblCache ibl;                   // image-based lighting (--env / DomeLight)
-  tinyusdz::Axis up_axis{tinyusdz::Axis::Y};
-  CameraFrame camera;
-  Options opt;  // mutable render parameters (width/height/ambient/bg/...)
-  int width{960};
-  int height{540};
-  // Time at which geometry + transforms are evaluated (NaN = default value).
-  double frame_time{std::numeric_limits<double>::quiet_NaN()};
-  double load_seconds{0.0}, stream_seconds{0.0}, bvh_seconds{0.0};
-
-  // Free the TLAS before the BLAS scenes it references (blas[] destructs after
-  // this body runs).
-  ~RenderContext() {
-    if (tlas) lrt_tlas_free(tlas);
-    if (scene) lrt_tri_scene_free(scene);
-  }
-  RenderContext() = default;
-  RenderContext(const RenderContext &) = delete;
-  RenderContext &operator=(const RenderContext &) = delete;
-};
 
 // Resolve the camera (named / autoframe / auto-fit) into ctx.camera and the
 // image height into ctx.height, from the current ctx.opt + ctx.bounds.
@@ -5883,37 +4875,11 @@ void ResolveCameraNext(RenderContext &ctx) {
 // Prototype BLAS to build: the holder prim's path + the inherited purpose
 // context it was instanced under (part of the dedup key, so instances under a
 // guide ancestor get a separate, purpose-culled BLAS).
-struct ProtoBuildReq {
-  std::string path;
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
-  uint32_t blas_id{0};  // index into RenderContext::blas
-};
 
 // A curve prim (UsdGeomBasisCurves / NurbsCurves) to ray-trace as hair strands
 // in the next path. `world` is the world transform; the linear-strand geometry is
 // built into the RenderContext's DirectScene (shared by the flat and TLAS render
 // paths) — see BuildNextCurves.
-struct CurveJobNext {
-  tinyusdz::next::UsdPrim prim;
-  matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
-};
-
-// One placement of a curve prototype's curve BLAS (deduped curve geometry stored
-// once and instanced through the TLAS, like mesh prototypes).
-struct CurveInstanceRT {
-  uint32_t curve_proto_idx{0};  // index into CurveProtoCollect::protos
-  float o2w[12]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-};
-
-// Curve prototypes referenced by PointInstancers + their placements, so a
-// heavily-instanced curve prototype stores its hair geometry once (a curve BLAS)
-// instead of baking world-space copies per instance.
-struct CurveProtoCollect {
-  std::vector<ProtoBuildReq> protos;             // curve prototype paths
-  std::unordered_map<std::string, uint32_t> ids;  // dedup key -> protos index
-  std::vector<CurveInstanceRT> instances;
-};
 
 bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
   const std::string &t = prim.GetTypeName();
