@@ -385,7 +385,8 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   }
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
-                        lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0);
+                        lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
+                        lt.opacity_tex_id >= 0);
   if (has_tex && textures && !b.tri_uvs.empty()) {
     const size_t base = size_t(th.prim_id) * 6;
     if (base + 5 < b.tri_uvs.size()) {
@@ -435,6 +436,11 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                                   scalar_lod((*textures)[size_t(lt.occ_tex_id)]));
         if (o >= 0.0f) out->occlusion = o;
       }
+      if (lt.opacity_tex_id >= 0) {
+        float a = SampleScalarTex(*textures, lt.opacity_tex_id, lt.opacity_ch, u,
+                                  v, scalar_lod((*textures)[size_t(lt.opacity_tex_id)]));
+        if (a >= 0.0f) out->opacity *= a;
+      }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
         const Texture &nt = (*textures)[size_t(lt.normal_tex_id)];
@@ -444,6 +450,11 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
       }
     }
   }
+  // inputs:opacityThreshold > 0: alpha cutout. The (textured) opacity becomes a
+  // binary mask -- below threshold is fully transparent, at/above fully opaque --
+  // rather than translucent blending.
+  if (out->opacity_threshold > 0.0f)
+    out->opacity = (out->opacity < out->opacity_threshold) ? 0.0f : 1.0f;
   return true;
 }
 
@@ -511,7 +522,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
            hit_tri.rough_tex_id >= 0 || hit_tri.metal_tex_id >= 0 ||
-           hit_tri.emission_tex_id >= 0 || hit_tri.occ_tex_id >= 0) &&
+           hit_tri.emission_tex_id >= 0 || hit_tri.occ_tex_id >= 0 ||
+           hit_tri.opacity_tex_id >= 0) &&
           textures && tri_uvs) {
         const size_t base = size_t(hit.prim_id) * 6;
         if (base + 5 < tri_uvs->size()) {
@@ -568,6 +580,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                 scalar_lod((*textures)[size_t(hit_tri.occ_tex_id)]));
             if (o >= 0.0f) hit_tri.occlusion = o;
           }
+          if (hit_tri.opacity_tex_id >= 0) {
+            float a = SampleScalarTex(
+                *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
+                scalar_lod((*textures)[size_t(hit_tri.opacity_tex_id)]));
+            if (a >= 0.0f) hit_tri.opacity *= a;
+          }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
             const Texture &nt = (*textures)[size_t(hit_tri.normal_tex_id)];
@@ -578,6 +596,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           }
         }
       }
+      // inputs:opacityThreshold > 0: alpha cutout (binary mask, not blending).
+      if (hit_tri.opacity_threshold > 0.0f)
+        hit_tri.opacity =
+            (hit_tri.opacity < hit_tri.opacity_threshold) ? 0.0f : 1.0f;
       tri_t = hit.t;
       tri_hit = true;
     }
