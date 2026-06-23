@@ -288,4 +288,219 @@ bool RunVulkanLightRT(const Options &opt,
                               const CameraFrame &camera, int height);
 #endif
 
+// ---- tusdr_next.cc (next loader + driver) ----
+unsigned WorkerThreadCount(int requested);
+bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
+CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
+                            const Bounds &bounds, int height,
+                            tinyusdz::Axis up_axis);
+matrix4d Mat4FromArray(const double d[16]);
+uint32_t PurposeBit(tinyusdz::Purpose purpose);
+
+std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name, double time);
+
+std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name, double time);
+
+std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                        const char *name, double time);
+
+std::string DirName(const std::string &path);
+
+bool UsdzEntryMatches(const std::string &entry, const std::string &asset);
+
+
+tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
+                                          const tinyusdz::next::UsdPrim &prim,
+                                          const std::string &prop);
+
+WrapMode ParseWrapMode(const std::string &s);
+
+void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
+                              const tinyusdz::next::UsdPrim &surf,
+                              const std::string &input, TextureCache &tc,
+                              ScalarTex *out);
+
+UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &uvtex);
+
+void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
+                             const tinyusdz::next::UsdPrim &mesh,
+                             TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
+                             float *roughness, float *metallic,
+                             int32_t *normal_tex_id, UvXform *uv_xform,
+                             ScalarTex *rough_tex, ScalarTex *metal_tex,
+                             Vec3 *emission, int32_t *emission_tex_id,
+                             float *occlusion, ScalarTex *occ_tex,
+                             float *opacity = nullptr,
+                             bool *vertex_color = nullptr);
+
+void ResolveMeshMaterialCached(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
+    TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
+    MeshJobNext *job);
+
+bool PathMatchesMask(const std::string &path,
+                     const std::vector<std::string> &mask);
+
+bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim);
+
+bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim);
+
+bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
+                             const std::vector<std::string> &mask,
+                             bool ancestor_xform_animated);
+
+bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
+                           const std::vector<std::string> &mask);
+
+void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
+                                const tinyusdz::next::UsdPrim &prim,
+                                const matrix4d &parent_world,
+                                tinyusdz::Purpose inherited_purpose, double time,
+                                const std::vector<std::string> &mask,
+                                std::vector<MeshJobNext> *jobs);
+
+void CollectVolumesNext(const tinyusdz::next::Stage &stage,
+                        const tinyusdz::next::UsdPrim &prim,
+                        const matrix4d &parent_world, double time,
+                        const std::string &baseDir,
+                        std::vector<VolumeData> *out);
+
+float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       float fallback);
+
+bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
+                                  const tinyusdz::next::UsdPrim &prim,
+                                  const matrix4d &parent_world,
+                                  const std::string &query, double time,
+                                  CameraFrame *frame, float *aspect);
+
+bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
+                         const std::string &query, double time,
+                         CameraFrame *frame, float *aspect);
+
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
+                                int width, int *out_height);
+
+bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim);
+
+std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
+    const tinyusdz::next::UsdPrim &prim, double time);
+
+bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
+                     double time);
+
+matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
+                     const float *scale3);
+
+void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
+                          const matrix4d &parent_world,
+                          tinyusdz::Purpose inherited_purpose, double time,
+                          std::vector<CurveJobNext> *out);
+
+void CollectProtoCurves(const tinyusdz::next::Stage &stage,
+                        const std::string &proto_path,
+                        tinyusdz::Purpose start_purpose, double time,
+                        std::vector<CurveJobNext> *out);
+
+int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
+                          const std::string &proto_path,
+                          tinyusdz::Purpose purpose, double time,
+                          CurveProtoCollect *curve_inst);
+
+void CollectPointInstancer(const tinyusdz::next::Stage &stage,
+                           const tinyusdz::next::UsdPrim &instancer,
+                           const matrix4d &instancer_world,
+                           tinyusdz::Purpose purpose, double time,
+                           const std::vector<std::string> &mask,
+                           std::vector<InstanceRT> *instances,
+                           std::unordered_map<std::string, uint32_t> *proto_ids,
+                           std::vector<ProtoBuildReq> *protos,
+                           CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                           // When set, curve placements go here (in `instancer_world`
+                           // space) instead of curve_inst->instances -- used to
+                           // capture a NESTED instancer's curve placements per
+                           // prototype for later flattening. Curve prototypes are
+                           // still deduped into curve_inst.
+                           std::vector<CurveInstanceRT> *curve_out = nullptr);
+
+void CollectSceneSplit(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &prim,
+                       const matrix4d &parent_world,
+                       tinyusdz::Purpose inherited_purpose, double time,
+                       const std::vector<std::string> &mask,
+                       std::vector<MeshJobNext> *base_jobs,
+                       std::vector<InstanceRT> *instances,
+                       std::unordered_map<std::string, uint32_t> *proto_ids,
+                       std::vector<ProtoBuildReq> *protos,
+                       std::vector<CurveJobNext> *curve_jobs,
+                       CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                       const std::unordered_set<std::string> *proto_holders);
+
+void CollectProtoMeshNestingRec(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
+    const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
+    const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
+    std::vector<CurveInstanceRT> *nested_curves,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
+    RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders);
+
+void CollectProtoMeshNesting(
+    const tinyusdz::next::Stage &stage, const std::string &proto_path,
+    tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
+    std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
+    RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders);
+
+void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
+                           std::unordered_set<std::string> *out);
+
+void CollectProtoJobs(const tinyusdz::next::Stage &stage,
+                      const std::string &proto_path,
+                      tinyusdz::Purpose start_purpose, double time,
+                      std::vector<MeshJobNext> *jobs);
+
+inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
+                                 double time);
+
+void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
+                                  const float o2w[12]);
+
+void CollectLightsNext(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &prim,
+                       const matrix4d &parent_world, double time,
+                       LightCache *cache);
+
+tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim);
+
+bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
+                  const std::string &base_dir, IblCache *ibl);
+
+bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
+
+std::string SubstituteFrame(const std::string &path, long frame);
+
+int RunRTPreviewNext(const Options &opt);
+
+// ---- shared helpers (defined in tusdrender.cc) ----
+void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
+                              const std::vector<int> &counts,
+                              const std::vector<float> &widths,
+                              const matrix4d &world,
+                              std::vector<float> *curve_points,
+                              std::vector<float> *curve_radii,
+                              std::vector<uint32_t> *first,
+                              std::vector<uint32_t> *count,
+                              std::vector<TriInfo> *info,
+                              Bounds *bounds);
+void MergeStats(RTPreviewStats *dst, const RTPreviewStats &src);
+void MergeBounds(Bounds *dst, const Bounds &src);
+inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
+
 }  // namespace tusdr
