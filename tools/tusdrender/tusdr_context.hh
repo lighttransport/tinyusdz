@@ -281,4 +281,11 @@ int RunJSScriptMode(const Options &opt, const std::string &script_path);
 int RunMCPMode(const Options &opt);
 #endif
 
+#ifdef HAVE_VULKAN
+bool RunVulkanLightRT(const Options &opt,
+                              const std::vector<Vec3> &base_colors,
+                              const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                              const CameraFrame &camera, int height);
+#endif
+
 }  // namespace tusdr
