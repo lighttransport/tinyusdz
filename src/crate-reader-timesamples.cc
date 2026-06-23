@@ -1372,17 +1372,29 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
   return true;                                                                 \
 }
 
-/* Decode 48-bit inline payload into the target int type.
- * INT64: sign-extend bit 47 to int64_t. UINT64: zero-extend.
+/* Decode inline ValueRep payload (already masked to 48 bits) into the target
+ * int type. Must match the scalar decoder in crate-reader-values.cc: OpenUSD
+ * (and TinyUSDZ's own writer) inline an int64 as an exact int32 payload, so the
+ * common case is a 32-bit value that needs sign-extension from bit 31 — NOT
+ * bit 47. Older TinyUSDZ files used the full 48-bit payload; keep that as a
+ * fallback when bits 32-47 are non-zero.
  */
 static inline int64_t int64_inline_decode_INT64(uint64_t p) {
+  if ((p >> 32) == 0) {
+    /* OpenUSD/TinyUSDZ inline int64 as an exact int32 representation. */
+    int32_t rep32 = 0;
+    uint32_t payload32 = static_cast<uint32_t>(p);
+    memcpy(&rep32, &payload32, sizeof(rep32));
+    return static_cast<int64_t>(rep32);
+  }
   if (p & (1ull << 47)) {
+    /* Legacy TinyUSDZ inline payload: sign-extend from bit 47. */
     return static_cast<int64_t>(p | (~((1ull << 48) - 1)));
   }
   return static_cast<int64_t>(p);
 }
 static inline uint64_t int64_inline_decode_UINT64(uint64_t p) {
-  return p;  /* already masked to 48 bits */
+  return p;  /* already masked to 48 bits; OpenUSD's 32-bit form is a subset */
 }
 #define INT64_INLINE_DECODE_INT64(p)  int64_inline_decode_INT64(p)
 #define INT64_INLINE_DECODE_UINT64(p) int64_inline_decode_UINT64(p)
