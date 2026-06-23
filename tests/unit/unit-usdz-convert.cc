@@ -78,12 +78,17 @@ std::string TempDir() {
 }
 
 std::string TestFixturePath(const std::string &rel) {
-  if (tinyusdz::io::FileExists(rel)) {
-    return rel;
-  }
-  const std::string parent = tinyusdz::io::JoinPath("..", rel);
-  if (tinyusdz::io::FileExists(parent)) {
-    return parent;
+  // ctest sets WORKING_DIRECTORY to the test executable's directory, whose depth
+  // below the repo root varies by platform/generator: build/ for single-config
+  // Makefile/Ninja, but build/<Config>/ or build/tests/unit/<Config>/ for MSVC
+  // multi-config. Walk up several parent levels until the fixture resolves so
+  // the same relative path works everywhere.
+  std::string candidate = rel;
+  for (int depth = 0; depth < 8; ++depth) {
+    if (tinyusdz::io::FileExists(candidate)) {
+      return candidate;
+    }
+    candidate = tinyusdz::io::JoinPath("..", candidate);
   }
   return rel;
 }
