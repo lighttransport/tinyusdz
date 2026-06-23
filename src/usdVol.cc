@@ -21,6 +21,10 @@
 #pragma clang diagnostic ignored "-Wunused-private-field"
 #endif
 #define TINYVDBIO_IMPLEMENTATION
+// Point tinyvdb at this repo's vendored miniz / LZ4 / zstd copies.
+#define TINYVDBIO_MINIZ_INCLUDE "../miniz.h"
+#define TINYVDBIO_LZ4_INCLUDE "../../lz4/lz4.h"
+#define TINYVDBIO_ZSTD_INCLUDE "../zstd.h"
 #include "external/tinyvdb/tinyvdbio.h"
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop

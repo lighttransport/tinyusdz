@@ -48,6 +48,24 @@ else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# tydra_next uses no C++ RTTI and no C++ exceptions; disable both. The
+# TINYUSDZ_CXX_RTTI / _EXCEPTIONS variables are inherited from the parent project
+# when built as a subdirectory (undefined -> disabled when built standalone).
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+endif()
+
 # Optional: Build test
 option(TYDRA_NEXT_BUILD_TESTS "Build tests for Tydra Next" OFF)
 

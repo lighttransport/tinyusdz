@@ -173,6 +173,13 @@ option(TINYUSDZ_CXX_EXCEPTIONS
        "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
+# tinyusdz (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
+# disable it by default. This both shrinks the binary and enforces that no RTTI
+# creeps in.
+option(TINYUSDZ_CXX_RTTI
+       "Enable/Disable C++ RTTI (default: Off; tinyusdz uses no RTTI)"
+       Off)
+
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
 option(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT
@@ -1820,6 +1827,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
       target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
     else()
       target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
+    endif()
+  endif()
+
+  if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+      # -fno-rtti is a C++-only flag; scope it so the vendored C sources
+      # (lz4.c / miniz.c / zstd.c) do not warn.
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     endif()
   endif()
 

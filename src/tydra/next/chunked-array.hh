@@ -13,8 +13,9 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 #include <vector>
 #include <memory>
 
@@ -132,13 +133,23 @@ class ChunkedArray {
     return chunks_[chunk_idx][offset];
   }
 
+  // Bounds-checked access. Built with -fno-exceptions, so an out-of-range index
+  // is a fatal programming error: report and abort rather than throw.
   T& at(size_t idx) {
-    if (idx >= size_) throw std::out_of_range("ChunkedArray::at");
+    if (idx >= size_) {
+      std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",
+                   idx, size_);
+      std::abort();
+    }
     return (*this)[idx];
   }
 
   const T& at(size_t idx) const {
-    if (idx >= size_) throw std::out_of_range("ChunkedArray::at");
+    if (idx >= size_) {
+      std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",
+                   idx, size_);
+      std::abort();
+    }
     return (*this)[idx];
   }
 
