@@ -14,8 +14,9 @@ struct RenderContext {
   // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced
   // geometry lives in the budget-tracked Blas buffers below.
   std::vector<float> vertices;  // packed triangle positions (flat-path BVH input)
-  std::vector<TriInfo> tris;
-  std::vector<Texture> textures;  // diffuse textures referenced by tris[].tex_id
+  std::vector<FlatTri> tris;    // slim per-triangle: geometry + purpose + mat_id
+  std::vector<TriMat> flat_mats;  // flat-path material table (one per mesh-job)
+  std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
@@ -190,11 +191,11 @@ unsigned WorkerThreadCount(int requested);
 int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float);
 
 bool IntersectVisibleTriangles(lrt_tri_scene *scene,
-                               const std::vector<TriInfo> &tris,
+                               const std::vector<FlatTri> &tris,
                                const lrt_ray &ray, uint32_t purpose_mask,
                                lrt_hit *hit);
 
-bool Occluded(lrt_tri_scene *scene, const std::vector<TriInfo> &tris,
+bool Occluded(lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
               const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
               const DirectScene *direct, uint32_t purpose_mask);
 
@@ -225,7 +226,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out);
 
 Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
-           const std::vector<TriInfo> &tris,
+           const std::vector<FlatTri> &tris, const std::vector<TriMat> &mats,
            const LightCache &lights, const IblCache *ibl,
            const CameraFrame &camera,
            const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
@@ -254,7 +255,8 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg);
 
 tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
-                            const std::vector<TriInfo> &tris,
+                            const std::vector<FlatTri> &tris,
+                            const std::vector<TriMat> &mats,
                             const LightCache &lights, const IblCache *ibl,
                             const CameraFrame &camera, const Options &opt,
                             int height,

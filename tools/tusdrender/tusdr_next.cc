@@ -374,6 +374,18 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         TriStore ts;
         ts.mat_id = 0;
         tris->push_back(ts);
+      } else if constexpr (std::is_same<typename TVec::value_type,
+                                        FlatTri>::value) {
+        // Flat slim store: per-tri geometry + purpose + a mat_id into the flat
+        // material table (assigned at concat by StreamMeshJobs, like TriStore).
+        FlatTri ft;
+        ft.p0 = p0;
+        ft.p1 = p1;
+        ft.p2 = p2;
+        ft.n = n;
+        ft.purpose_bit = purpose_bit;
+        ft.mat_id = 0;
+        tris->push_back(ft);
       } else {
         TriInfo tri = tmpl;  // per-mesh material; per-tri geometry below
         tri.p0 = p0;
@@ -2213,8 +2225,10 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
           out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
         }
         // Slim store: assign each of this job's triangles a global material id and
-        // append the job's material to the shared table (one entry per job).
-        if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
+        // append the job's material to the shared table (one entry per job). Both
+        // the instanced (TriStore) and flat (FlatTri) slim records carry a mat_id.
+        if constexpr (std::is_same<typename TVec::value_type, TriStore>::value ||
+                      std::is_same<typename TVec::value_type, FlatTri>::value) {
           if (out_mat_table) {
             const uint32_t mid = uint32_t(out_mat_table->size());
             out_mat_table->push_back(r.mat);
@@ -2280,6 +2294,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   }
   ctx.vertices.clear();
   ctx.tris.clear();
+  ctx.flat_mats.clear();
   ctx.textures.clear();
   ctx.tri_uvs.clear();
   ctx.tri_colors.clear();
@@ -2359,8 +2374,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
                         &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
-                        /*out_mat_table=*/nullptr, want_colors, &ctx.tri_colors,
-                        opt.smooth, &ctx.tri_normals)) {
+                        /*out_mat_table=*/&ctx.flat_mats, want_colors,
+                        &ctx.tri_colors, opt.smooth, &ctx.tri_normals)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -3271,7 +3286,7 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   ctx.opt.width = ctx.width;
   const auto t0 = std::chrono::steady_clock::now();
   tinyusdz::Image img = RenderImage(
-      ctx.scene, &ctx.direct, ctx.tris, ctx.lights,
+      ctx.scene, &ctx.direct, ctx.tris, ctx.flat_mats, ctx.lights,
       ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,

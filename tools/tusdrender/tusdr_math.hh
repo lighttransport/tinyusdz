@@ -355,6 +355,22 @@ struct TriStore {
   uint32_t mat_id{0};
 };
 
+// Flat (non-instanced) per-triangle record: world-space geometry + purpose +
+// a material id into the flat material table (RenderContext::flat_mats). The
+// flat path used to store a full ~176 B TriInfo per triangle (geometry AND a
+// copy of the per-mesh material); since meshes share few materials, the material
+// is hoisted into the side table and referenced by id, mirroring the instanced
+// TriStore/TriMat split. 56 B/triangle vs 176 B. Shade rebuilds the full TriInfo
+// at hit via CombineTriMat(flat_mats[mat_id]) + this geometry.
+struct FlatTri {
+  Vec3 p0;
+  Vec3 p1;
+  Vec3 p2;
+  Vec3 n;
+  uint32_t purpose_bit{kPurposeDefaultBit};
+  uint32_t mat_id{0};
+};
+
 // Build a full TriInfo from a material record (positions/normal are filled by the
 // caller from the vertex soup). Used by ResolveTLASHit for instanced mesh hits.
 inline TriInfo CombineTriMat(const TriMat &m) {
@@ -425,6 +441,29 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
   return m;
+}
+
+// Split a legacy per-triangle TriInfo array into the (FlatTri geometry+purpose) +
+// (TriMat material table) form Shade/RenderImage consume. One material per
+// triangle (no dedup) -- the legacy path may carry per-triangle materials -- so
+// it is exactly round-trip identical: CombineTriMat(mats[i]) restores tris[i]'s
+// material and the geometry is copied verbatim.
+inline void SplitTriInfos(const std::vector<TriInfo> &tris,
+                          std::vector<FlatTri> *out_tris,
+                          std::vector<TriMat> *out_mats) {
+  out_tris->resize(tris.size());
+  out_mats->resize(tris.size());
+  for (size_t i = 0; i < tris.size(); ++i) {
+    const TriInfo &t = tris[i];
+    FlatTri &ft = (*out_tris)[i];
+    ft.p0 = t.p0;
+    ft.p1 = t.p1;
+    ft.p2 = t.p2;
+    ft.n = t.n;
+    ft.purpose_bit = t.purpose_bit;
+    ft.mat_id = uint32_t(i);
+    (*out_mats)[i] = ExtractTriMat(t);
+  }
 }
 
 inline bool SameTriMat(const TriMat &a, const TriMat &b) {
