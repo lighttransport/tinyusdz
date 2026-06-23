@@ -515,6 +515,10 @@ struct MeshJobNext {
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
+  float clearcoat{0.0f};                 // inputs:clearcoat weight
+  float clearcoat_roughness{0.01f};      // inputs:clearcoatRoughness
+  ScalarTex clearcoat_tex;               // clearcoat-weight texture + channel
+  ScalarTex clearcoat_rough_tex;         // clearcoat-roughness texture + channel
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
 };
 
@@ -541,6 +545,10 @@ struct ResolvedMat {
   float opacity{1.0f};
   ScalarTex opacity_tex;
   float opacity_threshold{0.0f};
+  float clearcoat{0.0f};
+  float clearcoat_roughness{0.01f};
+  ScalarTex clearcoat_tex;
+  ScalarTex clearcoat_rough_tex;
   bool vertex_color{false};
 };
 

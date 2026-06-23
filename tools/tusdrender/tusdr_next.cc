@@ -77,6 +77,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const Vec3 &emission, int32_t emission_tex_id,
                           float occlusion, const ScalarTex &occ_tex,
                           const ScalarTex &opacity_tex, float opacity_threshold,
+                          float clearcoat, float clearcoat_roughness,
+                          const ScalarTex &clearcoat_tex,
+                          const ScalarTex &clearcoat_rough_tex,
                           const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
@@ -106,10 +109,16 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     out_job_mat->opacity = opacity;
     out_job_mat->opacity_tex_id = opacity_tex.id;
     out_job_mat->opacity_threshold = opacity_threshold;
+    out_job_mat->clearcoat = clearcoat;
+    out_job_mat->clearcoat_roughness = clearcoat_roughness;
+    out_job_mat->clearcoat_tex_id = clearcoat_tex.id;
+    out_job_mat->clearcoat_rough_tex_id = clearcoat_rough_tex.id;
     out_job_mat->rough_ch = rough_tex.ch;
     out_job_mat->metal_ch = metal_tex.ch;
     out_job_mat->occ_ch = occ_tex.ch;
     out_job_mat->opacity_ch = opacity_tex.ch;
+    out_job_mat->clearcoat_ch = clearcoat_tex.ch;
+    out_job_mat->clearcoat_rough_ch = clearcoat_rough_tex.ch;
   }
   // Read geometry without permanently materializing it into the stage.
   const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
@@ -144,7 +153,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   bool have_st = false;
   if (want_uvs && (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
                    metal_tex.id >= 0 || emission_tex_id >= 0 ||
-                   occ_tex.id >= 0 || opacity_tex.id >= 0)) {
+                   occ_tex.id >= 0 || opacity_tex.id >= 0 ||
+                   clearcoat_tex.id >= 0 || clearcoat_rough_tex.id >= 0)) {
     st = ReadFloatArrayLazy(prim, "primvars:st", time);
     if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
     if (!st.empty()) {
@@ -297,6 +307,12 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   tmpl.opacity_tex_id = opacity_tex.id;
   tmpl.opacity_ch = opacity_tex.ch;
   tmpl.opacity_threshold = opacity_threshold;
+  tmpl.clearcoat = clearcoat;
+  tmpl.clearcoat_roughness = clearcoat_roughness;
+  tmpl.clearcoat_tex_id = clearcoat_tex.id;
+  tmpl.clearcoat_ch = clearcoat_tex.ch;
+  tmpl.clearcoat_rough_tex_id = clearcoat_rough_tex.id;
+  tmpl.clearcoat_rough_ch = clearcoat_rough_tex.ch;
   tmpl.purpose_bit = purpose_bit;
 
   size_t cursor = 0;
@@ -594,7 +610,9 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              Vec3 *emission, int32_t *emission_tex_id,
                              float *occlusion, ScalarTex *occ_tex,
                              float *opacity, ScalarTex *opacity_tex,
-                             float *opacity_threshold,
+                             float *opacity_threshold, float *clearcoat,
+                             float *clearcoat_roughness, ScalarTex *clearcoat_tex,
+                             ScalarTex *clearcoat_rough_tex,
                              bool *vertex_color) {
   // Geometry display primvars: the unmaterialed base color/opacity (e.g. ALab
   // geom-only meshes). The first value seeds the constant base; a >1-element
@@ -661,6 +679,23 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
           surf.GetPropertyValue("inputs:opacityThreshold"))
     if (const float *f = ot->as_float())
       if (opacity_threshold) *opacity_threshold = std::max(0.0f, *f);
+
+  // Clearcoat: a second specular lobe (weight + roughness), each a scalar const
+  // plus optional channel-aware texture. Only contributes under IBL (like base
+  // roughness/metallic).
+  if (const tinyusdz::next::Value *c = surf.GetPropertyValue("inputs:clearcoat"))
+    if (const float *f = c->as_float())
+      if (clearcoat) *clearcoat = std::min(1.0f, std::max(0.0f, *f));
+  if (const tinyusdz::next::Value *cr =
+          surf.GetPropertyValue("inputs:clearcoatRoughness"))
+    if (const float *f = cr->as_float())
+      if (clearcoat_roughness)
+        *clearcoat_roughness = std::min(1.0f, std::max(0.0f, *f));
+  if (clearcoat_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:clearcoat", tc, clearcoat_tex);
+  if (clearcoat_rough_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:clearcoatRoughness", tc,
+                             clearcoat_rough_tex);
 
   // Emissive color: constant + optional UsdUVTexture (sRGB color).
   if (const tinyusdz::next::Value *e =
@@ -802,6 +837,10 @@ void ResolveMeshMaterialCached(
       job->opacity = r.opacity;
       job->opacity_tex = r.opacity_tex;
       job->opacity_threshold = r.opacity_threshold;
+      job->clearcoat = r.clearcoat;
+      job->clearcoat_roughness = r.clearcoat_roughness;
+      job->clearcoat_tex = r.clearcoat_tex;
+      job->clearcoat_rough_tex = r.clearcoat_rough_tex;
       job->vertex_color = r.vertex_color;
       return;
     }
@@ -811,7 +850,9 @@ void ResolveMeshMaterialCached(
                           &job->uv_xform, &job->rough_tex, &job->metal_tex,
                           &job->emission, &job->emission_tex_id, &job->occlusion,
                           &job->occ_tex, &job->opacity, &job->opacity_tex,
-                          &job->opacity_threshold, &job->vertex_color);
+                          &job->opacity_threshold, &job->clearcoat,
+                          &job->clearcoat_roughness, &job->clearcoat_tex,
+                          &job->clearcoat_rough_tex, &job->vertex_color);
   if (!key.empty()) {
     ResolvedMat r;
     r.base_color = job->base_color;
@@ -829,6 +870,10 @@ void ResolveMeshMaterialCached(
     r.opacity = job->opacity;
     r.opacity_tex = job->opacity_tex;
     r.opacity_threshold = job->opacity_threshold;
+    r.clearcoat = job->clearcoat;
+    r.clearcoat_roughness = job->clearcoat_roughness;
+    r.clearcoat_tex = job->clearcoat_tex;
+    r.clearcoat_rough_tex = job->clearcoat_rough_tex;
     r.vertex_color = job->vertex_color;
     cache.emplace(key, r);
   }
@@ -2060,7 +2105,9 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.base_color, job.tex_id, job.normal_tex_id, job.roughness,
                 job.metallic, job.rough_tex, job.metal_tex, job.emission,
                 job.emission_tex_id, job.occlusion, job.occ_tex,
-                job.opacity_tex, job.opacity_threshold, job.uv_xform,
+                job.opacity_tex, job.opacity_threshold, job.clearcoat,
+                job.clearcoat_roughness, job.clearcoat_tex,
+                job.clearcoat_rough_tex, job.uv_xform,
                 want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
