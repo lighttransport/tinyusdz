@@ -19,6 +19,7 @@
 #include "tydra/render-data.hh"
 #include "next/prim/path.hh"
 #include "next/schema/geom-mesh.hh"
+#include "next/reader/usdz-reader.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/types/value.hh"

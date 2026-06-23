@@ -53,4 +53,31 @@ struct RenderContext {
   RenderContext &operator=(const RenderContext &) = delete;
 };
 
+// ---- tusdr_args.cc / tusdr_material.cc ----
+bool ParseIntStrict(const std::string &s, int *out);
+
+bool ParseFloatStrict(const std::string &s, float *out);
+
+bool ParseDoubleStrict(const std::string &s, double *out);
+
+bool ParseColor(const std::string &s, Vec3 *out);
+
+void PrintUsage(const char *prog);
+
+bool ParseArgs(int argc, char **argv, Options *opt);
+
+void SetupNullAssetResolution(tinyusdz::AssetResolutionResolver *resolver);
+
+Vec3 MaterialColor(const RenderScene &scene, const RenderMesh &mesh,
+                   int material_id);
+
+Vec3 MaterialEmission(const RenderScene &scene, int material_id);
+
+float MaterialRoughness(const RenderScene &scene, int material_id);
+
+float MaterialMetallic(const RenderScene &scene, int material_id);
+
+Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
+                       int material_id, float total_area);
+
 }  // namespace tusdr
