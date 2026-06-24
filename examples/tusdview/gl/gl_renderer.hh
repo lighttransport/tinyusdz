@@ -153,6 +153,7 @@ class GLRenderer final : public Renderer {
   GLint tHasDisplacementTex_{-1}, tDisplacementConst_{-1}, tDisplacementScale_{-1};
   GLint tDisplacementTexScale_{-1}, tDisplacementTexBias_{-1};
   GLint tMaxTessLevel_{-1};
+  GLint tHasMorph_{-1};  // GPU morph in the tess vertex stage
   GLint uSkinningEnabled_{-1};
   GLint uExtendedSkinningEnabled_{-1};
   GLint uBoneTexWidth_{-1}, uBoneMatrixCount_{-1}, uInfluenceTexWidth_{-1};
