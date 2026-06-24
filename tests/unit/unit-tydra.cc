@@ -918,6 +918,103 @@ void tydra_blendshape_resolution_test(void) {
   }
 }
 
+// In-between BlendShape offsets must be carried into RenderMesh::targets and,
+// crucially, splatted alongside the primary offsets when a facevarying mesh is
+// de-indexed (single-indexable build duplicates shared points). Regression for
+// the converter populating ShapeTarget::inbetweens + reordering them in
+// ReorderVertexVaryingAttributes.
+void tydra_blendshape_inbetween_test(void) {
+  // Two triangles share points 0 and 2, but their facevarying `st` differs at
+  // those corners, so the single-indexable build duplicates them: 4 -> 6
+  // points. The in-between (parallel to the 4 authored pointIndices) must be
+  // remapped to the same 6-entry space as the primary.
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+def Xform "Root"
+{
+    def Mesh "Mesh" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1),
+            (0.5, 0.5), (0.7, 0.7), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        uniform token[] skel:blendShapes = ["Key"]
+        rel skel:blendShapeTargets = </Root/Mesh/Key>
+
+        def BlendShape "Key"
+        {
+            uniform vector3f[] offsets = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+            uniform vector3f[] inbetweens:half = [(5, 0, 0), (5, 0, 0), (5, 0, 0), (5, 0, 0)] (
+                weight = 0.5
+            )
+        }
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "blendshape_inbetween.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.meshes.size() == 1);
+  if (scene.meshes.empty()) {
+    return;
+  }
+  const tydra::RenderMesh &mesh = scene.meshes[0];
+
+  // Facevarying `st` forced the shared points 0 and 2 to duplicate.
+  TEST_CHECK(mesh.points.size() == 6);
+  TEST_CHECK(mesh.targets.size() == 1);
+  if (mesh.targets.empty()) {
+    return;
+  }
+
+  const tydra::ShapeTarget &tgt = mesh.targets.begin()->second;
+  // Primary offsets were splatted to the duplicated points.
+  TEST_CHECK(tgt.pointIndices.size() == 6);
+  TEST_CHECK(tgt.pointOffsets.size() == 6);
+
+  // The in-between survived conversion and was splatted in lockstep with the
+  // primary (same count, same indexing).
+  TEST_CHECK(tgt.inbetweens.size() == 1);
+  if (tgt.inbetweens.empty()) {
+    return;
+  }
+  const tydra::InbetweenShapeTarget &ib = tgt.inbetweens.begin()->second;
+  TEST_CHECK(std::fabs(ib.weight - 0.5f) < 1e-6f);
+  TEST_CHECK(ib.pointOffsets.size() == tgt.pointIndices.size());
+  TEST_CHECK(ib.pointOffsets.size() == 6);
+  // Every authored in-between offset was (5,0,0); it must be preserved verbatim
+  // through the splat (no aliasing with the primary's (0,0,1)).
+  bool all_x5 = !ib.pointOffsets.empty();
+  for (size_t i = 0; i < ib.pointOffsets.size(); i++) {
+    all_x5 &= (std::fabs(ib.pointOffsets[i][0] - 5.0f) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][1]) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][2]) < 1e-6f);
+  }
+  TEST_CHECK(all_x5);
+}
+
 void tydra_material_binding_validation_test(void) {
   auto make_mesh = []() {
     GeomMesh mesh;

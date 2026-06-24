@@ -207,6 +207,7 @@ TEST_LIST = {
   { "tydra_shader_scene_access_test", tydra_shader_scene_access_test },
   { "tydra_skel_scene_access_test", tydra_skel_scene_access_test },
   { "tydra_blendshape_resolution_test", tydra_blendshape_resolution_test },
+  { "tydra_blendshape_inbetween_test", tydra_blendshape_inbetween_test },
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
   { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },
