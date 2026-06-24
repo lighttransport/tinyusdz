@@ -382,6 +382,8 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       int mrTex = mapTex(s.metallic.texture_id);
       if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
       dm.metalRoughTex = mrTex;
+      dm.displacementTex = mapTex(s.displacement.texture_id);
+      dm.displacementConst = s.displacement.value;
       // When a parameter is driven by a texture, the shader multiplies the
       // texel by the factor below, so use a neutral factor (1) instead of the
       // constant fallback (which would darken/override the texture).

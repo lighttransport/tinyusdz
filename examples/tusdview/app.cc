@@ -136,8 +136,11 @@ bool App::initWindow(std::string* err) {
   }
 
   if (backend_ == Backend::GL) {
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    // Request 4.1 core (the highest macOS supports) so the GPU-tessellation
+    // displacement path is available; fall back to 3.3 below if creation fails.
+    // 4.1 core is a strict superset of 3.3 core, so all existing shaders run as-is.
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
@@ -158,6 +161,13 @@ bool App::initWindow(std::string* err) {
     if (mh > 0 && winH > mh) winH = mh;
   }
   window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
+  if (!window_ && backend_ == Backend::GL) {
+    // 4.1 unavailable (e.g. 3.3-only hardware): retry at 3.3 core. Tessellation
+    // displacement is then unavailable; coarse per-vertex displacement still works.
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
+  }
   if (!window_) {
     *err = "glfwCreateWindow failed";
     return false;

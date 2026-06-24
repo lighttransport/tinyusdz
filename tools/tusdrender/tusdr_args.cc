@@ -90,6 +90,8 @@ void PrintUsage(const char *prog) {
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
       << "                         instead of per-face geometric normals.\n"
+      << "  -noDisplace            Disable UsdPreviewSurface displacement.\n"
+      << "  -displaceScale <f>     Global displacement multiplier (default 1.0).\n"
       << "  -rtPreview             Use mmap zero-copy mesh preview path for large USDC.\n"
       << "  -progress              Print long-running load/build progress.\n"
       << "  -quality <fast|default|hq>\n"
@@ -236,6 +238,14 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    } else if (a == "-noDisplace" || a == "--noDisplace") {
+      opt->displace = false;
+    } else if (a == "-displaceScale" || a == "--displaceScale") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseFloatStrict(v, &opt->displace_scale)) {
+        std::cerr << "Invalid -displaceScale value.\n";
+        return false;
+      }
     } else if (a == "-noShadows" || a == "--noShadows") {
       opt->shadows = false;
     } else if (a == "-rtPreview" || a == "--rtPreview" ||

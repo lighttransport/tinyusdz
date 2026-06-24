@@ -116,6 +116,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
+  uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
+  uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
+  uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
+  uDisplacementScale_ = glGetUniformLocation(program_, "uDisplacementScale");
   uSkinningEnabled_ = glGetUniformLocation(program_, "uSkinningEnabled");
   uExtendedSkinningEnabled_ = glGetUniformLocation(program_, "uExtendedSkinningEnabled");
   uBoneTexWidth_ = glGetUniformLocation(program_, "uBoneTexWidth");
@@ -129,7 +133,14 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
+  glUniform1i(glGetUniformLocation(program_, "uDisplacementTex"), 7);
   glUseProgram(0);
+
+  // GPU tessellation displacement program (GL >= 4.0 only). Failure to build is
+  // non-fatal: the renderer simply keeps using the coarse per-vertex path.
+  if (GLAD_GL_VERSION_4_0) {
+    buildTessProgram();
+  }
 
   // Instanced flat-shaded program: per-instance 3x4 object-to-world (attribs 6-8,
   // divisor 1) + per-instance/prototype displayColor (attrib 9), drawn with
@@ -456,6 +467,108 @@ bool GLRenderer::initImGui(std::string* err) {
 }
 #endif
 
+void GLRenderer::buildTessProgram() {
+  // Object-space passthrough VS -> TCS (adaptive level) -> TES (interpolate +
+  // displace along the interpolated normal) -> FS (geometric-normal shading).
+  // Self-contained for the Shaded view; AOV modes keep using the coarse program.
+  static const char* kVS =
+      "#version 410 core\n"
+      "layout(location=0) in vec3 aPosition;\n"
+      "layout(location=1) in vec3 aNormal;\n"
+      "layout(location=2) in vec3 aUV;\n"
+      "out vec3 vcPos; out vec3 vcNrm; out vec2 vcUV;\n"
+      "void main(){ vcPos=aPosition; vcNrm=aNormal; vcUV=aUV.xy; }\n";
+  static const char* kTCS =
+      "#version 410 core\n"
+      "layout(vertices=3) out;\n"
+      "in vec3 vcPos[]; in vec3 vcNrm[]; in vec2 vcUV[];\n"
+      "out vec3 tcPos[]; out vec3 tcNrm[]; out vec2 tcUV[];\n"
+      "uniform mat4 uModel; uniform vec3 uCameraPos; uniform float uMaxTessLevel;\n"
+      // Per-edge level from the world-space edge length relative to its distance
+      // to the camera: nearer / longer edges subdivide more. Clamped to the slider.
+      "float edgeLevel(vec3 a, vec3 b){\n"
+      "  vec3 wa=(uModel*vec4(a,1.0)).xyz, wb=(uModel*vec4(b,1.0)).xyz;\n"
+      "  vec3 mid=0.5*(wa+wb); float len=length(wa-wb);\n"
+      "  float dist=max(length(uCameraPos-mid),1e-3);\n"
+      "  return clamp(len/dist*120.0, 1.0, uMaxTessLevel);\n"
+      "}\n"
+      "void main(){\n"
+      "  tcPos[gl_InvocationID]=vcPos[gl_InvocationID];\n"
+      "  tcNrm[gl_InvocationID]=vcNrm[gl_InvocationID];\n"
+      "  tcUV[gl_InvocationID]=vcUV[gl_InvocationID];\n"
+      "  if(gl_InvocationID==0){\n"
+      "    float l0=edgeLevel(vcPos[1],vcPos[2]);\n"
+      "    float l1=edgeLevel(vcPos[2],vcPos[0]);\n"
+      "    float l2=edgeLevel(vcPos[0],vcPos[1]);\n"
+      "    gl_TessLevelOuter[0]=l0; gl_TessLevelOuter[1]=l1; gl_TessLevelOuter[2]=l2;\n"
+      "    gl_TessLevelInner[0]=max(max(l0,l1),l2);\n"
+      "  }\n"
+      "}\n";
+  static const char* kTES =
+      "#version 410 core\n"
+      "layout(triangles, equal_spacing, ccw) in;\n"
+      "in vec3 tcPos[]; in vec3 tcNrm[]; in vec2 tcUV[];\n"
+      "out vec3 vWorldPos; out vec3 vNormal; out vec2 vUV;\n"
+      "uniform mat4 uModelViewProj; uniform mat4 uModel; uniform mat3 uNormalMatrix;\n"
+      "uniform sampler2D uDisplacementTex; uniform bool uHasDisplacementTex;\n"
+      "uniform float uDisplacementConst; uniform float uDisplacementScale;\n"
+      "void main(){\n"
+      "  vec3 bc=gl_TessCoord;\n"
+      "  vec3 pos=bc.x*tcPos[0]+bc.y*tcPos[1]+bc.z*tcPos[2];\n"
+      "  vec3 nrm=normalize(bc.x*tcNrm[0]+bc.y*tcNrm[1]+bc.z*tcNrm[2]);\n"
+      "  vec2 uv=bc.x*tcUV[0]+bc.y*tcUV[1]+bc.z*tcUV[2];\n"
+      "  float d=uHasDisplacementTex? textureLod(uDisplacementTex,uv,0.0).r : uDisplacementConst;\n"
+      "  pos += nrm*(d*uDisplacementScale);\n"
+      "  vWorldPos=(uModel*vec4(pos,1.0)).xyz;\n"
+      "  vNormal=normalize(uNormalMatrix*nrm);\n"
+      "  vUV=uv;\n"
+      "  gl_Position=uModelViewProj*vec4(pos,1.0);\n"
+      "}\n";
+  static const char* kFS =
+      "#version 410 core\n"
+      "in vec3 vWorldPos; in vec3 vNormal; in vec2 vUV;\n"
+      "uniform vec3 uCameraPos; uniform vec3 uBaseColor;\n"
+      "uniform sampler2D uBaseColorTex; uniform bool uHasBaseColorTex;\n"
+      "out vec4 FragColor;\n"
+      "void main(){\n"
+      "  vec3 base=uBaseColor;\n"
+      "  if(uHasBaseColorTex) base*=texture(uBaseColorTex,vUV).rgb;\n"
+      // Geometric normal of the displaced surface (screen derivatives) so the new
+      // height detail actually shades, matching the coarse path's displaced look.
+      "  vec3 N=normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos)));\n"
+      "  if(!gl_FrontFacing) N=-N;\n"
+      "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
+      "  vec3 L=normalize(vec3(1.0,1.0,1.0));\n"
+      "  float NdotL=max(dot(N,L),0.0);\n"
+      "  vec3 H=normalize(L+V); float NdotH=max(dot(N,H),0.0);\n"
+      "  vec3 col=base*(0.05+NdotL)+vec3(0.15)*pow(NdotH,32.0);\n"
+      "  FragColor=vec4(col,1.0);\n"
+      "}\n";
+  std::string terr;
+  tessProgram_ = glutil::CompileProgramTess(kVS, kTCS, kTES, kFS, &terr);
+  if (!tessProgram_) {
+    // Best-effort: keep coarse displacement. (Logged, not fatal.)
+    fprintf(stderr, "[tusdview] GL tessellation program unavailable: %s\n",
+            terr.c_str());
+    return;
+  }
+  glUseProgram(tessProgram_);
+  tMVP_ = glGetUniformLocation(tessProgram_, "uModelViewProj");
+  tModel_ = glGetUniformLocation(tessProgram_, "uModel");
+  tNormalMat_ = glGetUniformLocation(tessProgram_, "uNormalMatrix");
+  tCameraPos_ = glGetUniformLocation(tessProgram_, "uCameraPos");
+  tBaseColor_ = glGetUniformLocation(tessProgram_, "uBaseColor");
+  tHasBaseColorTex_ = glGetUniformLocation(tessProgram_, "uHasBaseColorTex");
+  tHasDisplacementTex_ = glGetUniformLocation(tessProgram_, "uHasDisplacementTex");
+  tDisplacementConst_ = glGetUniformLocation(tessProgram_, "uDisplacementConst");
+  tDisplacementScale_ = glGetUniformLocation(tessProgram_, "uDisplacementScale");
+  tMaxTessLevel_ = glGetUniformLocation(tessProgram_, "uMaxTessLevel");
+  glUniform1i(glGetUniformLocation(tessProgram_, "uBaseColorTex"), 0);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uDisplacementTex"), 7);
+  glUseProgram(0);
+  tessAvailable_ = true;
+}
+
 void GLRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.ebo) glDeleteBuffers(1, &m.ebo);
@@ -506,6 +619,8 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
+    gm.displacementTex = m.displacementTex;
+    gm.displacementConst = m.displacementConst;
     materials_.push_back(gm);
   }
 }
@@ -1011,6 +1126,68 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
               : kDefault;
       glUniform1i(uMatId_, sub.materialId);
       glUniform1i(uFaceBase_, static_cast<int>(sub.indexOffset / 3));
+      // Resolve a material texture slot to a GPU texture; white if the slot is out
+      // of range or not yet uploaded (lazy texture streaming).
+      auto slotTex = [&](int slot) -> GLuint {
+        if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
+            textures_[static_cast<size_t>(slot)]) {
+          return textures_[static_cast<size_t>(slot)];
+        }
+        return whiteTex_;
+      };
+      // Coarse displacement: applied identically in the normal and highlight passes
+      // (the deformed positions must match) and forces geometric normals so shading
+      // follows the displaced surface. Unit 7 always bound (white when disabled) to
+      // keep the sampler complete.
+      const bool displaced =
+          params.displacement &&
+          ((sub.materialId >= 0 &&
+            static_cast<size_t>(sub.materialId) < materials_.size())
+               ? materials_[static_cast<size_t>(sub.materialId)].hasDisplacement()
+               : false);
+      // GPU tessellation detail path: subdivide displaced triangles on the GPU and
+      // displace each generated sample. Only in the Shaded view, for non-skinned
+      // displaced meshes, when the slider asks for >1x. The tess program is restored
+      // to the coarse program immediately after so following submeshes draw normally.
+      if (displaced && tessAvailable_ && !overrideEmissive && !mesh.skinned &&
+          params.maxTessLevel > 1 &&
+          params.mode == RenderMode::Shaded) {
+        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        glUseProgram(tessProgram_);
+        glUniformMatrix4fv(tMVP_, 1, GL_FALSE, MVP.m);
+        glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
+        glUniformMatrix3fv(tNormalMat_, 1, GL_FALSE, nmat);
+        glUniform3fv(tCameraPos_, 1, params.cameraPos);
+        glUniform3fv(tBaseColor_, 1, dmat.baseColor);
+        glUniform1i(tHasBaseColorTex_, dmat.baseColorTex >= 0 ? 1 : 0);
+        glUniform1i(tHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
+        glUniform1f(tDisplacementConst_, dmat.displacementConst);
+        glUniform1f(tDisplacementScale_, params.displacementScale);
+        glUniform1f(tMaxTessLevel_, static_cast<float>(params.maxTessLevel));
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, slotTex(dmat.baseColorTex));
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, slotTex(dmat.displacementTex));
+        glPatchParameteri(GL_PATCH_VERTICES, 3);
+        glDrawElements(GL_PATCHES, static_cast<GLsizei>(sub.indexCount),
+                       GL_UNSIGNED_INT,
+                       (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+        glUseProgram(program_);  // restore coarse program for following submeshes
+        continue;
+      }
+      glUniform1i(uHasDisplacement_, displaced ? 1 : 0);
+      glActiveTexture(GL_TEXTURE7);
+      if (displaced) {
+        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        glUniform1i(uHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
+        glUniform1f(uDisplacementConst_, dmat.displacementConst);
+        glUniform1f(uDisplacementScale_, params.displacementScale);
+        glBindTexture(GL_TEXTURE_2D, slotTex(dmat.displacementTex));
+        glUniform1i(uGeometricNormal_, 1);
+      } else {
+        glBindTexture(GL_TEXTURE_2D, whiteTex_);
+        glUniform1i(uGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+      }
       if (overrideEmissive) {
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
@@ -1022,15 +1199,6 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
       } else {
-        // Resolve a material texture slot to a GPU texture; white if the slot is
-        // out of range or not yet uploaded (lazy texture streaming).
-        auto slotTex = [&](int slot) -> GLuint {
-          if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
-              textures_[static_cast<size_t>(slot)]) {
-            return textures_[static_cast<size_t>(slot)];
-          }
-          return whiteTex_;
-        };
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
@@ -1413,6 +1581,7 @@ void GLRenderer::shutdown() {
   if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
   if (program_) { glDeleteProgram(program_); program_ = 0; }
+  if (tessProgram_) { glDeleteProgram(tessProgram_); tessProgram_ = 0; }
   if (instProgram_) { glDeleteProgram(instProgram_); instProgram_ = 0; }
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }

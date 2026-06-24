@@ -204,6 +204,15 @@ uniform int uBoneTexWidth;
 uniform int uBoneMatrixCount;
 uniform int uInfluenceTexWidth;
 
+// UsdPreviewSurface displacement (coarse per-vertex). The surface is offset along
+// its normal by (height-map red, or uDisplacementConst) * uDisplacementScale. No
+// derivatives in the vertex stage, so the map is sampled with textureLod(...,0).
+uniform bool uHasDisplacement;
+uniform bool uHasDisplacementTex;
+uniform sampler2D uDisplacementTex;
+uniform float uDisplacementConst;
+uniform float uDisplacementScale;
+
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
@@ -260,6 +269,14 @@ void main() {
             fetchBone(aJoint.w) * aWeight.w;
         pos = (skin * vec4(aPosition, 1.0)).xyz;
         nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+    }
+    // Coarse displacement: offset along the (object-space) normal before the world
+    // transform, so the displacement scales with the model like the geometry does.
+    if (uHasDisplacement) {
+        float d = uHasDisplacementTex
+                      ? textureLod(uDisplacementTex, aUV.xy, 0.0).r
+                      : uDisplacementConst;
+        pos += normalize(nrm) * (d * uDisplacementScale);
     }
     vec4 worldPos = uModel * vec4(pos, 1.0);
     vWorldPos = worldPos.xyz;
