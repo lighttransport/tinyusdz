@@ -615,11 +615,10 @@ void App::updateGpuSkinningFrameIfNeeded() {
     }
   }
 
-  // Bone matrices for GPU skinning. morphedOut = nullptr: the raster path applies
-  // blendshapes in the vertex shader (GPU morph), not by CPU-morphing the VBO.
-  if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
-                            &skinFrame_, gui_.showSkeletonOverlay(),
-                            /*morphedOut=*/nullptr, gui_.blendOverrides())) {
+  // Bone matrices for GPU skinning. Blendshapes are applied in the vertex shader
+  // (GPU morph, via updateMorphWeights below), not by CPU-morphing the VBO.
+  if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_,
+                            gui_.showSkeletonOverlay())) {
     renderer_->uploadSkinningFrame(skinFrame_);
   }
   // GPU blendshape morph: upload only the tiny per-channel coefficient array per
