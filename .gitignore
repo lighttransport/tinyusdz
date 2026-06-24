@@ -454,3 +454,4 @@ python/tinyusdz/_version.py
 
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
+resume.md
