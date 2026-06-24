@@ -66,8 +66,12 @@ bool RunVulkanLightRT(const Options &opt,
   bopts.num_threads = 1;
 
   lrt_result lrterr = LRT_RESULT_OK;
-  lrt_tri_scene *scene =
-      lrt_tri_scene_build(flat_verts.data(), ntris, &bopts, &lrterr);
+  // Indexed build: flat_verts holds the unique vertices and flat_idx the 3*ntris
+  // vertex ids. (The plain lrt_tri_scene_build expects a de-indexed 9*ntris soup,
+  // so passing the unique-vertex array there over-reads and fails the build.)
+  lrt_tri_scene *scene = lrt_tri_scene_build_indexed(
+      flat_verts.data(), flat_verts.size() / 3, flat_idx.data(), ntris, &bopts,
+      &lrterr);
   if (!scene || lrterr != LRT_RESULT_OK) {
     std::cerr << "Failed to build LightRT scene.\n";
     return false;

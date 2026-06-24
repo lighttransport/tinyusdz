@@ -206,6 +206,14 @@ int main(int argc, char **argv) {
         }
       }
 
+      // Displacement textures for the -vk/-vkr preview (loaded from disk relative
+      // to the input; usdz-embedded displacement maps are not resolved here).
+      std::vector<tusdr::Texture> disp_textures;
+      TextureCache tc;
+      tc.textures = &disp_textures;
+      tc.base_dir = DirName(opt.input);
+      tc.usdz = nullptr;
+
       // Stream geometry.
       for (auto &prim : mesh_stack) {
         RTPreviewStats::MeshGeometry geo;
@@ -241,6 +249,75 @@ int main(int argc, char **argv) {
           const std::vector<int> *idx = val->as_int_array();
           if (idx && !idx->empty()) {
             geo.indices.assign(idx->begin(), idx->end());
+          }
+        }
+
+        // Coarse displacement: resolve the bound material's inputs:displacement and
+        // offset each vertex along its smooth normal (RunVulkanLightRT triangulates
+        // indices as a soup and shades with geometric normals computed from these
+        // positions, so displaced positions are all that is needed).
+        if (opt.displace && opt.displace_scale != 0.0f && !geo.indices.empty()) {
+          float disp_const = 0.0f;
+          ScalarTex disp_tex;
+          const std::vector<tinyusdz::next::Path> *bind =
+              prim.GetRelationship("material:binding");
+          if (bind && !bind->empty()) {
+            tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+            if (mat.IsValid()) {
+              tinyusdz::next::UsdPrim surf =
+                  ConnectedPrimNext(stage, mat, "outputs:surface");
+              if (!surf.IsValid())
+                surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+              if (surf.IsValid()) {
+                if (const tinyusdz::next::Value *d =
+                        surf.GetPropertyValue("inputs:displacement"))
+                  if (const float *f = d->as_float()) disp_const = *f;
+                ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+                                         &disp_tex);
+              }
+            }
+          }
+          if (disp_tex.id >= 0 || disp_const != 0.0f) {
+            // Area-weighted smooth vertex normals from the triangle soup.
+            std::vector<Vec3> vn(nv, Vec3{0.0f, 0.0f, 0.0f});
+            for (size_t t = 0; t + 2 < geo.indices.size(); t += 3) {
+              int a = geo.indices[t], b = geo.indices[t + 1],
+                  c = geo.indices[t + 2];
+              if (a < 0 || b < 0 || c < 0 || uint32_t(a) >= nv ||
+                  uint32_t(b) >= nv || uint32_t(c) >= nv)
+                continue;
+              Vec3 pa{geo.positions[a * 3], geo.positions[a * 3 + 1],
+                      geo.positions[a * 3 + 2]};
+              Vec3 pb{geo.positions[b * 3], geo.positions[b * 3 + 1],
+                      geo.positions[b * 3 + 2]};
+              Vec3 pc{geo.positions[c * 3], geo.positions[c * 3 + 1],
+                      geo.positions[c * 3 + 2]};
+              Vec3 fn = Cross(Sub(pb, pa), Sub(pc, pa));
+              vn[a] = Add(vn[a], fn);
+              vn[b] = Add(vn[b], fn);
+              vn[c] = Add(vn[c], fn);
+            }
+            const tusdr::Texture *dtex =
+                (disp_tex.id >= 0 &&
+                 size_t(disp_tex.id) < disp_textures.size())
+                    ? &disp_textures[size_t(disp_tex.id)]
+                    : nullptr;
+            const bool per_vertex_uv = geo.uvs.size() >= size_t(nv) * 2;
+            for (uint32_t v = 0; v < nv; ++v) {
+              if (Length(vn[v]) < 1.0e-12f) continue;
+              Vec3 n = Normalize(vn[v]);
+              float h = disp_const;
+              if (dtex) {
+                float u = per_vertex_uv ? geo.uvs[v * 2] : 0.0f;
+                float vv = per_vertex_uv ? geo.uvs[v * 2 + 1] : 0.0f;
+                h = dtex->sample_channel(u, vv, 0.0f, disp_tex.ch) * disp_tex.scale +
+                    disp_tex.bias;
+              }
+              h *= opt.displace_scale;
+              geo.positions[v * 3 + 0] += n.x * h;
+              geo.positions[v * 3 + 1] += n.y * h;
+              geo.positions[v * 3 + 2] += n.z * h;
+            }
           }
         }
 
