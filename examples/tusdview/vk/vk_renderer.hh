@@ -338,6 +338,17 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispParamsUbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispParamsUboMem_{VK_NULL_HANDLE};
   void* dispParamsMapped_{nullptr};
+  // Set 6: per-material displacement texture scale/bias (2 floats/material, indexed
+  // by pc.matId in the vertex + tess-eval stages). Fixed-capacity host SSBO written
+  // per scene; lets the VK viewer center height maps like GL/tusdrender. Push
+  // constants are full, so this per-material data needs its own buffer.
+  static constexpr uint32_t kMaxDispMaterials = 4096;
+  VkDescriptorSetLayout dispMatSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool dispMatPool_{VK_NULL_HANDLE};
+  VkDescriptorSet dispMatSet_{VK_NULL_HANDLE};
+  VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
+  VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
+  void* dispMatMapped_{nullptr};
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
   VkDescriptorPool skinPool_{VK_NULL_HANDLE};
   VkDescriptorPool influencePool_{VK_NULL_HANDLE};

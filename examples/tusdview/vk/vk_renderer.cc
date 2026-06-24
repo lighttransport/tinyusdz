@@ -815,10 +815,12 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Set 4: displacement height map, sampled in the VERTEX stage (coarse
   // displacement). Reuses texSetLayout_ (now VERTEX|FRAGMENT visible).
   // Set 5: global displacement params UBO (live scale + max-tess sliders).
-  VkDescriptorSetLayout setLayouts[6] = {texSetLayout_, skinSetLayout_,
+  // Set 6: per-material displacement texture scale/bias SSBO.
+  VkDescriptorSetLayout setLayouts[7] = {texSetLayout_, skinSetLayout_,
                                          influenceSetLayout_, faceSetLayout_,
-                                         texSetLayout_, dispParamsSetLayout_};
-  plci.setLayoutCount = 6;
+                                         texSetLayout_, dispParamsSetLayout_,
+                                         dispMatSetLayout_};
+  plci.setLayoutCount = 7;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1875,6 +1877,56 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
       vkUpdateDescriptorSets(device_, 1, &dw, 0, nullptr);
     }
   }
+
+  // Set 6: per-material displacement texture scale/bias SSBO (2 floats/material),
+  // read in the vertex + tess-eval stages, indexed by pc.matId.
+  VkDescriptorSetLayoutBinding mb{};
+  mb.binding = 0;
+  mb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mb.descriptorCount = 1;
+  mb.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  if (tessSupported_) mb.stageFlags |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  VkDescriptorSetLayoutCreateInfo mlci{};
+  mlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  mlci.bindingCount = 1;
+  mlci.pBindings = &mb;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &mlci, nullptr, &dispMatSetLayout_),
+           "displacement-material set layout");
+  VkDescriptorPoolSize mps{};
+  mps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mps.descriptorCount = 1;
+  VkDescriptorPoolCreateInfo mpci{};
+  mpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  mpci.maxSets = 1;
+  mpci.poolSizeCount = 1;
+  mpci.pPoolSizes = &mps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &mpci, nullptr, &dispMatPool_),
+           "displacement-material descriptor pool");
+  const VkDeviceSize dispMatBytes = kMaxDispMaterials * 2 * sizeof(float);
+  std::vector<float> dispMatInit(kMaxDispMaterials * 2, 0.0f);
+  for (uint32_t i = 0; i < kMaxDispMaterials; ++i) dispMatInit[i * 2] = 1.0f;  // scale=1
+  if (createHostBuffer(dispMatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       dispMatInit.data(), &dispMatSsbo_, &dispMatSsboMem_)) {
+    vkMapMemory(device_, dispMatSsboMem_, 0, dispMatBytes, 0, &dispMatMapped_);
+    VkDescriptorSetAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    mai.descriptorPool = dispMatPool_;
+    mai.descriptorSetCount = 1;
+    mai.pSetLayouts = &dispMatSetLayout_;
+    if (vkAllocateDescriptorSets(device_, &mai, &dispMatSet_) == VK_SUCCESS) {
+      VkDescriptorBufferInfo mbi{};
+      mbi.buffer = dispMatSsbo_;
+      mbi.range = dispMatBytes;
+      VkWriteDescriptorSet mw{};
+      mw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      mw.dstSet = dispMatSet_;
+      mw.dstBinding = 0;
+      mw.descriptorCount = 1;
+      mw.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      mw.pBufferInfo = &mbi;
+      vkUpdateDescriptorSets(device_, 1, &mw, 0, nullptr);
+    }
+  }
   return true;
 }
 
@@ -2542,6 +2594,12 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matBaseTex_[i] = materials[i].baseColorTex;
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
+    // Per-material displacement texture scale/bias -> set 6 SSBO (2 floats each).
+    if (dispMatMapped_ && i < kMaxDispMaterials) {
+      float* dst = static_cast<float*>(dispMatMapped_) + i * 2;
+      dst[0] = materials[i].displacementTexScale;
+      dst[1] = materials[i].displacementTexBias;
+    }
   }
 }
 
@@ -3528,8 +3586,10 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   // sliders are live. Persistently mapped; written each frame (volume-UBO
   // convention). [0]=scale, [1]=maxTessLevel.
   if (dispParamsMapped_) {
-    const float dp[4] = {displacementScale_, static_cast<float>(maxTessLevel_),
-                         0.0f, 0.0f};
+    // Scale 0 when globally off so a material's bias can't displace either (the
+    // shader does (texel*scale + bias) * uboScale).
+    const float dp[4] = {displacement_ ? displacementScale_ : 0.0f,
+                         static_cast<float>(maxTessLevel_), 0.0f, 0.0f};
     std::memcpy(dispParamsMapped_, dp, sizeof(dp));
   }
   for (int i = 0; i < 3; ++i) {
@@ -3752,10 +3812,15 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                               1, 1, &boneDesc_, 0, nullptr);
     }
     // Set 5: global displacement params (frame-constant; shared by the coarse and
-    // tessellation pipelines, which use the same layout).
+    // tessellation pipelines, which use the same layout). Set 6: per-material
+    // displacement texture scale/bias (indexed by matId in the shaders).
     if (dispParamsSet_ != VK_NULL_HANDLE) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                               5, 1, &dispParamsSet_, 0, nullptr);
+    }
+    if (dispMatSet_ != VK_NULL_HANDLE) {
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                              6, 1, &dispMatSet_, 0, nullptr);
     }
 
     light3d::Mat4 P = ToMat4(proj_);
@@ -4193,6 +4258,10 @@ void VulkanRenderer::shutdown() {
   if (dispParamsSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispParamsSetLayout_, nullptr); dispParamsSetLayout_ = VK_NULL_HANDLE; }
   if (dispParamsUbo_) { vkDestroyBuffer(device_, dispParamsUbo_, nullptr); dispParamsUbo_ = VK_NULL_HANDLE; }
   if (dispParamsUboMem_) { vkFreeMemory(device_, dispParamsUboMem_, nullptr); dispParamsUboMem_ = VK_NULL_HANDLE; dispParamsMapped_ = nullptr; }
+  if (dispMatPool_) { vkDestroyDescriptorPool(device_, dispMatPool_, nullptr); dispMatPool_ = VK_NULL_HANDLE; }
+  if (dispMatSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispMatSetLayout_, nullptr); dispMatSetLayout_ = VK_NULL_HANDLE; }
+  if (dispMatSsbo_) { vkDestroyBuffer(device_, dispMatSsbo_, nullptr); dispMatSsbo_ = VK_NULL_HANDLE; }
+  if (dispMatSsboMem_) { vkFreeMemory(device_, dispMatSsboMem_, nullptr); dispMatSsboMem_ = VK_NULL_HANDLE; dispMatMapped_ = nullptr; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }

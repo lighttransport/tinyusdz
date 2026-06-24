@@ -173,6 +173,11 @@ struct DrawMaterialCPU {
   // times the global displacement scale. The displacement map is linear (raw).
   int displacementTex{-1};
   float displacementConst{0.0f};
+  // UsdUVTexture inputs:scale/inputs:bias for the displacement map's sampled
+  // channel: effective height = texel*scale + bias (bias commonly centers a [0,1]
+  // map). Identity (1, 0) when unauthored or for constant displacement.
+  float displacementTexScale{1.0f};
+  float displacementTexBias{0.0f};
   bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
 };
 

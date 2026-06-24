@@ -212,6 +212,8 @@ uniform bool uHasDisplacementTex;
 uniform sampler2D uDisplacementTex;
 uniform float uDisplacementConst;
 uniform float uDisplacementScale;
+uniform float uDisplacementTexScale;  // UsdUVTexture scale/bias (height = t*s + b)
+uniform float uDisplacementTexBias;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -274,7 +276,9 @@ void main() {
     // transform, so the displacement scales with the model like the geometry does.
     if (uHasDisplacement) {
         float d = uHasDisplacementTex
-                      ? textureLod(uDisplacementTex, aUV.xy, 0.0).r
+                      ? textureLod(uDisplacementTex, aUV.xy, 0.0).r *
+                                uDisplacementTexScale +
+                            uDisplacementTexBias
                       : uDisplacementConst;
         pos += normalize(nrm) * (d * uDisplacementScale);
     }

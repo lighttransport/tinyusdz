@@ -384,6 +384,15 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.metalRoughTex = mrTex;
       dm.displacementTex = mapTex(s.displacement.texture_id);
       dm.displacementConst = s.displacement.value;
+      // Displacement maps connect outputs:r (channel 0); honor that channel's
+      // UVTexture scale/bias so the viewer centers the height like tusdrender.
+      if (s.displacement.texture_id >= 0 &&
+          static_cast<size_t>(s.displacement.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& dt =
+            rs.textures[static_cast<size_t>(s.displacement.texture_id)];
+        dm.displacementTexScale = dt.scale[0];
+        dm.displacementTexBias = dt.bias[0];
+      }
       // When a parameter is driven by a texture, the shader multiplies the
       // texel by the factor below, so use a neutral factor (1) instead of the
       // constant fallback (which would darken/override the texture).
