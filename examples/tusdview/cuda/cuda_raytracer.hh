@@ -37,7 +37,11 @@ class CudaRayTracer {
   // to the device. `maxTris` caps the flattened triangle count (instances are
   // expanded, so heavily-instanced scenes can explode); 0 = no cap. Returns false
   // on OOM / build failure. Replaces any previously built scene.
-  bool build(const DrawScene& scene, size_t maxTris, std::string* err);
+  // displacementScale > 0 bakes coarse UsdPreviewSurface displacement into the
+  // traced geometry (ray tracers intersect real triangles, so displacement can't
+  // be a shader effect here). 0 = no displacement.
+  bool build(const DrawScene& scene, size_t maxTris, std::string* err,
+             float displacementScale = 0.0f);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 

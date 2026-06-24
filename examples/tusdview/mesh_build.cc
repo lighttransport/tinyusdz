@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mesh_build.hh"
 
+#include "displacement_bake.hh"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1000,6 +1002,7 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
 
   FinalizeSkinningLayout(rs, out);
   ComputeSceneBounds(out);
+  BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
 }
 
 bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
@@ -1083,6 +1086,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     BuildDrawVolumes(scene, out);
     FinalizeSkinningLayout(scene, out);
     ComputeSceneBounds(out);
+    BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
     return true;
   };
 

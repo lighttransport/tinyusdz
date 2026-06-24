@@ -1290,7 +1290,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     std::string cerr;
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
-    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, &cerr)) {
+    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, &cerr,
+                                  gui_.displacementScale())) {
       LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
     } else {
       std::vector<uint8_t> sizeProbe;
