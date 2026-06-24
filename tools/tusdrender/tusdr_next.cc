@@ -102,7 +102,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           int32_t displacement_tex_id = -1,
                           uint8_t displacement_ch = 0,
                           const std::vector<Texture> *tex_pool = nullptr,
-                          float disp_scale = 0.0f) {
+                          float disp_scale = 0.0f,
+                          float displacement_tex_scale = 1.0f,
+                          float displacement_tex_bias = 0.0f) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
@@ -263,7 +265,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                 ? uv_at(size_t(first_fv[i]), int32_t(i))
                 : uv_at(0, int32_t(i));
         uv_xform.apply(&uv.first, &uv.second);
-        d = dtex->sample_channel(uv.first, uv.second, 0.0f, displacement_ch);
+        d = dtex->sample_channel(uv.first, uv.second, 0.0f, displacement_ch) *
+                displacement_tex_scale +
+            displacement_tex_bias;
       }
       wpts[i] = Add(wpts[i], Mul(n, d * disp_scale));
     }
@@ -667,6 +671,17 @@ void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
       case 'a': out->ch = 3; break;
       default: out->ch = 0; break;  // r / rgb
     }
+  }
+  // UsdUVTexture inputs:scale / inputs:bias for the sampled channel (float4 or
+  // scalar). out = raw*scale + bias. Stored for all scalar inputs; the caller
+  // applies it only for displacement.
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
+    if (const float *f = v->as_float4()) out->scale = f[std::min<int>(out->ch, 3)];
+    else if (const float *s = v->as_float()) out->scale = *s;
+  }
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
+    if (const float *f = v->as_float4()) out->bias = f[std::min<int>(out->ch, 3)];
+    else if (const float *s = v->as_float()) out->bias = *s;
   }
 }
 
@@ -2294,7 +2309,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
                 indexed ? &jvb : nullptr, job.displacement,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
-                disp_scale);
+                disp_scale, job.displacement_tex.scale,
+                job.displacement_tex.bias);
           }
         } catch (const std::bad_alloc &) {
           oom.store(true, std::memory_order_relaxed);
