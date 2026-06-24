@@ -100,6 +100,15 @@ displays it with an ImGui docking UI.
   with the mesh even across an up-axis conversion). Toggle from **View ▸ Skeleton**.
 - **Base-color textures** on both backends (UsdPreviewSurface diffuse maps; GL
   also does metal/rough + emissive maps).
+- **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
+  a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
+  paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
+  **GPU-tessellation** path (GL 4.1 / Vulkan tessellation shaders) for adaptive
+  sub-triangle detail; **View ▸ Displacement** toggles it and exposes live scale +
+  max-tess sliders (both live on GL and Vulkan). The **ray-tracing** backends
+  (Vulkan ray query, CUDA) intersect real triangles, so the displacement is baked
+  into the geometry before the BLAS/TLAS is built. Geometric normals are used on
+  displaced surfaces so the new detail shades correctly.
 - **Three render techniques** — OpenGL raster, **Vulkan raster** (baseline), and
   **Vulkan ray tracing (ray query)**. RT is enabled only when the GPU exposes
   `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `bufferDeviceAddress`)
@@ -111,8 +120,9 @@ displays it with an ImGui docking UI.
   base color + the same directional light) plus **hard shadows**. Toggle it from
   **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
   with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
-  `build_vertex_indices=false`). _v1 RT limitations:_ base color only (no
-  textures), one material per mesh, no helper-line overlay.
+  `build_vertex_indices=false`); displacement is baked into the traced geometry.
+  _v1 RT limitations:_ base color only (no shading textures), one material per
+  mesh, no helper-line overlay.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
