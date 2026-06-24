@@ -482,8 +482,30 @@ void GLRenderer::buildTessProgram() {
       "layout(location=0) in vec3 aPosition;\n"
       "layout(location=1) in vec3 aNormal;\n"
       "layout(location=2) in vec3 aUV;\n"
+      "layout(location=8) in uvec2 aMorphOffsetCount;\n"
+      // GPU blendshape morph (active-channel skip), so morphed displaced meshes
+      // tessellate the DEFORMED surface. Skinning is not applied here -- skinned
+      // displaced meshes stay on the coarse path (gated out at draw).
+      "uniform bool uHasMorph;\n"
+      "uniform samplerBuffer uMorphDeltaTex;\n"
+      "uniform samplerBuffer uMorphCoeffTex;\n"
+      "uniform usamplerBuffer uMorphChanTex;\n"
       "out vec3 vcPos; out vec3 vcNrm; out vec2 vcUV;\n"
-      "void main(){ vcPos=aPosition; vcNrm=aNormal; vcUV=aUV.xy; }\n";
+      "void main(){\n"
+      "  vec3 pos=aPosition;\n"
+      "  if(uHasMorph && aMorphOffsetCount.y>0u){\n"
+      "    int mbase=int(aMorphOffsetCount.x);\n"
+      "    int mcount=min(int(aMorphOffsetCount.y),256);\n"
+      "    for(int i=0;i<256;++i){\n"
+      "      if(i>=mcount) break;\n"
+      "      int ch=int(texelFetch(uMorphChanTex,mbase+i).r);\n"
+      "      float c=texelFetch(uMorphCoeffTex,ch).r;\n"
+      "      if(abs(c)<1e-6) continue;\n"
+      "      pos += c*texelFetch(uMorphDeltaTex,mbase+i).yzw;\n"
+      "    }\n"
+      "  }\n"
+      "  vcPos=pos; vcNrm=aNormal; vcUV=aUV.xy;\n"
+      "}\n";
   static const char* kTCS =
       "#version 410 core\n"
       "layout(vertices=3) out;\n"
@@ -572,8 +594,12 @@ void GLRenderer::buildTessProgram() {
   tDisplacementTexScale_ = glGetUniformLocation(tessProgram_, "uDisplacementTexScale");
   tDisplacementTexBias_ = glGetUniformLocation(tessProgram_, "uDisplacementTexBias");
   tMaxTessLevel_ = glGetUniformLocation(tessProgram_, "uMaxTessLevel");
+  tHasMorph_ = glGetUniformLocation(tessProgram_, "uHasMorph");
   glUniform1i(glGetUniformLocation(tessProgram_, "uBaseColorTex"), 0);
   glUniform1i(glGetUniformLocation(tessProgram_, "uDisplacementTex"), 7);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uMorphChanTex"), 10);
   glUseProgram(0);
   tessAvailable_ = true;
 }
@@ -1269,6 +1295,19 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glBindTexture(GL_TEXTURE_2D, slotTex(dmat.baseColorTex));
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_2D, slotTex(dmat.displacementTex));
+        // GPU blendshape morph in the tess vertex stage (the VAO already supplies
+        // attr 8); bind the morph delta/coeff/channelId texture buffers (units
+        // 8/9/10) so the tessellated surface is the morphed one.
+        glUniform1i(tHasMorph_, mesh.hasMorph ? 1 : 0);
+        if (mesh.hasMorph) {
+          glActiveTexture(GL_TEXTURE8);
+          glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+          glActiveTexture(GL_TEXTURE9);
+          glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+          glActiveTexture(GL_TEXTURE10);
+          glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+          glActiveTexture(GL_TEXTURE0);
+        }
         glPatchParameteri(GL_PATCH_VERTICES, 3);
         glDrawElements(GL_PATCHES, static_cast<GLsizei>(sub.indexCount),
                        GL_UNSIGNED_INT,
