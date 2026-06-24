@@ -8,6 +8,7 @@ void tydra_scene_access_helper_test(void);
 void tydra_shader_scene_access_test(void);
 void tydra_skel_scene_access_test(void);
 void tydra_blendshape_resolution_test(void);
+void tydra_blendshape_inbetween_test(void);
 void tydra_material_binding_validation_test(void);
 void tydra_texture_loader_policy_test(void);
 void tydra_udim_texture_test(void);

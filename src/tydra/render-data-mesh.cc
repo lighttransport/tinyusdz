@@ -2133,6 +2133,17 @@ static bool ReorderVertexVaryingAttributes(
       std::vector<value::float3> tmpNormalOffsets;
       std::vector<uint32_t> tmpPointIndices;
 
+      // In-between offsets are parallel to the primary `pointIndices`, so they
+      // are splatted with the same remap to stay aligned after reordering.
+      std::vector<InbetweenShapeTarget *> ibTargets;
+      std::vector<std::vector<value::float3>> ibTmpPointOffsets;
+      std::vector<std::vector<value::float3>> ibTmpNormalOffsets;
+      for (auto &ib : target.second.inbetweens) {
+        ibTargets.push_back(&ib.second);
+        ibTmpPointOffsets.emplace_back();
+        ibTmpNormalOffsets.emplace_back();
+      }
+
       for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
         uint32_t orgPointIdx = target.second.pointIndices[i];
@@ -2156,6 +2167,21 @@ static bool ReorderVertexVaryingAttributes(
             tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
           }
 
+          for (size_t b = 0; b < ibTargets.size(); b++) {
+            if (ibTargets[b]->pointOffsets.size()) {
+              if (i >= ibTargets[b]->pointOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid in-between pointOffsets.size.");
+              }
+              ibTmpPointOffsets[b].push_back(ibTargets[b]->pointOffsets[i]);
+            }
+            if (ibTargets[b]->normalOffsets.size()) {
+              if (i >= ibTargets[b]->normalOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid in-between normalOffsets.size.");
+              }
+              ibTmpNormalOffsets[b].push_back(ibTargets[b]->normalOffsets[i]);
+            }
+          }
+
           tmpPointIndices.push_back(dstPointIndices[k]);
         }
       }
@@ -2164,9 +2190,12 @@ static bool ReorderVertexVaryingAttributes(
       target.second.pointOffsets.swap(tmpPointOffsets);
       target.second.normalOffsets.swap(tmpNormalOffsets);
 
-    }
+      for (size_t b = 0; b < ibTargets.size(); b++) {
+        ibTargets[b]->pointOffsets.swap(ibTmpPointOffsets[b]);
+        ibTargets[b]->normalOffsets.swap(ibTmpNormalOffsets[b]);
+      }
 
-    // TODO: Inbetween BlendShapes
+    }
 
   }
 
@@ -4680,7 +4709,43 @@ bool RenderSceneConverter::ConvertMesh(
              sizeof(value::normal3f) * normal_offsets.size());
     }
 
-    // TODO inbetweens
+    // In-between BlendShape attributes (`inbetweens:<name>`). Their offsets are
+    // parallel to `pointIndices`, same as the primary `offsets`. Stored
+    // un-reordered here; ReorderVertexVaryingAttributes splats them alongside
+    // the primary offsets so they stay aligned after single-indexable build.
+    for (const auto &pkv : bs->props) {
+      if (pkv.first.rfind("inbetweens:", 0) != 0) {  // namespace prefix
+        continue;
+      }
+      const Property &p = pkv.second;
+      if (!p.is_attribute()) {
+        continue;
+      }
+      const Attribute &a = p.get_attribute();
+      if (!a.metas().has_weight()) {
+        PUSH_WARN(fmt::format(
+            "In-between BlendShape `{}` has no `weight` metadata. Skipping.",
+            pkv.first));
+        continue;
+      }
+      std::vector<value::vector3f> ib_offsets;
+      if (!a.get_value(&ib_offsets)) {
+        continue;
+      }
+      if (ib_offsets.size() != vertex_indices.size()) {
+        PUSH_WARN(fmt::format(
+            "In-between BlendShape `{}` offset count {} differs from "
+            "pointIndices count {}. Skipping.",
+            pkv.first, ib_offsets.size(), vertex_indices.size()));
+        continue;
+      }
+      InbetweenShapeTarget ibt;
+      ibt.weight = float(a.metas().get_weight());
+      ibt.pointOffsets.resize(ib_offsets.size());
+      memcpy(ibt.pointOffsets.data(), ib_offsets.data(),
+             sizeof(value::vector3f) * ib_offsets.size());
+      shapeTarget.inbetweens[ibt.weight] = std::move(ibt);
+    }
 
     // TODO: key duplicate check
     dst.targets[bs->name] = shapeTarget;
