@@ -1527,16 +1527,21 @@ void Gui::drawBlendShapeEditor() {
   std::map<std::string, std::vector<float>> shapes;  // name -> inbetween weights
   const std::string selSlash = selPath_ + "/";
   for (const DrawMeshCPU& m : draw_->meshes) {
-    if (m.morphs.empty()) continue;
+    if (m.morphTargetChannels.empty()) continue;
     const std::string meshSlash = m.absPath + "/";
     const bool related = (m.absPath == selPath_) ||
                          (m.absPath.rfind(selSlash, 0) == 0) ||
                          (selPath_.rfind(meshSlash, 0) == 0);
     if (!related) continue;
-    for (const MorphTargetCPU& mt : m.morphs) {
-      std::vector<float>& ib = shapes[mt.name];
-      if (ib.empty() && !mt.inbetweens.empty()) {
-        for (const MorphInbetweenCPU& s : mt.inbetweens) ib.push_back(s.weight);
+    // morphTargetChannels carries name + ascending usdWeights = [inbetween
+    // weights..., 1.0]; the editor wants the in-between weights (drop the
+    // trailing 1.0 primary). The heavy per-vertex morphs are freed after load.
+    for (const MorphTargetChannelsCPU& tc : m.morphTargetChannels) {
+      std::vector<float>& ib = shapes[tc.name];
+      if (ib.empty() && tc.usdWeights.size() > 1) {
+        for (size_t k = 0; k + 1 < tc.usdWeights.size(); ++k) {
+          ib.push_back(tc.usdWeights[k]);
+        }
       }
     }
   }

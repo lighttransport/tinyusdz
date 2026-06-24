@@ -681,20 +681,22 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   // (channelId, dx, dy, dz). The vertex shader sums coeff[channelId] * delta; the
   // CPU computes the tiny per-channel coefficients each frame. Channel order per
   // target: in-betweens (ascending) then the primary, so usdWeights stays ascending.
+  //
+  // Built two-pass (count -> prefix-sum -> scatter) straight into the flat
+  // half-precision buffer, with NO per-vertex vector-of-vectors intermediate --
+  // at facial scale that temporary was the build-time peak (~16 B x targets x
+  // points plus a heap allocation per vertex).
   if (!dm.morphs.empty()) {
-    std::vector<std::vector<std::array<float, 4>>> perVtx(dm.vertices.size());
+    // A channel = one sparse delta stream (a target's primary or an in-between).
+    struct Chan {
+      int id;
+      const std::vector<float>* dpos;
+      const std::vector<uint32_t>* vtx;
+    };
+    std::vector<Chan> chans;
     int nextChannel = 0;
     dm.morphTargetChannels.clear();
     dm.morphTargetChannels.reserve(dm.morphs.size());
-    auto pushDelta = [&](int ch, const std::vector<float>& dp,
-                         const std::vector<uint32_t>& vtx) {
-      for (size_t e = 0; e < vtx.size(); ++e) {
-        const uint32_t v = vtx[e];
-        if (v >= perVtx.size() || e * 3 + 2 >= dp.size()) continue;
-        perVtx[v].push_back({static_cast<float>(ch), dp[e * 3 + 0],
-                             dp[e * 3 + 1], dp[e * 3 + 2]});
-      }
-    };
     for (const MorphTargetCPU& mt : dm.morphs) {
       MorphTargetChannelsCPU tc;
       tc.name = mt.name;
@@ -702,32 +704,66 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
         const int ch = nextChannel++;
         tc.usdWeights.push_back(ib.weight);
         tc.channelIds.push_back(ch);
-        pushDelta(ch, ib.dpos, mt.vtx);
+        chans.push_back({ch, &ib.dpos, &mt.vtx});
       }
       const int chPrimary = nextChannel++;
       tc.usdWeights.push_back(1.0f);
       tc.channelIds.push_back(chPrimary);
-      pushDelta(chPrimary, mt.dpos, mt.vtx);
+      chans.push_back({chPrimary, &mt.dpos, &mt.vtx});
       dm.morphTargetChannels.push_back(std::move(tc));
     }
     dm.morphChannelCount = nextChannel;
-    dm.morphOffsetCount.assign(dm.vertices.size() * 2, 0u);
-    dm.morphDeltaHalf.clear();
-    dm.morphDeltaHalf.reserve(perVtx.size() * 4);  // lower bound
-    auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
-    uint32_t off = 0;
-    for (size_t v = 0; v < perVtx.size(); ++v) {
-      dm.morphOffsetCount[v * 2 + 0] = off;
-      dm.morphOffsetCount[v * 2 + 1] = static_cast<uint32_t>(perVtx[v].size());
-      for (const std::array<float, 4>& e : perVtx[v]) {
-        // [channelId, dx, dy, dz] as halfs. channelId is exact (<=2048 channels).
-        dm.morphDeltaHalf.push_back(h(e[0]));
-        dm.morphDeltaHalf.push_back(h(e[1]));
-        dm.morphDeltaHalf.push_back(h(e[2]));
-        dm.morphDeltaHalf.push_back(h(e[3]));
+
+    const size_t nv = dm.vertices.size();
+    // Same guard in both passes so the count matches the scatter exactly.
+    auto usable = [](const std::vector<float>& dp, size_t e, uint32_t v,
+                     size_t nverts) {
+      return v < nverts && e * 3 + 2 < dp.size();
+    };
+    // Pass 1: count entries per vertex.
+    std::vector<uint32_t> count(nv, 0u);
+    for (const Chan& c : chans) {
+      for (size_t e = 0; e < c.vtx->size(); ++e) {
+        const uint32_t v = (*c.vtx)[e];
+        if (usable(*c.dpos, e, v, nv)) count[v]++;
       }
-      off += static_cast<uint32_t>(perVtx[v].size());
     }
+    // Prefix-sum into morphOffsetCount (offset,count per vertex).
+    dm.morphOffsetCount.assign(nv * 2, 0u);
+    uint64_t total = 0;
+    for (size_t v = 0; v < nv; ++v) {
+      dm.morphOffsetCount[v * 2 + 0] = static_cast<uint32_t>(total);
+      dm.morphOffsetCount[v * 2 + 1] = count[v];
+      total += count[v];
+    }
+    // Pass 2: scatter [channelId, dx, dy, dz] halfs at a running per-vertex cursor.
+    auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
+    dm.morphDeltaHalf.assign(total * 4, 0);
+    std::vector<uint32_t> cursor(nv, 0u);
+    for (const Chan& c : chans) {
+      const std::vector<float>& dp = *c.dpos;
+      const std::vector<uint32_t>& vtx = *c.vtx;
+      const uint16_t chHalf = h(static_cast<float>(c.id));
+      for (size_t e = 0; e < vtx.size(); ++e) {
+        const uint32_t v = vtx[e];
+        if (!usable(dp, e, v, nv)) continue;
+        const uint64_t slot = dm.morphOffsetCount[v * 2 + 0] + cursor[v]++;
+        uint16_t* o = &dm.morphDeltaHalf[slot * 4];
+        o[0] = chHalf;  // channelId exact as a half (<=2048 channels)
+        o[1] = h(dp[e * 3 + 0]);
+        o[2] = h(dp[e * 3 + 1]);
+        o[3] = h(dp[e * 3 + 2]);
+      }
+    }
+
+    // dm.morphs (the CPU sparse per-vertex deltas) is now redundant: the GPU
+    // raster path morphs from morphDeltaHalf, RT backends morph via the tydra
+    // targets (DeformSkinnedMeshes), the influence AOV is baked into
+    // morphInfluence above, and the blend editor reads names/weights from
+    // morphTargetChannels. Free it -- at facial scale (64+ targets, 64k+ pts)
+    // this is the dominant CPU copy (~16 B x targets x points). A manual-blend
+    // reconvert rebuilds the DrawScene from scratch if a CPU path ever needs it.
+    std::vector<MorphTargetCPU>().swap(dm.morphs);
   }
 
   // --- Submeshes (group triangles by material) ---
