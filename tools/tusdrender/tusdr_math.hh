@@ -497,6 +497,12 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
 struct ScalarTex {
   int32_t id{-1};
   uint8_t ch{0};
+  // UsdUVTexture inputs:scale/inputs:bias for the sampled channel (out = raw*scale
+  // + bias). Resolved for all scalar inputs but currently only applied to
+  // displacement (so roughness/metallic/etc. stay byte-identical); displacement
+  // commonly uses bias to center a [0,1] height map (e.g. scale 1, bias -0.5).
+  float scale{1.0f};
+  float bias{0.0f};
 };
 
 // Budget-tracked, pooled vectors for the big render buffers (triangle positions,
