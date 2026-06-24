@@ -2905,16 +2905,18 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       VkDescriptorSet d = allocMorphDescriptor(gm.morphCoeffBuf, cbytes);
       if (d != VK_NULL_HANDLE) gm.morphCoeffDesc = d;
     }
-    // Set 9: per-entry channelId, widened to uint (one SSBO element each) so the
-    // shader can read it WITHOUT touching the wide delta SSBO -- the active-channel
-    // skip pre-check. A separate buffer (not bit-packed into the delta entry) so
-    // skipped channels never pull the delta cache lines.
+    // Set 9: per-entry channelId in its own buffer so the shader can read it
+    // WITHOUT touching the wide delta SSBO -- the active-channel skip pre-check.
+    // A separate buffer (not bit-packed into the delta entry) so skipped channels
+    // never pull the delta cache lines. Uploaded as the uint16 side buffer packed
+    // 2-per-uint (no 16-bit-storage feature needed); the shader extracts the right
+    // half. 2 B/entry, parity with GL's R16UI texture buffer.
     if (sm.morphChannelId.size() == sm.morphDeltaHalf.size() / 4) {
-      std::vector<uint32_t> chan32(sm.morphChannelId.begin(),
-                                   sm.morphChannelId.end());
-      const VkDeviceSize chbytes = chan32.size() * sizeof(uint32_t);
+      std::vector<uint16_t> chan = sm.morphChannelId;
+      if (chan.size() & 1u) chan.push_back(0);  // pad to a whole number of uints
+      const VkDeviceSize chbytes = chan.size() * sizeof(uint16_t);
       if (createHostBuffer(chbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                           chan32.data(), &gm.morphChanBuf, &gm.morphChanMem)) {
+                           chan.data(), &gm.morphChanBuf, &gm.morphChanMem)) {
         VkDescriptorSet d = allocMorphDescriptor(gm.morphChanBuf, chbytes);
         if (d != VK_NULL_HANDLE) gm.morphChanDesc = d;
       }
