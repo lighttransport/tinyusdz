@@ -752,7 +752,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
         if (!usable(dp, e, v, nv)) continue;
         const uint64_t slot = dm.morphOffsetCount[v * 2 + 0] + cursor[v]++;
         uint16_t* o = &dm.morphDeltaHalf[slot * 4];
-        o[0] = chHalf;  // channelId exact as a half (<=2048 channels)
+        o[0] = chHalf;  // legacy fallback; the skip reads channelId from morphChannelId
         o[1] = h(dp[e * 3 + 0]);
         o[2] = h(dp[e * 3 + 1]);
         o[3] = h(dp[e * 3 + 2]);

@@ -94,16 +94,20 @@ struct DrawMeshCPU {
   //     halve both the buffer (facial rigs: 64+ targets x 64k+ points) and the
   //     per-vertex shader fetch bandwidth. GL binds it as an RGBA16F texture
   //     buffer (hardware f16->f32 on texelFetch); VK reads uvec2 + unpackHalf2x16.
-  //     channelId is exact as a half for <= 2048 channels (always true here).
+  //     The packed channelId (slot 0) is a legacy fallback -- the active-channel
+  //     skip reads channelId from the exact uint16 `morphChannelId` side buffer,
+  //     so only dx,dy,dz are live and the channel count is bounded by uint16, not
+  //     by half-exactness (<= 2048).
   //   morphChannelCount: number of channels (size of the per-frame coeff array).
   //   morphTargetChannels: per-target channel metadata for the per-frame eval.
   std::vector<uint32_t> morphOffsetCount;
   std::vector<uint16_t> morphDeltaHalf;
   // Parallel to the morphDeltaHalf entries (one uint16 channelId each). A small
-  // side buffer the GL vertex shader fetches FIRST, so it can skip the wide delta
-  // fetch when that channel's coefficient is ~0 (facial animation: only a handful
-  // of 64+ expressions are active per frame). Channels are assigned per target in
-  // a fixed order shared by every vertex, so the skip branch stays warp-coherent.
+  // side buffer the vertex shader fetches FIRST (GL: R16UI texture buffer; VK:
+  // widened to a uint SSBO, set 9), so it can skip the wide delta fetch when that
+  // channel's coefficient is ~0 (facial animation: only a handful of 64+
+  // expressions are active per frame). Channels are assigned per target in a fixed
+  // order shared by every vertex, so the skip branch stays warp-coherent.
   std::vector<uint16_t> morphChannelId;
   int morphChannelCount{0};
   std::vector<MorphTargetChannelsCPU> morphTargetChannels;
