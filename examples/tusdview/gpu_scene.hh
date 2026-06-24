@@ -57,7 +57,7 @@ struct MorphTargetCPU {
 
 // GPU-morph "channels" for one blendshape target: the primary and each in-between
 // sample become a channel with a mesh-local id and its own sparse per-vertex delta
-// (in DrawMeshCPU::morphDeltaTexels). Per frame the CPU computes one coefficient
+// (in DrawMeshCPU::morphDeltaHalf). Per frame the CPU computes one coefficient
 // per channel (reproducing the piecewise-lerp), and the vertex shader sums
 // coeff[channel] * delta. `usdWeights`/`channelIds` are parallel and ascending:
 // the in-between weights then 1.0 (primary). The implicit rest sample (weight 0)
@@ -89,12 +89,16 @@ struct DrawMeshCPU {
   // from a static sparse per-vertex delta list + a tiny per-frame coefficient
   // array, so weight changes upload only the coefficients (no VBO re-upload).
   // Mirrors the extended-skinning influence layout.
-  //   morphOffsetCount: 2 uints/vertex (offset, count) into morphDeltaTexels.
-  //   morphDeltaTexels: 4 floats/entry (channelIndexAsFloat, dx, dy, dz).
+  //   morphOffsetCount: 2 uints/vertex (offset, count) into morphDeltaHalf.
+  //   morphDeltaHalf: 4 halfs/entry (channelId, dx, dy, dz), half-precision to
+  //     halve both the buffer (facial rigs: 64+ targets x 64k+ points) and the
+  //     per-vertex shader fetch bandwidth. GL binds it as an RGBA16F texture
+  //     buffer (hardware f16->f32 on texelFetch); VK reads uvec2 + unpackHalf2x16.
+  //     channelId is exact as a half for <= 2048 channels (always true here).
   //   morphChannelCount: number of channels (size of the per-frame coeff array).
   //   morphTargetChannels: per-target channel metadata for the per-frame eval.
   std::vector<uint32_t> morphOffsetCount;
-  std::vector<float> morphDeltaTexels;
+  std::vector<uint16_t> morphDeltaHalf;
   int morphChannelCount{0};
   std::vector<MorphTargetChannelsCPU> morphTargetChannels;
   // Optional GPU skinning attributes, parallel to `vertices`.

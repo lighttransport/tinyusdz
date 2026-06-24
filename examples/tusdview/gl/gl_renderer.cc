@@ -987,11 +987,12 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindTexture(GL_TEXTURE_BUFFER, 0);
     }
     // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
-    // texture-buffer (RGBA32F: channelId,dx,dy,dz) + a per-frame coefficient
-    // texture-buffer (R32F). The vertex shader sums coeff*delta before skinning.
+    // texture-buffer (RGBA16F: channelId,dx,dy,dz half-precision) + a per-frame
+    // coefficient texture-buffer (R32F). The vertex shader sums coeff*delta
+    // before skinning; texelFetch returns the f16 deltas auto-converted to f32.
     if (sm.morphChannelCount > 0 &&
         sm.morphOffsetCount.size() == sm.vertices.size() * 2 &&
-        !sm.morphDeltaTexels.empty()) {
+        !sm.morphDeltaHalf.empty()) {
       glGenBuffers(1, &gm.morphOffsetVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.morphOffsetVbo);
       glBufferData(GL_ARRAY_BUFFER,
@@ -1003,11 +1004,11 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glGenBuffers(1, &gm.morphDeltaBuf);
       glBindBuffer(GL_TEXTURE_BUFFER, gm.morphDeltaBuf);
       glBufferData(GL_TEXTURE_BUFFER,
-                   static_cast<GLsizeiptr>(sm.morphDeltaTexels.size() * sizeof(float)),
-                   sm.morphDeltaTexels.data(), GL_STATIC_DRAW);
+                   static_cast<GLsizeiptr>(sm.morphDeltaHalf.size() * sizeof(uint16_t)),
+                   sm.morphDeltaHalf.data(), GL_STATIC_DRAW);
       glGenTextures(1, &gm.morphDeltaTex);
       glBindTexture(GL_TEXTURE_BUFFER, gm.morphDeltaTex);
-      glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, gm.morphDeltaBuf);
+      glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA16F, gm.morphDeltaBuf);
       const std::vector<float> zeroCoeff(static_cast<size_t>(sm.morphChannelCount), 0.0f);
       glGenBuffers(1, &gm.morphCoeffBuf);
       glBindBuffer(GL_TEXTURE_BUFFER, gm.morphCoeffBuf);
