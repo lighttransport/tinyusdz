@@ -21,6 +21,9 @@
 #include "mesh_frag.spv.h"
 #include "mesh_inst_frag.spv.h"
 #include "mesh_inst_vert.spv.h"
+#include "mesh_tess_tesc.spv.h"
+#include "mesh_tess_tese.spv.h"
+#include "mesh_tess_vert.spv.h"
 #include "mesh_vert.spv.h"
 #include "volume_frag.spv.h"
 #include "volume_vert.spv.h"
@@ -385,6 +388,18 @@ bool VulkanRenderer::createDevice(std::string* err) {
   }
   ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
   ci.ppEnabledExtensionNames = devExts.data();
+
+  // Enable the tessellation-shader feature when the device supports it, for the
+  // GPU-tessellation displacement pipeline. Absent -> displaced meshes still get
+  // coarse per-vertex displacement (the tess pipeline is simply not created).
+  VkPhysicalDeviceFeatures supported{};
+  vkGetPhysicalDeviceFeatures(phys_, &supported);
+  VkPhysicalDeviceFeatures enabledFeatures{};
+  if (supported.tessellationShader) {
+    enabledFeatures.tessellationShader = VK_TRUE;
+    tessSupported_ = true;
+  }
+  ci.pEnabledFeatures = &enabledFeatures;
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
   vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
@@ -782,8 +797,16 @@ VkShaderModule VulkanRenderer::createShader(const uint32_t* code, size_t bytes) 
 }
 
 bool VulkanRenderer::createPipeline(std::string* err) {
+  // The tessellation stages (tesc/tese) also read the push constants, so the
+  // shared range must declare them when tessellation is available. Every
+  // vkCmdPushConstants on this layout pushes with exactly pushStages_.
+  pushStages_ = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  if (tessSupported_) {
+    pushStages_ |= VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                   VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  }
   VkPushConstantRange pcr{};
-  pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pcr.stageFlags = pushStages_;
   pcr.offset = 0;
   pcr.size = sizeof(PushC);
 
@@ -917,7 +940,124 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     if (err) *err = "vkCreateGraphicsPipelines failed";
     return false;
   }
+  createTessPipeline();  // best-effort; coarse displacement still works without it
   return true;
+}
+
+// GPU-tessellation displacement pipeline: shares pipelineLayout_ but draws PATCH
+// lists through tess-control/tess-eval stages that subdivide each triangle and
+// displace the generated samples. Best-effort -- on failure the renderer keeps
+// using the coarse per-vertex path (tessPipeline_ stays null).
+void VulkanRenderer::createTessPipeline() {
+  if (!tessSupported_) return;
+  VkShaderModule vs = createShader(mesh_tess_vert_spv, sizeof(mesh_tess_vert_spv));
+  VkShaderModule tcs = createShader(mesh_tess_tesc_spv, sizeof(mesh_tess_tesc_spv));
+  VkShaderModule tes = createShader(mesh_tess_tese_spv, sizeof(mesh_tess_tese_spv));
+  VkShaderModule fs = createShader(mesh_frag_spv, sizeof(mesh_frag_spv));
+  if (!vs || !tcs || !tes || !fs) {
+    if (vs) vkDestroyShaderModule(device_, vs, nullptr);
+    if (tcs) vkDestroyShaderModule(device_, tcs, nullptr);
+    if (tes) vkDestroyShaderModule(device_, tes, nullptr);
+    if (fs) vkDestroyShaderModule(device_, fs, nullptr);
+    return;
+  }
+  VkPipelineShaderStageCreateInfo stages[4]{};
+  for (int i = 0; i < 4; ++i) {
+    stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[i].pName = "main";
+  }
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;             stages[0].module = vs;
+  stages[1].stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;    stages[1].module = tcs;
+  stages[2].stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; stages[2].module = tes;
+  stages[3].stage = VK_SHADER_STAGE_FRAGMENT_BIT;           stages[3].module = fs;
+
+  // Only binding 0 (interleaved DrawVertex) is consumed; the other vertex buffers
+  // bound at draw time are simply ignored by this pipeline's vertex input.
+  VkVertexInputBindingDescription bind{};
+  bind.binding = 0;
+  bind.stride = sizeof(DrawVertex);
+  bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[3]{};
+  attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+  attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
+  attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
+  VkPipelineVertexInputStateCreateInfo vin{};
+  vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vin.vertexBindingDescriptionCount = 1;
+  vin.pVertexBindingDescriptions = &bind;
+  vin.vertexAttributeDescriptionCount = 3;
+  vin.pVertexAttributeDescriptions = attrs;
+
+  VkPipelineInputAssemblyStateCreateInfo ia{};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+
+  VkPipelineTessellationStateCreateInfo tess{};
+  tess.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+  tess.patchControlPoints = 3;
+
+  VkPipelineViewportStateCreateInfo vp{};
+  vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vp.viewportCount = 1;
+  vp.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rs{};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  rs.cullMode = VK_CULL_MODE_NONE;
+  rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rs.lineWidth = 1.0f;
+
+  VkPipelineMultisampleStateCreateInfo ms{};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo ds{};
+  ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  ds.depthTestEnable = VK_TRUE;
+  ds.depthWriteEnable = VK_TRUE;
+  ds.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendAttachmentState cba{};
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo cb{};
+  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  cb.attachmentCount = 1;
+  cb.pAttachments = &cba;
+
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynState{};
+  dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynState.dynamicStateCount = 2;
+  dynState.pDynamicStates = dyn;
+
+  VkGraphicsPipelineCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  ci.stageCount = 4;
+  ci.pStages = stages;
+  ci.pVertexInputState = &vin;
+  ci.pInputAssemblyState = &ia;
+  ci.pTessellationState = &tess;
+  ci.pViewportState = &vp;
+  ci.pRasterizationState = &rs;
+  ci.pMultisampleState = &ms;
+  ci.pDepthStencilState = &ds;
+  ci.pColorBlendState = &cb;
+  ci.pDynamicState = &dynState;
+  ci.layout = pipelineLayout_;
+  ci.renderPass = offscreenPass_;
+  ci.subpass = 0;
+  VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                         &tessPipeline_);
+  vkDestroyShaderModule(device_, vs, nullptr);
+  vkDestroyShaderModule(device_, tcs, nullptr);
+  vkDestroyShaderModule(device_, tes, nullptr);
+  vkDestroyShaderModule(device_, fs, nullptr);
+  if (r != VK_SUCCESS) {
+    tessPipeline_ = VK_NULL_HANDLE;
+    LOGD("tessellation pipeline creation failed (%d); using coarse displacement", int(r));
+  }
 }
 
 // Instanced flat-shaded prototype pipeline (large-scene --next path). Mirrors the
@@ -1574,7 +1714,9 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   b.descriptorCount = 1;
   // VERTEX too: the same per-texture sets feed the vertex-stage displacement
   // sampler (set 4) as well as the fragment-stage base color (set 0).
+  // TESS_EVALUATION too when available: the tessellation path samples set 4 there.
   b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  if (tessSupported_) b.stageFlags |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   lci.bindingCount = 1;
@@ -3325,6 +3467,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   depthScale_ = params.depthScale;
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
+  maxTessLevel_ = params.maxTessLevel;
   for (int i = 0; i < 3; ++i) {
     sceneMin_[i] = params.sceneMin[i];
     sceneExtent_[i] = params.sceneExtent[i];
@@ -3656,10 +3799,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                       (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
         }
         pc.meshId = static_cast<int>(mi);
-        vkCmdPushConstants(cb, pipelineLayout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(PushC), &pc);
-        vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+        vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
+        // GPU tessellation for displaced, non-skinned meshes in Shaded mode when
+        // the slider asks for it: bind the PATCH-list tess pipeline for this draw,
+        // then restore the coarse pipeline for following submeshes.
+        const bool useTess = displaced && tessPipeline_ != VK_NULL_HANDLE &&
+                             maxTessLevel_ > 1 && rtMode_ == 0 && !mesh.skinned;
+        if (useTess) {
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
+          vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+        } else {
+          vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+        }
       }
     }
 
@@ -3973,6 +4125,7 @@ void VulkanRenderer::shutdown() {
   if (faceSetLayout_) { vkDestroyDescriptorSetLayout(device_, faceSetLayout_, nullptr); faceSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+  if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
   if (instPipelineLayout_) { vkDestroyPipelineLayout(device_, instPipelineLayout_, nullptr); instPipelineLayout_ = VK_NULL_HANDLE; }

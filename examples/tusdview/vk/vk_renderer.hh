@@ -165,6 +165,7 @@ class VulkanRenderer final : public Renderer {
                    VkBuffer* buf, VkDeviceMemory* mem, VkDeviceSize* cap,
                    VkPipeline pipeline, const float vp[16]);
   bool createPipeline(std::string* err);
+  void createTessPipeline();  // best-effort GPU-tessellation pipeline (non-fatal)
   bool createInstPipeline(std::string* err);
   bool createLinePipeline(std::string* err);
   bool createSampler(std::string* err);
@@ -262,6 +263,13 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
+  // topology + tesc/tese). Created only when the device supports the
+  // tessellationShader feature; otherwise displaced meshes stay coarse.
+  bool tessSupported_{false};
+  VkPipeline tessPipeline_{VK_NULL_HANDLE};
+  VkShaderStageFlags pushStages_{VK_SHADER_STAGE_VERTEX_BIT |
+                                 VK_SHADER_STAGE_FRAGMENT_BIT};
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
 
@@ -388,6 +396,7 @@ class VulkanRenderer final : public Renderer {
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
   float displacementScale_{1.0f};  // global displacement multiplier
+  int maxTessLevel_{1};       // >1 selects the GPU-tessellation pipeline
   float sceneMin_[3]{0, 0, 0};      // position-AOV scene bbox
   float sceneExtent_[3]{1, 1, 1};
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
