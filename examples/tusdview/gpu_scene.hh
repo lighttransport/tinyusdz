@@ -168,6 +168,12 @@ struct DrawMaterialCPU {
   int metalRoughTex{-1};
   int normalTex{-1};
   int emissiveTex{-1};
+  // UsdPreviewSurface inputs:displacement. The surface is offset along its normal
+  // by (displacementConst, or the displacement texture's red channel when present)
+  // times the global displacement scale. The displacement map is linear (raw).
+  int displacementTex{-1};
+  float displacementConst{0.0f};
+  bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
 };
 
 // Wrap modes (match light3d / GL semantics).

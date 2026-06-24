@@ -578,6 +578,12 @@ void Gui::drawDockspaceAndMenu() {
       }
       ImGui::SetNextItemWidth(80.0f);
       ImGui::SliderFloat("Tessellation", &tessQuality_, 0.25f, 4.0f, "%.2f");
+      ImGui::Separator();
+      ImGui::MenuItem("Displacement", nullptr, &displacementEnabled_);
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderFloat("Disp scale", &displacementScale_, 0.0f, 4.0f, "%.2f");
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderInt("Max tess", &maxTessLevel_, 1, 16);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -3027,6 +3033,9 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.mode = mode_;
+  p.displacement = displacementEnabled_;
+  p.displacementScale = displacementScale_;
+  p.maxTessLevel = maxTessLevel_;
   // Don't outline a hidden selection.
   const bool selHidden =
       selMeshIndex_ >= 0 &&

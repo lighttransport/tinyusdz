@@ -94,9 +94,13 @@ class GLRenderer final : public Renderer {
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
+    int displacementTex{-1};
+    float displacementConst{0.0f};
+    bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
   };
 
   void destroyScene();
+  void buildTessProgram();  // GL>=4.0 tessellation displacement program (best-effort)
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
                   const float* overrideEmissive);
@@ -119,6 +123,20 @@ class GLRenderer final : public Renderer {
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
+  GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
+  GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
+
+  // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
+  // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a
+  // coarse mesh shows fine height-map detail without any persistent extra geometry.
+  // Used for displaced submeshes in Shaded mode when Max-tess > 1; otherwise the
+  // coarse per-vertex program above is used.
+  bool tessAvailable_{false};
+  GLuint tessProgram_{0};
+  GLint tMVP_{-1}, tModel_{-1}, tNormalMat_{-1}, tCameraPos_{-1};
+  GLint tBaseColor_{-1}, tHasBaseColorTex_{-1};
+  GLint tHasDisplacementTex_{-1}, tDisplacementConst_{-1}, tDisplacementScale_{-1};
+  GLint tMaxTessLevel_{-1};
   GLint uSkinningEnabled_{-1};
   GLint uExtendedSkinningEnabled_{-1};
   GLint uBoneTexWidth_{-1}, uBoneMatrixCount_{-1}, uInfluenceTexWidth_{-1};

@@ -405,6 +405,8 @@ struct Options {
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
   std::string env_file;            // --env <hdr>: IBL environment map override
+  bool displace{true};             // apply UsdPreviewSurface displacement (coarse)
+  float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
 };
 
 struct DirectShape {
@@ -614,6 +616,8 @@ struct MeshJobNext {
   float ior{1.5f};                       // inputs:ior
   uint8_t use_specular_workflow{0};      // inputs:useSpecularWorkflow
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
+  float displacement{0.0f};              // inputs:displacement constant (scene units)
+  ScalarTex displacement_tex;            // inputs:displacement texture + channel
 };
 
 struct TextureCache {
@@ -648,6 +652,8 @@ struct ResolvedMat {
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
   bool vertex_color{false};
+  float displacement{0.0f};
+  ScalarTex displacement_tex;
 };
 
 struct ProtoBuildReq {
