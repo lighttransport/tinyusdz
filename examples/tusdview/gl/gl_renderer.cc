@@ -138,6 +138,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uDisplacementTex"), 7);
   glUniform1i(glGetUniformLocation(program_, "uMorphDeltaTex"), 8);  // GPU morph
   glUniform1i(glGetUniformLocation(program_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(program_, "uMorphChanTex"), 10);  // skip pre-check
   uHasMorph_ = glGetUniformLocation(program_, "uHasMorph");
   glUseProgram(0);
 
@@ -594,6 +595,8 @@ void GLRenderer::destroyScene() {
     if (m.morphDeltaBuf) glDeleteBuffers(1, &m.morphDeltaBuf);
     if (m.morphCoeffTex) glDeleteTextures(1, &m.morphCoeffTex);
     if (m.morphCoeffBuf) glDeleteBuffers(1, &m.morphCoeffBuf);
+    if (m.morphChanTex) glDeleteTextures(1, &m.morphChanTex);
+    if (m.morphChanBuf) glDeleteBuffers(1, &m.morphChanBuf);
     if (m.faceIdTex) glDeleteTextures(1, &m.faceIdTex);
     if (m.faceIdBuf) glDeleteBuffers(1, &m.faceIdBuf);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
@@ -1009,6 +1012,17 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glGenTextures(1, &gm.morphDeltaTex);
       glBindTexture(GL_TEXTURE_BUFFER, gm.morphDeltaTex);
       glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA16F, gm.morphDeltaBuf);
+      // Per-entry channelId (R16UI) for the in-shader active-channel skip.
+      if (sm.morphChannelId.size() == sm.morphDeltaHalf.size() / 4) {
+        glGenBuffers(1, &gm.morphChanBuf);
+        glBindBuffer(GL_TEXTURE_BUFFER, gm.morphChanBuf);
+        glBufferData(GL_TEXTURE_BUFFER,
+                     static_cast<GLsizeiptr>(sm.morphChannelId.size() * sizeof(uint16_t)),
+                     sm.morphChannelId.data(), GL_STATIC_DRAW);
+        glGenTextures(1, &gm.morphChanTex);
+        glBindTexture(GL_TEXTURE_BUFFER, gm.morphChanTex);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R16UI, gm.morphChanBuf);
+      }
       const std::vector<float> zeroCoeff(static_cast<size_t>(sm.morphChannelCount), 0.0f);
       glGenBuffers(1, &gm.morphCoeffBuf);
       glBindBuffer(GL_TEXTURE_BUFFER, gm.morphCoeffBuf);
@@ -1188,6 +1202,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
       glActiveTexture(GL_TEXTURE9);
       glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+      glActiveTexture(GL_TEXTURE10);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
       glActiveTexture(GL_TEXTURE0);
     }
 

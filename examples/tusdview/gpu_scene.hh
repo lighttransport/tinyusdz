@@ -99,6 +99,12 @@ struct DrawMeshCPU {
   //   morphTargetChannels: per-target channel metadata for the per-frame eval.
   std::vector<uint32_t> morphOffsetCount;
   std::vector<uint16_t> morphDeltaHalf;
+  // Parallel to the morphDeltaHalf entries (one uint16 channelId each). A small
+  // side buffer the GL vertex shader fetches FIRST, so it can skip the wide delta
+  // fetch when that channel's coefficient is ~0 (facial animation: only a handful
+  // of 64+ expressions are active per frame). Channels are assigned per target in
+  // a fixed order shared by every vertex, so the skip branch stays warp-coherent.
+  std::vector<uint16_t> morphChannelId;
   int morphChannelCount{0};
   std::vector<MorphTargetChannelsCPU> morphTargetChannels;
   // Optional GPU skinning attributes, parallel to `vertices`.
