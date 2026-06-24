@@ -20,6 +20,8 @@ Common flags:
 | `-camera <path>` | render through a named `UsdGeomCamera` |
 | `-mask <prim,...>` | restrict to these prim subtrees |
 | `-complexity low\|med\|high\|veryhigh` | subdivision preset |
+| `-smooth` | interpolate authored normals (smooth shading) |
+| `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
 | `-maxMem <GiB>` | memory cap override (default `min(32, 0.5·MemAvailable)`) |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
@@ -41,6 +43,11 @@ Common flags:
   glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
+* **Displacement** — `UsdPreviewSurface inputs:displacement` (constant or a
+  height texture, honoring the `UsdUVTexture` `scale`/`bias`) offsets each vertex
+  along its normal before the BVH build — coarse (no extra geometry), so it works
+  on the CPU path tracer and the `-vk`/`-vkr` backends. `-displaceScale <f>` tunes
+  the amount; `-noDisplace` turns it off (byte-identical to before).
 * **Lighting** — UsdLux finite lights (Rect/Sphere/Disk/Cylinder/Distant) are
   collected from the composed stage and shaded with soft area falloff; DomeLight
   is image-based lighting (`--env` overrides it). Scenes with no lights fall back
