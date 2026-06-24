@@ -736,14 +736,17 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       dm.morphOffsetCount[v * 2 + 1] = count[v];
       total += count[v];
     }
-    // Pass 2: scatter [channelId, dx, dy, dz] halfs at a running per-vertex cursor.
+    // Pass 2: scatter [channelId, dx, dy, dz] halfs at a running per-vertex
+    // cursor, plus the parallel uint16 channelId side buffer (GL skip pre-check).
     auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
     dm.morphDeltaHalf.assign(total * 4, 0);
+    dm.morphChannelId.assign(total, 0);
     std::vector<uint32_t> cursor(nv, 0u);
     for (const Chan& c : chans) {
       const std::vector<float>& dp = *c.dpos;
       const std::vector<uint32_t>& vtx = *c.vtx;
       const uint16_t chHalf = h(static_cast<float>(c.id));
+      const uint16_t chId = static_cast<uint16_t>(c.id);
       for (size_t e = 0; e < vtx.size(); ++e) {
         const uint32_t v = vtx[e];
         if (!usable(dp, e, v, nv)) continue;
@@ -753,6 +756,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
         o[1] = h(dp[e * 3 + 0]);
         o[2] = h(dp[e * 3 + 1]);
         o[3] = h(dp[e * 3 + 2]);
+        dm.morphChannelId[slot] = chId;
       }
     }
 

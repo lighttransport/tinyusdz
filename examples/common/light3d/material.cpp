@@ -216,12 +216,15 @@ uniform float uDisplacementScale;
 uniform float uDisplacementTexScale;  // UsdUVTexture scale/bias (height = t*s + b)
 uniform float uDisplacementTexBias;
 
-// GPU blendshape morph: per-vertex (offset,count) into uMorphDeltaTex (RGBA32F:
+// GPU blendshape morph: per-vertex (offset,count) into uMorphDeltaTex (RGBA16F:
 // channelId, dx,dy,dz); uMorphCoeffTex (R32F) holds the per-frame coefficient per
 // channel. pos += sum_i coeff[channel_i] * delta_i, applied before skinning.
+// uMorphChanTex (R16UI) duplicates each entry's channelId so the loop can read the
+// coefficient and skip the wide delta fetch when the channel is inactive.
 uniform bool uHasMorph;
 uniform samplerBuffer uMorphDeltaTex;
 uniform samplerBuffer uMorphCoeffTex;
+uniform usamplerBuffer uMorphChanTex;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -251,9 +254,13 @@ void main() {
         int mcount = min(int(aMorphOffsetCount.y), 256);
         for (int i = 0; i < 256; ++i) {
             if (i >= mcount) break;
-            vec4 d = texelFetch(uMorphDeltaTex, mbase + i);
-            float c = texelFetch(uMorphCoeffTex, int(d.x + 0.5)).r;
-            pos += c * d.yzw;
+            // Cheap channelId fetch first; skip the wide delta fetch when this
+            // channel is inactive (facial animation: most coeffs are 0). The
+            // channel order is shared across vertices, so the branch is coherent.
+            int ch = int(texelFetch(uMorphChanTex, mbase + i).r);
+            float c = texelFetch(uMorphCoeffTex, ch).r;
+            if (abs(c) < 1e-6) continue;
+            pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;
         }
     }
     float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;

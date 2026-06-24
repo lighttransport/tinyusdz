@@ -81,8 +81,9 @@ class GLRenderer final : public Renderer {
     // a static delta texture-buffer (RGBA32F: channelId,dx,dy,dz) + a tiny per-frame
     // coefficient texture-buffer (R32F). hasMorph gates it on; 0 handles = none.
     GLuint morphOffsetVbo{0};        // attrib 8: uvec2 (offset, count); 0 = none
-    GLuint morphDeltaBuf{0}, morphDeltaTex{0};   // RGBA32F GL_TEXTURE_BUFFER
+    GLuint morphDeltaBuf{0}, morphDeltaTex{0};   // RGBA16F GL_TEXTURE_BUFFER
     GLuint morphCoeffBuf{0}, morphCoeffTex{0};   // R32F GL_TEXTURE_BUFFER (dynamic)
+    GLuint morphChanBuf{0}, morphChanTex{0};     // R16UI: per-entry channelId (skip)
     int morphChannelCount{0};
     bool hasMorph{false};
     bool geometricNormal{false};     // shade with screen-derivative normal
