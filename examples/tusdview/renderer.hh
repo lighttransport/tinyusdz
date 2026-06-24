@@ -178,6 +178,12 @@ class Renderer {
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
   virtual void updateMeshVertices(int /*meshIndex*/,
                                   const std::vector<DrawVertex>& /*verts*/) {}
+  // Upload mesh `meshIndex`'s per-channel blendshape coefficients (one float per
+  // morph channel) for GPU-side morphing in the raster vertex shader. Only the
+  // tiny coefficient buffer updates per frame — no vertex re-upload, no GPU stall.
+  // No-op on backends that bake morph into geometry (ray tracing) or lack morph.
+  virtual void updateMorphWeights(int /*meshIndex*/,
+                                  const std::vector<float>& /*coeffs*/) {}
   // Replace mesh `meshIndex`'s world transform (column-major float[16]) — used
   // for per-frame node/xform animation alongside GPU skinning. No-op if
   // unsupported.
