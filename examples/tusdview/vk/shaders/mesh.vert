@@ -18,6 +18,11 @@ layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
 // Each entry packs 4 halfs (channelId,dx,dy,dz) into one uvec2 (unpackHalf2x16).
 layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
 layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
+// Per-entry channelId in its own buffer so the loop can read it WITHOUT touching
+// the wide delta SSBO -- the active-channel skip pre-check (facial animation: only
+// a handful of 64+ targets active per frame). Channels share a per-vertex order,
+// so the branch is warp-coherent on dense rigs.
+layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChannelId[]; };
 layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
   vec4 influenceRows[];
 };
@@ -75,10 +80,13 @@ void main() {
     int mcount = min(int(aMorphOffsetCount.y), 256);
     for (int i = 0; i < 256; ++i) {
       if (i >= mcount) break;
+      // Cheap channelId fetch first; skip the wide delta fetch when inactive.
+      float c = morphCoeff[int(morphChannelId[mbase + i])];
+      if (abs(c) < 1e-6) continue;
       uvec2 raw = morphDeltas[mbase + i];
       vec2 a = unpackHalf2x16(raw.x);  // (channelId, dx)
       vec2 b = unpackHalf2x16(raw.y);  // (dy, dz)
-      pos += morphCoeff[int(a.x + 0.5)] * vec3(a.y, b.x, b.y);
+      pos += c * vec3(a.y, b.x, b.y);
     }
   }
   float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;

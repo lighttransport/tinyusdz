@@ -817,12 +817,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Set 5: global displacement params UBO (live scale + max-tess sliders).
   // Set 6: per-material displacement texture scale/bias SSBO.
   // Sets 7 & 8: per-mesh GPU blendshape morph delta + coefficient SSBOs.
-  VkDescriptorSetLayout setLayouts[9] = {texSetLayout_, skinSetLayout_,
-                                         influenceSetLayout_, faceSetLayout_,
-                                         texSetLayout_, dispParamsSetLayout_,
-                                         dispMatSetLayout_, morphSetLayout_,
-                                         morphSetLayout_};
-  plci.setLayoutCount = 9;
+  // Set 9: per-mesh per-entry channelId SSBO (active-channel skip pre-check).
+  VkDescriptorSetLayout setLayouts[10] = {texSetLayout_, skinSetLayout_,
+                                          influenceSetLayout_, faceSetLayout_,
+                                          texSetLayout_, dispParamsSetLayout_,
+                                          dispMatSetLayout_, morphSetLayout_,
+                                          morphSetLayout_, morphSetLayout_};
+  plci.setLayoutCount = 10;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1947,7 +1948,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   rlci.pBindings = &rb;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &rlci, nullptr, &morphSetLayout_),
            "morph set layout");
-  const uint32_t kMaxMorphSets = 8192;  // 2 per morphed mesh + the dummy
+  const uint32_t kMaxMorphSets = 8192;  // 3 per morphed mesh (delta/coeff/chan) + dummy
   VkDescriptorPoolSize rps{};
   rps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   rps.descriptorCount = kMaxMorphSets;
@@ -2567,6 +2568,8 @@ void VulkanRenderer::destroyScene() {
     if (m.morphDeltaMem) vkFreeMemory(device_, m.morphDeltaMem, nullptr);
     if (m.morphCoeffBuf) vkDestroyBuffer(device_, m.morphCoeffBuf, nullptr);
     if (m.morphCoeffMem) vkFreeMemory(device_, m.morphCoeffMem, nullptr);
+    if (m.morphChanBuf) vkDestroyBuffer(device_, m.morphChanBuf, nullptr);
+    if (m.morphChanMem) vkFreeMemory(device_, m.morphChanMem, nullptr);
     if (m.instVbo) vkDestroyBuffer(device_, m.instVbo, nullptr);
     if (m.instVboMem) vkFreeMemory(device_, m.instVboMem, nullptr);
     if (m.instColorBuf) vkDestroyBuffer(device_, m.instColorBuf, nullptr);
@@ -2881,6 +2884,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   gm.morphDeltaDesc = dummyMorphDesc_;
   gm.morphCoeffDesc = dummyMorphDesc_;
+  gm.morphChanDesc = dummyMorphDesc_;
   if (sm.morphChannelCount > 0 && !sm.morphDeltaHalf.empty() &&
       sm.morphOffsetCount.size() == sm.vertices.size() * 2) {
     // 4 halfs/entry (channelId,dx,dy,dz) = one uvec2 in the SSBO; the shader
@@ -2901,10 +2905,25 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       VkDescriptorSet d = allocMorphDescriptor(gm.morphCoeffBuf, cbytes);
       if (d != VK_NULL_HANDLE) gm.morphCoeffDesc = d;
     }
+    // Set 9: per-entry channelId, widened to uint (one SSBO element each) so the
+    // shader can read it WITHOUT touching the wide delta SSBO -- the active-channel
+    // skip pre-check. A separate buffer (not bit-packed into the delta entry) so
+    // skipped channels never pull the delta cache lines.
+    if (sm.morphChannelId.size() == sm.morphDeltaHalf.size() / 4) {
+      std::vector<uint32_t> chan32(sm.morphChannelId.begin(),
+                                   sm.morphChannelId.end());
+      const VkDeviceSize chbytes = chan32.size() * sizeof(uint32_t);
+      if (createHostBuffer(chbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           chan32.data(), &gm.morphChanBuf, &gm.morphChanMem)) {
+        VkDescriptorSet d = allocMorphDescriptor(gm.morphChanBuf, chbytes);
+        if (d != VK_NULL_HANDLE) gm.morphChanDesc = d;
+      }
+    }
     gm.morphChannelCount = sm.morphChannelCount;
     gm.hasMorph =
         (gm.morphDeltaBuf != VK_NULL_HANDLE && gm.morphCoeffMapped != nullptr &&
-         gm.morphDeltaDesc != dummyMorphDesc_ && gm.morphCoeffDesc != dummyMorphDesc_);
+         gm.morphDeltaDesc != dummyMorphDesc_ && gm.morphCoeffDesc != dummyMorphDesc_ &&
+         gm.morphChanDesc != dummyMorphDesc_);
   }
   if (gm.extendedSkinned) {
     const VkDeviceSize bytes = sm.influenceTexels.size() * sizeof(float);
@@ -3982,15 +4001,20 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 3, 1, &faceDs, 0, nullptr);
       }
-      // Sets 7 & 8: GPU blendshape morph delta + coefficient SSBOs (real or dummy).
+      // Sets 7, 8 & 9: GPU blendshape morph delta + coefficient + channelId SSBOs
+      // (real or dummy).
       VkDescriptorSet morphD = mesh.morphDeltaDesc ? mesh.morphDeltaDesc : dummyMorphDesc_;
       VkDescriptorSet morphC = mesh.morphCoeffDesc ? mesh.morphCoeffDesc : dummyMorphDesc_;
+      VkDescriptorSet morphCh = mesh.morphChanDesc ? mesh.morphChanDesc : dummyMorphDesc_;
       if (morphD != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                 7, 1, &morphD, 0, nullptr);
       if (morphC != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                 8, 1, &morphC, 0, nullptr);
+      if (morphCh != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                9, 1, &morphCh, 0, nullptr);
       VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
       VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
