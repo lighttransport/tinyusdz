@@ -21,6 +21,8 @@ layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
 layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
 // Global displacement params: .x = scale, .y = maxTessLevel (set by the UI sliders).
 layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
+// Per-material displacement texture scale/bias (height = texel*scale + bias).
+layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
 
 // 128-byte push constant block (Vulkan-guaranteed minimum):
 //   mat4 mvp        : 64 bytes
@@ -97,7 +99,9 @@ void main() {
   // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
   // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
   // consistent with the deformed surface.
-  pos += normalize(nrm) * (textureLod(uDisplacementTex, aUV, 0.0).r * dp.disp.x);
+  vec2 dsb = pc.matId >= 0 ? dm.sb[pc.matId] : vec2(1.0, 0.0);
+  float disp = textureLod(uDisplacementTex, aUV, 0.0).r * dsb.x + dsb.y;
+  pos += normalize(nrm) * (disp * dp.disp.x);
   vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
   vUV = aUV;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;

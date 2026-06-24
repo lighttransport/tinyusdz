@@ -120,6 +120,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
   uDisplacementScale_ = glGetUniformLocation(program_, "uDisplacementScale");
+  uDisplacementTexScale_ = glGetUniformLocation(program_, "uDisplacementTexScale");
+  uDisplacementTexBias_ = glGetUniformLocation(program_, "uDisplacementTexBias");
   uSkinningEnabled_ = glGetUniformLocation(program_, "uSkinningEnabled");
   uExtendedSkinningEnabled_ = glGetUniformLocation(program_, "uExtendedSkinningEnabled");
   uBoneTexWidth_ = glGetUniformLocation(program_, "uBoneTexWidth");
@@ -512,12 +514,13 @@ void GLRenderer::buildTessProgram() {
       "uniform mat4 uModelViewProj; uniform mat4 uModel; uniform mat3 uNormalMatrix;\n"
       "uniform sampler2D uDisplacementTex; uniform bool uHasDisplacementTex;\n"
       "uniform float uDisplacementConst; uniform float uDisplacementScale;\n"
+      "uniform float uDisplacementTexScale; uniform float uDisplacementTexBias;\n"
       "void main(){\n"
       "  vec3 bc=gl_TessCoord;\n"
       "  vec3 pos=bc.x*tcPos[0]+bc.y*tcPos[1]+bc.z*tcPos[2];\n"
       "  vec3 nrm=normalize(bc.x*tcNrm[0]+bc.y*tcNrm[1]+bc.z*tcNrm[2]);\n"
       "  vec2 uv=bc.x*tcUV[0]+bc.y*tcUV[1]+bc.z*tcUV[2];\n"
-      "  float d=uHasDisplacementTex? textureLod(uDisplacementTex,uv,0.0).r : uDisplacementConst;\n"
+      "  float d=uHasDisplacementTex? (textureLod(uDisplacementTex,uv,0.0).r*uDisplacementTexScale+uDisplacementTexBias) : uDisplacementConst;\n"
       "  pos += nrm*(d*uDisplacementScale);\n"
       "  vWorldPos=(uModel*vec4(pos,1.0)).xyz;\n"
       "  vNormal=normalize(uNormalMatrix*nrm);\n"
@@ -562,6 +565,8 @@ void GLRenderer::buildTessProgram() {
   tHasDisplacementTex_ = glGetUniformLocation(tessProgram_, "uHasDisplacementTex");
   tDisplacementConst_ = glGetUniformLocation(tessProgram_, "uDisplacementConst");
   tDisplacementScale_ = glGetUniformLocation(tessProgram_, "uDisplacementScale");
+  tDisplacementTexScale_ = glGetUniformLocation(tessProgram_, "uDisplacementTexScale");
+  tDisplacementTexBias_ = glGetUniformLocation(tessProgram_, "uDisplacementTexBias");
   tMaxTessLevel_ = glGetUniformLocation(tessProgram_, "uMaxTessLevel");
   glUniform1i(glGetUniformLocation(tessProgram_, "uBaseColorTex"), 0);
   glUniform1i(glGetUniformLocation(tessProgram_, "uDisplacementTex"), 7);
@@ -621,6 +626,8 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.emissiveTex = m.emissiveTex;
     gm.displacementTex = m.displacementTex;
     gm.displacementConst = m.displacementConst;
+    gm.displacementTexScale = m.displacementTexScale;
+    gm.displacementTexBias = m.displacementTexBias;
     materials_.push_back(gm);
   }
 }
@@ -1163,6 +1170,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(tHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
         glUniform1f(tDisplacementConst_, dmat.displacementConst);
         glUniform1f(tDisplacementScale_, params.displacementScale);
+        glUniform1f(tDisplacementTexScale_, dmat.displacementTexScale);
+        glUniform1f(tDisplacementTexBias_, dmat.displacementTexBias);
         glUniform1f(tMaxTessLevel_, static_cast<float>(params.maxTessLevel));
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, slotTex(dmat.baseColorTex));
@@ -1182,6 +1191,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
         glUniform1f(uDisplacementConst_, dmat.displacementConst);
         glUniform1f(uDisplacementScale_, params.displacementScale);
+        glUniform1f(uDisplacementTexScale_, dmat.displacementTexScale);
+        glUniform1f(uDisplacementTexBias_, dmat.displacementTexBias);
         glBindTexture(GL_TEXTURE_2D, slotTex(dmat.displacementTex));
         glUniform1i(uGeometricNormal_, 1);
       } else {

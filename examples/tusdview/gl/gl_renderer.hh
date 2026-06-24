@@ -96,6 +96,8 @@ class GLRenderer final : public Renderer {
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
     int displacementTex{-1};
     float displacementConst{0.0f};
+    float displacementTexScale{1.0f};
+    float displacementTexBias{0.0f};
     bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
   };
 
@@ -125,6 +127,7 @@ class GLRenderer final : public Renderer {
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
+  GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
 
   // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
   // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a
@@ -136,6 +139,7 @@ class GLRenderer final : public Renderer {
   GLint tMVP_{-1}, tModel_{-1}, tNormalMat_{-1}, tCameraPos_{-1};
   GLint tBaseColor_{-1}, tHasBaseColorTex_{-1};
   GLint tHasDisplacementTex_{-1}, tDisplacementConst_{-1}, tDisplacementScale_{-1};
+  GLint tDisplacementTexScale_{-1}, tDisplacementTexBias_{-1};
   GLint tMaxTessLevel_{-1};
   GLint uSkinningEnabled_{-1};
   GLint uExtendedSkinningEnabled_{-1};
