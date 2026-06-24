@@ -1035,7 +1035,10 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindBuffer(GL_TEXTURE_BUFFER, 0);
       glBindTexture(GL_TEXTURE_BUFFER, 0);
       gm.morphChannelCount = sm.morphChannelCount;
-      gm.hasMorph = true;
+      // The skip shader reads channelId from morphChanTex; without it (the
+      // size-match guard above failing) binding texture 0 would feed channelId 0
+      // for every entry -> wrong morph. Gate on it, mirroring the VK path.
+      gm.hasMorph = (gm.morphChanTex != 0);
     } else {
       glDisableVertexAttribArray(8);
       glVertexAttribI2ui(8, 0u, 0u);
