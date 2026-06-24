@@ -15,6 +15,8 @@ layout(location = 2) in vec2 tcUV[];
 layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
 // Global displacement params: .x = scale (live UI slider).
 layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
+// Per-material displacement texture scale/bias (height = texel*scale + bias).
+layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
 
 layout(push_constant) uniform PushConstants {
   mat4 mvp;
@@ -43,7 +45,9 @@ void main() {
   vec3 pos = bc.x * tcPos[0] + bc.y * tcPos[1] + bc.z * tcPos[2];
   vec3 nrm = normalize(bc.x * tcNrm[0] + bc.y * tcNrm[1] + bc.z * tcNrm[2]);
   vec2 uv = bc.x * tcUV[0] + bc.y * tcUV[1] + bc.z * tcUV[2];
-  pos += nrm * (textureLod(uDisplacementTex, uv, 0.0).r * dp.disp.x);
+  vec2 dsb = pc.matId >= 0 ? dm.sb[pc.matId] : vec2(1.0, 0.0);
+  float disp = textureLod(uDisplacementTex, uv, 0.0).r * dsb.x + dsb.y;
+  pos += nrm * (disp * dp.disp.x);
   vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
   vUV = uv;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
