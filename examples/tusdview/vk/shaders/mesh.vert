@@ -15,7 +15,8 @@ layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
 };
 // GPU blendshape morph: per-vertex sparse delta list (set 7) + per-frame coefficient
 // per channel (set 8). pos += sum coeff[channel]*delta, applied before skinning.
-layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { vec4 morphDeltas[]; };
+// Each entry packs 4 halfs (channelId,dx,dy,dz) into one uvec2 (unpackHalf2x16).
+layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
 layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
 layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
   vec4 influenceRows[];
@@ -74,8 +75,10 @@ void main() {
     int mcount = min(int(aMorphOffsetCount.y), 256);
     for (int i = 0; i < 256; ++i) {
       if (i >= mcount) break;
-      vec4 d = morphDeltas[mbase + i];
-      pos += morphCoeff[int(d.x + 0.5)] * d.yzw;
+      uvec2 raw = morphDeltas[mbase + i];
+      vec2 a = unpackHalf2x16(raw.x);  // (channelId, dx)
+      vec2 b = unpackHalf2x16(raw.y);  // (dy, dz)
+      pos += morphCoeff[int(a.x + 0.5)] * vec3(a.y, b.x, b.y);
     }
   }
   float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;

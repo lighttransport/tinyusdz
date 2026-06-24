@@ -2881,11 +2881,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   gm.morphDeltaDesc = dummyMorphDesc_;
   gm.morphCoeffDesc = dummyMorphDesc_;
-  if (sm.morphChannelCount > 0 && !sm.morphDeltaTexels.empty() &&
+  if (sm.morphChannelCount > 0 && !sm.morphDeltaHalf.empty() &&
       sm.morphOffsetCount.size() == sm.vertices.size() * 2) {
-    const VkDeviceSize dbytes = sm.morphDeltaTexels.size() * sizeof(float);
+    // 4 halfs/entry (channelId,dx,dy,dz) = one uvec2 in the SSBO; the shader
+    // unpacks with unpackHalf2x16. Halves the buffer + fetch bandwidth.
+    const VkDeviceSize dbytes = sm.morphDeltaHalf.size() * sizeof(uint16_t);
     if (createHostBuffer(dbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                         sm.morphDeltaTexels.data(), &gm.morphDeltaBuf,
+                         sm.morphDeltaHalf.data(), &gm.morphDeltaBuf,
                          &gm.morphDeltaMem)) {
       VkDescriptorSet d = allocMorphDescriptor(gm.morphDeltaBuf, dbytes);
       if (d != VK_NULL_HANDLE) gm.morphDeltaDesc = d;
