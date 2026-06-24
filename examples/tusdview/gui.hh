@@ -97,6 +97,11 @@ class Gui {
   bool loopPlayback() const { return loop_; }
   float playSpeed() const { return speed_; }
   float tessellationQuality() const { return tessQuality_; }
+  // Effective global displacement scale (0 when displacement is disabled), for the
+  // CUDA ray tracer which bakes displacement into geometry at build time.
+  float displacementScale() const {
+    return displacementEnabled_ ? displacementScale_ : 0.0f;
+  }
   bool showSkeletonOverlay() const { return showSkeleton_; }
   // Manual blendshape weights from the blend-shape editor (Maya-like). Returns
   // the override map when manual mode is active, else nullptr (use animation).

@@ -2484,6 +2484,8 @@ void VulkanRenderer::destroyScene() {
   for (auto& m : meshes_) {
     if (m.vbo) vkDestroyBuffer(device_, m.vbo, nullptr);
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
+    if (m.vboDisp) vkDestroyBuffer(device_, m.vboDisp, nullptr);
+    if (m.vboDispMem) vkFreeMemory(device_, m.vboDispMem, nullptr);
     if (m.vtxColorBuf) vkDestroyBuffer(device_, m.vtxColorBuf, nullptr);
     if (m.vtxColorMem) vkFreeMemory(device_, m.vtxColorMem, nullptr);
     if (m.faceBuf) vkDestroyBuffer(device_, m.faceBuf, nullptr);
@@ -2840,7 +2842,17 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (rtSupported_) {
     gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
     gm.indexCount = static_cast<uint32_t>(sm.indices.size());
-    gm.vboAddr = bufferDeviceAddress(gm.vbo);
+    // Displaced geometry for the ray-tracing path: build a separate VBO from the
+    // baked vertices and point vboAddr (BLAS + hit) at it. The raster path keeps
+    // binding gm.vbo (rest pose + shader displacement).
+    if (sm.rtDisplacedVertices.size() == sm.vertices.size() &&
+        createHostBuffer(sm.rtDisplacedVertices.size() * sizeof(DrawVertex),
+                         vboUsage, sm.rtDisplacedVertices.data(), &gm.vboDisp,
+                         &gm.vboDispMem, /*deviceAddress=*/true)) {
+      gm.vboAddr = bufferDeviceAddress(gm.vboDisp);
+    } else {
+      gm.vboAddr = bufferDeviceAddress(gm.vbo);
+    }
     gm.eboAddr = bufferDeviceAddress(gm.ebo);
     gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
     NormalMatrix3(gm.world, gm.normalMat);
