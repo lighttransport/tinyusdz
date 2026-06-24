@@ -712,13 +712,19 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     }
     dm.morphChannelCount = nextChannel;
     dm.morphOffsetCount.assign(dm.vertices.size() * 2, 0u);
-    dm.morphDeltaTexels.clear();
+    dm.morphDeltaHalf.clear();
+    dm.morphDeltaHalf.reserve(perVtx.size() * 4);  // lower bound
+    auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
     uint32_t off = 0;
     for (size_t v = 0; v < perVtx.size(); ++v) {
       dm.morphOffsetCount[v * 2 + 0] = off;
       dm.morphOffsetCount[v * 2 + 1] = static_cast<uint32_t>(perVtx[v].size());
       for (const std::array<float, 4>& e : perVtx[v]) {
-        dm.morphDeltaTexels.insert(dm.morphDeltaTexels.end(), e.begin(), e.end());
+        // [channelId, dx, dy, dz] as halfs. channelId is exact (<=2048 channels).
+        dm.morphDeltaHalf.push_back(h(e[0]));
+        dm.morphDeltaHalf.push_back(h(e[1]));
+        dm.morphDeltaHalf.push_back(h(e[2]));
+        dm.morphDeltaHalf.push_back(h(e[3]));
       }
       off += static_cast<uint32_t>(perVtx[v].size());
     }
