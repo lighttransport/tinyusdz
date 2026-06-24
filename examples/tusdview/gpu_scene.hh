@@ -131,6 +131,12 @@ struct DrawMeshCPU {
   // triangulated from), parallel to the triangles of `indices` (grouped order).
   // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
   std::vector<uint32_t> sourceFaceId;
+  // Coarse displacement baked into geometry for the ray-tracing backends (which
+  // intersect real triangles, so displacement can't be a vertex/tess-shader effect
+  // like the raster path). Parallel to `vertices`; empty when the mesh has no
+  // displaced material. The raster path keeps using `vertices` (shader displacement
+  // with live sliders); the VK ray-query BLAS/hit reads these instead.
+  std::vector<DrawVertex> rtDisplacedVertices;
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across

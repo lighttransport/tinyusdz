@@ -71,6 +71,12 @@ class VulkanRenderer final : public Renderer {
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
     VkDeviceMemory vboMem{VK_NULL_HANDLE};
+    // Optional displacement-baked vertex buffer for the ray-tracing path: the BLAS
+    // + ray-query hit read this (via vboAddr) so RT shows displacement, while the
+    // raster path keeps using `vbo` (shader displacement). Null when the mesh has
+    // no displacement.
+    VkBuffer vboDisp{VK_NULL_HANDLE};
+    VkDeviceMemory vboDispMem{VK_NULL_HANDLE};
     VkBuffer jointVbo{VK_NULL_HANDLE};
     VkDeviceMemory jointVboMem{VK_NULL_HANDLE};
     VkBuffer weightVbo{VK_NULL_HANDLE};

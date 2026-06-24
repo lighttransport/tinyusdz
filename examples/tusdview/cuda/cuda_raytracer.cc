@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "cuew.h"
+#include "displacement_bake.hh"
 
 namespace tusdview {
 
@@ -754,7 +755,8 @@ int BuildTlas(std::vector<Node>& nodes, std::vector<int>& idx, int first, int co
 }
 }  // namespace
 
-bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err) {
+bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err,
+                          float displacementScale) {
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   freeScene();
@@ -845,6 +847,44 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
         wc[k * 3 + 0] = curTint[0] * dc[0];
         wc[k * 3 + 1] = curTint[1] * dc[1];
         wc[k * 3 + 2] = curTint[2] * dc[2];
+      }
+      // Bake coarse displacement (ray tracing intersects real triangles): offset
+      // each corner along its normal by the sampled height, then shade with the
+      // displaced triangle's geometric normal (matches the raster displaced look).
+      if (displacementScale != 0.0f) {
+        const DrawMaterialCPU* dmat = submeshMat(static_cast<uint32_t>(t));
+        if (dmat && dmat->hasDisplacement()) {
+          for (int k = 0; k < 3; ++k) {
+            float h = dmat->displacementTex >= 0
+                          ? SampleTextureRed(scene, dmat->displacementTex,
+                                             wuv[k * 2], wuv[k * 2 + 1]) *
+                                    dmat->displacementTexScale +
+                                dmat->displacementTexBias
+                          : dmat->displacementConst;
+            h *= displacementScale;
+            float nx = wn[k * 3], ny = wn[k * 3 + 1], nz = wn[k * 3 + 2];
+            const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (nl > 1e-12f) {
+              nx /= nl; ny /= nl; nz /= nl;
+              wp[k * 3 + 0] += nx * h;
+              wp[k * 3 + 1] += ny * h;
+              wp[k * 3 + 2] += nz * h;
+            }
+          }
+          const float e1[3] = {wp[3] - wp[0], wp[4] - wp[1], wp[5] - wp[2]};
+          const float e2[3] = {wp[6] - wp[0], wp[7] - wp[1], wp[8] - wp[2]};
+          const float gn[3] = {e1[1] * e2[2] - e1[2] * e2[1],
+                               e1[2] * e2[0] - e1[0] * e2[2],
+                               e1[0] * e2[1] - e1[1] * e2[0]};
+          const float gl = std::sqrt(gn[0] * gn[0] + gn[1] * gn[1] + gn[2] * gn[2]);
+          if (gl > 1e-12f) {
+            for (int k = 0; k < 3; ++k) {
+              wn[k * 3 + 0] = gn[0] / gl;
+              wn[k * 3 + 1] = gn[1] / gl;
+              wn[k * 3 + 2] = gn[2] / gl;
+            }
+          }
+        }
       }
       lt.insert(lt.end(), wp, wp + 9);
       ln.insert(ln.end(), wn, wn + 9);
