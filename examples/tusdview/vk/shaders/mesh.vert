@@ -21,8 +21,12 @@ layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCo
 // Per-entry channelId in its own buffer so the loop can read it WITHOUT touching
 // the wide delta SSBO -- the active-channel skip pre-check (facial animation: only
 // a handful of 64+ targets active per frame). Channels share a per-vertex order,
-// so the branch is warp-coherent on dense rigs.
-layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChannelId[]; };
+// so the branch is warp-coherent on dense rigs. uint16 packed 2-per-uint (parity
+// with GL's R16UI; no 16-bit-storage feature needed) -- see morphChanId().
+layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
+uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint)
+  return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;
+}
 layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
   vec4 influenceRows[];
 };
@@ -81,7 +85,7 @@ void main() {
     for (int i = 0; i < 256; ++i) {
       if (i >= mcount) break;
       // Cheap channelId fetch first; skip the wide delta fetch when inactive.
-      float c = morphCoeff[int(morphChannelId[mbase + i])];
+      float c = morphCoeff[int(morphChanId(uint(mbase + i)))];
       if (abs(c) < 1e-6) continue;
       uvec2 raw = morphDeltas[mbase + i];
       vec2 a = unpackHalf2x16(raw.x);  // (channelId, dx)
