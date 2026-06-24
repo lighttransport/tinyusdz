@@ -136,6 +136,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
   glUniform1i(glGetUniformLocation(program_, "uDisplacementTex"), 7);
+  glUniform1i(glGetUniformLocation(program_, "uMorphDeltaTex"), 8);  // GPU morph
+  glUniform1i(glGetUniformLocation(program_, "uMorphCoeffTex"), 9);
+  uHasMorph_ = glGetUniformLocation(program_, "uHasMorph");
   glUseProgram(0);
 
   // GPU tessellation displacement program (GL >= 4.0 only). Failure to build is
@@ -586,6 +589,11 @@ void GLRenderer::destroyScene() {
     if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
     if (m.uv1Vbo) glDeleteBuffers(1, &m.uv1Vbo);
     if (m.morphInflVbo) glDeleteBuffers(1, &m.morphInflVbo);
+    if (m.morphOffsetVbo) glDeleteBuffers(1, &m.morphOffsetVbo);
+    if (m.morphDeltaTex) glDeleteTextures(1, &m.morphDeltaTex);
+    if (m.morphDeltaBuf) glDeleteBuffers(1, &m.morphDeltaBuf);
+    if (m.morphCoeffTex) glDeleteTextures(1, &m.morphCoeffTex);
+    if (m.morphCoeffBuf) glDeleteBuffers(1, &m.morphCoeffBuf);
     if (m.faceIdTex) glDeleteTextures(1, &m.faceIdTex);
     if (m.faceIdBuf) glDeleteBuffers(1, &m.faceIdBuf);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
@@ -707,6 +715,19 @@ void GLRenderer::updateMeshVertices(int meshIndex,
                   static_cast<GLsizeiptr>(verts.size() * sizeof(DrawVertex)),
                   verts.data());
   glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void GLRenderer::updateMorphWeights(int meshIndex,
+                                    const std::vector<float>& coeffs) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  GLMesh& gm = meshes_[static_cast<size_t>(meshIndex)];
+  if (!gm.hasMorph || !gm.morphCoeffBuf || coeffs.empty()) return;
+  const size_t n = std::min(coeffs.size(),
+                            static_cast<size_t>(gm.morphChannelCount));
+  glBindBuffer(GL_TEXTURE_BUFFER, gm.morphCoeffBuf);
+  glBufferSubData(GL_TEXTURE_BUFFER, 0,
+                  static_cast<GLsizeiptr>(n * sizeof(float)), coeffs.data());
+  glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
 void GLRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
@@ -965,6 +986,45 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindBuffer(GL_TEXTURE_BUFFER, 0);
       glBindTexture(GL_TEXTURE_BUFFER, 0);
     }
+    // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
+    // texture-buffer (RGBA32F: channelId,dx,dy,dz) + a per-frame coefficient
+    // texture-buffer (R32F). The vertex shader sums coeff*delta before skinning.
+    if (sm.morphChannelCount > 0 &&
+        sm.morphOffsetCount.size() == sm.vertices.size() * 2 &&
+        !sm.morphDeltaTexels.empty()) {
+      glGenBuffers(1, &gm.morphOffsetVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.morphOffsetVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.morphOffsetCount.size() * sizeof(uint32_t)),
+                   sm.morphOffsetCount.data(), GL_STATIC_DRAW);
+      glEnableVertexAttribArray(8);
+      glVertexAttribIPointer(8, 2, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (void*)0);
+      glVertexAttribDivisor(8, 0);
+      glGenBuffers(1, &gm.morphDeltaBuf);
+      glBindBuffer(GL_TEXTURE_BUFFER, gm.morphDeltaBuf);
+      glBufferData(GL_TEXTURE_BUFFER,
+                   static_cast<GLsizeiptr>(sm.morphDeltaTexels.size() * sizeof(float)),
+                   sm.morphDeltaTexels.data(), GL_STATIC_DRAW);
+      glGenTextures(1, &gm.morphDeltaTex);
+      glBindTexture(GL_TEXTURE_BUFFER, gm.morphDeltaTex);
+      glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, gm.morphDeltaBuf);
+      const std::vector<float> zeroCoeff(static_cast<size_t>(sm.morphChannelCount), 0.0f);
+      glGenBuffers(1, &gm.morphCoeffBuf);
+      glBindBuffer(GL_TEXTURE_BUFFER, gm.morphCoeffBuf);
+      glBufferData(GL_TEXTURE_BUFFER,
+                   static_cast<GLsizeiptr>(zeroCoeff.size() * sizeof(float)),
+                   zeroCoeff.data(), GL_DYNAMIC_DRAW);
+      glGenTextures(1, &gm.morphCoeffTex);
+      glBindTexture(GL_TEXTURE_BUFFER, gm.morphCoeffTex);
+      glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, gm.morphCoeffBuf);
+      glBindBuffer(GL_TEXTURE_BUFFER, 0);
+      glBindTexture(GL_TEXTURE_BUFFER, 0);
+      gm.morphChannelCount = sm.morphChannelCount;
+      gm.hasMorph = true;
+    } else {
+      glDisableVertexAttribArray(8);
+      glVertexAttribI2ui(8, 0u, 0u);
+    }
   }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
@@ -1087,7 +1147,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(uMVP_, 1, GL_FALSE, MVP.m);
     glUniformMatrix4fv(uModel_, 1, GL_FALSE, W.m);
     glUniformMatrix3fv(uNormalMat_, 1, GL_FALSE, nmat);
-    glUniform1i(uGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+    // Morphed meshes shade with geometric normals (the rest normals no longer
+    // match the GPU-morphed surface), like the displacement path.
+    glUniform1i(uGeometricNormal_, (mesh.geometricNormal || mesh.hasMorph) ? 1 : 0);
     glUniform1i(uRenderMode_, static_cast<int>(params.mode));
     glUniform1f(uDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(uSceneMin_, 1, params.sceneMin);
@@ -1117,6 +1179,16 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+    // GPU blendshape morph: bind the per-vertex delta + per-frame coefficient
+    // texture buffers (units 8/9). The VAO already supplies attr 8 (offset,count).
+    glUniform1i(uHasMorph_, mesh.hasMorph ? 1 : 0);
+    if (mesh.hasMorph) {
+      glActiveTexture(GL_TEXTURE8);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+      glActiveTexture(GL_TEXTURE9);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+      glActiveTexture(GL_TEXTURE0);
+    }
 
     if (mesh.doubleSided || wireframe) {
       glDisable(GL_CULL_FACE);
@@ -1197,7 +1269,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uGeometricNormal_, 1);
       } else {
         glBindTexture(GL_TEXTURE_2D, whiteTex_);
-        glUniform1i(uGeometricNormal_, mesh.geometricNormal ? 1 : 0);
+        glUniform1i(uGeometricNormal_, (mesh.geometricNormal || mesh.hasMorph) ? 1 : 0);
       }
       if (overrideEmissive) {
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);

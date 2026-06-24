@@ -673,6 +673,55 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
     }
   }
 
+  // --- GPU-morph channels (raster path) ---
+  // Flatten each target's primary + in-between samples into mesh-local "channels",
+  // then invert the sparse target storage into a per-vertex CSR list of
+  // (channelId, dx, dy, dz). The vertex shader sums coeff[channelId] * delta; the
+  // CPU computes the tiny per-channel coefficients each frame. Channel order per
+  // target: in-betweens (ascending) then the primary, so usdWeights stays ascending.
+  if (!dm.morphs.empty()) {
+    std::vector<std::vector<std::array<float, 4>>> perVtx(dm.vertices.size());
+    int nextChannel = 0;
+    dm.morphTargetChannels.clear();
+    dm.morphTargetChannels.reserve(dm.morphs.size());
+    auto pushDelta = [&](int ch, const std::vector<float>& dp,
+                         const std::vector<uint32_t>& vtx) {
+      for (size_t e = 0; e < vtx.size(); ++e) {
+        const uint32_t v = vtx[e];
+        if (v >= perVtx.size() || e * 3 + 2 >= dp.size()) continue;
+        perVtx[v].push_back({static_cast<float>(ch), dp[e * 3 + 0],
+                             dp[e * 3 + 1], dp[e * 3 + 2]});
+      }
+    };
+    for (const MorphTargetCPU& mt : dm.morphs) {
+      MorphTargetChannelsCPU tc;
+      tc.name = mt.name;
+      for (const MorphInbetweenCPU& ib : mt.inbetweens) {
+        const int ch = nextChannel++;
+        tc.usdWeights.push_back(ib.weight);
+        tc.channelIds.push_back(ch);
+        pushDelta(ch, ib.dpos, mt.vtx);
+      }
+      const int chPrimary = nextChannel++;
+      tc.usdWeights.push_back(1.0f);
+      tc.channelIds.push_back(chPrimary);
+      pushDelta(chPrimary, mt.dpos, mt.vtx);
+      dm.morphTargetChannels.push_back(std::move(tc));
+    }
+    dm.morphChannelCount = nextChannel;
+    dm.morphOffsetCount.assign(dm.vertices.size() * 2, 0u);
+    dm.morphDeltaTexels.clear();
+    uint32_t off = 0;
+    for (size_t v = 0; v < perVtx.size(); ++v) {
+      dm.morphOffsetCount[v * 2 + 0] = off;
+      dm.morphOffsetCount[v * 2 + 1] = static_cast<uint32_t>(perVtx[v].size());
+      for (const std::array<float, 4>& e : perVtx[v]) {
+        dm.morphDeltaTexels.insert(dm.morphDeltaTexels.end(), e.begin(), e.end());
+      }
+      off += static_cast<uint32_t>(perVtx[v].size());
+    }
+  }
+
   // --- Submeshes (group triangles by material) ---
   const size_t triCount = dm.indices.size() / 3;
 

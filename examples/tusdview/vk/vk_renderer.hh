@@ -40,6 +40,8 @@ class VulkanRenderer final : public Renderer {
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
+  void updateMorphWeights(int meshIndex,
+                          const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
@@ -90,6 +92,20 @@ class VulkanRenderer final : public Renderer {
     VkBuffer influenceDataBuf{VK_NULL_HANDLE};
     VkDeviceMemory influenceDataMem{VK_NULL_HANDLE};
     VkDescriptorSet influenceDesc{VK_NULL_HANDLE};
+    // GPU blendshape morph (raster): per-vertex (offset,count) attribute (binding 6,
+    // loc 8) + a static delta SSBO (set 7) + a tiny per-frame coefficient SSBO (set
+    // 8, persistently mapped). hasMorph gates it; non-morph meshes bind dummy sets.
+    VkBuffer morphOffsetVbo{VK_NULL_HANDLE};     // binding 6: uvec2 (offset,count)
+    VkDeviceMemory morphOffsetVboMem{VK_NULL_HANDLE};
+    VkBuffer morphDeltaBuf{VK_NULL_HANDLE};       // set 7 SSBO (vec4: chId,dx,dy,dz)
+    VkDeviceMemory morphDeltaMem{VK_NULL_HANDLE};
+    VkDescriptorSet morphDeltaDesc{VK_NULL_HANDLE};
+    VkBuffer morphCoeffBuf{VK_NULL_HANDLE};       // set 8 SSBO (float/channel, dynamic)
+    VkDeviceMemory morphCoeffMem{VK_NULL_HANDLE};
+    VkDescriptorSet morphCoeffDesc{VK_NULL_HANDLE};
+    void* morphCoeffMapped{nullptr};
+    int morphChannelCount{0};
+    bool hasMorph{false};
     VkBuffer ebo{VK_NULL_HANDLE};
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     std::vector<DrawSubmesh> submeshes;
@@ -355,6 +371,16 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
+  // Sets 7 & 8: per-mesh GPU blendshape morph (delta SSBO + per-frame coeff SSBO).
+  // Both are "readonly SSBO, vertex stage, binding 0", so they share one layout.
+  // Non-morph meshes bind shared 1-element dummy descriptors (the shader statically
+  // references the SSBOs, so they must always be bound).
+  VkDescriptorSetLayout morphSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool morphPool_{VK_NULL_HANDLE};
+  VkBuffer dummyMorphBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory dummyMorphMem_{VK_NULL_HANDLE};
+  VkDescriptorSet dummyMorphDesc_{VK_NULL_HANDLE};
+  VkDescriptorSet allocMorphDescriptor(VkBuffer buffer, VkDeviceSize size);
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
   VkDescriptorPool skinPool_{VK_NULL_HANDLE};
   VkDescriptorPool influencePool_{VK_NULL_HANDLE};

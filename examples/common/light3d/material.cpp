@@ -191,6 +191,7 @@ layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
 layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
 layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
+layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
 layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
 
 uniform mat4 uModelViewProj;
@@ -215,6 +216,13 @@ uniform float uDisplacementScale;
 uniform float uDisplacementTexScale;  // UsdUVTexture scale/bias (height = t*s + b)
 uniform float uDisplacementTexBias;
 
+// GPU blendshape morph: per-vertex (offset,count) into uMorphDeltaTex (RGBA32F:
+// channelId, dx,dy,dz); uMorphCoeffTex (R32F) holds the per-frame coefficient per
+// channel. pos += sum_i coeff[channel_i] * delta_i, applied before skinning.
+uniform bool uHasMorph;
+uniform samplerBuffer uMorphDeltaTex;
+uniform samplerBuffer uMorphCoeffTex;
+
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
@@ -236,6 +244,18 @@ mat4 fetchBone(uint idx) {
 void main() {
     vec3 pos = aPosition;
     vec3 nrm = aNormal;
+    // GPU blendshape morph (before skinning): sum coeff*delta over this vertex's
+    // sparse channel list. Loop cap mirrors the extended-skinning influence loop.
+    if (uHasMorph && aMorphOffsetCount.y > 0u) {
+        int mbase = int(aMorphOffsetCount.x);
+        int mcount = min(int(aMorphOffsetCount.y), 256);
+        for (int i = 0; i < 256; ++i) {
+            if (i >= mcount) break;
+            vec4 d = texelFetch(uMorphDeltaTex, mbase + i);
+            float c = texelFetch(uMorphCoeffTex, int(d.x + 0.5)).r;
+            pos += c * d.yzw;
+        }
+    }
     float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
     uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
     if (uSkinningEnabled && uExtendedSkinningEnabled && aInfluence.y > 0u && uInfluenceTexWidth > 0) {
@@ -260,7 +280,7 @@ void main() {
         }
         if (fullWeightSum > 0.0) {
             skin *= 1.0 / fullWeightSum;
-            pos = (skin * vec4(aPosition, 1.0)).xyz;
+            pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
             nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
         }
     } else if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {
@@ -269,7 +289,7 @@ void main() {
             fetchBone(aJoint.y) * aWeight.y +
             fetchBone(aJoint.z) * aWeight.z +
             fetchBone(aJoint.w) * aWeight.w;
-        pos = (skin * vec4(aPosition, 1.0)).xyz;
+        pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
         nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
     }
     // Coarse displacement: offset along the (object-space) normal before the world
