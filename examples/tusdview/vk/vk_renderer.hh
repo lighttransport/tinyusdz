@@ -328,6 +328,16 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSetLayout skinSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout influenceSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout faceSetLayout_{VK_NULL_HANDLE};  // set 3: source-face-id SSBO
+  // Set 5: global displacement params UBO {scale, maxTessLevel}, read in the
+  // vertex + tessellation stages so the UI's displacement-scale and max-tess
+  // sliders are live on Vulkan (the push constants are full). One persistently
+  // mapped host buffer, written each frame (volume-UBO convention).
+  VkDescriptorSetLayout dispParamsSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool dispParamsPool_{VK_NULL_HANDLE};
+  VkDescriptorSet dispParamsSet_{VK_NULL_HANDLE};
+  VkBuffer dispParamsUbo_{VK_NULL_HANDLE};
+  VkDeviceMemory dispParamsUboMem_{VK_NULL_HANDLE};
+  void* dispParamsMapped_{nullptr};
   VkDescriptorPool texPool_{VK_NULL_HANDLE};
   VkDescriptorPool skinPool_{VK_NULL_HANDLE};
   VkDescriptorPool influencePool_{VK_NULL_HANDLE};
