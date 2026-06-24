@@ -239,7 +239,6 @@ void App::applyLoaded(bool ok, bool progressive) {
   nextMesh_ = 0;
   nextTex_ = 0;
   nextVolume_ = 0;
-  gpuMorphedMeshes_.clear();  // renderer re-uploads rest meshes for this scene
 
   if (ok) {
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
@@ -616,28 +615,25 @@ void App::updateGpuSkinningFrameIfNeeded() {
     }
   }
 
-  std::vector<std::pair<int, std::vector<DrawVertex>>> morphed;
+  // Bone matrices for GPU skinning. morphedOut = nullptr: the raster path applies
+  // blendshapes in the vertex shader (GPU morph), not by CPU-morphing the VBO.
   if (BuildGpuSkinningFrame(loaded_.render, loaded_.stage, &draw_, animTime_,
                             &skinFrame_, gui_.showSkeletonOverlay(),
-                            (hasMorph && idxOk) ? &morphed : nullptr,
-                            gui_.blendOverrides())) {
-    skinFrameTime_ = animTime_;
+                            /*morphedOut=*/nullptr, gui_.blendOverrides())) {
     renderer_->uploadSkinningFrame(skinFrame_);
-    // Upload posed buffers for actively-morphed meshes; revert any mesh that was
-    // morphed last frame but no longer is back to its rest vertices (once).
-    std::set<int> active;
-    for (auto& mv : morphed) {
-      renderer_->updateMeshVertices(mv.first, mv.second);
-      active.insert(mv.first);
-    }
-    for (int i : gpuMorphedMeshes_) {
-      if (!active.count(i) && i >= 0 &&
-          i < static_cast<int>(draw_.meshes.size())) {
-        renderer_->updateMeshVertices(i, draw_.meshes[i].vertices);
-      }
-    }
-    gpuMorphedMeshes_ = std::move(active);
   }
+  // GPU blendshape morph: upload only the tiny per-channel coefficient array per
+  // morphed mesh (the vertex shader sums coeff*delta). No VBO re-upload, no GPU
+  // stall. Meshes whose weights fall to 0 get a zero coefficient array (no morph).
+  if (hasMorph && idxOk) {
+    std::vector<std::pair<int, std::vector<float>>> coeffs;
+    BuildMorphChannelWeights(loaded_.stage, draw_, animTime_,
+                             gui_.blendOverrides(), &coeffs);
+    for (auto& mc : coeffs) {
+      renderer_->updateMorphWeights(mc.first, mc.second);
+    }
+  }
+  skinFrameTime_ = animTime_;
 }
 
 void App::maybeReconvertForManualBlend() {

@@ -816,11 +816,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // displacement). Reuses texSetLayout_ (now VERTEX|FRAGMENT visible).
   // Set 5: global displacement params UBO (live scale + max-tess sliders).
   // Set 6: per-material displacement texture scale/bias SSBO.
-  VkDescriptorSetLayout setLayouts[7] = {texSetLayout_, skinSetLayout_,
+  // Sets 7 & 8: per-mesh GPU blendshape morph delta + coefficient SSBOs.
+  VkDescriptorSetLayout setLayouts[9] = {texSetLayout_, skinSetLayout_,
                                          influenceSetLayout_, faceSetLayout_,
                                          texSetLayout_, dispParamsSetLayout_,
-                                         dispMatSetLayout_};
-  plci.setLayoutCount = 7;
+                                         dispMatSetLayout_, morphSetLayout_,
+                                         morphSetLayout_};
+  plci.setLayoutCount = 9;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -844,7 +846,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   stages[1].module = fs;
   stages[1].pName = "main";
 
-  VkVertexInputBindingDescription bind[6]{};
+  VkVertexInputBindingDescription bind[7]{};
   bind[0].binding = 0;
   bind[0].stride = sizeof(DrawVertex);
   bind[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -863,7 +865,10 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   bind[5].binding = 5;  // blendshape influence
   bind[5].stride = sizeof(float);
   bind[5].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[8]{};
+  bind[6].binding = 6;  // GPU morph (offset,count)
+  bind[6].stride = 2 * sizeof(uint32_t);
+  bind[6].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[9]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
@@ -872,12 +877,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   attrs[5] = {5, 3, VK_FORMAT_R32G32_UINT, 0};
   attrs[6] = {6, 4, VK_FORMAT_R32G32_SFLOAT, 0};  // aUV1
   attrs[7] = {7, 5, VK_FORMAT_R32_SFLOAT, 0};     // aMorphInfl
+  attrs[8] = {8, 6, VK_FORMAT_R32G32_UINT, 0};    // aMorphOffsetCount
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 6;
+  vin.vertexBindingDescriptionCount = 7;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 8;
+  vin.vertexAttributeDescriptionCount = 9;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -1927,7 +1933,62 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
       vkUpdateDescriptorSets(device_, 1, &mw, 0, nullptr);
     }
   }
+
+  // Sets 7 & 8: per-mesh GPU blendshape morph (delta SSBO + per-frame coeff SSBO).
+  // Both are "readonly SSBO, vertex stage" -> one layout, one pool (2 sets/mesh).
+  VkDescriptorSetLayoutBinding rb{};
+  rb.binding = 0;
+  rb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  rb.descriptorCount = 1;
+  rb.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  VkDescriptorSetLayoutCreateInfo rlci{};
+  rlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  rlci.bindingCount = 1;
+  rlci.pBindings = &rb;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &rlci, nullptr, &morphSetLayout_),
+           "morph set layout");
+  const uint32_t kMaxMorphSets = 8192;  // 2 per morphed mesh + the dummy
+  VkDescriptorPoolSize rps{};
+  rps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  rps.descriptorCount = kMaxMorphSets;
+  VkDescriptorPoolCreateInfo rpci{};
+  rpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  rpci.maxSets = kMaxMorphSets;
+  rpci.poolSizeCount = 1;
+  rpci.pPoolSizes = &rps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &rpci, nullptr, &morphPool_),
+           "morph descriptor pool");
+  // Shared 1-element dummy bound to sets 7/8 for meshes without morph (the shader
+  // statically references the SSBOs, so they must always be bound).
+  const float dummyMorph[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  if (createHostBuffer(sizeof(dummyMorph), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       dummyMorph, &dummyMorphBuf_, &dummyMorphMem_)) {
+    dummyMorphDesc_ = allocMorphDescriptor(dummyMorphBuf_, sizeof(dummyMorph));
+  }
   return true;
+}
+
+VkDescriptorSet VulkanRenderer::allocMorphDescriptor(VkBuffer buffer,
+                                                     VkDeviceSize size) {
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = morphPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &morphSetLayout_;
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(device_, &ai, &set) != VK_SUCCESS) return VK_NULL_HANDLE;
+  VkDescriptorBufferInfo bi{};
+  bi.buffer = buffer;
+  bi.range = size;
+  VkWriteDescriptorSet w{};
+  w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w.dstSet = set;
+  w.dstBinding = 0;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w.pBufferInfo = &bi;
+  vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  return set;
 }
 
 VkCommandBuffer VulkanRenderer::beginOneShot() {
@@ -2500,6 +2561,12 @@ void VulkanRenderer::destroyScene() {
     if (m.uv1VboMem) vkFreeMemory(device_, m.uv1VboMem, nullptr);
     if (m.morphInflVbo) vkDestroyBuffer(device_, m.morphInflVbo, nullptr);
     if (m.morphInflVboMem) vkFreeMemory(device_, m.morphInflVboMem, nullptr);
+    if (m.morphOffsetVbo) vkDestroyBuffer(device_, m.morphOffsetVbo, nullptr);
+    if (m.morphOffsetVboMem) vkFreeMemory(device_, m.morphOffsetVboMem, nullptr);
+    if (m.morphDeltaBuf) vkDestroyBuffer(device_, m.morphDeltaBuf, nullptr);
+    if (m.morphDeltaMem) vkFreeMemory(device_, m.morphDeltaMem, nullptr);
+    if (m.morphCoeffBuf) vkDestroyBuffer(device_, m.morphCoeffBuf, nullptr);
+    if (m.morphCoeffMem) vkFreeMemory(device_, m.morphCoeffMem, nullptr);
     if (m.instVbo) vkDestroyBuffer(device_, m.instVbo, nullptr);
     if (m.instVboMem) vkFreeMemory(device_, m.instVboMem, nullptr);
     if (m.instColorBuf) vkDestroyBuffer(device_, m.instColorBuf, nullptr);
@@ -2561,6 +2628,13 @@ void VulkanRenderer::destroyScene() {
     dummyFaceDesc_ = (dummyFaceBuf_ != VK_NULL_HANDLE)
                          ? allocFaceDescriptor(dummyFaceBuf_, sizeof(uint32_t))
                          : VK_NULL_HANDLE;
+  }
+  if (morphPool_) {
+    vkResetDescriptorPool(device_, morphPool_, 0);
+    // Re-allocate the shared dummy morph descriptor (the reset freed it).
+    dummyMorphDesc_ = (dummyMorphBuf_ != VK_NULL_HANDLE)
+                          ? allocMorphDescriptor(dummyMorphBuf_, 4 * sizeof(float))
+                          : VK_NULL_HANDLE;
   }
   whiteDesc_ = VK_NULL_HANDLE;
   blackDesc_ = VK_NULL_HANDLE;
@@ -2679,6 +2753,18 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   vkUnmapMemory(device_, gm.vboMem);
 }
 
+void VulkanRenderer::updateMorphWeights(int meshIndex,
+                                        const std::vector<float>& coeffs) {
+  if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
+  VkMeshGPU& gm = meshes_[static_cast<size_t>(meshIndex)];
+  if (!gm.hasMorph || !gm.morphCoeffMapped || coeffs.empty()) return;
+  // Persistently-mapped coefficient SSBO -> memcpy, NO vkDeviceWaitIdle (it is not a
+  // BLAS/vertex input). This is the win over updateMeshVertices' stall.
+  const size_t n = std::min(coeffs.size(),
+                            static_cast<size_t>(gm.morphChannelCount));
+  std::memcpy(gm.morphCoeffMapped, coeffs.data(), n * sizeof(float));
+}
+
 void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
   if (meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) return;
   VkMeshGPU& gm = meshes_[static_cast<size_t>(meshIndex)];
@@ -2782,6 +2868,41 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                      &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_);
     createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
                      &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_);
+  }
+  // GPU blendshape morph: per-vertex (offset,count) vertex buffer (binding 6, always
+  // created) + a static delta SSBO (set 7) + a per-frame coeff SSBO (set 8,
+  // persistently mapped). Non-morph meshes keep the shared dummy delta/coeff sets.
+  {
+    std::vector<uint32_t> oc = sm.morphOffsetCount;
+    if (oc.size() != sm.vertices.size() * 2) oc.assign(sm.vertices.size() * 2, 0u);
+    createHostBuffer(oc.size() * sizeof(uint32_t),
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, oc.data(),
+                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem);
+  }
+  gm.morphDeltaDesc = dummyMorphDesc_;
+  gm.morphCoeffDesc = dummyMorphDesc_;
+  if (sm.morphChannelCount > 0 && !sm.morphDeltaTexels.empty() &&
+      sm.morphOffsetCount.size() == sm.vertices.size() * 2) {
+    const VkDeviceSize dbytes = sm.morphDeltaTexels.size() * sizeof(float);
+    if (createHostBuffer(dbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         sm.morphDeltaTexels.data(), &gm.morphDeltaBuf,
+                         &gm.morphDeltaMem)) {
+      VkDescriptorSet d = allocMorphDescriptor(gm.morphDeltaBuf, dbytes);
+      if (d != VK_NULL_HANDLE) gm.morphDeltaDesc = d;
+    }
+    const VkDeviceSize cbytes =
+        static_cast<VkDeviceSize>(sm.morphChannelCount) * sizeof(float);
+    std::vector<float> zeroCoeff(static_cast<size_t>(sm.morphChannelCount), 0.0f);
+    if (createHostBuffer(cbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         zeroCoeff.data(), &gm.morphCoeffBuf, &gm.morphCoeffMem)) {
+      vkMapMemory(device_, gm.morphCoeffMem, 0, cbytes, 0, &gm.morphCoeffMapped);
+      VkDescriptorSet d = allocMorphDescriptor(gm.morphCoeffBuf, cbytes);
+      if (d != VK_NULL_HANDLE) gm.morphCoeffDesc = d;
+    }
+    gm.morphChannelCount = sm.morphChannelCount;
+    gm.hasMorph =
+        (gm.morphDeltaBuf != VK_NULL_HANDLE && gm.morphCoeffMapped != nullptr &&
+         gm.morphDeltaDesc != dummyMorphDesc_ && gm.morphCoeffDesc != dummyMorphDesc_);
   }
   if (gm.extendedSkinned) {
     const VkDeviceSize bytes = sm.influenceTexels.size() * sizeof(float);
@@ -3859,10 +3980,20 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 3, 1, &faceDs, 0, nullptr);
       }
-      VkDeviceSize offs[6] = {0, 0, 0, 0, 0, 0};
-      VkBuffer bufs[6] = {mesh.vbo,         mesh.jointVbo,    mesh.weightVbo,
-                          mesh.influenceVbo, mesh.uv1Vbo,      mesh.morphInflVbo};
-      vkCmdBindVertexBuffers(cb, 0, 6, bufs, offs);
+      // Sets 7 & 8: GPU blendshape morph delta + coefficient SSBOs (real or dummy).
+      VkDescriptorSet morphD = mesh.morphDeltaDesc ? mesh.morphDeltaDesc : dummyMorphDesc_;
+      VkDescriptorSet morphC = mesh.morphCoeffDesc ? mesh.morphCoeffDesc : dummyMorphDesc_;
+      if (morphD != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                7, 1, &morphD, 0, nullptr);
+      if (morphC != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                8, 1, &morphC, 0, nullptr);
+      VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
+      VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
+                          mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
+                          mesh.morphOffsetVbo};
+      vkCmdBindVertexBuffers(cb, 0, 7, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
         // Bind the submesh's base-color texture (white if untextured).
@@ -3935,7 +4066,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
         pc.matId = sub.materialId;
         pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)
-        pc.flags = ((mesh.geometricNormal || displaced) ? 1 : 0) |
+        pc.flags = ((mesh.geometricNormal || displaced || mesh.hasMorph) ? 1 : 0) |
                    (mesh.doubleSided ? 2 : 0) |
                    ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
                    ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
@@ -3951,7 +4082,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // the slider asks for it: bind the PATCH-list tess pipeline for this draw,
         // then restore the coarse pipeline for following submeshes.
         const bool useTess = displaced && tessPipeline_ != VK_NULL_HANDLE &&
-                             maxTessLevel_ > 1 && rtMode_ == 0 && !mesh.skinned;
+                             maxTessLevel_ > 1 && rtMode_ == 0 && !mesh.skinned &&
+                             !mesh.hasMorph;
         if (useTess) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
@@ -4266,6 +4398,10 @@ void VulkanRenderer::shutdown() {
   if (facePool_) { vkDestroyDescriptorPool(device_, facePool_, nullptr); facePool_ = VK_NULL_HANDLE; }
   if (dummyFaceBuf_) { vkDestroyBuffer(device_, dummyFaceBuf_, nullptr); dummyFaceBuf_ = VK_NULL_HANDLE; }
   if (dummyFaceMem_) { vkFreeMemory(device_, dummyFaceMem_, nullptr); dummyFaceMem_ = VK_NULL_HANDLE; }
+  if (morphPool_) { vkDestroyDescriptorPool(device_, morphPool_, nullptr); morphPool_ = VK_NULL_HANDLE; }
+  if (morphSetLayout_) { vkDestroyDescriptorSetLayout(device_, morphSetLayout_, nullptr); morphSetLayout_ = VK_NULL_HANDLE; }
+  if (dummyMorphBuf_) { vkDestroyBuffer(device_, dummyMorphBuf_, nullptr); dummyMorphBuf_ = VK_NULL_HANDLE; }
+  if (dummyMorphMem_) { vkFreeMemory(device_, dummyMorphMem_, nullptr); dummyMorphMem_ = VK_NULL_HANDLE; }
   if (dispParamsPool_) { vkDestroyDescriptorPool(device_, dispParamsPool_, nullptr); dispParamsPool_ = VK_NULL_HANDLE; }
   if (dispParamsSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispParamsSetLayout_, nullptr); dispParamsSetLayout_ = VK_NULL_HANDLE; }
   if (dispParamsUbo_) { vkDestroyBuffer(device_, dispParamsUbo_, nullptr); dispParamsUbo_ = VK_NULL_HANDLE; }

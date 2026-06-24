@@ -349,6 +349,30 @@ MorphBracket FindMorphBracket(const std::vector<float>& ibWeights, float w) {
   return {lo, hi, t};
 }
 
+// Per-mesh GPU-morph channel coefficients: fills coeff[0..morphChannelCount-1]
+// such that the vertex shader's sum_ch(coeff[ch] * delta_ch) reproduces
+// ApplyMorphTarget for every target. For each target weight w, FindMorphBracket
+// gives table indices {lo, hi} (0 == rest, last == primary) + lerp t; the bracket
+// channels get (1-t) and t (rest index 0 has no channel). Overdrive (t outside
+// [0,1]) extrapolates exactly, matching ApplyMorphTarget bit-for-bit.
+void EvalMorphChannelCoeffs(const DrawMeshCPU& dm,
+                            const std::unordered_map<std::string, float>& weights,
+                            std::vector<float>* coeff) {
+  coeff->assign(static_cast<size_t>(dm.morphChannelCount), 0.0f);
+  for (const MorphTargetChannelsCPU& tc : dm.morphTargetChannels) {
+    if (tc.usdWeights.empty()) continue;
+    auto it = weights.find(tc.name);
+    if (it == weights.end() || it->second == 0.0f) continue;
+    // ibWeights = usdWeights without the trailing 1.0 (primary).
+    std::vector<float> ibW(tc.usdWeights.begin(), tc.usdWeights.end() - 1);
+    const MorphBracket br = FindMorphBracket(ibW, it->second);
+    if (br.lo >= 1 && size_t(br.lo - 1) < tc.channelIds.size())
+      (*coeff)[tc.channelIds[br.lo - 1]] += (1.0f - br.t);
+    if (br.hi >= 1 && size_t(br.hi - 1) < tc.channelIds.size())
+      (*coeff)[tc.channelIds[br.hi - 1]] += br.t;
+  }
+}
+
 bool MeshIsSkinned(const tydra::RenderMesh& m) {
   return m.skel_id >= 0 && !m.joint_and_weights.jointIndices.empty();
 }
@@ -782,6 +806,26 @@ bool BuildGpuSkinningFrame(
     }
   }
   return true;
+}
+
+void BuildMorphChannelWeights(
+    const tinyusdz::Stage& stage, const DrawScene& draw, double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<std::pair<int, std::vector<float>>>* out) {
+  if (!out) return;
+  out->clear();
+  std::unordered_map<std::string, float> weights =
+      GatherBlendWeights(stage, timecode);
+  if (blendOverride) {
+    for (const auto& kv : *blendOverride) weights[kv.first] = kv.second;
+  }
+  std::vector<float> coeff;
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& dm = draw.meshes[mi];
+    if (dm.morphChannelCount <= 0 || dm.morphTargetChannels.empty()) continue;
+    EvalMorphChannelCoeffs(dm, weights, &coeff);
+    out->emplace_back(static_cast<int>(mi), coeff);
+  }
 }
 
 namespace {

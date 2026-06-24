@@ -104,4 +104,14 @@ void DeformSkinnedMeshes(
     double timecode,
     const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
+// Compute per-mesh GPU-morph channel coefficients for every blendshaped mesh at
+// `timecode` (animated weights overlaid by `blendOverride`). Reproduces
+// ApplyMorphTarget's piecewise-lerp exactly. Output: (meshIndex, coeffs) per mesh
+// with morph channels; the renderer uploads `coeffs` via updateMorphWeights so the
+// vertex shader applies the morph (no CPU vertex morph / VBO re-upload).
+void BuildMorphChannelWeights(
+    const tinyusdz::Stage& stage, const DrawScene& draw, double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<std::pair<int, std::vector<float>>>* out);
+
 }  // namespace tusdview

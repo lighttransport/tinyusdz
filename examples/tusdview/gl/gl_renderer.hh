@@ -25,6 +25,8 @@ class GLRenderer final : public Renderer {
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
+  void updateMorphWeights(int meshIndex,
+                          const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
@@ -75,6 +77,14 @@ class GLRenderer final : public Renderer {
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
     GLuint faceIdBuf{0};             // texture buffer: per-triangle source face id; 0 = none
     GLuint faceIdTex{0};             // GL_TEXTURE_BUFFER view (R32UI) of faceIdBuf
+    // GPU blendshape morph (raster): per-vertex (offset,count) attribute (loc 8) +
+    // a static delta texture-buffer (RGBA32F: channelId,dx,dy,dz) + a tiny per-frame
+    // coefficient texture-buffer (R32F). hasMorph gates it on; 0 handles = none.
+    GLuint morphOffsetVbo{0};        // attrib 8: uvec2 (offset, count); 0 = none
+    GLuint morphDeltaBuf{0}, morphDeltaTex{0};   // RGBA32F GL_TEXTURE_BUFFER
+    GLuint morphCoeffBuf{0}, morphCoeffTex{0};   // R32F GL_TEXTURE_BUFFER (dynamic)
+    int morphChannelCount{0};
+    bool hasMorph{false};
     bool geometricNormal{false};     // shade with screen-derivative normal
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
@@ -128,6 +138,7 @@ class GLRenderer final : public Renderer {
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
+  GLint uHasMorph_{-1};  // GPU blendshape morph enable (per-draw)
 
   // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
   // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a

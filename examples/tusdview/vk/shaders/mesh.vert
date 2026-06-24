@@ -8,10 +8,15 @@ layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
 layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
 layout(location = 7) in float aMorphInfl; // blendshape influence (world units)
+layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 = none
 
 layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
   vec4 boneRows[];
 };
+// GPU blendshape morph: per-vertex sparse delta list (set 7) + per-frame coefficient
+// per channel (set 8). pos += sum coeff[channel]*delta, applied before skinning.
+layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { vec4 morphDeltas[]; };
+layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
 layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
   vec4 influenceRows[];
 };
@@ -62,6 +67,17 @@ mat4 fetchBone(uint idx) {
 void main() {
   vec3 pos = aPos;
   vec3 nrm = aNormal;
+  // GPU blendshape morph (before skinning): sum coeff*delta over this vertex's
+  // sparse channel list. Cap mirrors the extended-skinning influence loop.
+  if (aMorphOffsetCount.y > 0u) {
+    int mbase = int(aMorphOffsetCount.x);
+    int mcount = min(int(aMorphOffsetCount.y), 256);
+    for (int i = 0; i < 256; ++i) {
+      if (i >= mcount) break;
+      vec4 d = morphDeltas[mbase + i];
+      pos += morphCoeff[int(d.x + 0.5)] * d.yzw;
+    }
+  }
   float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
   uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
   int boneCapacity = boneRows.length() / 4;
@@ -83,7 +99,7 @@ void main() {
     }
     if (fullWeightSum > 0.0) {
       skin *= 1.0 / fullWeightSum;
-      pos = (skin * vec4(aPos, 1.0)).xyz;
+      pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
       nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
     }
   } else if (wsum > 0.0 && int(maxJoint) < boneCapacity) {
@@ -92,7 +108,7 @@ void main() {
         fetchBone(aJoint.y) * aWeight.y +
         fetchBone(aJoint.z) * aWeight.z +
         fetchBone(aJoint.w) * aWeight.w;
-    pos = (skin * vec4(aPos, 1.0)).xyz;
+    pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
     nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
   }
   // Coarse displacement: offset along the (object-space) normal by the height map's

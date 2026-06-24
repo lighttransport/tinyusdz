@@ -55,6 +55,19 @@ struct MorphTargetCPU {
   std::vector<MorphInbetweenCPU> inbetweens;
 };
 
+// GPU-morph "channels" for one blendshape target: the primary and each in-between
+// sample become a channel with a mesh-local id and its own sparse per-vertex delta
+// (in DrawMeshCPU::morphDeltaTexels). Per frame the CPU computes one coefficient
+// per channel (reproducing the piecewise-lerp), and the vertex shader sums
+// coeff[channel] * delta. `usdWeights`/`channelIds` are parallel and ascending:
+// the in-between weights then 1.0 (primary). The implicit rest sample (weight 0)
+// has no channel.
+struct MorphTargetChannelsCPU {
+  std::string name;               // BlendShape name == weight key
+  std::vector<float> usdWeights;  // ascending: inbetween weights..., then 1.0
+  std::vector<int> channelIds;    // mesh-local channel id per usdWeights entry
+};
+
 struct DrawMeshCPU {
   std::string name;
   std::string absPath;
@@ -70,8 +83,20 @@ struct DrawMeshCPU {
   // hard-surface geometry isn't smeared by averaged smooth normals.
   bool geometricNormal{false};
   // Blendshape targets remapped to DrawVertex order; empty = no blendshapes.
-  // The GPU path morphs `vertices` per frame and re-uploads them.
+  // The CPU/RT path morphs `vertices` (ApplyMorphTarget) for baked geometry.
   std::vector<MorphTargetCPU> morphs;
+  // GPU-morph buffers (raster path): the morph is applied in the vertex shader
+  // from a static sparse per-vertex delta list + a tiny per-frame coefficient
+  // array, so weight changes upload only the coefficients (no VBO re-upload).
+  // Mirrors the extended-skinning influence layout.
+  //   morphOffsetCount: 2 uints/vertex (offset, count) into morphDeltaTexels.
+  //   morphDeltaTexels: 4 floats/entry (channelIndexAsFloat, dx, dy, dz).
+  //   morphChannelCount: number of channels (size of the per-frame coeff array).
+  //   morphTargetChannels: per-target channel metadata for the per-frame eval.
+  std::vector<uint32_t> morphOffsetCount;
+  std::vector<float> morphDeltaTexels;
+  int morphChannelCount{0};
+  std::vector<MorphTargetChannelsCPU> morphTargetChannels;
   // Optional GPU skinning attributes, parallel to `vertices`.
   // `jointIdx` stores four absolute bone-matrix texture row indices per vertex;
   // `jointWt` stores the corresponding normalized weights. Empty = unskinned.
