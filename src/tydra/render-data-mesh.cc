@@ -2134,14 +2134,14 @@ static bool ReorderVertexVaryingAttributes(
       std::vector<uint32_t> tmpPointIndices;
 
       // In-between offsets are parallel to the primary `pointIndices`, so they
-      // are splatted with the same remap to stay aligned after reordering.
+      // are splatted with the same remap to stay aligned after reordering. Only
+      // pointOffsets are carried (the converter does not store in-between
+      // normalOffsets -- morphed meshes shade with recomputed normals).
       std::vector<InbetweenShapeTarget *> ibTargets;
       std::vector<std::vector<value::float3>> ibTmpPointOffsets;
-      std::vector<std::vector<value::float3>> ibTmpNormalOffsets;
       for (auto &ib : target.second.inbetweens) {
         ibTargets.push_back(&ib.second);
         ibTmpPointOffsets.emplace_back();
-        ibTmpNormalOffsets.emplace_back();
       }
 
       for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
@@ -2174,12 +2174,6 @@ static bool ReorderVertexVaryingAttributes(
               }
               ibTmpPointOffsets[b].push_back(ibTargets[b]->pointOffsets[i]);
             }
-            if (ibTargets[b]->normalOffsets.size()) {
-              if (i >= ibTargets[b]->normalOffsets.size()) {
-                PUSH_ERROR_AND_RETURN("Invalid in-between normalOffsets.size.");
-              }
-              ibTmpNormalOffsets[b].push_back(ibTargets[b]->normalOffsets[i]);
-            }
           }
 
           tmpPointIndices.push_back(dstPointIndices[k]);
@@ -2192,7 +2186,6 @@ static bool ReorderVertexVaryingAttributes(
 
       for (size_t b = 0; b < ibTargets.size(); b++) {
         ibTargets[b]->pointOffsets.swap(ibTmpPointOffsets[b]);
-        ibTargets[b]->normalOffsets.swap(ibTmpNormalOffsets[b]);
       }
 
     }

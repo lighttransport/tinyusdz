@@ -436,86 +436,12 @@ point3f TransformPointRow(const point3f& p, const matrix4d& m) {
                  static_cast<float>(oz)};
 }
 
-// Recompute smooth normals from `mv`'s (morphed) positions over `dm.indices`,
-// then orient each to the rest normal (in dm.vertices) so winding is preserved.
-void RegenNormalsOriented(const DrawMeshCPU& dm, std::vector<DrawVertex>* mv) {
-  const size_t n = mv->size();
-  std::vector<float> nrm(n * 3, 0.0f);
-  for (size_t t = 0; t + 2 < dm.indices.size(); t += 3) {
-    const uint32_t i0 = dm.indices[t], i1 = dm.indices[t + 1],
-                   i2 = dm.indices[t + 2];
-    if (i0 >= n || i1 >= n || i2 >= n) continue;
-    const DrawVertex& a = (*mv)[i0];
-    const DrawVertex& b = (*mv)[i1];
-    const DrawVertex& c = (*mv)[i2];
-    const float e1[3] = {b.px - a.px, b.py - a.py, b.pz - a.pz};
-    const float e2[3] = {c.px - a.px, c.py - a.py, c.pz - a.pz};
-    const float fn[3] = {e1[1] * e2[2] - e1[2] * e2[1],
-                         e1[2] * e2[0] - e1[0] * e2[2],
-                         e1[0] * e2[1] - e1[1] * e2[0]};
-    for (uint32_t idx : {i0, i1, i2}) {
-      nrm[idx * 3 + 0] += fn[0];
-      nrm[idx * 3 + 1] += fn[1];
-      nrm[idx * 3 + 2] += fn[2];
-    }
-  }
-  for (size_t i = 0; i < n; ++i) {
-    float x = nrm[i * 3 + 0], y = nrm[i * 3 + 1], z = nrm[i * 3 + 2];
-    const float len = std::sqrt(x * x + y * y + z * z);
-    if (len <= 1e-8f) continue;  // degenerate: keep rest normal
-    x /= len; y /= len; z /= len;
-    const DrawVertex& rest = dm.vertices[i];
-    if (x * rest.nx + y * rest.ny + z * rest.nz < 0.0f) { x = -x; y = -y; z = -z; }
-    (*mv)[i].nx = x; (*mv)[i].ny = y; (*mv)[i].nz = z;
-  }
-}
-
 void TransformPointWorld(const float m[16], const point3f& p, float out[3]) {
   out[0] = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
   out[1] = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
   out[2] = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
 }
 
-// Apply a blendshape target at weight `w` to `mv`, piecewise-linearly
-// interpolating its position offset through any in-between shapes. The sample
-// table is (0 -> zero offset), each in-between (ascending), (1 -> primary
-// offset). Within a segment the offset lerps between the two bracketing samples;
-// outside [0,1] the end segment is extrapolated (Maya-style overdrive). With no
-// in-betweens this reduces to the classic linear `w * primary`.
-void ApplyMorphTarget(const MorphTargetCPU& mt, float w,
-                      std::vector<DrawVertex>* mv) {
-  if (w == 0.0f) return;
-  const size_t n = mt.vtx.size();
-  // Sample offset sources parallel to the bracket table {0, inbetweens..., 1}.
-  std::vector<const std::vector<float>*> src;  // null -> zero offset
-  std::vector<float> ibW;
-  src.push_back(nullptr);
-  for (const MorphInbetweenCPU& ib : mt.inbetweens) {
-    if (ib.dpos.size() != mt.dpos.size()) continue;
-    ibW.push_back(ib.weight);
-    src.push_back(&ib.dpos);
-  }
-  src.push_back(&mt.dpos);
-
-  const MorphBracket br = FindMorphBracket(ibW, w);
-  const float t = br.t;
-  const std::vector<float>* dlo = src[br.lo];
-  const std::vector<float>* dhi = src[br.hi];
-
-  for (size_t e = 0; e < n; ++e) {
-    const uint32_t v = mt.vtx[e];
-    if (v >= mv->size()) continue;
-    const float lx = dlo ? (*dlo)[e * 3 + 0] : 0.0f;
-    const float ly = dlo ? (*dlo)[e * 3 + 1] : 0.0f;
-    const float lz = dlo ? (*dlo)[e * 3 + 2] : 0.0f;
-    const float hx = dhi ? (*dhi)[e * 3 + 0] : 0.0f;
-    const float hy = dhi ? (*dhi)[e * 3 + 1] : 0.0f;
-    const float hz = dhi ? (*dhi)[e * 3 + 2] : 0.0f;
-    (*mv)[v].px += lx + (hx - lx) * t;
-    (*mv)[v].py += ly + (hy - ly) * t;
-    (*mv)[v].pz += lz + (hz - lz) * t;
-  }
-}
 
 }  // namespace
 
@@ -579,11 +505,8 @@ int MaxSkinInfluenceCount(const tydra::RenderScene& render) {
 }
 
 bool BuildGpuSkinningFrame(
-    const tydra::RenderScene& render, const tinyusdz::Stage& stage,
-    DrawScene* draw, double timecode, SkinningFrameCPU* frame,
-    bool updateSkinnedHelpers,
-    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut,
-    const std::unordered_map<std::string, float>* blendOverride) {
+    const tydra::RenderScene& render, DrawScene* draw, double timecode,
+    SkinningFrameCPU* frame, bool updateSkinnedHelpers) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
   if (matrices > 0) {
@@ -599,48 +522,8 @@ bool BuildGpuSkinningFrame(
     *frame = SkinningFrameCPU{};  // morph-only scene: no bone texture
   }
 
-  // Blendshape weights at this time (gathered once; empty if no morphs wanted).
-  std::unordered_map<std::string, float> blendWeights;
-  bool gatheredBlend = false;
-  // Morphed rest vertices per mesh (DrawVertex order), keyed by mesh index.
-  // Used for both bounds and GPU re-upload; absent meshes use rest vertices.
-  std::unordered_map<int, std::vector<DrawVertex>> morphed;
-  if (morphedOut) {
-    for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
-      DrawMeshCPU& dm = draw->meshes[mi];
-      if (dm.morphs.empty()) continue;
-      if (!gatheredBlend) {
-        blendWeights = GatherBlendWeights(stage, timecode);
-        // Manual UI weights (Maya-like blend editor) override the animation per
-        // blendshape name, and can introduce weights the animation doesn't drive.
-        if (blendOverride) {
-          for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
-        }
-        gatheredBlend = true;
-      }
-      std::vector<DrawVertex> mv = dm.vertices;  // start from rest
-      bool anyMorph = false;
-      for (const MorphTargetCPU& mt : dm.morphs) {
-        auto wit = blendWeights.find(mt.name);
-        if (wit == blendWeights.end() || wit->second == 0.0f) continue;
-        anyMorph = true;
-        ApplyMorphTarget(mt, wit->second, &mv);
-      }
-      // Only meshes with an active (non-zero) weight need a posed buffer; an
-      // unweighted mesh stays at its rest vertices (the caller reverts any mesh
-      // that was morphed last frame). Regenerate smooth normals from the morphed
-      // positions (matching the CPU path), oriented to the rest normal.
-      if (anyMorph) {
-        RegenNormalsOriented(dm, &mv);
-        morphed.emplace(static_cast<int>(mi), std::move(mv));
-      }
-    }
-  }
-  // Mesh `mi`'s base (morphed-or-rest) vertices for bounds/skin reads.
-  auto baseVerts = [&](int mi, const DrawMeshCPU& dm) -> const std::vector<DrawVertex>& {
-    auto it = morphed.find(mi);
-    return it != morphed.end() ? it->second : dm.vertices;
-  };
+  // The raster path applies blendshapes + skinning in the GPU vertex shader, so
+  // the CPU keeps rest geometry; bounds/skin reads use dm.vertices directly.
 
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
   std::unordered_map<int, std::vector<matrix4d>> composedByBase;
@@ -684,7 +567,7 @@ bool BuildGpuSkinningFrame(
   };
   for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
     DrawMeshCPU& dm = draw->meshes[mi];
-    const std::vector<DrawVertex>& verts = baseVerts(static_cast<int>(mi), dm);
+    const std::vector<DrawVertex>& verts = dm.vertices;
     bool meshFirst = true;
     float mn[3] = {std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max(),
@@ -712,8 +595,7 @@ bool BuildGpuSkinningFrame(
         skinned && dm.influenceOffsetCount.size() == verts.size() * 2 &&
         !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
     dm.skinnedHelperPoints.clear();
-    if (!skinned && !extendedSkinned &&
-        morphed.find(static_cast<int>(mi)) == morphed.end()) {
+    if (!skinned && !extendedSkinned) {
       if (dm.aabbMin[0] <= dm.aabbMax[0] && dm.aabbMin[1] <= dm.aabbMax[1] &&
           dm.aabbMin[2] <= dm.aabbMax[2]) {
         updateScene(dm.aabbMin, dm.aabbMax);
@@ -796,13 +678,6 @@ bool BuildGpuSkinningFrame(
     for (int c = 0; c < 3; ++c) {
       draw->aabbMin[c] = sceneMn[c];
       draw->aabbMax[c] = sceneMx[c];
-    }
-  }
-
-  if (morphedOut) {
-    morphedOut->clear();
-    for (auto& kv : morphed) {
-      morphedOut->emplace_back(kv.first, std::move(kv.second));
     }
   }
   return true;
