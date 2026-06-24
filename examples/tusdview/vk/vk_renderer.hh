@@ -104,6 +104,9 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory morphCoeffMem{VK_NULL_HANDLE};
     VkDescriptorSet morphCoeffDesc{VK_NULL_HANDLE};
     void* morphCoeffMapped{nullptr};
+    VkBuffer morphChanBuf{VK_NULL_HANDLE};         // set 9 SSBO (uint channelId/entry)
+    VkDeviceMemory morphChanMem{VK_NULL_HANDLE};
+    VkDescriptorSet morphChanDesc{VK_NULL_HANDLE};
     int morphChannelCount{0};
     bool hasMorph{false};
     VkBuffer ebo{VK_NULL_HANDLE};
