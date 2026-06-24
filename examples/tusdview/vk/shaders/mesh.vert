@@ -15,6 +15,10 @@ layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
 layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
   vec4 influenceRows[];
 };
+// Coarse displacement height map (red channel), sampled in the vertex stage. The
+// renderer binds black (red=0) when the submesh has no displacement, so this is an
+// unconditional no-op there -- no push-constant lane is spent on an enable flag.
+layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
 
 // 128-byte push constant block (Vulkan-guaranteed minimum):
 //   mat4 mvp        : 64 bytes
@@ -87,6 +91,11 @@ void main() {
     pos = (skin * vec4(aPos, 1.0)).xyz;
     nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
   }
+  // Coarse displacement: offset along the (object-space) normal by the height map's
+  // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
+  // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
+  // consistent with the deformed surface.
+  pos += normalize(nrm) * textureLod(uDisplacementTex, aUV, 0.0).r;
   vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
   vUV = aUV;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;

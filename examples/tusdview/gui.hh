@@ -342,6 +342,12 @@ class Gui {
   bool cullJobEnabled_{false};
   const DrawScene* cullJobDraw_{nullptr};
   float tessQuality_{1.0f};
+  // UsdPreviewSurface displacement (raster preview). enabled = master toggle;
+  // scale = global multiplier; maxTessLevel > 1 enables GPU tessellation for
+  // adaptive sub-triangle detail (1 = coarse per-vertex displacement only).
+  bool displacementEnabled_{true};
+  float displacementScale_{1.0f};
+  int maxTessLevel_{1};
   std::vector<HelperVertex> helperLines_;
   std::vector<HelperVertex> overlayLines_;
 

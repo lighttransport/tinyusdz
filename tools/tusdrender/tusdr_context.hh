@@ -346,7 +346,9 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              int32_t *specular_tex_id = nullptr,
                              float *ior = nullptr,
                              uint8_t *use_specular_workflow = nullptr,
-                             bool *vertex_color = nullptr);
+                             bool *vertex_color = nullptr,
+                             float *displacement = nullptr,
+                             ScalarTex *displacement_tex = nullptr);
 
 void ResolveMeshMaterialCached(
     const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,

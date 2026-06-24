@@ -334,11 +334,20 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};
   VkDescriptorSet whiteDesc_{VK_NULL_HANDLE};
+  // Black 1x1 (red=0) bound to set 4 when a submesh has no displacement (or
+  // displacement is globally off): the vertex shader always samples set 4 and
+  // displaces by red, so black = no displacement (no push-constant lane needed).
+  VkImage blackImg_{VK_NULL_HANDLE};
+  VkDeviceMemory blackMem_{VK_NULL_HANDLE};
+  VkImageView blackView_{VK_NULL_HANDLE};
+  VkDescriptorSet blackDesc_{VK_NULL_HANDLE};
   std::vector<VkImage> texImgs_;
   std::vector<VkDeviceMemory> texMems_;
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
+  std::vector<int> matDispTex_;  // per material: displacement texture index or -1
+  std::vector<float> matDispConst_;  // per material: constant displacement amount
 
   VkBuffer boneBuf_{VK_NULL_HANDLE};
   VkDeviceMemory boneMem_{VK_NULL_HANDLE};
@@ -377,6 +386,8 @@ class VulkanRenderer final : public Renderer {
   bool rtActive_{false};      // RT technique currently selected
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
+  bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
+  float displacementScale_{1.0f};  // global displacement multiplier
   float sceneMin_[3]{0, 0, 0};      // position-AOV scene bbox
   float sceneExtent_[3]{1, 1, 1};
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild

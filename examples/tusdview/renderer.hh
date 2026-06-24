@@ -116,6 +116,16 @@ struct RenderFrameParams {
   // (GL + VK raster); the VK ray-tracing path traces the whole TLAS.
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
+
+  // Surface displacement (UsdPreviewSurface inputs:displacement). When enabled, a
+  // material's displacement (constant or height-map red channel) offsets the
+  // surface along its normal by displacementScale in the raster vertex/tess shader
+  // (coarse, no extra geometry). maxTessLevel > 1 enables GPU tessellation for
+  // adaptive sub-triangle detail (0/1 = coarse per-vertex only). Geometric normals
+  // are used on displaced surfaces so shading follows the deformed geometry.
+  bool displacement{true};
+  float displacementScale{1.0f};
+  int maxTessLevel{1};
 };
 
 // Opaque texture handle for ImGui::Image. GL: a GLuint texture id. Vulkan: a

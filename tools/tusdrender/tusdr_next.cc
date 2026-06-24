@@ -93,7 +93,16 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           // emit 1x unique verts + 3 vertex indices/tri (offset by
                           // *io_vbase) instead of writing the de-indexed soup.
                           FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr,
-                          uint32_t *io_vbase = nullptr) {
+                          uint32_t *io_vbase = nullptr,
+                          // Coarse displacement (UsdPreviewSurface inputs:displacement):
+                          // each unique vertex is offset along its smooth normal by the
+                          // sampled height (const + optional channel-aware texture from
+                          // tex_pool). disp_scale == 0 disables it.
+                          float displacement = 0.0f,
+                          int32_t displacement_tex_id = -1,
+                          uint8_t displacement_ch = 0,
+                          const std::vector<Texture> *tex_pool = nullptr,
+                          float disp_scale = 0.0f) {
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
@@ -157,11 +166,12 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   std::vector<int32_t> st_indices;
   bool st_facevarying = false;
   bool have_st = false;
-  if (want_uvs && (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
-                   metal_tex.id >= 0 || emission_tex_id >= 0 ||
-                   occ_tex.id >= 0 || opacity_tex.id >= 0 ||
-                   clearcoat_tex.id >= 0 || clearcoat_rough_tex.id >= 0 ||
-                   specular_tex_id >= 0)) {
+  if ((want_uvs || displacement_tex_id >= 0) &&
+      (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
+       metal_tex.id >= 0 || emission_tex_id >= 0 || occ_tex.id >= 0 ||
+       opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
+       clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
+       displacement_tex_id >= 0)) {
     st = ReadFloatArrayLazy(prim, "primvars:st", time);
     if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
     if (!st.empty()) {
@@ -193,6 +203,71 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     if (s * 2 + 1 >= st.size()) return {0.0f, 0.0f};
     return {st[s * 2 + 0], st[s * 2 + 1]};
   };
+
+  // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
+  // vertex normal by the sampled displacement scalar. Watertight (a shared vertex
+  // moves exactly once) and memory-free (no new geometry). Geometric normals are
+  // recomputed per-triangle from the displaced positions in the fan loop below, so
+  // authored normals are intentionally dropped for displaced meshes (see below).
+  const bool do_displace =
+      disp_scale != 0.0f && (displacement_tex_id >= 0 || displacement != 0.0f);
+  if (do_displace) {
+    std::vector<Vec3> vn(npts, Vec3{0.0f, 0.0f, 0.0f});
+    size_t cur = 0;
+    for (int32_t c : counts) {
+      if (c >= 3 && cur + size_t(c) <= indices.size()) {
+        for (int32_t k = 1; k + 1 < c; k++) {
+          int32_t a = indices[cur + 0], b = indices[cur + size_t(k)],
+                  e = indices[cur + size_t(k + 1)];
+          if (a < 0 || b < 0 || e < 0 || size_t(a) >= npts ||
+              size_t(b) >= npts || size_t(e) >= npts)
+            continue;
+          // Area-weighted (un-normalized cross product) face normal accumulation.
+          Vec3 fn = Cross(Sub(wpts[size_t(b)], wpts[size_t(a)]),
+                          Sub(wpts[size_t(e)], wpts[size_t(a)]));
+          vn[size_t(a)] = Add(vn[size_t(a)], fn);
+          vn[size_t(b)] = Add(vn[size_t(b)], fn);
+          vn[size_t(e)] = Add(vn[size_t(e)], fn);
+        }
+      }
+      cur += size_t(std::max<int32_t>(0, c));
+    }
+    // First face-vertex slot referencing each point, for faceVarying UV lookup.
+    std::vector<int64_t> first_fv;
+    const bool need_fv = displacement_tex_id >= 0 && st_facevarying;
+    if (need_fv) {
+      first_fv.assign(npts, -1);
+      cur = 0;
+      for (int32_t c : counts) {
+        if (c >= 0 && cur + size_t(c) <= indices.size())
+          for (int32_t j = 0; j < c; j++) {
+            int32_t pi = indices[cur + size_t(j)];
+            if (pi >= 0 && size_t(pi) < npts && first_fv[size_t(pi)] < 0)
+              first_fv[size_t(pi)] = int64_t(cur + size_t(j));
+          }
+        cur += size_t(std::max<int32_t>(0, c));
+      }
+    }
+    const Texture *dtex =
+        (displacement_tex_id >= 0 && tex_pool &&
+         size_t(displacement_tex_id) < tex_pool->size())
+            ? &(*tex_pool)[size_t(displacement_tex_id)]
+            : nullptr;
+    for (size_t i = 0; i < npts; i++) {
+      if (Length(vn[i]) < 1.0e-12f) continue;
+      Vec3 n = Normalize(vn[i]);
+      float d = displacement;
+      if (dtex) {
+        std::pair<float, float> uv =
+            (need_fv && first_fv[i] >= 0)
+                ? uv_at(size_t(first_fv[i]), int32_t(i))
+                : uv_at(0, int32_t(i));
+        uv_xform.apply(&uv.first, &uv.second);
+        d = dtex->sample_channel(uv.first, uv.second, 0.0f, displacement_ch);
+      }
+      wpts[i] = Add(wpts[i], Mul(n, d * disp_scale));
+    }
+  }
 
   // Per-corner displayColor/displayOpacity (RGBA), when the scene has any
   // non-constant display primvar. Interpolation is inferred from array size:
@@ -235,7 +310,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   // absent. Interpolation inferred from size (vertex / faceVarying).
   std::vector<float> nrm;
   int nrm_mode = 0;  // 0=none, 1=vertex, 2=faceVarying
-  if (want_normals) {
+  // Displaced meshes shade with the geometric normal of the deformed surface, so
+  // authored (pre-displacement) normals are ignored -- they no longer match.
+  if (want_normals && !do_displace) {
     nrm = ReadFloatArrayLazy(prim, "normals", time);
     if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
     const size_t nn = nrm.size() / 3;
@@ -638,7 +715,8 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              ScalarTex *clearcoat_rough_tex, Vec3 *specular_color,
                              int32_t *specular_tex_id, float *ior,
                              uint8_t *use_specular_workflow,
-                             bool *vertex_color) {
+                             bool *vertex_color, float *displacement,
+                             ScalarTex *displacement_tex) {
   // Geometry display primvars: the unmaterialed base color/opacity (e.g. ALab
   // geom-only meshes). The first value seeds the constant base; a >1-element
   // array is per-vertex/faceVarying/uniform and sets *vertex_color so the stream
@@ -690,6 +768,18 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
       if (occlusion) *occlusion = std::min(1.0f, std::max(0.0f, *f));
   if (occ_tex)
     ResolveScalarTextureNext(stage, surf, "inputs:occlusion", tc, occ_tex);
+
+  // Displacement: UsdPreviewSurface inputs:displacement offsets the surface along
+  // its normal (scene units). A scalar constant and/or a channel-aware height
+  // texture (raw, like roughness/opacity). Applied per-vertex at mesh-build time
+  // (coarse displacement) -- see AddRTPreviewMeshNext.
+  if (const tinyusdz::next::Value *d =
+          surf.GetPropertyValue("inputs:displacement"))
+    if (const float *f = d->as_float())
+      if (displacement) *displacement = *f;
+  if (displacement_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+                             displacement_tex);
 
   // Transparency: UsdPreviewSurface inputs:opacity (scalar const, multiplied into
   // any displayOpacity) + optional channel-aware texture (commonly the diffuse
@@ -915,6 +1005,8 @@ void ResolveMeshMaterialCached(
       job->ior = r.ior;
       job->use_specular_workflow = r.use_specular_workflow;
       job->vertex_color = r.vertex_color;
+      job->displacement = r.displacement;
+      job->displacement_tex = r.displacement_tex;
       return;
     }
   }
@@ -927,7 +1019,8 @@ void ResolveMeshMaterialCached(
                           &job->clearcoat_roughness, &job->clearcoat_tex,
                           &job->clearcoat_rough_tex, &job->specular_color,
                           &job->specular_tex_id, &job->ior,
-                          &job->use_specular_workflow, &job->vertex_color);
+                          &job->use_specular_workflow, &job->vertex_color,
+                          &job->displacement, &job->displacement_tex);
   if (!key.empty()) {
     ResolvedMat r;
     r.base_color = job->base_color;
@@ -954,6 +1047,8 @@ void ResolveMeshMaterialCached(
     r.ior = job->ior;
     r.use_specular_workflow = job->use_specular_workflow;
     r.vertex_color = job->vertex_color;
+    r.displacement = job->displacement;
+    r.displacement_tex = job->displacement_tex;
     cache.emplace(key, r);
   }
 }
@@ -2114,7 +2209,12 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     // Indexed geometry (Phase 2b): when both non-null, emit unique
                     // verts + 3 indices/tri here instead of the de-indexed soup
                     // in out_vertices.
-                    FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr) {
+                    FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr,
+                    // Coarse displacement: per-vertex offset along the smooth normal
+                    // by the resolved displacement (texture from tex_pool). disp_scale
+                    // == 0 disables it (then renders are byte-identical to before).
+                    const std::vector<Texture> *tex_pool = nullptr,
+                    float disp_scale = 0.0f) {
   const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
@@ -2192,7 +2292,9 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
-                indexed ? &jvb : nullptr);
+                indexed ? &jvb : nullptr, job.displacement,
+                job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
+                disp_scale);
           }
         } catch (const std::bad_alloc &) {
           oom.store(true, std::memory_order_relaxed);
@@ -2371,11 +2473,15 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     bool want_colors = false;
     for (const MeshJobNext &j : base_jobs)
       if (j.vertex_color) { want_colors = true; break; }
+    const float disp_scale = opt.displace ? opt.displace_scale : 0.0f;
     if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
                         &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
                         /*out_mat_table=*/&ctx.flat_mats, want_colors,
-                        &ctx.tri_colors, opt.smooth, &ctx.tri_normals)) {
+                        &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
+                        /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
+                        /*out_indices=*/static_cast<IdxVec *>(nullptr),
+                        &ctx.textures, disp_scale)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -2535,7 +2641,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
               &ctx.blas[b].mat_table, jobs_have_color(gjobs),
               &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
-              /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices))
+              /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
+              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f))
         gstream_ok.store(false, std::memory_order_relaxed);
     }
   };
@@ -2561,7 +2668,11 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
                                &ctx.blas[b].mat_table, jobs_have_color(proto_jobs[i]),
                                &ctx.blas[b].tri_colors, opt.smooth,
-                               &ctx.blas[b].tri_normals);
+                               &ctx.blas[b].tri_normals,
+                               /*out_uverts=*/static_cast<FloatVec *>(nullptr),
+                               /*out_indices=*/static_cast<IdxVec *>(nullptr),
+                               &ctx.textures,
+                               opt.displace ? opt.displace_scale : 0.0f);
   }
   if (!stream_ok) {
     std::cerr << "Aborting: triangle stream exceeded memory cap "

@@ -789,9 +789,12 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  VkDescriptorSetLayout setLayouts[4] = {texSetLayout_, skinSetLayout_,
-                                         influenceSetLayout_, faceSetLayout_};
-  plci.setLayoutCount = 4;
+  // Set 4: displacement height map, sampled in the VERTEX stage (coarse
+  // displacement). Reuses texSetLayout_ (now VERTEX|FRAGMENT visible).
+  VkDescriptorSetLayout setLayouts[5] = {texSetLayout_, skinSetLayout_,
+                                         influenceSetLayout_, faceSetLayout_,
+                                         texSetLayout_};
+  plci.setLayoutCount = 5;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1569,7 +1572,9 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   b.binding = 0;
   b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   b.descriptorCount = 1;
-  b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // VERTEX too: the same per-texture sets feed the vertex-stage displacement
+  // sampler (set 4) as well as the fragment-stage base color (set 0).
+  b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   lci.bindingCount = 1;
@@ -2029,6 +2034,15 @@ bool VulkanRenderer::createWhiteTexture(std::string* err) {
     if (err) *err = "failed to create white texture";
     return false;
   }
+  light3d::Image b;
+  b.width = 1;
+  b.height = 1;
+  b.channels = 4;
+  b.data = {0, 0, 0, 255};
+  if (!createTextureImage(b, &blackImg_, &blackMem_, &blackView_)) {
+    if (err) *err = "failed to create black texture";
+    return false;
+  }
   return true;
 }
 
@@ -2297,6 +2311,7 @@ void VulkanRenderer::destroyScene() {
                          : VK_NULL_HANDLE;
   }
   whiteDesc_ = VK_NULL_HANDLE;
+  blackDesc_ = VK_NULL_HANDLE;
 }
 
 void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
@@ -2306,6 +2321,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 
   // Default white texture descriptor + one white slot per texture (filled lazily).
   whiteDesc_ = allocTexDescriptor(whiteView_);
+  blackDesc_ = allocTexDescriptor(blackView_);  // set 4 default = no displacement
   texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
 
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
@@ -2313,6 +2329,8 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   // constants still carry only baseColor (matColor_ row 0), read with stride 12.
   matColor_.resize(materials.size() * 12);
   matBaseTex_.resize(materials.size());
+  matDispTex_.resize(materials.size());
+  matDispConst_.resize(materials.size());
   for (size_t i = 0; i < materials.size(); ++i) {
     matColor_[i * 12 + 0] = materials[i].baseColor[0];
     matColor_[i * 12 + 1] = materials[i].baseColor[1];
@@ -2324,6 +2342,8 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matColor_[i * 12 + 9] = materials[i].emissive[1];
     matColor_[i * 12 + 10] = materials[i].emissive[2];
     matBaseTex_[i] = materials[i].baseColorTex;
+    matDispTex_[i] = materials[i].displacementTex;
+    matDispConst_[i] = materials[i].displacementConst;
   }
 }
 
@@ -3303,6 +3323,8 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   hasParams_ = (params.view && params.proj);
   rtMode_ = static_cast<int>(params.mode);
   depthScale_ = params.depthScale;
+  displacement_ = params.displacement;
+  displacementScale_ = params.displacementScale;
   for (int i = 0; i < 3; ++i) {
     sceneMin_[i] = params.sceneMin[i];
     sceneExtent_[i] = params.sceneExtent[i];
@@ -3566,6 +3588,24 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                   0, 1, &ds, 0, nullptr);
         }
+        // Set 4: displacement height map (vertex stage). Black (red=0) when the
+        // material has no displacement or displacement is globally off, so the
+        // shader's unconditional sample is a no-op there. Note: the VK raster path
+        // applies displacement at the authored scale (the UI scale slider is GL-only).
+        bool displaced = false;
+        VkDescriptorSet dispDs = blackDesc_;
+        if (displacement_ && sub.materialId >= 0 &&
+            static_cast<size_t>(sub.materialId) < matDispTex_.size()) {
+          const int dt = matDispTex_[static_cast<size_t>(sub.materialId)];
+          if (dt >= 0 && static_cast<size_t>(dt) < texDescs_.size()) {
+            dispDs = texDescs_[static_cast<size_t>(dt)];
+            displaced = true;
+          }
+        }
+        if (dispDs != VK_NULL_HANDLE) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                  4, 1, &dispDs, 0, nullptr);
+        }
         PushC pc{};
         std::memcpy(pc.mvp, MVP.m, sizeof(pc.mvp));
         std::memcpy(pc.model, W.m, sizeof(pc.model));
@@ -3605,7 +3645,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
         pc.matId = sub.materialId;
         pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)
-        pc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
+        pc.flags = ((mesh.geometricNormal || displaced) ? 1 : 0) |
+                   (mesh.doubleSided ? 2 : 0) |
                    ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
                    ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
         // bit 7: source-face data present; bits 8-31: this submesh's first triangle
@@ -3913,6 +3954,9 @@ void VulkanRenderer::shutdown() {
   if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }
   if (whiteImg_) { vkDestroyImage(device_, whiteImg_, nullptr); whiteImg_ = VK_NULL_HANDLE; }
   if (whiteMem_) { vkFreeMemory(device_, whiteMem_, nullptr); whiteMem_ = VK_NULL_HANDLE; }
+  if (blackView_) { vkDestroyImageView(device_, blackView_, nullptr); blackView_ = VK_NULL_HANDLE; }
+  if (blackImg_) { vkDestroyImage(device_, blackImg_, nullptr); blackImg_ = VK_NULL_HANDLE; }
+  if (blackMem_) { vkFreeMemory(device_, blackMem_, nullptr); blackMem_ = VK_NULL_HANDLE; }
   if (boneMapped_) { vkUnmapMemory(device_, boneMem_); boneMapped_ = nullptr; }
   if (boneBuf_) { vkDestroyBuffer(device_, boneBuf_, nullptr); boneBuf_ = VK_NULL_HANDLE; }
   if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
