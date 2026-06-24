@@ -2,8 +2,8 @@
 
 // Tessellation control: adaptive per-edge level from the world-space edge length
 // relative to its distance to the camera (nearer / longer edges subdivide more),
-// clamped to a fixed cap (the VK path has no live max-tess slider -- the slider
-// only toggles tessellation on/off via pipeline selection on the CPU side).
+// clamped to the max-tess slider (set-5 params UBO .y). The CPU also gates the
+// tessellation pipeline on maxTess > 1, so the slider both toggles and caps it.
 
 layout(vertices = 3) out;
 
@@ -30,7 +30,8 @@ layout(push_constant) uniform PushConstants {
   int meshId;
 } pc;
 
-const float kMaxTessLevel = 16.0;
+// Global displacement params: .y = max tessellation level (live UI slider).
+layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
 
 float edgeLevel(vec3 a, vec3 b) {
   vec3 wa = (pc.model * vec4(a, 1.0)).xyz;
@@ -38,7 +39,7 @@ float edgeLevel(vec3 a, vec3 b) {
   vec3 mid = 0.5 * (wa + wb);
   float len = length(wa - wb);
   float dist = max(length(pc.camPos.xyz - mid), 1e-3);
-  return clamp(len / dist * 120.0, 1.0, kMaxTessLevel);
+  return clamp(len / dist * 120.0, 1.0, max(dp.disp.y, 1.0));
 }
 
 void main() {

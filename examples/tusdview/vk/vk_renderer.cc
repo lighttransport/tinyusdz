@@ -814,10 +814,11 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   // Set 4: displacement height map, sampled in the VERTEX stage (coarse
   // displacement). Reuses texSetLayout_ (now VERTEX|FRAGMENT visible).
-  VkDescriptorSetLayout setLayouts[5] = {texSetLayout_, skinSetLayout_,
+  // Set 5: global displacement params UBO (live scale + max-tess sliders).
+  VkDescriptorSetLayout setLayouts[6] = {texSetLayout_, skinSetLayout_,
                                          influenceSetLayout_, faceSetLayout_,
-                                         texSetLayout_};
-  plci.setLayoutCount = 5;
+                                         texSetLayout_, dispParamsSetLayout_};
+  plci.setLayoutCount = 6;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1818,6 +1819,61 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   if (createHostBuffer(sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                        &dummyFace, &dummyFaceBuf_, &dummyFaceMem_)) {
     dummyFaceDesc_ = allocFaceDescriptor(dummyFaceBuf_, sizeof(uint32_t));
+  }
+
+  // Set 5: global displacement params UBO {scale, maxTessLevel}, so the UI sliders
+  // are live on Vulkan. Read in the vertex stage (coarse scale) and, when
+  // available, the tessellation stages (TCS max-level clamp, TES scale).
+  VkDescriptorSetLayoutBinding db{};
+  db.binding = 0;
+  db.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  db.descriptorCount = 1;
+  db.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  if (tessSupported_) {
+    db.stageFlags |= VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                     VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  }
+  VkDescriptorSetLayoutCreateInfo dlci{};
+  dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  dlci.bindingCount = 1;
+  dlci.pBindings = &db;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &dlci, nullptr,
+                                       &dispParamsSetLayout_),
+           "displacement-params set layout");
+  VkDescriptorPoolSize dps{};
+  dps.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  dps.descriptorCount = 1;
+  VkDescriptorPoolCreateInfo dpci{};
+  dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  dpci.maxSets = 1;
+  dpci.poolSizeCount = 1;
+  dpci.pPoolSizes = &dps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &dpci, nullptr, &dispParamsPool_),
+           "displacement-params descriptor pool");
+  // 4 floats: [0]=scale, [1]=maxTessLevel, [2..3]=pad. Default scale 1, level 1.
+  const float dispInit[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+  if (createHostBuffer(sizeof(dispInit), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                       dispInit, &dispParamsUbo_, &dispParamsUboMem_)) {
+    vkMapMemory(device_, dispParamsUboMem_, 0, sizeof(dispInit), 0,
+                &dispParamsMapped_);
+    VkDescriptorSetAllocateInfo dai{};
+    dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool = dispParamsPool_;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts = &dispParamsSetLayout_;
+    if (vkAllocateDescriptorSets(device_, &dai, &dispParamsSet_) == VK_SUCCESS) {
+      VkDescriptorBufferInfo dbi{};
+      dbi.buffer = dispParamsUbo_;
+      dbi.range = sizeof(dispInit);
+      VkWriteDescriptorSet dw{};
+      dw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      dw.dstSet = dispParamsSet_;
+      dw.dstBinding = 0;
+      dw.descriptorCount = 1;
+      dw.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      dw.pBufferInfo = &dbi;
+      vkUpdateDescriptorSets(device_, 1, &dw, 0, nullptr);
+    }
   }
   return true;
 }
@@ -3468,6 +3524,14 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
   maxTessLevel_ = params.maxTessLevel;
+  // Update the global displacement-params UBO (set 5) so the scale + max-tess
+  // sliders are live. Persistently mapped; written each frame (volume-UBO
+  // convention). [0]=scale, [1]=maxTessLevel.
+  if (dispParamsMapped_) {
+    const float dp[4] = {displacementScale_, static_cast<float>(maxTessLevel_),
+                         0.0f, 0.0f};
+    std::memcpy(dispParamsMapped_, dp, sizeof(dp));
+  }
   for (int i = 0; i < 3; ++i) {
     sceneMin_[i] = params.sceneMin[i];
     sceneExtent_[i] = params.sceneExtent[i];
@@ -3687,6 +3751,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                               1, 1, &boneDesc_, 0, nullptr);
     }
+    // Set 5: global displacement params (frame-constant; shared by the coarse and
+    // tessellation pipelines, which use the same layout).
+    if (dispParamsSet_ != VK_NULL_HANDLE) {
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                              5, 1, &dispParamsSet_, 0, nullptr);
+    }
 
     light3d::Mat4 P = ToMat4(proj_);
     light3d::Mat4 V = ToMat4(view_);
@@ -3733,8 +3803,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
         // Set 4: displacement height map (vertex stage). Black (red=0) when the
         // material has no displacement or displacement is globally off, so the
-        // shader's unconditional sample is a no-op there. Note: the VK raster path
-        // applies displacement at the authored scale (the UI scale slider is GL-only).
+        // shader's unconditional sample is a no-op there. The scale + max-tess
+        // sliders reach the shader via the set-5 params UBO.
         bool displaced = false;
         VkDescriptorSet dispDs = blackDesc_;
         if (displacement_ && sub.materialId >= 0 &&
@@ -4119,6 +4189,10 @@ void VulkanRenderer::shutdown() {
   if (facePool_) { vkDestroyDescriptorPool(device_, facePool_, nullptr); facePool_ = VK_NULL_HANDLE; }
   if (dummyFaceBuf_) { vkDestroyBuffer(device_, dummyFaceBuf_, nullptr); dummyFaceBuf_ = VK_NULL_HANDLE; }
   if (dummyFaceMem_) { vkFreeMemory(device_, dummyFaceMem_, nullptr); dummyFaceMem_ = VK_NULL_HANDLE; }
+  if (dispParamsPool_) { vkDestroyDescriptorPool(device_, dispParamsPool_, nullptr); dispParamsPool_ = VK_NULL_HANDLE; }
+  if (dispParamsSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispParamsSetLayout_, nullptr); dispParamsSetLayout_ = VK_NULL_HANDLE; }
+  if (dispParamsUbo_) { vkDestroyBuffer(device_, dispParamsUbo_, nullptr); dispParamsUbo_ = VK_NULL_HANDLE; }
+  if (dispParamsUboMem_) { vkFreeMemory(device_, dispParamsUboMem_, nullptr); dispParamsUboMem_ = VK_NULL_HANDLE; dispParamsMapped_ = nullptr; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
