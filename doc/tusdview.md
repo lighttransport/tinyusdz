@@ -64,6 +64,37 @@ b=np.array(Image.open('b.png').convert('RGB')).astype(int); \
 print('maxdiff', int(np.abs(a-b).max()))"
 ```
 
+## Headless HW-accelerated GL (NVIDIA) + GPU profiling
+
+Under `xvfb-run`, the **OpenGL** backend falls back to **llvmpipe** (Mesa software
+rendering) — fine for correctness/screenshots, but ~50–90 ms/frame and useless for
+profiling. On an NVIDIA host, route the GL context to the discrete GPU with the
+PRIME render-offload env vars:
+
+```sh
+export __NV_PRIME_RENDER_OFFLOAD=1 \
+       __GLX_VENDOR_LIBRARY_NAME=nvidia \
+       __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+xvfb-run -a ./build_ninja/tusdview --backend gl --frames 8 --screenshot out.png model.usdz
+# verify: glGetString(GL_RENDERER) now reports the GPU, not llvmpipe:
+xvfb-run -a glxinfo | grep "OpenGL renderer"   # -> NVIDIA GeForce ... (was: llvmpipe)
+```
+
+- The **Vulkan** backend already selects the discrete GPU on its own — these vars
+  are not needed for `--backend vk` (confirm via `vulkaninfo --summary`, or that
+  `maxBoundDescriptorSets` is 32 rather than llvmpipe/lavapipe's 8).
+- **Caveat — wall-clock is misleading here.** PRIME renders on the NVIDIA GPU but
+  *presents* through the software xvfb X server, so each frame pays a GPU→X blit
+  (~89 ms/frame observed) that has nothing to do with draw cost. **Measure GPU-side,
+  not with wall-clock**: `GL_TIME_ELAPSED` timer queries around the draw (GL), or
+  `vkCmdWriteTimestamp` around the render pass (VK). A timer query bracketing just
+  `drawMeshes` isolates a feature's GPU cost (e.g. the blendshape morph vertex
+  shader) from the clear/grid/present overhead.
+
+These vars are how the GPU blendshape-morph optimizations were profiled on an
+RTX 3070 (the active-channel skip makes the morph's GPU cost scale with the number
+of *active* targets, not the total target count).
+
 ## Vulkan validation layers (debugging the Vulkan/threaded paths)
 
 The Vulkan backend (raster, ray query, and the experimental `--threaded` render
