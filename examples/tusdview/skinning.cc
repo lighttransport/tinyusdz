@@ -869,9 +869,6 @@ void DeformSkinnedMeshes(
 
   std::unordered_map<std::string, float> blendWeights;
   bool gatheredBlend = false;
-  // In-between samples (by name); read once on first morphed mesh. Matches the
-  // GPU raster path so ray-traced geometry interpolates through in-betweens too.
-  std::map<std::string, InbetweenSamples> inbetweens;
 
   // Cache skinning matrices per skeleton (shared across meshes).
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
@@ -900,7 +897,6 @@ void DeformSkinnedMeshes(
         if (blendOverride) {
           for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
         }
-        inbetweens = CollectBlendShapeInbetweens(stage);
         gatheredBlend = true;
       }
       for (const auto& kv : mesh.targets) {
@@ -911,15 +907,23 @@ void DeformSkinnedMeshes(
         const tydra::ShapeTarget& tgt = kv.second;
         const size_t no = tgt.pointOffsets.size();
 
-        // In-between samples aligned to this target's pointIndices.
+        // In-between samples carried by tydra, reordered parallel to this
+        // target's pointIndices (single-indexable and facevarying alike).
         std::vector<float> ibW;
-        std::vector<const std::vector<tinyusdz::value::vector3f>*> ibOff;
-        auto iit = inbetweens.find(kv.first);
-        if (iit != inbetweens.end()) {
-          for (const auto& s : iit->second) {
-            if (s.second.size() != tgt.pointIndices.size()) continue;
-            ibW.push_back(s.first);
-            ibOff.push_back(&s.second);
+        std::vector<const tydra::InbetweenShapeTarget*> ibOff;
+        {
+          std::vector<const tydra::InbetweenShapeTarget*> sorted;
+          sorted.reserve(tgt.inbetweens.size());
+          for (const auto& s : tgt.inbetweens) sorted.push_back(&s.second);
+          std::sort(sorted.begin(), sorted.end(),
+                    [](const tydra::InbetweenShapeTarget* a,
+                       const tydra::InbetweenShapeTarget* b) {
+                      return a->weight < b->weight;
+                    });
+          for (const tydra::InbetweenShapeTarget* s : sorted) {
+            if (s->pointOffsets.size() != tgt.pointIndices.size()) continue;
+            ibW.push_back(s->weight);
+            ibOff.push_back(s);
           }
         }
         const MorphBracket br = FindMorphBracket(ibW, w);
@@ -931,7 +935,7 @@ void DeformSkinnedMeshes(
             o[0] = tgt.pointOffsets[k][0]; o[1] = tgt.pointOffsets[k][1];
             o[2] = tgt.pointOffsets[k][2];
           } else {
-            const auto& a = (*ibOff[si - 1])[k];
+            const auto& a = ibOff[si - 1]->pointOffsets[k];
             o[0] = a[0]; o[1] = a[1]; o[2] = a[2];
           }
         };

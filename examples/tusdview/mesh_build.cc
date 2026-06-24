@@ -444,8 +444,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
 // Build the geometry (interleaved vertices, indices, submeshes, normals) of one
 // RenderMesh into `dm`. World transform is left as identity; call PlaceDrawMesh
 // afterwards. Returns false if the mesh has no usable geometry.
-bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
-                  const std::map<std::string, InbetweenSamples>* inbetweens = nullptr) {
+bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   const size_t nPoints = mesh.points.size();
   const std::vector<uint32_t>& srcIndices = mesh.faceVertexIndices();
   if (nPoints == 0 || srcIndices.empty()) {
@@ -611,25 +610,28 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
       MorphTargetCPU mt;
       mt.name = kv.first;
 
-      // In-between shapes (read from the source BlendShape prim; the converter
-      // does not carry them yet). Their offsets are parallel to the blendshape's
-      // pointIndices, exactly like the primary `pointOffsets`, so we remap them
-      // with the same p2v expansion below. Only samples whose offset array
-      // matches pointIndices length are usable.
-      // Keep only inbetweens whose offsets align with pointIndices; ibSrc stays
+      // In-between shapes. tydra carries them in `tgt.inbetweens`, already
+      // reordered parallel to `pointIndices`/`pointOffsets` (so the same p2v
+      // expansion below applies, single-indexable and facevarying alike).
+      // Sort ascending by weight so usdWeights stays ascending; ibSrc stays
       // index-parallel to ibOut so the expansion below is unambiguous.
       std::vector<MorphInbetweenCPU> ibOut;
-      std::vector<const std::vector<tinyusdz::value::vector3f>*> ibSrc;
-      if (inbetweens) {
-        auto it = inbetweens->find(kv.first);  // key by blendshape name
-        if (it != inbetweens->end()) {
-          for (const auto& ib : it->second) {
-            if (ib.second.size() != tgt.pointIndices.size()) continue;
-            MorphInbetweenCPU mi;
-            mi.weight = ib.first;
-            ibOut.push_back(std::move(mi));
-            ibSrc.push_back(&ib.second);
-          }
+      std::vector<const tydra::InbetweenShapeTarget*> ibSrc;
+      {
+        std::vector<const tydra::InbetweenShapeTarget*> sorted;
+        sorted.reserve(tgt.inbetweens.size());
+        for (const auto& ib : tgt.inbetweens) sorted.push_back(&ib.second);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const tydra::InbetweenShapeTarget* a,
+                     const tydra::InbetweenShapeTarget* b) {
+                    return a->weight < b->weight;
+                  });
+        for (const tydra::InbetweenShapeTarget* ib : sorted) {
+          if (ib->pointOffsets.size() != tgt.pointIndices.size()) continue;
+          MorphInbetweenCPU mi;
+          mi.weight = ib->weight;
+          ibOut.push_back(std::move(mi));
+          ibSrc.push_back(ib);
         }
       }
 
@@ -643,7 +645,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut,
           mt.dpos.push_back(tgt.pointOffsets[e][2]);
           // Same expansion for each usable in-between sample.
           for (size_t s = 0; s < ibOut.size(); ++s) {
-            const auto& src = (*ibSrc[s])[e];
+            const auto& src = ibSrc[s]->pointOffsets[e];
             ibOut[s].dpos.push_back(src[0]);
             ibOut[s].dpos.push_back(src[1]);
             ibOut[s].dpos.push_back(src[2]);
@@ -985,13 +987,7 @@ void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl, const tinyusdz::Stage* stage) {
   *out = DrawScene{};
-
-  // Blendshape in-between shapes are not carried by RenderMesh; read them once
-  // from the source Stage (keyed by BlendShape name) and remap per mesh below.
-  std::map<std::string, InbetweenSamples> inbetweens;
-  if (stage) inbetweens = CollectBlendShapeInbetweens(*stage);
-  const std::map<std::string, InbetweenSamples>* ibPtr =
-      inbetweens.empty() ? nullptr : &inbetweens;
+  (void)stage;  // in-betweens now carried by tydra (RenderMesh::targets)
 
   // Mesh world transforms from the node hierarchy.
   std::unordered_map<int, matrix4d> meshXform;
@@ -1007,7 +1003,7 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   for (size_t m = 0; m < rs.meshes.size(); ++m) {
     const tydra::RenderMesh& mesh = rs.meshes[m];
     DrawMeshCPU dm;
-    if (!MakeDrawMesh(mesh, &dm, ibPtr)) {
+    if (!MakeDrawMesh(mesh, &dm)) {
       out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
       continue;
     }
@@ -1060,12 +1056,6 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
                              LoadControl* ctrl) {
   *out = DrawScene{};
 
-  // Blendshape in-betweens (keyed by name) read once from the source Stage.
-  std::map<std::string, InbetweenSamples> inbetweens =
-      CollectBlendShapeInbetweens(env.stage);
-  const std::map<std::string, InbetweenSamples>* ibPtr =
-      inbetweens.empty() ? nullptr : &inbetweens;
-
   // Streaming state (lives for the duration of the synchronous conversion).
   std::vector<int> rsMeshToDraw;   // rs mesh index -> out->meshes index (-1 skipped)
   std::vector<bool> placed;        // per out->meshes: world applied yet?
@@ -1078,7 +1068,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
                      const std::string&, void*) -> bool {
     if (index >= rsMeshToDraw.size()) rsMeshToDraw.resize(index + 1, -1);
     DrawMeshCPU dm;
-    if (!MakeDrawMesh(mesh, &dm, ibPtr)) {
+    if (!MakeDrawMesh(mesh, &dm)) {
       out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
       return true;
     }
