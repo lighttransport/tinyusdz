@@ -697,10 +697,15 @@ void App::startReconvertAsync(double t) {
   // Worker reads loaded_ (stage/mmap/filepath) read-only; the main thread keeps
   // loaded_ alive and joins this worker (cancelAndJoinReconvert) before any
   // reload. RenderSceneAtTime skips texture decode and fills only dp->meshes.
-  reconvThread_ = std::thread([this, t, dp, rt, ovr = std::move(ovr)]() {
+  // The rest cache only pays off for repeated same-timecode reconverts (dragging
+  // a blendshape weight while paused). During playback the timecode changes every
+  // frame, so it would never hit and the per-frame copy-into-cache would be pure
+  // overhead -- skip it then.
+  RestSceneCache* cache = animPlaying_ ? nullptr : &reconvRestCache_;
+  reconvThread_ = std::thread([this, t, dp, rt, cache, ovr = std::move(ovr)]() {
     std::string w, e;
     const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_,
-                                      ovr.empty() ? nullptr : &ovr);
+                                      ovr.empty() ? nullptr : &ovr, cache);
     reconvOk_.store(ok, std::memory_order_relaxed);
     reconvFinished_.store(true, std::memory_order_release);
   });
@@ -743,6 +748,10 @@ void App::cancelAndJoinReconvert() {
   reconvFinished_.store(false);
   reconvHasRequest_ = false;
   reconvDraw_.reset();
+  // The cached rest scene belongs to the (possibly outgoing) scene; drop it now
+  // that the worker is joined. Called on reload + skinning-mode switch, not during
+  // interactive blendshape reconverts (those queue), so this doesn't defeat it.
+  reconvRestCache_ = RestSceneCache{};
 }
 
 void App::openFileDialog() {

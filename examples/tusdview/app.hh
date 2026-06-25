@@ -283,6 +283,10 @@ class App
   double reconvApplied_{0.0};      // time code currently shown
   std::unique_ptr<DrawScene> reconvDraw_;
   std::atomic<bool> reconvOk_{false};
+  // Rest-pose scene cache so a same-timecode reconvert (interactive blendshape
+  // edit on the RT/CPU path) reuses the conversion instead of re-running it.
+  // Touched only by the reconvert worker; cleared on reload (worker joined first).
+  RestSceneCache reconvRestCache_;
 
   // Progressive GPU upload (interactive path): stream meshes then textures.
   bool progressiveActive_{false};

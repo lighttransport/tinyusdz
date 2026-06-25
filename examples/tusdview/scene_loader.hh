@@ -133,10 +133,26 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 // `blendOverride` (optional, by BlendShape name) applies manual blendshape
 // weights (the blend editor) when deforming -- the ray-traced / CPU-skinned
 // equivalent of the GPU path's override; honors in-between shapes.
+//
+// Optional `restCache`: the un-deformed Tydra scene from the last conversion,
+// keyed by timecode. When the requested `timecode` matches the cache, the stage
+// re-conversion (the heavy `ConvertStageToSceneImpl`) is skipped and the cached
+// rest scene is reused -- only the CPU deform + pack re-run. This lets interactive
+// blendshape edits (same timecode, only weights changing) on the RT/CPU path avoid
+// a full re-conversion. The caller owns the cache and must clear it on reload (the
+// geometry belongs to the old scene). NOT thread-safe: only one RenderSceneAtTime
+// may touch a given cache at a time (the app gates reconverts to one in flight).
+struct RestSceneCache {
+  tinyusdz::tydra::RenderScene scene;
+  double timecode = 0.0;
+  bool valid = false;
+};
+
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
                        LoadControl* ctrl = nullptr,
                        const std::unordered_map<std::string, float>* blendOverride =
-                           nullptr);
+                           nullptr,
+                       RestSceneCache* restCache = nullptr);
 
 }  // namespace tusdview
