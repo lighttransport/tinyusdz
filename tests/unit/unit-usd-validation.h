@@ -41,6 +41,7 @@ void usd_validation_physics_test(void);
 void usd_validation_physics_inertia_and_joint_transform_test(void);
 void usd_validation_physics_mjc_extension_test(void);
 void usd_validation_physics_mjc_tendon_route_arrays_test(void);
+void usd_validation_physics_mjc_sensor_type_test(void);
 void usd_validation_physics_newton_extension_test(void);
 void usd_validation_physics_preliminary_test(void);
 void usd_validation_relationship_bind_material_as_metadata_test(void);
