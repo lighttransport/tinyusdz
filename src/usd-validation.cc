@@ -2180,9 +2180,34 @@ void ValidateMjcTokenEnums(const PrimSpec &ps,
                            {"none", "affine", "muscle", "user"},
                            "physics.extension.mjc.token", prim_location,
                            result);
-  ValidateTokenSetProperty(ps, "mjc:type", {"spatial", "fixed"},
-                           "physics.extension.mjc.token", prim_location,
-                           result);
+  if (ps.typeName() == "MjcTendon") {
+    ValidateTokenSetProperty(ps, "mjc:type", {"spatial", "fixed"},
+                             "physics.extension.mjc.token", prim_location,
+                             result);
+  } else if (ps.typeName() == "MjcSensor") {
+    static const std::set<std::string> kSensorObjectTypes = {
+        "body", "xbody", "joint", "geom", "site", "camera", "light",
+        "tendon", "actuator", "sensor", "numeric", "text", "tuple", "key",
+        "plugin"};
+    ValidateTokenSetProperty(
+        ps, "mjc:type",
+        {"touch", "accelerometer", "velocimeter", "gyro", "force", "torque",
+         "magnetometer", "camprojection", "rangefinder", "jointpos",
+         "jointvel", "tendonpos", "tendonvel", "actuatorpos", "actuatorvel",
+         "actuatorfrc", "ballquat", "ballangvel", "jointlimitpos",
+         "jointlimitvel", "jointlimitfrc", "tendonlimitpos",
+         "tendonlimitvel", "tendonlimitfrc", "framepos", "framequat",
+         "framexaxis", "frameyaxis", "framezaxis", "framelinvel",
+         "frameangvel", "framelinacc", "frameangacc", "subtreecom",
+         "subtreelinvel", "subtreeangmom", "clock", "user"},
+        "physics.extension.mjc.token", prim_location, result);
+    ValidateTokenSetProperty(ps, "mjc:objtype", kSensorObjectTypes,
+                             "physics.extension.mjc.token", prim_location,
+                             result);
+    ValidateTokenSetProperty(ps, "mjc:reftype", kSensorObjectTypes,
+                             "physics.extension.mjc.token", prim_location,
+                             result);
+  }
   ValidateTokenSetProperty(ps, "mjc:inertia",
                            {"legacy", "convex", "exact", "shell"},
                            "physics.extension.mjc.token", prim_location,
