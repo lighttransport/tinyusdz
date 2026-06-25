@@ -1,6 +1,7 @@
 #pragma once
 
 void path_expression_parse_test(void);
+void path_expression_limits_test(void);
 void path_expression_roundtrip_test(void);
 void path_expression_decompose_test(void);
 void path_expression_match_test(void);

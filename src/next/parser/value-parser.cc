@@ -1013,7 +1013,7 @@ struct SliceParser {
 // (parity with the mature ASCII parser's kMaxArrayElements). USDA arrays are
 // otherwise only input-length-bounded; this caps a single pathological array so
 // it can't drive a multi-GB vector even from a large/streamed input.
-constexpr size_t kMaxArrayScalars = size_t(1) << 30;  // ~1.07e9 scalars
+constexpr size_t kMaxArrayScalars = 128ull * 1024ull * 1024ull;  // 128M scalars
 
 template <class T, class ParseOne>
 bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
@@ -1023,8 +1023,8 @@ bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) 
   while (true) {
     T v{};
     if (!parse_one(sp, &v)) return false;
+    if (out->size() >= kMaxArrayScalars) return false;
     out->push_back(v);
-    if (out->size() > kMaxArrayScalars) return false;
     if (sp->maybe_consume(',')) continue;
     return sp->finish_array();
   }
@@ -1038,6 +1038,7 @@ bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
   if (sp->at_array_end()) return sp->finish_array();
   while (true) {
     if (!sp->consume('(')) return false;
+    if (out->size() > kMaxArrayScalars - N) return false;
     for (uint32_t i = 0; i < N; i++) {
       ScalarT v{};
       if (!parse_one(sp, &v)) return false;
@@ -1059,6 +1060,8 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
   if (sp->at_array_end()) return sp->finish_array();
   while (true) {
     if (!sp->consume('(')) return false;
+    const size_t matrix_scalars = size_t(N) * size_t(N);
+    if (out->size() > kMaxArrayScalars - matrix_scalars) return false;
     for (uint32_t r = 0; r < N; r++) {
       if (!sp->consume('(')) return false;
       for (uint32_t c = 0; c < N; c++) {
@@ -1129,10 +1132,12 @@ bool ParseChunkFlat(const char* b, const char* e, bool is_last,
     if (N == 1) {
       T v{};
       if (!parse_one(&sp, &v)) return false;  // parse_one's own skip_ws is a no-op here
+      if (local->size() >= kMaxArrayScalars) return false;
       local->push_back(v);
     } else {
       if (sp.p >= end || *sp.p != '(') return false;
       ++sp.p;
+      if (local->size() > kMaxArrayScalars - N) return false;
       for (uint32_t i = 0; i < N; i++) {
         T v{};
         if (!parse_one(&sp, &v)) return false;  // parse_one skips leading ws
@@ -1232,7 +1237,10 @@ bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
   }
 
   size_t total = 0;
-  for (const auto& l : locals) total += l.size();
+  for (const auto& l : locals) {
+    if (l.size() > kMaxArrayScalars - total) return false;
+    total += l.size();
+  }
   out->clear();
   out->reserve(total);
   for (auto& l : locals) out->insert(out->end(), l.begin(), l.end());
@@ -1251,8 +1259,11 @@ bool ParseSimpleArraySerial(const char* data, size_t len, std::vector<T>* out,
                             ParseOne parse_one) {
   if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
   out->clear();
-  return ParseChunkFlat<T, N>(data + 1, data + len - 1, /*is_last=*/true, out,
-                              parse_one);
+  if (!ParseChunkFlat<T, N>(data + 1, data + len - 1, /*is_last=*/true, out,
+                            parse_one)) {
+    return false;
+  }
+  return out->size() <= kMaxArrayScalars;
 }
 
 template <class T, class ParseOne>
@@ -1587,25 +1598,40 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     // Collect data based on type
     if (element_type == TypeId::Float) {
       if (const float* f = elem.value.as_float()) {
+        if (float_data.size() >= kMaxArrayScalars) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         float_data.push_back(*f);
       }
     } else if (element_type == TypeId::Int) {
       if (const int32_t* i = elem.value.as_int()) {
+        if (int_data.size() >= kMaxArrayScalars) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         int_data.push_back(*i);
       }
     } else if (IsFloat3Like(element_type)) {
       if (const float* f = elem.value.as_float3()) {
+        if (float_data.size() > kMaxArrayScalars - 3) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         float_data.push_back(f[0]);
         float_data.push_back(f[1]);
         float_data.push_back(f[2]);
       }
     } else if (IsFloat2Like(element_type)) {
       if (const float* f = elem.value.as_float2()) {
+        if (float_data.size() > kMaxArrayScalars - 2) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         float_data.push_back(f[0]);
         float_data.push_back(f[1]);
       }
     } else if (IsFloat4Like(element_type)) {
       if (const float* f = elem.value.as_float4()) {
+        if (float_data.size() > kMaxArrayScalars - 4) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         float_data.push_back(f[0]);
         float_data.push_back(f[1]);
         float_data.push_back(f[2]);
@@ -1613,19 +1639,18 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
       }
     } else if (element_type == TypeId::Token) {
       if (const std::string* s = elem.value.as_token()) {
+        if (string_data.size() >= kMaxArrayScalars) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         string_data.push_back(*s);
       }
     } else if (element_type == TypeId::String) {
       if (const std::string* s = elem.value.as_string()) {
+        if (string_data.size() >= kMaxArrayScalars) {
+          return ParseResult::Error("Array element count exceeds limit");
+        }
         string_data.push_back(*s);
       }
-    }
-
-    // Defense-in-depth: cap a single pathological array's accumulated scalars.
-    if (float_data.size() > kMaxArrayScalars ||
-        int_data.size() > kMaxArrayScalars ||
-        string_data.size() > kMaxArrayScalars) {
-      return ParseResult::Error("Array element count exceeds limit");
     }
 
     // Check for comma or end

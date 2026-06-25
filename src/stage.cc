@@ -946,6 +946,10 @@ bool Stage::RenamePrim(const Path &path, const std::string &new_name,
       old_name, new_name);
 
   if (!parent) _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
   _dirty = true;
   _prim_id_dirty = true;
   return true;
@@ -1087,6 +1091,10 @@ bool Stage::ReparentPrim(const Path &path, const Path &new_parent_path,
   dest->emplace_back(std::move(moved));
 
   _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
   _dirty = true;
   _prim_id_dirty = true;
   return true;

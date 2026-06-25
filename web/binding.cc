@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -6643,8 +6644,22 @@ class TinyUSDZLoaderNative {
     // One JS->WASM copy into an owned std::string; the pipeline then MOVES it
     // into the retained crate buffer (the single in-heap copy of the input).
     size_t size = data["byteLength"].as<size_t>();
+    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
+    if (size > kMaxLayerBytes) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", std::string("Input exceeds 1 GiB limit"));
+      return result;
+    }
     std::string input;
-    input.resize(size);
+    try {
+      input.resize(size);
+    } catch (const std::bad_alloc &) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", std::string("Input allocation failed"));
+      return result;
+    }
     if (size > 0) {
       // Pass length as a JS Number (double): under wasm64 size_t marshals to a
       // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
@@ -9347,8 +9362,24 @@ class RenderStream {
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
   emscripten::val begin(emscripten::val bytes) {
     const size_t size = bytes["byteLength"].as<size_t>();
+    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
+    if (size > kMaxLayerBytes) {
+      emscripten::val r = emscripten::val::object();
+      error_ = "Input exceeds 1 GiB limit";
+      r.set("success", false);
+      r.set("error", error_);
+      return r;
+    }
     std::string s;
-    s.resize(size);
+    try {
+      s.resize(size);
+    } catch (const std::bad_alloc &) {
+      emscripten::val r = emscripten::val::object();
+      error_ = "Input allocation failed";
+      r.set("success", false);
+      r.set("error", error_);
+      return r;
+    }
     if (size > 0) {
       emscripten::val view = emscripten::val::global("Uint8Array").new_(
           bytes["buffer"], bytes["byteOffset"],
@@ -9374,7 +9405,13 @@ class RenderStream {
     }
     const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
-    const bool soup = buildRenderMesh_(prim);  // indexed, or non-indexed soup
+    bool soup = false;  // indexed, or non-indexed soup
+    std::string mesh_err;
+    if (!buildRenderMesh_(prim, &soup, &mesh_err)) {
+      out.set("error", mesh_err.empty() ? std::string("mesh build failed")
+                                        : mesh_err);
+      return out;
+    }
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
@@ -9431,7 +9468,9 @@ class RenderStream {
   //     index + hash-map overhead).
   // The full soup is never materialized in the welded path; at most one mesh is
   // resident at a time either way.
-  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim, bool *soup_out,
+                        std::string *err) {
+    if (soup_out) *soup_out = false;
     std::vector<float> P = matFloat_(prim, "points");
     std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
     std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
@@ -9459,10 +9498,54 @@ class RenderStream {
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
-      return false;
+      if (soup_out) *soup_out = false;
+      return true;
     }
 
     const bool haveN = (nCount == vtxCount) || nFaceVarying;
+    constexpr size_t kMaxRenderCorners = size_t(1) << 24;
+    constexpr size_t kMaxEmittedVertices = size_t(1) << 24;
+    auto readVec3 = [](const std::vector<float> &src, int32_t idx,
+                       float *x, float *y, float *z) {
+      if (idx < 0) return false;
+      const size_t i = static_cast<size_t>(idx);
+      if (i > (src.size() / 3)) return false;
+      const size_t off = i * 3;
+      if (off + 2 >= src.size()) return false;
+      *x = src[off];
+      *y = src[off + 1];
+      *z = src[off + 2];
+      return true;
+    };
+    auto readVec2 = [](const std::vector<float> &src, int32_t idx,
+                       float *x, float *y) {
+      if (idx < 0) return false;
+      const size_t i = static_cast<size_t>(idx);
+      if (i > (src.size() / 2)) return false;
+      const size_t off = i * 2;
+      if (off + 1 >= src.size()) return false;
+      *x = src[off];
+      *y = src[off + 1];
+      return true;
+    };
+    auto indexFromSlot = [](size_t slot) -> int32_t {
+      return slot <= static_cast<size_t>((std::numeric_limits<int32_t>::max)())
+                 ? static_cast<int32_t>(slot)
+                 : -1;
+    };
+    auto faceSpanAvailable = [](size_t base, int32_t n, size_t total) {
+      if (n < 3) return false;
+      const size_t count = static_cast<size_t>(n);
+      return base <= total && count <= total - base;
+    };
+    auto advanceFaceBase = [](size_t base, int32_t n) {
+      if (n <= 0) return base;
+      const size_t add = static_cast<size_t>(n);
+      if (base > (std::numeric_limits<size_t>::max)() - add) {
+        return (std::numeric_limits<size_t>::max)();
+      }
+      return base + add;
+    };
 
     // Decide weld vs soup by POSITION sharing, not interpolation type: a welded
     // mesh has at least vtxCount vertices, so it can only beat the (index-free)
@@ -9471,46 +9554,67 @@ class RenderStream {
     // matters is the expansion factor. When vtxCount is already close to the
     // corner count, the soup is minimal, so skip welding and keep it.
     size_t triCount = 0;
-    for (int32_t nn : fvc) if (nn >= 3) triCount += static_cast<size_t>(nn - 2);
-    const size_t cornerCount = triCount * 3;
-    const bool doWeld = vtxCount > 0 && vtxCount * 3 < cornerCount;
+    for (int32_t nn : fvc) {
+      if (nn >= 3) {
+        const size_t add = static_cast<size_t>(nn - 2);
+        if (triCount > (std::numeric_limits<size_t>::max)() - add) {
+          triCount = (std::numeric_limits<size_t>::max)();
+          break;
+        }
+        triCount += add;
+      }
+    }
+    const size_t cornerCount =
+        (triCount > (std::numeric_limits<size_t>::max)() / 3)
+            ? (std::numeric_limits<size_t>::max)()
+            : triCount * 3;
+    const bool doWeld = vtxCount > 0 && vtxCount < cornerCount / 3;
 
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
-      std::vector<uint32_t> slots;
+      std::vector<size_t> slots;
       size_t b = 0;
       for (int32_t n : fvc) {
-        if (n >= 3 && b + static_cast<size_t>(n) <= faceVtx) {
+        if (faceSpanAvailable(b, n, faceVtx)) {
           for (int32_t k = 2; k < n; ++k) {
-            slots.push_back(static_cast<uint32_t>(b));
-            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k) - 1));
-            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k)));
+            if (slots.size() > kMaxRenderCorners - 3) {
+              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+              if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
+              return false;
+            }
+            slots.push_back(b);
+            slots.push_back(b + static_cast<size_t>(k) - 1);
+            slots.push_back(b + static_cast<size_t>(k));
           }
         }
-        b += static_cast<size_t>(n < 0 ? 0 : n);
+        b = advanceFaceBase(b, n);
       }
       const size_t corners = slots.size();
       s_points_.resize(corners * 3);
       if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
       if (haveN) s_normals_.resize(corners * 3);
       for (size_t c = 0; c < corners; ++c) {
-        const uint32_t slot = slots[c];
-        const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
-        if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
-          s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+        const size_t slot = slots[c];
+        const int32_t vi = (slot < faceVtx) ? fvi[slot] : -1;
+        float px = 0.0f, py = 0.0f, pz = 0.0f;
+        if (readVec3(P, vi, &px, &py, &pz)) {
+          s_points_[c * 3] = px; s_points_[c * 3 + 1] = py; s_points_[c * 3 + 2] = pz;
         }
         if (!UV.empty()) {
-          const uint32_t ui = uvFaceVarying ? slot : vi;  // st:indices is empty here
-          if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+          const int32_t ui = uvFaceVarying ? indexFromSlot(slot) : vi;  // st:indices is empty here
+          float u = 0.0f, v = 0.0f;
+          if (readVec2(UV, ui, &u, &v)) { s_uv_[c * 2] = u; s_uv_[c * 2 + 1] = v; }
         }
         if (haveN) {
-          const uint32_t ni = nFaceVarying ? slot : vi;
-          if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
-            s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+          const int32_t ni = nFaceVarying ? indexFromSlot(slot) : vi;
+          float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+          if (readVec3(N, ni, &nx, &ny, &nz)) {
+            s_normals_[c * 3] = nx; s_normals_[c * 3 + 1] = ny; s_normals_[c * 3 + 2] = nz;
           }
         }
       }
       if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // empty idx -> flat per-tri
+      if (soup_out) *soup_out = true;
       return true;  // non-indexed soup
     }
 
@@ -9531,50 +9635,65 @@ class RenderStream {
     std::unordered_map<WeldKey, uint32_t, WeldHash> weld;
     // Welded vertices are bounded below by the point count; reserve to cut
     // rehash spikes (which transiently inflate the peak).
-    weld.reserve(vtxCount ? vtxCount * 2 : 1024);
+    constexpr size_t kMaxInitialWeldReserve = size_t(1) << 20;
+    weld.reserve(vtxCount ? std::min(vtxCount, kMaxInitialWeldReserve) : 1024);
 
-    auto emit = [&](uint32_t slot) {
-      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+    auto emit = [&](size_t slot) -> bool {
+      const int32_t vi = (slot < faceVtx) ? fvi[slot] : -1;
       float px = 0, py = 0, pz = 0, u = 0, v = 0, nx = 0, ny = 0, nz = 0;
-      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) { px = P[vi * 3]; py = P[vi * 3 + 1]; pz = P[vi * 3 + 2]; }
+      (void)readVec3(P, vi, &px, &py, &pz);
       if (!UV.empty()) {
-        const uint32_t ui = (!stIdx.empty() && slot < stIdx.size())
-                                ? static_cast<uint32_t>(stIdx[slot])
-                                : (uvFaceVarying ? slot : vi);
-        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { u = UV[ui * 2]; v = UV[ui * 2 + 1]; }
+        const int32_t ui = (!stIdx.empty() && slot < stIdx.size())
+                                ? stIdx[slot]
+                                : (uvFaceVarying ? indexFromSlot(slot) : vi);
+        (void)readVec2(UV, ui, &u, &v);
       }
       if (haveN) {
-        const uint32_t ni = nFaceVarying ? slot : vi;
-        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) { nx = N[ni * 3]; ny = N[ni * 3 + 1]; nz = N[ni * 3 + 2]; }
+        const int32_t ni = nFaceVarying ? indexFromSlot(slot) : vi;
+        (void)readVec3(N, ni, &nx, &ny, &nz);
       }
       WeldKey key;
       std::memcpy(&key.b[0], &px, 4); std::memcpy(&key.b[1], &py, 4); std::memcpy(&key.b[2], &pz, 4);
       std::memcpy(&key.b[3], &u, 4); std::memcpy(&key.b[4], &v, 4);
       std::memcpy(&key.b[5], &nx, 4); std::memcpy(&key.b[6], &ny, 4); std::memcpy(&key.b[7], &nz, 4);
       auto it = weld.find(key);
-      if (it != weld.end()) { s_indices_.push_back(it->second); return; }
-      const uint32_t idx = static_cast<uint32_t>(s_points_.size() / 3);
+      if (it != weld.end()) {
+        s_indices_.push_back(it->second);
+        return true;
+      }
+      const size_t nextIdx = s_points_.size() / 3;
+      if (nextIdx >= kMaxEmittedVertices ||
+          nextIdx > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+        return false;
+      }
+      const uint32_t idx = static_cast<uint32_t>(nextIdx);
       s_points_.push_back(px); s_points_.push_back(py); s_points_.push_back(pz);
       if (!UV.empty()) { s_uv_.push_back(u); s_uv_.push_back(v); }
       if (haveN) { s_normals_.push_back(nx); s_normals_.push_back(ny); s_normals_.push_back(nz); }
       weld.emplace(key, idx);
       s_indices_.push_back(idx);
+      return true;
     };
 
     size_t base = 0;
     for (int32_t n : fvc) {
-      if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
+      if (faceSpanAvailable(base, n, faceVtx)) {
         for (int32_t k = 2; k < n; ++k) {
-          emit(static_cast<uint32_t>(base));
-          emit(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
-          emit(static_cast<uint32_t>(base + static_cast<size_t>(k)));
+          if (!emit(base) ||
+              !emit(base + static_cast<size_t>(k) - 1) ||
+              !emit(base + static_cast<size_t>(k))) {
+            s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+            if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+            return false;
+          }
         }
       }
-      base += static_cast<size_t>(n < 0 ? 0 : n);
+      base = advanceFaceBase(base, n);
     }
     // Normals not authored -> smooth normals on the welded indexed mesh.
     if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
-    return false;  // welded result is INDEXED
+    if (soup_out) *soup_out = false;
+    return true;  // welded result is INDEXED
   }
 
   // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
@@ -9601,18 +9720,40 @@ class RenderStream {
     if (fvi.empty()) return;
     if (fvc.empty()) {  // assume an already-triangulated index list
       out.reserve(fvi.size());
-      for (int32_t v : fvi) out.push_back(static_cast<uint32_t>(v));
+      for (int32_t v : fvi) {
+        if (v >= 0) out.push_back(static_cast<uint32_t>(v));
+      }
       return;
     }
     size_t base = 0;
-    for (int32_t n : fvc) {
-      if (n < 3 || base + static_cast<size_t>(n) > fvi.size()) { base += static_cast<size_t>(n < 0 ? 0 : n); continue; }
-      for (int32_t k = 2; k < n; ++k) {
-        out.push_back(static_cast<uint32_t>(fvi[base]));
-        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k) - 1]));
-        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k)]));
+    auto faceSpanAvailable = [](size_t base, int32_t n, size_t total) {
+      if (n < 3) return false;
+      const size_t count = static_cast<size_t>(n);
+      return base <= total && count <= total - base;
+    };
+    auto advanceFaceBase = [](size_t base, int32_t n) {
+      if (n <= 0) return base;
+      const size_t add = static_cast<size_t>(n);
+      if (base > (std::numeric_limits<size_t>::max)() - add) {
+        return (std::numeric_limits<size_t>::max)();
       }
-      base += static_cast<size_t>(n);
+      return base + add;
+    };
+    for (int32_t n : fvc) {
+      if (!faceSpanAvailable(base, n, fvi.size())) {
+        base = advanceFaceBase(base, n);
+        continue;
+      }
+      for (int32_t k = 2; k < n; ++k) {
+        const int32_t a = fvi[base];
+        const int32_t b = fvi[base + static_cast<size_t>(k) - 1];
+        const int32_t c = fvi[base + static_cast<size_t>(k)];
+        if (a < 0 || b < 0 || c < 0) continue;
+        out.push_back(static_cast<uint32_t>(a));
+        out.push_back(static_cast<uint32_t>(b));
+        out.push_back(static_cast<uint32_t>(c));
+      }
+      base = advanceFaceBase(base, n);
     }
   }
 
