@@ -132,6 +132,33 @@ void test_read_usdz_stage() {
   PASS();
 }
 
+void test_usdz_memory_caps() {
+  TEST("USDZ memory caps");
+
+  USDZReadOptions read_opts;
+  read_opts.max_archive_size = 1;
+  USDZReader reader;
+  if (reader.OpenFile("/tmp/test_usdz_next.usdz", read_opts)) {
+    FAIL("USDZReader ignored archive cap"); return;
+  }
+
+  read_opts.max_archive_size = 0;
+  read_opts.max_entry_size = 1;
+  if (reader.OpenFile("/tmp/test_usdz_next.usdz", read_opts)) {
+    FAIL("USDZReader ignored entry cap"); return;
+  }
+
+  LoadUSDOptions load_opts;
+  load_opts.max_memory = 1;
+  Stage loaded_stage;
+  std::string warn, err;
+  if (LoadUSD("/tmp/test_usdz_next.usdz", &loaded_stage, load_opts, &warn, &err)) {
+    FAIL("LoadUSD ignored USDZ memory cap"); return;
+  }
+
+  PASS();
+}
+
 void test_usdc_from_usdz() {
   TEST("Extract USDC from USDZ and read");
 
@@ -206,6 +233,7 @@ int main() {
   test_write_usdz_to_file();
   test_read_usdz_with_reader();
   test_read_usdz_stage();
+  test_usdz_memory_caps();
   test_usdc_from_usdz();
   test_write_from_usdc();
 

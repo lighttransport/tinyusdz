@@ -197,6 +197,22 @@ bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
   return ::tinyusdz::next::GetInt64ArrayView(*v, &out->scratch, &out->view);
 }
 
+bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                   double time, ValueArrayRead<uint32_t>* out) {
+  if (!out) return false;
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  if (!v) return false;
+  return ::tinyusdz::next::GetUIntArrayView(*v, &out->scratch, &out->view);
+}
+
+bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                     double time, ValueArrayRead<uint64_t>* out) {
+  if (!out) return false;
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  if (!v) return false;
+  return ::tinyusdz::next::GetUInt64ArrayView(*v, &out->scratch, &out->view);
+}
+
 std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                       const char* name, double time) {
   ValueArrayRead<float> r;
@@ -216,6 +232,20 @@ std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
   ValueArrayRead<int64_t> r;
   if (!ReadInt64Array(prim, name, time, &r)) return {};
   return std::vector<int64_t>(r.begin(), r.end());
+}
+
+std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                        const char* name, double time) {
+  ValueArrayRead<uint32_t> r;
+  if (!ReadUIntArray(prim, name, time, &r)) return {};
+  return std::vector<uint32_t>(r.begin(), r.end());
+}
+
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                          const char* name, double time) {
+  ValueArrayRead<uint64_t> r;
+  if (!ReadUInt64Array(prim, name, time, &r)) return {};
+  return std::vector<uint64_t>(r.begin(), r.end());
 }
 
 }  // namespace next

@@ -567,12 +567,17 @@ void EmitInstancedProto(const tnext::Stage& stage,
       double iw16[16];
       tydn::ComputeWorldTransform(stage, ni, iw16, time);
       const matrix4d ni_rel = Mul4(Mat4dFromArray(iw16), inv_proto);
-      const std::vector<float> positions = ReadFloats(ni, "positions", time);
+      tydn::ValueArrayRead<float> positions;
+      tydn::ReadFloatArray(ni, "positions", time, &positions);
       const size_t n = positions.size() / 3;
-      const std::vector<int32_t> protoIdx = ReadInts(ni, "protoIndices", time);
-      const std::vector<float> orients = ReadFloats(ni, "orientations", time);
-      const std::vector<float> scales = ReadFloats(ni, "scales", time);
-      const std::vector<int64_t> invis = ReadInt64s(ni, "invisibleIds", time);
+      tydn::ValueArrayRead<int32_t> protoIdx;
+      tydn::ReadIntArray(ni, "protoIndices", time, &protoIdx);
+      tydn::ValueArrayRead<float> orients;
+      tydn::ReadFloatArray(ni, "orientations", time, &orients);
+      tydn::ValueArrayRead<float> scales;
+      tydn::ReadFloatArray(ni, "scales", time, &scales);
+      tydn::ValueArrayRead<int64_t> invis;
+      tydn::ReadInt64Array(ni, "invisibleIds", time, &invis);
       const std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
       const std::vector<tnext::Path>* iprotos = ni.GetRelationship("prototypes");
       if (!iprotos) continue;
@@ -769,15 +774,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tydn::ComputeWorldTransform(stage, p, iw16, time);
       const matrix4d instancer_world = Mat4dFromArray(iw16);
 
-      const std::vector<float> positions = ReadFloats(p, "positions", time);
+      tydn::ValueArrayRead<float> positions;
+      tydn::ReadFloatArray(p, "positions", time, &positions);
       const size_t n = positions.size() / 3;
-      const std::vector<int32_t> protoIdx = ReadInts(p, "protoIndices", time);
-      const std::vector<float> orients = ReadFloats(p, "orientations", time);
-      const std::vector<float> scales = ReadFloats(p, "scales", time);
-      const std::vector<int64_t> invis = ReadInt64s(p, "invisibleIds", time);
+      tydn::ValueArrayRead<int32_t> protoIdx;
+      tydn::ReadIntArray(p, "protoIndices", time, &protoIdx);
+      tydn::ValueArrayRead<float> orients;
+      tydn::ReadFloatArray(p, "orientations", time, &orients);
+      tydn::ValueArrayRead<float> scales;
+      tydn::ReadFloatArray(p, "scales", time, &scales);
+      tydn::ValueArrayRead<int64_t> invis;
+      tydn::ReadInt64Array(p, "invisibleIds", time, &invis);
       std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
       // Optional per-instance displayColor on the instancer (rgb/instance).
-      const std::vector<float> instCol = ReadFloats(p, "primvars:displayColor", time);
+      tydn::ValueArrayRead<float> instCol;
+      tydn::ReadFloatArray(p, "primvars:displayColor", time, &instCol);
       const bool perInstColor = (instCol.size() == 3 * n && n > 0);
 
       const std::vector<tnext::Path>* protos = p.GetRelationship("prototypes");

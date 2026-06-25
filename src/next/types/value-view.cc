@@ -10,6 +10,7 @@
 #include "../crate/crate-data-source.hh"
 
 #include <cstdint>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -39,6 +40,7 @@ bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
   const uint64_t byte_count = flat_count * uint64_t(sizeof(T));
   if (flat_count / comps != ref->element_count) return false;
   if (byte_count / sizeof(T) != flat_count) return false;
+  if (flat_count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
   if (byte_count > ref->block_len - 8) return false;
   const uint64_t data_off = ref->block_offset + 8;
   if (data_off < ref->block_offset || data_off > ref->source->size()) return false;

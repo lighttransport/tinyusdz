@@ -157,6 +157,10 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
 
   size_t size = static_cast<size_t>(file.tellg());
   file.seekg(0, std::ios::beg);
+  if (options_.max_file_size > 0 && size > options_.max_file_size) {
+    AddError("File size exceeds maximum allowed");
+    return false;
+  }
 
   // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
   // uninitialized, so we skip zero-filling hundreds of MB we immediately
