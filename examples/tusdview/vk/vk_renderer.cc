@@ -981,23 +981,30 @@ void VulkanRenderer::createTessPipeline() {
   stages[2].stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; stages[2].module = tes;
   stages[3].stage = VK_SHADER_STAGE_FRAGMENT_BIT;           stages[3].module = fs;
 
-  // Vertex input for the morph-aware tess vertex stage: interleaved
-  // pos/normal/uv (binding 0) + the per-vertex morph offset/count (binding 6).
-  // Skinning is not applied in tess, so joint/weight/influence are not bound.
-  VkVertexInputBindingDescription bind[2]{};
+  // Vertex input for the morph + skin tess vertex stage: interleaved
+  // pos/normal/uv (binding 0), joint/weight/influence (bindings 1-3), and the
+  // per-vertex morph offset/count (binding 6). uv1/morphInfl (bindings 4-5) are
+  // not consumed by the tess vertex stage and are not bound here.
+  VkVertexInputBindingDescription bind[5]{};
   bind[0].binding = 0; bind[0].stride = sizeof(DrawVertex);
-  bind[1].binding = 6; bind[1].stride = 2 * sizeof(uint32_t);  // morph (offset,count)
+  bind[1].binding = 1; bind[1].stride = 4 * sizeof(uint32_t);  // joint
+  bind[2].binding = 2; bind[2].stride = 4 * sizeof(float);     // weight
+  bind[3].binding = 3; bind[3].stride = 2 * sizeof(uint32_t);  // influence (offset,count)
+  bind[4].binding = 6; bind[4].stride = 2 * sizeof(uint32_t);  // morph (offset,count)
   for (auto& b : bind) b.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[4]{};
+  VkVertexInputAttributeDescription attrs[7]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
-  attrs[3] = {8, 6, VK_FORMAT_R32G32_UINT, 0};  // aMorphOffsetCount
+  attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_UINT, 0};
+  attrs[4] = {4, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
+  attrs[5] = {5, 3, VK_FORMAT_R32G32_UINT, 0};
+  attrs[6] = {8, 6, VK_FORMAT_R32G32_UINT, 0};  // aMorphOffsetCount
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 2;
+  vin.vertexBindingDescriptionCount = 5;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 4;
+  vin.vertexAttributeDescriptionCount = 7;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -4111,10 +4118,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
         // restore the coarse pipeline for following submeshes. The tess vertex
-        // stage applies the blendshape morph, so morphed meshes tessellate too;
-        // skinned meshes stay on the coarse path (skin isn't applied in tess).
+        // stage applies the blendshape morph + skinning, so morphed and/or
+        // skinned meshes tessellate too.
         const bool useTess = displaced && tessPipeline_ != VK_NULL_HANDLE &&
-                             maxTessLevel_ > 1 && rtMode_ == 0 && !mesh.skinned;
+                             maxTessLevel_ > 1 && rtMode_ == 0;
         if (useTess) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);

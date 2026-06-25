@@ -154,6 +154,9 @@ class GLRenderer final : public Renderer {
   GLint tDisplacementTexScale_{-1}, tDisplacementTexBias_{-1};
   GLint tMaxTessLevel_{-1};
   GLint tHasMorph_{-1};  // GPU morph in the tess vertex stage
+  // Skinning in the tess vertex stage (mirrors the coarse program's uniforms).
+  GLint tSkinningEnabled_{-1}, tExtendedSkinningEnabled_{-1};
+  GLint tBoneTexWidth_{-1}, tBoneMatrixCount_{-1}, tInfluenceTexWidth_{-1};
   GLint uSkinningEnabled_{-1};
   GLint uExtendedSkinningEnabled_{-1};
   GLint uBoneTexWidth_{-1}, uBoneMatrixCount_{-1}, uInfluenceTexWidth_{-1};

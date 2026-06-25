@@ -482,17 +482,35 @@ void GLRenderer::buildTessProgram() {
       "layout(location=0) in vec3 aPosition;\n"
       "layout(location=1) in vec3 aNormal;\n"
       "layout(location=2) in vec3 aUV;\n"
+      "layout(location=3) in uvec4 aJoint;\n"
+      "layout(location=4) in vec4 aWeight;\n"
+      "layout(location=5) in uvec2 aInfluence;\n"
       "layout(location=8) in uvec2 aMorphOffsetCount;\n"
-      // GPU blendshape morph (active-channel skip), so morphed displaced meshes
-      // tessellate the DEFORMED surface. Skinning is not applied here -- skinned
-      // displaced meshes stay on the coarse path (gated out at draw).
+      // GPU blendshape morph (active-channel skip) + linear-blend skinning, so the
+      // tessellator subdivides the DEFORMED control mesh. Mirrors the coarse GL330
+      // vertex stage (morph before skin).
       "uniform bool uHasMorph;\n"
       "uniform samplerBuffer uMorphDeltaTex;\n"
       "uniform samplerBuffer uMorphCoeffTex;\n"
       "uniform usamplerBuffer uMorphChanTex;\n"
+      "uniform sampler2D uBoneTex;\n"
+      "uniform sampler2D uInfluenceTex;\n"
+      "uniform bool uSkinningEnabled;\n"
+      "uniform bool uExtendedSkinningEnabled;\n"
+      "uniform int uBoneTexWidth;\n"
+      "uniform int uBoneMatrixCount;\n"
+      "uniform int uInfluenceTexWidth;\n"
       "out vec3 vcPos; out vec3 vcNrm; out vec2 vcUV;\n"
+      "mat4 fetchBone(uint idx){\n"
+      "  int base=int(idx)*4;\n"
+      "  return mat4(\n"
+      "    texelFetch(uBoneTex,ivec2((base+0)%uBoneTexWidth,(base+0)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+1)%uBoneTexWidth,(base+1)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+2)%uBoneTexWidth,(base+2)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+3)%uBoneTexWidth,(base+3)/uBoneTexWidth),0));\n"
+      "}\n"
       "void main(){\n"
-      "  vec3 pos=aPosition;\n"
+      "  vec3 pos=aPosition; vec3 nrm=aNormal;\n"
       "  if(uHasMorph && aMorphOffsetCount.y>0u){\n"
       "    int mbase=int(aMorphOffsetCount.x);\n"
       "    int mcount=min(int(aMorphOffsetCount.y),256);\n"
@@ -504,7 +522,24 @@ void GLRenderer::buildTessProgram() {
       "      pos += c*texelFetch(uMorphDeltaTex,mbase+i).yzw;\n"
       "    }\n"
       "  }\n"
-      "  vcPos=pos; vcNrm=aNormal; vcUV=aUV.xy;\n"
+      "  float wsum=aWeight.x+aWeight.y+aWeight.z+aWeight.w;\n"
+      "  uint maxJoint=max(max(aJoint.x,aJoint.y),max(aJoint.z,aJoint.w));\n"
+      "  if(uSkinningEnabled && uExtendedSkinningEnabled && aInfluence.y>0u && uInfluenceTexWidth>0){\n"
+      "    mat4 skin=mat4(0.0); float fws=0.0;\n"
+      "    int base=int(aInfluence.x); int count=min(int(aInfluence.y),256);\n"
+      "    for(int i=0;i<256;++i){\n"
+      "      if(i>=count) break;\n"
+      "      int linear=base+i;\n"
+      "      vec4 iw=texelFetch(uInfluenceTex,ivec2(linear%uInfluenceTexWidth,linear/uInfluenceTexWidth),0);\n"
+      "      uint joint=uint(iw.x+0.5); float w=iw.y;\n"
+      "      if(w>0.0 && int(joint)<uBoneMatrixCount){ skin+=fetchBone(joint)*w; fws+=w; }\n"
+      "    }\n"
+      "    if(fws>0.0){ skin*=1.0/fws; pos=(skin*vec4(pos,1.0)).xyz; nrm=normalize((skin*vec4(aNormal,0.0)).xyz); }\n"
+      "  } else if(uSkinningEnabled && wsum>0.0 && int(maxJoint)<uBoneMatrixCount){\n"
+      "    mat4 skin=fetchBone(aJoint.x)*aWeight.x+fetchBone(aJoint.y)*aWeight.y+fetchBone(aJoint.z)*aWeight.z+fetchBone(aJoint.w)*aWeight.w;\n"
+      "    pos=(skin*vec4(pos,1.0)).xyz; nrm=normalize((skin*vec4(aNormal,0.0)).xyz);\n"
+      "  }\n"
+      "  vcPos=pos; vcNrm=nrm; vcUV=aUV.xy;\n"
       "}\n";
   static const char* kTCS =
       "#version 410 core\n"
@@ -595,11 +630,19 @@ void GLRenderer::buildTessProgram() {
   tDisplacementTexBias_ = glGetUniformLocation(tessProgram_, "uDisplacementTexBias");
   tMaxTessLevel_ = glGetUniformLocation(tessProgram_, "uMaxTessLevel");
   tHasMorph_ = glGetUniformLocation(tessProgram_, "uHasMorph");
+  tSkinningEnabled_ = glGetUniformLocation(tessProgram_, "uSkinningEnabled");
+  tExtendedSkinningEnabled_ =
+      glGetUniformLocation(tessProgram_, "uExtendedSkinningEnabled");
+  tBoneTexWidth_ = glGetUniformLocation(tessProgram_, "uBoneTexWidth");
+  tBoneMatrixCount_ = glGetUniformLocation(tessProgram_, "uBoneMatrixCount");
+  tInfluenceTexWidth_ = glGetUniformLocation(tessProgram_, "uInfluenceTexWidth");
   glUniform1i(glGetUniformLocation(tessProgram_, "uBaseColorTex"), 0);
   glUniform1i(glGetUniformLocation(tessProgram_, "uDisplacementTex"), 7);
   glUniform1i(glGetUniformLocation(tessProgram_, "uMorphDeltaTex"), 8);
   glUniform1i(glGetUniformLocation(tessProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(tessProgram_, "uMorphChanTex"), 10);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uInfluenceTex"), 5);
   glUseProgram(0);
   tessAvailable_ = true;
 }
@@ -1274,7 +1317,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // displace each generated sample. Only in the Shaded view, for non-skinned
       // displaced meshes, when the slider asks for >1x. The tess program is restored
       // to the coarse program immediately after so following submeshes draw normally.
-      if (displaced && tessAvailable_ && !overrideEmissive && !mesh.skinned &&
+      if (displaced && tessAvailable_ && !overrideEmissive &&
           params.maxTessLevel > 1 &&
           params.mode == RenderMode::Shaded) {
         const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
@@ -1308,6 +1351,21 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
           glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
           glActiveTexture(GL_TEXTURE0);
         }
+        // Skinning in the tess vertex stage (mirrors the coarse program); bone
+        // matrices (unit 4) + extended-influence (unit 5) texture buffers.
+        const bool tSkinOn = mesh.skinned && skinningFrameEnabled_;
+        glUniform1i(tSkinningEnabled_, tSkinOn ? 1 : 0);
+        glUniform1i(tExtendedSkinningEnabled_,
+                    (mesh.extendedSkinned && skinningFrameEnabled_) ? 1 : 0);
+        glUniform1i(tBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+        glUniform1i(tBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+        glUniform1i(tInfluenceTexWidth_,
+                    (mesh.extendedSkinned && skinningFrameEnabled_) ? mesh.influenceTexWidth : 0);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+        glActiveTexture(GL_TEXTURE0);
         glPatchParameteri(GL_PATCH_VERTICES, 3);
         glDrawElements(GL_PATCHES, static_cast<GLsizei>(sub.indexCount),
                        GL_UNSIGNED_INT,
