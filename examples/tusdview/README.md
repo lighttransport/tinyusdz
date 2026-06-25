@@ -41,10 +41,15 @@ displays it with an ImGui docking UI.
   matrices (`inverse(bind)·posedWorld`, joint poses from the animation /
   blendshape weights from the stage's `SkelAnimation`, which Tydra does not
   emit), uploads them as an RGBA32F **bone-matrix texture**, and the vertex
-  shader does linear-blend skinning. **Blendshapes** are applied on the GPU path
-  too: the affected meshes' rest vertices are morphed on the CPU (sparse
-  weighted offsets, normals regenerated from the posed geometry) and re-uploaded
-  per frame, then GPU-skinned. **Animated node transforms** (a moving SkelRoot /
+  shader does linear-blend skinning. **Blendshapes** are applied in the **GPU
+  vertex shader** too (before skinning): each target's primary + in-between
+  samples become sparse per-vertex "channels", and a weight change uploads only a
+  tiny per-channel coefficient array — no VBO re-upload. Deltas are stored
+  half-precision; the shader skips the wide fetch for inactive channels (facial
+  rigs: only a handful of 64+ targets active per frame). With displacement the
+  morph + skin also run in the **GPU-tessellation** vertex stage, so deformed
+  meshes tessellate the posed surface. The ray-tracing backends keep a CPU morph
+  (baked into the traced geometry). **Animated node transforms** (a moving SkelRoot /
   parent Xform) are posed on the GPU path too: the affected mesh world matrices
   are re-evaluated from the stage each frame (`BuildXformNodeFromStage`, no
   geometry re-pack). The **CPU** path (`SkinPointsLBS`, full re-pose + upload) is
@@ -105,7 +110,9 @@ displays it with an ImGui docking UI.
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
   **GPU-tessellation** path (GL 4.1 / Vulkan tessellation shaders) for adaptive
   sub-triangle detail; **View ▸ Displacement** toggles it and exposes live scale +
-  max-tess sliders (both live on GL and Vulkan). The **ray-tracing** backends
+  max-tess sliders (both live on GL and Vulkan). The tessellation vertex stage
+  applies blendshape morph **and** skinning, so morphed/skinned displaced meshes
+  tessellate the deformed surface (not the rest pose). The **ray-tracing** backends
   (Vulkan ray query, CUDA) intersect real triangles, so the displacement is baked
   into the geometry before the BLAS/TLAS is built. Geometric normals are used on
   displaced surfaces so the new detail shades correctly.
