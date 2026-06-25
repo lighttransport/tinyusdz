@@ -1090,6 +1090,15 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   pcr.size = sizeof(InstPushC);
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  // Same 10-set layout as the main pipeline so the instanced shader can bind the
+  // GPU-morph SSBOs (sets 7/8/9); sets 0-6 are declared but unused here.
+  VkDescriptorSetLayout setLayouts[10] = {texSetLayout_, skinSetLayout_,
+                                          influenceSetLayout_, faceSetLayout_,
+                                          texSetLayout_, dispParamsSetLayout_,
+                                          dispMatSetLayout_, morphSetLayout_,
+                                          morphSetLayout_, morphSetLayout_};
+  plci.setLayoutCount = 10;
+  plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
   VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &instPipelineLayout_),
@@ -1113,26 +1122,29 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
 
   // binding 0 = DrawVertex (vertex-rate); 1 = per-instance 3x4 o2w (instance-rate,
   // 48B); 2 = per-instance color (instance-rate, 12B); 3 = per-vertex prototype
-  // color (vertex-rate, 12B).
-  VkVertexInputBindingDescription bind[4]{};
+  // color (vertex-rate, 12B); 4 = per-vertex morph (offset,count) (vertex-rate,
+  // 8B). Instance rows sit at locations 3/4/5 so location 8 carries the morph CSR.
+  VkVertexInputBindingDescription bind[5]{};
   bind[0] = {0, sizeof(DrawVertex), VK_VERTEX_INPUT_RATE_VERTEX};
   bind[1] = {1, 12 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
   bind[2] = {2, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
   bind[3] = {3, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
-  VkVertexInputAttributeDescription attrs[7]{};
+  bind[4] = {4, 2 * sizeof(uint32_t), VK_VERTEX_INPUT_RATE_VERTEX};
+  VkVertexInputAttributeDescription attrs[8]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                   // aPos
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};   // aNormal
-  attrs[2] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};               // aRow0
-  attrs[3] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 4 * sizeof(float)};  // aRow1
-  attrs[4] = {8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 8 * sizeof(float)};  // aRow2
+  attrs[2] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};               // aRow0
+  attrs[3] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 4 * sizeof(float)};  // aRow1
+  attrs[4] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 8 * sizeof(float)};  // aRow2
   attrs[5] = {9, 2, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // aInstColor
   attrs[6] = {10, 3, VK_FORMAT_R32G32B32_SFLOAT, 0};                 // aVtxColor
+  attrs[7] = {8, 4, VK_FORMAT_R32G32_UINT, 0};                       // aMorphOffsetCount
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 4;
+  vin.vertexBindingDescriptionCount = 5;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 7;
+  vin.vertexAttributeDescriptionCount = 8;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -4161,10 +4173,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdPushConstants(cb, instPipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(InstPushC), &ipc);
-        VkBuffer bufs[4] = {mesh.vbo, mesh.instVbo, mesh.instColorBuf,
-                            mesh.instVtxColorBuf};
-        VkDeviceSize offs[4] = {0, 0, 0, 0};
-        vkCmdBindVertexBuffers(cb, 0, 4, bufs, offs);
+        // binding 4 = per-vertex morph (offset,count); always present (zero-filled
+        // for non-morph meshes, so the shader's count==0 guard skips the loop).
+        VkBuffer bufs[5] = {mesh.vbo, mesh.instVbo, mesh.instColorBuf,
+                            mesh.instVtxColorBuf, mesh.morphOffsetVbo};
+        VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
+        vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
+        // Sets 7/8/9: GPU morph delta/coeff/channelId (dummy sets for non-morph).
+        VkDescriptorSet morphSets[3] = {
+            mesh.morphDeltaDesc ? mesh.morphDeltaDesc : dummyMorphDesc_,
+            mesh.morphCoeffDesc ? mesh.morphCoeffDesc : dummyMorphDesc_,
+            mesh.morphChanDesc ? mesh.morphChanDesc : dummyMorphDesc_};
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 7, 3, morphSets, 0, nullptr);
         vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
         for (const auto& sub : mesh.submeshes) {
           vkCmdDrawIndexed(cb, sub.indexCount, mesh.drawInstanceCount,
