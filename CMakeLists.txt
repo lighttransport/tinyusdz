@@ -2102,6 +2102,23 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
+  # tusdview: instanced-prototype GPU-morph frustum-culling regression. Needs a
+  # GL/VK context (runs under xvfb when headless); SKIPs (return 77) when no
+  # renderer is available, so it is harmless on headless CI without a GPU.
+  #
+  if(TARGET tusdview)
+    add_test(
+      NAME tusdview-inst-morph-cull
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-inst-morph-cull.sh
+    )
+    set_tests_properties(tusdview-inst-morph-cull PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+  endif()
+
+  #
   # USDA parser tester
   #
   if(TINYUSDZ_WITH_MODULE_USDA_READER)
