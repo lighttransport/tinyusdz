@@ -23,6 +23,7 @@
 #include "spline-binary.hh"
 
 #include <cstring>
+#include <limits>
 
 namespace tinyusdz {
 
@@ -241,6 +242,30 @@ bool DecodeSplineFromBinary(const uint8_t *data, size_t size, SplineData *out,
   uint32_t knotCount = 0;
   if (!Rd<uint32_t>(&p, &remain, &knotCount)) {
     if (err) *err = "Unexpected end of spline data (knot count).";
+    return false;
+  }
+
+  const size_t valueSize = (desc == 2) ? sizeof(float)
+                         : (desc == 3) ? sizeof(value::half)
+                                       : sizeof(double);
+  size_t minKnotBytes = sizeof(uint8_t) + sizeof(double) + valueSize +
+                        valueSize + valueSize;
+  if (!hermite) {
+    minKnotBytes += sizeof(double) + sizeof(double);
+  }
+  if (version > 1) {
+    minKnotBytes += sizeof(uint8_t);
+  }
+  if ((minKnotBytes > 0) &&
+      (static_cast<uint64_t>(knotCount) >
+       static_cast<uint64_t>(remain / minKnotBytes))) {
+    if (err) *err = "Spline knot count exceeds remaining data.";
+    return false;
+  }
+  if (static_cast<uint64_t>(knotCount) >
+      static_cast<uint64_t>((std::numeric_limits<size_t>::max)() /
+                            sizeof(SplineKnotData))) {
+    if (err) *err = "Spline knot count exceeds addressable memory.";
     return false;
   }
 

@@ -4577,6 +4577,8 @@ bool GetPhysicsRigidBodyAPI(const Prim &prim, PhysicsRigidBodyAPI *out) {
   const auto *props = PrimPropsMap(prim);
   if (!props) return false;
   ExtractTypedValue<bool>(*props, "physics:rigidBodyEnabled", &out->rigidBodyEnabled);
+  ExtractTypedValue<bool>(*props, "physics:kinematicEnabled", &out->kinematicEnabled);
+  ExtractRel(*props, "physics:simulationOwner", &out->simulationOwner);
   ExtractTypedValue<bool>(*props, "physics:startsAsleep", &out->startsAsleep);
   ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
   ExtractTypedValue<float>(*props, "physics:density", &out->density);

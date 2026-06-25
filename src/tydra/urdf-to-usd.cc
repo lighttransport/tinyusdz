@@ -22,6 +22,7 @@
 #include "core/relationship.hh"
 #include "core/xform-op.hh"
 #include "mjcPhysics.hh"
+#include "nonstd/optional.hpp"
 #include "stage.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -199,6 +200,20 @@ std::vector<int32_t> JsonIntArray(const nlohmann::json &j, const char *key) {
       out.push_back(item.get<int32_t>());
     } else if (item.is_number()) {
       out.push_back(static_cast<int32_t>(item.get<double>()));
+    }
+  }
+  return out;
+}
+
+std::vector<std::string> JsonStringArray(const nlohmann::json &j,
+                                         const char *key) {
+  std::vector<std::string> out;
+  if (!j.is_object() || !j.contains(key) || !j.at(key).is_array()) {
+    return out;
+  }
+  for (const auto &item : j.at(key)) {
+    if (item.is_string()) {
+      out.push_back(item.get<std::string>());
     }
   }
   return out;
@@ -1001,14 +1016,11 @@ bool AddNewtonActuatorFromJson(
   return true;
 }
 
-// MJCF <tendon><fixed> -> MjcTendon prim. The "fixed" tendon couples joints
-// with per-joint coefficients (Sum_i coef_i * q_i is constrained); we map the
-// referenced joints into the mjc:path rel and the coefficients into
-// mjc:path:coef. Spatial tendons (sites) are not yet emitted — a warning is
-// raised by the parser. JSON shape:
-//   { "name", "type":"fixed", "joints":[{"joint","coef"},...],
-//     "stiffness","damping","range":[lo,hi],"limited","frictionloss","margin",
-//     "springlength":[...] }
+// MJCF <tendon> -> MjcTendon prim. The legacy MJCF JSON shape uses
+// `joints:[{joint,coef}]` for fixed tendons and `path:[{site|sidesite}]` for
+// spatial tendons. The richer tydra JSON shape emitted by physics-to-json uses
+// absolute or source-name string arrays (`route`, `sideSites`) plus the typed
+// route metadata arrays.
 bool AddMjcTendonFromJson(
     Prim &tendons_prim, const nlohmann::json &t_json,
     const std::map<std::string, std::string> &joint_name_to_usd,
@@ -1023,13 +1035,60 @@ bool AddMjcTendonFromJson(
   const std::string type = JsonString(t_json, "type", "fixed");
   tendon.type.set_value(value::token(type));
 
+  auto resolve_route_ref = [&](const std::string &ref) -> nonstd::optional<Path> {
+    if (ref.empty()) {
+      return nonstd::nullopt;
+    }
+    if (ref[0] == '/') {
+      return Path(ref, "");
+    }
+    if (type == "spatial") {
+      auto it = site_name_to_usd.find(ref);
+      if (it != site_name_to_usd.end()) {
+        return Path("/World/Sites/" + it->second, "");
+      }
+    } else {
+      auto it = joint_name_to_usd.find(ref);
+      if (it != joint_name_to_usd.end()) {
+        return Path("/World/Joints/" + it->second, "");
+      }
+    }
+    return nonstd::nullopt;
+  };
+
+  auto resolve_site_ref = [&](const std::string &ref) -> nonstd::optional<Path> {
+    if (ref.empty()) {
+      return nonstd::nullopt;
+    }
+    if (ref[0] == '/') {
+      return Path(ref, "");
+    }
+    auto it = site_name_to_usd.find(ref);
+    if (it != site_name_to_usd.end()) {
+      return Path("/World/Sites/" + it->second, "");
+    }
+    return nonstd::nullopt;
+  };
+
   std::vector<Path> targets;
-  if (type == "spatial") {
+  std::vector<double> coefs = JsonDoubleArray(t_json, "routeCoef");
+  const std::vector<std::string> route = JsonStringArray(t_json, "route");
+  if (!route.empty()) {
+    for (const std::string &ref : route) {
+      auto resolved = resolve_route_ref(ref);
+      if (resolved.has_value()) {
+        targets.push_back(resolved.value());
+      } else {
+        AppendWarn(warn, "Tendon `" + tendon.name +
+                             "` route reference `" + ref +
+                             "` could not be resolved; skipping it.\n");
+      }
+    }
+  } else if (type == "spatial") {
     // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints ->
     // mjc:path rel to the routing site prims (wrap geoms approximated by their
     // sidesite via point). mjc:path:coef carries the per-waypoint coefficient
     // (1 for sites; pulley divisors are not modeled here).
-    std::vector<double> coefs;
     if (t_json.contains("path") && t_json["path"].is_array()) {
       for (const auto &wp : t_json["path"]) {
         if (!wp.is_object()) continue;
@@ -1043,24 +1102,8 @@ bool AddMjcTendonFromJson(
         coefs.push_back(1.0);
       }
     }
-    if (targets.size() < 2) {
-      AppendWarn(warn, "Skipping spatial tendon `" + tendon.name +
-                           "`: fewer than 2 routing sites were exported.\n");
-      return true;
-    }
-    tendon.path.set(std::move(targets));
-    tendon.path_coef.set_value(coefs);
-    const auto rgba = JsonDoubleArray(t_json, "rgba");
-    if (rgba.size() >= 4) {
-      tendon.rgba.set_value(value::color4f{
-          static_cast<float>(rgba[0]), static_cast<float>(rgba[1]),
-          static_cast<float>(rgba[2]), static_cast<float>(rgba[3])});
-    }
-    double w = 0.0;
-    if (JsonNumber(t_json, "width", &w)) tendon.width.set_value(w);
   } else {
     // Fixed tendon: linear combination of joint coordinates.
-    std::vector<double> coefs;
     if (t_json.contains("joints") && t_json["joints"].is_array()) {
       for (const auto &je : t_json["joints"]) {
         if (!je.is_object()) continue;
@@ -1077,32 +1120,112 @@ bool AddMjcTendonFromJson(
         coefs.push_back(coef);
       }
     }
+  }
+
+  if (type == "spatial") {
+    if (targets.size() < 2) {
+      AppendWarn(warn, "Skipping spatial tendon `" + tendon.name +
+                           "`: fewer than 2 routing sites were exported.\n");
+      return true;
+    }
+  } else {
     if (targets.empty()) {
       AppendWarn(warn, "Skipping tendon `" + tendon.name +
                            "`: no referenced joint was exported.\n");
       return true;
     }
-    tendon.path.set(std::move(targets));
+  }
+
+  tendon.path.set(std::move(targets));
+  if (!coefs.empty()) {
     tendon.path_coef.set_value(coefs);
   }
 
+  std::vector<Path> side_sites;
+  for (const std::string &ref : JsonStringArray(t_json, "sideSites")) {
+    auto resolved = resolve_site_ref(ref);
+    if (resolved.has_value()) {
+      side_sites.push_back(resolved.value());
+    } else {
+      AppendWarn(warn, "Tendon `" + tendon.name +
+                           "` sideSite reference `" + ref +
+                           "` could not be resolved; skipping it.\n");
+    }
+  }
+  if (!side_sites.empty()) {
+    tendon.sideSites.set(std::move(side_sites));
+  }
+
+  std::vector<int32_t> int_values = JsonIntArray(t_json, "routeIndices");
+  if (!int_values.empty()) tendon.path_indices.set_value(int_values);
+  int_values = JsonIntArray(t_json, "sideSiteIndices");
+  if (!int_values.empty()) tendon.sideSites_indices.set_value(int_values);
+  int_values = JsonIntArray(t_json, "routeSegments");
+  if (!int_values.empty()) tendon.path_segments.set_value(int_values);
+
+  std::vector<double> values = JsonDoubleArray(t_json, "routeDivisors");
+  if (!values.empty()) tendon.path_divisors.set_value(values);
+  values = JsonDoubleArray(t_json, "routeCoef");
+  if (!values.empty()) tendon.path_coef.set_value(values);
+
+  const auto rgba = JsonDoubleArray(t_json, "rgba");
+  if (rgba.size() >= 4) {
+    tendon.rgba.set_value(value::color4f{
+        static_cast<float>(rgba[0]), static_cast<float>(rgba[1]),
+        static_cast<float>(rgba[2]), static_cast<float>(rgba[3])});
+  }
+
   double v = 0.0;
+  int32_t group = 0;
+  if (t_json.contains("group")) {
+    group = JsonInt(t_json, "group", 0);
+    tendon.group.set_value(group);
+  }
   if (JsonNumber(t_json, "stiffness", &v)) tendon.stiffness.set_value(v);
   if (JsonNumber(t_json, "damping", &v)) tendon.damping.set_value(v);
   if (JsonNumber(t_json, "frictionloss", &v)) tendon.frictionloss.set_value(v);
   if (JsonNumber(t_json, "margin", &v)) tendon.margin.set_value(v);
   if (JsonNumber(t_json, "armature", &v)) tendon.armature.set_value(v);
+  if (JsonNumber(t_json, "width", &v)) tendon.width.set_value(v);
   if (t_json.contains("range") && t_json["range"].is_array() &&
       t_json["range"].size() >= 2) {
     tendon.range_min.set_value(t_json["range"][0].get<double>());
     tendon.range_max.set_value(t_json["range"][1].get<double>());
     tendon.limited.set_value(value::token("true"));
   }
+  if (JsonNumber(t_json, "range_min", &v)) tendon.range_min.set_value(v);
+  if (JsonNumber(t_json, "range_max", &v)) tendon.range_max.set_value(v);
+  if (t_json.contains("actuatorfrcrange") &&
+      t_json["actuatorfrcrange"].is_array() &&
+      t_json["actuatorfrcrange"].size() >= 2) {
+    tendon.actuatorfrcrange_min.set_value(
+        t_json["actuatorfrcrange"][0].get<double>());
+    tendon.actuatorfrcrange_max.set_value(
+        t_json["actuatorfrcrange"][1].get<double>());
+  }
+  if (JsonNumber(t_json, "actuatorfrcrange_min", &v)) {
+    tendon.actuatorfrcrange_min.set_value(v);
+  }
+  if (JsonNumber(t_json, "actuatorfrcrange_max", &v)) {
+    tendon.actuatorfrcrange_max.set_value(v);
+  }
   if (t_json.contains("limited")) {
     tendon.limited.set_value(value::token(JsonString(t_json, "limited", "auto")));
   }
-  std::vector<double> springlen = JsonDoubleArray(t_json, "springlength");
-  if (!springlen.empty()) tendon.springlength.set_value(springlen);
+  if (t_json.contains("actuatorfrclimited")) {
+    tendon.actuatorfrclimited.set_value(
+        value::token(JsonString(t_json, "actuatorfrclimited", "auto")));
+  }
+  values = JsonDoubleArray(t_json, "springlength");
+  if (!values.empty()) tendon.springlength.set_value(values);
+  values = JsonDoubleArray(t_json, "solreflimit");
+  if (!values.empty()) tendon.solreflimit.set_value(values);
+  values = JsonDoubleArray(t_json, "solimplimit");
+  if (!values.empty()) tendon.solimplimit.set_value(values);
+  values = JsonDoubleArray(t_json, "solreffriction");
+  if (!values.empty()) tendon.solreffriction.set_value(values);
+  values = JsonDoubleArray(t_json, "solimpfriction");
+  if (!values.empty()) tendon.solimpfriction.set_value(values);
 
   std::string add_err;
   if (!tendons_prim.add_child(Prim(tendon), true, &add_err)) {

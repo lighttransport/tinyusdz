@@ -7,9 +7,16 @@
 
 #include "str-util.hh"  // GlobMatch (freestanding glob; no std::regex)
 
+#include <cstdint>
+#include <vector>
+
 namespace tinyusdz {
 
 namespace {
+
+constexpr size_t kMaxMatchElems = 4096;
+constexpr size_t kMaxMatchSegments = 4096;
+constexpr size_t kMaxEvalOps = 4096;
 
 // A path decomposed for matching.
 struct PathParts {
@@ -84,34 +91,46 @@ struct MatchElem {
 bool MatchElems(const std::vector<MatchElem> &elems, size_t ei,
                 const std::vector<std::string> &segments, size_t si,
                 const std::vector<std::string> &segPrimPaths,
-                const PathExpressionEvalContext &ctx) {
+                const PathExpressionEvalContext &ctx,
+                std::vector<int8_t> *memo) {
+  const size_t width = segments.size() + 1;
+  int8_t &cached = (*memo)[ei * width + si];
+  if (cached != -1) {
+    return cached != 0;
+  }
+  auto finish = [&](bool v) {
+    cached = v ? 1 : 0;
+    return v;
+  };
+
   if (ei == elems.size()) {
-    return si == segments.size();
+    return finish(si == segments.size());
   }
   const MatchElem &e = elems[ei];
   if (e.stretch) {
     // Match zero or more segments.
     for (size_t k = si; k <= segments.size(); k++) {
-      if (MatchElems(elems, ei + 1, segments, k, segPrimPaths, ctx)) {
-        return true;
+      if (MatchElems(elems, ei + 1, segments, k, segPrimPaths, ctx, memo)) {
+        return finish(true);
       }
     }
-    return false;
+    return finish(false);
   }
   if (si >= segments.size()) {
-    return false;
+    return finish(false);
   }
   // An empty component text (a predicate-only element such as `{kind:group}`)
   // matches any single element name; the predicate below does the filtering.
   if (!e.text.empty() && !GlobMatch(e.text, segments[si])) {
-    return false;
+    return finish(false);
   }
   if (!e.predicate.empty() && ctx.eval_predicate) {
     if (!ctx.eval_predicate(e.predicate, segPrimPaths[si])) {
-      return false;
+      return finish(false);
     }
   }
-  return MatchElems(elems, ei + 1, segments, si + 1, segPrimPaths, ctx);
+  return finish(MatchElems(elems, ei + 1, segments, si + 1, segPrimPaths, ctx,
+                           memo));
 }
 
 }  // namespace
@@ -133,6 +152,9 @@ bool MatchPattern(const PathPattern &pattern, const std::string &path,
   for (size_t i = 0; i < prim_comp_end; i++) {
     const PathPatternComponent &c = pattern.components[i];
     elems.push_back(MatchElem{c.is_stretch(), c.text, c.predicate});
+  }
+  if (elems.size() > kMaxMatchElems || pp.segments.size() > kMaxMatchSegments) {
+    return false;
   }
 
   // Property gating.
@@ -159,7 +181,9 @@ bool MatchPattern(const PathPattern &pattern, const std::string &path,
     }
   }
 
-  return MatchElems(elems, 0, pp.segments, 0, segPrimPaths, ctx);
+  const size_t memo_size = (elems.size() + 1) * (pp.segments.size() + 1);
+  std::vector<int8_t> memo(memo_size, -1);
+  return MatchElems(elems, 0, pp.segments, 0, segPrimPaths, ctx, &memo);
 }
 
 namespace {
@@ -217,6 +241,9 @@ struct Evaluator {
 bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
                const PathExpressionEvalContext &ctx) {
   if (!expr.valid() || expr.empty()) {
+    return false;
+  }
+  if (expr.ops().size() > kMaxEvalOps) {
     return false;
   }
   Evaluator e{expr, path, ctx, ctx.max_ref_depth};

@@ -12,5 +12,6 @@ void security_unsafe_asset_path_rejected_test(void);
 void security_json_array_count_mismatch_rejected_test(void);
 void security_json_point3f_count_overflow_rejected_test(void);
 void security_resolver_oversized_custom_asset_rejected_test(void);
+void security_resolver_overreported_custom_asset_rejected_test(void);
 void security_nested_zstd_depth_rejected_test(void);
 void security_sha256_overflow_rejected_test(void);

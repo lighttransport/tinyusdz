@@ -12,6 +12,7 @@ void physics_prismatic_joint_test(void);
 void physics_fixed_joint_test(void);
 void physics_distance_joint_test(void);
 void physics_joint_mjc_api_test(void);
+void physics_mjc_joint_authorship_usdc_roundtrip_test(void);
 void physics_joint_physx_state_mirror_test(void);
 void physics_joint_physx_state_usdc_roundtrip_test(void);
 void physics_prismatic_state_init_test(void);
@@ -22,15 +23,19 @@ void mjc_actuator_test(void);
 void newton_actuator_test(void);
 void newton_actuator_extended_api_test(void);
 void mjc_tendon_test(void);
+void physics_mjc_tendon_full_usdc_roundtrip_test(void);
 void mjc_keyframe_test(void);
 void physics_pprint_roundtrip_test(void);
 void physics_spherical_joint_test(void);
 void physics_to_json_test(void);
+void physics_mjc_tendon_full_to_json_test(void);
 void physics_collision_group_test(void);
 void physics_collision_group_colliders_test(void);
 void physics_filtered_pairs_api_test(void);
 void physics_collision_group_invert_test(void);
 void physics_drive_limit_api_test(void);
+void physics_schema_defaults_and_owner_test(void);
+void physics_spherical_schema_names_fixture_test(void);
 void physics_mesh_collider_convention_test(void);
 void physics_newton_collision_material_api_test(void);
 void urdf_json_spherical_joint_export_test(void);
@@ -50,6 +55,7 @@ void physx_scene_rigidbody_roundtrip_test(void);
 
 // Phase 1d: MJCF tendon / equality conversion (JSON->USD)
 void urdf_json_mjcf_tendon_export_test(void);
+void urdf_json_mjcf_tendon_full_export_test(void);
 void urdf_json_mjcf_equality_export_test(void);
 
 // Phase 1c: full inertia tensor diagonalization

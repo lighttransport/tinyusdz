@@ -54,6 +54,14 @@ void namespace_edit_rename_test(void) {
   TEST_CHECK(HasPrim(stage, "/World/Renamed"));
   TEST_CHECK(HasPrim(stage, "/World/Renamed/child"));
   TEST_CHECK(!HasPrim(stage, "/World/A/child"));
+  {
+    auto child = stage.GetPrimAtPath(Path("/World/Renamed/child", ""));
+    TEST_CHECK(child && child.value());
+    if (child && child.value()) {
+      TEST_CHECK(child.value()->absolute_path().full_path_name() ==
+                 "/World/Renamed/child");
+    }
+  }
 
   // Export still references the renamed prim.
   std::string usda = stage.ExportToString();
@@ -94,6 +102,14 @@ void namespace_edit_reparent_test(void) {
   TEST_CHECK(!HasPrim(stage, "/World/A"));
   TEST_CHECK(HasPrim(stage, "/World/B/A"));
   TEST_CHECK(HasPrim(stage, "/World/B/A/child"));
+  {
+    auto child = stage.GetPrimAtPath(Path("/World/B/A/child", ""));
+    TEST_CHECK(child && child.value());
+    if (child && child.value()) {
+      TEST_CHECK(child.value()->absolute_path().full_path_name() ==
+                 "/World/B/A/child");
+    }
+  }
 
   // Reparent to root with a rename.
   std::string err2;
@@ -103,6 +119,14 @@ void namespace_edit_reparent_test(void) {
   TEST_CHECK(!HasPrim(stage, "/World/B/A"));
   TEST_CHECK(HasPrim(stage, "/Moved"));
   TEST_CHECK(HasPrim(stage, "/Moved/child"));
+  {
+    auto child = stage.GetPrimAtPath(Path("/Moved/child", ""));
+    TEST_CHECK(child && child.value());
+    if (child && child.value()) {
+      TEST_CHECK(child.value()->absolute_path().full_path_name() ==
+                 "/Moved/child");
+    }
+  }
 }
 
 void namespace_edit_errors_test(void) {
