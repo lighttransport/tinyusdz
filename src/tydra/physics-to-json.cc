@@ -286,6 +286,7 @@ bool ConvertPhysicsToJson(
     std::vector<std::pair<std::string, const PhysicsDistanceJoint*>> distanceJoints;
     std::vector<std::pair<std::string, const MjcActuator*>> actuators;
     std::vector<std::pair<std::string, const MjcTendon*>> tendons;
+    std::vector<std::pair<std::string, const MjcSensor*>> sensors;
     std::vector<std::pair<std::string, const MjcKeyframe*>> keyframes;
   } data;
 
@@ -298,6 +299,7 @@ bool ConvertPhysicsToJson(
     else if (auto *distance = prim.as<PhysicsDistanceJoint>()) data.distanceJoints.emplace_back(path, distance);
     else if (auto *actuator = prim.as<MjcActuator>()) data.actuators.emplace_back(path, actuator);
     else if (auto *tendon = prim.as<MjcTendon>()) data.tendons.emplace_back(path, tendon);
+    else if (auto *sensor = prim.as<MjcSensor>()) data.sensors.emplace_back(path, sensor);
     else if (auto *keyframe = prim.as<MjcKeyframe>()) data.keyframes.emplace_back(path, keyframe);
   });
 
@@ -508,6 +510,32 @@ bool ConvertPhysicsToJson(
       EmitKV(ss, 3, sp, "rgba", JsonColor4f(t->rgba.get_value()), false);
       ss << Indent(2, sp) << "}";
       if (i + 1 < data.tendons.size()) ss << ",";
+      ss << "\n";
+    }
+    ss << Indent(1, sp);
+  }
+  ss << "],\n";
+
+  // Sensors
+  ss << Indent(1, sp) << "\"sensors\": [";
+  if (!data.sensors.empty()) {
+    ss << "\n";
+    for (size_t i = 0; i < data.sensors.size(); ++i) {
+      const auto &[path, sensor] = data.sensors[i];
+      ss << Indent(2, sp) << "{\n";
+      EmitKV(ss, 3, sp, "path", JsonStr(path));
+      EmitKV(ss, 3, sp, "name", JsonStr(sensor->name));
+      EmitKV(ss, 3, sp, "type", JsonStr(sensor->type.get_value().str()));
+      EmitKV(ss, 3, sp, "objtype", JsonStr(sensor->objType.get_value().str()));
+      EmitKV(ss, 3, sp, "objname", JsonStr(sensor->objName.get_value().str()));
+      EmitKV(ss, 3, sp, "reftype", JsonStr(sensor->refType.get_value().str()));
+      EmitKV(ss, 3, sp, "refname", JsonStr(sensor->refName.get_value().str()));
+      EmitKV(ss, 3, sp, "group", JsonNum(sensor->group.get_value()));
+      EmitKV(ss, 3, sp, "cutoff", JsonNum(sensor->cutoff.get_value()));
+      EmitKV(ss, 3, sp, "noise", JsonNum(sensor->noise.get_value()));
+      EmitOptionalArray(ss, 3, sp, "user", sensor->user, false);
+      ss << Indent(2, sp) << "}";
+      if (i + 1 < data.sensors.size()) ss << ",";
       ss << "\n";
     }
     ss << Indent(1, sp);

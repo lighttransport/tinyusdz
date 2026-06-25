@@ -3932,6 +3932,28 @@ void urdf_json_mjc_sensors_test(void) {
       TEST_CHECK(s->refName.get_value().str() == "world");
     }
   }
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (json_ok) {
+    TEST_CHECK(json.find("\"sensors\"") != std::string::npos);
+    TEST_CHECK(json.find("\"path\": \"/World/Sensors/imu_gyro\"") !=
+               std::string::npos);
+    TEST_CHECK(json.find("\"type\": \"gyro\"") != std::string::npos);
+    TEST_CHECK(json.find("\"objtype\": \"site\"") != std::string::npos);
+    TEST_CHECK(json.find("\"objname\": \"imu\"") != std::string::npos);
+    TEST_CHECK(json.find("\"cutoff\": 34.9") != std::string::npos);
+    TEST_CHECK(json.find("\"noise\": 0.01") != std::string::npos);
+    TEST_CHECK(json.find("\"type\": \"framepos\"") != std::string::npos);
+    TEST_CHECK(json.find("\"reftype\": \"body\"") != std::string::npos);
+    TEST_CHECK(json.find("\"refname\": \"world\"") != std::string::npos);
+  }
+
   // USDC round-trip preserves the sensor prim + typed fields.
   Stage rt;
   std::string w2, e2;

@@ -25,7 +25,7 @@ struct PhysicsJsonExportOptions {
 /// Export all physics annotations from a Stage to JSON.
 ///
 /// Traverses the stage to find PhysicsScene, PhysicsJoint, MjcActuator,
-/// MjcTendon, and MjcKeyframe prims, then serializes their attributes
+/// MjcTendon, MjcSensor, and MjcKeyframe prims, then serializes their attributes
 /// to a JSON string.
 ///
 /// @param[in] stage The USD stage to export from
