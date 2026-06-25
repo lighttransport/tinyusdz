@@ -21,6 +21,7 @@
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
 #include "next/tinyusdz-next.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/render-extract.hh"
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
@@ -89,49 +90,13 @@ inline matrix4d InstanceTRS(const float* pos, const float* q_xyzw,
 // Lazy array readers: try the time sample then the default opinion; materialize a
 // lazy (mmap-backed) value. Mirror tusdrender's ReadFloatArrayLazy.
 std::vector<float> ReadFloats(const tnext::UsdPrim& p, const char* name, double t) {
-  auto pull = [](const tnext::Value* v) -> std::vector<float> {
-    if (!v) return {};
-    if (v->is_lazy()) {
-      tnext::Value tmp = v->materialized_copy();
-      if (const auto* a = tmp.as_float_array()) return *a;
-      return {};
-    }
-    if (const auto* a = v->as_float_array()) return *a;
-    return {};
-  };
-  std::vector<float> r = pull(p.GetValueAtTime(name, t));
-  if (r.empty()) r = pull(p.GetPropertyValue(name));
-  return r;
+  return tydn::ReadFloatArrayCopy(p, name, t);
 }
 std::vector<int32_t> ReadInts(const tnext::UsdPrim& p, const char* name, double t) {
-  auto pull = [](const tnext::Value* v) -> std::vector<int32_t> {
-    if (!v) return {};
-    if (v->is_lazy()) {
-      tnext::Value tmp = v->materialized_copy();
-      if (const auto* a = tmp.as_int_array()) return *a;
-      return {};
-    }
-    if (const auto* a = v->as_int_array()) return *a;
-    return {};
-  };
-  std::vector<int32_t> r = pull(p.GetValueAtTime(name, t));
-  if (r.empty()) r = pull(p.GetPropertyValue(name));
-  return r;
+  return tydn::ReadIntArrayCopy(p, name, t);
 }
 std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, double t) {
-  auto pull = [](const tnext::Value* v) -> std::vector<int64_t> {
-    if (!v) return {};
-    if (v->is_lazy()) {
-      tnext::Value tmp = v->materialized_copy();
-      if (const auto* a = tmp.as_int64_array()) return *a;
-      return {};
-    }
-    if (const auto* a = v->as_int64_array()) return *a;
-    return {};
-  };
-  std::vector<int64_t> r = pull(p.GetValueAtTime(name, t));
-  if (r.empty()) r = pull(p.GetPropertyValue(name));
-  return r;
+  return tydn::ReadInt64ArrayCopy(p, name, t);
 }
 std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
                                     double t) {
@@ -155,35 +120,35 @@ std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
 bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
   const size_t np = m.point_count();
   if (np == 0 || m.triangulated_indices.size() < 3) return false;
-  std::vector<float> pts = m.points.flatten();
-  std::vector<uint32_t> idx = m.triangulated_indices.flatten();
   // Authored vertex normals -> smooth shading; otherwise shade geometrically in
   // the shader (screen-derivative normal), which reads correctly on hard
   // surfaces instead of being smeared by averaged smooth normals.
-  std::vector<float> nrm;
   const bool authoredNormals = m.has_normals() &&
                                m.normals_interp == tydn::Interpolation::Vertex &&
                                m.normals.size() == 3 * np;
-  if (authoredNormals) nrm = m.normals.flatten();
-  else nrm.assign(3 * np, 0.0f);
   dm->geometricNormal = !authoredNormals;
 
-  std::vector<float> uv;
   const bool hasUV = m.has_texcoords() &&
                      m.texcoords_0_interp == tydn::Interpolation::Vertex &&
                      m.texcoords_0.size() == 2 * np;
-  if (hasUV) uv = m.texcoords_0.flatten();
 
   // Per-vertex displayColor: Vertex (per-point) directly; Constant broadcast.
-  std::vector<float> col;
   if (!m.colors.empty()) {
-    std::vector<float> c = m.colors.flatten();
-    if (m.colors_interp == tydn::Interpolation::Vertex && c.size() >= 3 * np) {
-      col = std::move(c);
-    } else if (m.colors_interp == tydn::Interpolation::Constant && c.size() >= 3) {
-      col.resize(3 * np);
+    if (m.colors_interp == tydn::Interpolation::Vertex &&
+        m.colors.size() >= 3 * np) {
+      dm->vertexColors.resize(3 * np);
       for (size_t i = 0; i < np; ++i) {
-        col[3 * i + 0] = c[0]; col[3 * i + 1] = c[1]; col[3 * i + 2] = c[2];
+        dm->vertexColors[3 * i + 0] = m.colors[3 * i + 0];
+        dm->vertexColors[3 * i + 1] = m.colors[3 * i + 1];
+        dm->vertexColors[3 * i + 2] = m.colors[3 * i + 2];
+      }
+    } else if (m.colors_interp == tydn::Interpolation::Constant &&
+               m.colors.size() >= 3) {
+      dm->vertexColors.resize(3 * np);
+      for (size_t i = 0; i < np; ++i) {
+        dm->vertexColors[3 * i + 0] = m.colors[0];
+        dm->vertexColors[3 * i + 1] = m.colors[1];
+        dm->vertexColors[3 * i + 2] = m.colors[2];
       }
     }
   }
@@ -193,13 +158,19 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
   dm->vertices.resize(np);
   for (size_t i = 0; i < np; ++i) {
     DrawVertex& v = dm->vertices[i];
-    v.px = pts[3 * i + 0]; v.py = pts[3 * i + 1]; v.pz = pts[3 * i + 2];
-    v.nx = nrm[3 * i + 0]; v.ny = nrm[3 * i + 1]; v.nz = nrm[3 * i + 2];
-    v.u = hasUV ? uv[2 * i + 0] : 0.0f;
-    v.v = hasUV ? uv[2 * i + 1] : 0.0f;
+    v.px = m.points[3 * i + 0];
+    v.py = m.points[3 * i + 1];
+    v.pz = m.points[3 * i + 2];
+    v.nx = authoredNormals ? m.normals[3 * i + 0] : 0.0f;
+    v.ny = authoredNormals ? m.normals[3 * i + 1] : 0.0f;
+    v.nz = authoredNormals ? m.normals[3 * i + 2] : 0.0f;
+    v.u = hasUV ? m.texcoords_0[2 * i + 0] : 0.0f;
+    v.v = hasUV ? m.texcoords_0[2 * i + 1] : 0.0f;
   }
-  if (!col.empty()) dm->vertexColors = std::move(col);
-  dm->indices = std::move(idx);
+  dm->indices.resize(m.triangulated_indices.size());
+  for (size_t i = 0; i < m.triangulated_indices.size(); ++i) {
+    dm->indices[i] = m.triangulated_indices[i];
+  }
   dm->submeshes.push_back(
       DrawSubmesh{0, static_cast<uint32_t>(dm->indices.size()), 0});
   return true;
@@ -217,13 +188,6 @@ struct Bounds {
     }
   }
 };
-
-// Collect all Mesh prim paths under `root` (inclusive).
-void GatherMeshPrims(const tnext::UsdPrim& root,
-                     std::vector<tnext::UsdPrim>* out) {
-  if (root.GetTypeName() == "Mesh") out->push_back(root);
-  for (const tnext::UsdPrim& c : root.GetChildren()) GatherMeshPrims(c, out);
-}
 
 // Resolve a prim's inherited USD `purpose` (default/render/proxy/guide): the
 // nearest authored, non-"default" purpose walking self->ancestors, else
@@ -653,7 +617,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
       const matrix4d m_rel = Mul4(Mat4dFromArray(w16), inv_proto);
       // The native instance's children are proxies of its prototype; consume them.
       std::vector<tnext::UsdPrim> proxies;
-      GatherMeshPrims(ni, &proxies);
+      tydn::GatherMeshPrims(ni, &proxies);
       if (consumed)
         for (const tnext::UsdPrim& m : proxies) consumed->insert(m.GetPath().str());
       tnext::UsdPrim innerRoot = stage.GetPrimAtPath(ipath);
@@ -835,7 +799,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           // ones) so the static-batching pass never draws them as base geometry --
           // prototypes can live outside the instancer subtree.
           std::vector<tnext::UsdPrim> protoMeshes;
-          GatherMeshPrims(protoRoot, &protoMeshes);
+          tydn::GatherMeshPrims(protoRoot, &protoMeshes);
           for (const tnext::UsdPrim& mp : protoMeshes)
             consumed.insert(mp.GetPath().str());
           if (byProto[pi].empty()) continue;
@@ -886,7 +850,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // The instance's children are proxies of the prototype; the converter
         // flattened them, so consume those mesh paths (excluded from 3b).
         std::vector<tnext::UsdPrim> ms;
-        GatherMeshPrims(p, &ms);
+        tydn::GatherMeshPrims(p, &ms);
         for (const tnext::UsdPrim& m : ms) consumed.insert(m.GetPath().str());
         return;
       }
@@ -938,22 +902,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // RenderScene node list now); convert + bake each one streaming.
   std::vector<tnext::UsdPrim> meshPrims;
   {
-    std::function<void(const tnext::UsdPrim&)> g = [&](const tnext::UsdPrim& p) {
-      // Geometry under PointInstancer prototypes and scenegraph-instance proxies
-      // was already consumed + GPU-instanced above, so do NOT descend into those
-      // subtrees. GetChildren() on an instanceable prim expands the prototype as
-      // instance proxies, so recursing here costs O(instances x prototype-meshes)
-      // of pure wasted traversal -- pathological on heavily-instanced scenes
-      // (e.g. the full Moana Island). The standalone prototype prim is still
-      // reached via the normal hierarchy below.
-      if (p.GetTypeName() == "PointInstancer") return;
-      const auto* s = p.GetPrimSpec();
-      if (s && !s->meta().instance_prototype().empty()) return;
-      if (p.GetTypeName() == "Mesh" && !consumed.count(p.GetPath().str()))
-        meshPrims.push_back(p);
-      for (const tnext::UsdPrim& c : p.GetChildren()) g(c);
-    };
-    for (const tnext::UsdPrim& r : stage.GetRootPrims()) g(r);
+    tydn::RenderExtractOptions xopts;
+    xopts.time_code = time;
+    xopts.stop_at_point_instancers = true;
+    xopts.stop_at_native_instances = true;
+    tydn::RenderExtractResult xres;
+    tydn::CollectRenderPrims(stage, xopts, &xres);
+    meshPrims.reserve(xres.meshes.size());
+    for (const tydn::RenderPrimRecord& rec : xres.meshes) {
+      if (!consumed.count(rec.path)) meshPrims.push_back(rec.prim);
+    }
   }
 
   bool capped = false;

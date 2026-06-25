@@ -7,10 +7,12 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <unordered_set>
 
 #include "tydra/next/chunked-array.hh"
 #include "tydra/next/render-data.hh"
 #include "tydra/next/scene-access.hh"
+#include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
 #include "next/reader/usda-reader.hh"
 
@@ -243,6 +245,69 @@ def Xform "World"
   std::cout << "  Scene Access: PASSED\n";
 }
 
+void TestRenderExtract() {
+  std::cout << "Testing RenderExtract...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    token purpose = "render"
+
+    def Mesh "MeshA"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def PointInstancer "Inst"
+    {
+        rel prototypes = </World/MeshA>
+        point3f[] positions = [(0, 0, 0)]
+        int[] protoIndices = [0]
+    }
+
+    def Camera "Cam" {}
+    def RectLight "Key" {}
+    def Material "Mat" {}
+    def Volume "Fog" {}
+    def BasisCurves "Curve" {}
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  RenderExtractOptions opts;
+  opts.time_code = 0.0;
+  opts.stop_at_point_instancers = true;
+  opts.stop_at_native_instances = true;
+  RenderExtractResult er;
+  assert(CollectRenderPrims(lr.stage, opts, &er));
+  assert(er.meshes.size() == 1);
+  assert(er.point_instancers.size() == 1);
+  assert(er.cameras.size() == 1);
+  assert(er.lights.size() == 1);
+  assert(er.materials.size() == 1);
+  assert(er.volumes.size() == 1);
+  assert(er.curves.size() == 1);
+  assert(er.meshes[0].purpose == "render");
+  assert(er.meshes[0].path == "/World/MeshA");
+
+  std::unordered_set<std::string> prototypes;
+  CollectPrototypePaths(lr.stage, &prototypes);
+  assert(prototypes.empty());
+
+  std::cout << "  RenderExtract: PASSED\n";
+}
+
 //
 // Converter Tests
 //
@@ -338,6 +403,7 @@ int main() {
 
   // Scene Access tests
   TestSceneAccess();
+  TestRenderExtract();
 
   std::cout << "\n";
 

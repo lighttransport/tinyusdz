@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/value-view.cc
     types/interpolation.cc
 
     # Prim types
@@ -95,6 +96,7 @@ set(TINYUSDZ_NEXT_HEADERS
     types/type-id.hh
     types/type-info.hh
     types/value.hh
+    types/value-view.hh
     types/interpolation.hh
 
     # Prim types
@@ -415,6 +417,7 @@ endif()
 set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
 )
@@ -423,6 +426,7 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/chunked-array.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
 )

@@ -23,6 +23,7 @@
 #include "next/reader/usdc-reader.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
+#include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -130,6 +131,21 @@ int main() {
   }
   assert(pv->is_lazy());  // still lazy after the temp is destroyed
 
+  // Borrowed read-only view: direct pointer into the retained crate payload for
+  // uncompressed POD arrays, without materializing or dirtying the Value.
+  {
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(*pv, &scratch, &view));
+    assert(view.borrowed);
+    assert(view.size == points.size());
+    assert(scratch.storage.empty());
+    for (size_t i = 0; i < points.size(); i++) assert(view[i] == points[i]);
+    assert(pv->is_lazy());
+    assert(!pv->is_dirty());
+    std::cout << "  points borrowed view reads without materializing" << std::endl;
+  }
+
   // Materialize the original via accessor; verify contents byte-for-byte.
   const std::vector<float>* arr = pv->as_float_array();
   assert(arr);
@@ -142,6 +158,17 @@ int main() {
   const Value* iv = ps->property_value("faceVertexIndices");
   assert(iv);
   assert(iv->is_lazy());
+  {
+    ArrayScratch<int32_t> scratch;
+    ArrayView<int32_t> view;
+    assert(GetIntArrayView(*iv, &scratch, &view));
+    assert(view.size == indices.size());
+    for (size_t i = 0; i < indices.size(); i++) assert(view[i] == indices[i]);
+    assert(iv->is_lazy());
+    assert(!iv->is_dirty());
+    std::cout << "  indices view reads without materializing source"
+              << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
+  }
   const std::vector<int32_t>* ia = iv->as_int_array();
   assert(ia);
   assert(*ia == indices);

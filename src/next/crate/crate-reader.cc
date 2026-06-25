@@ -121,9 +121,6 @@ private:
   std::vector<CrateSpec> specs_;
   std::vector<std::string> paths_;
 
-  // Cached fieldsets
-  std::unordered_map<uint32_t, std::vector<std::pair<std::string, Value>>> fieldset_cache_;
-
   // Parse from a moved-in owned buffer (shared by Read / ReadOwned / ReadFile).
   CrateReadResult ReadFromString(std::string&& bytes);
 
@@ -1332,7 +1329,6 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   fieldset_indices_.clear();
   specs_.clear();
   paths_.clear();
-  fieldset_cache_.clear();
 
   if (!source_ || source_->size() < kCrateBootstrapSize) {
     AddError("Invalid input data");
@@ -1352,11 +1348,6 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   if (!ReadSpecs()) return std::move(result_);
   if (!ReadPaths()) return std::move(result_);
   if (!BuildStage()) return std::move(result_);
-
-  // The fieldset cache held a full second copy of every fieldset's unpacked
-  // Values (including large arrays) purely to serve BuildStage. The data now
-  // lives in the built Stage/Layer, so release the duplicate to reclaim memory.
-  fieldset_cache_.clear();
 
   result_.success = result_.errors.empty();
   result_.version = version_;
@@ -2231,7 +2222,7 @@ bool CrateReader::Impl::BuildStage() {
     std::string name;
     std::string type_name;
     PrimSpecifier specifier;
-    std::vector<std::pair<std::string, Value>> fields;
+    uint32_t fieldset_index = 0;
   };
 
   // Variant content lives in the layer as bracketed holder/child prims
@@ -2243,6 +2234,8 @@ bool CrateReader::Impl::BuildStage() {
   std::unordered_map<std::string, std::map<std::string, std::string>> variant_sel;
 
   std::vector<PrimEntry> prim_entries;
+  std::vector<std::pair<std::string, ValueRep>> raw_field_scratch;
+  std::vector<std::pair<std::string, Value>> value_field_scratch;
   for (const auto& spec : specs_) {
     // Build Prim specs AND variant-namespace holders (Variant/VariantSet specs
     // at "/Prim/{vset=sel}" / "/Prim/{vset=}"). The holders are needed so that
@@ -2267,9 +2260,8 @@ bool CrateReader::Impl::BuildStage() {
     // so prims with multiple variant sets compose correctly. (Only for the
     // owning, non-bracketed prim.)
     if (!bracketed) {
-      std::vector<std::pair<std::string, ValueRep>> raw;
-      if (ResolveFieldsetRaw(spec.fieldset_index.value, raw)) {
-        for (auto& f : raw) {
+      if (ResolveFieldsetRaw(spec.fieldset_index.value, raw_field_scratch)) {
+        for (auto& f : raw_field_scratch) {
           if (f.first == "variantSelection") {
             std::vector<std::pair<std::string, std::string>> sels;
             if (DecodeVariantSelectionMap(f.second, sels)) {
@@ -2289,16 +2281,16 @@ bool CrateReader::Impl::BuildStage() {
     PrimEntry entry;
     entry.full_path = full_path;
     entry.name = prim_name;
+    entry.fieldset_index = spec.fieldset_index.value;
 
-    std::vector<std::pair<std::string, Value>> fields;
-    ResolveFieldset(spec.fieldset_index.value, fields);
+    ResolveFieldset(spec.fieldset_index.value, value_field_scratch);
 
     // Untyped prims stay untyped: composition fills the type from the
     // referenced prim (a forced "Xform" default would mask e.g. a referenced
     // Mesh definition; the writer already skips empty type names).
     entry.type_name.clear();
     entry.specifier = PrimSpecifier::Def;
-    for (auto& f : fields) {
+    for (auto& f : value_field_scratch) {
       if (f.first == "typeName") {
         if (const std::string* s = f.second.as_token()) entry.type_name = *s;
       } else if (f.first == "specifier") {
@@ -2306,8 +2298,6 @@ bool CrateReader::Impl::BuildStage() {
           if (*s == "over") entry.specifier = PrimSpecifier::Over;
           else if (*s == "class") entry.specifier = PrimSpecifier::Class;
         }
-      } else {
-        entry.fields.push_back(std::move(f));
       }
     }
     prim_entries.push_back(std::move(entry));
@@ -2346,6 +2336,7 @@ bool CrateReader::Impl::BuildStage() {
   };
   std::unordered_map<std::string, std::vector<AttrInfo>> attr_map;
   std::unordered_map<std::string, std::vector<RelInfo>> rel_map;
+  std::vector<std::pair<std::string, ValueRep>> property_raw_field_scratch;
 
   // Split a property spec path ".<primpath>/<name>" into (primpath, name).
   auto split_prop_path = [](const std::string& raw, std::string& prim_path,
@@ -2376,13 +2367,12 @@ bool CrateReader::Impl::BuildStage() {
       continue;
     }
 
-    std::vector<std::pair<std::string, ValueRep>> raw_fields;
-    if (!ResolveFieldsetRaw(spec.fieldset_index.value, raw_fields)) continue;
+    if (!ResolveFieldsetRaw(spec.fieldset_index.value, property_raw_field_scratch)) continue;
 
     if (is_rel) {
       RelInfo ri;
       ri.name = std::move(prop_name);
-      for (auto& f : raw_fields) {
+      for (auto& f : property_raw_field_scratch) {
         if (f.first == "targetPaths") {
           DecodePathTargets(f.second, ri.targets);
         } else if (f.first == "variability") {
@@ -2399,7 +2389,7 @@ bool CrateReader::Impl::BuildStage() {
     // Attribute spec.
     AttrInfo ai;
     ai.name = std::move(prop_name);
-    for (auto& f : raw_fields) {
+    for (auto& f : property_raw_field_scratch) {
       if (f.first == "typeName") {
         Value v;
         if (UnpackValue(f.second, v)) {
@@ -2479,6 +2469,7 @@ bool CrateReader::Impl::BuildStage() {
   // Build hierarchy using depth-based stack management
   // Stack keeps ancestor paths at each depth level
   std::vector<std::string> prim_stack;
+  std::vector<std::pair<std::string, Value>> prim_value_field_scratch;
 
   for (auto& entry : prim_entries) {
     // Compute depth of this prim (number of '/' in path)
@@ -2533,8 +2524,10 @@ bool CrateReader::Impl::BuildStage() {
       }
     };
 
+    ResolveFieldset(entry.fieldset_index, prim_value_field_scratch);
+
     // Add properties and extract composition arcs / metadata into PrimSpecMeta
-    for (auto& field : entry.fields) {
+    for (auto& field : prim_value_field_scratch) {
       if (field.first == "typeName" || field.first == "specifier") continue;
 
       // Reserved prim metadata stored inline in the prim spec (pxrUSD keeps
@@ -2822,12 +2815,6 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
                                          std::vector<std::pair<std::string, Value>>& out) {
   out.clear();
 
-  auto it = fieldset_cache_.find(fieldset_index);
-  if (it != fieldset_cache_.end()) {
-    out = it->second;
-    return true;
-  }
-
   if (fieldset_index >= fieldset_indices_.size()) {
     return false;
   }
@@ -2851,7 +2838,6 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
     start++;
   }
 
-  fieldset_cache_[fieldset_index] = out;
   return true;
 }
 

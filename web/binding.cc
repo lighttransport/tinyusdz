@@ -66,7 +66,6 @@
 #include "usdc-writer.hh"
 #include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
-#include "crate-writer.hh"
 #include "image-writer.hh"
 #include "imageio/png-stream.hh"  // streaming scanline PNG codec
 #include "imageproc/simd.hh"      // SIMD row kernels (channel pack)
@@ -84,6 +83,132 @@
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+
+namespace {
+
+// When binding.cc is compiled with -fno-rtti, embind emits canonical local
+// type IDs instead of std::type_info pointers. Emscripten's builtin embind
+// registration is compiled separately, so register the builtin wire types again
+// with the no-RTTI IDs used by this translation unit.
+template <typename T>
+void RegisterNoRttiInteger(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_integer(TypeID<T>::get(), name, sizeof(T),
+                           std::numeric_limits<T>::min(),
+                           std::numeric_limits<T>::max());
+}
+
+template <typename T>
+void RegisterNoRttiBigInt(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_bigint(TypeID<T>::get(), name, sizeof(T),
+                          std::numeric_limits<T>::min(),
+                          std::numeric_limits<T>::max());
+}
+
+template <typename T>
+void RegisterNoRttiFloat(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_float(TypeID<T>::get(), name, sizeof(T));
+}
+
+enum NoRttiTypedArrayIndex {
+  kNoRttiInt8Array,
+  kNoRttiUint8Array,
+  kNoRttiInt16Array,
+  kNoRttiUint16Array,
+  kNoRttiInt32Array,
+  kNoRttiUint32Array,
+  kNoRttiFloat32Array,
+  kNoRttiFloat64Array,
+  kNoRttiInt64Array,
+  kNoRttiUint64Array,
+};
+
+template <typename T>
+constexpr NoRttiTypedArrayIndex GetNoRttiTypedArrayIndex() {
+  static_assert(emscripten::internal::typeSupportsMemoryView<T>(),
+                "type does not map to a typed array");
+  return std::is_floating_point<T>::value
+             ? (sizeof(T) == 4 ? kNoRttiFloat32Array : kNoRttiFloat64Array)
+             : (sizeof(T) == 1
+                    ? (std::is_signed<T>::value ? kNoRttiInt8Array
+                                                : kNoRttiUint8Array)
+                    : (sizeof(T) == 2
+                           ? (std::is_signed<T>::value ? kNoRttiInt16Array
+                                                       : kNoRttiUint16Array)
+                           : (sizeof(T) == 4
+                                  ? (std::is_signed<T>::value
+                                         ? kNoRttiInt32Array
+                                         : kNoRttiUint32Array)
+                                  : (std::is_signed<T>::value
+                                         ? kNoRttiInt64Array
+                                         : kNoRttiUint64Array))));
+}
+
+template <typename T>
+void RegisterNoRttiMemoryView(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_memory_view(TypeID<emscripten::memory_view<T>>::get(),
+                               GetNoRttiTypedArrayIndex<T>(), name);
+}
+
+}  // namespace
+
+EMSCRIPTEN_BINDINGS(tinyusdz_no_rtti_builtin_types) {
+  using namespace emscripten::internal;
+
+  _embind_register_void(TypeID<void>::get(), "void");
+  _embind_register_bool(TypeID<bool>::get(), "bool", true, false);
+
+  RegisterNoRttiInteger<char>("char");
+  RegisterNoRttiInteger<signed char>("signed char");
+  RegisterNoRttiInteger<unsigned char>("unsigned char");
+  RegisterNoRttiInteger<signed short>("short");
+  RegisterNoRttiInteger<unsigned short>("unsigned short");
+  RegisterNoRttiInteger<signed int>("int");
+  RegisterNoRttiInteger<unsigned int>("unsigned int");
+#if __wasm64__
+  RegisterNoRttiBigInt<signed long>("long");
+  RegisterNoRttiBigInt<unsigned long>("unsigned long");
+#else
+  RegisterNoRttiInteger<signed long>("long");
+  RegisterNoRttiInteger<unsigned long>("unsigned long");
+#endif
+  RegisterNoRttiBigInt<signed long long>("long long");
+  RegisterNoRttiBigInt<unsigned long long>("unsigned long long");
+
+  RegisterNoRttiFloat<float>("float");
+  RegisterNoRttiFloat<double>("double");
+
+  _embind_register_std_string(TypeID<std::string>::get(), "std::string");
+  _embind_register_emval(TypeID<emscripten::val>::get());
+
+  RegisterNoRttiMemoryView<char>("emscripten::memory_view<char>");
+  RegisterNoRttiMemoryView<signed char>(
+      "emscripten::memory_view<signed char>");
+  RegisterNoRttiMemoryView<unsigned char>(
+      "emscripten::memory_view<unsigned char>");
+  RegisterNoRttiMemoryView<short>("emscripten::memory_view<short>");
+  RegisterNoRttiMemoryView<unsigned short>(
+      "emscripten::memory_view<unsigned short>");
+  RegisterNoRttiMemoryView<int>("emscripten::memory_view<int>");
+  RegisterNoRttiMemoryView<unsigned int>(
+      "emscripten::memory_view<unsigned int>");
+  RegisterNoRttiMemoryView<long>("emscripten::memory_view<long>");
+  RegisterNoRttiMemoryView<unsigned long>(
+      "emscripten::memory_view<unsigned long>");
+  RegisterNoRttiMemoryView<int8_t>("emscripten::memory_view<int8_t>");
+  RegisterNoRttiMemoryView<uint8_t>("emscripten::memory_view<uint8_t>");
+  RegisterNoRttiMemoryView<int16_t>("emscripten::memory_view<int16_t>");
+  RegisterNoRttiMemoryView<uint16_t>("emscripten::memory_view<uint16_t>");
+  RegisterNoRttiMemoryView<int32_t>("emscripten::memory_view<int32_t>");
+  RegisterNoRttiMemoryView<uint32_t>("emscripten::memory_view<uint32_t>");
+  RegisterNoRttiMemoryView<int64_t>("emscripten::memory_view<int64_t>");
+  RegisterNoRttiMemoryView<uint64_t>("emscripten::memory_view<uint64_t>");
+  RegisterNoRttiMemoryView<float>("emscripten::memory_view<float>");
+  RegisterNoRttiMemoryView<double>("emscripten::memory_view<double>");
+}
 
 // EXR detection here is backend-agnostic (a magic-number test). Decoding goes
 // through tinyusdz::image::LoadImageFromMemory, which selects the active EXR
@@ -532,11 +657,7 @@ bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t>
   if (n == 0 || n > kMaxUint8ArrayBytes) {
     return false;
   }
-  try {
-    buf.resize(n);
-  } catch (const std::bad_alloc&) {
-    return false;
-  }
+  buf.resize(n);
 
   // Copy JS typed array -> v (one memcpy under the hood). Length must be a JS
   // Number (double): a C++ size_t marshals to a BigInt under wasm64 and
@@ -704,16 +825,12 @@ struct ZeroCopyStreamingBuffer {
 
   bool allocate(size_t size, const std::string &name = "") {
     if (size == 0) return false;
-    try {
-      buffer.resize(size);
-      total_size = size;
-      bytes_written = 0;
-      finalized = false;
-      asset_name = name;
-      return true;
-    } catch (const std::bad_alloc&) {
-      return false;
-    }
+    buffer.resize(size);
+    total_size = size;
+    bytes_written = 0;
+    finalized = false;
+    asset_name = name;
+    return true;
   }
 
   // Get raw pointer for direct memory access
@@ -774,86 +891,40 @@ struct ZeroCopyStreamingBuffer {
   }
 };
 
-class JSUint8ArrayOutputStream
-    : public tinyusdz::experimental::IOutputStream {
- public:
-  JSUint8ArrayOutputStream(const emscripten::val &buffer, size_t capacity)
-      : buffer_(buffer), capacity_(capacity) {}
-
-  bool Open(std::string *err) override {
-    if (buffer_.isNull() || buffer_.isUndefined() || capacity_ == 0) {
-      if (err) {
-        *err = "JS output buffer is empty.";
-      }
-      return false;
-    }
-    pos_ = 0;
-    max_pos_ = 0;
-    open_ = true;
-    error_.clear();
-    return true;
+bool GetUint8ArrayByteLength(const emscripten::val &buffer, size_t *capacity) {
+  if (!capacity || buffer.isNull() || buffer.isUndefined()) {
+    return false;
   }
-
-  void Close() override { open_ = false; }
-
-  bool IsOpen() const override { return open_; }
-
-  int64_t Tell() override { return static_cast<int64_t>(pos_); }
-
-  bool Seek(int64_t pos) override {
-    if (pos < 0) {
-      error_ = "Negative seek in JS output buffer.";
-      return false;
-    }
-    const size_t next = static_cast<size_t>(pos);
-    if (next > capacity_) {
-      error_ = "Seek exceeds JS output buffer capacity.";
-      return false;
-    }
-    pos_ = next;
-    return true;
+  const emscripten::val byte_length = buffer["byteLength"];
+  if (byte_length.isUndefined() ||
+      byte_length.typeOf().as<std::string>() != "number") {
+    return false;
   }
+  const double n = byte_length.as<double>();
+  if (!std::isfinite(n) || n < 0.0) {
+    return false;
+  }
+  *capacity = static_cast<size_t>(n);
+  return true;
+}
 
-  bool Write(const void *data, size_t size) override {
-    if (!open_) {
-      error_ = "JS output buffer is not open.";
-      return false;
+bool CopyBytesToUint8Array(const std::vector<uint8_t> &bytes,
+                           const emscripten::val &buffer,
+                           size_t capacity,
+                           std::string *err) {
+  if (bytes.size() > capacity) {
+    if (err) {
+      *err = "USDC export output buffer too small.";
     }
-    if (size == 0) {
-      return true;
-    }
-    if (!data) {
-      error_ = "Null write data for JS output buffer.";
-      return false;
-    }
-    if (pos_ > capacity_ || size > capacity_ - pos_) {
-      error_ = "JS output buffer too small for USDC export.";
-      return false;
-    }
-
+    return false;
+  }
+  if (!bytes.empty()) {
     emscripten::val src = emscripten::val(emscripten::typed_memory_view(
-        size, reinterpret_cast<const uint8_t *>(data)));
-    buffer_.call<void>("set", src, emscripten::val(static_cast<double>(pos_)));
-    pos_ += size;
-    if (pos_ > max_pos_) {
-      max_pos_ = pos_;
-    }
-    return true;
+        bytes.size(), bytes.data()));
+    buffer.call<void>("set", src, emscripten::val(0));
   }
-
-  bool Flush() override { return true; }
-
-  size_t written() const { return max_pos_; }
-  const std::string &error() const { return error_; }
-
- private:
-  emscripten::val buffer_;
-  size_t capacity_{0};
-  size_t pos_{0};
-  size_t max_pos_{0};
-  bool open_{false};
-  std::string error_;
-};
+  return true;
+}
 
 struct EMAssetResolutionResolver {
 
@@ -6384,11 +6455,9 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    nlohmann::json j_args;
-    try {
-      j_args = nlohmann::json::parse(args);
-    } catch (const std::exception& e) {
-      return std::string("{\"error\": \"Invalid JSON: ") + e.what() + "\"}";
+    nlohmann::json j_args = nlohmann::json::parse(args, nullptr, false);
+    if (j_args.is_discarded()) {
+      return "{\"error\": \"Invalid JSON\"}";
     }
 
     // Per-session context: isolated so one session cannot read/overwrite
@@ -6569,11 +6638,7 @@ class TinyUSDZLoaderNative {
     size_t size = data["byteLength"].as<size_t>();
     constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
     if (size == 0 || size > kMaxLayerBytes) return false;
-    try {
-      out->resize(size);
-    } catch (const std::bad_alloc &) {
-      return false;
-    }
+    out->resize(size);
     emscripten::val view = emscripten::val::global("Uint8Array").new_(
         data["buffer"], data["byteOffset"],
         emscripten::val(static_cast<double>(size)));
@@ -7315,9 +7380,7 @@ class TinyUSDZLoaderNative {
     }
 
     size_t capacity = 0;
-    try {
-      capacity = buffer["byteLength"].as<size_t>();
-    } catch (...) {
+    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
       error_ = "USDC export output must be a Uint8Array.";
       result.set("error", error_);
       return result;
@@ -7330,57 +7393,27 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
-        new JSUint8ArrayOutputStream(buffer, capacity));
-    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
-    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
-        std::move(js_stream));
-    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
-
-    tinyusdz::experimental::CrateWriter::Options opts;
-    opts.version_major = 0;
-    opts.version_minor = 8;
-    opts.version_patch = 0;
-    opts.enable_compression = true;
-    opts.enable_deduplication = true;
-    if (usdc_max_file_size_bytes_ > 0) {
-      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
-    }
-    if (usdc_max_memory_bytes_ > 0) {
-      opts.max_memory_bytes = usdc_max_memory_bytes_;
-    }
-    writer.SetOptions(opts);
-
-    std::string open_err;
-    if (!writer.Open(&open_err)) {
-      error_ = "Failed to open CrateWriter: " + open_err;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string convert_err;
-    if (!writer.ConvertLayerToSpecs(curr, &convert_err)) {
-      writer.Close();
-      error_ = "Failed to convert Layer to USDC: " + convert_err;
+    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
+      error_ = err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string finalize_err;
-    if (!writer.Finalize(&finalize_err)) {
-      writer.Close();
-      error_ = "Failed to finalize USDC: " + finalize_err;
-      if (!stream_ptr->error().empty()) {
-        error_ += " " + stream_ptr->error();
-      }
-      result.set("error", error_);
-      return result;
-    }
-
-    writer.Close();
-    warn_.clear();
+    warn_ = warn;
     result.set("success", true);
-    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("size", static_cast<double>(output.size()));
     result.set("warn", warn_);
     return result;
   }
@@ -7404,9 +7437,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
     size_t capacity = 0;
-    try {
-      capacity = buffer["byteLength"].as<size_t>();
-    } catch (...) {
+    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
       error_ = "USDC export output must be a Uint8Array.";
       result.set("error", error_);
       return result;
@@ -7423,57 +7454,27 @@ class TinyUSDZLoaderNative {
       return result;
     }
 
-    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
-        new JSUint8ArrayOutputStream(buffer, capacity));
-    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
-    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
-        std::move(js_stream));
-    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
-
-    tinyusdz::experimental::CrateWriter::Options opts;
-    opts.version_major = 0;
-    opts.version_minor = 8;
-    opts.version_patch = 0;
-    opts.enable_compression = true;
-    opts.enable_deduplication = true;
-    if (usdc_max_file_size_bytes_ > 0) {
-      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
-    }
-    if (usdc_max_memory_bytes_ > 0) {
-      opts.max_memory_bytes = usdc_max_memory_bytes_;
-    }
-    writer.SetOptions(opts);
-
-    std::string open_err;
-    if (!writer.Open(&open_err)) {
-      error_ = "Failed to open CrateWriter: " + open_err;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string convert_err;
-    if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
-      writer.Close();
-      error_ = "Failed to convert Stage to USDC: " + convert_err;
+    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
+      error_ = err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string finalize_err;
-    if (!writer.Finalize(&finalize_err)) {
-      writer.Close();
-      error_ = "Failed to finalize USDC: " + finalize_err;
-      if (!stream_ptr->error().empty()) {
-        error_ += " " + stream_ptr->error();
-      }
-      result.set("error", error_);
-      return result;
-    }
-
-    writer.Close();
-    warn_.clear();
+    warn_ = warn;
     result.set("success", true);
-    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("size", static_cast<double>(output.size()));
     result.set("warn", warn_);
     return result;
   }

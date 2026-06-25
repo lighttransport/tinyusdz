@@ -1948,7 +1948,6 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {
-    //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
   // Perfect-forwarding constructor. Use std::forward (NOT std::move): since
@@ -1958,7 +1957,6 @@ class Value {
   // (Callers that intend a move pass `Value(std::move(x))`.)
   template <class T>
   Value(T &&v) noexcept : v_(std::forward<T>(v)) {
-    //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 
   // template <class T>
@@ -2188,7 +2186,6 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
-    //TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }
