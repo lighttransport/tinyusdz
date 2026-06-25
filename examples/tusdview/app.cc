@@ -20,6 +20,7 @@
 #include "log.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
+#include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
 #include "skinning.hh"
 
 #if defined(HAVE_NFD)
@@ -248,6 +249,13 @@ void App::applyLoaded(bool ok, bool progressive) {
       reconvApplied_ = animTime_;
     }
     updateSkinningEffective();
+    // --next GPU morph: detect instanced prototypes carrying morph channels so
+    // the per-frame coefficient upload runs (independent of Tydra GPU skinning).
+    hasNextMorph_ = false;
+    if (useNextLoader_) {
+      for (const DrawMeshCPU& m : draw_.meshes)
+        if (m.morphChannelCount > 0) { hasNextMorph_ = true; break; }
+    }
     if (skinningEffective_ == SkinningMode::GPU) {
       LOGI("skinning: GPU (%s)", skinningReason_.c_str());
     } else if (skinningRequested_ == SkinningMode::GPU) {
@@ -293,6 +301,12 @@ void App::applyLoaded(bool ok, bool progressive) {
   // once streaming completes (skinFrameTime_ stays NaN until then).
   if (ok && skinningEffective_ == SkinningMode::GPU && !progressiveActive_) {
     updateGpuSkinningFrameIfNeeded();
+  }
+  // --next morph: upload the initial blendshape coefficients (the render loop
+  // re-poses each frame as animTime_ advances). Skipped while streaming; the
+  // loop catches up once meshes land.
+  if (ok && useNextLoader_ && hasNextMorph_ && !progressiveActive_) {
+    updateNextMorphFrameIfNeeded();
   }
   // Frame the camera AFTER the GPU pose updates draw_ bounds (so an animated
   // load, e.g. --time, frames the posed geometry, matching the CPU bake path).
@@ -361,14 +375,27 @@ void App::loadFileBlocking(const std::string& path) {
   LoadOptions opts = loadOpts_;
   if (useNextLoader_) {
     // `next` flat-preview path: builds only the DrawScene (no Tydra
-    // RenderScene/skinning); the hierarchy browser/inspector stay empty.
-    const bool ok =
-        LoadUSDViaNext(path, opts, &drawTmp, &tmp.warn, &tmp.err, &loadCtrl_);
+    // RenderScene/skinning); the hierarchy browser/inspector stay empty. Retain
+    // the stage + surface its animation range so per-frame blendshape morph works.
+    std::shared_ptr<tinyusdz::next::Stage> stage;
+    const bool ok = LoadUSDViaNext(path, opts, &drawTmp, &tmp.warn, &tmp.err,
+                                   &loadCtrl_, &stage);
     tmp.ok = ok;
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
+    if (stage) {
+      const double s = stage->GetStartTimeCode();
+      const double e = stage->GetEndTimeCode();
+      const double fps = stage->GetTimeCodesPerSecond();
+      if (fps > 0.0) tmp.render.meta.timeCodesPerSecond = fps;
+      if (e > s) {
+        tmp.render.meta.startTimeCode = s;
+        tmp.render.meta.endTimeCode = e;
+      }
+    }
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
+    nextStage_ = ok ? std::move(stage) : nullptr;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
@@ -429,9 +456,22 @@ void App::startLoadAsync(const std::string& path) {
   const bool useNext = useNextLoader_;
   loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext]() {
     if (useNext) {
-      lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_);
+      lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
+                              &pendingNextStage_);
       lp->filepath = path;
       lp->render.meta.upAxis = dp->upAxis;  // drive camera/grid up-axis
+      // Surface the stage's animation range so --next gets a timeline (the Tydra
+      // RenderScene meta is otherwise empty here). readAnimationRange reads these.
+      if (pendingNextStage_) {
+        const double s = pendingNextStage_->GetStartTimeCode();
+        const double e = pendingNextStage_->GetEndTimeCode();
+        const double fps = pendingNextStage_->GetTimeCodesPerSecond();
+        if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
+        if (e > s) {
+          lp->render.meta.startTimeCode = s;
+          lp->render.meta.endTimeCode = e;
+        }
+      }
     } else {
       LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
     }
@@ -480,6 +520,8 @@ void App::finishLoadIfReady() {
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   draw_ = ok ? std::move(*pendingDraw_) : DrawScene{};
+  nextStage_ = ok ? std::move(pendingNextStage_) : nullptr;
+  pendingNextStage_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
@@ -498,6 +540,7 @@ void App::cancelAndJoinLoad() {
   loadFinished_.store(false);
   pendingLoaded_.reset();
   pendingDraw_.reset();
+  pendingNextStage_.reset();
 }
 
 void App::readAnimationRange() {
@@ -583,6 +626,9 @@ void App::updateSkinningEffective() {
 }
 
 void App::updateGpuSkinningFrameIfNeeded() {
+  // --next does not engage Tydra GPU skinning (empty loaded_.render/.stage); its
+  // GPU blendshape morph rides a separate per-frame coefficient upload.
+  if (useNextLoader_) { updateNextMorphFrameIfNeeded(); return; }
   if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
   const bool hasMorph = SceneHasBlendShapes(loaded_.render);
   const bool mixed = SceneHasNonSkeletalAnimation(loaded_.render);
@@ -632,6 +678,23 @@ void App::updateGpuSkinningFrameIfNeeded() {
       renderer_->updateMorphWeights(mc.first, mc.second);
     }
   }
+  skinFrameTime_ = animTime_;
+}
+
+void App::updateNextMorphFrameIfNeeded() {
+  if (!useNextLoader_ || !hasNextMorph_ || !nextStage_ || !loaded_.ok) return;
+  // Manual blendshape weights (editor) re-pose even at the same time code.
+  const bool blendDirty = gui_.consumeBlendDirty();
+  if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
+  // Per-mesh coefficient upload indexes the renderer by draw-mesh order; only
+  // valid once the renderer holds exactly these meshes (post-streaming). Mark
+  // "posed" only when we actually uploaded, so a too-early call (meshes not yet
+  // streamed on the threaded path) re-tries next frame instead of latching.
+  if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
+  std::vector<std::pair<int, std::vector<float>>> coeffs;
+  BuildNextMorphWeights(*nextStage_, draw_, animTime_, gui_.blendOverrides(),
+                        &coeffs);
+  for (auto& mc : coeffs) renderer_->updateMorphWeights(mc.first, mc.second);
   skinFrameTime_ = animTime_;
 }
 

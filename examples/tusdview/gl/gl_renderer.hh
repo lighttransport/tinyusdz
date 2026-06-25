@@ -140,6 +140,7 @@ class GLRenderer final : public Renderer {
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
   GLint uHasMorph_{-1};  // GPU blendshape morph enable (per-draw)
+  GLint iHasMorph_{-1};  // GPU morph enable in the instanced program (per-draw)
 
   // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
   // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a

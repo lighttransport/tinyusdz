@@ -159,19 +159,42 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=1) in vec3 aNormal;\n"
       // Per-instance 3x4 object-to-world (row-major o2w; rows = output x/y/z):
       // worldP.c = dot(vec4(pos,1), aRow[c]).  48 B/instance vs a full mat4's 64.
-      "layout(location=6) in vec4 aRow0;\n"
-      "layout(location=7) in vec4 aRow1;\n"
-      "layout(location=8) in vec4 aRow2;\n"
+      // At locations 3/4/5 (the unused skin slots) so location 8 is free for the
+      // per-vertex morph offset/count -- the flat instanced path does not skin.
+      "layout(location=3) in vec4 aRow0;\n"
+      "layout(location=4) in vec4 aRow1;\n"
+      "layout(location=5) in vec4 aRow2;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
       "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
+      // GPU blendshape morph (shared by instanced prototypes): per-vertex CSR
+      // (offset,count) + delta/coeff/channelId texture-buffers, summed into the
+      // local position before the per-instance transform. Same scheme + units
+      // (8/9/10) as the non-instanced material shader.
+      "layout(location=8) in uvec2 aMorphOffsetCount;\n"
       "uniform mat4 uViewProj;\n"
+      "uniform bool uHasMorph;\n"
+      "uniform samplerBuffer uMorphDeltaTex;\n"
+      "uniform samplerBuffer uMorphCoeffTex;\n"
+      "uniform usamplerBuffer uMorphChanTex;\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
       "flat out int vInstanceId;\n"
       "void main(){\n"
       "  vInstanceId = gl_InstanceID;\n"
-      "  vec4 p = vec4(aPosition, 1.0);\n"
+      "  vec3 pos = aPosition;\n"
+      "  if (uHasMorph && aMorphOffsetCount.y > 0u) {\n"
+      "    int mbase = int(aMorphOffsetCount.x);\n"
+      "    int mcount = min(int(aMorphOffsetCount.y), 256);\n"
+      "    for (int i = 0; i < 256; ++i) {\n"
+      "      if (i >= mcount) break;\n"
+      "      int ch = int(texelFetch(uMorphChanTex, mbase + i).r);\n"
+      "      float c = texelFetch(uMorphCoeffTex, ch).r;\n"
+      "      if (abs(c) < 1e-6) continue;\n"
+      "      pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;\n"
+      "    }\n"
+      "  }\n"
+      "  vec4 p = vec4(pos, 1.0);\n"
       "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
       "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
       "                dot(aNormal, aRow2.xyz));\n"
@@ -277,6 +300,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iDoubleSided_ = glGetUniformLocation(instProgram_, "uDoubleSided");
   iPurpose_ = glGetUniformLocation(instProgram_, "uPurpose");
   iKind_ = glGetUniformLocation(instProgram_, "uKind");
+  iHasMorph_ = glGetUniformLocation(instProgram_, "uHasMorph");
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
   glUseProgram(0);
 
   // 1x1 white default texture (bound to unused sampler units).
@@ -1058,10 +1085,13 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindBuffer(GL_TEXTURE_BUFFER, 0);
       glBindTexture(GL_TEXTURE_BUFFER, 0);
     }
-    // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
-    // texture-buffer (RGBA16F: channelId,dx,dy,dz half-precision) + a per-frame
-    // coefficient texture-buffer (R32F). The vertex shader sums coeff*delta
-    // before skinning; texelFetch returns the f16 deltas auto-converted to f32.
+  }  // end !gmInstanced (uv1 / morphInfl / faceId)
+
+  // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
+  // texture-buffer (RGBA16F: channelId,dx,dy,dz half-precision) + a per-frame
+  // coefficient texture-buffer (R32F). The vertex shader sums coeff*delta before
+  // the per-instance transform. Shared by non-instanced AND instanced meshes:
+  // instance rows live at locations 3/4/5, leaving attr 8 free for the morph CSR.
     if (sm.morphChannelCount > 0 &&
         sm.morphOffsetCount.size() == sm.vertices.size() * 2 &&
         !sm.morphDeltaHalf.empty()) {
@@ -1112,11 +1142,10 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(8);
       glVertexAttribI2ui(8, 0u, 0u);
     }
-  }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
-  // rows = 48 B/instance) into a second VBO; bind as instanced attribs 6-8
-  // (divisor 1).
+  // rows = 48 B/instance) into a second VBO; bind as instanced attribs 3-5
+  // (divisor 1) -- off the morph/uv slots so an instanced prototype can morph.
   if (!sm.instanceXforms.empty()) {
     gm.instanceCount = static_cast<int>(sm.instanceXforms.size() / 12);
     gm.drawInstanceCount = gm.instanceCount;
@@ -1128,7 +1157,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
                  sm.instanceXforms.data(), GL_DYNAMIC_DRAW);
     const GLsizei mstride = 12 * sizeof(float);
     for (int r = 0; r < 3; ++r) {
-      const GLuint loc = 6 + r;
+      const GLuint loc = 3 + r;
       glEnableVertexAttribArray(loc);
       glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, mstride,
                             (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
@@ -1465,6 +1494,19 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // Default per-vertex color to white when the prototype has none (the VAO
       // supplies attrib 10 from vertexColorVbo otherwise).
       if (!mesh.vertexColorVbo) glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);
+      // GPU blendshape morph for a morphed prototype: bind its delta/coeff/chan
+      // texture-buffers (units 8/9/10, matching the instanced program's samplers)
+      // and enable the in-shader morph. Same as the non-instanced material pass.
+      glUniform1i(iHasMorph_, mesh.hasMorph ? 1 : 0);
+      if (mesh.hasMorph) {
+        glActiveTexture(GL_TEXTURE8);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+        glActiveTexture(GL_TEXTURE9);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+        glActiveTexture(GL_TEXTURE10);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+        glActiveTexture(GL_TEXTURE0);
+      }
       for (const auto& sub : mesh.submeshes) {
         glDrawElementsInstanced(
             GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
