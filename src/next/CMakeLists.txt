@@ -218,16 +218,13 @@ else()
     set_source_files_properties(${LZ4_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 endif()
 
-# Optional: Create test executable
+# Optional: Create test executables.
 #
-# EXPERIMENTAL / under-construction module. `next` is a standalone CMake project
-# (not added by the top-level CMakeLists) and its tests are OFF by default, so it
-# is intentionally excluded from the main native regression suite (`build/` ctest)
-# and from the Pixar comparison runner. Its tests may be unstable and use bare
-# assert() (no-ops under NDEBUG). Build/run them on demand only — see
-# doc/testing-cpp.md ("Experimental `next` library tests"). Do NOT add `next` to
-# the full regression gate without first hardening the suite.
-option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next (experimental; excluded from main regression)" OFF)
+# `next` is a stable standalone CMake project. It is not added to the top-level
+# build by default, so full regression runs must build this project separately
+# and run its ctests. Keep the tests in a Debug build: many test programs use
+# assert(), which is compiled out under NDEBUG.
+option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for stable TinyUSDZ Next" OFF)
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     # The next tests validate behavior with assert(); a Release build (-DNDEBUG)

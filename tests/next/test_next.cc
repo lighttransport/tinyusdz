@@ -7,6 +7,8 @@
 #include <cassert>
 #include <cstring>
 #include <cmath>
+#include <limits>
+#include <string>
 
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
@@ -23,6 +25,18 @@
 #include "next/schema/physics-joint.hh"
 
 using namespace tinyusdz::next;
+
+namespace {
+
+std::string UsdaFixturePath(const std::string& filename) {
+  const std::string file_path(__FILE__);
+  const std::string marker = "/tests/next/";
+  const size_t pos = file_path.rfind(marker);
+  assert(pos != std::string::npos);
+  return file_path.substr(0, pos) + "/tests/usda/" + filename;
+}
+
+}  // namespace
 
 // ============================================================
 // Type system tests
@@ -504,16 +518,34 @@ def Xform "Body" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
 )
 {
+    bool physics:kinematicEnabled = 1
+    rel physics:simulationOwner = </Scene>
     vector3f physics:velocity = (1, 2, 3)
     vector3f physics:angularVelocity = (4, 5, 6)
     point3f physics:centerOfMass = (0.5, 0.5, 0.5)
     float3 physics:diagonalInertia = (2, 3, 4)
 }
 
+def Xform "BodyDefaults" (
+    prepend apiSchemas = ["PhysicsMassAPI"]
+)
+{
+}
+
+def PhysicsScene "Scene"
+{
+}
+
 def PhysicsRevoluteJoint "Joint"
 {
     point3f physics:localPos0 = (1, 0, 0)
     point3f physics:localPos1 = (0, 1, 0)
+}
+
+def PhysicsSphericalJoint "Ball"
+{
+    float physics:coneAngle0Limit = 30
+    float physics:coneAngle1Limit = 45
 }
 )";
 
@@ -526,6 +558,8 @@ def PhysicsRevoluteJoint "Joint"
   // Rigid body velocity / angularVelocity (single vector3f attrs).
   PhysicsRigidBodyData rb;
   assert(GetPhysicsRigidBodyData(result.stage, body, &rb, 0.0));
+  assert(rb.kinematicEnabled);
+  assert(rb.simulationOwner == "/Scene");
   assert(std::abs(rb.velocity[0] - 1.0f) < 0.001f);
   assert(std::abs(rb.velocity[1] - 2.0f) < 0.001f);
   assert(std::abs(rb.velocity[2] - 3.0f) < 0.001f);
@@ -542,6 +576,15 @@ def PhysicsRevoluteJoint "Joint"
   assert(std::abs(mass.diagonalInertia[1] - 3.0f) < 0.001f);
   assert(std::abs(mass.diagonalInertia[2] - 4.0f) < 0.001f);
 
+  UsdPrim body_defaults = result.stage.GetPrimAtPath("/BodyDefaults");
+  assert(body_defaults.IsValid());
+  PhysicsMassData mass_defaults;
+  assert(GetPhysicsMassData(result.stage, body_defaults, &mass_defaults));
+  assert(std::isinf(mass_defaults.centerOfMass[0]) &&
+         mass_defaults.centerOfMass[0] < 0.0f);
+  assert(mass_defaults.principalAxes[0] == 0.0f);
+  assert(mass_defaults.principalAxes[3] == 0.0f);
+
   // Joint local frame positions (vector3f).
   UsdPrim joint = result.stage.GetPrimAtPath("/Joint");
   assert(joint.IsValid());
@@ -551,6 +594,55 @@ def PhysicsRevoluteJoint "Joint"
   assert(std::abs(jd.localPos0[0] - 1.0f) < 0.001f);
   assert(jd.hasLocalPos1);
   assert(std::abs(jd.localPos1[1] - 1.0f) < 0.001f);
+  assert(std::isinf(jd.breakForce));
+  assert(!jd.collisionEnabled);
+
+  UsdPrim scene = result.stage.GetPrimAtPath("/Scene");
+  assert(scene.IsValid());
+  assert(!IsPhysicsJoint(scene));
+
+  UsdPrim ball = result.stage.GetPrimAtPath("/Ball");
+  assert(ball.IsValid());
+  PhysicsSphericalJointData sj;
+  assert(GetPhysicsSphericalJointData(result.stage, ball, &sj, 0.0));
+  assert(std::abs(sj.coneAngle0Limit - 30.0f) < 0.001f);
+  assert(std::abs(sj.coneAngle1Limit - 45.0f) < 0.001f);
+
+  {
+    LoadResult fixture =
+        LoadUSDAFromFile(UsdaFixturePath("physics-schema-defaults-001.usda"));
+    assert(fixture.success);
+    UsdPrim fixture_body = fixture.stage.GetPrimAtPath("/World/Body");
+    assert(fixture_body.IsValid());
+    PhysicsRigidBodyData fixture_rb;
+    assert(GetPhysicsRigidBodyData(fixture.stage, fixture_body, &fixture_rb));
+    assert(fixture_rb.kinematicEnabled);
+    assert(fixture_rb.simulationOwner == "/World/Scene");
+
+    PhysicsMassData fixture_mass;
+    assert(GetPhysicsMassData(fixture.stage, fixture_body, &fixture_mass));
+    assert(std::isinf(fixture_mass.centerOfMass[0]) &&
+           fixture_mass.centerOfMass[0] < 0.0f);
+    assert(fixture_mass.principalAxes[0] == 0.0f);
+    assert(fixture_mass.principalAxes[3] == 0.0f);
+
+    UsdPrim fixture_scene = fixture.stage.GetPrimAtPath("/World/Scene");
+    assert(fixture_scene.IsValid());
+    assert(!IsPhysicsJoint(fixture_scene));
+  }
+
+  {
+    LoadResult fixture = LoadUSDAFromFile(
+        UsdaFixturePath("physics-spherical-schema-names-001.usda"));
+    assert(fixture.success);
+    UsdPrim fixture_ball = fixture.stage.GetPrimAtPath("/World/Ball");
+    assert(fixture_ball.IsValid());
+    PhysicsSphericalJointData fixture_sj;
+    assert(GetPhysicsSphericalJointData(fixture.stage, fixture_ball,
+                                        &fixture_sj, 0.0));
+    assert(std::abs(fixture_sj.coneAngle0Limit - 30.0f) < 0.001f);
+    assert(std::abs(fixture_sj.coneAngle1Limit - 45.0f) < 0.001f);
+  }
 
   std::cout << "  physics schema tests passed!" << std::endl;
 }

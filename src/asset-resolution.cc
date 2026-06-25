@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
 #include <cassert>
+#include <algorithm>
 #include <iostream>
 #include <limits>
 
@@ -305,6 +306,9 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
       (static_cast<uint64_t>(_max_asset_bytes_in_mb) > kMaxAssetBytesInMiB)
           ? (std::numeric_limits<uint64_t>::max)()
           : static_cast<uint64_t>(_max_asset_bytes_in_mb) * kBytesPerMiB;
+  const uint64_t max_addressable_asset_bytes =
+      (std::min)(max_asset_bytes,
+                 static_cast<uint64_t>((std::numeric_limits<size_t>::max)()));
 
   if (_asset_resolution_handlers.count(ext)) {
     if (_asset_resolution_handlers.at(ext).size_fun && _asset_resolution_handlers.at(ext).read_fun) {
@@ -322,16 +326,16 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (sz > max_asset_bytes) {
+      if (sz > max_addressable_asset_bytes) {
         if (err) {
           (*err) += fmt::format("Asset `{}` exceeds max bytes ({} > {}).\n",
-                                resolvedPath, sz, max_asset_bytes);
+                                resolvedPath, sz,
+                                max_addressable_asset_bytes);
         }
         return false;
       }
 
-      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
-      // and max_asset_bytes above bounds it.)
+      // `sz` is now bounded by both the user limit and addressable memory.
 
       DCOUT("asset_size: " << sz);
 
@@ -349,7 +353,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (read_size > sz) {
+      if (read_size > asset.size()) {
         if (err) {
           (*err) += "Read asset reported larger size than requested.\n";
         }
@@ -386,16 +390,16 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (sz > max_asset_bytes) {
+      if (sz > max_addressable_asset_bytes) {
         if (err) {
           (*err) += fmt::format("Asset `{}` exceeds max bytes ({} > {}).\n",
-                                resolvedPath, sz, max_asset_bytes);
+                                resolvedPath, sz,
+                                max_addressable_asset_bytes);
         }
         return false;
       }
 
-      // (no size_t-vs-uint64_t check needed: sz is already uint64_t,
-      // and max_asset_bytes above bounds it.)
+      // `sz` is now bounded by both the user limit and addressable memory.
 
       DCOUT("asset_size: " << sz);
 
@@ -413,7 +417,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         return false;
       }
 
-      if (read_size > sz) {
+      if (read_size > asset.size()) {
         if (err) {
           (*err) += "Read asset reported larger size than requested.\n";
         }

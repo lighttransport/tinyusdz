@@ -106,7 +106,7 @@ option(TINYUSDZ_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
 option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
-       "Use next::pcp::Cache backend for LargeSceneLoader (experimental; links tinyusdz_next)."
+       "Use stable next::pcp::Cache backend for LargeSceneLoader (links tinyusdz_next)."
        OFF)
 option(TINYUSDZ_ENABLE_SIMD
        "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."

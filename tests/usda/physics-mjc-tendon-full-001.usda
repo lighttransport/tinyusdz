@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Scope "Sites"
+    {
+        def Sphere "p0"
+        {
+        }
+
+        def Sphere "p1"
+        {
+        }
+    }
+
+    def Scope "Joints"
+    {
+        def PhysicsRevoluteJoint "j0"
+        {
+        }
+
+        def PhysicsPrismaticJoint "j1"
+        {
+        }
+    }
+
+    def MjcTendon "FullTendon"
+    {
+        token mjc:type = "spatial"
+        rel mjc:path = [</World/Sites/p0>, </World/Sites/p1>]
+        rel mjc:sideSites = [</World/Sites/p1>]
+        int[] mjc:path:indices = [0, 1]
+        int[] mjc:sideSites:indices = [1]
+        int[] mjc:path:segments = [0, 1]
+        double[] mjc:path:divisors = [1, 2]
+        double[] mjc:path:coef = [1, -0.5]
+        int mjc:group = 2
+        token mjc:limited = "true"
+        token mjc:actuatorfrclimited = "false"
+        double mjc:range:min = 0.1
+        double mjc:range:max = 0.9
+        double mjc:actuatorfrcrange:min = -3
+        double mjc:actuatorfrcrange:max = 4
+        double[] mjc:solreflimit = [0.03, 1.1]
+        double[] mjc:solimplimit = [0.8, 0.9, 0.01, 0.5, 2]
+        double[] mjc:solreffriction = [0.04, 1.2]
+        double[] mjc:solimpfriction = [0.7, 0.8, 0.02, 0.4, 1.5]
+        double mjc:margin = 0.02
+        double mjc:frictionloss = 0.3
+        double[] mjc:springlength = [0.2, 0.8]
+        double mjc:stiffness = 120
+        double mjc:damping = 3
+        double mjc:armature = 0.02
+        double mjc:width = 0.006
+        color4f mjc:rgba = (0.2, 0.3, 0.4, 0.5)
+    }
+}

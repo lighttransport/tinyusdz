@@ -1142,6 +1142,79 @@ void ValidateNumericArrayFiniteProperty(const PrimSpec &ps,
   }
 }
 
+bool GetRelationshipTargetCount(const PrimSpec &ps,
+                                const std::string &rel_name,
+                                size_t *count) {
+  if (!count) {
+    return false;
+  }
+  const Property *rel = GetProperty(ps, rel_name);
+  if (!rel || !rel->is_relationship()) {
+    return false;
+  }
+  *count = rel->get_relationTargets().size();
+  return true;
+}
+
+void ValidateIntArrayLengthMatchesRelationship(
+    const PrimSpec &ps, const std::string &array_prop,
+    const std::string &rel_prop, const std::string &rule_id,
+    const std::string &prim_location, USDValidationResult *result) {
+  const Property *prop = GetProperty(ps, array_prop);
+  if (!prop) {
+    return;
+  }
+  const std::string location = MakePropertyLocation(prim_location, array_prop);
+  std::vector<int32_t> values;
+  if (!prop->is_attribute() || !GetIntArrayProperty(ps, array_prop, &values)) {
+    AddError(result, rule_id, location,
+             array_prop + " must have an int array value");
+    return;
+  }
+  size_t target_count = 0;
+  if (!GetRelationshipTargetCount(ps, rel_prop, &target_count)) {
+    AddError(result, rule_id, location,
+             array_prop + " requires relationship " + rel_prop);
+    return;
+  }
+  if (values.size() != target_count) {
+    AddError(result, rule_id, location,
+             array_prop + " has " + std::to_string(values.size()) +
+                 " elements, but " + rel_prop + " has " +
+                 std::to_string(target_count) + " targets");
+  }
+}
+
+void ValidateNumericArrayLengthMatchesRelationship(
+    const PrimSpec &ps, const std::string &array_prop,
+    const std::string &rel_prop, const std::string &rule_id,
+    const std::string &prim_location, USDValidationResult *result) {
+  const Property *prop = GetProperty(ps, array_prop);
+  if (!prop) {
+    return;
+  }
+  const std::string location = MakePropertyLocation(prim_location, array_prop);
+  std::vector<double> values;
+  if (!prop->is_attribute() ||
+      !GetDoubleArrayProperty(ps, array_prop, &values)) {
+    AddError(result, rule_id, location,
+             array_prop + " must have a numeric array value");
+    return;
+  }
+  size_t target_count = 0;
+  if (!GetRelationshipTargetCount(ps, rel_prop, &target_count)) {
+    AddError(result, rule_id, location,
+             array_prop + " requires relationship " + rel_prop);
+    return;
+  }
+  if (values.size() != target_count) {
+    AddError(result, rule_id, location,
+             array_prop + " has " + std::to_string(values.size()) +
+                 " elements, but " + rel_prop + " has " +
+                 std::to_string(target_count) + " targets");
+  }
+}
+
 void ValidateNumericMinMaxPair(const PrimSpec &ps,
                                const std::string &min_prop,
                                const std::string &max_prop,
@@ -2207,6 +2280,15 @@ void ValidateMjcPhysics(const PrimSpec &ps,
                                        "physics.extension.mjc.array",
                                        prim_location, result);
   }
+  ValidateIntArrayLengthMatchesRelationship(
+      ps, "mjc:path:indices", "mjc:path", "physics.extension.mjc.array",
+      prim_location, result);
+  ValidateNumericArrayLengthMatchesRelationship(
+      ps, "mjc:path:coef", "mjc:path", "physics.extension.mjc.array",
+      prim_location, result);
+  ValidateIntArrayLengthMatchesRelationship(
+      ps, "mjc:sideSites:indices", "mjc:sideSites",
+      "physics.extension.mjc.array", prim_location, result);
 
   ValidatePhysicsRelationship(ps, "mjc:target",
                               "physics.extension.mjc.relationship",

@@ -75,6 +75,23 @@ std::string JsonIntArray(const std::vector<int> &arr) {
   return oss.str();
 }
 
+std::string JsonStringArray(const std::vector<std::string> &arr) {
+  std::ostringstream oss;
+  oss << "[";
+  for (size_t i = 0; i < arr.size(); ++i) {
+    if (i > 0) oss << ", ";
+    oss << JsonStr(arr[i]);
+  }
+  oss << "]";
+  return oss.str();
+}
+
+std::string JsonColor4f(const value::color4f &v) {
+  std::ostringstream oss;
+  oss << "[" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << "]";
+  return oss.str();
+}
+
 // Helper to emit a key-value pair
 void EmitKV(std::ostringstream &ss, int ind, int sp, const std::string &key,
             const std::string &val, bool comma = true) {
@@ -96,6 +113,20 @@ void EmitOptionalArray(std::ostringstream &ss, int ind, int sp,
     } else {
       EmitKV(ss, ind, sp, key, JsonIntArray(opt.value()), comma);
     }
+  }
+}
+
+void EmitOptionalRelTargets(std::ostringstream &ss, int ind, int sp,
+                            const std::string &key,
+                            const RelationshipProperty &rel,
+                            bool comma = true) {
+  if (!rel.authored() || rel.is_blocked()) return;
+  std::vector<std::string> targets;
+  for (const auto &path : rel.get_targetPaths()) {
+    targets.push_back(path.full_path_name());
+  }
+  if (!targets.empty()) {
+    EmitKV(ss, ind, sp, key, JsonStringArray(targets), comma);
   }
 }
 
@@ -336,12 +367,18 @@ bool ConvertPhysicsToJson(
         if (!b1.empty()) EmitKV(ss, 3, sp, "body1", JsonStr(b1));
         bool has_mjc = base.mjcJoint.has_value() && options.include_mjc;
         {
-          auto je = base.jointEnabled.get_value();
-          if (je.has_value()) EmitKV(ss, 3, sp, "jointEnabled", JsonBool(je.value()));
-          auto be = base.breakForce.get_value();
-          if (be.has_value()) EmitKV(ss, 3, sp, "breakForce", JsonNum(be.value()));
-          auto bt = base.breakTorque.get_value();
-          if (bt.has_value()) EmitKV(ss, 3, sp, "breakTorque", JsonNum(bt.value()));
+          if (base.jointEnabled.authored()) {
+            EmitKV(ss, 3, sp, "jointEnabled",
+                   JsonBool(base.jointEnabled.get_value()));
+          }
+          if (base.breakForce.authored()) {
+            EmitKV(ss, 3, sp, "breakForce",
+                   JsonNum(base.breakForce.get_value()));
+          }
+          if (base.breakTorque.authored()) {
+            EmitKV(ss, 3, sp, "breakTorque",
+                   JsonNum(base.breakTorque.get_value()));
+          }
         }
         // PhysX / Newton mirror block. Authored under physxJoint:* /
         // physxLimit:{angular,linear}:* / state:{angular,linear}:physics:*.
@@ -440,10 +477,23 @@ bool ConvertPhysicsToJson(
       ss << Indent(2, sp) << "{\n";
       EmitKV(ss, 3, sp, "path", JsonStr(path));
       EmitKV(ss, 3, sp, "type", JsonStr(t->type.get_value().str()));
+      EmitOptionalRelTargets(ss, 3, sp, "route", t->path);
+      EmitOptionalRelTargets(ss, 3, sp, "sideSites", t->sideSites);
+      EmitOptionalArray(ss, 3, sp, "routeIndices", t->path_indices);
+      EmitOptionalArray(ss, 3, sp, "sideSiteIndices", t->sideSites_indices);
+      EmitOptionalArray(ss, 3, sp, "routeSegments", t->path_segments);
+      EmitOptionalArray(ss, 3, sp, "routeDivisors", t->path_divisors);
+      EmitOptionalArray(ss, 3, sp, "routeCoef", t->path_coef);
       EmitKV(ss, 3, sp, "group", JsonNum(t->group.get_value()));
       EmitKV(ss, 3, sp, "limited", JsonStr(t->limited.get_value().str()));
+      EmitKV(ss, 3, sp, "actuatorfrclimited",
+             JsonStr(t->actuatorfrclimited.get_value().str()));
       EmitKV(ss, 3, sp, "range_min", JsonNum(t->range_min.get_value()));
       EmitKV(ss, 3, sp, "range_max", JsonNum(t->range_max.get_value()));
+      EmitKV(ss, 3, sp, "actuatorfrcrange_min",
+             JsonNum(t->actuatorfrcrange_min.get_value()));
+      EmitKV(ss, 3, sp, "actuatorfrcrange_max",
+             JsonNum(t->actuatorfrcrange_max.get_value()));
       EmitKV(ss, 3, sp, "stiffness", JsonNum(t->stiffness.get_value()));
       EmitKV(ss, 3, sp, "damping", JsonNum(t->damping.get_value()));
       EmitKV(ss, 3, sp, "armature", JsonNum(t->armature.get_value()));
@@ -453,7 +503,9 @@ bool ConvertPhysicsToJson(
       EmitOptionalArray(ss, 3, sp, "solreflimit", t->solreflimit);
       EmitOptionalArray(ss, 3, sp, "solimplimit", t->solimplimit);
       EmitOptionalArray(ss, 3, sp, "solreffriction", t->solreffriction);
-      EmitOptionalArray(ss, 3, sp, "solimpfriction", t->solimpfriction, false);
+      EmitOptionalArray(ss, 3, sp, "solimpfriction", t->solimpfriction);
+      EmitKV(ss, 3, sp, "width", JsonNum(t->width.get_value()));
+      EmitKV(ss, 3, sp, "rgba", JsonColor4f(t->rgba.get_value()), false);
       ss << Indent(2, sp) << "}";
       if (i + 1 < data.tendons.size()) ss << ",";
       ss << "\n";

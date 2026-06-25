@@ -1498,6 +1498,47 @@ def Mesh "mesh"
   TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.range"));
 }
 
+void usd_validation_physics_mjc_tendon_route_arrays_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def MjcTendon "badRoute"
+{
+    rel mjc:path = [</a>, </b>]
+    int[] mjc:path:indices = [0]
+    double[] mjc:path:coef = [1]
+    rel mjc:sideSites = [</s>]
+    int[] mjc:sideSites:indices = [0, 1]
+}
+)";
+
+  Layer layer;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(parse_layer(usda, &layer, &warn, &err));
+
+  const USDValidationResult result =
+      ValidateLayerAgainstAOUSDCore(layer, AllGroups());
+  TEST_CHECK(HasRule(result, "physics.extension.mjc.array"));
+
+  const char *valid_usda = R"(#usda 1.0
+
+def MjcTendon "goodRoute"
+{
+    rel mjc:path = [</a>, </b>]
+    int[] mjc:path:indices = [0, 1]
+    double[] mjc:path:coef = [1, -0.5]
+    rel mjc:sideSites = [</s>]
+    int[] mjc:sideSites:indices = [0]
+}
+)";
+
+  Layer valid_layer;
+  TEST_CHECK(parse_layer(valid_usda, &valid_layer, &warn, &err));
+  const USDValidationResult valid_result =
+      ValidateLayerAgainstAOUSDCore(valid_layer, AllGroups());
+  TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.array"));
+}
+
 void usd_validation_physics_newton_extension_test(void) {
   const char *usda = R"(#usda 1.0
 
