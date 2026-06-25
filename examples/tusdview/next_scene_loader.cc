@@ -353,6 +353,42 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     dm->vertices[i].py += delta[3 * i + 1];
     dm->vertices[i].pz += delta[3 * i + 2];
   }
+
+  // Recompute smooth vertex normals from the baked positions so authored-normal
+  // (smooth-shaded) meshes don't keep stale rest normals. Geometric-shaded meshes
+  // re-derive normals in the shader and ignore the attribute, so skip them.
+  if (dm->geometricNormal) return;
+  for (size_t i = 0; i < np; ++i) {
+    dm->vertices[i].nx = dm->vertices[i].ny = dm->vertices[i].nz = 0.0f;
+  }
+  for (size_t t = 0; t + 2 < dm->indices.size(); t += 3) {
+    const uint32_t a = dm->indices[t], b = dm->indices[t + 1],
+                   c = dm->indices[t + 2];
+    if (a >= np || b >= np || c >= np) continue;
+    const DrawVertex& va = dm->vertices[a];
+    const DrawVertex& vb = dm->vertices[b];
+    const DrawVertex& vc = dm->vertices[c];
+    // Cross product of two edges = area-weighted face normal (accumulated to
+    // each vertex for an area-weighted smooth normal).
+    const float e1x = vb.px - va.px, e1y = vb.py - va.py, e1z = vb.pz - va.pz;
+    const float e2x = vc.px - va.px, e2y = vc.py - va.py, e2z = vc.pz - va.pz;
+    const float fnx = e1y * e2z - e1z * e2y;
+    const float fny = e1z * e2x - e1x * e2z;
+    const float fnz = e1x * e2y - e1y * e2x;
+    for (uint32_t v : {a, b, c}) {
+      dm->vertices[v].nx += fnx;
+      dm->vertices[v].ny += fny;
+      dm->vertices[v].nz += fnz;
+    }
+  }
+  for (size_t i = 0; i < np; ++i) {
+    DrawVertex& v = dm->vertices[i];
+    const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+    if (len > 1e-12f) {
+      const float inv = 1.0f / len;
+      v.nx *= inv; v.ny *= inv; v.nz *= inv;
+    }
+  }
 }
 
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
