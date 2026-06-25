@@ -157,6 +157,10 @@ struct DrawMeshCPU {
   // culling (raster) and the CUDA instance world-AABBs transform per instance.
   float protoAabbMin[3]{0, 0, 0};
   float protoAabbMax[3]{0, 0, 0};
+  // Max per-axis morph displacement (object space), used to pad protoAabb so a
+  // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
+  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
+  float morphExtent[3]{0, 0, 0};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
   // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =

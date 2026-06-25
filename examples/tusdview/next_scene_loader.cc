@@ -587,6 +587,29 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
       dm->morphChannelId[slot] = chId;
     }
   }
+
+  // Max per-axis morph displacement, to pad protoAabb for per-instance culling.
+  // Conservative: per vertex, sum each axis's positive and negative deltas across
+  // ALL channels (worst case = every channel at full coefficient), then take the
+  // largest absolute swing over vertices. Safe superset (over-pads, never culls a
+  // visible morphed instance); small overdrive (weight > 1) is not bounded.
+  std::vector<float> sumPos(np * 3, 0.0f), sumNeg(np * 3, 0.0f);
+  for (const Chan& c : chans) {
+    const size_t m = c.offsets.size() / 3;
+    for (size_t e = 0; e < m; ++e) {
+      const int64_t v = vtxOf(c, e);
+      if (v < 0) continue;
+      for (int a = 0; a < 3; ++a) {
+        const float d = c.offsets[e * 3 + a];
+        (d >= 0.0f ? sumPos : sumNeg)[size_t(v) * 3 + a] += d;
+      }
+    }
+  }
+  for (size_t v = 0; v < np; ++v)
+    for (int a = 0; a < 3; ++a)
+      dm->morphExtent[a] = std::max(
+          dm->morphExtent[a],
+          std::max(sumPos[v * 3 + a], -sumNeg[v * 3 + a]));
 }
 
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
@@ -699,7 +722,12 @@ void EmitInstancedProto(const tnext::Stage& stage,
         lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
         lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
       }
-      for (int k = 0; k < 3; ++k) { dm.protoAabbMin[k] = lo[k]; dm.protoAabbMax[k] = hi[k]; }
+      // Pad by the GPU morph's max displacement so a morphed instance is not
+      // wrongly frustum-culled (the rest box would miss the displaced geometry).
+      for (int k = 0; k < 3; ++k) {
+        dm.protoAabbMin[k] = lo[k] - dm.morphExtent[k];
+        dm.protoAabbMax[k] = hi[k] + dm.morphExtent[k];
+      }
     }
     dm.instanceXforms.reserve(placements.size() * 12);
     if (haveColors) dm.instanceColors.reserve(placements.size() * 3);
