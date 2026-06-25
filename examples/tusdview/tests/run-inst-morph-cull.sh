@@ -10,12 +10,17 @@
 #
 # Needs a GL (or VK) context: runs under xvfb-run when no $DISPLAY. Software GL
 # (llvmpipe) is fine -- culling is CPU-side, independent of rasterization. If no
-# renderer can be created the test SKIPs (exit 0) rather than failing.
+# renderer can be created the test SKIPs (exit 77, ctest SKIP_RETURN_CODE) rather
+# than failing, so headless CI without a GPU/display does not report a failure.
+#
+# Exit codes: 0 = pass, 1 = fail (instance wrongly culled), 77 = skip.
 #
 # Usage (from the repo root, after building build/tusdview):
 #   examples/tusdview/tests/run-inst-morph-cull.sh
 # Overrides: TUSDVIEW=<binary>  BACKEND=gl|vk
+# Also run via ctest: `ctest -R tusdview-inst-morph-cull`.
 set -uo pipefail
+SKIP=77
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUSDVIEW="${TUSDVIEW:-$SCRIPT_DIR/../../../build/tusdview}"
@@ -24,7 +29,7 @@ ASSET="$SCRIPT_DIR/inst_morph_cull.usda"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"
-  exit 0
+  exit $SKIP
 fi
 
 OUT="$(mktemp -d)/inst_morph_cull.png"
@@ -41,7 +46,7 @@ echo "$LOG"
 
 if ! echo "$LOG" | grep -q "render stats"; then
   echo "SKIP: no renderer (backend '$BACKEND' unavailable in this environment)"
-  exit 0
+  exit $SKIP
 fi
 
 if echo "$LOG" | grep -q "instances 4/4 visible"; then
