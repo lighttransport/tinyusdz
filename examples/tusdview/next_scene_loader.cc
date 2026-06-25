@@ -133,6 +133,22 @@ std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, doubl
   if (r.empty()) r = pull(p.GetPropertyValue(name));
   return r;
 }
+std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
+                                    double t) {
+  auto pull = [](const tnext::Value* v) -> std::vector<std::string> {
+    if (!v) return {};
+    if (v->is_lazy()) {
+      tnext::Value tmp = v->materialized_copy();
+      if (const auto* a = tmp.as_token_array()) return *a;
+      return {};
+    }
+    if (const auto* a = v->as_token_array()) return *a;
+    return {};
+  };
+  std::vector<std::string> r = pull(p.GetValueAtTime(name, t));
+  if (r.empty()) r = pull(p.GetPropertyValue(name));
+  return r;
+}
 
 // Build interleaved DrawVertex geometry (mesh-LOCAL space) + indices from a
 // tydra-next RenderMesh. Returns false if there is no renderable geometry.
@@ -230,6 +246,115 @@ std::string ResolveNextPurpose(const tnext::Stage& stage, const std::string& abs
   return "default";
 }
 
+// Resolve the SkelAnimation that drives a mesh's blendshapes, returning a
+// blendShape-name -> weight map. The next converter emits no skel/morph data, so
+// we read straight from the stage: prefer a `skel:animationSource` relationship
+// (walking the mesh's ancestors, which is where SkelRoot/Skeleton authors it),
+// else fall back to scanning the enclosing SkelRoot subtree for a SkelAnimation
+// prim. Empty map => everything stays at rest. `time` picks the time sample.
+std::unordered_map<std::string, float> ResolveBlendWeights(
+    const tnext::Stage& stage, const tnext::UsdPrim& meshPrim, double time) {
+  std::unordered_map<std::string, float> out;
+
+  // Find the SkelAnimation prim.
+  tnext::UsdPrim anim;
+  tnext::UsdPrim skelRoot;
+  for (tnext::UsdPrim a = meshPrim; a.IsValid(); a = a.GetParent()) {
+    if (const std::vector<tnext::Path>* src =
+            a.GetRelationship("skel:animationSource")) {
+      if (!src->empty()) {
+        tnext::UsdPrim cand = stage.GetPrimAtPath((*src)[0]);
+        if (cand.IsValid() && cand.GetTypeName() == "SkelAnimation") {
+          anim = cand;
+          break;
+        }
+      }
+    }
+    if (a.GetTypeName() == "SkelRoot") skelRoot = a;
+    if (a.GetPath().str() == "/") break;
+  }
+  // Fallback: first SkelAnimation under the enclosing SkelRoot.
+  if (!anim.IsValid() && skelRoot.IsValid()) {
+    std::function<tnext::UsdPrim(const tnext::UsdPrim&)> find =
+        [&](const tnext::UsdPrim& p) -> tnext::UsdPrim {
+      if (p.GetTypeName() == "SkelAnimation") return p;
+      for (const tnext::UsdPrim& c : p.GetChildren()) {
+        tnext::UsdPrim r = find(c);
+        if (r.IsValid()) return r;
+      }
+      return tnext::UsdPrim();
+    };
+    anim = find(skelRoot);
+  }
+  if (!anim.IsValid()) return out;
+
+  const std::vector<std::string> names = ReadTokens(anim, "blendShapes", time);
+  const std::vector<float> weights = ReadFloats(anim, "blendShapeWeights", time);
+  for (size_t i = 0; i < names.size() && i < weights.size(); ++i)
+    out[names[i]] = weights[i];
+  return out;
+}
+
+// Bake blendshape (morph) targets into the prototype's local vertex positions
+// once at load. The `--next` instanced path has no GPU morph, so resolving the
+// morph into geometry here makes the existing flat instanced GL/VK path render N
+// instances of the morphed prototype with no shader/attribute changes. The morph
+// is per-prototype (shared by all instances), and `--next` is a static preview,
+// so load-time weights suffice. `dm->vertices` is point-indexed (vertex i == point
+// i), matching the BlendShape `pointIndices` which index authored points.
+//
+// Limitations (acceptable for a static preview): only the primary target offset
+// (scaled linearly by weight) is applied -- USD in-between samples are not
+// interpolated (see ApplyMorphTarget in skinning.cc for the bracket logic). Vertex
+// normals are left untouched; meshes shaded geometrically (the common case, incl.
+// the test cube) re-derive correct normals from the baked positions, but authored
+// smooth normals would go stale.
+void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
+                     double time, DrawMeshCPU* dm) {
+  const std::vector<std::string> shapeNames =
+      ReadTokens(meshPrim, "skel:blendShapes", time);
+  const std::vector<tnext::Path>* targets =
+      meshPrim.GetRelationship("skel:blendShapeTargets");
+  if (shapeNames.empty() || !targets || targets->empty()) return;
+
+  const std::unordered_map<std::string, float> weights =
+      ResolveBlendWeights(stage, meshPrim, time);
+  if (weights.empty()) return;
+
+  const size_t np = dm->vertices.size();
+  if (np == 0) return;
+  std::vector<float> delta(3 * np, 0.0f);
+  bool any = false;
+
+  const size_t n = std::min(shapeNames.size(), targets->size());
+  for (size_t i = 0; i < n; ++i) {
+    auto it = weights.find(shapeNames[i]);
+    if (it == weights.end() || std::fabs(it->second) < 1e-8f) continue;
+    const float w = it->second;
+    tnext::UsdPrim bs = stage.GetPrimAtPath((*targets)[i]);
+    if (!bs.IsValid()) continue;
+    const std::vector<float> offsets = ReadFloats(bs, "offsets", time);
+    const std::vector<int32_t> pointIndices = ReadInts(bs, "pointIndices", time);
+    const size_t m = offsets.size() / 3;
+    for (size_t k = 0; k < m; ++k) {
+      // Absent pointIndices => offsets are per-point for all points (USD rule).
+      const int64_t pidx =
+          pointIndices.empty() ? int64_t(k) : int64_t(pointIndices[k]);
+      if (pidx < 0 || size_t(pidx) >= np) continue;
+      delta[3 * pidx + 0] += w * offsets[3 * k + 0];
+      delta[3 * pidx + 1] += w * offsets[3 * k + 1];
+      delta[3 * pidx + 2] += w * offsets[3 * k + 2];
+      any = true;
+    }
+  }
+  if (!any) return;
+  for (size_t i = 0; i < np; ++i) {
+    dm->vertices[i].px += delta[3 * i + 0];
+    dm->vertices[i].py += delta[3 * i + 1];
+    dm->vertices[i].pz += delta[3 * i + 2];
+  }
+}
+
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
@@ -242,6 +367,9 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   tydn::RenderMesh rm;
   if (!conv.ConvertMesh(mp, &rm)) return false;
   if (!FillFlatGeometry(rm, dm)) return false;
+  // Resolve blendshapes into the prototype geometry at load (the next instanced
+  // path has no GPU morph). No-ops for non-blendshaped meshes.
+  BakeBlendShapes(stage, mp, time, dm);
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor is carried PER-VERTEX (FillFlatGeometry filled
   // dm->vertexColors -- uploaded to GL attrib 10 for instanced draws, shared by all
