@@ -513,18 +513,35 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
                        LoadControl* ctrl,
-                       const std::unordered_map<std::string, float>* blendOverride) {
+                       const std::unordered_map<std::string, float>* blendOverride,
+                       RestSceneCache* restCache) {
   if (draw) *draw = DrawScene{};
   // Convert the scene at `timecode` WITHOUT packing (draw=nullptr): node
   // transforms / time-sampled points / value clips are resolved by Tydra, but
   // skeletal skinning and blendshapes are not. Deform the rest-pose meshes on
   // the CPU, then pack the posed geometry. Textures are not re-decoded
   // (loadTextures=false), so the caller keeps the initial load's textures.
+  //
+  // `scratch` ends up holding the DEFORMED geometry (DeformSkinnedMeshes mutates
+  // points in place). The rest cache stores a pre-deform copy keyed by timecode:
+  // a same-timecode hit (e.g. dragging a blendshape weight while paused) reuses it
+  // and skips the heavy ConvertStageToSceneImpl.
   tinyusdz::tydra::RenderScene scratch;
-  if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
-                               rtPath, /*loadTextures=*/false, &scratch,
-                               /*draw=*/nullptr, warn, err, ctrl)) {
-    return false;
+  const bool cacheHit =
+      restCache && restCache->valid && restCache->timecode == timecode;
+  if (cacheHit) {
+    scratch = restCache->scene;  // copy rest (cheap vs re-converting the stage)
+  } else {
+    if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
+                                 rtPath, /*loadTextures=*/false, &scratch,
+                                 /*draw=*/nullptr, warn, err, ctrl)) {
+      return false;
+    }
+    if (restCache) {  // store the rest scene (before deform) for later reuse
+      restCache->scene = scratch;
+      restCache->timecode = timecode;
+      restCache->valid = true;
+    }
   }
   DeformSkinnedMeshes(src.stage, scratch, timecode, blendOverride);
   BuildDrawScene(scratch, draw, ctrl, &src.stage);
