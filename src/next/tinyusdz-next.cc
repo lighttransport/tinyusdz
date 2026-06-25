@@ -8,10 +8,10 @@
 #include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
-#include <fstream>
 #include <cstdlib>
-#include <thread>
 #include <cstring>
+#include <fstream>
+#include <thread>
 
 namespace tinyusdz {
 namespace next {
@@ -75,23 +75,21 @@ FileFormat DetectFormatFromExtension(const std::string& filename) {
   return FileFormat::Unknown;
 }
 
-bool ReadFile(const std::string& filename, std::vector<uint8_t>* data, std::string* err) {
-  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
+FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* err) {
+  std::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
-    if (err) *err = "Failed to open file: " + filename;
-    return false;
+    if (err) *err = "Failed to open file for format detection: " + filename;
+    return FileFormat::Unknown;
   }
 
-  std::streamsize size = ifs.tellg();
-  ifs.seekg(0, std::ios::beg);
-
-  data->resize(static_cast<size_t>(size));
-  if (!ifs.read(reinterpret_cast<char*>(data->data()), size)) {
-    if (err) *err = "Failed to read file: " + filename;
-    return false;
+  uint8_t header[4096] = {};
+  ifs.read(reinterpret_cast<char*>(header), sizeof(header));
+  const std::streamsize nread = ifs.gcount();
+  if (nread <= 0) {
+    if (err) *err = "Failed to read file header: " + filename;
+    return FileFormat::Unknown;
   }
-
-  return true;
+  return DetectFormat(header, static_cast<size_t>(nread));
 }
 
 }  // namespace
@@ -103,16 +101,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
     return false;
   }
 
-  // Read file to detect format
-  std::vector<uint8_t> data;
-  if (!ReadFile(filename, &data, err)) {
-    return false;
-  }
-
-  // Detect format
   FileFormat format = DetectFormatFromExtension(filename);
   if (format == FileFormat::Unknown) {
-    format = DetectFormat(data.data(), data.size());
+    format = DetectFormatFromFileHeader(filename, err);
   }
 
   switch (format) {

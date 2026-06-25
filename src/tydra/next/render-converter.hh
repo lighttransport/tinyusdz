@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "render-data.hh"
+#include "render-extract.hh"
 #include "scene-access.hh"
 #include "next/stage/stage.hh"
 
@@ -111,7 +112,7 @@ class RenderSceneConverter {
 
  private:
   // Build scene hierarchy
-  void BuildNodeHierarchy(const ::tinyusdz::next::Stage& stage, RenderScene* scene);
+  void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
 
   // Extract mesh data directly into chunked arrays
   bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
