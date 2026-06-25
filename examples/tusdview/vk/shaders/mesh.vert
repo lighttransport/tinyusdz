@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -10,26 +11,10 @@ layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV)
 layout(location = 7) in float aMorphInfl; // blendshape influence (world units)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 = none
 
-layout(set = 1, binding = 0, std430) readonly buffer BoneRows {
-  vec4 boneRows[];
-};
-// GPU blendshape morph: per-vertex sparse delta list (set 7) + per-frame coefficient
-// per channel (set 8). pos += sum coeff[channel]*delta, applied before skinning.
-// Each entry packs 4 halfs (channelId,dx,dy,dz) into one uvec2 (unpackHalf2x16).
-layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
-layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
-// Per-entry channelId in its own buffer so the loop can read it WITHOUT touching
-// the wide delta SSBO -- the active-channel skip pre-check (facial animation: only
-// a handful of 64+ targets active per frame). Channels share a per-vertex order,
-// so the branch is warp-coherent on dense rigs. uint16 packed 2-per-uint (parity
-// with GL's R16UI; no 16-bit-storage feature needed) -- see morphChanId().
-layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
-uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint)
-  return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;
-}
-layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows {
-  vec4 influenceRows[];
-};
+// Blendshape morph + linear-blend skinning (sets 1,2,7,8,9 + fetchBone /
+// morphChanId / applyMorphSkin); shared with the GPU-tessellation vertex stage.
+#include "deform.glsl"
+
 // Coarse displacement height map (red channel), sampled in the vertex stage. The
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
@@ -65,67 +50,11 @@ layout(location = 4) out float vDomWeight;
 layout(location = 5) out vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 layout(location = 6) out float vMorphInfl;     // blendshape influence (world units)
 
-mat4 fetchBone(uint idx) {
-  int base = int(idx) * 4;
-  return mat4(
-      boneRows[base + 0],
-      boneRows[base + 1],
-      boneRows[base + 2],
-      boneRows[base + 3]);
-}
-
 void main() {
-  vec3 pos = aPos;
-  vec3 nrm = aNormal;
-  // GPU blendshape morph (before skinning): sum coeff*delta over this vertex's
-  // sparse channel list. Cap mirrors the extended-skinning influence loop.
-  if (aMorphOffsetCount.y > 0u) {
-    int mbase = int(aMorphOffsetCount.x);
-    int mcount = min(int(aMorphOffsetCount.y), 256);
-    for (int i = 0; i < 256; ++i) {
-      if (i >= mcount) break;
-      // Cheap channelId fetch first; skip the wide delta fetch when inactive.
-      float c = morphCoeff[int(morphChanId(uint(mbase + i)))];
-      if (abs(c) < 1e-6) continue;
-      uvec2 raw = morphDeltas[mbase + i];
-      vec2 a = unpackHalf2x16(raw.x);  // (channelId, dx)
-      vec2 b = unpackHalf2x16(raw.y);  // (dy, dz)
-      pos += c * vec3(a.y, b.x, b.y);
-    }
-  }
-  float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
-  uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
-  int boneCapacity = boneRows.length() / 4;
-  if (aInfluence.y > 0u) {
-    mat4 skin = mat4(0.0);
-    float fullWeightSum = 0.0;
-    int base = int(aInfluence.x);
-    int count = min(int(aInfluence.y), 256);
-    for (int i = 0; i < 256; ++i) {
-      if (i >= count) break;
-      int linear = base + i;
-      vec4 iw = influenceRows[linear];
-      uint joint = uint(iw.x + 0.5);
-      float weight = iw.y;
-      if (weight > 0.0 && int(joint) < boneCapacity) {
-        skin += fetchBone(joint) * weight;
-        fullWeightSum += weight;
-      }
-    }
-    if (fullWeightSum > 0.0) {
-      skin *= 1.0 / fullWeightSum;
-      pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
-      nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
-    }
-  } else if (wsum > 0.0 && int(maxJoint) < boneCapacity) {
-    mat4 skin =
-        fetchBone(aJoint.x) * aWeight.x +
-        fetchBone(aJoint.y) * aWeight.y +
-        fetchBone(aJoint.z) * aWeight.z +
-        fetchBone(aJoint.w) * aWeight.w;
-    pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
-    nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
-  }
+  // Blendshape morph (before skin) + linear-blend skin -> object-space pos/nrm.
+  vec3 pos, nrm;
+  applyMorphSkin(aPos, aNormal, aMorphOffsetCount, aJoint, aWeight, aInfluence,
+                 pos, nrm);
   // Coarse displacement: offset along the (object-space) normal by the height map's
   // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
   // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
