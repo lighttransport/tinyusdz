@@ -542,6 +542,12 @@ void main() {
 }
 
 // ==================== GL430 Bindless Shaders ====================
+//
+// UNUSED scaffold for a future GL 4.3 path (no callers; the renderer uses the
+// GL330 shaders). STALE: these predate GPU blendshape morph, GPU skinning, and
+// displacement, so activating them as-is would render none of those. Re-derive
+// from the GL330 shaders (which carry the current morph/skin/displacement) before
+// wiring up a 4.3 path.
 
 const char* getMaterialVertexShaderGL430() {
     return R"glsl(#version 430 core
@@ -649,6 +655,11 @@ void main() {
 }
 
 // ==================== Vulkan 450 Shaders ====================
+//
+// UNUSED: the Vulkan backend compiles vk/shaders/*.vert|frag to SPIR-V (which
+// carry the current morph/skin/displacement) rather than these strings. STALE
+// (predate that work); kept only as a GLSL reference. Don't wire these up without
+// re-deriving from vk/shaders/.
 
 const char* getMaterialVertexShaderVK450() {
     return R"glsl(#version 450
