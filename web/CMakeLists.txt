@@ -160,6 +160,14 @@ add_executable(${BUILD_TARGET} ${SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
+target_compile_options(${BUILD_TARGET}
+                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+                               $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+target_compile_definitions(${BUILD_TARGET}
+                           PRIVATE JSON_NOEXCEPTION=1
+                                   TINYUSDZ_CXX_EXCEPTIONS=0
+                                   TINYUSDZ_CXX_RTTI=0
+                                   EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
@@ -222,8 +230,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   else()
     # Standard debug mode
@@ -236,8 +242,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   endif()
 else()

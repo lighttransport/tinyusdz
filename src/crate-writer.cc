@@ -49,7 +49,6 @@ namespace pathlib = ::crate;
 // - shadow: if-else chains reuse variable names intentionally
 // - sign-conversion: safe narrowing in serialization code
 // - old-style-cast: debug print formatting
-// - exceptions: comparator functions may throw in debug builds
 // - unused-parameter: some functions have consistent API signatures
 #if defined(__clang__)
 #pragma clang diagnostic push

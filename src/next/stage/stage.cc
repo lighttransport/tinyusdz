@@ -422,6 +422,7 @@ bool Stage::HasTimeSamples() const {
   // Check if any prim has time samples
   bool has_samples = false;
   Traverse([&](const UsdPrim& prim) {
+    (void)prim;
     // Check all properties for time samples
     // Simplified: just check if endTimeCode > startTimeCode
     if (meta_.endTimeCode > meta_.startTimeCode) {

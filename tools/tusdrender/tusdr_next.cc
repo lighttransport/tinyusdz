@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -14,54 +15,37 @@
 #include "image-writer.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
+#include "tydra/next/render-extract.hh"
 #include "usdVol.hh"
 #include "tusdr_context.hh"
 
 namespace tusdr {
 
+bool ReadFloatArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+                            const char *name, double time,
+                            tinyusdz::tydra::next::ValueArrayRead<float> *out) {
+  return tinyusdz::tydra::next::ReadFloatArray(prim, name, time, out);
+}
+
+bool ReadIntArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+                          const char *name, double time,
+                          tinyusdz::tydra::next::ValueArrayRead<int32_t> *out) {
+  return tinyusdz::tydra::next::ReadIntArray(prim, name, time, out);
+}
+
 std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                       const char *name, double time) {
-  const tinyusdz::next::Value *v = std::isnan(time)
-                                       ? prim.GetPropertyValue(name)
-                                       : prim.GetValueAtTime(name, time);
-  if (!v) return {};
-  if (v->is_lazy()) {
-    tinyusdz::next::Value tmp = v->materialized_copy();
-    if (const std::vector<float> *a = tmp.as_float_array()) return *a;
-    return {};
-  }
-  if (const std::vector<float> *a = v->as_float_array()) return *a;
-  return {};
+  return tinyusdz::tydra::next::ReadFloatArrayCopy(prim, name, time);
 }
 
 std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                       const char *name, double time) {
-  const tinyusdz::next::Value *v = std::isnan(time)
-                                       ? prim.GetPropertyValue(name)
-                                       : prim.GetValueAtTime(name, time);
-  if (!v) return {};
-  if (v->is_lazy()) {
-    tinyusdz::next::Value tmp = v->materialized_copy();
-    if (const std::vector<int32_t> *a = tmp.as_int_array()) return *a;
-    return {};
-  }
-  if (const std::vector<int32_t> *a = v->as_int_array()) return *a;
-  return {};
+  return tinyusdz::tydra::next::ReadIntArrayCopy(prim, name, time);
 }
 
 std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                         const char *name, double time) {
-  const tinyusdz::next::Value *v = std::isnan(time)
-                                       ? prim.GetPropertyValue(name)
-                                       : prim.GetValueAtTime(name, time);
-  if (!v) return {};
-  if (v->is_lazy()) {
-    tinyusdz::next::Value tmp = v->materialized_copy();
-    if (const std::vector<int64_t> *a = tmp.as_int64_array()) return *a;
-    return {};
-  }
-  if (const std::vector<int64_t> *a = v->as_int64_array()) return *a;
-  return {};
+  return tinyusdz::tydra::next::ReadInt64ArrayCopy(prim, name, time);
 }
 
 // Templated on the output buffer type so the flat path can stream into plain
@@ -137,12 +121,15 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     out_job_mat->ior = ior;
     out_job_mat->use_specular_workflow = use_specular_workflow;
   }
-  // Read geometry without permanently materializing it into the stage.
-  const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
-  const std::vector<int32_t> counts =
-      ReadIntArrayLazy(prim, "faceVertexCounts", time);
-  const std::vector<int32_t> indices =
-      ReadIntArrayLazy(prim, "faceVertexIndices", time);
+  // Read core geometry without permanently materializing it into the stage.
+  // Uncompressed USDC arrays are borrowed from the retained crate buffer; other
+  // encodings decode into function-local scratch and are freed after this mesh.
+  tinyusdz::tydra::next::ValueArrayRead<float> points;
+  tinyusdz::tydra::next::ValueArrayRead<int32_t> counts;
+  tinyusdz::tydra::next::ValueArrayRead<int32_t> indices;
+  ReadFloatArrayViewLazy(prim, "points", time, &points);
+  ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
+  ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
   if (points.empty() || counts.empty() || indices.empty()) {
     stats->skipped_meshes++;
     return;
@@ -737,20 +724,19 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // array is per-vertex/faceVarying/uniform and sets *vertex_color so the stream
   // stores per-corner colors (see AddRTPreviewMeshNext). A bound material below
   // overrides the constant color.
-  if (const tinyusdz::next::Value *dcv =
-          mesh.GetPropertyValue("primvars:displayColor")) {
-    if (const std::vector<float> *dc = dcv->as_float_array()) {
-      if (dc->size() >= 3) *base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
-      if (vertex_color && dc->size() > 3) *vertex_color = true;
-    }
+  constexpr double kDefaultTime = std::numeric_limits<double>::quiet_NaN();
+  tinyusdz::tydra::next::ValueArrayRead<float> dc;
+  if (tinyusdz::tydra::next::ReadFloatArray(
+          mesh, "primvars:displayColor", kDefaultTime, &dc)) {
+    if (dc.size() >= 3) *base_color = Vec3{dc[0], dc[1], dc[2]};
+    if (vertex_color && dc.size() > 3) *vertex_color = true;
   }
   if (opacity) {
-    if (const tinyusdz::next::Value *dov =
-            mesh.GetPropertyValue("primvars:displayOpacity")) {
-      if (const std::vector<float> *od = dov->as_float_array()) {
-        if (!od->empty()) *opacity = std::min(1.0f, std::max(0.0f, (*od)[0]));
-        if (vertex_color && od->size() > 1) *vertex_color = true;
-      }
+    tinyusdz::tydra::next::ValueArrayRead<float> od;
+    if (tinyusdz::tydra::next::ReadFloatArray(
+            mesh, "primvars:displayOpacity", kDefaultTime, &od)) {
+      if (!od.empty()) *opacity = std::min(1.0f, std::max(0.0f, od[0]));
+      if (vertex_color && od.size() > 1) *vertex_color = true;
     }
   }
   const std::vector<tinyusdz::next::Path> *bind =
@@ -2433,9 +2419,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // Gather native-instance prototype holders up front so the base-geometry
   // traversal can skip them (they are rendered via their instance proxies).
   std::unordered_set<std::string> proto_holders;
-  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
-    CollectPrototypePaths(root, &proto_holders);
-  }
+  tinyusdz::tydra::next::CollectPrototypePaths(ctx.stage, &proto_holders);
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
                       tinyusdz::Purpose::Default, time, opt.mask, &base_jobs,

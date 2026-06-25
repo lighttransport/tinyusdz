@@ -6,6 +6,7 @@
 #include "render-converter.hh"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 #include <unordered_set>
 
 namespace tinyusdz {
@@ -52,79 +53,84 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     result.scene.end_time = meta.endTimeCode;
     result.scene.frames_per_second = meta.timeCodesPerSecond;
 
+    RenderExtractOptions xopts;
+    xopts.time_code = config_.time_code;
+    xopts.collect_other = true;
+    RenderExtractResult extracted;
+    CollectRenderPrims(stage, xopts, &extracted);
+
     // Build node hierarchy first
     if (config_.progress_callback) {
       config_.progress_callback(0.1f, "Building node hierarchy...");
     }
-    BuildNodeHierarchy(stage, &result.scene);
+    BuildNodeHierarchy(extracted, &result.scene);
 
     // Convert meshes
-    auto meshes = FindMeshes(stage);
     float mesh_progress_start = 0.2f;
     float mesh_progress_end = 0.5f;
 
-    for (size_t i = 0; i < meshes.size(); ++i) {
+    for (size_t i = 0; i < extracted.meshes.size(); ++i) {
+      const UsdPrim& mesh_prim = extracted.meshes[i].prim;
       if (config_.progress_callback) {
         float p = mesh_progress_start +
-                  (mesh_progress_end - mesh_progress_start) * i / meshes.size();
-        config_.progress_callback(p, "Converting mesh: " + meshes[i].GetName());
+                  (mesh_progress_end - mesh_progress_start) * i /
+                      std::max<size_t>(extracted.meshes.size(), 1);
+        config_.progress_callback(p, "Converting mesh: " + mesh_prim.GetName());
       }
 
       RenderMesh mesh;
-      if (ConvertMesh(meshes[i], &mesh)) {
+      if (ConvertMesh(mesh_prim, &mesh)) {
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
       } else {
-        warnings_.push_back("Failed to convert mesh: " + meshes[i].GetPath().str());
+        warnings_.push_back("Failed to convert mesh: " + mesh_prim.GetPath().str());
       }
     }
 
     // Convert materials
-    auto materials = FindMaterials(stage);
     float mat_progress_start = 0.5f;
     float mat_progress_end = 0.7f;
 
-    for (size_t i = 0; i < materials.size(); ++i) {
+    for (size_t i = 0; i < extracted.materials.size(); ++i) {
+      const UsdPrim& mat_prim = extracted.materials[i].prim;
       if (config_.progress_callback) {
         float p = mat_progress_start +
-                  (mat_progress_end - mat_progress_start) * i / materials.size();
-        config_.progress_callback(p, "Converting material: " + materials[i].GetName());
+                  (mat_progress_end - mat_progress_start) * i /
+                      std::max<size_t>(extracted.materials.size(), 1);
+        config_.progress_callback(p, "Converting material: " + mat_prim.GetName());
       }
 
       RenderMaterial material;
-      if (ConvertMaterial(stage, materials[i], &material)) {
+      if (ConvertMaterial(stage, mat_prim, &material)) {
         int32_t mat_id = static_cast<int32_t>(result.scene.materials.size());
         result.scene.material_by_path[material.prim_path] = mat_id;
         result.scene.materials.push_back(std::move(material));
       } else {
-        warnings_.push_back("Failed to convert material: " + materials[i].GetPath().str());
+        warnings_.push_back("Failed to convert material: " + mat_prim.GetPath().str());
       }
     }
 
     // Convert lights
-    auto lights = FindLights(stage);
-    for (const auto& light_prim : lights) {
+    for (const auto& rec : extracted.lights) {
       RenderLight light;
-      if (ConvertLight(light_prim, &light)) {
+      if (ConvertLight(rec.prim, &light)) {
         result.scene.lights.push_back(std::move(light));
       }
     }
 
     // Convert cameras
-    auto cameras = FindCameras(stage);
-    for (const auto& cam_prim : cameras) {
+    for (const auto& rec : extracted.cameras) {
       RenderCamera camera;
-      if (ConvertCamera(cam_prim, &camera)) {
+      if (ConvertCamera(rec.prim, &camera)) {
         result.scene.cameras.push_back(std::move(camera));
       }
     }
 
     // Convert skeletons
-    auto skeletons = FindSkeletons(stage);
-    for (const auto& skel_prim : skeletons) {
+    for (const auto& rec : extracted.skeletons) {
       Skeleton skeleton;
-      if (ConvertSkeleton(skel_prim, &skeleton)) {
+      if (ConvertSkeleton(rec.prim, &skeleton)) {
         result.scene.skeletons.push_back(std::move(skeleton));
       }
     }
@@ -144,16 +150,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 // Node hierarchy
 //
 
-void RenderSceneConverter::BuildNodeHierarchy(const Stage& stage, RenderScene* scene) {
+void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extracted,
+                                              RenderScene* scene) {
   std::unordered_map<std::string, int32_t> path_to_node;
 
-  stage.Traverse([&](const UsdPrim& prim) {
+  for (const RenderPrimRecord& rec : extracted.records) {
+    const UsdPrim& prim = rec.prim;
     SceneNode node;
     node.name = prim.GetName();
-    node.prim_path = prim.GetPath().str();
+    node.prim_path = rec.path;
 
     // Determine node type
-    const std::string& type = prim.GetTypeName();
+    const std::string& type = rec.type_name;
     if (type == "Mesh") node.type = NodeType::Mesh;
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
@@ -172,8 +180,10 @@ void RenderSceneConverter::BuildNodeHierarchy(const Stage& stage, RenderScene* s
     }
 
     // Compute transforms
-    ComputeLocalTransform(prim, node.local_transform.m, config_.time_code);
-    ComputeWorldTransform(stage, prim, node.world_transform.m, config_.time_code);
+    for (int i = 0; i < 16; ++i) {
+      node.local_transform.m[i] = static_cast<float>(rec.local[i]);
+      node.world_transform.m[i] = static_cast<float>(rec.world[i]);
+    }
 
     // Get visibility
     bool visible = true;
@@ -197,8 +207,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const Stage& stage, RenderScene* s
     }
 
     scene->nodes.push_back(std::move(node));
-    return true;
-  });
+  }
 }
 
 //
@@ -242,7 +251,8 @@ bool RenderSceneConverter::ConvertMesh(const UsdPrim& prim, RenderMesh* out) {
 
 bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
   // Get face vertex counts
-  std::vector<int32_t> face_counts = GetIntArray(prim, "faceVertexCounts");
+  ValueArrayRead<int32_t> face_counts;
+  ReadIntArray(prim, "faceVertexCounts", config_.time_code, &face_counts);
   if (face_counts.empty()) {
     last_error_ = "Mesh has no faceVertexCounts";
     return false;
@@ -254,7 +264,8 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   }
 
   // Get face vertex indices
-  std::vector<int32_t> indices = GetIntArray(prim, "faceVertexIndices");
+  ValueArrayRead<int32_t> indices;
+  ReadIntArray(prim, "faceVertexIndices", config_.time_code, &indices);
   if (indices.empty()) {
     last_error_ = "Mesh has no faceVertexIndices";
     return false;
@@ -269,21 +280,15 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
 }
 
 bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
-  // Get points directly into chunked array
-  const Value* points_val = GetAttribute(prim, "points");
-  if (!points_val) {
-    last_error_ = "Mesh has no points";
-    return false;
-  }
-
-  const std::vector<float>* points = points_val->as_float_array();
-  if (!points || points->empty()) {
+  ValueArrayRead<float> points;
+  ReadFloatArray(prim, "points", config_.time_code, &points);
+  if (points.empty()) {
     last_error_ = "Invalid points data";
     return false;
   }
 
   // Copy directly to chunked array
-  mesh->points.append(points->data(), points->size());
+  mesh->points.append(points.view.data, points.view.size);
 
   // Compute bounding box
   size_t num_points = mesh->point_count();
@@ -307,11 +312,10 @@ bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* 
   }
 
   // Get normals if present
-  const Value* normals_val = GetAttribute(prim, "normals");
-  if (normals_val) {
-    const std::vector<float>* normals = normals_val->as_float_array();
-    if (normals && !normals->empty()) {
-      mesh->normals.append(normals->data(), normals->size());
+  ValueArrayRead<float> normals;
+  if (ReadFloatArray(prim, "normals", config_.time_code, &normals)) {
+    if (!normals.empty()) {
+      mesh->normals.append(normals.view.data, normals.view.size);
 
       // Determine interpolation
       std::string interp;
@@ -330,11 +334,10 @@ bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* 
 bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh) {
   // Get UV coordinates
   std::string uv_name = "primvars:" + config_.mesh.default_uv_primvar;
-  const Value* uv_val = GetAttribute(prim, uv_name);
-  if (uv_val) {
-    const std::vector<float>* uvs = uv_val->as_float_array();
-    if (uvs && !uvs->empty()) {
-      mesh->texcoords_0.append(uvs->data(), uvs->size());
+  ValueArrayRead<float> uvs;
+  if (ReadFloatArray(prim, uv_name.c_str(), config_.time_code, &uvs)) {
+    if (!uvs.empty()) {
+      mesh->texcoords_0.append(uvs.view.data, uvs.view.size);
 
       std::string interp;
       GetToken(prim, uv_name + ":interpolation", &interp);
@@ -347,12 +350,10 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
   }
 
   // Get vertex colors
-  const Value* colors_val = GetAttribute(prim, "primvars:displayColor");
-  if (colors_val) {
-    const std::vector<float>* colors = colors_val->as_float_array();
-    if (colors && !colors->empty()) {
-      mesh->colors.append(colors->data(), colors->size());
-    }
+  ValueArrayRead<float> colors;
+  if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code, &colors) &&
+      !colors.empty()) {
+    mesh->colors.append(colors.view.data, colors.view.size);
   }
 
   return true;
@@ -384,13 +385,30 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     return true;
   }
 
-  // Use triangle fan method
-  std::vector<uint32_t> face_counts_vec = mesh->face_vertex_counts.flatten();
-  std::vector<uint32_t> indices_vec = mesh->face_vertex_indices.flatten();
+  size_t tri_count = 0;
+  for (size_t i = 0; i < mesh->face_vertex_counts.size(); ++i) {
+    uint32_t nverts = mesh->face_vertex_counts[i];
+    if (nverts >= 3) tri_count += nverts - 2;
+  }
 
-  return TriangulateFan(face_counts_vec.data(), face_counts_vec.size(),
-                        indices_vec.data(), indices_vec.size(),
-                        &mesh->triangulated_indices);
+  mesh->triangulated_indices.reserve(tri_count * 3);
+  size_t idx_offset = 0;
+  for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
+    const uint32_t nverts = mesh->face_vertex_counts[f];
+    if (idx_offset + nverts > mesh->face_vertex_indices.size()) return false;
+    if (nverts >= 3) {
+      const uint32_t v0 = mesh->face_vertex_indices[idx_offset];
+      for (uint32_t i = 1; i < nverts - 1; ++i) {
+        mesh->triangulated_indices.push_back(v0);
+        mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i]);
+        mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i + 1]);
+      }
+    }
+    idx_offset += nverts;
+  }
+
+  mesh->is_triangulated = true;
+  return true;
 }
 
 bool RenderSceneConverter::TriangulateFan(
@@ -400,11 +418,16 @@ bool RenderSceneConverter::TriangulateFan(
 
   // Count triangles
   size_t tri_count = 0;
+  size_t required_index_count = 0;
   for (size_t i = 0; i < face_count; ++i) {
     uint32_t nverts = face_vertex_counts[i];
+    required_index_count += nverts;
     if (nverts >= 3) {
       tri_count += nverts - 2;
     }
+  }
+  if (required_index_count > index_count) {
+    return false;
   }
 
   out_indices->reserve(tri_count * 3);
@@ -659,6 +682,8 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
 bool RenderSceneConverter::ConvertAnimation(const UsdPrim& prim, AnimationClip* out) {
   // TODO: Implement animation extraction
+  (void)prim;
+  (void)out;
   return false;
 }
 

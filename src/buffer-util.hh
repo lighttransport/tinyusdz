@@ -178,8 +178,7 @@ class Buffer {
 #endif
 
     if (!new_data) {
-      // Allocation failed - could throw or handle error
-      // For now, keep existing buffer
+      // Allocation failed. Keep existing buffer.
       return;
     }
 

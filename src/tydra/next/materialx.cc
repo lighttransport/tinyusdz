@@ -30,11 +30,6 @@ void SetShaderParam(ShaderParam& param, float r, float g, float b) {
   param.value = {r, g, b, 1};
 }
 
-void SetShaderParam(ShaderParam& param, float r, float g, float b, float a) {
-  param.texture_id = -1;
-  param.value = {r, g, b, a};
-}
-
 }  // namespace
 
 bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,

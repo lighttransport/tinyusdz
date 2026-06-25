@@ -134,7 +134,7 @@ class ChunkedArray {
   }
 
   // Bounds-checked access. Built with -fno-exceptions, so an out-of-range index
-  // is a fatal programming error: report and abort rather than throw.
+    // is a fatal programming error: report and abort immediately.
   T& at(size_t idx) {
     if (idx >= size_) {
       std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",

@@ -142,8 +142,10 @@ option(TINYUSDZ_WITH_COROUTINE
        ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
 
 
-if(MSVC)
-  # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
+if(WIN32)
+  # Windows STL configurations generally require exception support, so leave the
+  # toolchain exception mode enabled there by default. TinyUSDZ sources still do
+  # not use C++ exceptions.
   set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
 else()
   set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
@@ -170,7 +172,7 @@ if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 option(TINYUSDZ_CXX_EXCEPTIONS
-       "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
+       "Enable/Disable C++ exceptions(default: Off except on Windows)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 # tinyusdz (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
@@ -1509,14 +1511,6 @@ endif()
 #                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
 #endif(TINYUSDZ_WITH_ALAC_AUDIO)
 #
-#if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-#  if(MSVC)
-#    target_compile_options(tinyusdz_object PUBLIC /EHs-c-)
-#  else()
-#    target_compile_options(tinyusdz_object PUBLIC -fno-exceptions)
-#  endif()
-#endif()
-#
 # TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
 #add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
 #add_sanitizers(${TINYUSDZ_TARGET_STATIC})
@@ -1822,11 +1816,29 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_MESHOPT")
   endif(TINYUSDZ_WITH_MESHOPT)
 
+  if(TINYUSDZ_CXX_EXCEPTIONS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=1)
+  else()
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=0)
+  endif()
+
+  if(TINYUSDZ_CXX_RTTI)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_RTTI=1)
+  else()
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_RTTI=0)
+  endif()
+
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
     else()
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
   endif()
 
