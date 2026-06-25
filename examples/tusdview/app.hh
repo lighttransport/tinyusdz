@@ -35,6 +35,8 @@
 
 struct GLFWwindow;
 
+namespace tinyusdz { namespace next { class Stage; } }
+
 namespace tusdview {
 
 class App
@@ -175,6 +177,10 @@ class App
   void readAnimationRange();
   void updateSkinningEffective();
   void updateGpuSkinningFrameIfNeeded();
+  // --next per-frame GPU morph: upload blendshape coefficients for instanced
+  // prototypes from the retained next stage at animTime_. Runs independently of
+  // the Tydra-path GPU-skinning gate (which --next does not engage).
+  void updateNextMorphFrameIfNeeded();
   // Non-GPU (ray-traced / CPU-skinned) path: when manual blendshape weights
   // change, re-bake the deformed geometry + BLAS via an async reconvert.
   void maybeReconvertForManualBlend();
@@ -217,6 +223,12 @@ class App
   DrawScene draw_;
   LoadOptions loadOpts_;
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
+  // Retained lazy `next` stage (--next): kept alive so per-frame blendshape
+  // weights can be sampled at animTime_ (lazy arrays stay mmap-backed). Set on
+  // load; pending* is the worker-thread staging slot moved in at finishLoad.
+  std::shared_ptr<tinyusdz::next::Stage> nextStage_;
+  std::shared_ptr<tinyusdz::next::Stage> pendingNextStage_;
+  bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
   Gui gui_;

@@ -133,6 +133,27 @@ std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, doubl
   if (r.empty()) r = pull(p.GetPropertyValue(name));
   return r;
 }
+// Linearly-interpolated float-array read across time samples (the next stage's
+// GetValueAtTime/GetInterpolatedValue snap to the nearest sample for arrays).
+// Brackets `t` between the two surrounding samples and lerps element-wise; falls
+// back to the plain read (default opinion / single sample / no samples).
+std::vector<float> ReadFloatsLerp(const tnext::UsdPrim& p, const char* name,
+                                  double t) {
+  const std::vector<double> times = p.GetTimeSampleTimes(name);
+  if (times.size() < 2) return ReadFloats(p, name, t);
+  if (t <= times.front()) return ReadFloats(p, name, times.front());
+  if (t >= times.back()) return ReadFloats(p, name, times.back());
+  size_t hi = 0;
+  while (hi < times.size() && times[hi] < t) ++hi;
+  const double t0 = times[hi - 1], t1 = times[hi];
+  const std::vector<float> a = ReadFloats(p, name, t0);
+  const std::vector<float> b = ReadFloats(p, name, t1);
+  if (a.size() != b.size() || t1 <= t0) return a;
+  const float f = static_cast<float>((t - t0) / (t1 - t0));
+  std::vector<float> out(a.size());
+  for (size_t i = 0; i < a.size(); ++i) out[i] = a[i] + f * (b[i] - a[i]);
+  return out;
+}
 std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
                                     double t) {
   auto pull = [](const tnext::Value* v) -> std::vector<std::string> {
@@ -289,7 +310,10 @@ std::unordered_map<std::string, float> ResolveBlendWeights(
   if (!anim.IsValid()) return out;
 
   const std::vector<std::string> names = ReadTokens(anim, "blendShapes", time);
-  const std::vector<float> weights = ReadFloats(anim, "blendShapeWeights", time);
+  // Linearly-interpolated weights so morph animates smoothly between time
+  // samples (static scenes fall back to the default opinion).
+  const std::vector<float> weights =
+      ReadFloatsLerp(anim, "blendShapeWeights", time);
   for (size_t i = 0; i < names.size() && i < weights.size(); ++i)
     out[names[i]] = weights[i];
   return out;
@@ -458,6 +482,113 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   }
 }
 
+// Build GPU-morph CSR channels for a prototype mesh, so the instanced raster
+// shader morphs per-frame from a tiny per-channel coefficient buffer instead of
+// the morph being baked into geometry. Mirrors BuildMorphChannels in
+// mesh_build.cc, but point-indexed (FillFlatGeometry keeps vertex i == point i,
+// so pointIndices map straight to vertices) and reading directly from the next
+// stage. A channel = one delta stream (an in-between sample or the primary); per
+// target the channels are [in-betweens ascending..., primary] with usdWeights
+// [ibWeights..., 1.0], matching EvalMorphChannelCoeffs' bracket eval. No-op (no
+// channels) when the mesh has no resolvable blendshape targets.
+void BuildMorphChannelsNext(const tnext::Stage& stage,
+                            const tnext::UsdPrim& meshPrim, double time,
+                            DrawMeshCPU* dm) {
+  const std::vector<std::string> shapeNames =
+      ReadTokens(meshPrim, "skel:blendShapes", time);
+  const std::vector<tnext::Path>* targets =
+      meshPrim.GetRelationship("skel:blendShapeTargets");
+  if (shapeNames.empty() || !targets || targets->empty()) return;
+
+  const size_t np = dm->vertices.size();
+  if (np == 0) return;
+
+  // One delta stream per channel: its offsets (3/entry) + the point indices the
+  // entries map to (empty => identity 0..M-1). Streams own their data so the
+  // sparse target reads can be freed before the CSR scatter.
+  struct Chan {
+    int id;
+    std::vector<float> offsets;       // 3 * M
+    const std::vector<int32_t>* pidx; // M (points into `pidxStore`)
+  };
+  std::vector<Chan> chans;
+  std::vector<std::vector<int32_t>> pidxStore;  // stable addresses for Chan::pidx
+  pidxStore.reserve(targets->size());
+  int nextChannel = 0;
+  dm->morphTargetChannels.clear();
+
+  const size_t n = std::min(shapeNames.size(), targets->size());
+  for (size_t i = 0; i < n; ++i) {
+    tnext::UsdPrim bs = stage.GetPrimAtPath((*targets)[i]);
+    if (!bs.IsValid()) continue;
+    std::vector<float> primary = ReadFloats(bs, "offsets", time);
+    if (primary.size() < 3) continue;
+    pidxStore.push_back(ReadInts(bs, "pointIndices", time));
+    const std::vector<int32_t>* pidx = &pidxStore.back();
+    std::vector<std::pair<float, std::vector<float>>> ib =
+        ReadInbetweens(bs, time);
+
+    MorphTargetChannelsCPU tc;
+    tc.name = shapeNames[i];
+    for (auto& s : ib) {  // in-betweens ascending
+      const int ch = nextChannel++;
+      tc.usdWeights.push_back(s.first);
+      tc.channelIds.push_back(ch);
+      chans.push_back({ch, std::move(s.second), pidx});
+    }
+    const int chPrimary = nextChannel++;  // primary == weight 1.0
+    tc.usdWeights.push_back(1.0f);
+    tc.channelIds.push_back(chPrimary);
+    chans.push_back({chPrimary, std::move(primary), pidx});
+    dm->morphTargetChannels.push_back(std::move(tc));
+  }
+  if (chans.empty()) return;
+  dm->morphChannelCount = nextChannel;
+
+  // entry's target vertex (or -1 to skip).
+  auto vtxOf = [np](const Chan& c, size_t e) -> int64_t {
+    const int64_t v = c.pidx->empty() ? int64_t(e) : int64_t((*c.pidx)[e]);
+    return (v >= 0 && size_t(v) < np && e * 3 + 2 < c.offsets.size()) ? v : -1;
+  };
+  // Pass 1: count entries per vertex. M = offsets/3 (== pidx size when present).
+  std::vector<uint32_t> count(np, 0u);
+  for (const Chan& c : chans) {
+    const size_t m = c.offsets.size() / 3;
+    for (size_t e = 0; e < m; ++e)
+      if (vtxOf(c, e) >= 0) count[size_t(vtxOf(c, e))]++;
+  }
+  // Prefix-sum into morphOffsetCount (offset,count per vertex).
+  dm->morphOffsetCount.assign(np * 2, 0u);
+  uint64_t total = 0;
+  for (size_t v = 0; v < np; ++v) {
+    dm->morphOffsetCount[v * 2 + 0] = static_cast<uint32_t>(total);
+    dm->morphOffsetCount[v * 2 + 1] = count[v];
+    total += count[v];
+  }
+  // Pass 2: scatter [channelId, dx, dy, dz] halfs + the uint16 channelId side
+  // buffer (the shader's active-channel skip pre-check).
+  auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
+  dm->morphDeltaHalf.assign(total * 4, 0);
+  dm->morphChannelId.assign(total, 0);
+  std::vector<uint32_t> cursor(np, 0u);
+  for (const Chan& c : chans) {
+    const uint16_t chHalf = h(static_cast<float>(c.id));
+    const uint16_t chId = static_cast<uint16_t>(c.id);
+    const size_t m = c.offsets.size() / 3;
+    for (size_t e = 0; e < m; ++e) {
+      const int64_t v = vtxOf(c, e);
+      if (v < 0) continue;
+      const uint64_t slot = dm->morphOffsetCount[size_t(v) * 2 + 0] + cursor[size_t(v)]++;
+      uint16_t* o = &dm->morphDeltaHalf[slot * 4];
+      o[0] = chHalf;
+      o[1] = h(c.offsets[e * 3 + 0]);
+      o[2] = h(c.offsets[e * 3 + 1]);
+      o[3] = h(c.offsets[e * 3 + 2]);
+      dm->morphChannelId[slot] = chId;
+    }
+  }
+}
+
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
@@ -470,9 +601,20 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   tydn::RenderMesh rm;
   if (!conv.ConvertMesh(mp, &rm)) return false;
   if (!FillFlatGeometry(rm, dm)) return false;
-  // Resolve blendshapes into the prototype geometry at load (the next instanced
-  // path has no GPU morph). No-ops for non-blendshaped meshes.
-  BakeBlendShapes(stage, mp, time, dm);
+  // Blendshapes on the prototype. Default: build GPU-morph channels so the
+  // instanced raster shader morphs per-frame (animated weights). Opt-out
+  // (TUSDVIEW_NEXT_MORPH_BAKE=1): bake the morph into geometry at load -- a
+  // static, lower-overhead path (no per-frame GPU morph, no morph buffers) for
+  // huge static scenes. Mutually exclusive so morph is never applied twice. Both
+  // no-op for non-blendshaped meshes.
+  static const bool kBakeMorph = [] {
+    const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
+    return e && e[0] == '1';
+  }();
+  if (kBakeMorph)
+    BakeBlendShapes(stage, mp, time, dm);
+  else
+    BuildMorphChannelsNext(stage, mp, time, dm);
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor is carried PER-VERTEX (FillFlatGeometry filled
   // dm->vertexColors -- uploaded to GL attrib 10 for instanced draws, shared by all
@@ -669,6 +811,39 @@ void EmitInstancedProto(const tnext::Stage& stage,
 
 }  // namespace
 
+void BuildNextMorphWeights(
+    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<std::pair<int, std::vector<float>>>* out) {
+  out->clear();
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& dm = draw.meshes[mi];
+    if (dm.morphChannelCount <= 0 || dm.morphTargetChannels.empty()) continue;
+
+    // Animated weights from the mesh's bound SkelAnimation, then manual overrides.
+    std::unordered_map<std::string, float> weights =
+        ResolveBlendWeights(stage, stage.GetPrimAtPath(dm.absPath), time);
+    if (blendOverride)
+      for (const auto& kv : *blendOverride) weights[kv.first] = kv.second;
+
+    // Per-channel coefficients (== EvalMorphChannelCoeffs): each target's weight
+    // brackets two channels (rest index 0 contributes nothing) with (1-t) / t.
+    std::vector<float> coeff(static_cast<size_t>(dm.morphChannelCount), 0.0f);
+    for (const MorphTargetChannelsCPU& tc : dm.morphTargetChannels) {
+      if (tc.usdWeights.empty()) continue;
+      auto it = weights.find(tc.name);
+      if (it == weights.end() || it->second == 0.0f) continue;
+      const std::vector<float> ibW(tc.usdWeights.begin(), tc.usdWeights.end() - 1);
+      const MorphBracket br = FindMorphBracket(ibW, it->second);
+      if (br.lo >= 1 && size_t(br.lo - 1) < tc.channelIds.size())
+        coeff[tc.channelIds[br.lo - 1]] += (1.0f - br.t);
+      if (br.hi >= 1 && size_t(br.hi - 1) < tc.channelIds.size())
+        coeff[tc.channelIds[br.hi - 1]] += br.t;
+    }
+    out->emplace_back(static_cast<int>(mi), std::move(coeff));
+  }
+}
+
 // UsdVol volumes for the `next` path: walk the stage, find Volume prims,
 // resolve each `field:*` relationship to its field-asset prim, load the .vdb
 // (relative to the USD file dir), and emit a DrawVolumeCPU. Extends `bounds`
@@ -749,14 +924,19 @@ void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
 
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
-                    LoadControl* ctrl) {
+                    LoadControl* ctrl,
+                    std::shared_ptr<tnext::Stage>* out_stage) {
   // --- 1. Compose with the next loader (default options load payloads). ---
-  tnext::Stage stage;
+  // Heap-allocate the stage so the caller can keep it alive for per-frame
+  // animation (the lazy arrays stay mmap-backed, not materialized).
+  auto stagePtr = std::make_shared<tnext::Stage>();
+  tnext::Stage& stage = *stagePtr;
   std::string lwarn, lerr;
   if (!tnext::LoadUSDComposed(path, &stage, &lwarn, &lerr, /*comp_opts=*/nullptr)) {
     if (err) *err = "next: compose failed: " + lerr;
     return false;
   }
+  if (out_stage) *out_stage = stagePtr;
   if (warn && !lwarn.empty()) *warn = lwarn;
   const double time = std::isnan(opts.timecode) ? 0.0 : opts.timecode;
 

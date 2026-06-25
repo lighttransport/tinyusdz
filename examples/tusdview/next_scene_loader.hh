@@ -10,11 +10,17 @@
 // instancing/materials/streaming are follow-ups.
 #pragma once
 
+#include <memory>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "gpu_scene.hh"      // DrawScene
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
+
+namespace tinyusdz { namespace next { class Stage; } }
 
 namespace tusdview {
 
@@ -23,8 +29,23 @@ namespace tusdview {
 // when no renderable mesh was produced). Worker-thread safe (no GPU access).
 // `ctrl` (optional) caps triangles (LoadControl::maxTriangles) and supports
 // cancellation; the scene is marked `truncated` when a cap is hit.
+// `out_stage` (optional) receives the composed lazy stage so the caller can keep
+// it alive for per-frame animation (blendshape weights) -- the lazy mmap arrays
+// stay resident but unmaterialized, so this is cheap.
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
-                    LoadControl* ctrl = nullptr);
+                    LoadControl* ctrl = nullptr,
+                    std::shared_ptr<tinyusdz::next::Stage>* out_stage = nullptr);
+
+// Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
+// draw mesh that carries morph channels, resolve its blendshape weights from
+// `stage` at `time` (manual `blendOverride` weights, when set, replace animated
+// ones by name) and evaluate the per-channel coefficients the instanced raster
+// shader sums. Emits (meshIndex, coeffs) only for morphed meshes. Mirrors
+// BuildMorphChannelWeights/EvalMorphChannelCoeffs for the next stage.
+void BuildNextMorphWeights(
+    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<std::pair<int, std::vector<float>>>* out);
 
 }  // namespace tusdview
