@@ -295,6 +295,48 @@ std::unordered_map<std::string, float> ResolveBlendWeights(
   return out;
 }
 
+// In-between samples of a `--next` BlendShape prim, read from its `inbetweens:*`
+// attributes (vector3f[] offsets parallel to the prim's pointIndices, plus a
+// `weight` attr-meta). Returned sorted ascending by weight. Mirrors
+// ReadInbetweensFromPrim in skinning.cc for the next stage.
+std::vector<std::pair<float, std::vector<float>>> ReadInbetweens(
+    const tnext::UsdPrim& bs, double time) {
+  std::vector<std::pair<float, std::vector<float>>> out;
+  const tnext::PrimSpec* spec = bs.GetPrimSpec();
+  if (!spec) return out;
+  for (const std::string& name : bs.GetPropertyNames()) {
+    if (name.rfind("inbetweens:", 0) != 0) continue;  // namespace prefix
+    const tnext::PropMeta* pm = spec->property_meta(name);
+    if (!pm || !(pm->authored & tnext::PropMeta::kWeight)) continue;
+    std::vector<float> offs = ReadFloats(bs, name.c_str(), time);
+    if (offs.empty()) continue;
+    out.emplace_back(static_cast<float>(pm->weight), std::move(offs));
+  }
+  std::sort(out.begin(), out.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+  return out;
+}
+
+// Bracket a target weight `w` within the implied sample table {0, ibWeights...,
+// 1} (ibWeights ascending). Returns table indices [lo, hi] (0 == implicit rest,
+// last == primary) + lerp parameter t (extrapolates outside [0,1]). Identical to
+// FindMorphBracket in skinning.cc -- keeps the static bake bit-for-bit with the
+// GPU-morph coeff eval. With no in-betweens it degrades to {lo:0, hi:1, t:w},
+// i.e. a plain linear primary scale.
+struct MorphBracket { int lo; int hi; float t; };
+MorphBracket FindMorphBracket(const std::vector<float>& ibWeights, float w) {
+  const int N = static_cast<int>(ibWeights.size());
+  auto wAt = [&](int i) -> float {
+    return i == 0 ? 0.0f : (i == N + 1 ? 1.0f : ibWeights[i - 1]);
+  };
+  int hi = 1;
+  while (hi < N + 1 && w > wAt(hi)) ++hi;
+  const int lo = hi - 1;
+  const float denom = wAt(hi) - wAt(lo);
+  const float t = denom > 1e-12f ? (w - wAt(lo)) / denom : 0.0f;
+  return {lo, hi, t};
+}
+
 // Bake blendshape (morph) targets into the prototype's local vertex positions
 // once at load. The `--next` instanced path has no GPU morph, so resolving the
 // morph into geometry here makes the existing flat instanced GL/VK path render N
@@ -303,12 +345,10 @@ std::unordered_map<std::string, float> ResolveBlendWeights(
 // so load-time weights suffice. `dm->vertices` is point-indexed (vertex i == point
 // i), matching the BlendShape `pointIndices` which index authored points.
 //
-// Limitations (acceptable for a static preview): only the primary target offset
-// (scaled linearly by weight) is applied -- USD in-between samples are not
-// interpolated (see ApplyMorphTarget in skinning.cc for the bracket logic). Vertex
-// normals are left untouched; meshes shaded geometrically (the common case, incl.
-// the test cube) re-derive correct normals from the baked positions, but authored
-// smooth normals would go stale.
+// USD in-between samples are interpolated (piecewise-lerp via FindMorphBracket,
+// matching the GPU-morph coeff eval); without in-betweens this is a plain linear
+// primary scale. Limitation (acceptable for a static preview): load-time weights
+// only -- no animated morph. Authored smooth normals are recomputed below.
 void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                      double time, DrawMeshCPU* dm) {
   const std::vector<std::string> shapeNames =
@@ -333,17 +373,44 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     const float w = it->second;
     tnext::UsdPrim bs = stage.GetPrimAtPath((*targets)[i]);
     if (!bs.IsValid()) continue;
-    const std::vector<float> offsets = ReadFloats(bs, "offsets", time);
+    const std::vector<float> primary = ReadFloats(bs, "offsets", time);
     const std::vector<int32_t> pointIndices = ReadInts(bs, "pointIndices", time);
-    const size_t m = offsets.size() / 3;
+    const size_t m = primary.size() / 3;
+    if (m == 0) continue;
+
+    // Sample table = [in-betweens (ascending)..., primary]; FindMorphBracket
+    // gives the two table entries (rest index 0 contributes nothing) + lerp t.
+    const std::vector<std::pair<float, std::vector<float>>> ib =
+        ReadInbetweens(bs, time);
+    std::vector<float> ibW;
+    ibW.reserve(ib.size());
+    for (const auto& s : ib) ibW.push_back(s.first);
+    const MorphBracket br = FindMorphBracket(ibW, w);
+    // Table index k in [1..N+1] -> array entry k-1 (in-between k-1, or primary).
+    auto sampleAt = [&](int tableIdx) -> const std::vector<float>* {
+      const int a = tableIdx - 1;
+      if (a < 0) return nullptr;
+      return (a < int(ib.size())) ? &ib[size_t(a)].second : &primary;
+    };
+    const std::vector<float>* sLo = br.lo >= 1 ? sampleAt(br.lo) : nullptr;
+    const std::vector<float>* sHi = br.hi >= 1 ? sampleAt(br.hi) : nullptr;
+    const float wLo = 1.0f - br.t, wHi = br.t;
+
     for (size_t k = 0; k < m; ++k) {
       // Absent pointIndices => offsets are per-point for all points (USD rule).
       const int64_t pidx =
-          pointIndices.empty() ? int64_t(k) : int64_t(pointIndices[k]);
+          pointIndices.empty()
+              ? int64_t(k)
+              : (k < pointIndices.size() ? int64_t(pointIndices[k]) : -1);
       if (pidx < 0 || size_t(pidx) >= np) continue;
-      delta[3 * pidx + 0] += w * offsets[3 * k + 0];
-      delta[3 * pidx + 1] += w * offsets[3 * k + 1];
-      delta[3 * pidx + 2] += w * offsets[3 * k + 2];
+      float d[3] = {0, 0, 0};
+      if (sLo && 3 * k + 2 < sLo->size())
+        for (int c = 0; c < 3; ++c) d[c] += wLo * (*sLo)[3 * k + c];
+      if (sHi && 3 * k + 2 < sHi->size())
+        for (int c = 0; c < 3; ++c) d[c] += wHi * (*sHi)[3 * k + c];
+      delta[3 * pidx + 0] += d[0];
+      delta[3 * pidx + 1] += d[1];
+      delta[3 * pidx + 2] += d[2];
       any = true;
     }
   }
