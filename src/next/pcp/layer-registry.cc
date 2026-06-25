@@ -31,7 +31,7 @@ std::string ToLowerExt(const std::string &path) {
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
-                                         int parse_num_threads) {
+                                         const LayerLoadOptions &options) {
   std::string ext = ToLowerExt(resolved_path);
 
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
@@ -49,7 +49,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usda") {
     LoadOptions lopts;
-    lopts.parse_options.num_threads = parse_num_threads;
+    lopts.parse_options.num_threads = options.parse_num_threads;
+    lopts.parse_options.max_file_size = options.max_memory;
     LoadResult r = LoadUSDAFromFile(resolved_path, lopts);
     if (!r.success) {
       if (err) *err += "Failed to load USDA layer: " + resolved_path + " : " +
@@ -63,7 +64,9 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   }
 
   if (ext == "usdc") {
-    USDCLoadResult r = LoadUSDCFromFile(resolved_path);
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    USDCLoadResult r = LoadUSDCFromFile(resolved_path, lopts);
     if (!r.success) {
       if (err) *err += "Failed to load USDC layer: " + resolved_path + " : " +
                        r.error_summary + "\n";
@@ -79,11 +82,20 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   return nullptr;
 }
 
+std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
+                                         std::string *warn, std::string *err,
+                                         int parse_num_threads) {
+  LayerLoadOptions options;
+  options.parse_num_threads = parse_num_threads;
+  return LoadLayerFromFile(resolved_path, warn, err, options);
+}
+
 std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 const std::string &asset_path,
                                                 const std::string &anchor,
                                                 std::string *warn,
-                                                std::string *err) {
+                                                std::string *err,
+                                                const LayerLoadOptions &options) {
   const std::string resolved = resolver.ResolvePath(asset_path, anchor);
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
@@ -118,7 +130,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err);
+  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
+                                    options);
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -137,7 +150,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err);
+  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
+                                                   options);
   if (!layer) {
     return nullptr;
   }

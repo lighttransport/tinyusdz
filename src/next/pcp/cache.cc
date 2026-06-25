@@ -307,7 +307,8 @@ struct Cache::Impl {
         return false;
       }
       std::shared_ptr<Layer> sl =
-          reg_->GetOrLoad(*resolver, sub, anchor, warn, err);
+          reg_->GetOrLoad(*resolver, sub, anchor, warn, err,
+                          LayerLoadOptions{options.max_layer_memory, 0});
       if (sl) {
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
@@ -663,7 +664,8 @@ struct Cache::Impl {
               ? authoring_layer_id
               : layer_stacks[src.stack_idx].identifier);
       std::shared_ptr<Layer> arc_layer =
-          reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err);
+          reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err,
+                          LayerLoadOptions{options.max_layer_memory, 0});
       if (!arc_layer) {
         if (options.error_when_asset_not_found) {
           AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
@@ -2085,7 +2087,8 @@ struct Cache::Impl {
             size_t i = next_idx.fetch_add(1);
             if (i >= assets.size()) break;
             std::string w, e;
-            reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w, &e);
+            reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
+                            &e, LayerLoadOptions{options.max_layer_memory, 0});
           }
         };
         ts.reserve(static_cast<size_t>(pf));
@@ -2518,7 +2521,8 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
 bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           Stage *out_stage, const CompositionOptions &options,
                           std::string *warn, std::string *err) {
-  std::shared_ptr<Layer> root = LoadLayerFromFile(filename, warn, err);
+  std::shared_ptr<Layer> root = LoadLayerFromFile(
+      filename, warn, err, LayerLoadOptions{options.max_layer_memory, 0});
   if (!root) return false;
   return ComposeStageFromLayer(std::move(root), resolver, out_stage, filename,
                                options, warn, err);

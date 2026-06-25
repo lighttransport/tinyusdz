@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -19,6 +20,7 @@
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/tinyusdz-next.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -648,6 +650,96 @@ void test_roundtrip_vec_matrix_arrays() {
   std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
 }
 
+void test_high_level_memory_caps() {
+  std::cout << "Testing high-level memory caps...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Xform");
+  b.add_property("v", Value(1.0));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  const char* usdc_file = "/tmp/next_memcap_highlevel.usdc";
+  {
+    std::ofstream f(usdc_file, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(buf.data()),
+            static_cast<std::streamsize>(buf.size()));
+  }
+
+  LoadUSDOptions load_opts;
+  load_opts.max_memory = 1;
+  Stage limited_stage;
+  std::string warn, err;
+  bool ok = LoadUSD(usdc_file, &limited_stage, load_opts, &warn, &err);
+  assert(!ok && "LoadUSD max_memory must reject oversized USDC input");
+
+  USDCLoadOptions usdc_opts;
+  usdc_opts.crate_options.max_memory = 1;
+  warn.clear();
+  err.clear();
+  ok = LoadUSDC(usdc_file, &limited_stage, usdc_opts, &warn, &err);
+  assert(!ok && "LoadUSDC options must reject oversized USDC input");
+
+  const char* usda_file = "/tmp/next_memcap_highlevel.usda";
+  {
+    std::ofstream f(usda_file, std::ios::binary);
+    f << "#usda 1.0\n\ndef Xform \"World\" {}\n";
+  }
+  warn.clear();
+  err.clear();
+  ok = LoadUSD(usda_file, &limited_stage, load_opts, &warn, &err);
+  assert(!ok && "LoadUSD max_memory must reject oversized USDA input");
+
+  LoadOptions usda_opts;
+  usda_opts.parse_options.max_file_size = 1;
+  warn.clear();
+  err.clear();
+  ok = LoadUSDA(usda_file, &limited_stage, usda_opts, &warn, &err);
+  assert(!ok && "LoadUSDA options must reject oversized USDA input");
+
+  const char* asset_file = "/tmp/next_memcap_ext_asset.usda";
+  const char* root_file = "/tmp/next_memcap_ext_root.usda";
+  std::string root_text =
+      "#usda 1.0\n(\n  subLayers = [@./next_memcap_ext_asset.usda@]\n)\n"
+      "def Xform \"World\" {}\n";
+  std::string asset_text =
+      "#usda 1.0\n\ndef Xform \"Asset\" {\n  string note = \"";
+  asset_text.append(256, 'x');
+  asset_text += "\"\n}\n";
+  {
+    std::ofstream f(root_file, std::ios::binary);
+    f << root_text;
+  }
+  {
+    std::ofstream f(asset_file, std::ios::binary);
+    f << asset_text;
+  }
+
+  LoadUSDOptions composed_opts;
+  composed_opts.max_memory = root_text.size() + 8;
+  assert(root_text.size() <= composed_opts.max_memory);
+  assert(asset_text.size() > composed_opts.max_memory);
+  warn.clear();
+  err.clear();
+  pcp::CompositionOptions comp_opts;
+  comp_opts.error_when_asset_not_found = true;
+  ok = LoadUSDComposed(root_file, &limited_stage, composed_opts, &warn, &err,
+                       &comp_opts);
+  assert(!ok && "LoadUSDComposed must cap external composition layers");
+
+  std::remove(usdc_file);
+  std::remove(usda_file);
+  std::remove(asset_file);
+  std::remove(root_file);
+  std::cout << "  high-level memory caps passed!\n\n";
+}
+
 // HalfToFloat/FloatToHalf: every finite half bit pattern must survive
 // half -> float -> half byte-exact (NaN payloads excluded).
 void test_half_conversion() {
@@ -832,6 +924,7 @@ int main() {
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
     test_roundtrip_vec_matrix_arrays();
+    test_high_level_memory_caps();
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
 
