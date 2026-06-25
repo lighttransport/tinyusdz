@@ -18,7 +18,8 @@ struct ArrayView {
 
   bool empty() const { return size == 0; }
   const T* begin() const { return data; }
-  const T* end() const { return data + size; }
+  const T* end() const { return data ? data + size : data; }
+  size_t size_bytes() const { return size * sizeof(T); }
   const T& operator[](size_t i) const { return data[i]; }
 };
 

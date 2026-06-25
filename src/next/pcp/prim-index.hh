@@ -120,6 +120,10 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
+  // Per-layer file/input memory cap for layers loaded by the compositor
+  // (sublayers, references, payloads). 0 = no limit.
+  size_t max_layer_memory = 0;
+
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
   // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
   // read so the composition core takes no implicit process-environment input;

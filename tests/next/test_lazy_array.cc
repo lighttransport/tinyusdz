@@ -31,11 +31,28 @@ using namespace tinyusdz::next;
 int main() {
   std::cout << "=== TinyUSDZ Next Lazy Array Tests ===" << std::endl;
 
+  // Empty ArrayView must be safe to use with begin()/end() range APIs.
+  {
+    Value empty = Value::MakeFloatArray(std::vector<float>{});
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(empty, &scratch, &view));
+    assert(view.empty());
+    assert(view.begin() == view.end());
+    std::vector<float> copied(view.begin(), view.end());
+    assert(copied.empty());
+    assert(view.size_bytes() == 0);
+  }
+
   // ---- Build a stage with numeric POD arrays --------------------------------
   std::vector<float> points;        // 128 vec3f
   for (int i = 0; i < 128 * 3; i++) points.push_back(static_cast<float>(i) * 0.5f);
   std::vector<int32_t> indices;     // 256 ints
   for (int i = 0; i < 256; i++) indices.push_back(i * 7 - 11);
+  std::vector<uint32_t> uids;       // 96 uints
+  for (uint32_t i = 0; i < 96; i++) uids.push_back(i * 13u + 5u);
+  std::vector<uint64_t> hashes;     // 32 uint64s
+  for (uint64_t i = 0; i < 32; i++) hashes.push_back((i << 40) | (i * 17u));
   std::vector<float> quats;         // 64 quatf
   for (int i = 0; i < 64; i++) {
     quats.push_back(0.0f);
@@ -56,6 +73,8 @@ int main() {
   lb.begin_prim("Mesh1", "Mesh");
   lb.add_property("points", Value::MakeFloat3Array(points));
   lb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
+  lb.add_property("primvars:ids", Value::MakeUIntArray(uids));
+  lb.add_property("primvars:hashes", Value::MakeUInt64Array(hashes));
   lb.add_property("orientations",
                   Value::MakeFloatCompArray(std::vector<float>(quats),
                                             TypeId::Quatf, 4));
@@ -175,6 +194,34 @@ int main() {
   assert(!iv->is_lazy());
   std::cout << "  indices materialized correctly (" << ia->size() << " ints)" << std::endl;
 
+  // ---- unsigned integer arrays: lazy UInt / UInt64 views --------------------
+  const Value* uv = ps->property_value("primvars:ids");
+  assert(uv && uv->is_lazy());
+  {
+    ArrayScratch<uint32_t> scratch;
+    ArrayView<uint32_t> view;
+    assert(GetUIntArrayView(*uv, &scratch, &view));
+    assert(view.size == uids.size());
+    assert(view.size_bytes() == uids.size() * sizeof(uint32_t));
+    for (size_t i = 0; i < uids.size(); i++) assert(view[i] == uids[i]);
+    assert(uv->is_lazy());
+    assert(!uv->is_dirty());
+  }
+  const Value* u64v = ps->property_value("primvars:hashes");
+  assert(u64v && u64v->is_lazy());
+  {
+    ArrayScratch<uint64_t> scratch;
+    ArrayView<uint64_t> view;
+    assert(GetUInt64ArrayView(*u64v, &scratch, &view));
+    assert(view.size == hashes.size());
+    assert(view.size_bytes() == hashes.size() * sizeof(uint64_t));
+    for (size_t i = 0; i < hashes.size(); i++) assert(view[i] == hashes[i]);
+    assert(u64v->is_lazy());
+    assert(!u64v->is_dirty());
+    std::cout << "  unsigned integer views read without materializing source"
+              << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
+  }
+
   // ---- orientations / xforms: newly supported vector/matrix array laziness --
   const Value* qv = ps->property_value("orientations");
   assert(qv && qv->is_array() && qv->is_lazy());
@@ -248,9 +295,10 @@ int main() {
     std::vector<uint8_t> out;
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
-    // Numeric arrays (points Vec3f, indices Int, orientations Quatf, xforms
-    // Matrix4d, tangents Vec4f, extent Vec2d) copied verbatim.
-    assert(wres.arrays_passed_through >= 6);
+    // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
+    // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d)
+    // copied verbatim.
+    assert(wres.arrays_passed_through >= 8);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -266,6 +314,12 @@ int main() {
     const std::vector<int32_t>* ix =
         ps4->property_value("faceVertexIndices")->as_int_array();
     assert(ix && *ix == indices);
+    const std::vector<uint32_t>* ux =
+        ps4->property_value("primvars:ids")->as_uint_array();
+    assert(ux && *ux == uids);
+    const std::vector<uint64_t>* u64x =
+        ps4->property_value("primvars:hashes")->as_uint64_array();
+    assert(u64x && *u64x == hashes);
     const std::vector<float>* oq =
         ps4->property_value("orientations")->as_float_array();
     assert(oq && *oq == quats);
