@@ -1373,6 +1373,28 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
+// Explicit instantiation declarations for prim::ReconstructPrim placeholder
+// specializations defined in prim-reconstruct.cc. These keep split reader TUs
+// from instantiating from only the forward declaration under -Weverything.
+}  // namespace usda
+namespace prim {
+
+#define USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(__T) \
+  extern template bool ReconstructPrim<__T>( \
+      const Specifier &, PropertyMap &, const ReferenceList &, \
+      __T *, std::string *, std::string *, const PrimReconstructOptions &);
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Volume)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(OpenVDBAsset)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Field3DAsset)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderSettings)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderProduct)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderVar)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(GenerativeProcedural)
+#undef USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM
+
+}  // namespace prim
+namespace usda {
+
 
 // --- Split reconstruct: RegisterReconstructCallback<T> is instantiated across
 // usda-reader-reconstruct-{1,2,3,4}.cc. Declared extern so the RegisterReconstructCallbacks()
@@ -1404,6 +1426,13 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(Material)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Shader)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NodeGraph)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Scope)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Volume)
+USDA_EXTERN_REGISTER_RECONSTRUCT(OpenVDBAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Field3DAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderSettings)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderProduct)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderVar)
+USDA_EXTERN_REGISTER_RECONSTRUCT(GenerativeProcedural)
 USDA_EXTERN_REGISTER_RECONSTRUCT(SphereLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DomeLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DiskLight)
