@@ -570,7 +570,9 @@ bool CrateWriter::ConvertSinglePrim(
       }
     }
     if (!entry) {
-      prop_entries.push_back({base_name, {}, false, {}, false, {}, false, {}, false, {}});
+      PropEntry new_entry;
+      new_entry.name = base_name;
+      prop_entries.push_back(std::move(new_entry));
       entry = &prop_entries.back();
     }
 
