@@ -466,6 +466,7 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
   <tendon>
     <spatial name="glute_tendon" stiffness="10">
       <site site="m_p1"/>
+      <pulley divisor="2.5"/>
       <site site="m_p2"/>
     </spatial>
   </tendon>
@@ -492,6 +493,7 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
     assert.equal(payload.tendons[0].type, 'spatial');
     assert.equal(payload.tendons[0].path.length, 2);
     assert.equal(payload.tendons[0].path[0].site, 'm_p1');
+    assert.deepEqual(payload.tendons[0].routeDivisors, [2.5]);
     // Muscle actuator targeting the tendon
     assert.equal(payload.mjcActuators.length, 1);
     assert.equal(payload.mjcActuators[0].targetTendon, 'glute_tendon');

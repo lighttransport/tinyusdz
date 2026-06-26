@@ -23,6 +23,15 @@
 #include "tydra/physics-to-json.hh"
 #include "tydra/urdf-to-usd.hh"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+#include "external/jsonhpp/nlohmann/json.hpp"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -78,6 +87,10 @@ static bool usdc_roundtrip_stage(const Stage &stage, Stage *out,
 static bool approx_eq(double a, double b) {
   const double tol = 1e-5 * (1.0 + std::abs(b));
   return std::abs(a - b) <= tol;
+}
+
+static nlohmann::json parse_json_noexcept(const std::string &json) {
+  return nlohmann::json::parse(json, nullptr, false);
 }
 
 // Pull a numeric value out of a generic property bag (post-parse). Returns
@@ -1461,6 +1474,12 @@ def "World"
     {
         rel mjc:target = </World/Joint>
     }
+
+    def MjcSensor "sensor"
+    {
+        uniform token mjc:type = "framepos"
+        uniform token mjc:objname = "body, }"
+    }
 }
 )";
   Stage stage;
@@ -1484,6 +1503,14 @@ def "World"
   TEST_CHECK(compact_json.find("\"group\"") == std::string::npos);
   TEST_CHECK(compact_json.find("\"dynType\"") == std::string::npos);
   TEST_CHECK(compact_json.find("\"ctrlLimited\"") == std::string::npos);
+  nlohmann::json compact = parse_json_noexcept(compact_json);
+  if (compact.is_discarded()) {
+    TEST_MSG("compact JSON failed to parse:\n%s", compact_json.c_str());
+  }
+  TEST_CHECK(!compact.is_discarded());
+  if (!compact.is_discarded()) {
+    TEST_CHECK(compact["sensors"][0]["objname"] == "body, }");
+  }
 
   std::string defaults_json;
   opts.include_defaults = true;
@@ -1495,6 +1522,14 @@ def "World"
   TEST_CHECK(defaults_json.find("\"dynType\": \"none\"") != std::string::npos);
   TEST_CHECK(defaults_json.find("\"ctrlLimited\": \"auto\"") !=
              std::string::npos);
+  nlohmann::json defaults = parse_json_noexcept(defaults_json);
+  if (defaults.is_discarded()) {
+    TEST_MSG("defaults JSON failed to parse:\n%s", defaults_json.c_str());
+  }
+  TEST_CHECK(!defaults.is_discarded());
+  if (!defaults.is_discarded()) {
+    TEST_CHECK(defaults["sensors"][0]["objname"] == "body, }");
+  }
 }
 
 void physics_mjc_tendon_full_to_json_test(void) {

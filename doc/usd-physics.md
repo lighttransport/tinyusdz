@@ -558,7 +558,7 @@ Registered in the `APISchemas::APIName` enum (`src/core/composition-types.hh`):
 (`ReconstructPrim<T>` specializations exist for all of these)
 
 - **UsdPhysics**: PhysicsScene, PhysicsJoint (generic D6), PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsSphericalJoint, PhysicsFixedJoint, PhysicsDistanceJoint, PhysicsCollisionGroup (8)
-- **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe (3)
+- **mjcPhysics**: MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (4)
 - **Newton**: NewtonActuator (1)
 
 ### Test coverage
