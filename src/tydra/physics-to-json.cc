@@ -92,12 +92,29 @@ std::string JsonColor4f(const value::color4f &v) {
   return oss.str();
 }
 
+std::string JsonValue(const bool v) { return JsonBool(v); }
+std::string JsonValue(const int v) { return JsonNum(v); }
+std::string JsonValue(const double v) { return JsonNum(v); }
+std::string JsonValue(const value::token &v) { return JsonStr(v.str()); }
+std::string JsonValue(const value::color4f &v) { return JsonColor4f(v); }
+
 // Helper to emit a key-value pair
 void EmitKV(std::ostringstream &ss, int ind, int sp, const std::string &key,
             const std::string &val, bool comma = true) {
   ss << Indent(ind, sp) << JsonStr(key) << ": " << val;
   if (comma) ss << ",";
   ss << "\n";
+}
+
+template <typename T>
+void EmitFallbackAttr(std::ostringstream &ss, int ind, int sp,
+                      const std::string &key,
+                      const TypedAttributeWithFallback<T> &attr,
+                      bool include_defaults,
+                      bool comma = true) {
+  if (include_defaults || attr.authored()) {
+    EmitKV(ss, ind, sp, key, JsonValue(attr.get_value()), comma);
+  }
 }
 
 // Helper to emit optional TypedAttribute<std::vector<T>> as JSON array
@@ -227,26 +244,31 @@ void EmitMjcSceneAPI(std::ostringstream &ss, const MjcSceneAPI &api,
 
 // Emit MjcJointAPI to JSON
 void EmitMjcJointAPI(std::ostringstream &ss, const MjcJointAPI &api,
-                     int ind, int sp) {
+                     int ind, int sp, bool include_defaults) {
   ss << Indent(ind, sp) << "\"mjc\": {\n";
   int i = ind + 1;
-  EmitKV(ss, i, sp, "group", JsonNum(api.group.get_value()));
-  EmitKV(ss, i, sp, "stiffness", JsonNum(api.stiffness.get_value()));
-  EmitKV(ss, i, sp, "damping", JsonNum(api.damping.get_value()));
-  EmitKV(ss, i, sp, "armature", JsonNum(api.armature.get_value()));
-  EmitKV(ss, i, sp, "frictionloss", JsonNum(api.frictionloss.get_value()));
+  EmitFallbackAttr(ss, i, sp, "group", api.group, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "stiffness", api.stiffness, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "damping", api.damping, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "armature", api.armature, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "frictionloss", api.frictionloss,
+                   include_defaults);
   EmitOptionalArray(ss, i, sp, "springdamper", api.springdamper);
-  EmitKV(ss, i, sp, "springref", JsonNum(api.springref.get_value()));
-  EmitKV(ss, i, sp, "ref", JsonNum(api.ref.get_value()));
-  EmitKV(ss, i, sp, "margin", JsonNum(api.margin.get_value()));
+  EmitFallbackAttr(ss, i, sp, "springref", api.springref, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "ref", api.ref, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "margin", api.margin, include_defaults);
   EmitOptionalArray(ss, i, sp, "solreflimit", api.solreflimit);
   EmitOptionalArray(ss, i, sp, "solimplimit", api.solimplimit);
   EmitOptionalArray(ss, i, sp, "solreffriction", api.solreffriction);
   EmitOptionalArray(ss, i, sp, "solimpfriction", api.solimpfriction);
-  EmitKV(ss, i, sp, "actuatorfrcrange_min", JsonNum(api.actuatorfrcrange_min.get_value()));
-  EmitKV(ss, i, sp, "actuatorfrcrange_max", JsonNum(api.actuatorfrcrange_max.get_value()));
-  EmitKV(ss, i, sp, "actuatorfrclimited", JsonStr(api.actuatorfrclimited.get_value().str()));
-  EmitKV(ss, i, sp, "actuatorgravcomp", JsonBool(api.actuatorgravcomp.get_value()), false);
+  EmitFallbackAttr(ss, i, sp, "actuatorfrcrange_min",
+                   api.actuatorfrcrange_min, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "actuatorfrcrange_max",
+                   api.actuatorfrcrange_max, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "actuatorfrclimited",
+                   api.actuatorfrclimited, include_defaults);
+  EmitFallbackAttr(ss, i, sp, "actuatorgravcomp", api.actuatorgravcomp,
+                   include_defaults, false);
   ss << Indent(ind, sp) << "}";
 }
 
@@ -421,7 +443,8 @@ bool ConvertPhysicsToJson(
           ss << (has_mjc ? ",\n" : "\n");
         }
         if (has_mjc) {
-          EmitMjcJointAPI(ss, base.mjcJoint.value(), 3, sp);
+          EmitMjcJointAPI(ss, base.mjcJoint.value(), 3, sp,
+                          options.include_defaults);
           ss << "\n";
         }
         ss << Indent(2, sp) << "}";
@@ -448,20 +471,62 @@ bool ConvertPhysicsToJson(
       EmitKV(ss, 3, sp, "path", JsonStr(path));
       auto tgt = RelTargetStr(act->target);
       if (!tgt.empty()) EmitKV(ss, 3, sp, "target", JsonStr(tgt));
-      EmitKV(ss, 3, sp, "group", JsonNum(act->group.get_value()));
-      EmitKV(ss, 3, sp, "dynType", JsonStr(act->dynType.get_value().str()));
-      EmitKV(ss, 3, sp, "gainType", JsonStr(act->gainType.get_value().str()));
-      EmitKV(ss, 3, sp, "biasType", JsonStr(act->biasType.get_value().str()));
-      EmitKV(ss, 3, sp, "ctrlLimited", JsonStr(act->ctrlLimited.get_value().str()));
-      EmitKV(ss, 3, sp, "forceLimited", JsonStr(act->forceLimited.get_value().str()));
-      EmitKV(ss, 3, sp, "actLimited", JsonStr(act->actLimited.get_value().str()));
-      EmitKV(ss, 3, sp, "forceRange_min", JsonNum(act->forceRange_min.get_value()));
-      EmitKV(ss, 3, sp, "forceRange_max", JsonNum(act->forceRange_max.get_value()));
+      EmitFallbackAttr(ss, 3, sp, "group", act->group,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "ctrlLimited", act->ctrlLimited,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "forceLimited", act->forceLimited,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actLimited", act->actLimited,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "ctrlRange_min", act->ctrlRange_min,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "ctrlRange_max", act->ctrlRange_max,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "forceRange_min", act->forceRange_min,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "forceRange_max", act->forceRange_max,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actRange_min", act->actRange_min,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actRange_max", act->actRange_max,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "lengthRange_min", act->lengthRange_min,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "lengthRange_max", act->lengthRange_max,
+                       options.include_defaults);
       EmitOptionalArray(ss, 3, sp, "gear", act->gear);
+      EmitFallbackAttr(ss, 3, sp, "crankLength", act->crankLength,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "jointInParent", act->jointInParent,
+                       options.include_defaults);
+      {
+        auto ref = RelTargetStr(act->refSite);
+        if (!ref.empty()) EmitKV(ss, 3, sp, "refSite", JsonStr(ref));
+      }
+      {
+        auto slider = RelTargetStr(act->sliderSite);
+        if (!slider.empty()) EmitKV(ss, 3, sp, "sliderSite", JsonStr(slider));
+      }
+      EmitFallbackAttr(ss, 3, sp, "actDim", act->actDim,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "dynType", act->dynType,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "gainType", act->gainType,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "biasType", act->biasType,
+                       options.include_defaults);
+      EmitOptionalArray(ss, 3, sp, "dynPrm", act->dynPrm);
       EmitOptionalArray(ss, 3, sp, "gainPrm", act->gainPrm);
       EmitOptionalArray(ss, 3, sp, "biasPrm", act->biasPrm);
-      EmitKV(ss, 3, sp, "actDim", JsonNum(act->actDim.get_value()));
-      EmitKV(ss, 3, sp, "inheritRange", JsonNum(act->inheritRange.get_value()), false);
+      EmitFallbackAttr(ss, 3, sp, "actEarly", act->actEarly,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "inheritRange", act->inheritRange,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "plugin", act->plugin,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "instance", act->instance,
+                       options.include_defaults, false);
       ss << Indent(2, sp) << "}";
       if (i + 1 < data.actuators.size()) ss << ",";
       ss << "\n";
@@ -478,7 +543,8 @@ bool ConvertPhysicsToJson(
       const auto &[path, t] = data.tendons[i];
       ss << Indent(2, sp) << "{\n";
       EmitKV(ss, 3, sp, "path", JsonStr(path));
-      EmitKV(ss, 3, sp, "type", JsonStr(t->type.get_value().str()));
+      EmitFallbackAttr(ss, 3, sp, "type", t->type,
+                       options.include_defaults);
       EmitOptionalRelTargets(ss, 3, sp, "route", t->path);
       EmitOptionalRelTargets(ss, 3, sp, "sideSites", t->sideSites);
       EmitOptionalArray(ss, 3, sp, "routeIndices", t->path_indices);
@@ -486,28 +552,39 @@ bool ConvertPhysicsToJson(
       EmitOptionalArray(ss, 3, sp, "routeSegments", t->path_segments);
       EmitOptionalArray(ss, 3, sp, "routeDivisors", t->path_divisors);
       EmitOptionalArray(ss, 3, sp, "routeCoef", t->path_coef);
-      EmitKV(ss, 3, sp, "group", JsonNum(t->group.get_value()));
-      EmitKV(ss, 3, sp, "limited", JsonStr(t->limited.get_value().str()));
-      EmitKV(ss, 3, sp, "actuatorfrclimited",
-             JsonStr(t->actuatorfrclimited.get_value().str()));
-      EmitKV(ss, 3, sp, "range_min", JsonNum(t->range_min.get_value()));
-      EmitKV(ss, 3, sp, "range_max", JsonNum(t->range_max.get_value()));
-      EmitKV(ss, 3, sp, "actuatorfrcrange_min",
-             JsonNum(t->actuatorfrcrange_min.get_value()));
-      EmitKV(ss, 3, sp, "actuatorfrcrange_max",
-             JsonNum(t->actuatorfrcrange_max.get_value()));
-      EmitKV(ss, 3, sp, "stiffness", JsonNum(t->stiffness.get_value()));
-      EmitKV(ss, 3, sp, "damping", JsonNum(t->damping.get_value()));
-      EmitKV(ss, 3, sp, "armature", JsonNum(t->armature.get_value()));
-      EmitKV(ss, 3, sp, "frictionloss", JsonNum(t->frictionloss.get_value()));
-      EmitKV(ss, 3, sp, "margin", JsonNum(t->margin.get_value()));
+      EmitFallbackAttr(ss, 3, sp, "group", t->group,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "limited", t->limited,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actuatorfrclimited",
+                       t->actuatorfrclimited, options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "range_min", t->range_min,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "range_max", t->range_max,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actuatorfrcrange_min",
+                       t->actuatorfrcrange_min, options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "actuatorfrcrange_max",
+                       t->actuatorfrcrange_max, options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "stiffness", t->stiffness,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "damping", t->damping,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "armature", t->armature,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "frictionloss", t->frictionloss,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "margin", t->margin,
+                       options.include_defaults);
       EmitOptionalArray(ss, 3, sp, "springlength", t->springlength);
       EmitOptionalArray(ss, 3, sp, "solreflimit", t->solreflimit);
       EmitOptionalArray(ss, 3, sp, "solimplimit", t->solimplimit);
       EmitOptionalArray(ss, 3, sp, "solreffriction", t->solreffriction);
       EmitOptionalArray(ss, 3, sp, "solimpfriction", t->solimpfriction);
-      EmitKV(ss, 3, sp, "width", JsonNum(t->width.get_value()));
-      EmitKV(ss, 3, sp, "rgba", JsonColor4f(t->rgba.get_value()), false);
+      EmitFallbackAttr(ss, 3, sp, "width", t->width,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "rgba", t->rgba,
+                       options.include_defaults, false);
       ss << Indent(2, sp) << "}";
       if (i + 1 < data.tendons.size()) ss << ",";
       ss << "\n";
@@ -525,14 +602,22 @@ bool ConvertPhysicsToJson(
       ss << Indent(2, sp) << "{\n";
       EmitKV(ss, 3, sp, "path", JsonStr(path));
       EmitKV(ss, 3, sp, "name", JsonStr(sensor->name));
-      EmitKV(ss, 3, sp, "type", JsonStr(sensor->type.get_value().str()));
-      EmitKV(ss, 3, sp, "objtype", JsonStr(sensor->objType.get_value().str()));
-      EmitKV(ss, 3, sp, "objname", JsonStr(sensor->objName.get_value().str()));
-      EmitKV(ss, 3, sp, "reftype", JsonStr(sensor->refType.get_value().str()));
-      EmitKV(ss, 3, sp, "refname", JsonStr(sensor->refName.get_value().str()));
-      EmitKV(ss, 3, sp, "group", JsonNum(sensor->group.get_value()));
-      EmitKV(ss, 3, sp, "cutoff", JsonNum(sensor->cutoff.get_value()));
-      EmitKV(ss, 3, sp, "noise", JsonNum(sensor->noise.get_value()));
+      EmitFallbackAttr(ss, 3, sp, "type", sensor->type,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "objtype", sensor->objType,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "objname", sensor->objName,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "reftype", sensor->refType,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "refname", sensor->refName,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "group", sensor->group,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "cutoff", sensor->cutoff,
+                       options.include_defaults);
+      EmitFallbackAttr(ss, 3, sp, "noise", sensor->noise,
+                       options.include_defaults);
       EmitOptionalArray(ss, 3, sp, "user", sensor->user, false);
       ss << Indent(2, sp) << "}";
       if (i + 1 < data.sensors.size()) ss << ",";

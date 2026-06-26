@@ -1028,8 +1028,18 @@ bool AddMjcTendonFromJson(
     std::map<std::string, std::string> &tendon_name_to_usd,
     size_t index, std::string *warn, std::string *err) {
   MjcTendon tendon;
-  const std::string source_name =
-      JsonString(t_json, "name", "tendon_" + std::to_string(index));
+  std::string source_name = JsonString(t_json, "name");
+  if (source_name.empty()) {
+    const std::string prim_path = JsonString(t_json, "path");
+    const size_t slash = prim_path.find_last_of('/');
+    if (!prim_path.empty() && slash != std::string::npos &&
+        slash + 1 < prim_path.size()) {
+      source_name = prim_path.substr(slash + 1);
+    }
+  }
+  if (source_name.empty()) {
+    source_name = "tendon_" + std::to_string(index);
+  }
   tendon.name = SanitizeUSDIdentifier(source_name, "tendon");
   tendon_name_to_usd[source_name] = tendon.name;
   const std::string type = JsonString(t_json, "type", "fixed");
@@ -1070,19 +1080,49 @@ bool AddMjcTendonFromJson(
     return nonstd::nullopt;
   };
 
+  auto append_route_ref = [&](const std::string &ref,
+                              std::vector<Path> *out) -> bool {
+    auto resolved = resolve_route_ref(ref);
+    if (resolved.has_value()) {
+      out->push_back(resolved.value());
+      return true;
+    }
+    if (!ref.empty()) {
+      AppendWarn(warn, "Tendon `" + tendon.name +
+                           "` route reference `" + ref +
+                           "` could not be resolved; skipping it.\n");
+    }
+    return false;
+  };
+
+  auto append_route_object = [&](const nlohmann::json &item,
+                                 std::vector<Path> *out) -> bool {
+    if (!item.is_object()) {
+      return false;
+    }
+    std::string ref = JsonString(item, "target");
+    if (ref.empty()) ref = JsonString(item, "path");
+    if (ref.empty() && type == "spatial") ref = JsonString(item, "site");
+    if (ref.empty() && type == "spatial") ref = JsonString(item, "sidesite");
+    if (ref.empty()) ref = JsonString(item, "joint");
+    return append_route_ref(ref, out);
+  };
+
   std::vector<Path> targets;
   std::vector<double> coefs = JsonDoubleArray(t_json, "routeCoef");
   const std::vector<std::string> route = JsonStringArray(t_json, "route");
   if (!route.empty()) {
     for (const std::string &ref : route) {
-      auto resolved = resolve_route_ref(ref);
-      if (resolved.has_value()) {
-        targets.push_back(resolved.value());
-      } else {
-        AppendWarn(warn, "Tendon `" + tendon.name +
-                             "` route reference `" + ref +
-                             "` could not be resolved; skipping it.\n");
-      }
+      append_route_ref(ref, &targets);
+    }
+  } else if (t_json.contains("route") && t_json["route"].is_array()) {
+    for (const auto &item : t_json["route"]) {
+      append_route_object(item, &targets);
+    }
+  } else if (t_json.contains("path") && t_json["path"].is_array() &&
+             !JsonStringArray(t_json, "path").empty()) {
+    for (const std::string &ref : JsonStringArray(t_json, "path")) {
+      append_route_ref(ref, &targets);
     }
   } else if (type == "spatial") {
     // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints ->
@@ -1095,10 +1135,11 @@ bool AddMjcTendonFromJson(
         std::string site_ref;
         if (wp.contains("site")) site_ref = JsonString(wp, "site");
         else if (wp.contains("sidesite")) site_ref = JsonString(wp, "sidesite");
-        if (site_ref.empty()) continue;  // pulley / unresolvable geom wrap
-        auto it = site_name_to_usd.find(site_ref);
-        if (it == site_name_to_usd.end()) continue;
-        targets.emplace_back("/World/Sites/" + it->second, "");
+        if (site_ref.empty()) {
+          append_route_object(wp, &targets);
+          continue;  // pulley / unresolvable geom wrap
+        }
+        append_route_ref(site_ref, &targets);
         coefs.push_back(1.0);
       }
     }
@@ -1123,10 +1164,14 @@ bool AddMjcTendonFromJson(
   }
 
   if (type == "spatial") {
-    if (targets.size() < 2) {
+    if (targets.empty()) {
       AppendWarn(warn, "Skipping spatial tendon `" + tendon.name +
-                           "`: fewer than 2 routing sites were exported.\n");
+                           "`: no routing sites were exported.\n");
       return true;
+    } else if (targets.size() < 2) {
+      AppendWarn(warn, "Spatial tendon `" + tendon.name +
+                           "` has fewer than 2 routing sites; preserving the "
+                           "partial route.\n");
     }
   } else {
     if (targets.empty()) {
@@ -1150,6 +1195,24 @@ bool AddMjcTendonFromJson(
       AppendWarn(warn, "Tendon `" + tendon.name +
                            "` sideSite reference `" + ref +
                            "` could not be resolved; skipping it.\n");
+    }
+  }
+  if (side_sites.empty() && t_json.contains("sideSites") &&
+      t_json["sideSites"].is_array()) {
+    for (const auto &item : t_json["sideSites"]) {
+      if (!item.is_object()) continue;
+      std::string ref = JsonString(item, "target");
+      if (ref.empty()) ref = JsonString(item, "path");
+      if (ref.empty()) ref = JsonString(item, "site");
+      if (ref.empty()) ref = JsonString(item, "sidesite");
+      auto resolved = resolve_site_ref(ref);
+      if (resolved.has_value()) {
+        side_sites.push_back(resolved.value());
+      } else if (!ref.empty()) {
+        AppendWarn(warn, "Tendon `" + tendon.name +
+                             "` sideSite reference `" + ref +
+                             "` could not be resolved; skipping it.\n");
+      }
     }
   }
   if (!side_sites.empty()) {
@@ -1381,7 +1444,10 @@ bool AddMjcActuatorFromJson(
   const std::string t_joint = JsonString(a_json, "targetJoint");
   const std::string t_site = JsonString(a_json, "targetSite");
   const std::string t_body = JsonString(a_json, "targetBody");
-  if (!t_tendon.empty()) {
+  const std::string t_path = JsonString(a_json, "target");
+  if (!t_path.empty() && t_path[0] == '/') {
+    targets.emplace_back(t_path, "");
+  } else if (!t_tendon.empty()) {
     auto it = tendon_name_to_usd.find(t_tendon);
     if (it != tendon_name_to_usd.end())
       targets.emplace_back("/World/Tendons/" + it->second, "");
@@ -1404,6 +1470,8 @@ bool AddMjcActuatorFromJson(
   if (!gainPrm.empty()) act.gainPrm.set_value(gainPrm);
   std::vector<double> biasPrm = JsonDoubleArray(a_json, "biasPrm");
   if (!biasPrm.empty()) act.biasPrm.set_value(biasPrm);
+  std::vector<double> dynPrm = JsonDoubleArray(a_json, "dynPrm");
+  if (!dynPrm.empty()) act.dynPrm.set_value(dynPrm);
   std::vector<double> gear = JsonDoubleArray(a_json, "gear");
   if (!gear.empty()) act.gear.set_value(gear);
   if (a_json.contains("lengthRange") && a_json["lengthRange"].is_array() &&
@@ -1421,16 +1489,66 @@ bool AddMjcActuatorFromJson(
     act.forceRange_min.set_value(a_json["forceRange"][0].get<double>());
     act.forceRange_max.set_value(a_json["forceRange"][1].get<double>());
   }
+  if (a_json.contains("actRange") && a_json["actRange"].is_array() &&
+      a_json["actRange"].size() >= 2) {
+    act.actRange_min.set_value(a_json["actRange"][0].get<double>());
+    act.actRange_max.set_value(a_json["actRange"][1].get<double>());
+  }
+  double v = 0.0;
+  if (JsonNumber(a_json, "ctrlRange_min", &v)) act.ctrlRange_min.set_value(v);
+  if (JsonNumber(a_json, "ctrlRange_max", &v)) act.ctrlRange_max.set_value(v);
+  if (JsonNumber(a_json, "forceRange_min", &v)) act.forceRange_min.set_value(v);
+  if (JsonNumber(a_json, "forceRange_max", &v)) act.forceRange_max.set_value(v);
+  if (JsonNumber(a_json, "actRange_min", &v)) act.actRange_min.set_value(v);
+  if (JsonNumber(a_json, "actRange_max", &v)) act.actRange_max.set_value(v);
+  if (JsonNumber(a_json, "lengthRange_min", &v)) act.lengthRange_min.set_value(v);
+  if (JsonNumber(a_json, "lengthRange_max", &v)) act.lengthRange_max.set_value(v);
+  if (JsonNumber(a_json, "crankLength", &v)) act.crankLength.set_value(v);
+  if (JsonNumber(a_json, "inheritRange", &v)) act.inheritRange.set_value(v);
+  int int_value = 0;
+  if (JsonIntFromObjectOrParent(a_json, "", "group", &int_value)) {
+    act.group.set_value(int_value);
+  }
+  if (JsonIntFromObjectOrParent(a_json, "", "actDim", &int_value)) {
+    act.actDim.set_value(int_value);
+  }
+  bool bool_value = false;
+  if (JsonBool(a_json, "jointInParent", &bool_value)) {
+    act.jointInParent.set_value(bool_value);
+  }
+  if (JsonBool(a_json, "actEarly", &bool_value)) {
+    act.actEarly.set_value(bool_value);
+  }
   if (a_json.contains("gainType"))
     act.gainType.set_value(value::token(JsonString(a_json, "gainType", "fixed")));
   if (a_json.contains("biasType"))
     act.biasType.set_value(value::token(JsonString(a_json, "biasType", "none")));
   if (a_json.contains("dynType"))
     act.dynType.set_value(value::token(JsonString(a_json, "dynType", "none")));
+  if (a_json.contains("ctrlLimited"))
+    act.ctrlLimited.set_value(value::token(JsonString(a_json, "ctrlLimited", "auto")));
+  if (a_json.contains("forceLimited"))
+    act.forceLimited.set_value(value::token(JsonString(a_json, "forceLimited", "auto")));
+  if (a_json.contains("actLimited"))
+    act.actLimited.set_value(value::token(JsonString(a_json, "actLimited", "auto")));
   if (a_json.contains("plugin"))
     act.plugin.set_value(value::token(JsonString(a_json, "plugin", "")));
   if (a_json.contains("instance"))
     act.instance.set_value(value::token(JsonString(a_json, "instance", "")));
+  auto resolve_site_rel = [&](const std::string &site,
+                              RelationshipProperty *rel) {
+    if (!rel || site.empty()) return;
+    if (site[0] == '/') {
+      rel->set(Path(site, ""));
+      return;
+    }
+    auto it = site_name_to_usd.find(site);
+    if (it != site_name_to_usd.end()) {
+      rel->set(Path("/World/Sites/" + it->second, ""));
+    }
+  };
+  resolve_site_rel(JsonString(a_json, "refSite"), &act.refSite);
+  resolve_site_rel(JsonString(a_json, "sliderSite"), &act.sliderSite);
 
   std::string add_err;
   if (!actuators_prim.add_child(Prim(act), true, &add_err)) {
@@ -1470,8 +1588,9 @@ bool AddMjcKeyframeFromJson(Prim &keyframes_prim, const nlohmann::json &k_json,
 
 // MJCF <sensor> child -> MjcSensor prim. A single typed prim covers all sensor
 // kinds; the kind is `mjc:type` (the element name) and the measured object is
-// `mjc:objtype`/`mjc:objname` (+ reftype/refname for frame sensors). JSON:
-//   { name, type, objtype, objname, reftype, refname, group, cutoff, noise, user }.
+// `mjc:objtype`/`mjc:objname` (+ reftype/refname for frame sensors). JSON may
+// be pre-normalized or use MuJoCo attribute aliases such as `site`, `joint`,
+// `tendon`, `body`, and `refsite`.
 bool AddMjcSensorFromJson(Prim &sensors_prim, const nlohmann::json &s_json,
                           std::set<std::string> &used_names, size_t index,
                           std::string *err) {
@@ -1488,6 +1607,44 @@ bool AddMjcSensorFromJson(Prim &sensors_prim, const nlohmann::json &s_json,
   tok("objname", sensor.objName);
   tok("reftype", sensor.refType);
   tok("refname", sensor.refName);
+  auto set_sensor_target_alias = [&](const char *key, const char *obj_type,
+                                     auto &type_field, auto &name_field) {
+    if (type_field.authored() || name_field.authored()) {
+      return;
+    }
+    const std::string name = JsonString(s_json, key);
+    if (!name.empty()) {
+      type_field.set_value(value::token(obj_type));
+      name_field.set_value(value::token(name));
+    }
+  };
+  const std::pair<const char *, const char *> target_aliases[] = {
+      {"site", "site"},       {"joint", "joint"},
+      {"actuator", "actuator"}, {"tendon", "tendon"},
+      {"body", "body"},       {"xbody", "xbody"},
+      {"geom", "geom"},       {"camera", "camera"},
+      {"light", "light"},     {"sensor", "sensor"},
+      {"numeric", "numeric"}, {"text", "text"},
+      {"tuple", "tuple"},     {"key", "key"},
+      {"plugin", "plugin"}};
+  for (const auto &alias : target_aliases) {
+    set_sensor_target_alias(alias.first, alias.second, sensor.objType,
+                            sensor.objName);
+  }
+  const std::pair<const char *, const char *> ref_aliases[] = {
+      {"refsite", "site"},       {"refSite", "site"},
+      {"refjoint", "joint"},     {"refJoint", "joint"},
+      {"refactuator", "actuator"}, {"refActuator", "actuator"},
+      {"reftendon", "tendon"},   {"refTendon", "tendon"},
+      {"refbody", "body"},       {"refBody", "body"},
+      {"refxbody", "xbody"},     {"refXbody", "xbody"},
+      {"refgeom", "geom"},       {"refGeom", "geom"},
+      {"refcamera", "camera"},   {"refCamera", "camera"},
+      {"reflight", "light"},     {"refLight", "light"}};
+  for (const auto &alias : ref_aliases) {
+    set_sensor_target_alias(alias.first, alias.second, sensor.refType,
+                            sensor.refName);
+  }
   int g = 0;
   if (JsonIntFromObjectOrParent(s_json, "", "group", &g)) sensor.group.set_value(g);
   double v = 0.0;
