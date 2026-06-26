@@ -1452,6 +1452,51 @@ def MjcKeyframe "Key0"
   }
 }
 
+void physics_to_json_include_defaults_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def "World"
+{
+    def MjcActuator "act"
+    {
+        rel mjc:target = </World/Joint>
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::string compact_json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  opts.include_defaults = false;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &compact_json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  TEST_CHECK(compact_json.find("\"target\": \"/World/Joint\"") !=
+             std::string::npos);
+  TEST_CHECK(compact_json.find("\"group\"") == std::string::npos);
+  TEST_CHECK(compact_json.find("\"dynType\"") == std::string::npos);
+  TEST_CHECK(compact_json.find("\"ctrlLimited\"") == std::string::npos);
+
+  std::string defaults_json;
+  opts.include_defaults = true;
+  json_ok = tydra::ConvertPhysicsToJson(stage, &defaults_json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  TEST_CHECK(defaults_json.find("\"group\": 0") != std::string::npos);
+  TEST_CHECK(defaults_json.find("\"dynType\": \"none\"") != std::string::npos);
+  TEST_CHECK(defaults_json.find("\"ctrlLimited\": \"auto\"") !=
+             std::string::npos);
+}
+
 void physics_mjc_tendon_full_to_json_test(void) {
   Stage stage;
   std::string warn, err;
@@ -3319,6 +3364,168 @@ void urdf_json_mjcf_tendon_full_export_test(void) {
   TEST_CHECK(t->rgba.authored());
 }
 
+void urdf_json_mjcf_tendon_alias_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "TendonAliasBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sites": [
+    { "name": "p0", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
+    { "name": "p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0,0,1] }
+  ],
+  "tendons": [
+    { "name": "object_route", "type": "spatial",
+      "route": [ {"site": "p0"}, {"target": "/World/Sites/p1"} ],
+      "sideSites": [ {"site": "p0"} ],
+      "routeCoef": [1, -1] },
+    { "name": "partial_route", "type": "spatial",
+      "route": ["/World/Sites/p0"] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Tendons/object_route", ""));
+  TEST_CHECK(bool(r));
+  if (r) {
+    const auto *t = (*r)->as<MjcTendon>();
+    TEST_CHECK(t != nullptr);
+    if (t) {
+      TEST_CHECK(t->path.authored());
+      auto targets = t->path.get_targetPaths();
+      TEST_CHECK(targets.size() == 2);
+      if (targets.size() == 2) {
+        TEST_CHECK(targets[0].prim_part() == "/World/Sites/p0");
+        TEST_CHECK(targets[1].prim_part() == "/World/Sites/p1");
+      }
+      TEST_CHECK(t->sideSites.authored());
+      TEST_CHECK(t->sideSites.get_targetPaths().size() == 1);
+      auto coef = t->path_coef.get_value();
+      TEST_CHECK(coef.has_value() && coef.value().size() == 2);
+    }
+  }
+
+  auto partial = stage.GetPrimAtPath(Path("/World/Tendons/partial_route", ""));
+  TEST_CHECK(bool(partial));
+  if (partial) {
+    const auto *t = (*partial)->as<MjcTendon>();
+    TEST_CHECK(t != nullptr);
+    if (t) {
+      TEST_CHECK(t->path.authored());
+      TEST_CHECK(t->path.get_targetPaths().size() == 1);
+    }
+  }
+}
+
+void urdf_json_mjc_actuator_full_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "ActuatorFullBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sites": [
+    { "name": "p0", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
+    { "name": "p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0,0,1] }
+  ],
+  "mjcActuators": [
+    { "name": "full",
+      "target": "/World/Links/base",
+      "group": 3,
+      "ctrlLimited": "true",
+      "forceLimited": "false",
+      "actLimited": "auto",
+      "ctrlRange_min": -1,
+      "ctrlRange_max": 1,
+      "forceRange_min": -200,
+      "forceRange_max": 200,
+      "actRange": [0, 2],
+      "lengthRange_min": 0.18,
+      "lengthRange_max": 0.29,
+      "gear": [1, 0, 0, 0, 0, 0],
+      "crankLength": 0.1,
+      "jointInParent": true,
+      "refSite": "p0",
+      "sliderSite": "p1",
+      "actDim": 2,
+      "dynType": "filter",
+      "gainType": "affine",
+      "biasType": "affine",
+      "dynPrm": [0.01, 0.02],
+      "gainPrm": [350, 0, 0],
+      "biasPrm": [0, -350, -10],
+      "actEarly": true,
+      "inheritRange": 0.5,
+      "plugin": "pid0",
+      "instance": "inst0" }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/MjcActuators/full", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *a = (*r)->as<MjcActuator>();
+  TEST_CHECK(a != nullptr);
+  if (!a) return;
+
+  TEST_CHECK(a->target.authored());
+  auto targets = a->target.get_targetPaths();
+  TEST_CHECK(targets.size() == 1);
+  if (targets.size() == 1) {
+    TEST_CHECK(targets[0].prim_part() == "/World/Links/base");
+  }
+  TEST_CHECK(a->group.authored() && a->group.get_value() == 3);
+  TEST_CHECK(a->ctrlLimited.get_value().str() == "true");
+  TEST_CHECK(a->forceLimited.get_value().str() == "false");
+  TEST_CHECK(a->actLimited.get_value().str() == "auto");
+  TEST_CHECK(approx_eq(a->ctrlRange_min.get_value(), -1.0));
+  TEST_CHECK(approx_eq(a->ctrlRange_max.get_value(), 1.0));
+  TEST_CHECK(approx_eq(a->forceRange_min.get_value(), -200.0));
+  TEST_CHECK(approx_eq(a->forceRange_max.get_value(), 200.0));
+  TEST_CHECK(approx_eq(a->actRange_min.get_value(), 0.0));
+  TEST_CHECK(approx_eq(a->actRange_max.get_value(), 2.0));
+  TEST_CHECK(approx_eq(a->lengthRange_min.get_value(), 0.18));
+  TEST_CHECK(approx_eq(a->lengthRange_max.get_value(), 0.29));
+  TEST_CHECK(approx_eq(a->crankLength.get_value(), 0.1));
+  TEST_CHECK(a->jointInParent.get_value() == true);
+  TEST_CHECK(a->refSite.authored());
+  if (a->refSite.authored()) {
+    auto rels = a->refSite.get_targetPaths();
+    TEST_CHECK(rels.size() == 1);
+    if (rels.size() == 1) TEST_CHECK(rels[0].prim_part() == "/World/Sites/p0");
+  }
+  TEST_CHECK(a->sliderSite.authored());
+  if (a->sliderSite.authored()) {
+    auto rels = a->sliderSite.get_targetPaths();
+    TEST_CHECK(rels.size() == 1);
+    if (rels.size() == 1) TEST_CHECK(rels[0].prim_part() == "/World/Sites/p1");
+  }
+  TEST_CHECK(a->actDim.get_value() == 2);
+  TEST_CHECK(a->dynType.get_value().str() == "filter");
+  TEST_CHECK(a->gainType.get_value().str() == "affine");
+  TEST_CHECK(a->biasType.get_value().str() == "affine");
+  auto dyn = a->dynPrm.get_value();
+  TEST_CHECK(dyn.has_value() && dyn.value().size() == 2);
+  auto gain = a->gainPrm.get_value();
+  TEST_CHECK(gain.has_value() && gain.value().size() == 3);
+  auto bias = a->biasPrm.get_value();
+  TEST_CHECK(bias.has_value() && bias.value().size() == 3);
+  TEST_CHECK(a->actEarly.get_value() == true);
+  TEST_CHECK(approx_eq(a->inheritRange.get_value(), 0.5));
+  TEST_CHECK(a->plugin.get_value().str() == "pid0");
+  TEST_CHECK(a->instance.get_value().str() == "inst0");
+}
+
 // MJCF <equality> connect/weld/joint -> Xform host prims with MjcEquality*API.
 void urdf_json_mjcf_equality_export_test(void) {
   const char *robot_json = R"JSON({
@@ -3970,6 +4177,66 @@ def "World" { def MjcSensor "g" { uniform token mjc:type = "gyro"
         TEST_CHECK(s->type.get_value().str() == "gyro");
         TEST_CHECK(approx_eq(s->cutoff.get_value(), 12.5));
       }
+    }
+  }
+}
+
+void urdf_json_mjc_sensor_aliases_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "SensorAliasBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sensors": [
+    { "name": "g", "type": "gyro", "site": "imu",
+      "group": 4, "user": [1, 2, 3] },
+    { "name": "tv", "type": "tendonvel", "tendon": "achilles" },
+    { "name": "fp", "type": "framepos", "body": "torso",
+      "refSite": "imu" }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto g = stage.GetPrimAtPath(Path("/World/Sensors/g", ""));
+  TEST_CHECK(bool(g));
+  if (g) {
+    const auto *s = (*g)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "site");
+      TEST_CHECK(s->objName.get_value().str() == "imu");
+      TEST_CHECK(s->group.authored() && s->group.get_value() == 4);
+      auto user = s->user.get_value();
+      TEST_CHECK(user.has_value() && user.value().size() == 3);
+    }
+  }
+
+  auto tv = stage.GetPrimAtPath(Path("/World/Sensors/tv", ""));
+  TEST_CHECK(bool(tv));
+  if (tv) {
+    const auto *s = (*tv)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "tendon");
+      TEST_CHECK(s->objName.get_value().str() == "achilles");
+    }
+  }
+
+  auto fp = stage.GetPrimAtPath(Path("/World/Sensors/fp", ""));
+  TEST_CHECK(bool(fp));
+  if (fp) {
+    const auto *s = (*fp)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "body");
+      TEST_CHECK(s->objName.get_value().str() == "torso");
+      TEST_CHECK(s->refType.get_value().str() == "site");
+      TEST_CHECK(s->refName.get_value().str() == "imu");
     }
   }
 }
