@@ -10,6 +10,7 @@
 ///
 #pragma once
 
+#include <cinttypes>
 #include <algorithm>
 #include <array>
 #include <cmath>
