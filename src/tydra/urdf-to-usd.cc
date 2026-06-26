@@ -1127,8 +1127,8 @@ bool AddMjcTendonFromJson(
   } else if (type == "spatial") {
     // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints ->
     // mjc:path rel to the routing site prims (wrap geoms approximated by their
-    // sidesite via point). mjc:path:coef carries the per-waypoint coefficient
-    // (1 for sites; pulley divisors are not modeled here).
+    // sidesite via point). mjc:path:coef carries per-waypoint site coefficients;
+    // pulley divisors are preserved separately as mjc:path:divisors.
     if (t_json.contains("path") && t_json["path"].is_array()) {
       for (const auto &wp : t_json["path"]) {
         if (!wp.is_object()) continue;
