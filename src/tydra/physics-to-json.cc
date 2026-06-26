@@ -157,6 +157,53 @@ std::string RelTargetStr(const RelationshipProperty &rp) {
   return "";
 }
 
+// Remove emitter-created trailing commas without touching comma-like text
+// inside JSON strings.
+std::string RemoveTrailingJsonCommas(const std::string &src) {
+  std::string out;
+  out.reserve(src.size());
+
+  bool in_string = false;
+  bool escaped = false;
+  for (size_t i = 0; i < src.size(); ++i) {
+    const char c = src[i];
+
+    if (in_string) {
+      out.push_back(c);
+      if (escaped) {
+        escaped = false;
+      } else if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      in_string = true;
+      out.push_back(c);
+      continue;
+    }
+
+    if (c == ',') {
+      size_t j = i + 1;
+      while (j < src.size() &&
+             (src[j] == ' ' || src[j] == '\n' || src[j] == '\r' ||
+              src[j] == '\t')) {
+        ++j;
+      }
+      if (j < src.size() && (src[j] == '}' || src[j] == ']')) {
+        continue;
+      }
+    }
+
+    out.push_back(c);
+  }
+
+  return out;
+}
+
 // Emit MjcSceneAPI to JSON
 void EmitMjcSceneAPI(std::ostringstream &ss, const MjcSceneAPI &api,
                      int ind, int sp) {
@@ -652,20 +699,8 @@ bool ConvertPhysicsToJson(
 
   ss << "}\n";
 
-  // Strip trailing commas before } and ] to produce valid JSON
-  // (EmitKV/EmitOptionalArray may leave trailing commas when optional fields are absent)
-  std::string result = ss.str();
-  for (size_t i = 0; i < result.size(); i++) {
-    if (result[i] == ',' && i + 1 < result.size()) {
-      size_t j = i + 1;
-      while (j < result.size() && (result[j] == ' ' || result[j] == '\n'))
-        j++;
-      if (j < result.size() && (result[j] == '}' || result[j] == ']')) {
-        result.erase(i, 1);
-        i--;
-      }
-    }
-  }
+  // Emitters may leave trailing commas when optional fields are absent.
+  std::string result = RemoveTrailingJsonCommas(ss.str());
   *json_str = std::move(result);
   return true;
 }

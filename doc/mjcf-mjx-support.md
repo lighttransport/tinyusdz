@@ -66,7 +66,7 @@ Legend:
 | `<tendon><fixed>` (joint coupling) | `MjcTendon` type=fixed, `mjc:path`→joints, `mjc:path:coef` | Full |
 | **`<tendon><spatial>` (muscle path)** | `MjcTendon` type=spatial, `mjc:path`→routing sites, rgba/width | Full + **Viz** (red polylines through the sites, drawn on **both** the MJCF-source and converted-USD views) |
 | `<spatial><geom sidesite=..>` wrap | routed via the sidesite via-point | Partial (wrap-surface geometry not modeled) |
-| `<spatial><pulley divisor>` | — | Missing |
+| `<spatial><pulley divisor>` | `MjcTendon` `mjc:path:divisors` | Partial (divisors preserved; pulley wrap geometry/moment-arm evaluation not modeled) |
 | **`<actuator><muscle>` / `<general class="muscle">`** | `MjcActuator` (`mjc:target`→tendon, `gainPrm`/`biasPrm`/`lengthRange`/`ctrlRange`) | Full |
 | `<actuator><motor/position/velocity>` (joint) | `NewtonActuator` (PD: kp/kv, force/ctrl range) | Full |
 | `<actuator><general/cylinder/adhesion/damper/intvelocity/plugin>` (joint/tendon/site/body) | `MjcActuator` (all gain/bias/transmission/range params + `mjc:plugin`/`mjc:instance`) | Partial (params preserved + USDC-round-trip; type-specific dynamics not interpreted) |
@@ -80,7 +80,7 @@ Legend:
 | `<contact><exclude>` | `PhysicsFilteredPairsAPI` (`physics:filteredPairs`) | Full |
 | `<contact><pair>` (explicit pair + friction/solref/solimp/condim) | `/World/Contacts` `MjcContactPair` prim (`mjc:geom1`/`mjc:geom2` + friction/solref/solimp/condim/gap/margin) | Full |
 
-## Sensors, deformables, misc (not yet converted)
+## Sensors, assets, deformables, misc
 
 | MJCF | Status | Notes |
 |---|---|---|
@@ -199,18 +199,10 @@ source-relative in usda/usdc, and all 25 visual meshes bind the material with
 
 ## Required for "full" MJCF/MJX coverage (prioritized backlog)
 
-1. **`<contact><pair>`** explicit contact pairs → a `MjcContactPairAPI`/prim
-   (friction/solref/solimp/gap). Companion to the existing `<exclude>` support.
-2. **`<sensor>`** → `MjcSensor` prim + per-type `MjcSensorAPI` (start with
-   jointpos/jointvel/framepos/framequat/touch/accelerometer/gyro).
-3. **`<camera>`/`<light>`** → `UsdGeomCamera` / `UsdLux` (straightforward).
-4. **`<asset><texture/material>`** → `UsdShade` material binding (geom rgba →
-   UsdPreviewSurface) so converted models keep their appearance.
-5. **`<custom>`** numeric/text/tuple → `mjc:custom:*` customData (MJX knobs).
-6. **`<spatial>` wrap geoms + `<pulley>`** → faithful muscle wrap geometry
+1. **`<custom>`** numeric/text/tuple → `mjc:custom:*` customData (MJX knobs).
+2. **`<spatial>` wrap geoms + `<pulley>`** → faithful muscle wrap geometry
    (sphere/cylinder wrap surfaces) for accurate moment arms.
-7. **`<hfield>` / `<sdf>` geoms** → `GeomMesh` (tessellated) or a dedicated prim.
-8. **`<deformable>`/`<flex>`** (MuJoCo 3 soft bodies) → needs a USD physics
+3. **`<sdf>` geoms** → `GeomMesh` (tessellated) or a dedicated prim.
+4. **`<deformable>`/`<flex>`** (MuJoCo 3 soft bodies) → needs a USD physics
    soft-body/FEM schema (design work; no UsdPhysics analog yet).
-9. **`<equality><tendon/distance/flex>`** → extend the `MjcEquality*API` family.
-10. **`<plugin>`/`<extension>`** → preserve plugin config as customData.
+5. **`<equality><tendon/distance/flex>`** → extend the `MjcEquality*API` family.
