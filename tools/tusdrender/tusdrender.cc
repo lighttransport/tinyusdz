@@ -17,7 +17,9 @@
 #include <iostream>
 #include <mutex>
 #include <new>
-#include <unistd.h>
+#if !defined(_MSC_VER)
+#include <unistd.h>  // POSIX (present under MinGW; absent with MSVC)
+#endif
 #include <array>
 #include <limits>
 #include <memory>
