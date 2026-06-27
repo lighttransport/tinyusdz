@@ -130,9 +130,18 @@ class RenderSceneConverter {
   bool ComputeVertexNormals(RenderMesh* mesh);
 
   // Material extraction
+  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
+                       const UsdPrim& prim,
+                       RenderMaterial* out,
+                       RenderScene* scene);
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
-                             PreviewSurfaceShader* out);
+                             PreviewSurfaceShader* out,
+                             RenderScene* scene);
+  bool ExtractOpenPBRSurface(const ::tinyusdz::next::Stage& stage,
+                             const UsdPrim& shader_prim,
+                             OpenPBRSurfaceShader* out,
+                             RenderScene* scene);
   bool ExtractShaderParam(const ::tinyusdz::next::Stage& stage,
                           const UsdPrim& shader_prim,
                           const std::string& param_name,

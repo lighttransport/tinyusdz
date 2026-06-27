@@ -10,12 +10,14 @@
 #include "crate-writer.hh"
 #include "sconv-detail.hh"
 #include <iostream>
+#include <sstream>
 #include <set>
 #include <unordered_set>
 #include "layer.hh"
 #include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
+#include "value-pprint.hh"  // For string payloads of unregistered Crate values
 #include "usdShade.hh"  // For Material and Shader
 #include "usdMtlx.hh"  // For MtlxOpenPBRSurface (concrete ShaderNode subtype)
 #include "usdPhysics.hh"  // For PhysicsScene, PhysicsJoint, PhysicsCollisionGroup
@@ -158,6 +160,69 @@ const std::map<std::string, Property> *GetPrimProps(const value::Value &v) {
 #undef GET_PRIM_PROPS
 
   return nullptr;
+}
+
+template <typename Vec>
+std::string FormatUintTuple(const Vec &v) {
+  std::ostringstream ss;
+  ss << "(";
+  for (size_t i = 0; i < v.size(); ++i) {
+    if (i) {
+      ss << ", ";
+    }
+    ss << v[i];
+  }
+  ss << ")";
+  return ss.str();
+}
+
+template <typename Vec>
+std::string FormatUintTupleArray(const std::vector<Vec> &values) {
+  std::ostringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i) {
+      ss << ", ";
+    }
+    ss << FormatUintTuple(values[i]);
+  }
+  ss << "]";
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatSmallIntegerValue(T value) {
+  std::ostringstream ss;
+  ss << static_cast<int64_t>(value);
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatSmallIntegerArray(const std::vector<T> &values) {
+  std::ostringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i) {
+      ss << ", ";
+    }
+    ss << static_cast<int64_t>(values[i]);
+  }
+  ss << "]";
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatUnregisteredValue(const T &value) {
+  std::ostringstream ss;
+  ss << value;
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatUnregisteredArray(const std::vector<T> &values) {
+  std::ostringstream ss;
+  ss << values;
+  return ss.str();
 }
 
 // Returns the Collection mixin pointer for prims that inherit from
@@ -498,9 +563,13 @@ bool CrateWriter::ConvertSinglePrim(
     "apiSchemas", "inherits", "inheritPaths", "specializes", "references", "payload",
     "displayName", "displayGroup", "sceneName",
   };
+  std::set<std::string> prim_field_names = kPrimFields;
+  for (const auto& kv : prim.metas().data()) {
+    prim_field_names.insert(kv.first);
+  }
 
   for (auto& fv : fields) {
-    if (kPrimFields.count(fv.first)) {
+    if (prim_field_names.count(fv.first)) {
       prim_fields.push_back(std::move(fv));
       continue;
     }
@@ -1165,11 +1234,9 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"instanceable", v});
   }
 
-  // customData (Dictionary). Skipped historically due to dict serialization
-  // worries, but the dict path on the writer side is now exercised by
-  // attribute customData and works for primitive value types
-  // (string/int/bool/float/double/token). We emit here too so prim-level
-  // customData survives USDC round-trip.
+  // customData (Dictionary). Keep this on the Stage path so prim-level
+  // customData survives USDC round-trip; the writer supports the common scalar,
+  // vector, array, nested-dictionary, token and asset-path metadata values.
   if (metas.has_customData()) {
     crate::CrateValue v;
     v.Set(metas.get_customData());
@@ -1220,6 +1287,46 @@ void CrateWriter::ExtractPrimMeta(
       v.Set(listop);
       fields.push_back({"apiSchemas", v});
     }
+  }
+
+  const std::unordered_set<std::string> emitted_prim_meta_names = {
+      "active",
+      "apiSchemas",
+      "assetInfo",
+      "clips",
+      "comment",
+      "customData",
+      "displayName",
+      "documentation",
+      "hidden",
+      "inherits",
+      "inheritPaths",
+      "instanceable",
+      "kind",
+      "payload",
+      "primChildren",
+      "properties",
+      "references",
+      "sceneName",
+      "specializes",
+      "variantChildren",
+      "variantSelection",
+      "variantSetChildren",
+      "variantSetNames",
+      "variantSets",
+      "variants"};
+  for (const auto& kv : metas.data()) {
+    if (emitted_prim_meta_names.count(kv.first)) {
+      continue;
+    }
+    crate::CrateValue v;
+    std::string meta_err;
+    if (!ConvertValue(kv.second.get_raw_value(), v, &meta_err)) {
+      DCOUT("WARNING: Skipping unsupported prim metadata `" << kv.first
+            << "`: " << meta_err);
+      continue;
+    }
+    fields.push_back({kv.first, v});
   }
 
   // Composition arcs — references, inherits, specializes, payload.
@@ -1602,6 +1709,96 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uint2") {
+    if (auto v = val.get_value<value::uint2>()) {
+      out.SetUnregisteredValueString(FormatUintTuple(*v));
+      return true;
+    }
+  } else if (type_name == "uint3") {
+    if (auto v = val.get_value<value::uint3>()) {
+      out.SetUnregisteredValueString(FormatUintTuple(*v));
+      return true;
+    }
+  } else if (type_name == "uint4") {
+    if (auto v = val.get_value<value::uint4>()) {
+      out.SetUnregisteredValueString(FormatUintTuple(*v));
+      return true;
+    }
+  } else if (type_name == "char") {
+    if (auto v = val.get_value<char>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "char2") {
+    if (auto v = val.get_value<value::char2>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "char3") {
+    if (auto v = val.get_value<value::char3>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "char4") {
+    if (auto v = val.get_value<value::char4>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar2") {
+    if (auto v = val.get_value<value::uchar2>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar3") {
+    if (auto v = val.get_value<value::uchar3>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar4") {
+    if (auto v = val.get_value<value::uchar4>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short") {
+    if (auto v = val.get_value<int16_t>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "short2") {
+    if (auto v = val.get_value<value::short2>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short3") {
+    if (auto v = val.get_value<value::short3>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short4") {
+    if (auto v = val.get_value<value::short4>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort") {
+    if (auto v = val.get_value<uint16_t>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort2") {
+    if (auto v = val.get_value<value::ushort2>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort3") {
+    if (auto v = val.get_value<value::ushort3>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort4") {
+    if (auto v = val.get_value<value::ushort4>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
   } else if (type_name == "int64") {
     if (auto v = val.get_value<int64_t>()) {
       out.Set(*v);
@@ -1619,6 +1816,11 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "double") {
     if (auto v = val.get_value<double>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "timecode") {
+    if (auto v = val.get_value<value::timecode>()) {
       out.Set(*v);
       return true;
     }
@@ -1739,8 +1941,18 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "point3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "point3d") {
     if (auto v = val.get_value<value::double3>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "vector3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1759,8 +1971,18 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "normal3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "normal3d") {
     if (auto v = val.get_value<value::double3>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "color3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1771,6 +1993,11 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "color3d") {
     if (auto v = val.get_value<value::double3>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "color4h") {
+    if (auto v = val.get_value<value::half4>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1787,7 +2014,22 @@ bool CrateWriter::ConvertValue(
   }
 
   // Matrix types
-  else if (type_name == "matrix2d") {
+  else if (type_name == "matrix2f") {
+    if (auto v = val.get_value<value::matrix2f>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "matrix3f") {
+    if (auto v = val.get_value<value::matrix3f>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "matrix4f") {
+    if (auto v = val.get_value<value::matrix4f>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "matrix2d") {
     if (auto v = val.get_value<value::matrix2d>()) {
       out.Set(*v);
       return true;
@@ -1854,6 +2096,96 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "uint2[]") {
+    if (auto v = val.get_value<std::vector<value::uint2>>()) {
+      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
+      return true;
+    }
+  } else if (type_name == "uint3[]") {
+    if (auto v = val.get_value<std::vector<value::uint3>>()) {
+      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
+      return true;
+    }
+  } else if (type_name == "uint4[]") {
+    if (auto v = val.get_value<std::vector<value::uint4>>()) {
+      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
+      return true;
+    }
+  } else if (type_name == "char[]") {
+    if (auto v = val.get_value<std::vector<char>>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "char2[]") {
+    if (auto v = val.get_value<std::vector<value::char2>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "char3[]") {
+    if (auto v = val.get_value<std::vector<value::char3>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "char4[]") {
+    if (auto v = val.get_value<std::vector<value::char4>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar2[]") {
+    if (auto v = val.get_value<std::vector<value::uchar2>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar3[]") {
+    if (auto v = val.get_value<std::vector<value::uchar3>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar4[]") {
+    if (auto v = val.get_value<std::vector<value::uchar4>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short[]") {
+    if (auto v = val.get_value<std::vector<int16_t>>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "short2[]") {
+    if (auto v = val.get_value<std::vector<value::short2>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short3[]") {
+    if (auto v = val.get_value<std::vector<value::short3>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short4[]") {
+    if (auto v = val.get_value<std::vector<value::short4>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort[]") {
+    if (auto v = val.get_value<std::vector<uint16_t>>()) {
+      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort2[]") {
+    if (auto v = val.get_value<std::vector<value::ushort2>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort3[]") {
+    if (auto v = val.get_value<std::vector<value::ushort3>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort4[]") {
+    if (auto v = val.get_value<std::vector<value::ushort4>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
   } else if (type_name == "float[]") {
     if (auto v = val.get_value<std::vector<float>>()) {
       out.Set(*v);
@@ -1861,6 +2193,11 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "double[]") {
     if (auto v = val.get_value<std::vector<double>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "timecode[]") {
+    if (auto v = val.get_value<std::vector<value::timecode>>()) {
       out.Set(*v);
       return true;
     }
@@ -1891,8 +2228,18 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "point3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "point3d[]") {
     if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "normal3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1911,8 +2258,18 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "vector3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "vector3d[]") {
     if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "color3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1923,6 +2280,11 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "color3d[]") {
     if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "color4h[]") {
+    if (auto v = val.get_value<std::vector<value::half4>>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1938,13 +2300,23 @@ bool CrateWriter::ConvertValue(
     }
   }
   // TexCoord role type arrays
-  else if (type_name == "texCoord2f[]") {
+  else if (type_name == "texCoord2h[]") {
+    if (auto v = val.get_value<std::vector<value::half2>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2f[]") {
     if (auto v = val.get_value<std::vector<value::float2>>(false)) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "texCoord2d[]") {
     if (auto v = val.get_value<std::vector<value::double2>>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
       out.Set(*v);
       return true;
     }
@@ -1967,13 +2339,23 @@ bool CrateWriter::ConvertValue(
     }
   }
   // TexCoord scalars
-  else if (type_name == "texCoord2f") {
+  else if (type_name == "texCoord2h") {
+    if (auto v = val.get_value<value::half2>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2f") {
     if (auto v = val.get_value<value::float2>(false)) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "texCoord2d") {
     if (auto v = val.get_value<value::double2>(false)) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
       out.Set(*v);
       return true;
     }
@@ -2060,6 +2442,21 @@ bool CrateWriter::ConvertValue(
   } else if (type_name == "int4[]") {
     if (auto v = val.get_value<std::vector<value::int4>>()) {
       out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "matrix2f[]") {
+    if (auto v = val.get_value<std::vector<value::matrix2f>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "matrix3f[]") {
+    if (auto v = val.get_value<std::vector<value::matrix3f>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "matrix4f[]") {
+    if (auto v = val.get_value<std::vector<value::matrix4f>>()) {
+      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
       return true;
     }
   } else if (type_name == "matrix4d[]") {
@@ -2220,8 +2617,30 @@ bool CrateWriter::ConvertAttributeToFields(
     const value::Value& val = pvar.value_raw();
     crate::CrateValue crate_val;
 
-    // Use existing ConvertValue helper
-    if (!ConvertValue(val, crate_val, err)) {
+    if (attr.type_name() == "timecode") {
+      if (auto tc = val.get_value<value::timecode>()) {
+        crate_val.Set(*tc);
+      } else if (auto d = val.get_value<double>()) {
+        crate_val.Set(value::timecode{*d});
+      } else {
+        if (err) *err = "Failed to convert timecode attribute value: " + attr_name;
+        return false;
+      }
+    } else if (attr.type_name() == "timecode[]") {
+      if (auto tc = val.get_value<std::vector<value::timecode>>()) {
+        crate_val.Set(*tc);
+      } else if (auto ds = val.get_value<std::vector<double>>()) {
+        std::vector<value::timecode> tcs;
+        tcs.reserve(ds->size());
+        for (double d : *ds) {
+          tcs.push_back(value::timecode{d});
+        }
+        crate_val.Set(std::move(tcs));
+      } else {
+        if (err) *err = "Failed to convert timecode[] attribute value: " + attr_name;
+        return false;
+      }
+    } else if (!ConvertValue(val, crate_val, err)) {
       if (err) *err = "Failed to convert attribute value: " + attr_name;
       return false;
     }
@@ -2332,6 +2751,68 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue v;
     v.Set(metas.get_comment().value);
     attr_fields.push_back({"comment", v});
+  }
+  if (metas.has_bindMaterialAs()) {
+    crate::CrateValue v;
+    v.Set(metas.get_bindMaterialAs());
+    attr_fields.push_back({"bindMaterialAs", v});
+  }
+  if (metas.has_outputName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_outputName());
+    attr_fields.push_back({"outputName", v});
+  }
+  if (metas.has_connectability()) {
+    crate::CrateValue v;
+    v.Set(metas.get_connectability());
+    attr_fields.push_back({"connectability", v});
+  }
+  if (metas.has_renderType()) {
+    crate::CrateValue v;
+    v.Set(metas.get_renderType());
+    attr_fields.push_back({"renderType", v});
+  }
+  if (metas.has_sdrMetadata()) {
+    crate::CrateValue v;
+    v.Set(metas.get_sdrMetadata());
+    attr_fields.push_back({"sdrMetadata", v});
+  }
+  if (metas.has_unauthoredValuesIndex()) {
+    crate::CrateValue v;
+    v.Set(metas.get_unauthoredValuesIndex());
+    attr_fields.push_back({"unauthoredValuesIndex", v});
+  }
+
+  const std::unordered_set<std::string> emitted_meta_names = {
+      "allowedTokens",
+      "bindMaterialAs",
+      "colorSpace",
+      "comment",
+      "connectability",
+      "customData",
+      "displayGroup",
+      "displayName",
+      "documentation",
+      "elementSize",
+      "hidden",
+      "interpolation",
+      "outputName",
+      "renderType",
+      "sdrMetadata",
+      "unauthoredValuesIndex",
+      "weight"};
+  for (const auto& kv : metas.data()) {
+    if (emitted_meta_names.count(kv.first)) {
+      continue;
+    }
+    crate::CrateValue v;
+    std::string meta_err;
+    if (!ConvertValue(kv.second.get_raw_value(), v, &meta_err)) {
+      DCOUT("WARNING: Skipping unsupported attribute metadata `" << kv.first
+            << "` on " << attr_name << ": " << meta_err);
+      continue;
+    }
+    attr_fields.push_back({kv.first, v});
   }
 
   // Add attribute connection paths if any.

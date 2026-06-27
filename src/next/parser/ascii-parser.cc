@@ -49,7 +49,8 @@ private:
   bool ParsePrim();
   bool ParsePrimContents();
   bool ParseAttribute();
-  bool ParseRelationship();
+  bool ParseRelationship(PrimSpec::RelationshipListOp op =
+                         PrimSpec::RelationshipListOp::Append);
   bool ParseMetadataBlock();
   bool ParseTimeSamples(const std::string& prop_name, TypeId type_id,
                         bool is_array);
@@ -422,12 +423,23 @@ bool AsciiParser::Impl::ParsePrimContents() {
     }
 
     // Optional list-op qualifier before a body relationship/attribute, e.g.
-    // `prepend rel prototypes = <...>`. Consume it; the relationship/attribute
-    // is parsed on the next iteration. (List-op semantics for body
-    // relationships are not yet modeled.)
+    // `prepend rel prototypes = <...>`. Relationship list-ops are applied to
+    // the same-spec target vector; attribute qualifiers are consumed as before.
     if (tok.type == TokenType::Prepend || tok.type == TokenType::Append ||
         tok.type == TokenType::Delete || tok.type == TokenType::Add) {
+      TokenType op_tok = tok.type;
       lexer_->next();
+      if (lexer_->peek().type == TokenType::Rel) {
+        PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
+        if (op_tok == TokenType::Prepend) {
+          op = PrimSpec::RelationshipListOp::Prepend;
+        } else if (op_tok == TokenType::Delete) {
+          op = PrimSpec::RelationshipListOp::Delete;
+        } else if (op_tok == TokenType::Add) {
+          op = PrimSpec::RelationshipListOp::Add;
+        }
+        if (!ParseRelationship(op)) return false;
+      }
       continue;
     }
 
@@ -632,7 +644,7 @@ bool AsciiParser::Impl::ParseAttribute() {
   return true;
 }
 
-bool AsciiParser::Impl::ParseRelationship() {
+bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
   lexer_->next();  // Skip 'rel'
 
   // Parse relationship name
@@ -649,13 +661,14 @@ bool AsciiParser::Impl::ParseRelationship() {
   }
 
   // Parse target(s)
+  std::vector<Path> targets;
   if (Check(TokenType::OpenBracket)) {
     // Multiple targets
     lexer_->next();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
       std::string target;
       if (lexer_->expect(TokenType::PathRef, target)) {
-        builder_->add_relationship(rel_name, Path(target));
+        targets.emplace_back(target);
       }
       if (!Check(TokenType::CloseBracket)) {
         Match(TokenType::Comma);
@@ -666,10 +679,16 @@ bool AsciiParser::Impl::ParseRelationship() {
     // Single target
     std::string target;
     lexer_->expect(TokenType::PathRef, target);
-    builder_->add_relationship(rel_name, Path(target));
+    targets.emplace_back(target);
   } else if (Check(TokenType::None)) {
     // No target
     lexer_->next();
+  }
+
+  if (!targets.empty()) {
+    if (PrimSpec* prim = builder_->current()) {
+      prim->apply_relationship_list_op(rel_name, targets, op);
+    }
   }
   ParsePropertyMetadata(rel_name);
 

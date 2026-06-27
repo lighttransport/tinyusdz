@@ -1053,10 +1053,7 @@ std::string to_string(const value::token &v) {
   return ss.str();
 }
 std::string to_string(const std::string &s) {
-  // TODO: Escape `"` character.
-
-  // Escape backslash
-  return quote(escapeBackslash(s));
+  return buildEscapedAndQuotedStringForUSDA(s);
 }
 std::string to_string(const value::quath &v) {
   std::stringstream ss;

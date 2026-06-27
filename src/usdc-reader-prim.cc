@@ -92,10 +92,8 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
   } else {
     // USD allows multiple list-edit qualifiers on the same field (e.g.
     // `delete` + `prepend`). Process each present group, preserving it in
-    // `authoredOps`. Canonical apply order: delete, add, append, prepend.
-    if (arg.GetOrderedItems().size()) {
-      return nonstd::make_unexpected("TODO: Ordered apiSchemas ListOp items.");
-    }
+    // `authoredOps`. Canonical apply order: delete, add, append, prepend,
+    // order.
     struct { const std::vector<value::token>& items; ListEditQual qual; } groups[] = {
       // Some writers populate explicit items without setting the IsExplicit()
       // flag (e.g. apiSchemas round-tripped through USDC). Handle that here so
@@ -105,6 +103,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       {arg.GetAddedItems(), ListEditQual::Add},
       {arg.GetAppendedItems(), ListEditQual::Append},
       {arg.GetPrependedItems(), ListEditQual::Prepend},
+      {arg.GetOrderedItems(), ListEditQual::Order},
     };
     bool any = false;
     for (const auto &g : groups) {

@@ -19,6 +19,8 @@
 #endif
 
 #include <algorithm>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include <stack>
 
@@ -37,6 +39,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
+#include "safe-arithmetic.hh"
 
 //
 #ifdef __clang__
@@ -496,7 +499,8 @@ bool CrateReader::BuildNodeHierarchy(
         // Assume single root node in the scene.
         //assert(thisIndex == 0);
         if (thisIndex != 0) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "Jump-based node hierarchy decode received multiple root nodes.");
         }
 
         if (thisIndex >= pathIndexes.size()) {
@@ -708,7 +712,8 @@ bool CrateReader::BuildNodeHierarchy(
       // Assume single root node in the scene.
       //assert(thisIndex == 0);
       if (thisIndex != 0) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "Jump-based node hierarchy decode received multiple root nodes.");
       }
 
       if (thisIndex >= pathIndexes.size()) {
@@ -859,8 +864,17 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
 
-  // 3 = pathIndex, elementTokenIndex, jump
-  CHECK_MEMORY_USAGE(size_t(numEncodedPaths) * sizeof(int32_t) * 3);
+  // Scratch decode arrays are local to this method. Keep their memory budget
+  // scoped so malformed streams that return early do not leak the cap counter.
+  size_t decode_arrays_bytes{0};
+  if (!safe::mul(size_t(numEncodedPaths), sizeof(int32_t) * size_t(3),
+                 &decode_arrays_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in path array size computation.");
+  }
+  auto decode_arrays_budget = memory_manager_->ReserveScoped(decode_arrays_bytes);
+  if (!decode_arrays_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed path arrays.");
+  }
 
   pathIndexes.resize(static_cast<size_t>(numEncodedPaths));
   elementTokenIndexes.resize(static_cast<size_t>(numEncodedPaths));
@@ -868,15 +882,9 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(numEncodedPaths));
   size_t workspaceBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(numEncodedPaths));
-  CHECK_MEMORY_USAGE(compBufferSize);
-  CHECK_MEMORY_USAGE(workspaceBufferSize);
 
-  // Optimized implementation: reuse buffers across calls
-  if (_decomp_comp_buffer.size() < compBufferSize) {
-    _decomp_comp_buffer.resize(compBufferSize);
-  }
-  if (_decomp_working_buffer.size() < workspaceBufferSize) {
-    _decomp_working_buffer.resize(workspaceBufferSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, workspaceBufferSize)) {
+    return false;
   }
   // Create references for compatibility with existing code
   std::vector<char> &compBuffer = _decomp_comp_buffer;
@@ -893,8 +901,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     if (compPathIndexesSize > compBufferSize) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed PathIndexes size.");
     }
-
-    CHECK_MEMORY_USAGE(size_t(compPathIndexesSize));
 
     if (compPathIndexesSize !=
         _sr->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
@@ -928,8 +934,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
 
-    CHECK_MEMORY_USAGE(size_t(compElementTokenIndexesSize));
-
     if (compElementTokenIndexesSize !=
         _sr->read(size_t(compElementTokenIndexesSize),
                   size_t(compElementTokenIndexesSize),
@@ -961,8 +965,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     if (compJumpsSize > compBufferSize) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
-
-    CHECK_MEMORY_USAGE(size_t(compJumpsSize));
 
     if (compJumpsSize !=
         _sr->read(size_t(compJumpsSize), size_t(compJumpsSize),
@@ -1009,7 +1011,10 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   // For circular tree check
   std::vector<bool> visit_table;
-  CHECK_MEMORY_USAGE(_paths.size()); // TODO: divide by 8?
+  auto visit_table_budget = memory_manager_->ReserveScoped(_paths.size());
+  if (!visit_table_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path visit table.");
+  }
 
   // `_paths` is already initialized just before calling this ReadCompressedPaths
   visit_table.resize(_paths.size());
@@ -1063,8 +1068,100 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   for (size_t i = 0; i < visit_table.size(); i++) {
     visit_table[i] = false;
   }
-  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
-                          /* curIndex */ 0, /* parent node index */ -1)) {
+
+  auto build_node_hierarchy_from_decoded_paths = [&]() -> bool {
+    std::unordered_map<std::string, size_t> path_to_index;
+    path_to_index.reserve(_paths.size());
+
+    for (size_t path_idx = 0; path_idx < _paths.size(); ++path_idx) {
+      if (!_paths[path_idx].is_valid()) {
+        continue;
+      }
+      path_to_index.emplace(_paths[path_idx].full_path_name(), path_idx);
+    }
+
+    std::function<bool(size_t)> build_one = [&](const size_t path_idx) -> bool {
+      if (path_idx >= _paths.size() || path_idx >= _nodes.size() ||
+          path_idx >= visit_table.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+      if (!_paths[path_idx].is_valid()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid decoded path.");
+      }
+      if (visit_table[path_idx]) {
+        return true;
+      }
+      if (_nodes[path_idx].GetParent() != -2) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Corrupted path hierarchy: duplicate node.");
+      }
+
+      int64_t parent_node_index = -1;
+      Path parent_path = _paths[path_idx].get_parent_path();
+      while (parent_path.is_valid() && !parent_path.full_path_name().empty()) {
+        const auto parent_it = path_to_index.find(parent_path.full_path_name());
+        if (parent_it != path_to_index.end()) {
+          parent_node_index = static_cast<int64_t>(parent_it->second);
+          if (!visit_table[parent_it->second] &&
+              !build_one(parent_it->second)) {
+            return false;
+          }
+          break;
+        }
+
+        const Path next_parent = parent_path.get_parent_path();
+        if (!next_parent.is_valid() ||
+            next_parent.full_path_name() == parent_path.full_path_name()) {
+          break;
+        }
+        parent_path = next_parent;
+      }
+
+      Node node(parent_node_index, _paths[path_idx]);
+      if (path_idx < _elemPaths.size()) {
+        node.SetElementPath(_elemPaths[path_idx]);
+      }
+      _nodes[path_idx] = node;
+      visit_table[path_idx] = true;
+
+      if (parent_node_index >= 0) {
+        const size_t parent_idx = static_cast<size_t>(parent_node_index);
+        if (parent_idx >= _nodes.size()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent node index out-of-range.");
+        }
+        std::string child_name;
+        if (path_idx < _elemPaths.size() && _elemPaths[path_idx].is_valid() &&
+            !_elemPaths[path_idx].is_empty()) {
+          child_name = _elemPaths[path_idx].full_path_name();
+        } else {
+          child_name = _paths[path_idx].full_path_name();
+        }
+        if (!_nodes[parent_idx].AddChildren(child_name, path_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag,
+              fmt::format("Duplicate child `{}` under parent `{}`.",
+                          child_name,
+                          _paths[parent_idx].full_path_name()));
+        }
+      }
+
+      return true;
+    };
+
+    for (size_t encoded_idx = 0; encoded_idx < pathIndexes.size();
+         ++encoded_idx) {
+      const size_t path_idx = pathIndexes[encoded_idx];
+      if (!build_one(path_idx)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  (void)elementTokenIndexes;
+  (void)jumps;
+  if (!build_node_hierarchy_from_decoded_paths()) {
     return false;
   }
 

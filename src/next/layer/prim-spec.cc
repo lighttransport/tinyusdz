@@ -530,6 +530,39 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
 
+void PrimSpec::apply_relationship_list_op(const std::string& name,
+                                          const std::vector<Path>& targets,
+                                          RelationshipListOp op) {
+  if (targets.empty()) return;
+  std::vector<Path>& dst = relationships_[name];
+
+  switch (op) {
+    case RelationshipListOp::Prepend:
+      dst.insert(dst.begin(), targets.begin(), targets.end());
+      break;
+    case RelationshipListOp::Add:
+      for (const Path& t : targets) {
+        if (std::find(dst.begin(), dst.end(), t) == dst.end()) {
+          dst.push_back(t);
+        }
+      }
+      break;
+    case RelationshipListOp::Delete:
+      dst.erase(std::remove_if(dst.begin(), dst.end(),
+                               [&](const Path& p) {
+                                 return std::find(targets.begin(), targets.end(),
+                                                  p) != targets.end();
+                               }),
+                dst.end());
+      if (dst.empty()) relationships_.erase(name);
+      break;
+    case RelationshipListOp::Append:
+    default:
+      dst.insert(dst.end(), targets.begin(), targets.end());
+      break;
+  }
+}
+
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   auto it = relationships_.find(name);
   if (it == relationships_.end()) return nullptr;

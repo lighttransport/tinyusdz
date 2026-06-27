@@ -45,6 +45,33 @@ bool FileExistsImpl(const std::string& path) {
 #endif
 }
 
+std::string NormalizePackageEntryPath(std::string path) {
+  for (char& c : path) {
+    if (c == '\\') c = '/';
+  }
+
+  std::vector<std::string> parts;
+  size_t start = 0;
+  while (start < path.size()) {
+    size_t end = path.find('/', start);
+    if (end == std::string::npos) end = path.size();
+    std::string part = path.substr(start, end - start);
+    if (part == "..") {
+      if (!parts.empty()) parts.pop_back();
+    } else if (!part.empty() && part != ".") {
+      parts.push_back(part);
+    }
+    start = end + 1;
+  }
+
+  std::string out;
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i) out += '/';
+    out += parts[i];
+  }
+  return out;
+}
+
 std::string GetCurrentWorkingDirectory() {
 #if defined(__EMSCRIPTEN__)
   // No filesystem (and the getcwd syscall ABORTS under -sFILESYSTEM=0).
@@ -139,7 +166,7 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
       // Resolve the package file itself
       ResolvedAsset pkg = ResolveInternal(result.package_path, anchor_path);
       if (pkg.exists) {
-        result.resolved_path = asset_path;
+        result.resolved_path = pkg.resolved_path + "[" + result.asset_in_package + "]";
         result.package_path = pkg.resolved_path;
         result.exists = true;  // Assume asset exists in package if package exists
       }
@@ -167,6 +194,30 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
       result.exists = FileExists(result.resolved_path);
     }
     return result;
+  }
+
+  // Relative paths authored inside a package layer resolve to another entry in
+  // that same package. This lets pkg.usdz[root.usda] reference @geom.usda@
+  // without escaping to the filesystem beside pkg.usdz.
+  if (!anchor_path.empty() && IsPackagePath(anchor_path)) {
+    std::string anchor_package;
+    std::string anchor_entry;
+    if (ParsePackagePath(anchor_path, &anchor_package, &anchor_entry)) {
+      ResolvedAsset pkg = ResolveInternal(anchor_package, "");
+      if (pkg.exists) {
+        const std::string entry_dir = GetDirectory(anchor_entry);
+        std::string entry = (entry_dir == "." || entry_dir.empty())
+                                ? asset_path
+                                : JoinPath(entry_dir, asset_path);
+        entry = NormalizePackageEntryPath(entry);
+        result.is_package = true;
+        result.package_path = pkg.resolved_path;
+        result.asset_in_package = entry;
+        result.resolved_path = pkg.resolved_path + "[" + entry + "]";
+        result.exists = true;  // The package exists; entry validation happens on open.
+        return result;
+      }
+    }
   }
 
   // Relative path - try relative to anchor first

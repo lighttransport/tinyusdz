@@ -352,7 +352,9 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
     return false;
   }
 
-  AddWarning("TimeSamples skipped: not yet wired to per-property storage");
+  // Anonymous TimeSamples carry no property name at this level. Per-property
+  // fields are decoded by BuildStage() through DecodeTimeSamples(); this generic
+  // value-unpack fallback only validates and drops unattachable data.
   return false;
 }
 
@@ -2666,9 +2668,10 @@ bool CrateReader::Impl::BuildStage() {
           continue;
         }
       }
-      // The sibling "variability" field cannot be re-associated with its
-      // property in the current format; consume it so it does not surface as a
-      // stray property. (Uniformity is not yet round-tripped — see review note.)
+      // A loose sibling "variability" field cannot be re-associated with a
+      // property here; consume it so it does not surface as a stray property.
+      // Per-property variability is decoded above through Attribute/Relationship
+      // specs and preserved as kFlagUniform.
       if (field.first == "variability") continue;
 
       // Reserved Sdf children-key ordering fields. pxrUSD stores prim/property

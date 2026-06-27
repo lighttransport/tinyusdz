@@ -2802,6 +2802,26 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kBool);
 
+  d.insert(kChar);
+  d.insert(kChar2);
+  d.insert(kChar3);
+  d.insert(kChar4);
+
+  d.insert(kUChar);
+  d.insert(kUChar2);
+  d.insert(kUChar3);
+  d.insert(kUChar4);
+
+  d.insert(kShort);
+  d.insert(kShort2);
+  d.insert(kShort3);
+  d.insert(kShort4);
+
+  d.insert(kUShort);
+  d.insert(kUShort2);
+  d.insert(kUShort3);
+  d.insert(kUShort4);
+
   d.insert(kInt64);
 
   d.insert(kInt);
@@ -2835,8 +2855,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   d.insert(kQuatf);
   d.insert(kQuatd);
 
-  // AOUSD Core Spec 6.2: uchar and timecode scalar types
-  d.insert(kUChar);
+  // AOUSD Core Spec 6.2: timecode scalar type
   d.insert(kTimeCode);
 
   // AOUSD Core Spec 6.5: All semantic aliases (role types)

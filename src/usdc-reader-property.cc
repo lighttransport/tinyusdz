@@ -561,9 +561,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
     } else {
-      // TODO: register unkown metadataum as custom metadata?
-      PUSH_WARN("TODO: " << fv.first);
-      DCOUT("TODO: " << fv.first);
+      MetaVariable unknown_meta;
+      if (allow_move_from_fvs) {
+        unknown_meta.set_value(fv.first, std::move(fv.second.get_raw()));
+      } else {
+        unknown_meta.set_value(fv.first, fv.second.get_raw());
+      }
+      meta.data()[fv.first] = std::move(unknown_meta);
+      PUSH_WARN("Preserved unknown property metadata: " << fv.first);
+      DCOUT("Preserved unknown property metadata: " << fv.first);
     }
   }
   DCOUT("== End List of Fields");

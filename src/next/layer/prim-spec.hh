@@ -647,8 +647,21 @@ public:
   // Relationships
   // ============================================================
 
+  enum class RelationshipListOp {
+    Append,
+    Prepend,
+    Add,
+    Delete,
+  };
+
   /// Add a relationship target
   void add_relationship(const std::string& name, const Path& target);
+
+  /// Apply same-spec relationship list-op targets. Used by USDA body syntax
+  /// such as `prepend rel prototypes = [...]`.
+  void apply_relationship_list_op(const std::string& name,
+                                  const std::vector<Path>& targets,
+                                  RelationshipListOp op);
 
   /// Get relationship targets
   const std::vector<Path>* relationship(const std::string& name) const;
