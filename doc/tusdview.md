@@ -40,6 +40,36 @@ cmake --build build_ninja -j16 --target tusdview
   See [`threading-stage2.md`](../examples/tusdview/doc/threading-stage2.md). When
   OFF, `--threaded` is a no-op and the single-threaded path is unchanged.
 
+### Windows (llvm-mingw)
+
+tusdview cross/host-builds with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
+(clang + the UCRT) using the bundled toolchain file. No Vulkan SDK or
+`glslangValidator` is needed: the Vulkan API is resolved at runtime via the
+vendored **volk** meta-loader and the shaders ship as pre-compiled **embedded
+SPIR-V** (`vk/shaders/embedded/`), so the Vulkan backend — including ray query —
+is on by default and the `.exe` is self-contained (the MinGW C++/unwind/pthread
+runtime is statically linked; opt out with `-DTUSDVIEW_STATIC_RUNTIME=OFF`).
+
+```sh
+export LLVM_MINGW_DIR=/path/to/llvm-mingw-…-ucrt-x86_64   # read by the toolchain file
+export PATH="$LLVM_MINGW_DIR/bin:$PATH"                    # + ninja on PATH
+
+cmake -S . -B build-llvm-mingw -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-win64.cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON \
+  -DTINYUSDZ_BUILD_GUI_VIEWER=ON
+cmake --build build-llvm-mingw -j16 --target tusdview
+```
+
+- Builds clean under clang's `-Weverything -Werror`; no `-DTINYUSDZ_NO_WERROR=ON`
+  needed.
+- Add `-DTINYUSDZ_BUILD_TOOLS=ON --target tusdrender` to also build the CPU/Vulkan
+  preview ray-tracer (`tools/tusdrender/`), which is likewise self-contained under
+  MinGW.
+- Look for `tusdview: Vulkan backend ENABLED (runtime-loaded via volk; embedded
+  SPIR-V, ray query ON)` in the configure log to confirm the Vulkan + RT path.
+
 ## Headless screenshots (CI / no display)
 
 ```sh
@@ -120,6 +150,28 @@ cmake --build build -j
 
 # -> build/layers/libVkLayer_khronos_validation.so + VkLayer_khronos_validation.json
 ```
+
+### Windows (one-shot script)
+
+On Windows, `scripts/setup-vulkan-validation.ps1` obtains the validation layer
+for you. `-FromSource` clones + builds Vulkan-ValidationLayers (it auto-fetches a
+new enough Ninja — the layers' C++20 modules need Ninja ≥ 1.11 — and a clean
+CPython for `update_deps.py`); the default tries the prebuilt LunarG SDK
+(needs admin). It writes `activate-vulkan-validation.ps1`; dot-source it, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-vulkan-validation.ps1 -FromSource
+. .\activate-vulkan-validation.ps1
+.\build-msvc\Release\tusdview.exe --headless --frames 2 --screenshot out.ppm models\cube.usdc 2>&1 |
+  Select-String VUID
+```
+
+This is how the AMD `vkCmdDrawIndexed` crash was root-caused to
+`VUID-VkPushConstantRange-size-00298` (a 256-byte push-constant block on a device
+whose `maxPushConstantsSize` is only 128). The repo-root `vk_layer_settings.txt`
+enables GPU-Assisted Validation (set `VK_LAYER_SETTINGS_PATH` to it).
+
+### Linux (build from source)
 
 Run tusdview under it by pointing the loader at the built layer directory:
 
