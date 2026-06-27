@@ -9,16 +9,18 @@ layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec3 vColor;
 layout(location = 3) flat in int vInstanceId;
 
-layout(push_constant) uniform InstPushC {
+// Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;
   mat4 viewProj;
-  vec4 camPos;       // xyz = camera, w = depthScale
+  vec4 camPos;       // xyz camera, w depthScale
   vec4 sceneMin;
   vec4 sceneExtent;
-  vec4 emissive;
-  int renderMode;
-  int meshId;
-  int flags;         // bit0=geometricNormal, bit1=doubleSided, bits2-3=purpose, bits4-6=kind
-  int pad;
+  ivec4 mode;        // .x renderMode
+} fr;
+layout(push_constant) uniform InstPushC {
+  vec4 emissive;     // xyz = selection-highlight override (else 0)
+  ivec4 ids;         // .x meshId, .y flags (bit0=geomN, bit1=dbl, 2-3=purpose, 4-6=kind)
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -47,40 +49,40 @@ void main() {
   // Face the geometric normal toward the camera (winding-independent). Using the
   // view vector instead of gl_FrontFacing avoids the VK Y-flipped-viewport
   // winding inversion that would otherwise leave every face unlit.
-  vec3 Vdir = normalize(pc.camPos.xyz - vWorldPos);
+  vec3 Vdir = normalize(fr.camPos.xyz - vWorldPos);
   vec3 N = Ngeo;
   if (dot(N, Vdir) < 0.0) N = -N;
-  const bool geoNrm = (pc.flags & 1) != 0;
-  const bool dsided = (pc.flags & 2) != 0;
-  const int purpose = (pc.flags >> 2) & 3;
-  const int kind = (pc.flags >> 4) & 7;
-  if (pc.renderMode != 0) {
+  const bool geoNrm = (pc.ids.y & 1) != 0;
+  const bool dsided = (pc.ids.y & 2) != 0;
+  const int purpose = (pc.ids.y >> 2) & 3;
+  const int kind = (pc.ids.y >> 4) & 7;
+  if (fr.mode.x != 0) {
     vec3 Nshade = geoNrm ? Ngeo : normalize(vNormal);
-    if (pc.renderMode == 2) { outColor = vec4(Nshade * 0.5 + 0.5, 1.0); return; }
-    if (pc.renderMode == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
-    if (pc.renderMode == 6) {
-      float d = clamp(length(pc.camPos.xyz - vWorldPos) / max(pc.camPos.w, 1e-3), 0.0, 1.0);
+    if (fr.mode.x == 2) { outColor = vec4(Nshade * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 6) {
+      float d = clamp(length(fr.camPos.xyz - vWorldPos) / max(fr.camPos.w, 1e-3), 0.0, 1.0);
       outColor = vec4(vec3(1.0 - d), 1.0); return;
     }
-    if (pc.renderMode == 7) { outColor = vec4(vColor, 1.0); return; }  // albedo
-    if (pc.renderMode == 8) {
+    if (fr.mode.x == 7) { outColor = vec4(vColor, 1.0); return; }  // albedo
+    if (fr.mode.x == 8) {
       outColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0); return;
     }
-    if (pc.renderMode == 13) {  // world position
-      outColor = vec4(clamp((vWorldPos - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0), 1.0); return;
+    if (fr.mode.x == 13) {  // world position
+      outColor = vec4(clamp((vWorldPos - fr.sceneMin.xyz) / fr.sceneExtent.xyz, 0.0, 1.0), 1.0); return;
     }
-    if (pc.renderMode == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
-    if (pc.renderMode == 16) { outColor = vec4(idColor(pc.meshId), 1.0); return; }        // mesh id
-    if (pc.renderMode == 19) {  // missing normals
+    if (fr.mode.x == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
+    if (fr.mode.x == 16) { outColor = vec4(idColor(pc.ids.x), 1.0); return; }        // mesh id
+    if (fr.mode.x == 19) {  // missing normals
       outColor = geoNrm ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0); return;
     }
-    if (pc.renderMode == 20) {  // double-sided
+    if (fr.mode.x == 20) {  // double-sided
       outColor = dsided ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0); return;
     }
-    if (pc.renderMode == 18) { outColor = vec4(purposeColor(purpose), 1.0); return; }
-    if (pc.renderMode == 29) { outColor = vec4(kindColor(kind), 1.0); return; }
-    if (pc.renderMode == 26) { outColor = vec4(idColor(vInstanceId), 1.0); return; }  // instance id
-    if (pc.renderMode == 25) {  // curvature (screen-space geometric normal variation)
+    if (fr.mode.x == 18) { outColor = vec4(purposeColor(purpose), 1.0); return; }
+    if (fr.mode.x == 29) { outColor = vec4(kindColor(kind), 1.0); return; }
+    if (fr.mode.x == 26) { outColor = vec4(idColor(vInstanceId), 1.0); return; }  // instance id
+    if (fr.mode.x == 25) {  // curvature (screen-space geometric normal variation)
       vec3 n = Ngeo;
       float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
       outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
@@ -88,7 +90,7 @@ void main() {
     // Modes instanced prototypes cannot supply (UV/material scalars): neutral gray.
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
-  vec3 V = normalize(pc.camPos.xyz - vWorldPos);
+  vec3 V = normalize(fr.camPos.xyz - vWorldPos);
   vec3 L = normalize(vec3(1.0, 1.0, 1.0));
   float NdotL = max(dot(N, L), 0.0);
   vec3 H = normalize(L + V);

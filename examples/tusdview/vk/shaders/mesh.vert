@@ -19,27 +19,27 @@ layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
 layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
-// Global displacement params: .x = scale, .y = maxTessLevel (set by the UI sliders).
-layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
+// Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
+// mvp = viewProj*model and the normal matrix from pc.model, so neither needs a
+// push-constant lane (keeps the push block <= 128 B, the Vulkan minimum).
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;          // .x = displacement scale, .y = maxTessLevel
+  mat4 viewProj;      // P * V
+  vec4 camPos;        // .xyz camera, .w depth normalizer
+  vec4 sceneMin;      // .xyz
+  vec4 sceneExtent;   // .xyz
+  ivec4 mode;         // .x = renderMode
+} fr;
 // Per-material displacement texture scale/bias (height = texel*scale + bias).
 layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
 
-// 128-byte push constant block (Vulkan-guaranteed minimum):
-//   mat4 mvp        : 64 bytes
-//   mat3 nmat       : 48 bytes (std layout: 3 x vec4)
-//   vec4 baseColor  : 16 bytes
+// 128-byte per-draw push constant block (matches struct PushC in vk_renderer.cc).
 layout(push_constant) uniform PushConstants {
-  mat4 mvp;
   mat4 model;
-  vec4 nmat[3];   // normal matrix columns in .xyz; .w packs emissive.rgb (AOV)
-  vec4 baseColor;
-  vec4 camPos;
-  vec4 sceneMin;
-  vec4 sceneExtent;
-  int matId;
-  int renderMode;
-  int flags;
-  int meshId;
+  vec4 baseColor;   // rgb + .w opacity
+  vec4 matAux;      // .x metallic, .y roughness (AOVs)
+  vec4 emissive;    // .xyz emissive (AOV)
+  ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
 
 layout(location = 0) out vec3 vNormalW;
@@ -59,10 +59,13 @@ void main() {
   // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
   // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
   // consistent with the deformed surface.
-  vec2 dsb = pc.matId >= 0 ? dm.sb[pc.matId] : vec2(1.0, 0.0);
+  vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
   float disp = textureLod(uDisplacementTex, aUV, 0.0).r * dsb.x + dsb.y;
-  pos += normalize(nrm) * (disp * dp.disp.x);
-  vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
+  pos += normalize(nrm) * (disp * fr.disp.x);
+  // Normal matrix = inverse-transpose of the model's upper-left 3x3 (derived
+  // here so it costs no push-constant space).
+  mat3 nmat = transpose(inverse(mat3(pc.model)));
+  vNormalW = nmat * nrm;
   vUV = aUV;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
   // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
@@ -74,5 +77,5 @@ void main() {
   if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
   vUV1 = aUV1;
   vMorphInfl = aMorphInfl;
-  gl_Position = pc.mvp * vec4(pos, 1.0);
+  gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }
