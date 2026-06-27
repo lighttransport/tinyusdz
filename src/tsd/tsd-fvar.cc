@@ -193,7 +193,7 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
       continue;  // boundary edge
     }
     const uint32_t f0 = geo_topo.edge_faces[2 * e];
-    for (int end = 0; end < 2; end++) {
+    for (uint32_t end = 0; end < 2; end++) {
       const uint32_t v = geo_topo.edge_verts[2 * e + end];
       const uint32_t c0 = CornerOfVertexInFace(geo_topo, geo_fvi, f0, v);
       const uint32_t c1 = CornerOfVertexInFace(geo_topo, geo_fvi, f1, v);
@@ -302,7 +302,7 @@ Result BuildFVarSplitLevel0(const Topology &geo_topo, const uint32_t *geo_fvc,
     if (!IsSharp(s)) {
       continue;
     }
-    for (int end = 0; end < 2; end++) {
+    for (uint32_t end = 0; end < 2; end++) {
       const uint32_t sv = st.edge_verts[2 * e + end];
       if (IsInfinitelySharp(s)) {
         inf_interior[sv]++;

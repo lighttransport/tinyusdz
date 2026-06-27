@@ -371,7 +371,7 @@ inline void GenerateCylinderMesh(
   // Generate side vertices: (hs+1) rings x (rs+1) columns
   for (int j = 0; j <= hs; ++j) {
     float v = float(j) / float(hs);
-    float y = -h + v * height;
+    float y = -h + v * float(height);
     for (int i = 0; i <= rs; ++i) {
       float u = float(i) / float(rs);
       float angle = u * 2.0f * float(kPI);
@@ -590,7 +590,7 @@ inline void GenerateCapsuleMesh(
   // Cylinder section
   for (int j = 0; j <= hs; ++j) {
     float vFrac = float(j) / float(hs);
-    float y = halfCyl - vFrac * height;
+    float y = halfCyl - vFrac * float(height);
     float v = 0.5f - 0.5f * vFrac;
     for (int i = 0; i <= rs; ++i) {
       float u = float(i) / float(rs);
@@ -674,10 +674,10 @@ inline void GeneratePlaneMesh(
   // Generate vertices: (ls+1) rows x (ws+1) columns
   for (int j = 0; j <= ls; ++j) {
     float v = float(j) / float(ls);
-    float z = -l + v * length;
+    float z = -l + v * float(length);
     for (int i = 0; i <= ws; ++i) {
       float u = float(i) / float(ws);
-      float x = -w + u * width;
+      float x = -w + u * float(width);
       points.push_back({x, 0.0f, z});
       normals.push_back({0.0f, 1.0f, 0.0f});
       uvs.push_back({u, v});

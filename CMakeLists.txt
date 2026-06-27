@@ -1321,6 +1321,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
                  ${TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS})
   endforeach()
 
+  # usdVol.cc pulls in the vendored tinyvdb (src/external/tinyvdb/tinyvdbio.h,
+  # which also includes zstd.h). Under -Weverything those third-party headers
+  # trip several diagnostics not present in tinyusdz's own code (missing
+  # override/destructor-override markers, doxygen \tag commands clang doesn't
+  # know, reserved identifiers, and int/size_t narrowing). Suppress only those
+  # classes on this TU so the rest of -Werror still applies to our code.
+  if(TINYUSDZ_WITH_USDVOL)
+    set_property(SOURCE ${PROJECT_SOURCE_DIR}/src/usdVol.cc
+                 APPEND_STRING PROPERTY COMPILE_FLAGS
+                 " -Wno-suggest-override -Wno-suggest-destructor-override -Wno-documentation-unknown-command -Wno-reserved-identifier -Wno-sign-conversion -Wno-shorten-64-to-32")
+  endif()
+
   if (TINYUSDZ_WITH_C_API)
     set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
                                 PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})

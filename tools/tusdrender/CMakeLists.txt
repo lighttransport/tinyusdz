@@ -18,6 +18,12 @@ set_target_properties(lightrt_c PROPERTIES
   C_EXTENSIONS OFF
 )
 
+# lightrt's C sources use C11 <stdatomic.h>. MSVC only enables C atomics behind
+# /experimental:c11atomics (VS 2022 17.5+); GCC/Clang have them by default.
+if(MSVC)
+  target_compile_options(lightrt_c PRIVATE /experimental:c11atomics)
+endif()
+
 target_include_directories(lightrt_c PUBLIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt
 )
@@ -86,6 +92,11 @@ if(Threads_FOUND)
   target_link_libraries(tusdrender Threads::Threads)
 endif()
 
+# Windows: GetProcessMemoryInfo (process RSS for the memory budget) lives in psapi.
+if(WIN32)
+  target_link_libraries(tusdrender psapi)
+endif()
+
 target_include_directories(tusdrender PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}
@@ -118,4 +129,17 @@ if(TUSDRENDER_WITH_VULKAN)
                                     ${LIGHTRT_VK_SRC}/lightrt_vkew.c)
   target_compile_definitions(tusdrender PRIVATE HAVE_VULKAN=1)
   target_include_directories(tusdrender PRIVATE ${LIGHTRT_VK_SRC})
+endif()
+
+# MinGW (e.g. llvm-mingw): statically link the C++/runtime support libs so the
+# .exe is self-contained and needs no libc++.dll / libunwind.dll /
+# libwinpthread-1.dll alongside it (mirrors tusdview). Windows system DLLs and
+# the UCRT stay dynamic. Opt out with -DTUSDRENDER_STATIC_RUNTIME=OFF.
+if(MINGW)
+  option(TUSDRENDER_STATIC_RUNTIME
+         "Statically link the MinGW C++/unwind/pthread runtime into tusdrender" ON)
+  if(TUSDRENDER_STATIC_RUNTIME)
+    target_link_options(tusdrender PRIVATE -static)
+    message(STATUS "tusdrender: static C++ runtime (-static) for MinGW build")
+  endif()
 endif()

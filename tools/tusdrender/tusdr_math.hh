@@ -20,6 +20,15 @@
 #if defined(__linux__)
 #include <malloc.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 #include "value-types.hh"
@@ -104,8 +113,16 @@ class MemBudget {
     return true;
   }
 
-  // Linux RSS via /proc/self/statm (pages); 0 if unavailable.
+  // Process RSS in bytes; 0 if unavailable. Linux: /proc/self/statm (pages).
+  // Windows: working set via GetProcessMemoryInfo.
   static size_t ProcessRSS() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+      return size_t(pmc.WorkingSetSize);
+    }
+    return 0;
+#else
     std::ifstream f("/proc/self/statm");
     if (!f) return 0;
     size_t total_pages = 0, rss_pages = 0;
@@ -113,10 +130,20 @@ class MemBudget {
     if (!f) return 0;
     long pg = sysconf(_SC_PAGESIZE);
     return rss_pages * size_t(pg > 0 ? pg : 4096);
+#endif
   }
 
-  // Linux MemAvailable via /proc/meminfo (bytes); 0 if unavailable.
+  // Available system memory in bytes; 0 if unavailable. Linux: /proc/meminfo
+  // MemAvailable. Windows: GlobalMemoryStatusEx ullAvailPhys.
   static size_t AvailableSystemMemory() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX st;
+    st.dwLength = sizeof(st);
+    if (GlobalMemoryStatusEx(&st)) {
+      return size_t(st.ullAvailPhys);
+    }
+    return 0;
+#else
     std::ifstream f("/proc/meminfo");
     if (!f) return 0;
     std::string key;
@@ -130,6 +157,7 @@ class MemBudget {
       std::getline(f, rest);
     }
     return 0;
+#endif
   }
 
   static std::string GiB(size_t bytes) {
