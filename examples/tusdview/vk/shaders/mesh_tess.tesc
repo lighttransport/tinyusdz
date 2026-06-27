@@ -17,29 +17,30 @@ layout(location = 2) out vec2 tcUV[];
 
 // Must match PushC / mesh.vert exactly (shared push-constant range).
 layout(push_constant) uniform PushConstants {
-  mat4 mvp;
   mat4 model;
-  vec4 nmat[3];
   vec4 baseColor;
+  vec4 matAux;
+  vec4 emissive;
+  ivec4 ids;
+} pc;
+
+// Frame UBO (set 5): .disp.y = max tessellation level, camPos for edge LOD.
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;
+  mat4 viewProj;
   vec4 camPos;
   vec4 sceneMin;
   vec4 sceneExtent;
-  int matId;
-  int renderMode;
-  int flags;
-  int meshId;
-} pc;
-
-// Global displacement params: .y = max tessellation level (live UI slider).
-layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
+  ivec4 mode;
+} fr;
 
 float edgeLevel(vec3 a, vec3 b) {
   vec3 wa = (pc.model * vec4(a, 1.0)).xyz;
   vec3 wb = (pc.model * vec4(b, 1.0)).xyz;
   vec3 mid = 0.5 * (wa + wb);
   float len = length(wa - wb);
-  float dist = max(length(pc.camPos.xyz - mid), 1e-3);
-  return clamp(len / dist * 120.0, 1.0, max(dp.disp.y, 1.0));
+  float dist = max(length(fr.camPos.xyz - mid), 1e-3);
+  return clamp(len / dist * 120.0, 1.0, max(fr.disp.y, 1.0));
 }
 
 void main() {

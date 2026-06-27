@@ -76,33 +76,38 @@ void NormalMatrix3(const float m[16], float out9[9]) {
   out9[8] = (a00 * a11 - a01 * a10) * inv;
 }
 
+// Per-draw push constants for the mesh pipeline. Kept at 128 bytes -- the Vulkan
+// *guaranteed minimum* maxPushConstantsSize (some drivers, e.g. amdvlk, expose
+// exactly 128; pushing more is UB and crashes). Frame-constant data (viewProj,
+// camPos, scene bbox, renderMode) lives in the set-5 Frame UBO instead; the
+// vertex shader derives mvp = viewProj*model and the normal matrix from model.
 struct PushC {
-  float mvp[16];
-  float model[16];     // world matrix (for world-space AOVs: geom normal, depth)
-  float nmat[12];      // 3 columns padded to vec4
-  float baseColor[4];
-  float camPos[4];     // xyz camera position + .w depth-AOV normalizer
-  float sceneMin[4];   // position AOV: scene bbox min
-  float sceneExtent[4];// position AOV: scene bbox size
-  int32_t matId;       // material id (material-id visualization)
-  int32_t renderMode;  // RenderMode (see renderer.hh)
-  int32_t flags;       // bit0 = geometric (no authored) normals, bit1 = double-sided
-  int32_t meshId;      // per-draw mesh index (mesh-id AOV)
+  float model[16];     // 64  world matrix (clip pos + world-space AOVs)
+  float baseColor[4];  // 16  rgb + .w opacity
+  float matAux[4];     // 16  .x metallic, .y roughness (material AOVs)
+  float emissive[4];   // 16  .xyz emissive (material AOV)
+  int32_t ids[4];      // 16  .x matId, .y flags, .z meshId, .w pad
 };
+static_assert(sizeof(PushC) == 128, "PushC must match mesh shaders and fit maxPushConstantsSize>=128");
 
 // Instanced flat-shaded prototype push constants (must match mesh_inst.vert/.frag).
+// viewProj / camPos / scene bbox / renderMode are frame-constant -> set-5 Frame UBO.
 struct InstPushC {
-  float viewProj[16];
-  float camPos[4];      // xyz camera + .w depthScale
-  float sceneMin[4];    // position-AOV bbox min
-  float sceneExtent[4]; // position-AOV bbox size
-  float emissive[4];    // xyz selection-highlight override (else 0)
-  int32_t renderMode;
-  int32_t meshId;
-  int32_t flags;        // bit0=geomNormal, bit1=doubleSided, bits2-3=purpose, bits4-6=kind
-  int32_t pad;
+  float emissive[4];   // 16  xyz selection-highlight override (else 0)
+  int32_t ids[4];      // 16  .x meshId, .y flags, .z/.w pad
 };
-static_assert(sizeof(InstPushC) == 144, "InstPushC must match mesh_inst shaders");
+static_assert(sizeof(InstPushC) == 32, "InstPushC must match mesh_inst shaders");
+
+// Frame-constant uniforms shared by the mesh, tessellation and instanced
+// pipelines (descriptor set 5). Persistently mapped, written once per frame.
+struct FrameUBO {
+  float disp[4];        // .x displacement scale, .y maxTessLevel (UI sliders)
+  float viewProj[16];   // P * V (shader derives per-mesh mvp = viewProj*model)
+  float camPos[4];      // .xyz camera world pos, .w depth-AOV normalizer
+  float sceneMin[4];    // .xyz position-AOV scene bbox min
+  float sceneExtent[4]; // .xyz position-AOV scene bbox size
+  int32_t mode[4];      // .x renderMode
+};
 
 // Ray-tracing compute push constants (must match raytrace.comp).
 struct RtPushC {
@@ -398,6 +403,12 @@ bool VulkanRenderer::createDevice(std::string* err) {
   if (supported.tessellationShader) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
+  }
+  // mesh.frag / mesh_inst.frag read gl_PrimitiveID in the fragment stage, which
+  // requires the geometryShader feature (SPIR-V Geometry capability). Enable it
+  // when available; ubiquitous on desktop GPUs.
+  if (supported.geometryShader) {
+    enabledFeatures.geometryShader = VK_TRUE;
   }
   ci.pEnabledFeatures = &enabledFeatures;
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
@@ -1858,7 +1869,9 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   db.binding = 0;
   db.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   db.descriptorCount = 1;
-  db.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  // Frame UBO: vertex derives mvp/normal-matrix; fragment reads camPos / scene
+  // bbox / renderMode (mesh.frag, mesh_inst.*); tess stages read viewProj/disp.
+  db.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   if (tessSupported_) {
     db.stageFlags |= VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
                      VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
@@ -1880,11 +1893,14 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   dpci.pPoolSizes = &dps;
   VK_CHECK(vkCreateDescriptorPool(device_, &dpci, nullptr, &dispParamsPool_),
            "displacement-params descriptor pool");
-  // 4 floats: [0]=scale, [1]=maxTessLevel, [2..3]=pad. Default scale 1, level 1.
-  const float dispInit[4] = {1.0f, 1.0f, 0.0f, 0.0f};
-  if (createHostBuffer(sizeof(dispInit), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                       dispInit, &dispParamsUbo_, &dispParamsUboMem_)) {
-    vkMapMemory(device_, dispParamsUboMem_, 0, sizeof(dispInit), 0,
+  // Frame UBO (disp scale/maxTess + viewProj + camPos + scene bbox + renderMode).
+  // Written each frame in presentImpl; defaults give scale 1 / level 1.
+  FrameUBO frameInit{};
+  frameInit.disp[0] = 1.0f;
+  frameInit.disp[1] = 1.0f;
+  if (createHostBuffer(sizeof(FrameUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                       &frameInit, &dispParamsUbo_, &dispParamsUboMem_)) {
+    vkMapMemory(device_, dispParamsUboMem_, 0, sizeof(FrameUBO), 0,
                 &dispParamsMapped_);
     VkDescriptorSetAllocateInfo dai{};
     dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1894,7 +1910,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     if (vkAllocateDescriptorSets(device_, &dai, &dispParamsSet_) == VK_SUCCESS) {
       VkDescriptorBufferInfo dbi{};
       dbi.buffer = dispParamsUbo_;
-      dbi.range = sizeof(dispInit);
+      dbi.range = sizeof(FrameUBO);
       VkWriteDescriptorSet dw{};
       dw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       dw.dstSet = dispParamsSet_;
@@ -4002,6 +4018,25 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
 
     light3d::Mat4 P = ToMat4(proj_);
     light3d::Mat4 V = ToMat4(view_);
+    // Frame-constant uniforms (set 5) for the mesh + instanced passes: viewProj
+    // (shaders derive per-mesh mvp = viewProj*model) plus camPos / scene bbox /
+    // renderMode for the fragment AOVs. This keeps push constants per-draw-only
+    // (<=128 B = the guaranteed maxPushConstantsSize; pushing 256 was UB and
+    // crashed the AMD driver).
+    if (dispParamsMapped_) {
+      const light3d::Mat4 VP = P * V;
+      FrameUBO* fr = static_cast<FrameUBO*>(dispParamsMapped_);
+      fr->disp[0] = displacement_ ? displacementScale_ : 0.0f;
+      fr->disp[1] = static_cast<float>(maxTessLevel_);
+      std::memcpy(fr->viewProj, VP.m, sizeof(fr->viewProj));
+      fr->camPos[0] = cameraPos_[0]; fr->camPos[1] = cameraPos_[1];
+      fr->camPos[2] = cameraPos_[2]; fr->camPos[3] = depthScale_;
+      for (int e = 0; e < 3; ++e) {
+        fr->sceneMin[e] = sceneMin_[e];
+        fr->sceneExtent[e] = sceneExtent_[e];
+      }
+      fr->mode[0] = rtMode_;
+    }
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (mi < meshVisible_.size() && !meshVisible_[mi]) {
         continue;  // hidden by the viewer's per-mesh visibility mask
@@ -4009,9 +4044,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       if (meshes_[mi].instanceCount > 0) continue;  // drawn in the instanced pass
       const auto& mesh = meshes_[mi];
       light3d::Mat4 W = ToMat4(mesh.world);
-      light3d::Mat4 MVP = P * V * W;
-      float nmat9[9];
-      NormalMatrix3(mesh.world, nmat9);
+      // mvp = viewProj*model and the normal matrix are derived in the shader from
+      // pc.model (frees the push-constant lanes they used).
       if (mesh.influenceDesc != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 2, 1, &mesh.influenceDesc, 0,
@@ -4077,55 +4111,37 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                                   4, 1, &dispDs, 0, nullptr);
         }
         PushC pc{};
-        std::memcpy(pc.mvp, MVP.m, sizeof(pc.mvp));
         std::memcpy(pc.model, W.m, sizeof(pc.model));
-        pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1];
-        pc.camPos[2] = cameraPos_[2]; pc.camPos[3] = depthScale_;
-        for (int e = 0; e < 3; ++e) {
-          pc.sceneMin[e] = sceneMin_[e];
-          pc.sceneExtent[e] = sceneExtent_[e];
-        }
-        // mat3 columns padded to vec4
-        for (int c = 0; c < 3; ++c) {
-          pc.nmat[c * 4 + 0] = nmat9[c * 3 + 0];
-          pc.nmat[c * 4 + 1] = nmat9[c * 3 + 1];
-          pc.nmat[c * 4 + 2] = nmat9[c * 3 + 2];
-          pc.nmat[c * 4 + 3] = 0.0f;
-        }
         if (sub.materialId >= 0 &&
             static_cast<size_t>(sub.materialId) * 12 + 10 < matColor_.size()) {
           // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,
-          // [5]=roughness, [8..10]=emissive. Pack the scalar AOVs into otherwise-
-          // unused push-constant lanes (the block is already at the 256 B limit):
-          // metallic->sceneMin.w, roughness->sceneExtent.w, emissive->nmat[*].w.
+          // [5]=roughness, [8..10]=emissive.
           const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
-          pc.sceneMin[3] = mc[4];        // metallic
-          pc.sceneExtent[3] = mc[5];     // roughness
-          pc.nmat[3] = mc[8];            // emissive.r
-          pc.nmat[7] = mc[9];            // emissive.g
-          pc.nmat[11] = mc[10];          // emissive.b
+          pc.matAux[0] = mc[4];          // metallic
+          pc.matAux[1] = mc[5];          // roughness
+          pc.emissive[0] = mc[8]; pc.emissive[1] = mc[9]; pc.emissive[2] = mc[10];
         } else {
           pc.baseColor[0] = pc.baseColor[1] = pc.baseColor[2] = 0.6f;
           pc.baseColor[3] = 1.0f;
-          pc.sceneMin[3] = 0.0f;         // metallic default
-          pc.sceneExtent[3] = 0.5f;      // roughness default
-          pc.nmat[3] = pc.nmat[7] = pc.nmat[11] = 0.0f;  // emissive default
+          pc.matAux[0] = 0.0f;           // metallic default
+          pc.matAux[1] = 0.5f;           // roughness default
         }
-        pc.matId = sub.materialId;
-        pc.renderMode = rtMode_;  // current RenderMode (set in renderFrame)
-        pc.flags = ((mesh.geometricNormal || displaced || mesh.hasMorph) ? 1 : 0) |
-                   (mesh.doubleSided ? 2 : 0) |
-                   ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
-                   ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
+        int flags = ((mesh.geometricNormal || displaced || mesh.hasMorph) ? 1 : 0) |
+                    (mesh.doubleSided ? 2 : 0) |
+                    ((mesh.purposeId & 3) << 2) |   // bits 2-3: purpose AOV
+                    ((mesh.kindId & 7) << 4);       // bits 4-6: kind AOV
         // bit 7: source-face data present; bits 8-31: this submesh's first triangle
         // (gl_PrimitiveID is submesh-local) for the source-face-id SSBO lookup.
         if (mesh.faceBuf != VK_NULL_HANDLE) {
-          pc.flags |= (1 << 7) |
-                      (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
+          flags |= (1 << 7) |
+                   (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
         }
-        pc.meshId = static_cast<int>(mi);
+        pc.ids[0] = sub.materialId;
+        pc.ids[1] = flags;
+        pc.ids[2] = static_cast<int>(mi);
+        pc.ids[3] = 0;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
@@ -4151,25 +4167,23 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     if (anyInstanced && instPipeline_) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
-      InstPushC ipc{};
-      const light3d::Mat4 VPi = P * V;
-      std::memcpy(ipc.viewProj, VPi.m, sizeof(ipc.viewProj));
-      ipc.camPos[0] = cameraPos_[0]; ipc.camPos[1] = cameraPos_[1];
-      ipc.camPos[2] = cameraPos_[2]; ipc.camPos[3] = depthScale_;
-      for (int e = 0; e < 3; ++e) {
-        ipc.sceneMin[e] = sceneMin_[e];
-        ipc.sceneExtent[e] = sceneExtent_[e];
+      // Set 5: the Frame UBO (viewProj / camPos / scene bbox / renderMode), the
+      // same one the mesh pass uses. The instanced shaders read viewProj + the
+      // AOV data from it, so push constants stay per-draw-only.
+      if (dispParamsSet_ != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 5, 1, &dispParamsSet_, 0, nullptr);
       }
+      InstPushC ipc{};
       ipc.emissive[0] = ipc.emissive[1] = ipc.emissive[2] = 0.0f;
-      ipc.renderMode = rtMode_;
       for (size_t mi = 0; mi < meshes_.size(); ++mi) {
         if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
         const auto& mesh = meshes_[mi];
         if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
         if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
-        ipc.meshId = static_cast<int>(mi);
-        ipc.flags = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
-                    ((mesh.purposeId & 3) << 2) | ((mesh.kindId & 7) << 4);
+        ipc.ids[0] = static_cast<int>(mi);  // meshId
+        ipc.ids[1] = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
+                     ((mesh.purposeId & 3) << 2) | ((mesh.kindId & 7) << 4);  // flags
         vkCmdPushConstants(cb, instPipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(InstPushC), &ipc);

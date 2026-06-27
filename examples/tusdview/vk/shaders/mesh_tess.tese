@@ -13,23 +13,24 @@ layout(location = 1) in vec3 tcNrm[];
 layout(location = 2) in vec2 tcUV[];
 
 layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
-// Global displacement params: .x = scale (live UI slider).
-layout(set = 5, binding = 0) uniform DispParams { vec4 disp; } dp;
+// Frame UBO (set 5): .disp.x = displacement scale, viewProj for clip position.
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;
+  mat4 viewProj;
+  vec4 camPos;
+  vec4 sceneMin;
+  vec4 sceneExtent;
+  ivec4 mode;
+} fr;
 // Per-material displacement texture scale/bias (height = texel*scale + bias).
 layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
 
 layout(push_constant) uniform PushConstants {
-  mat4 mvp;
   mat4 model;
-  vec4 nmat[3];
   vec4 baseColor;
-  vec4 camPos;
-  vec4 sceneMin;
-  vec4 sceneExtent;
-  int matId;
-  int renderMode;
-  int flags;
-  int meshId;
+  vec4 matAux;
+  vec4 emissive;
+  ivec4 ids;
 } pc;
 
 layout(location = 0) out vec3 vNormalW;
@@ -45,15 +46,16 @@ void main() {
   vec3 pos = bc.x * tcPos[0] + bc.y * tcPos[1] + bc.z * tcPos[2];
   vec3 nrm = normalize(bc.x * tcNrm[0] + bc.y * tcNrm[1] + bc.z * tcNrm[2]);
   vec2 uv = bc.x * tcUV[0] + bc.y * tcUV[1] + bc.z * tcUV[2];
-  vec2 dsb = pc.matId >= 0 ? dm.sb[pc.matId] : vec2(1.0, 0.0);
+  vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
   float disp = textureLod(uDisplacementTex, uv, 0.0).r * dsb.x + dsb.y;
-  pos += nrm * (disp * dp.disp.x);
-  vNormalW = mat3(pc.nmat[0].xyz, pc.nmat[1].xyz, pc.nmat[2].xyz) * nrm;
+  pos += nrm * (disp * fr.disp.x);
+  mat3 nmat = transpose(inverse(mat3(pc.model)));
+  vNormalW = nmat * nrm;
   vUV = uv;
   vWorldPos = (pc.model * vec4(pos, 1.0)).xyz;
   vDomJoint = -1;
   vDomWeight = 0.0;
   vUV1 = vec2(0.0);
   vMorphInfl = 0.0;
-  gl_Position = pc.mvp * vec4(pos, 1.0);
+  gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }

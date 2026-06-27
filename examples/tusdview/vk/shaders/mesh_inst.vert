@@ -25,16 +25,20 @@ uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint
   return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;
 }
 
-layout(push_constant) uniform InstPushC {
+// Frame UBO (set 5): viewProj / camPos / scene bbox / renderMode, frame-constant
+// for the whole instanced pass (shared with the mesh pipeline).
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;
   mat4 viewProj;     // P * V
-  vec4 camPos;       // xyz = camera world pos, w = depthScale
-  vec4 sceneMin;     // xyz = position-AOV bbox min
-  vec4 sceneExtent;  // xyz = position-AOV bbox size
+  vec4 camPos;       // xyz camera, w depthScale
+  vec4 sceneMin;
+  vec4 sceneExtent;
+  ivec4 mode;        // .x renderMode
+} fr;
+// Per-draw push constants (<= 128 B): selection highlight + ids only.
+layout(push_constant) uniform InstPushC {
   vec4 emissive;     // xyz = selection-highlight override (else 0)
-  int renderMode;
-  int meshId;
-  int flags;         // bit0=geometricNormal, bit1=doubleSided, bits2-3=purpose, bits4-6=kind
-  int pad;
+  ivec4 ids;         // .x meshId, .y flags (bit0=geomN, bit1=dbl, 2-3=purpose, 4-6=kind)
 } pc;
 
 layout(location = 0) out vec3 vWorldPos;
@@ -66,5 +70,5 @@ void main() {
   vWorldPos = wp;
   vNormal = normalize(n);
   vColor = aInstColor * aVtxColor;  // per-instance x per-vertex (both default 1)
-  gl_Position = pc.viewProj * vec4(wp, 1.0);
+  gl_Position = fr.viewProj * vec4(wp, 1.0);
 }
