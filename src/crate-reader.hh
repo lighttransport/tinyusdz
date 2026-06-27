@@ -30,9 +30,8 @@ namespace crate {
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
-// on: Use for-based PathIndex tree decoder to avoid potential buffer overflow(new implementation. its not well tested with fuzzer)
-// off: Use recursive function call to decode PathIndex tree(its been working for a years and tested with fuzzer)
-// TODO: After several battle-testing, make for-based PathIndex tree decoder default
+// Use the iterative PathIndex tree decoder. It avoids recursion depth risk on
+// attacker-controlled crate path tables.
 #define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
 
 ///
@@ -478,17 +477,6 @@ class CrateReader {
 
   // times(double[])
   bool UnpackTimeSampleTimes(const crate::ValueRep &rep, std::vector<double> &dst);
-
-  //
-  // Construct node hierarchy.
-  //
-  bool BuildNodeHierarchy(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps,
-      std::vector<bool> &visit_table,  // track visited pathIndex to prevent
-                                       // circular referencing
-      size_t curIndex, int64_t parentNodeIndex);
 
   // Build O(1) lookup table for fieldset start -> end(terminator) index.
   bool BuildFieldSetBoundaryIndex();

@@ -4,9 +4,6 @@
 //
 // Crate(binary format) reader
 //
-//
-// - [] Unify BuildDecompressedPathsImpl and BuildNodeHierarchy
-
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1598,8 +1595,10 @@ bool CrateReader::ReadFields() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed Value reps size exceeds USDC data.");
     }
 
-    // reps datasize = LZ4 compressed. uncompressed size = num_fields * 8 bytes
-    size_t uncompressed_size = size_t(num_fields) * sizeof(uint64_t);
+    size_t uncompressed_size = 0;
+    if (!safe::n_to_size<uint64_t>(num_fields, &uncompressed_size)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ValueRep buffer size computation.");
+    }
     auto reps_budget = memory_manager_->ReserveScoped(uncompressed_size);
     if (!reps_budget.IsReserved()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for Fields ValueRep decode buffer.");

@@ -162,6 +162,7 @@ private:
   bool UnpackVec4d(ValueRep rep, Value& out);
   bool UnpackQuatf(ValueRep rep, Value& out);
   bool UnpackQuatd(ValueRep rep, Value& out);
+  bool UnpackMatrix2d(ValueRep rep, Value& out);
   bool UnpackMatrix3d(ValueRep rep, Value& out);
   bool UnpackMatrix4d(ValueRep rep, Value& out);
   bool UnpackSpecifier(ValueRep rep, Value& out);
@@ -604,6 +605,29 @@ bool CrateReader::Impl::UnpackMatrix4d(ValueRep rep, Value& out) {
   return true;
 }
 
+bool CrateReader::Impl::UnpackMatrix2d(ValueRep rep, Value& out) {
+  // 2x2 matrix. Inline form uses packed 8-bit payloads; fallback is a direct
+  // read of 4 doubles. The inline form preserves legacy pxrUSD encoding for
+  // integer-valued matrices.
+  if (rep.is_inlined()) {
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    double m[4] = {0.0};
+    m[0] = double(b[0]);
+    m[1] = double(b[1]);
+    m[2] = double(b[2]);
+    m[3] = double(b[3]);
+    out = Value::MakeMatrix2d(m);
+    return true;
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  double data[4];
+  if (!reader_->read(data, sizeof(data))) return false;
+  out = Value::MakeMatrix2d(data);
+  return true;
+}
+
 bool CrateReader::Impl::UnpackSpecifier(ValueRep rep, Value& out) {
   uint32_t spec = static_cast<uint32_t>(rep.payload());
   const char* names[] = {"def", "over", "class"};
@@ -814,6 +838,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Vec4d: return UnpackVec4d(rep, out);
     case CrateTypeId::Quatf: return UnpackQuatf(rep, out);
     case CrateTypeId::Quatd: return UnpackQuatd(rep, out);
+    case CrateTypeId::Matrix2d: return UnpackMatrix2d(rep, out);
     case CrateTypeId::Matrix3d: return UnpackMatrix3d(rep, out);
     case CrateTypeId::Matrix4d: return UnpackMatrix4d(rep, out);
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
@@ -1013,14 +1038,18 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       AddWarning("Array element count exceeds available file bytes");
       return false;
     }
+    if (elem_bytes != 0 &&
+        count > (std::numeric_limits<uint64_t>::max)() / elem_bytes) {
+      AddWarning("Array payload byte size overflow");
+      return false;
+    }
     if (!CheckByteAllocation(count * elem_bytes, "Array payload")) {
       return false;
     }
   }
 
-  // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place,
-  // mirroring ReadFields. dst must hold `count` uint32_t.
-  auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
+  // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place.
+  auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
     std::vector<uint8_t> blob;
@@ -1029,15 +1058,18 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU32(
-        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+        with_prefix.data(), with_prefix.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress integer array: " + dr.error);
       return false;
     }
     return true;
   };
+  auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
+    return read_compressed_u32_n(dst, static_cast<size_t>(count));
+  };
 
-  auto read_compressed_u64 = [&](uint64_t* dst) -> bool {
+  auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
     std::vector<uint8_t> blob;
@@ -1046,12 +1078,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU64(
-        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+        with_prefix.data(), with_prefix.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress 64-bit integer array: " + dr.error);
       return false;
     }
     return true;
+  };
+  auto read_compressed_u64 = [&](uint64_t* dst) -> bool {
+    return read_compressed_u64_n(dst, static_cast<size_t>(count));
   };
 
   // Read `count` raw elements of `elem_size` bytes into `dst` (overflow-safe).
@@ -1063,15 +1098,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 
   // Decode a compressed floating-point array (pxrUSD format): [i8 code] then
   // 'i' -> compressed int32s cast to T; 't' -> [u32 lutSize][T lut][compressed
-  // u32 indices]. Fills `count` elements of T into `dst`.
-  auto read_compressed_floating = [&](auto* dst) -> bool {
+  // u32 indices]. Fills `n` scalar elements of T into `dst`.
+  auto read_compressed_floating_n = [&](auto* dst, size_t n) -> bool {
     using T = typename std::remove_pointer<decltype(dst)>::type;
     int8_t code = 0;
     if (!reader_->read_i8(code)) return false;
     if (code == 'i') {
-      std::vector<uint32_t> ints(static_cast<size_t>(count));
-      if (!read_compressed_u32(ints.data())) return false;
-      for (size_t i = 0; i < count; ++i) {
+      std::vector<uint32_t> ints(n);
+      if (!read_compressed_u32_n(ints.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
         dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
       }
       return true;
@@ -1088,9 +1123,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
       if (!reader_->read(lut.data(), lut_bytes)) return false;
-      std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (!read_compressed_u32(idxs.data())) return false;
-      for (size_t i = 0; i < count; ++i) {
+      std::vector<uint32_t> idxs(n);
+      if (!read_compressed_u32_n(idxs.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
         dst[i] = lut[idxs[i]];
       }
@@ -1099,17 +1134,20 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     AddWarning("Unknown compressed floating-point array code");
     return false;
   };
+  auto read_compressed_floating = [&](auto* dst) -> bool {
+    return read_compressed_floating_n(dst, static_cast<size_t>(count));
+  };
 
   // Decode a pxrUSD compressed scalar half array into raw half (uint16) values.
   // Same [i8 code] framing as the floating decoder, but code 'i' reconstructs
   // each value as GfHalf(int) and the 't' lookup table holds 2-byte halfs.
-  auto read_compressed_half = [&](uint16_t* dst) -> bool {
+  auto read_compressed_half_n = [&](uint16_t* dst, size_t n) -> bool {
     int8_t code = 0;
     if (!reader_->read_i8(code)) return false;
     if (code == 'i') {
-      std::vector<uint32_t> ints(static_cast<size_t>(count));
-      if (!read_compressed_u32(ints.data())) return false;
-      for (size_t i = 0; i < count; ++i) {
+      std::vector<uint32_t> ints(n);
+      if (!read_compressed_u32_n(ints.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
         dst[i] = FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i])));
       }
       return true;
@@ -1123,9 +1161,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
       if (!reader_->read(lut.data(), lut_bytes)) return false;
-      std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (!read_compressed_u32(idxs.data())) return false;
-      for (size_t i = 0; i < count; ++i) {
+      std::vector<uint32_t> idxs(n);
+      if (!read_compressed_u32_n(idxs.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
         dst[i] = lut[idxs[i]];
       }
@@ -1134,7 +1172,6 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     AddWarning("Unknown compressed half-precision array code");
     return false;
   };
-
   switch (type_id) {
     case CrateTypeId::Float: {
       std::vector<float> data(static_cast<size_t>(count));
@@ -1157,24 +1194,30 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Vec2f: {
-      if (compressed) { AddWarning("Compressed Vec2f arrays not supported"); return false; }
       size_t data_size;
       if (!safe::mul(static_cast<size_t>(count), size_t(2), &data_size)) {
         return false;
       }
       std::vector<float> data(data_size);
-      if (!read_raw(data.data(), 2 * sizeof(float))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), data_size)) return false;
+      } else if (!read_raw(data.data(), 2 * sizeof(float))) {
+        return false;
+      }
       out = Value::MakeFloat2Array(std::move(data));
       return true;
     }
     case CrateTypeId::Vec3f: {
-      if (compressed) { AddWarning("Compressed Vec3f arrays not supported"); return false; }
       size_t data_size;
       if (!safe::mul(static_cast<size_t>(count), size_t(3), &data_size)) {
         return false;
       }
       std::vector<float> data(data_size);
-      if (!read_raw(data.data(), 3 * sizeof(float))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), data_size)) return false;
+      } else if (!read_raw(data.data(), 3 * sizeof(float))) {
+        return false;
+      }
       out = Value::MakeFloat3Array(std::move(data));
       return true;
     }
@@ -1228,9 +1271,12 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Token: {
-      if (compressed) { AddWarning("Compressed token arrays not supported"); return false; }
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (!read_raw(idxs.data(), sizeof(uint32_t))) return false;  // bulk read indices
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(idxs.data())) return false;
+      } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
+        return false;
+      }
       std::vector<std::string> data(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) {
         if (idxs[i] >= tokens_.size()) return false;
@@ -1244,13 +1290,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     // stride so each type doesn't need a near-identical case.
     case CrateTypeId::Vec4f:
     case CrateTypeId::Quatf: {
-      if (compressed) { AddWarning("Compressed float-vector arrays not supported"); return false; }
       const uint32_t stride_bytes = CrateArrayElemStride(type_id);  // e.g. 16
       const uint32_t comps = stride_bytes / 4;
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<float> data(scalars);
-      if (!read_raw(data.data(), stride_bytes)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), stride_bytes)) {
+        return false;
+      }
       out = Value::MakeFloatCompArray(std::move(data),
                                       CrateArrayValueType(type_id), comps);
       return true;
@@ -1262,13 +1311,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     case CrateTypeId::Matrix2d:
     case CrateTypeId::Matrix3d:
     case CrateTypeId::Matrix4d: {
-      if (compressed) { AddWarning("Compressed double-vector arrays not supported"); return false; }
       const uint32_t stride_bytes = CrateArrayElemStride(type_id);  // e.g. 128
       const uint32_t comps = stride_bytes / 8;
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<double> data(scalars);
-      if (!read_raw(data.data(), stride_bytes)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), stride_bytes)) {
+        return false;
+      }
       out = Value::MakeDoubleCompArray(std::move(data),
                                        CrateArrayValueType(type_id), comps);
       return true;
@@ -1283,12 +1335,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<uint16_t> halfs(scalars);
       if (compressed && count >= kMinCompressedArraySize) {
-        // pxrUSD only compresses scalar half arrays (not Vec*h / Quath).
-        if (comps != 1) {
-          AddWarning("Compressed half-vector arrays not supported");
-          return false;
-        }
-        if (!read_compressed_half(halfs.data())) return false;
+        if (!read_compressed_half_n(halfs.data(), scalars)) return false;
       } else if (!read_raw(halfs.data(), comps * 2)) {
         return false;
       }
@@ -1677,6 +1724,13 @@ bool CrateReader::Impl::ReadFields() {
       !CheckElementAllocation(num_fields, sizeof(uint64_t), "Field value reps")) {
     return false;
   }
+  size_t field_index_bytes = 0;
+  size_t field_value_rep_bytes = 0;
+  if (!safe::mul(num_fields, sizeof(uint32_t), &field_index_bytes) ||
+      !safe::mul(num_fields, sizeof(uint64_t), &field_value_rep_bytes)) {
+    AddError("Field table byte size overflow");
+    return false;
+  }
 
   uint64_t indices_size;
   if (!reader_->read_u64(indices_size)) {
@@ -1694,7 +1748,12 @@ bool CrateReader::Impl::ReadFields() {
   // Try pxrUSD format (n_chunks LZ4 + delta-coded) first, fall back to legacy
   std::vector<uint32_t> token_indices_vec(static_cast<size_t>(num_fields));
   // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-  std::vector<uint8_t> indices_with_prefix(8 + indices_data.size());
+  size_t indices_with_prefix_size = 0;
+  if (!safe::add(size_t(8), indices_data.size(), &indices_with_prefix_size)) {
+    AddError("Field indices payload size overflow");
+    return false;
+  }
+  std::vector<uint8_t> indices_with_prefix(indices_with_prefix_size);
   std::memcpy(indices_with_prefix.data(), &indices_size, 8);
   if (!indices_data.empty()) {
     std::memcpy(indices_with_prefix.data() + 8, indices_data.data(),
@@ -1711,13 +1770,12 @@ bool CrateReader::Impl::ReadFields() {
       AddError("Failed to decompress field indices: " + dr.error);
       return false;
     }
-    if (dr.data.size() < num_fields * sizeof(uint32_t)) {
+    if (dr.data.size() < field_index_bytes) {
       AddError("Decompressed field indices shorter than expected");
       return false;
     }
-    if (num_fields) {
-      std::memcpy(token_indices_vec.data(), dr.data.data(),
-                  num_fields * sizeof(uint32_t));
+    if (field_index_bytes > 0) {
+      std::memcpy(token_indices_vec.data(), dr.data.data(), field_index_bytes);
     }
   }
 
@@ -1732,7 +1790,7 @@ bool CrateReader::Impl::ReadFields() {
 
   std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
 
-  if (reps_size == num_fields * 8) {
+  if (reps_size == field_value_rep_bytes) {
     if (!reader_->read(value_reps.data(), static_cast<size_t>(reps_size))) {
       AddError("Failed to read value reps");
       return false;
@@ -1744,18 +1802,18 @@ bool CrateReader::Impl::ReadFields() {
       return false;
     }
 
-    DecompressResult rdr = DecompressCrateBlob(reps_data.data(), reps_data.size(),
-                                               static_cast<size_t>(num_fields * 8));
+    DecompressResult rdr = DecompressCrateBlob(
+        reps_data.data(), reps_data.size(), field_value_rep_bytes);
     if (!rdr.success) {
       AddError("Failed to decompress value reps");
       return false;
     }
-    if (rdr.data.size() < num_fields * 8) {
+    if (rdr.data.size() < field_value_rep_bytes) {
       AddError("Decompressed value reps shorter than expected");
       return false;
     }
-    if (num_fields) {
-      std::memcpy(value_reps.data(), rdr.data.data(), num_fields * 8);
+    if (field_value_rep_bytes > 0) {
+      std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
     }
   }
 
@@ -1796,6 +1854,11 @@ bool CrateReader::Impl::ReadFieldsets() {
                               "Fieldset index table")) {
     return false;
   }
+  size_t fieldset_index_bytes = 0;
+  if (!safe::mul(num_fieldsets, sizeof(uint32_t), &fieldset_index_bytes)) {
+    AddError("Fieldset index byte size overflow");
+    return false;
+  }
 
   if (section->size < 8) {
     AddError("FIELDSETS section too small");
@@ -1823,13 +1886,12 @@ bool CrateReader::Impl::ReadFieldsets() {
       AddError("Failed to decompress fieldsets: " + dr.error);
       return false;
     }
-    if (dr.data.size() < num_fieldsets * sizeof(uint32_t)) {
+    if (dr.data.size() < fieldset_index_bytes) {
       AddError("Decompressed fieldsets shorter than expected");
       return false;
     }
-    if (num_fieldsets) {
-      std::memcpy(fieldset_indices_.data(), dr.data.data(),
-                  num_fieldsets * sizeof(uint32_t));
+    if (fieldset_index_bytes > 0) {
+      std::memcpy(fieldset_indices_.data(), dr.data.data(), fieldset_index_bytes);
     }
   }
 
@@ -1910,11 +1972,16 @@ bool CrateReader::Impl::ReadSpecs() {
         AddError("Failed to decompress specs array: " + dr.error);
         return false;
       }
-      if (dr.data.size() < count * sizeof(uint32_t)) {
+      size_t expected_bytes = 0;
+      if (!safe::mul(count, sizeof(uint32_t), &expected_bytes)) {
+        AddError("Specs array byte size overflow");
+        return false;
+      }
+      if (dr.data.size() < expected_bytes) {
         AddError("Decompressed specs array shorter than expected");
         return false;
       }
-      if (count) std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+      if (expected_bytes > 0) std::memcpy(dst, dr.data.data(), expected_bytes);
     }
     return true;
   };
@@ -1940,12 +2007,19 @@ bool CrateReader::Impl::ReadSpecs() {
     return false;
   }
   size_t legacy_size = static_cast<size_t>(section->size) - 8;
+  size_t legacy_plain_size = 0;
+  size_t legacy_value_count = 0;
+  if (!safe::mul(num_specs, size_t(12), &legacy_plain_size) ||
+      !safe::mul(num_specs, size_t(3), &legacy_value_count)) {
+    AddError("Specs legacy byte size overflow");
+    return false;
+  }
   std::vector<uint8_t> legacy_data(legacy_size);
   if (!reader_->read(legacy_data.data(), legacy_size)) {
     AddError("Failed to read specs legacy data");
     return false;
   }
-  if (legacy_size == num_specs * 12) {
+  if (legacy_size == legacy_plain_size) {
     const uint8_t* ptr = legacy_data.data();
     for (size_t i = 0; i < num_specs; i++) {
       std::memcpy(&specs_[i].path_index.value, ptr, 4); ptr += 4;
@@ -1956,7 +2030,7 @@ bool CrateReader::Impl::ReadSpecs() {
     }
   } else {
     DecompressResult dr = DecompressIntegers(legacy_data.data(), legacy_data.size(),
-                                              static_cast<size_t>(num_specs * 3), false);
+                                              legacy_value_count, false);
     if (dr.success) {
       const uint32_t* vals = reinterpret_cast<const uint32_t*>(dr.data.data());
       for (size_t i = 0; i < num_specs; i++) {
@@ -2051,11 +2125,16 @@ bool CrateReader::Impl::ReadPaths() {
         AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
         return false;
       }
-      if (dr.data.size() < count * sizeof(uint32_t)) {
+      size_t expected_bytes = 0;
+      if (!safe::mul(count, sizeof(uint32_t), &expected_bytes)) {
+        AddError(std::string(name) + " byte size overflow");
+        return false;
+      }
+      if (dr.data.size() < expected_bytes) {
         AddError(std::string("Decompressed ") + name + " shorter than expected");
         return false;
       }
-      if (count) std::memcpy(dst, dr.data.data(), count * sizeof(uint32_t));
+      if (expected_bytes > 0) std::memcpy(dst, dr.data.data(), expected_bytes);
     }
     return true;
   };
@@ -3161,7 +3240,12 @@ bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
     AddError(std::string(what) + " size exceeds addressable memory");
     return false;
   }
-  return CheckByteAllocation(count * static_cast<uint64_t>(elem_size), what);
+  size_t total = 0;
+  if (!safe::mul(count, elem_size, &total)) {
+    AddError(std::string(what) + " size exceeds addressable memory");
+    return false;
+  }
+  return CheckByteAllocation(static_cast<uint64_t>(total), what);
 }
 
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {

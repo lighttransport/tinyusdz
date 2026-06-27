@@ -8,6 +8,7 @@
 #include "crate-writer.hh"
 #include "crate-data-source.hh"
 #include "lazy-array.hh"
+#include "safe-arithmetic.hh"
 #include "../layer/property-index.hh"
 #include "../types/type-id.hh"
 #include <unordered_map>
@@ -278,6 +279,10 @@ public:
 
     // Build fields, fieldsets, and specs from layer
     BuildFieldsAndSpecs(layer);
+    if (!result_.error.empty()) {
+      result_.success = false;
+      return result_;
+    }
 
     // Pre-register path element tokens so they're included in TOKENS section.
     // WritePathsSection calls InternToken() for path elements, but that happens
@@ -370,6 +375,10 @@ public:
       std::strncpy(sec.name, "FIELDS", sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
       WriteFieldsSection();
+      if (!result_.error.empty()) {
+        result_.success = false;
+        return result_;
+      }
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
     }
@@ -704,7 +713,14 @@ private:
     }
     const uint8_t header = 0x03;  // IsExplicit (0x01) | HasExplicitItems (0x02)
     uint64_t count = idxs.size();
-    std::vector<uint8_t> blob(1 + 8 + count * 4);
+    size_t items_bytes = 0;
+    size_t blob_size = 0;
+    if (!safe::mul(count, size_t(4), &items_bytes) ||
+        !safe::add(size_t(9), items_bytes, &blob_size)) {
+      result_.error = "PathListOp payload size overflow";
+      return 0;
+    }
+    std::vector<uint8_t> blob(blob_size);
     blob[0] = header;
     std::memcpy(blob.data() + 1, &count, 8);
     for (size_t i = 0; i < idxs.size(); ++i) {
@@ -722,7 +738,14 @@ private:
   uint64_t StoreVariantSelectionMap(
       const std::vector<std::pair<std::string, std::string>>& sels) {
     uint64_t count = sels.size();
-    std::vector<uint8_t> blob(8 + count * 8);
+    size_t items_bytes = 0;
+    size_t blob_size = 0;
+    if (!safe::mul(count, size_t(8), &items_bytes) ||
+        !safe::add(size_t(8), items_bytes, &blob_size)) {
+      result_.error = "VariantSelectionMap payload size overflow";
+      return 0;
+    }
+    std::vector<uint8_t> blob(blob_size);
     std::memcpy(blob.data(), &count, 8);
     for (size_t i = 0; i < sels.size(); ++i) {
       uint32_t k = InternString(sels[i].first);
@@ -780,7 +803,14 @@ private:
     uint64_t num_samples = samples ? samples->size() : 0;
 
     // Times array block: [u64 count][double[count]]
-    std::vector<uint8_t> times_data(8 + num_samples * 8);
+    size_t times_bytes = 0;
+    size_t times_total = 0;
+    if (!safe::mul(num_samples, size_t(8), &times_bytes) ||
+        !safe::add(size_t(8), times_bytes, &times_total)) {
+      result_.error = "timeSamples times payload size overflow";
+      return CrateField{};
+    }
+    std::vector<uint8_t> times_data(times_total);
     std::memcpy(times_data.data(), &num_samples, 8);
     size_t ti = 0;
     if (samples) {
@@ -805,7 +835,13 @@ private:
     }
 
     // Header block: [i64 fwd1][ValueRep times][i64 fwd2][u64 N][ValueRep vals[N]]
-    size_t header_size = 8 + 8 + 8 + 8 + num_samples * 8;
+    size_t reps_bytes = 0;
+    size_t header_size = 0;
+    if (!safe::mul(num_samples, size_t(8), &reps_bytes) ||
+        !safe::add(size_t(32), reps_bytes, &header_size)) {
+      result_.error = "timeSamples header payload size overflow";
+      return CrateField{};
+    }
     std::vector<uint8_t> header_data(header_size, 0);
     size_t hp = 0;
     int64_t fwd1 = 8;
@@ -1297,16 +1333,43 @@ private:
 
       // Collect array data
       std::vector<uint8_t> arr_data;
+      auto resize_counted_payload = [&](uint64_t item_count,
+                                        size_t item_size) -> bool {
+        size_t bytes = 0;
+        size_t total = 0;
+        if (!safe::mul(item_count, item_size, &bytes) ||
+            !safe::add(size_t(8), bytes, &total)) {
+          result_.error = "Array payload size overflow";
+          return false;
+        }
+        arr_data.resize(total);
+        std::memcpy(arr_data.data(), &item_count, 8);
+        return true;
+      };
+      auto copy_counted_payload = [&](uint64_t item_count, const void* data,
+                                      size_t item_size) -> bool {
+        if (!resize_counted_payload(item_count, item_size)) {
+          return false;
+        }
+        size_t bytes = 0;
+        if (!safe::mul(item_count, item_size, &bytes)) {
+          result_.error = "Array payload size overflow";
+          return false;
+        }
+        if (bytes > 0) {
+          std::memcpy(arr_data.data() + 8, data, bytes);
+        }
+        return true;
+      };
 
       switch (type_id) {
         case TypeId::Float: {
           const std::vector<float>* arr = val.as_float_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(float);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (!copy_counted_payload(count, arr->data(), sizeof(float))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           }
           break;
         }
@@ -1321,7 +1384,14 @@ private:
               std::vector<uint8_t> delta = EncodeDeltaU32(tmp.data(), count);
               CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
               if (cr.success) {
-                arr_data.resize(8 + 8 + cr.data.size());
+                size_t payload_size = 0;
+                size_t total_size = 0;
+                if (!safe::add(size_t(8), cr.data.size(), &payload_size) ||
+                    !safe::add(size_t(8), payload_size, &total_size)) {
+                  result_.error = "Compressed integer array payload size overflow";
+                  return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+                }
+                arr_data.resize(total_size);
                 std::memcpy(arr_data.data(), &count, 8);
                 uint64_t csz = static_cast<uint64_t>(cr.data.size());
                 std::memcpy(arr_data.data() + 8, &csz, 8);
@@ -1329,16 +1399,15 @@ private:
                 data_compressed = true;
               } else {
                 // Fall back to uncompressed
-                size_t bytes = count * sizeof(int32_t);
-                arr_data.resize(8 + bytes);
-                std::memcpy(arr_data.data(), &count, 8);
-                std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+                if (!copy_counted_payload(count, arr->data(),
+                                          sizeof(int32_t))) {
+                  return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+                }
               }
             } else {
-              size_t bytes = count * sizeof(int32_t);
-              arr_data.resize(8 + bytes);
-              std::memcpy(arr_data.data(), &count, 8);
-              std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+              if (!copy_counted_payload(count, arr->data(), sizeof(int32_t))) {
+                return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+              }
             }
           }
           break;
@@ -1351,10 +1420,11 @@ private:
           const std::vector<float>* arr = val.as_float_array();
           if (arr && arr->size() % 3 == 0) {
             count = arr->size() / 3;
-            size_t bytes = arr->size() * sizeof(float);
-            arr_data.resize(8 + bytes);
+            if (!copy_counted_payload(count * uint64_t(3), arr->data(),
+                                      sizeof(float))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
           }
           break;
         }
@@ -1362,18 +1432,17 @@ private:
           const std::vector<double>* arr = val.as_double_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(double);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (!copy_counted_payload(count, arr->data(), sizeof(double))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           } else {
             // Fallback: try reading as float array and convert
             const std::vector<float>* farr = val.as_float_array();
             if (farr) {
               count = farr->size();
-              size_t bytes = count * sizeof(double);
-              arr_data.resize(8 + bytes);
-              std::memcpy(arr_data.data(), &count, 8);
+              if (!resize_counted_payload(count, sizeof(double))) {
+                return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+              }
               double* dptr = reinterpret_cast<double*>(arr_data.data() + 8);
               for (size_t i = 0; i < count; ++i) dptr[i] = static_cast<double>((*farr)[i]);
             }
@@ -1384,10 +1453,9 @@ private:
           const std::vector<int64_t>* arr = val.as_int64_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(int64_t);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (!copy_counted_payload(count, arr->data(), sizeof(int64_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           }
           break;
         }
@@ -1395,10 +1463,9 @@ private:
           const std::vector<uint32_t>* arr = val.as_uint_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(uint32_t);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (!copy_counted_payload(count, arr->data(), sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           }
           break;
         }
@@ -1406,10 +1473,9 @@ private:
           const std::vector<uint64_t>* arr = val.as_uint64_array();
           if (arr) {
             count = arr->size();
-            size_t bytes = count * sizeof(uint64_t);
-            arr_data.resize(8 + bytes);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
+            if (!copy_counted_payload(count, arr->data(), sizeof(uint64_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           }
           break;
         }
@@ -1417,9 +1483,9 @@ private:
           const std::vector<uint8_t>* arr = val.as_bool_array();
           if (arr) {
             count = arr->size();
-            arr_data.resize(8 + count);
-            std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), count);
+            if (!copy_counted_payload(count, arr->data(), sizeof(uint8_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
           }
           break;
         }
@@ -1428,8 +1494,9 @@ private:
           if (arr) {
             count = arr->size();
             // Store token indices
-            arr_data.resize(8 + count * 4);
-            std::memcpy(arr_data.data(), &count, 8);
+            if (!resize_counted_payload(count, sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             for (size_t k = 0; k < count; ++k) {
               uint32_t idx = InternToken((*arr)[k]);
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
@@ -1448,10 +1515,11 @@ private:
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            size_t bytes = arr->size() * sizeof(float);
-            arr_data.resize(8 + bytes);
+            if (!copy_counted_payload(arr->size(), arr->data(),
+                                      sizeof(float))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
           }
           break;
         }
@@ -1462,8 +1530,9 @@ private:
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            size_t bytes = arr->size() * sizeof(double);
-            arr_data.resize(8 + bytes);
+            if (!resize_counted_payload(arr->size(), sizeof(double))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             std::memcpy(arr_data.data(), &count, 8);
             for (size_t i = 0; i < arr->size(); ++i) {
               double d = static_cast<double>((*arr)[i]);
@@ -1487,10 +1556,11 @@ private:
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            size_t bytes = arr->size() * sizeof(double);
-            arr_data.resize(8 + bytes);
+            if (!copy_counted_payload(arr->size(), arr->data(),
+                                      sizeof(double))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             std::memcpy(arr_data.data(), &count, 8);
-            std::memcpy(arr_data.data() + 8, arr->data(), bytes);
           }
           break;
         }
@@ -1506,8 +1576,9 @@ private:
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            size_t bytes = arr->size() * sizeof(uint16_t);
-            arr_data.resize(8 + bytes);
+            if (!resize_counted_payload(arr->size(), sizeof(uint16_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
             std::memcpy(arr_data.data(), &count, 8);
             for (size_t i = 0; i < arr->size(); ++i) {
               uint16_t h = FloatToHalf((*arr)[i]);
@@ -1810,7 +1881,14 @@ private:
       // misread as the header -> apiSchemas did not round-trip).
       if (!prim.meta().apiSchemas().empty()) {
         size_t count = prim.meta().apiSchemas().size();
-        std::vector<uint8_t> api_data(1 + 8 + count * 4);
+        size_t items_bytes = 0;
+        size_t api_data_size = 0;
+        if (!safe::mul(count, size_t(4), &items_bytes) ||
+            !safe::add(size_t(9), items_bytes, &api_data_size)) {
+          result_.error = "apiSchemas payload size overflow";
+          return;
+        }
+        std::vector<uint8_t> api_data(api_data_size);
         api_data[0] = 0x02;  // kHasExplicit
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
@@ -2179,7 +2257,12 @@ private:
     }
 
     // Write compressed value reps (TfFastCompression LZ4 format)
-    std::vector<uint8_t> raw_reps(num_fields * 8);
+    size_t value_rep_bytes = 0;
+    if (!safe::mul(static_cast<size_t>(num_fields), size_t(8), &value_rep_bytes)) {
+      result_.error = "Field value-rep byte size overflow";
+      return;
+    }
+    std::vector<uint8_t> raw_reps(value_rep_bytes);
     for (size_t i = 0; i < num_fields; i++) {
       uint64_t v = fields_[i].value_rep.raw();
       std::memcpy(raw_reps.data() + i * 8, &v, 8);
