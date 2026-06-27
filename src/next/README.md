@@ -274,7 +274,7 @@ src/tydra/next/                  # Tydra render data conversion
   - ✅ `HasTimeSamples()` query API
   - ✅ Value deduplication via hash-based lookup (60%+ memory savings)
   - ✅ Time sample interpolation (linear/held modes)
-  - [ ] Time sample writing in USDC writer (basic structure only)
+  - ✅ Time sample writing in USDC writer
 
 - [x] **Attribute Evaluation** ✅ COMPLETE
   - ✅ `AttributeEval` class for unified value resolution
@@ -298,15 +298,17 @@ src/tydra/next/                  # Tydra render data conversion
   - ✅ `Compositor` class with LIVRPS ordering
   - ✅ Cycle detection
   - ✅ Layer caching
-  - [ ] Full reference resolution with asset loading
+  - [x] Reference resolution with asset loading through `LayerRegistry`
+  - [x] USDZ package path resolution for referenced layers
   - [ ] Payload lazy loading
   - [ ] Variant selection with variant sets
 
-- [ ] **Complete USDC Writer** (partial)
+- [x] **Complete USDC Writer** ✅ INTERNAL ROUNDTRIP
   - [x] Basic section structure (TOKENS, STRINGS, FIELDS, SPECS, PATHS)
-  - [ ] Implement integer compression (USD's custom encoding)
-  - [ ] Implement LZ4 compression for large arrays
-  - [ ] Add proper fieldset encoding for full pxrUSD compatibility
+  - [x] Implement integer compression (USD's custom encoding)
+  - [x] Implement LZ4 compression for large arrays
+  - [x] Add proper fieldset encoding for full pxrUSD compatibility
+  - [x] Add internal USDC roundtrip tests
   - [ ] Test roundtrip with pxrUSD tools
 
 ### Medium Priority
@@ -336,6 +338,14 @@ src/tydra/next/                  # Tydra render data conversion
   - [x] Standard Surface to PreviewSurface conversion
   - [x] USD MaterialX material binding support
   - [x] Texture data extraction
+  - [x] Texture colorspace/default metadata extraction
+
+- [x] **Tydra Render Extraction** ✅ BASIC
+  - [x] Shared render prim collection for meshes, cameras, lights, materials,
+        skeletons, and other renderable prims
+  - [x] Node hierarchy visibility propagation
+  - [x] Node `data_id` links to converted mesh/light/camera/skeleton arrays
+  - [x] Xform timeSamples extraction, including scalar rotateX/Y/Z channels
 
 - [ ] **Error Recovery**
   - [ ] Add error recovery in USDA parser
@@ -350,7 +360,8 @@ src/tydra/next/                  # Tydra render data conversion
 ### Low Priority
 
 - [ ] **USDZ Support**
-  - Add zip archive reading
+  - [x] Add zip archive reading
+  - [x] Resolve package-relative referenced layers
   - Add zip archive writing
   - Handle embedded assets
 

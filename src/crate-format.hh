@@ -424,8 +424,21 @@ class CrateValue {
                 !std::is_same<typename std::decay<T>::type, CrateValue>::value>::type>
   void Set(T &&v) {
     value_ = std::forward<T>(v);
+    is_unregistered_value_ = false;
   }
 
+  void SetUnregisteredValueString(std::string v) {
+    value_ = std::move(v);
+    is_unregistered_value_ = true;
+  }
+
+  bool IsUnregisteredValue() const {
+    return is_unregistered_value_;
+  }
+
+  const std::string *GetUnregisteredValueString() const {
+    return is_unregistered_value_ ? value_.as<std::string>() : nullptr;
+  }
 
   // Type-safe way to get concrete value.
   template <class T>
@@ -469,6 +482,7 @@ class CrateValue {
 
  private:
   value::Value value_;
+  bool is_unregistered_value_{false};
   MMapArrayRef _mmap_ref{};
   bool _has_mmap_ref{false};
 };

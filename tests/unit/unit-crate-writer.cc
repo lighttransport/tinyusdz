@@ -402,6 +402,13 @@ void crate_writer_stage_composition_arcs_test(void) {
     Reference ref;
     ref.asset_path = value::AssetPath("ref.usda");
     ref.prim_path = Path("/RefPrim", "");
+    ref.customData["note"].set_value(std::string("reference metadata"));
+    ref.customData["asset"].set_value(value::AssetPath("refs/texture.png"));
+    value::matrix4d ref_matrix = value::matrix4d::identity();
+    ref_matrix.m[3][0] = 5.0;
+    ref.customData["matrix"].set_value(ref_matrix);
+    ref.customData["tokens"].set_value(std::vector<value::token>{
+        value::token("ref"), value::token("metadata")});
     std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
     refs.push_back({ListEditQual::Prepend, {ref}});
     prim.metas().references = refs;
@@ -471,7 +478,40 @@ void crate_writer_stage_composition_arcs_test(void) {
       const auto &rv = m.references.value();
       TEST_CHECK(rv.size() == 1);
       if (rv.size() == 1 && rv[0].second.size() == 1) {
-        TEST_CHECK(rv[0].second[0].asset_path.GetAssetPath() == "ref.usda");
+        const Reference& ref = rv[0].second[0];
+        TEST_CHECK(ref.asset_path.GetAssetPath() == "ref.usda");
+        TEST_CHECK(ref.customData.count("note") == 1);
+        if (ref.customData.count("note")) {
+          auto note = ref.customData.at("note").get_value<std::string>();
+          TEST_CHECK(note.has_value());
+          if (note) {
+            TEST_CHECK(note.value() == "reference metadata");
+          }
+        }
+        TEST_CHECK(ref.customData.count("asset") == 1);
+        if (ref.customData.count("asset")) {
+          auto asset = ref.customData.at("asset").get_value<value::AssetPath>();
+          TEST_CHECK(asset.has_value());
+          if (asset) {
+            TEST_CHECK(asset->GetAssetPath() == "refs/texture.png");
+          }
+        }
+        TEST_CHECK(ref.customData.count("matrix") == 1);
+        if (ref.customData.count("matrix")) {
+          auto matrix = ref.customData.at("matrix").get_value<value::matrix4d>();
+          TEST_CHECK(matrix.has_value());
+          if (matrix) {
+            TEST_CHECK(matrix->m[3][0] == 5.0);
+          }
+        }
+        TEST_CHECK(ref.customData.count("tokens") == 1);
+        if (ref.customData.count("tokens")) {
+          auto tokens = ref.customData.at("tokens").get_value<std::vector<value::token>>();
+          TEST_CHECK(tokens.has_value());
+          if (tokens) {
+            TEST_CHECK(tokens->size() == 2);
+          }
+        }
       }
     }
 
@@ -2452,6 +2492,20 @@ void crate_writer_point_instancer_test(void) {
     };
     instancer.velocities = Animatable<std::vector<value::vector3f>>(velocities);
 
+    // Set orientations (quath)
+    const value::half half_zero{0x0000};
+    const value::half half_one{0x3c00};
+    value::quath identity_orientation{};
+    identity_orientation.imag = value::half3{half_zero, half_zero, half_zero};
+    identity_orientation.real = half_one;
+    std::vector<value::quath> orientations = {
+      identity_orientation,
+      identity_orientation,
+      identity_orientation,
+      identity_orientation
+    };
+    instancer.orientations = Animatable<std::vector<value::quath>>(orientations);
+
     // Set enhanced properties (ids, invisibleIds, inactiveIds)
     std::vector<int64_t> ids = {100, 101, 102, 103};
     instancer.ids = Animatable<std::vector<int64_t>>(ids);
@@ -2461,9 +2515,6 @@ void crate_writer_point_instancer_test(void) {
 
     std::vector<int64_t> inactive_ids = {103};  // Deactivate one instance
     instancer.inactiveIds = inactive_ids;
-
-    // Note: orientations (quath[]) test skipped - requires proper quath construction
-    // orientations would be extracted if populated
 
     Prim instancer_prim("PointInstancer1", instancer);
     instancer_prim.prim_type_name() = "PointInstancer";
@@ -2562,6 +2613,24 @@ void crate_writer_point_instancer_test(void) {
             if (vel_anim.get_default(&velocities)) {
               TEST_CHECK(velocities.size() == 4);
               TEST_MSG("PointInstancer has %zu velocities", velocities.size());
+            }
+          }
+        }
+
+        // Verify orientations
+        TEST_CHECK(loaded_instancer->orientations.authored());
+        if (loaded_instancer->orientations.authored()) {
+          auto orient_opt = loaded_instancer->orientations.get_value();
+          if (orient_opt.has_value()) {
+            const Animatable<std::vector<value::quath>>& orient_anim = orient_opt.value();
+            std::vector<value::quath> orientations;
+            if (orient_anim.get_default(&orientations)) {
+              TEST_CHECK(orientations.size() == 4);
+              TEST_MSG("PointInstancer has %zu orientations", orientations.size());
+              TEST_CHECK(orientations[0].imag[0].value == 0x0000);
+              TEST_CHECK(orientations[0].imag[1].value == 0x0000);
+              TEST_CHECK(orientations[0].imag[2].value == 0x0000);
+              TEST_CHECK(orientations[0].real.value == 0x3c00);
             }
           }
         }
@@ -3046,8 +3115,8 @@ void crate_writer_mesh_advanced_features_test(void) {
     std::vector<float> crease_sharpnesses = {2.0f, 1.5f};  // Crease sharpness values
     mesh.creaseSharpnesses = Animatable<std::vector<float>>(crease_sharpnesses);
 
-    // Skip hole indices for now - empty arrays cause reader issues
-    // TODO: Add hole indices support once empty array handling is improved
+    std::vector<int32_t> hole_indices = {0};
+    mesh.holeIndices = Animatable<std::vector<int32_t>>(hole_indices);
 
     // Set subdivision control attributes
     mesh.subdivisionScheme = GeomMesh::SubdivisionScheme::CatmullClark;
@@ -3056,7 +3125,11 @@ void crate_writer_mesh_advanced_features_test(void) {
       Animatable<GeomMesh::FaceVaryingLinearInterpolation>(
         GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1);
 
-    // TODO: Add blend shapes - token[] arrays need special handling
+    std::vector<value::token> blend_shapes = {
+      value::token("smile"),
+      value::token("blink")
+    };
+    mesh.blendShapes = blend_shapes;
 
     Prim mesh_prim("AdvancedMesh", mesh);
     mesh_prim.prim_type_name() = "Mesh";
@@ -3164,6 +3237,20 @@ void crate_writer_mesh_advanced_features_test(void) {
     }
   }
 
+  if (loaded_mesh->holeIndices.has_value()) {
+    auto hole_indices_anim = loaded_mesh->holeIndices.get_value();
+    if (hole_indices_anim && hole_indices_anim->has_default()) {
+      std::vector<int32_t> hole_indices_val;
+      if (hole_indices_anim->get_default(&hole_indices_val)) {
+        TEST_CHECK(hole_indices_val.size() == 1);
+        TEST_MSG("Mesh has %zu hole indices", hole_indices_val.size());
+        if (hole_indices_val.size() == 1) {
+          TEST_CHECK(hole_indices_val[0] == 0);
+        }
+      }
+    }
+  }
+
   // Verify subdivision scheme
   if (loaded_mesh->subdivisionScheme.has_value()) {
     const auto& subdiv_scheme = loaded_mesh->subdivisionScheme.get_value();
@@ -3183,7 +3270,17 @@ void crate_writer_mesh_advanced_features_test(void) {
     }
   }
 
-  // TODO: Verify blend shapes once token[] arrays are supported
+  if (loaded_mesh->blendShapes.has_value()) {
+    auto blend_shapes = loaded_mesh->blendShapes.get_value();
+    TEST_CHECK(blend_shapes.has_value());
+    if (blend_shapes.has_value()) {
+      TEST_CHECK(blend_shapes->size() == 2);
+      if (blend_shapes->size() == 2) {
+        TEST_CHECK((*blend_shapes)[0].str() == "smile");
+        TEST_CHECK((*blend_shapes)[1].str() == "blink");
+      }
+    }
+  }
 
   std::cerr << "Mesh advanced features roundtrip successful!\n";
   cleanup_file(filename);
@@ -3225,6 +3322,17 @@ void crate_writer_blend_shape_test(void) {
     blend_shape.offsets = offsets_data;
     blend_shape.normalOffsets = normal_offsets_data;
     blend_shape.pointIndices = point_indices_data;
+
+    std::vector<value::vector3f> inbetween_offsets;
+    inbetween_offsets.push_back({0.2f, 0.0f, 0.0f});
+    inbetween_offsets.push_back({0.0f, 0.3f, 0.0f});
+    primvar::PrimVar inbetween_pvar;
+    inbetween_pvar.set_value(value::Value(inbetween_offsets));
+    Attribute inbetween_attr;
+    inbetween_attr.set_name("half");
+    inbetween_attr.set_type_name("vector3f[]");
+    inbetween_attr.set_var(std::move(inbetween_pvar));
+    TEST_CHECK(blend_shape.add_inbetweenBlendShape(0.5, std::move(inbetween_attr)));
 
     // Create Prim with BlendShape
     Prim blend_shape_prim("BlendShapeTarget", blend_shape);
@@ -3335,6 +3443,29 @@ void crate_writer_blend_shape_test(void) {
       TEST_MSG("BlendShape has %zu point indices for sparse targeting", loaded_point_indices.size());
       TEST_CHECK(loaded_point_indices[0] == 1);
       TEST_CHECK(loaded_point_indices[1] == 3);
+    }
+  }
+
+  TEST_CHECK(loaded_bs->props.count("inbetweens:half") == 1);
+  if (loaded_bs->props.count("inbetweens:half") == 1) {
+    const Property& inbetween_prop = loaded_bs->props.at("inbetweens:half");
+    TEST_CHECK(inbetween_prop.is_attribute());
+    if (inbetween_prop.is_attribute()) {
+      const Attribute& inbetween_attr = inbetween_prop.get_attribute();
+      auto loaded_inbetweens =
+          inbetween_attr.get_value<std::vector<value::vector3f>>();
+      TEST_CHECK(loaded_inbetweens.has_value());
+      if (loaded_inbetweens.has_value()) {
+        TEST_CHECK(loaded_inbetweens->size() == 2);
+        if (loaded_inbetweens->size() == 2) {
+          TEST_CHECK(std::abs((*loaded_inbetweens)[0].x - 0.2f) < 0.001f);
+          TEST_CHECK(std::abs((*loaded_inbetweens)[1].y - 0.3f) < 0.001f);
+        }
+      }
+      TEST_CHECK(inbetween_attr.metas().has_weight());
+      if (inbetween_attr.metas().has_weight()) {
+        TEST_CHECK(std::abs(inbetween_attr.metas().get_weight() - 0.5) < 0.001);
+      }
     }
   }
 
@@ -6689,6 +6820,86 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   cleanup_file(filename);
 }
 
+void crate_reader_parallel_inlined_fieldsets_test(void) {
+  std::string filename = get_temp_filename("test_parallel_fieldsets");
+  std::string err;
+
+  Stage stage;
+  for (size_t i = 0; i < 96; i++) {
+    Xform xform;
+    Attribute attr;
+    attr.set_type_name("int");
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(static_cast<int32_t>(i)));
+    attr.set_var(std::move(pvar));
+    xform.props["testIndex"] = Property(attr, /* custom */ true);
+
+    Prim prim("Xform_" + std::to_string(i), xform);
+    TEST_CHECK(stage.add_root_prim(std::move(prim)));
+  }
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  TEST_CHECK(writer.Open(&err));
+  TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+  TEST_CHECK(writer.Finalize(&err));
+  writer.Close();
+
+  std::vector<uint8_t> data;
+  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr));
+  if (data.empty()) {
+    cleanup_file(filename);
+    return;
+  }
+
+  StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::crate::CrateReaderConfig config;
+  config.numThreads = 4;
+  tinyusdz::crate::CrateReader reader(&sr, config);
+
+  TEST_CHECK(reader.ReadBootStrap());
+  TEST_CHECK(reader.ReadTOC());
+  TEST_CHECK(reader.ReadTokens());
+  TEST_CHECK(reader.ReadStrings());
+  TEST_CHECK(reader.ReadFields());
+  TEST_CHECK(reader.ReadFieldSets());
+  TEST_CHECK(reader.ReadPaths());
+  TEST_CHECK(reader.ReadSpecs());
+  TEST_CHECK(reader.BuildLiveFieldSets());
+  TEST_MSG("CrateReader error: %s", reader.GetError().c_str());
+
+  TEST_CHECK(reader.GetLiveFieldSets().size() >= 96);
+
+  size_t index_count = 0;
+  for (const auto &spec : reader.GetSpecs()) {
+    auto path = reader.GetPathString(spec.path_index);
+    if (!path || (path->find(".testIndex") == std::string::npos)) {
+      continue;
+    }
+    auto live_it = reader.GetLiveFieldSets().find(spec.fieldset_index);
+    TEST_CHECK(live_it != reader.GetLiveFieldSets().end());
+    if (live_it == reader.GetLiveFieldSets().end()) {
+      continue;
+    }
+    for (const auto &field : live_it->second) {
+      if (field.first == "default") {
+        auto index = field.second.get_value<int32_t>();
+        if (index && (*index >= 0) && (*index < 96)) {
+          index_count++;
+        }
+      }
+    }
+  }
+  TEST_CHECK(index_count >= 96);
+
+  cleanup_file(filename);
+}
+
 // Round-trip correctness for float[]/double[] arrays across the data patterns
 // the tagged compression (Options.enable_float_array_compression) cares about:
 //   - integer-valued        -> code 'i' (compressed int32)
@@ -7123,6 +7334,8 @@ void crate_writer_prim_meta_roundtrip_test(void) {
 
     // Set hidden
     scope.meta.set_hidden(true);
+    scope.meta.set("studioTag", value::token("hero"));
+    scope.meta.set("uiPriority", int32_t(7));
 
     // Set displayName
     scope.meta.set_displayName("Test Scope Display");
@@ -7130,8 +7343,31 @@ void crate_writer_prim_meta_roundtrip_test(void) {
     // Set documentation
     scope.meta.set_doc(value::StringData("This is a test scope"));
 
-    // Note: customData, assetInfo, apiSchemas serialization is currently
-    // disabled in ExtractPrimMeta due to encoding issues.
+    Dictionary custom_data;
+    custom_data["big"].set_value(int64_t(1234567890123ll));
+    custom_data["asset"].set_value(value::AssetPath("assets/model.usd"));
+    custom_data["tokens"].set_value(std::vector<value::token>{
+        value::token("metal"), value::token("rough")});
+    custom_data["pairs"].set_value(std::vector<value::double2>{
+        value::double2{1.0, 2.0}, value::double2{3.0, 4.0}});
+    value::matrix4d custom_matrix = value::matrix4d::identity();
+    custom_matrix.m[3][2] = 8.0;
+    custom_data["matrix"].set_value(custom_matrix);
+    Dictionary nested;
+    nested["enabled"].set_value(true);
+    custom_data["nested"].set_value(nested);
+    scope.meta.set_customData(custom_data);
+
+    Dictionary asset_info;
+    asset_info["identifier"].set_value(value::AssetPath("assets/model.usd"));
+    asset_info["name"].set_value(std::string("TestAsset"));
+    scope.meta.set_assetInfo(asset_info);
+
+    APISchemas api_schemas;
+    api_schemas.names.push_back(
+        {APISchemas::APIName::MaterialBindingAPI, std::string()});
+    api_schemas.unknownSchemas.push_back({"CustomAPI", std::string("instance")});
+    scope.meta.set_apiSchemas(api_schemas);
 
     Prim prim("test_scope", scope);
     prim.prim_type_name() = "Scope";
@@ -7139,8 +7375,9 @@ void crate_writer_prim_meta_roundtrip_test(void) {
 
     // Write using CrateWriter
     CrateWriter writer(filename);
-    TEST_CHECK(writer.Open(&err));
-    if (!writer.Open(&err)) { cleanup_file(filename); return; }
+    bool opened = writer.Open(&err);
+    TEST_CHECK(opened);
+    if (!opened) { cleanup_file(filename); return; }
 
     TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
     TEST_CHECK(writer.Finalize(&err));
@@ -7188,7 +7425,121 @@ void crate_writer_prim_meta_roundtrip_test(void) {
       TEST_CHECK(metas.get_hidden() == true);
     }
 
-    // Note: customData/apiSchemas verification disabled until encoding is fixed.
+    TEST_CHECK(metas.has("studioTag"));
+    if (metas.has("studioTag")) {
+      auto tag = metas.get<value::token>("studioTag");
+      TEST_CHECK(tag.has_value());
+      if (tag) {
+        TEST_CHECK(tag->str() == "hero");
+      }
+    }
+    TEST_CHECK(metas.has("uiPriority"));
+    if (metas.has("uiPriority")) {
+      auto priority = metas.get<int32_t>("uiPriority");
+      TEST_CHECK(priority.has_value());
+      if (priority) {
+        TEST_CHECK(*priority == 7);
+      }
+    }
+
+    TEST_CHECK(metas.has_customData());
+    if (metas.has_customData()) {
+      Dictionary custom_data = metas.get_customData();
+      TEST_CHECK(custom_data.count("big") == 1);
+      if (custom_data.count("big")) {
+        auto big = custom_data["big"].get_value<int64_t>();
+        TEST_CHECK(big.has_value());
+        if (big) {
+          TEST_CHECK(big.value() == int64_t(1234567890123ll));
+        }
+      }
+      TEST_CHECK(custom_data.count("asset") == 1);
+      if (custom_data.count("asset")) {
+        auto asset = custom_data["asset"].get_value<value::AssetPath>();
+        TEST_CHECK(asset.has_value());
+        if (asset) {
+          TEST_CHECK(asset->GetAssetPath() == "assets/model.usd");
+        }
+      }
+      TEST_CHECK(custom_data.count("tokens") == 1);
+      if (custom_data.count("tokens")) {
+        auto tokens = custom_data["tokens"].get_value<std::vector<value::token>>();
+        TEST_CHECK(tokens.has_value());
+        if (tokens) {
+          TEST_CHECK(tokens->size() == 2);
+        }
+      }
+      TEST_CHECK(custom_data.count("pairs") == 1);
+      if (custom_data.count("pairs")) {
+        auto pairs = custom_data["pairs"].get_value<std::vector<value::double2>>();
+        TEST_CHECK(pairs.has_value());
+        if (pairs) {
+          TEST_CHECK(pairs->size() == 2);
+          if (pairs->size() == 2) {
+            TEST_CHECK((*pairs)[1][1] == 4.0);
+          }
+        }
+      }
+      TEST_CHECK(custom_data.count("nested") == 1);
+      if (custom_data.count("nested")) {
+        auto nested = custom_data["nested"].get_value<Dictionary>();
+        TEST_CHECK(nested.has_value());
+        if (nested) {
+          TEST_CHECK(nested->count("enabled") == 1);
+          if (nested->count("enabled")) {
+            auto enabled = (*nested)["enabled"].get_value<bool>();
+            TEST_CHECK(enabled.has_value());
+            if (enabled) {
+              TEST_CHECK(enabled.value() == true);
+            }
+          }
+        }
+      }
+      TEST_CHECK(custom_data.count("matrix") == 1);
+      if (custom_data.count("matrix")) {
+        auto matrix = custom_data["matrix"].get_value<value::matrix4d>();
+        TEST_CHECK(matrix.has_value());
+        if (matrix) {
+          TEST_CHECK(matrix->m[3][2] == 8.0);
+        }
+      }
+    }
+
+    TEST_CHECK(metas.has_assetInfo());
+    if (metas.has_assetInfo()) {
+      Dictionary asset_info = metas.get_assetInfo();
+      TEST_CHECK(asset_info.count("identifier") == 1);
+      if (asset_info.count("identifier")) {
+        auto identifier = asset_info["identifier"].get_value<value::AssetPath>();
+        TEST_CHECK(identifier.has_value());
+        if (identifier) {
+          TEST_CHECK(identifier->GetAssetPath() == "assets/model.usd");
+        }
+      }
+      TEST_CHECK(asset_info.count("name") == 1);
+      if (asset_info.count("name")) {
+        auto name = asset_info["name"].get_value<std::string>();
+        TEST_CHECK(name.has_value());
+        if (name) {
+          TEST_CHECK(name.value() == "TestAsset");
+        }
+      }
+    }
+
+    TEST_CHECK(metas.has_apiSchemas());
+    if (metas.has_apiSchemas()) {
+      APISchemas api_schemas = metas.get_apiSchemas();
+      TEST_CHECK(api_schemas.names.size() == 1);
+      if (api_schemas.names.size() == 1) {
+        TEST_CHECK(api_schemas.names[0].first ==
+                   APISchemas::APIName::MaterialBindingAPI);
+      }
+      TEST_CHECK(api_schemas.unknownSchemas.size() == 1);
+      if (api_schemas.unknownSchemas.size() == 1) {
+        TEST_CHECK(api_schemas.unknownSchemas[0].first == "CustomAPI:instance");
+        TEST_CHECK(api_schemas.unknownSchemas[0].second.empty());
+      }
+    }
   }
 
   std::cerr << "PrimMeta roundtrip successful!\n";
@@ -7217,6 +7568,8 @@ void crate_writer_props_map_roundtrip_test(void) {
       primvar::PrimVar pvar;
       pvar.set_value(value::Value(1.5f));
       attr.set_var(std::move(pvar));
+      attr.metas().set("studioTag", value::token("hero"));
+      attr.metas().set("uiMin", 0.0f);
       Property prop(attr, /* custom */ true);
       mesh.props["myCustomFloat"] = prop;
     }
@@ -7276,6 +7629,24 @@ void crate_writer_props_map_roundtrip_test(void) {
     TEST_CHECK(loaded_mesh->props.count("myCustomFloat") > 0);
     if (loaded_mesh->props.count("myCustomFloat")) {
       TEST_MSG("myCustomFloat found in props map");
+      const AttrMetas& metas =
+          loaded_mesh->props.at("myCustomFloat").get_attribute().metas();
+      TEST_CHECK(metas.has("studioTag"));
+      if (metas.has("studioTag")) {
+        auto tag = metas.get<value::token>("studioTag");
+        TEST_CHECK(tag.has_value());
+        if (tag) {
+          TEST_CHECK(tag->str() == "hero");
+        }
+      }
+      TEST_CHECK(metas.has("uiMin"));
+      if (metas.has("uiMin")) {
+        auto ui_min = metas.get<float>("uiMin");
+        TEST_CHECK(ui_min.has_value());
+        if (ui_min) {
+          TEST_CHECK(std::abs(*ui_min - 0.0f) < 0.001f);
+        }
+      }
     }
 
     // Verify string attribute survives via props map
@@ -7286,6 +7657,73 @@ void crate_writer_props_map_roundtrip_test(void) {
   }
 
   std::cerr << "Props map roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+// ==========================================================================
+// Raw value::dict packing: direct Crate dictionary coverage
+// ==========================================================================
+void crate_writer_raw_dict_value_pack_test(void) {
+  std::string filename = get_temp_filename("test_raw_dict_pack.usdc");
+  std::string err;
+
+  CrateWriter writer(filename);
+  bool opened = writer.Open(&err);
+  TEST_CHECK(opened);
+  if (!opened) {
+    cleanup_file(filename);
+    return;
+  }
+
+  value::dict nested;
+  nested["enabled"] = true;
+
+  value::dict dict;
+  dict["big"] = int64_t(1234567890123ll);
+  dict["asset"] = value::AssetPath("assets/model.usd");
+  dict["tokens"] = std::vector<value::token>{
+      value::token("metal"), value::token("rough")};
+  dict["pairs"] = std::vector<value::double2>{
+      value::double2{1.0, 2.0}, value::double2{3.0, 4.0}};
+  value::matrix4d raw_matrix = value::matrix4d::identity();
+  raw_matrix.m[3][2] = 8.0;
+  dict["matrix"] = raw_matrix;
+  dict["nested"] = nested;
+
+  tinyusdz::crate::FieldValuePairVector pseudo_fields;
+  bool added_pseudo =
+      writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields, &err);
+  TEST_CHECK(added_pseudo);
+  if (!added_pseudo) {
+    TEST_MSG("AddSpec pseudo-root failed: %s", err.c_str());
+  }
+
+  tinyusdz::crate::CrateValue specifier_value;
+  specifier_value.Set(Specifier::Def);
+  tinyusdz::crate::CrateValue type_name_value;
+  type_name_value.Set(value::token("Xform"));
+  tinyusdz::crate::CrateValue dict_value;
+  dict_value.Set(dict);
+
+  tinyusdz::crate::FieldValuePairVector fields;
+  fields.push_back({"specifier", specifier_value});
+  fields.push_back({"typeName", type_name_value});
+  fields.push_back({"customData", dict_value});
+
+  bool added = writer.AddSpec(Path("/DictPrim", ""), SpecType::Prim, fields, &err);
+  TEST_CHECK(added);
+  if (!added) {
+    TEST_MSG("AddSpec failed: %s", err.c_str());
+  }
+
+  bool finalized = writer.Finalize(&err);
+  TEST_CHECK(finalized);
+  if (!finalized) {
+    TEST_MSG("Finalize failed: %s", err.c_str());
+  }
+  TEST_CHECK(err.empty());
+
+  writer.Close();
   cleanup_file(filename);
 }
 
@@ -7317,9 +7755,21 @@ void crate_writer_skeleton_properties_test(void) {
     joint_names.push_back(value::token("head"));
     skeleton.jointNames = joint_names;
 
-    // Note: bindTransforms and restTransforms (matrix4d[]) are not yet supported
-    // by the CrateWriter's WriteValueData. They will be silently skipped during
-    // extraction but won't cause a write failure.
+    std::vector<value::matrix4d> bind_transforms;
+    for (size_t i = 0; i < 3; i++) {
+      value::matrix4d mat = value::matrix4d::identity();
+      mat.m[3][1] = static_cast<double>(i);
+      bind_transforms.push_back(mat);
+    }
+    skeleton.bindTransforms = bind_transforms;
+
+    std::vector<value::matrix4d> rest_transforms;
+    for (size_t i = 0; i < 3; i++) {
+      value::matrix4d mat = value::matrix4d::identity();
+      mat.m[3][0] = static_cast<double>(i) * 0.25;
+      rest_transforms.push_back(mat);
+    }
+    skeleton.restTransforms = rest_transforms;
 
     Prim prim("MySkeleton", skeleton);
     prim.prim_type_name() = "Skeleton";
@@ -7361,8 +7811,25 @@ void crate_writer_skeleton_properties_test(void) {
       }
     }
 
-    // Note: bindTransforms/restTransforms (matrix4d[]) are not yet supported
-    // by WriteValueData, so they are silently skipped during extraction.
+    if (loaded_skel->bindTransforms.has_value()) {
+      auto bind_val = loaded_skel->bindTransforms.get_value();
+      if (bind_val) {
+        TEST_CHECK(bind_val->size() == 3);
+        if (bind_val->size() == 3) {
+          TEST_CHECK((*bind_val)[2].m[3][1] == 2.0);
+        }
+      }
+    }
+
+    if (loaded_skel->restTransforms.has_value()) {
+      auto rest_val = loaded_skel->restTransforms.get_value();
+      if (rest_val) {
+        TEST_CHECK(rest_val->size() == 3);
+        if (rest_val->size() == 3) {
+          TEST_CHECK((*rest_val)[2].m[3][0] == 0.5);
+        }
+      }
+    }
   }
 
   std::cerr << "Skeleton properties roundtrip successful!\n";
@@ -7403,8 +7870,10 @@ void crate_writer_skelanim_properties_test(void) {
     Animatable<std::vector<value::float3>> trans_anim(translations);
     anim.translations = trans_anim;
 
-    // Note: scales (half3[]) are not yet supported by WriteValueData,
-    // so they are silently skipped during extraction.
+    std::vector<value::half3> scales;
+    scales.push_back(value::half3{value::half{0x3c00}, value::half{0x3c00}, value::half{0x3c00}});
+    scales.push_back(value::half3{value::half{0x4000}, value::half{0x3c00}, value::half{0x3c00}});
+    anim.scales = Animatable<std::vector<value::half3>>(scales);
 
     // Set blendShapes
     std::vector<value::token> blend_shapes;
@@ -7481,6 +7950,20 @@ void crate_writer_skelanim_properties_test(void) {
           // Check second joint translation
           if (trans.size() >= 2) {
             TEST_CHECK(std::abs(trans[1][1] - 1.0f) < 0.001f);
+          }
+        }
+      }
+    }
+
+    // Verify scales
+    if (loaded_anim->scales.has_value()) {
+      auto scales_opt = loaded_anim->scales.get_value();
+      if (scales_opt && scales_opt->has_default()) {
+        std::vector<value::half3> scales;
+        if (scales_opt->get_default(&scales)) {
+          TEST_CHECK(scales.size() == 2);
+          if (scales.size() == 2) {
+            TEST_CHECK(scales[1][0].value == 0x4000);
           }
         }
       }

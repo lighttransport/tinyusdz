@@ -4,9 +4,13 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "render-converter.hh"
+#include "next/schema/usd-shade.hh"
+#include "next/schema/usd-skel.hh"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <optional>
 #include <unordered_set>
 
 namespace tinyusdz {
@@ -16,6 +20,371 @@ namespace next {
 using ::tinyusdz::next::Stage;
 using ::tinyusdz::next::UsdPrim;
 using ::tinyusdz::next::Value;
+
+namespace {
+
+constexpr float kAlphaEpsilon = 1.0e-6f;
+
+std::string SourcePrimPathFromConnection(const std::string& connection_path) {
+  size_t dot_pos = connection_path.find(".outputs:");
+  if (dot_pos == std::string::npos) {
+    dot_pos = connection_path.find(".inputs:");
+  }
+  if (dot_pos == std::string::npos) {
+    dot_pos = connection_path.rfind('.');
+  }
+  if (dot_pos == std::string::npos) {
+    return connection_path;
+  }
+  return connection_path.substr(0, dot_pos);
+}
+
+bool SplitConnectionPath(const std::string& connection_path,
+                         std::string* prim_path,
+                         std::string* prop_name) {
+  if (!prim_path || !prop_name) return false;
+  size_t dot_pos = connection_path.find(".outputs:");
+  if (dot_pos == std::string::npos) {
+    dot_pos = connection_path.find(".inputs:");
+  }
+  if (dot_pos == std::string::npos) {
+    dot_pos = connection_path.rfind('.');
+  }
+  if (dot_pos == std::string::npos) return false;
+
+  *prim_path = connection_path.substr(0, dot_pos);
+  *prop_name = connection_path.substr(dot_pos + 1);
+  return !prim_path->empty() && !prop_name->empty();
+}
+
+bool ResolveConnectedValue(const Stage& stage,
+                           const std::string& connection_path,
+                           double time_code,
+                           Value* out,
+                           int depth = 0) {
+  if (!out || depth > 16) return false;
+
+  std::string prim_path;
+  std::string prop_name;
+  if (!SplitConnectionPath(connection_path, &prim_path, &prop_name)) return false;
+
+  UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (!prim.IsValid()) return false;
+
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  if (eval.HasConnection(prim, prop_name)) {
+    return ResolveConnectedValue(stage, eval.GetConnectionPath(prim, prop_name),
+                                 time_code, out, depth + 1);
+  }
+
+  ::tinyusdz::next::EvalOptions opts = eval.GetOptions();
+  opts.follow_connections = false;
+  ::tinyusdz::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
+  if (result.success) {
+    *out = std::move(result.value);
+    return true;
+  }
+
+  return false;
+}
+
+RenderTexture::Channel ChannelFromConnection(const std::string& connection_path) {
+  size_t pos = connection_path.find(".outputs:");
+  if (pos == std::string::npos) {
+    return RenderTexture::Channel::RGBA;
+  }
+
+  const std::string channel = connection_path.substr(pos + 9);
+  if (channel == "r" || channel == "x") return RenderTexture::Channel::R;
+  if (channel == "g" || channel == "y") return RenderTexture::Channel::G;
+  if (channel == "b" || channel == "z") return RenderTexture::Channel::B;
+  if (channel == "a" || channel == "w") return RenderTexture::Channel::A;
+  if (channel == "rgb" || channel == "xyz") return RenderTexture::Channel::RGB;
+  return RenderTexture::Channel::RGBA;
+}
+
+WrapMode ParseWrapMode(const std::string& token) {
+  if (token == "clamp") return WrapMode::Clamp;
+  if (token == "mirror") return WrapMode::Mirror;
+  if (token == "black") return WrapMode::Black;
+  return WrapMode::Repeat;
+}
+
+ColorSpace ParseColorSpace(const std::string& token) {
+  if (token == "raw") return ColorSpace::Raw;
+  if (token == "linear" || token == "Linear") return ColorSpace::Linear;
+  if (token == "sRGB" || token == "srgb") return ColorSpace::sRGB;
+  if (token == "acescg" || token == "ACEScg") return ColorSpace::ACEScg;
+  if (token == "rec709" || token == "Rec709") return ColorSpace::Rec709;
+  if (token == "rec2020" || token == "Rec2020") return ColorSpace::Rec2020;
+  if (token == "displayP3" || token == "DisplayP3") return ColorSpace::DisplayP3;
+  return ColorSpace::Unknown;
+}
+
+void SetParamFloat(ShaderParam* out, float x) {
+  out->texture_id = -1;
+  out->value = Float4(x, 0.0f, 0.0f, 0.0f);
+}
+
+void SetParamFloat3(ShaderParam* out, float x, float y, float z) {
+  out->texture_id = -1;
+  out->value = Float4(x, y, z, 1.0f);
+}
+
+void SetParamFloat4(ShaderParam* out, float x, float y, float z, float w) {
+  out->texture_id = -1;
+  out->value = Float4(x, y, z, w);
+}
+
+bool ValueToShaderParam(const Value& value, ShaderParam* out) {
+  if (!out || value.is_empty() || value.is_array()) return false;
+
+  if (const float* v = value.as_float()) {
+    SetParamFloat(out, *v);
+    return true;
+  }
+  if (const double* v = value.as_double()) {
+    SetParamFloat(out, static_cast<float>(*v));
+    return true;
+  }
+  if (const int32_t* v = value.as_int()) {
+    SetParamFloat(out, static_cast<float>(*v));
+    return true;
+  }
+  if (const uint32_t* v = value.as_uint()) {
+    SetParamFloat(out, static_cast<float>(*v));
+    return true;
+  }
+  if (const bool* v = value.as_bool()) {
+    SetParamFloat(out, *v ? 1.0f : 0.0f);
+    return true;
+  }
+  if (const float* v = value.as_float2()) {
+    SetParamFloat4(out, v[0], v[1], 0.0f, 1.0f);
+    return true;
+  }
+  if (const float* v = value.as_float3()) {
+    SetParamFloat3(out, v[0], v[1], v[2]);
+    return true;
+  }
+  if (const float* v = value.as_float4()) {
+    SetParamFloat4(out, v[0], v[1], v[2], v[3]);
+    return true;
+  }
+  if (const double* v = value.as_double2()) {
+    SetParamFloat4(out, static_cast<float>(v[0]), static_cast<float>(v[1]),
+                   0.0f, 1.0f);
+    return true;
+  }
+  if (const double* v = value.as_double3()) {
+    SetParamFloat3(out, static_cast<float>(v[0]), static_cast<float>(v[1]),
+                   static_cast<float>(v[2]));
+    return true;
+  }
+  if (const double* v = value.as_double4()) {
+    SetParamFloat4(out, static_cast<float>(v[0]), static_cast<float>(v[1]),
+                   static_cast<float>(v[2]), static_cast<float>(v[3]));
+    return true;
+  }
+
+  return false;
+}
+
+bool ValueToFloat4(const Value& value, Float4* out) {
+  if (!out || value.is_empty() || value.is_array()) return false;
+
+  if (const float* v = value.as_float()) {
+    *out = Float4(*v, 0.0f, 0.0f, 0.0f);
+    return true;
+  }
+  if (const double* v = value.as_double()) {
+    *out = Float4(static_cast<float>(*v), 0.0f, 0.0f, 0.0f);
+    return true;
+  }
+  if (const float* v = value.as_float3()) {
+    *out = Float4(v[0], v[1], v[2], 0.0f);
+    return true;
+  }
+  if (const double* v = value.as_double3()) {
+    *out = Float4(static_cast<float>(v[0]), static_cast<float>(v[1]),
+                  static_cast<float>(v[2]), 0.0f);
+    return true;
+  }
+  if (const float* v = value.as_float4()) {
+    *out = Float4(v[0], v[1], v[2], v[3]);
+    return true;
+  }
+  if (const double* v = value.as_double4()) {
+    *out = Float4(static_cast<float>(v[0]), static_cast<float>(v[1]),
+                  static_cast<float>(v[2]), static_cast<float>(v[3]));
+    return true;
+  }
+  return false;
+}
+
+bool ValueToAnimationFloat4(const std::string& prop_name,
+                            const Value& value,
+                            Float4* out) {
+  if (!out || value.is_empty() || value.is_array()) return false;
+
+  float scalar = 0.0f;
+  bool is_scalar = false;
+  if (const float* v = value.as_float()) {
+    scalar = *v;
+    is_scalar = true;
+  } else if (const double* v = value.as_double()) {
+    scalar = static_cast<float>(*v);
+    is_scalar = true;
+  }
+
+  if (is_scalar) {
+    if (prop_name.find("rotateX") != std::string::npos) {
+      *out = Float4(scalar, 0.0f, 0.0f, 0.0f);
+    } else if (prop_name.find("rotateY") != std::string::npos) {
+      *out = Float4(0.0f, scalar, 0.0f, 0.0f);
+    } else if (prop_name.find("rotateZ") != std::string::npos) {
+      *out = Float4(0.0f, 0.0f, scalar, 0.0f);
+    } else if (prop_name.find("scale") != std::string::npos) {
+      *out = Float4(scalar, scalar, scalar, 0.0f);
+    } else {
+      *out = Float4(scalar, 0.0f, 0.0f, 0.0f);
+    }
+    return true;
+  }
+
+  return ValueToFloat4(value, out);
+}
+
+void AssignNodeDataId(RenderScene* scene,
+                      const std::string& prim_path,
+                      int32_t data_id) {
+  if (!scene) return;
+  const auto node_it = scene->node_by_path.find(prim_path);
+  if (node_it == scene->node_by_path.end()) return;
+  const int32_t node_id = node_it->second;
+  if (node_id < 0 || static_cast<size_t>(node_id) >= scene->nodes.size()) return;
+  scene->nodes[static_cast<size_t>(node_id)].data_id = data_id;
+}
+
+void SetIdentity(Matrix4* m) {
+  if (!m) return;
+  *m = Matrix4::Identity();
+}
+
+void CopyMatrixFromDoubles(const std::vector<double>& values,
+                           size_t matrix_index,
+                           Matrix4* out) {
+  if (!out) return;
+  SetIdentity(out);
+  const size_t offset = matrix_index * 16;
+  if (offset + 16 > values.size()) return;
+  for (size_t i = 0; i < 16; ++i) {
+    out->m[i] = static_cast<float>(values[offset + i]);
+  }
+}
+
+std::string LeafNameFromJointPath(const std::string& path) {
+  size_t pos = path.rfind('/');
+  if (pos == std::string::npos) return path;
+  if (pos + 1 >= path.size()) return "";
+  return path.substr(pos + 1);
+}
+
+bool LocalVisibility(const UsdPrim& prim) {
+  const Value* value = prim.GetPropertyValue("visibility");
+  if (!value) return true;
+  if (const std::string* token = value->as_token()) {
+    return *token != "invisible";
+  }
+  if (const std::string* str = value->as_string()) {
+    return *str != "invisible";
+  }
+  return true;
+}
+
+AnimationChannel::TargetPath TargetPathForXformOp(const std::string& prop_name) {
+  if (prop_name.find("translate") != std::string::npos) {
+    return AnimationChannel::TargetPath::Translation;
+  }
+  if (prop_name.find("scale") != std::string::npos) {
+    return AnimationChannel::TargetPath::Scale;
+  }
+  return AnimationChannel::TargetPath::Rotation;
+}
+
+bool IsXformAnimationProperty(const std::string& prop_name) {
+  if (prop_name.find("xformOp:") != 0) return false;
+  return prop_name.find("translate") != std::string::npos ||
+         prop_name.find("scale") != std::string::npos ||
+         prop_name.find("rotate") != std::string::npos ||
+         prop_name.find("orient") != std::string::npos;
+}
+
+struct TextureNodeData {
+  std::string file;
+  std::string wrap_s = "useMetadata";
+  std::string wrap_t = "useMetadata";
+  float scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  float bias[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  std::string source_color_space = "auto";
+};
+
+bool ExtractTextureNodeData(const Stage& stage,
+                            const UsdPrim& texture_prim,
+                            double time_code,
+                            TextureNodeData* out) {
+  if (!out || !texture_prim.IsValid()) return false;
+
+  ::tinyusdz::next::UVTextureData uv;
+  if (::tinyusdz::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
+    out->file = uv.file;
+    out->wrap_s = uv.wrap_s;
+    out->wrap_t = uv.wrap_t;
+    out->source_color_space = uv.source_color_space;
+    std::memcpy(out->scale, uv.scale, sizeof(out->scale));
+    std::memcpy(out->bias, uv.bias, sizeof(out->bias));
+    return !out->file.empty();
+  }
+
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+
+  std::optional<std::string> file = eval.EvalAssetPath(texture_prim, "inputs:file");
+  if (!file) {
+    file = eval.EvalString(texture_prim, "inputs:file");
+  }
+  if (!file || file->empty()) return false;
+  out->file = *file;
+
+  if (std::optional<std::string> wrap_s = eval.EvalToken(texture_prim, "inputs:wrapS")) {
+    out->wrap_s = *wrap_s;
+  }
+  if (std::optional<std::string> wrap_t = eval.EvalToken(texture_prim, "inputs:wrapT")) {
+    out->wrap_t = *wrap_t;
+  }
+  float scale[4];
+  if (eval.EvalFloat4(texture_prim, "inputs:scale", scale)) {
+    std::memcpy(out->scale, scale, sizeof(out->scale));
+  }
+  float bias[4];
+  if (eval.EvalFloat4(texture_prim, "inputs:bias", bias)) {
+    std::memcpy(out->bias, bias, sizeof(out->bias));
+  }
+  if (std::optional<std::string> cs = eval.EvalToken(texture_prim, "inputs:sourceColorSpace")) {
+    out->source_color_space = *cs;
+  }
+
+  return true;
+}
+
+bool IsOpenPBRShaderId(const std::string& id) {
+  return id == "ND_open_pbr_surface_surfaceshader" ||
+         id == "open_pbr_surface" ||
+         id == "OpenPBRSurface";
+}
+
+}  // namespace
 
 //
 // Constructor / Destructor
@@ -65,6 +434,19 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
     BuildNodeHierarchy(extracted, &result.scene);
 
+    for (const auto& rec : extracted.records) {
+      AnimationClip clip;
+      if (ConvertAnimation(rec.prim, &clip)) {
+        const auto node_it = result.scene.node_by_path.find(rec.path);
+        if (node_it != result.scene.node_by_path.end()) {
+          for (AnimationChannel& channel : clip.channels) {
+            channel.target_node = node_it->second;
+          }
+        }
+        result.scene.animations.push_back(std::move(clip));
+      }
+    }
+
     // Convert meshes
     float mesh_progress_start = 0.2f;
     float mesh_progress_end = 0.5f;
@@ -83,6 +465,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
+        AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
       } else {
         warnings_.push_back("Failed to convert mesh: " + mesh_prim.GetPath().str());
       }
@@ -102,7 +485,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
 
       RenderMaterial material;
-      if (ConvertMaterial(stage, mat_prim, &material)) {
+      if (ConvertMaterial(stage, mat_prim, &material, &result.scene)) {
         int32_t mat_id = static_cast<int32_t>(result.scene.materials.size());
         result.scene.material_by_path[material.prim_path] = mat_id;
         result.scene.materials.push_back(std::move(material));
@@ -115,7 +498,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.lights) {
       RenderLight light;
       if (ConvertLight(rec.prim, &light)) {
+        int32_t light_id = static_cast<int32_t>(result.scene.lights.size());
         result.scene.lights.push_back(std::move(light));
+        AssignNodeDataId(&result.scene, rec.path, light_id);
       }
     }
 
@@ -123,7 +508,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.cameras) {
       RenderCamera camera;
       if (ConvertCamera(rec.prim, &camera)) {
+        int32_t camera_id = static_cast<int32_t>(result.scene.cameras.size());
         result.scene.cameras.push_back(std::move(camera));
+        AssignNodeDataId(&result.scene, rec.path, camera_id);
       }
     }
 
@@ -131,7 +518,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.skeletons) {
       Skeleton skeleton;
       if (ConvertSkeleton(rec.prim, &skeleton)) {
+        int32_t skeleton_id = static_cast<int32_t>(result.scene.skeletons.size());
         result.scene.skeletons.push_back(std::move(skeleton));
+        AssignNodeDataId(&result.scene, rec.path, skeleton_id);
       }
     }
 
@@ -185,26 +574,25 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
       node.world_transform.m[i] = static_cast<float>(rec.world[i]);
     }
 
-    // Get visibility
-    bool visible = true;
-    GetToken(prim, "visibility", nullptr);  // TODO: proper visibility handling
-    node.visible = visible;
-
     int32_t node_id = static_cast<int32_t>(scene->nodes.size());
     path_to_node[node.prim_path] = node_id;
     scene->node_by_path[node.prim_path] = node_id;
 
     // Set parent
     std::string parent_path = GetParentPath(node.prim_path);
+    bool parent_visible = true;
     if (!parent_path.empty() && parent_path != "/") {
       auto it = path_to_node.find(parent_path);
       if (it != path_to_node.end()) {
         node.parent_id = it->second;
         scene->nodes[it->second].children.push_back(node_id);
+        parent_visible = scene->nodes[it->second].visible;
       }
     } else {
       scene->root_nodes.push_back(node_id);
     }
+
+    node.visible = parent_visible && LocalVisibility(prim);
 
     scene->nodes.push_back(std::move(node));
   }
@@ -525,8 +913,17 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 // Material conversion
 //
 
-bool RenderSceneConverter::ConvertMaterial(const Stage& stage, const UsdPrim& prim, RenderMaterial* out) {
-  if (!out || !IsMaterial(prim)) {
+bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
+                                           const UsdPrim& prim,
+                                           RenderMaterial* out) {
+  return ConvertMaterial(stage, prim, out, nullptr);
+}
+
+bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
+                                           const UsdPrim& prim,
+                                           RenderMaterial* out,
+                                           RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsMaterial(prim)) {
     last_error_ = "Invalid material prim";
     return false;
   }
@@ -539,7 +936,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage, const UsdPrim& pr
 
   auto children = prim.GetChildren();
   for (const auto& child : children) {
-    if (IsShader(child)) {
+    if (::tinyusdz::next::IsShader(child)) {
       std::string shader_id;
       GetToken(child, "info:id", &shader_id);
 
@@ -550,19 +947,215 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage, const UsdPrim& pr
         // legacy tydra path, e.g. usd-wg MaterialXTest/basic_flatten).
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::make_unique<PreviewSurfaceShader>();
-        // TODO: Extract shader parameters
+        ExtractPreviewSurface(stage, child, out->preview_surface.get(), scene);
+        if (out->preview_surface->opacity.is_texture() ||
+            out->preview_surface->opacity.value.x < 1.0f - kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        if (out->preview_surface->opacity_threshold.value.x > kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Mask;
+          out->alpha_cutoff = out->preview_surface->opacity_threshold.value.x;
+        }
         found_shader = true;
-      } else if (shader_id == "ND_open_pbr_surface_surfaceshader") {
+      } else if (IsOpenPBRShaderId(shader_id)) {
         out->shader_type = RenderMaterial::ShaderType::OpenPBR;
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
-        // TODO: Extract OpenPBR parameters
+        ExtractOpenPBRSurface(stage, child, out->openpbr.get(), scene);
+        if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
         found_shader = true;
       }
     }
   }
 
-  (void)stage;  // Suppress unused parameter warning
   return found_shader;
+}
+
+bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
+                                                 const UsdPrim& shader_prim,
+                                                 PreviewSurfaceShader* out,
+                                                 RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+
+  ExtractShaderParam(stage, shader_prim, "diffuseColor", &out->diffuse_color, scene);
+  ExtractShaderParam(stage, shader_prim, "emissiveColor", &out->emissive_color, scene);
+  ExtractShaderParam(stage, shader_prim, "specularColor", &out->specular_color, scene);
+  ExtractShaderParam(stage, shader_prim, "metallic", &out->metallic, scene);
+  ExtractShaderParam(stage, shader_prim, "roughness", &out->roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "clearcoat", &out->clearcoat, scene);
+  ExtractShaderParam(stage, shader_prim, "clearcoatRoughness",
+                     &out->clearcoat_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "opacityThreshold",
+                     &out->opacity_threshold, scene);
+  ExtractShaderParam(stage, shader_prim, "ior", &out->ior, scene);
+  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  ExtractShaderParam(stage, shader_prim, "displacement", &out->displacement, scene);
+  ExtractShaderParam(stage, shader_prim, "occlusion", &out->occlusion, scene);
+
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(config_.time_code);
+  if (std::optional<int32_t> use_spec =
+          eval.EvalInt(shader_prim, "inputs:useSpecularWorkflow")) {
+    out->use_specular_workflow = (*use_spec != 0);
+  }
+
+  return true;
+}
+
+bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
+                                                 const UsdPrim& shader_prim,
+                                                 OpenPBRSurfaceShader* out,
+                                                 RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+
+  ExtractShaderParam(stage, shader_prim, "base_weight", &out->base_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
+  ExtractShaderParam(stage, shader_prim, "baseColor", &out->base_color, scene);
+  ExtractShaderParam(stage, shader_prim, "base_roughness", &out->base_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "roughness", &out->base_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "base_metalness", &out->base_metalness, scene);
+  ExtractShaderParam(stage, shader_prim, "metalness", &out->base_metalness, scene);
+
+  ExtractShaderParam(stage, shader_prim, "specular_weight", &out->specular_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_color", &out->specular_color, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness",
+                     &out->specular_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_ior", &out->specular_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
+                     &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_rotation",
+                     &out->specular_rotation, scene);
+
+  ExtractShaderParam(stage, shader_prim, "transmission_weight",
+                     &out->transmission_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_color",
+                     &out->transmission_color, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_depth",
+                     &out->transmission_depth, scene);
+
+  ExtractShaderParam(stage, shader_prim, "subsurface_weight",
+                     &out->subsurface_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_color",
+                     &out->subsurface_color, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_radius",
+                     &out->subsurface_radius, scene);
+
+  ExtractShaderParam(stage, shader_prim, "coat_weight", &out->coat_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
+
+  ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_roughness", &out->sheen_roughness, scene);
+
+  ExtractShaderParam(stage, shader_prim, "emission_luminance",
+                     &out->emission_luminance, scene);
+  ExtractShaderParam(stage, shader_prim, "emission_color", &out->emission_color, scene);
+
+  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  ExtractShaderParam(stage, shader_prim, "tangent", &out->tangent, scene);
+
+  return true;
+}
+
+bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
+                                              const UsdPrim& shader_prim,
+                                              const std::string& param_name,
+                                              ShaderParam* out,
+                                              RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+
+  const std::string attr_name = "inputs:" + param_name;
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(config_.time_code);
+
+  if (eval.HasConnection(shader_prim, attr_name)) {
+    const std::string connection_path = eval.GetConnectionPath(shader_prim, attr_name);
+    const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
+    UsdPrim texture_prim = stage.GetPrimAtPath(texture_prim_path);
+
+    TextureNodeData tex_data;
+    if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
+      int32_t image_id = -1;
+      const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
+      const ColorSpace image_color_space =
+          cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
+      for (size_t i = 0; i < scene->images.size(); ++i) {
+        if (scene->images[i].resolved_path == tex_data.file &&
+            scene->images[i].color_space == image_color_space) {
+          image_id = static_cast<int32_t>(i);
+          break;
+        }
+      }
+      if (image_id < 0) {
+        TextureImage image;
+        image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
+        image.resolved_path = tex_data.file;
+        image.color_space = image_color_space;
+        if (config_.material.load_textures) {
+          TextureImage loaded;
+          if (LoadTexture(tex_data.file, &loaded)) {
+            if (loaded.name.empty()) loaded.name = image.name;
+            if (loaded.resolved_path.empty()) loaded.resolved_path = tex_data.file;
+            if (!config_.material.custom_texture_loader ||
+                loaded.color_space == ColorSpace::Unknown) {
+              loaded.color_space = image.color_space;
+            }
+            image = std::move(loaded);
+          } else if (!config_.material.allow_missing_textures) {
+            warnings_.push_back("Failed to load texture: " + tex_data.file);
+            return false;
+          }
+        }
+        image_id = static_cast<int32_t>(scene->images.size());
+        scene->images.push_back(std::move(image));
+      }
+
+      RenderTexture texture;
+      texture.name = texture_prim.IsValid() ? texture_prim.GetName() : param_name;
+      texture.prim_path = texture_prim_path;
+      texture.asset_path = tex_data.file;
+      texture.wrap_s = ParseWrapMode(tex_data.wrap_s);
+      texture.wrap_t = ParseWrapMode(tex_data.wrap_t);
+      texture.scale_value = Float4(tex_data.scale[0], tex_data.scale[1],
+                                   tex_data.scale[2], tex_data.scale[3]);
+      texture.bias = Float4(tex_data.bias[0], tex_data.bias[1],
+                            tex_data.bias[2], tex_data.bias[3]);
+      texture.image_id = image_id;
+      texture.output_channel = ChannelFromConnection(connection_path);
+
+      out->texture_id = static_cast<int32_t>(scene->textures.size());
+      scene->textures.push_back(std::move(texture));
+      return true;
+    }
+
+    Value connected_value;
+    if (ResolveConnectedValue(stage, connection_path, config_.time_code,
+                              &connected_value) &&
+        ValueToShaderParam(connected_value, out)) {
+      return true;
+    }
+  }
+
+  ::tinyusdz::next::EvalOptions direct_opts = eval.GetOptions();
+  direct_opts.follow_connections = false;
+  ::tinyusdz::next::EvalResult direct =
+      eval.EvalWith(shader_prim, attr_name, direct_opts);
+  if (direct.success && ValueToShaderParam(direct.value, out)) {
+    return true;
+  }
+
+  ::tinyusdz::next::EvalResult followed = eval.Eval(shader_prim, attr_name);
+  if (followed.success && ValueToShaderParam(followed.value, out)) {
+    return true;
+  }
+
+  return false;
 }
 
 //
@@ -663,15 +1256,66 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
 //
 
 bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
-  if (!out || !IsSkeleton(prim)) {
+  if (!out || !::tinyusdz::next::IsSkeleton(prim)) {
     last_error_ = "Invalid skeleton prim";
     return false;
   }
 
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
+  out->root_joint = -1;
 
-  // TODO: Extract joints, bind transforms, rest transforms
+  Stage stage;
+  (void)stage;
+
+  const Stage* stage_ptr = nullptr;
+  // GetSkeletonData currently only needs the stage for API symmetry. Keep a
+  // local empty Stage out of the hot path and read directly from the prim.
+  (void)stage_ptr;
+
+  ::tinyusdz::next::SkeletonData skel;
+  // The schema accessor does not dereference Stage for Skeleton fields.
+  if (!::tinyusdz::next::GetSkeletonData(stage, prim, &skel) ||
+      skel.joints.empty()) {
+    return true;
+  }
+
+  std::vector<int> topology;
+  std::string err;
+  if (!::tinyusdz::next::BuildSkelTopology(skel.joints, topology, &err)) {
+    warnings_.push_back("Invalid skeleton topology for " + prim.GetPath().str() +
+                        ": " + err);
+    topology.assign(skel.joints.size(), -1);
+  }
+
+  out->joints.resize(skel.joints.size());
+  for (size_t i = 0; i < skel.joints.size(); ++i) {
+    SkeletonJoint& joint = out->joints[i];
+    joint.path = skel.joints[i];
+    if (i < skel.jointNames.size() && !skel.jointNames[i].empty()) {
+      joint.name = skel.jointNames[i];
+    } else {
+      joint.name = LeafNameFromJointPath(skel.joints[i]);
+    }
+    joint.parent_id = (i < topology.size()) ? topology[i] : -1;
+    CopyMatrixFromDoubles(skel.bindTransforms, i, &joint.bind_transform);
+    CopyMatrixFromDoubles(skel.restTransforms, i, &joint.rest_transform);
+
+    if (joint.parent_id < 0 && out->root_joint < 0) {
+      out->root_joint = static_cast<int32_t>(i);
+    }
+  }
+
+  for (size_t i = 0; i < out->joints.size(); ++i) {
+    const int32_t parent = out->joints[i].parent_id;
+    if (parent >= 0 && static_cast<size_t>(parent) < out->joints.size()) {
+      out->joints[parent].children.push_back(static_cast<int32_t>(i));
+    }
+  }
+
+  if (out->root_joint < 0 && !out->joints.empty()) {
+    out->root_joint = 0;
+  }
 
   return true;
 }
@@ -681,10 +1325,46 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 //
 
 bool RenderSceneConverter::ConvertAnimation(const UsdPrim& prim, AnimationClip* out) {
-  // TODO: Implement animation extraction
-  (void)prim;
-  (void)out;
-  return false;
+  if (!out || !prim.IsValid()) return false;
+
+  out->name = prim.GetName() + "_Anim";
+  out->prim_path = prim.GetPath().str();
+  out->start_time = std::numeric_limits<double>::max();
+  out->end_time = -std::numeric_limits<double>::max();
+
+  for (const std::string& prop_name : prim.GetPropertyNames()) {
+    const std::vector<double> times = prim.GetTimeSampleTimes(prop_name);
+    if (times.empty()) continue;
+
+    const bool is_xform = IsXformAnimationProperty(prop_name);
+    AnimationChannel channel;
+    channel.target_path = is_xform ? TargetPathForXformOp(prop_name)
+                                   : AnimationChannel::TargetPath::CustomProperty;
+    channel.target_prim_path = prim.GetPath().str();
+    channel.property_name = prop_name;
+    channel.keyframes.reserve(times.size());
+
+    for (double t : times) {
+      Value value = prim.GetInterpolatedValue(prop_name, t);
+      Float4 v;
+      if (!ValueToAnimationFloat4(prop_name, value, &v)) continue;
+      channel.keyframes.push_back(Keyframe{t, v});
+      out->start_time = std::min(out->start_time, t);
+      out->end_time = std::max(out->end_time, t);
+    }
+
+    if (!channel.keyframes.empty()) {
+      out->channels.push_back(std::move(channel));
+    }
+  }
+
+  if (out->channels.empty()) {
+    out->start_time = 0.0;
+    out->end_time = 0.0;
+    return false;
+  }
+
+  return true;
 }
 
 //
@@ -699,8 +1379,8 @@ bool RenderSceneConverter::LoadTexture(const std::string& asset_path, TextureIma
     return config_.material.custom_texture_loader(asset_path, out);
   }
 
-  // TODO: Implement default texture loading
-  // For now, just store the path
+  // Built-in loader is metadata-only by design. Applications that need decoded
+  // pixels should provide `MaterialConfig::custom_texture_loader`.
   out->resolved_path = asset_path;
 
   return true;

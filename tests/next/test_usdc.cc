@@ -178,7 +178,37 @@ void test_crate_reader_invalid() {
 void test_read_usdc_file() {
   std::cout << "Testing USDC file reading..." << std::endl;
 
-  // Try to find a test USDC file
+  const char* required_files[] = {
+    "../../../tests/usdc/simple.usdc",
+    "../../tests/usdc/simple.usdc",
+    "../tests/usdc/simple.usdc",
+    "./tests/usdc/simple.usdc",
+  };
+
+  const char* required_file = nullptr;
+  for (const char* path : required_files) {
+    std::ifstream f(path);
+    if (f.good()) {
+      required_file = path;
+      break;
+    }
+  }
+
+  if (required_file) {
+    USDCLoadResult result = LoadUSDCFromFile(required_file);
+    if (!result.success) {
+      std::cout << "  Required fixture parse failed: " << required_file << std::endl;
+      if (!result.errors.empty()) {
+        std::cout << "  Error: " << result.errors[0].message << std::endl;
+      }
+    }
+    assert(result.success);
+    assert(!result.stage.GetRootPrims().empty());
+  } else {
+    std::cout << "  Skipping required fixture assertion (tests/usdc/simple.usdc not found from cwd)" << std::endl;
+  }
+
+  // Try to find an optional larger model for diagnostic coverage.
   const char* test_files[] = {
     "../../../models/suzanne.usdc",
     "../../models/suzanne.usdc",
@@ -209,7 +239,6 @@ void test_read_usdc_file() {
     if (!result.errors.empty()) {
       std::cout << "  Error: " << result.errors[0].message << std::endl;
     }
-    // Don't assert - file might be unsupported version
   } else {
     std::cout << "  Version: " << result.version.to_string() << std::endl;
     auto roots = result.stage.GetRootPrims();

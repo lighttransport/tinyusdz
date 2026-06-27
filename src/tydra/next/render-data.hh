@@ -559,11 +559,14 @@ struct AnimationChannel {
     Translation = 0,
     Rotation,
     Scale,
-    Weights  // Blend shape weights
+    Weights,  // Blend shape weights
+    CustomProperty
   };
 
   TargetPath target_path = TargetPath::Translation;
   int32_t target_node = -1;
+  std::string target_prim_path;
+  std::string property_name;
 
   // Keyframes (sorted by time)
   std::vector<Keyframe> keyframes;
