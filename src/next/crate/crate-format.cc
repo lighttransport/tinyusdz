@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Crate Format Implementation
 
 #include "crate-format.hh"
+#include "safe-arithmetic.hh"
 
 // Include LZ4 from existing TinyUSDZ
 #include "../../lz4/lz4.h"
@@ -861,8 +862,19 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
     return result;
   }
 
-  // Estimate max delta-encoded size
-  size_t max_delta_size = sizeof(int32_t) + (count * 2 + 7) / 8 + count * sizeof(int32_t);
+  // Estimate max delta-encoded size.
+  size_t code_bits = 0;
+  size_t code_bytes = 0;
+  size_t value_bytes = 0;
+  size_t max_delta_size = 0;
+  if (!safe::mul(count, size_t(2), &code_bits) ||
+      !safe::add(code_bits, size_t(7), &code_bits) ||
+      !safe::mul(count, sizeof(int32_t), &value_bytes) ||
+      !safe::add(sizeof(int32_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, value_bytes, &max_delta_size)) {
+    result.error = "Compressed integer decoded size overflow";
+    return result;
+  }
 
   // Decompress the n_chunks LZ4 blob
   DecompressResult dr = DecompressCrateBlob(data + 8, static_cast<size_t>(comp_size), max_delta_size);
@@ -966,8 +978,18 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
 
   // Worst-case delta-coded size: int64 common value + 2-bit codes + up to one
   // full int64 per element.
-  const size_t max_delta_size =
-      sizeof(int64_t) + (count * 2 + 7) / 8 + count * sizeof(int64_t);
+  size_t code_bits = 0;
+  size_t code_bytes = 0;
+  size_t value_bytes = 0;
+  size_t max_delta_size = 0;
+  if (!safe::mul(count, size_t(2), &code_bits) ||
+      !safe::add(code_bits, size_t(7), &code_bits) ||
+      !safe::mul(count, sizeof(int64_t), &value_bytes) ||
+      !safe::add(sizeof(int64_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, value_bytes, &max_delta_size)) {
+    result.error = "Compressed 64-bit integer decoded size overflow";
+    return result;
+  }
 
   DecompressResult dr = DecompressCrateBlob(
       data + 8, static_cast<size_t>(comp_size), max_delta_size);

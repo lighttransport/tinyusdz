@@ -197,7 +197,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
   }
 
   if (rep.IsCompressed()) {
-    PUSH_ERROR("Inlinved value must not be compressed.");
+    PUSH_ERROR("Inlined value must not be compressed.");
     return false;
   }
 
@@ -212,7 +212,6 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
   uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
   DCOUT("d = " << d);
 
-  // TODO(syoyo): Use template SFINE?
   switch (dty.dtype_id) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
@@ -643,10 +642,8 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY: {
-      // empty dict is allowed
-      // TODO: empty(zero value) check?
-      //crate::CrateValue::Dictionary dict;
-      CustomDataType dict; // use CustomDataType for Dict
+      // Inlined dictionary encodes an empty dictionary.
+      CustomDataType dict;  // use CustomDataType for Dict
       value->Set(dict);
       return true;
     }
@@ -1058,7 +1055,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: value->Set(std::vector<value::timecode>()); break;
       default:
         DCOUT("Empty array: unhandled type " << crate::GetCrateDataTypeName(tyRet0.value().dtype_id));
-        break;  // leave as void — pprint will show TODO
+        break;  // leave as void for unknown/unhandled empty array types
     }
     return true;
   }
@@ -1221,7 +1218,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
@@ -1249,11 +1245,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<crate::Index> v;
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read TokenIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                  static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed TokenIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read TokenIndex array.");
+            return false;
+          }
         }
 
         size_t tokens_bytes;
@@ -1323,7 +1327,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("stringArray = " << stringArray);
 
-        // TODO: Use token type?
+        // String arrays are encoded as string-token indices in Crate.
         value->Set(std::move(stringArray));
 
         return true;
@@ -2541,8 +2545,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_float3_size);
 
         {
-          // Regular allocation for compressed data or when mmap is disabled
-          // TODO: Chunked
+          // Regular allocation for compressed data or when mmap is disabled.
           std::vector<value::float3> v;
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::float3),
@@ -3290,22 +3293,23 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      // TODO: use crate::ValueRep for set container type.
-      if (unpackRecursionGuard.count(local_rep.GetData())) {
+      const uint64_t local_rep_key = local_rep.GetData();
+      if (unpackRecursionGuard.count(local_rep_key)) {
         // Recursion detected.
         PUSH_ERROR(
             "Corrupted Value data detected.");
         return false;
       } else {
+        unpackRecursionGuard.insert(local_rep_key);
+
         crate::CrateValue local_val;
         bool ret = UnpackValueRep(local_rep, &local_val);
+        unpackRecursionGuard.erase(local_rep_key);
         if (!ret) {
           return false;
         }
 
         (*value) = std::move(local_val);
-
-        unpackRecursionGuard.erase(local_rep.GetData());
         return true;
       }
     }
