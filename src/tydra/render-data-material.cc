@@ -2,21 +2,6 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// TODO:
-//   - [ ] Subdivision surface to polygon mesh conversion.
-//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
-//     function of subd surface)
-//   - [ ] Support material binding collection(Collection API)
-//   - [ ] Support multiple skel animation
-//   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
-//   - [ ] Adjust normal vector computation with handness?
-//   - [ ] Node xform animation
-//   - [ ] Better build of index buffer
-//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin
-//     indices/weights, BlendShape points, ...) as much as possible.
-//     - Implement spatial hash
-//
-//
 // Material and texture conversion routines split from render-data.cc
 //
 #include <chrono>
@@ -49,7 +34,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#include "materialx-to-json.hh"
 #include "security-policy.hh"
 
 //
@@ -1843,8 +1827,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
         if (channels > 4) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("TODO: Multiband color channels(5 or more) are not "
-                          "supported(yet)."));
+              fmt::format("Multiband color channels(5 or more) are not "
+                          "supported for texture color conversion."));
         }
 
         // Helper: convert u8 image data to f32 buffer
@@ -2057,9 +2041,22 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                                    to_string(texImage.usdColorSpace)));
           }
 
+        } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Raw;
+
+        } else if ((texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+                    texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) &&
+                   env.material_config.preserve_texel_bitdepth) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
         } else {
-          PUSH_ERROR(fmt::format("Unsupported asset texture texel format: {}",
-                                 to_string(assetImageBuffer.componentType)));
+          PUSH_ERROR(fmt::format(
+              "Unsupported asset texture texel format {} for color conversion "
+              "from {}",
+              to_string(assetImageBuffer.componentType),
+              to_string(texImage.usdColorSpace)));
         }
 
       } else {
@@ -2111,9 +2108,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
-                                 to_string(assetImageBuffer.componentType)));
+          imageBuffer = std::move(assetImageBuffer);
         }
+        texImage.colorSpace = texImage.usdColorSpace;
       }
 
       // Assign buffer id
