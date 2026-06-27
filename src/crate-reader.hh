@@ -430,6 +430,9 @@ class CrateReader {
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
+  bool IsThreadSafeInlinedValueRep(const crate::ValueRep &rep) const;
+  bool DecodeFieldSetRange(uint32_t start_idx, uint32_t end_idx,
+                           FieldValuePairVector *pairs);
 
   /// Describe an uncompressed array ValueRep without reading data.
   /// Records offset/count in *ref, sets *value to empty typed array.
@@ -626,6 +629,9 @@ class CrateReader {
 
   // To prevent recursive Value unpack(The Value encodes itself)
   std::unordered_set<uint64_t> unpackRecursionGuard;
+
+  bool ReserveDecompressionBuffers(size_t comp_buffer_size,
+                                   size_t working_buffer_size) const;
 
   CrateReaderConfig _config;
 

@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -2844,11 +2843,15 @@ bool RenderSceneConverter::ConvertMesh(
   if (auto it = rmaterial_map.find(material_path.material_path);
       it != rmaterial_map.s_end()) {
     dst.material_id = int(it->second);
+  } else {
+    dst.material_id = material_path.default_material_id;
   }
 
   if (auto it = rmaterial_map.find(material_path.backface_material_path);
       it != rmaterial_map.s_end()) {
     dst.backface_material_id = int(it->second);
+  } else {
+    dst.backface_material_id = material_path.default_backface_material_id;
   }
 
   if (env.mesh_config.validate_geomsubset) {
@@ -2900,12 +2903,16 @@ bool RenderSceneConverter::ConvertMesh(
         ms.material_id = int(mat_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : material_id "
                                 << ms.material_id);
+      } else {
+        ms.material_id = mp.default_material_id;
       }
       if (auto backface_it = rmaterial_map.find(mp.backface_material_path);
           backface_it != rmaterial_map.s_end()) {
         ms.backface_material_id = int(backface_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : backface_material_id "
                                 << ms.backface_material_id);
+      } else {
+        ms.backface_material_id = mp.default_backface_material_id;
       }
     }
 

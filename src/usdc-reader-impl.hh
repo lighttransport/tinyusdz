@@ -130,6 +130,60 @@ static inline bool IsUnregisteredValueType(const std::string &typeName)
   if (tyname == value::TypeTraits<value::uint4>::type_name()) {
     return true;
   }
+  if (tyname == value::TypeTraits<char>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<int16_t>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<uint16_t>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix2f>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix3f>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix4f>::type_name()) {
+    return true;
+  }
 
   return false;
 }

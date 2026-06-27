@@ -1314,8 +1314,15 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
   crate::ValueRep rep;
 
+  if (value.as<Reference>()) {
+    if (err) {
+      *err = "Standalone Reference values are not representable in Crate; use ReferenceListOp.";
+    }
+    return rep;
+  }
+
   // Try to inline the value
-  if (TryInlineValue(value, &rep)) {
+  if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
     return rep;
   }
 
@@ -1365,7 +1372,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   } else
 
   // Scalar types
+  if (value.IsUnregisteredValue()) {
+    rep.SetType(static_cast<int32_t>(
+        crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE));
+  } else
   PACK_SCALAR_TYPE(double, CRATE_DATA_TYPE_DOUBLE)
+  PACK_SCALAR_TYPE(value::timecode, CRATE_DATA_TYPE_TIME_CODE)
   PACK_SCALAR_TYPE(int64_t, CRATE_DATA_TYPE_INT64)
   PACK_SCALAR_TYPE(uint64_t, CRATE_DATA_TYPE_UINT64)
   PACK_SCALAR_TYPE(value::float2, CRATE_DATA_TYPE_VEC2F)
@@ -1396,6 +1408,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   PACK_ARRAY_TYPE(value::half, CRATE_DATA_TYPE_HALF)
   PACK_ARRAY_TYPE(float, CRATE_DATA_TYPE_FLOAT)
   PACK_ARRAY_TYPE(double, CRATE_DATA_TYPE_DOUBLE)
+  PACK_ARRAY_TYPE(value::timecode, CRATE_DATA_TYPE_TIME_CODE)
   PACK_ARRAY_TYPE(value::float2, CRATE_DATA_TYPE_VEC2F)
   PACK_ARRAY_TYPE(value::float3, CRATE_DATA_TYPE_VEC3F)
   PACK_ARRAY_TYPE(value::float4, CRATE_DATA_TYPE_VEC4F)
@@ -1449,12 +1462,9 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   } else if (value.as<ListOp<uint64_t>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP));
   }
-  // Phase 2: Reference and Payload types
-  else if (value.as<Reference>()) {
-    // Note: There's no single Reference type ID in crate format - References are typically in ReferenceListOp
-    // But we'll handle it anyway for completeness
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));  // Or use a custom type
-  } else if (value.as<Payload>()) {
+  // Phase 2: Payload and list-op types. Crate has no standalone Reference
+  // type; references are represented by ReferenceListOp.
+  else if (value.as<Payload>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD));
   } else if (value.as<ListOp<Reference>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP));

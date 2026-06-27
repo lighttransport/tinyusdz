@@ -80,6 +80,7 @@ bool MtlxInput::ParseFromXML(XMLNodePtr xml_node) {
   }
   
   nodename_ = xml_node->GetAttribute("nodename");
+  nodegraph_ = xml_node->GetAttribute("nodegraph");
   output_ = xml_node->GetAttribute("output");
   interfacename_ = xml_node->GetAttribute("interfacename");
   channels_ = xml_node->GetAttribute("channels");
@@ -229,6 +230,20 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
       } else if (shader_name == "displacementshader" || shader_name == "dr") {
         displacement_shader_ = shader_node;
       } else if (shader_name == "volumeshader" || shader_name == "vr") {
+        volume_shader_ = shader_node;
+      }
+    } else if (child->GetName() == "input") {
+      std::string input_name = child->GetAttribute("name");
+      std::string shader_node = child->GetAttribute("nodename");
+      if (shader_node.empty()) {
+        shader_node = child->GetAttribute("node");
+      }
+
+      if (input_name == "surfaceshader" || input_name == "sr") {
+        surface_shader_ = shader_node;
+      } else if (input_name == "displacementshader" || input_name == "dr") {
+        displacement_shader_ = shader_node;
+      } else if (input_name == "volumeshader" || input_name == "vr") {
         volume_shader_ = shader_node;
       }
     }

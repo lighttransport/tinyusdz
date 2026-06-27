@@ -59,17 +59,11 @@ namespace usdc {
 
 namespace {
 
-// Check if filename ends with ".zst" extension (case-insensitive).
-// Only used in SaveAsUSDCToFile's non-Android branch; on Android the
-// function returns early via #ifdef __ANDROID__, leaving this helper
-// unused (-Wunused-function under -Werror).
-#ifndef __ANDROID__
 bool HasZstdExtension(const std::string &filename) {
   if (filename.size() < 4) return false;
   std::string ext = filename.substr(filename.size() - 4);
   return (ext == ".zst" || ext == ".ZST");
 }
-#endif
 
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -84,6 +78,47 @@ std::wstring UTF8ToWchar(const std::string &str) {
 }
 
 #endif
+
+bool WriteAllBytesToFile(FILE *fp, const uint8_t *data, size_t size,
+                         std::string *err) {
+  if (!fp) {
+    if (err) {
+      (*err) += "Invalid file handle.\n";
+    }
+    return false;
+  }
+
+  if (size == 0) {
+    return true;
+  }
+
+  if (!data) {
+    if (err) {
+      (*err) += "Invalid output data buffer.\n";
+    }
+    return false;
+  }
+
+  size_t written = 0;
+  while (written < size) {
+    const size_t n = fwrite(data + written, 1, size - written, fp);
+    if (n == 0) {
+      if (ferror(fp)) {
+        if (err) {
+          (*err) += "Failed to write data to a file: ";
+          (*err) += strerror(errno);
+          (*err) += "\n";
+        }
+      } else if (err) {
+        (*err) += "Failed to write data to a file: fwrite made no progress.\n";
+      }
+      return false;
+    }
+    written += n;
+  }
+
+  return true;
+}
 
 struct Section {
   Section() { memset(this, 0, sizeof(*this)); }
@@ -350,18 +385,6 @@ class Writer {
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
-#ifdef __ANDROID__
-  (void)filename;
-  (void)stage;
-  (void)warn;
-  (void)options;
-
-  if (err) {
-    (*err) += "Saving USDC to a file is not supported for Android platform(at the moment).\n";
-  }
-  return false;
-#else
-
   std::vector<uint8_t> output;
 
   if (!SaveAsUSDCToMemory(stage, &output, warn, err, /*max_file_size*/ 0,
@@ -399,8 +422,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   errno_t fperr = _wfopen_s(&fp, UTF8ToWchar(filename).c_str(), L"wb");
   if (fperr != 0) {
     if (err) {
-      // TODO: WChar
-      (*err) += "Failed to open file to write.\n";
+      (*err) += "Failed to open file `" + filename + "` to write.\n";
     }
     return false;
   }
@@ -425,35 +447,18 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   }
 #endif
 
-  size_t n = fwrite(write_data, /* size */ 1, /* count */ write_size, fp);
-  fclose(fp);
-
-  if (n < write_size) {
-    // TODO: Retry writing data when n < write_size
-
-    if (err) {
-      (*err) += "Failed to write data to a file.\n";
-    }
+  if (!WriteAllBytesToFile(fp, write_data, write_size, err)) {
+    fclose(fp);
     return false;
   }
 
+  fclose(fp);
   return true;
-#endif
 }
 
 bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
                       std::string *warn, std::string *err,
                       const USDWriteOptions &options) {
-#ifdef __ANDROID__
-  (void)filename;
-  (void)layer;
-  (void)warn;
-  (void)options;
-  if (err) {
-    (*err) += "TODO: Implement Android file saving.\n";
-  }
-  return false;
-#else
   std::vector<uint8_t> output;
   if (!SaveAsUSDCToMemory(layer, &output, warn, err, /*max_file_size*/ 0,
                           /*max_memory*/ 0, options.compress_float_arrays)) {
@@ -491,18 +496,13 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
     return false;
   }
 
-  size_t n = fwrite(write_data, 1, write_size, fp);
-  fclose(fp);
-
-  if (n < write_size) {
-    if (err) {
-      (*err) += "Failed to write data to a file.\n";
-    }
+  if (!WriteAllBytesToFile(fp, write_data, write_size, err)) {
+    fclose(fp);
     return false;
   }
 
+  fclose(fp);
   return true;
-#endif
 }
 
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,

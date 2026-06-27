@@ -420,6 +420,9 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
 )
 
 set(TYDRA_NEXT_HEADERS
@@ -429,6 +432,9 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.hh
 )
 
 add_library(tydra_next STATIC

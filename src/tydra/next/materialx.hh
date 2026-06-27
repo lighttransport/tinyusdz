@@ -133,6 +133,7 @@ struct MtlxNodeInfo {
   std::string name;
   std::string category;  // e.g., "standard_surface", "image", "multiply"
   std::string type;      // e.g., "surfaceshader", "color3", "float"
+  std::string colorspace;
 
   // Input connections/values
   std::map<std::string, std::string> input_connections;  // input_name -> node.output

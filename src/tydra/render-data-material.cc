@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -1439,6 +1438,51 @@ void RenderSceneConverter::RememberMaterialSourceSignature(
   _materialSourceSignatureCache.emplace(signature, material_id);
 }
 
+bool RenderSceneConverter::GetOrCreateDefaultMaterial(
+    const RenderSceneConverterEnv &env, int *material_id) {
+  if (!material_id) {
+    PUSH_ERROR_AND_RETURN("material_id argument is nullptr.");
+  }
+  *material_id = -1;
+
+  if (!env.material_config.assign_default_material) {
+    return true;
+  }
+
+  constexpr const char *kDefaultMaterialPath =
+      "/__tinyusdz_default_material__";
+  if (auto it = materialMap.find(kDefaultMaterialPath);
+      it != materialMap.s_end()) {
+    *material_id = int(it->second);
+    return true;
+  }
+
+  RenderMaterial material;
+  material.name = env.material_config.default_material_name.empty()
+                      ? "defaultMaterial"
+                      : env.material_config.default_material_name;
+  material.abs_path = kDefaultMaterialPath;
+  material.display_name = material.name;
+
+  PreviewSurfaceShader shader;
+  shader.diffuseColor.value = env.material_config.default_material_diffuse_color;
+  shader.roughness.value = env.material_config.default_material_roughness;
+  shader.metallic.value = env.material_config.default_material_metallic;
+  shader.opacity.value = env.material_config.default_material_opacity;
+  material.surfaceShader = shader;
+  material.computeMaterialTag();
+
+  const int id = int(materials.size());
+  materials.emplace_back(std::move(material));
+  materialMap.add(kDefaultMaterialPath, uint64_t(id));
+  *material_id = id;
+
+  if (!EmitMaterial(size_t(id), kDefaultMaterialPath)) {
+    PUSH_ERROR_AND_RETURN("Conversion cancelled by user.");
+  }
+  return true;
+}
+
 // Convert UsdUVTexture shader node.
 // @return true upon conversion success(textures.back() contains the converted
 // UVTexture)
@@ -1792,7 +1836,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       // Linearlization and widen texel bit depth if required.
       if (env.material_config.linearize_color_space) {
-        // TODO: Support ACEScg and Lin_DisplayP3
         DCOUT("linearlize colorspace.");
         size_t width = size_t(texImage.width);
         size_t height = size_t(texImage.height);
@@ -3950,8 +3993,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     MaterialPath material_path;
     material_path.default_texcoords_primvar_name =
         visitorEnv->env->mesh_config.default_texcoords_primvar_name;
-    // TODO: Implement feature to assign default material
-    // id(MaterialPath::default_material_id) when no bound material found.
 
     {
       const std::string mesh_path_str = abs_path.full_path_name();
@@ -4019,6 +4060,17 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           DCOUT("Bound backface material path: "
                 << material_path.backface_material_path);
         }
+      }
+
+      if (material_path.material_path.empty()) {
+        if (!visitorEnv->converter->GetOrCreateDefaultMaterial(
+                *visitorEnv->env, &material_path.default_material_id)) {
+          return false;
+        }
+      }
+      if (material_path.backface_material_path.empty()) {
+        material_path.default_backface_material_id =
+            material_path.default_material_id;
       }
 
       // BlendShapes

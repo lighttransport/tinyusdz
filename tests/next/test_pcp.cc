@@ -18,7 +18,9 @@
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/layer.hh"
+#include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -2216,6 +2218,183 @@ static void test_sublayer_stack_composition() {
   std::cout << "  OK" << std::endl;
 }
 
+static Stage BuildSinglePrimStage(const std::string& name,
+                                  const std::string& type_name,
+                                  const std::string& prop_name,
+                                  int prop_value) {
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim(name, type_name);
+  lb.add_property(prop_name, Value(static_cast<int32_t>(prop_value)));
+  lb.end_prim();
+  lb.finalize();
+
+  Stage stage;
+  stage.SetRootLayer(std::move(layer));
+  return stage;
+}
+
+static void AppendU16LE(std::vector<uint8_t>* out, uint16_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+}
+
+static void AppendU32LE(std::vector<uint8_t>* out, uint32_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 16) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 24) & 0xffu));
+}
+
+static void AppendStoredZipEntry(std::vector<uint8_t>* out,
+                                 const std::string& name,
+                                 const std::string& bytes) {
+  AppendU32LE(out, 0x04034b50u);  // local file header
+  AppendU16LE(out, 20);           // version needed
+  AppendU16LE(out, 0);            // flags
+  AppendU16LE(out, 0);            // stored
+  AppendU16LE(out, 0);            // mod time
+  AppendU16LE(out, 0);            // mod date
+  AppendU32LE(out, 0);            // crc32 (ignored by USDZReader)
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU16LE(out, static_cast<uint16_t>(name.size()));
+  AppendU16LE(out, 0);            // extra field
+  out->insert(out->end(), name.begin(), name.end());
+  out->insert(out->end(), bytes.begin(), bytes.end());
+}
+
+static void WriteTwoEntryUSDZ(const std::string& filename,
+                              const std::string& root_usda,
+                              const std::string& sibling_usda) {
+  std::vector<uint8_t> bytes;
+  AppendStoredZipEntry(&bytes, "root.usda", root_usda);
+  AppendStoredZipEntry(&bytes, "sibling.usda", sibling_usda);
+  std::ofstream f(filename, std::ios::binary);
+  f.write(reinterpret_cast<const char*>(bytes.data()),
+          static_cast<std::streamsize>(bytes.size()));
+}
+
+// LoadUSDComposed must route direct .usdz layers and explicit package-path
+// layers through PCP, preserving the normal archive and inner-parser caps.
+static void test_usdz_package_layers() {
+  std::cout << "test_usdz_package_layers..." << std::endl;
+
+  {
+    Stage sub_stage =
+        BuildSinglePrimStage("World", "Xform", "weakVal", 42);
+    USDZWriteResult wr =
+        WriteUSDZToFile("/tmp/next_pcp_sublayer_pkg.usdz", sub_stage);
+    assert(wr.success && "failed to write sublayer USDZ fixture");
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_sublayer_root.usda");
+      f << "#usda 1.0\n"
+           "(\n"
+           "    subLayers = [@next_pcp_sublayer_pkg.usdz@]\n"
+           ")\n"
+           "def Xform \"World\"\n"
+           "{\n"
+           "    custom int strongVal = 7\n"
+           "}\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_sublayer_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for direct USDZ sublayer");
+    UsdPrim world = stage.GetPrimAtPath("/World");
+    assert(world.IsValid());
+    assert(world.GetPropertyValue("weakVal") != nullptr &&
+           "direct USDZ sublayer weak opinion missing");
+    assert(world.GetPropertyValue("strongVal") != nullptr &&
+           "direct USDZ sublayer strong root opinion missing");
+  }
+
+  {
+    Stage ref_stage =
+        BuildSinglePrimStage("Asset", "Xform", "pkgVal", 99);
+    USDZWriteResult wr =
+        WriteUSDZToFile("/tmp/next_pcp_ref_pkg.usdz", ref_stage);
+    assert(wr.success && "failed to write reference USDZ fixture");
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_ref_root.usda");
+      f << "#usda 1.0\n"
+           "def Xform \"World\"\n"
+           "{\n"
+           "    def Xform \"P\" (\n"
+           "        prepend references = "
+           "[@next_pcp_ref_pkg.usdz[root.usdc]@</Asset>]\n"
+           "    )\n"
+           "    {\n"
+           "    }\n"
+           "}\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_ref_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for USDZ package reference");
+    UsdPrim p = stage.GetPrimAtPath("/World/P");
+    assert(p.IsValid());
+    assert(p.GetPropertyValue("pkgVal") != nullptr &&
+           "USDZ package-path reference opinion missing");
+  }
+
+  {
+    const std::string root_usda =
+        "#usda 1.0\n"
+        "def Xform \"World\"\n"
+        "{\n"
+        "    def Xform \"P\" (\n"
+        "        prepend references = [@sibling.usda@</Asset>]\n"
+        "    )\n"
+        "    {\n"
+        "    }\n"
+        "}\n";
+    const std::string sibling_usda =
+        "#usda 1.0\n"
+        "def Xform \"Asset\"\n"
+        "{\n"
+        "    custom int siblingVal = 123\n"
+        "}\n";
+    WriteTwoEntryUSDZ("/tmp/next_pcp_multi_pkg.usdz", root_usda,
+                      sibling_usda);
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+      f << "#usda 1.0\n"
+           "(\n"
+           "    subLayers = [@next_pcp_multi_pkg.usdz[root.usda]@]\n"
+           ")\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_pkg_anchor_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for package-internal reference");
+    UsdPrim p = stage.GetPrimAtPath("/World/P");
+    assert(p.IsValid());
+    assert(p.GetPropertyValue("siblingVal") != nullptr &&
+           "relative reference inside USDZ package did not resolve to sibling entry");
+  }
+
+  std::remove("/tmp/next_pcp_sublayer_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_sublayer_root.usda");
+  std::remove("/tmp/next_pcp_ref_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_ref_root.usda");
+  std::remove("/tmp/next_pcp_multi_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_sublayer_cycle_and_depth() {
   std::cout << "test_sublayer_cycle_and_depth..." << std::endl;
 
@@ -2941,6 +3120,7 @@ int main() {
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
   test_sublayer_stack_composition();
+  test_usdz_package_layers();
   test_sublayer_cycle_and_depth();
   test_node_overflow_fails_cleanly();
   test_concurrent_queries();

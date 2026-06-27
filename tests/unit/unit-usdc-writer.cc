@@ -7,6 +7,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -4169,8 +4170,14 @@ def Xform "x" {
     displayName = "Count"
     displayGroup = "Stats"
     documentation = "the count"
+    connectability = "interfaceOnly"
+    outputName = "result"
+    renderType = "color"
     customData = {
       string note = "x"
+    }
+    sdrMetadata = {
+      string role = "test"
     }
   )
   custom float[] vals = [0.1, 0.2, 0.3] (
@@ -4192,6 +4199,23 @@ def Xform "x" {
     TEST_CHECK(m.has_displayGroup());
     TEST_CHECK(m.has_doc());
     TEST_CHECK(m.has_customData());
+    TEST_CHECK(m.has_connectability());
+    TEST_CHECK(m.has_outputName());
+    TEST_CHECK(m.has_renderType());
+    TEST_CHECK(m.has_sdrMetadata());
+    if (m.has_connectability()) {
+      TEST_CHECK(m.get_connectability().str() == "interfaceOnly");
+    }
+    if (m.has_outputName()) {
+      TEST_CHECK(m.get_outputName().str() == "result");
+    }
+    if (m.has_renderType()) {
+      TEST_CHECK(m.get_renderType().str() == "color");
+    }
+    if (m.has_sdrMetadata()) {
+      auto sdr = m.get_sdrMetadata();
+      TEST_CHECK(sdr.count("role") == 1);
+    }
   }
   auto itv = xf->props.find("vals");
   TEST_CHECK(itv != xf->props.end());
@@ -4342,6 +4366,358 @@ def Xform "x" (
   TEST_CHECK(cd.count("big") == 1);
   TEST_CHECK(cd.count("ubig") == 1);
   TEST_CHECK(cd.count("hh") == 1);
+}
+
+void usdc_writer_uint_tuple_unregistered_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom uint2 u2 = (7, 8)
+  custom uint2[] u2arr = [(0, 1), (2, 3)]
+  custom uint3[] u3arr = [(4, 5, 6)]
+  custom uint4[] u4arr = [(7, 8, 9, 10)]
+}
+)";
+  RT_OK(usda);
+  const Xform *xform = find_root<Xform>(stage, "x");
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  auto check_attr = [&](const char *name) -> const Attribute * {
+    auto it = xform->props.find(name);
+    TEST_CHECK(it != xform->props.end());
+    if (it == xform->props.end()) return nullptr;
+    TEST_CHECK(it->second.is_attribute());
+    if (!it->second.is_attribute()) return nullptr;
+    return &it->second.get_attribute();
+  };
+
+  if (const Attribute *attr = check_attr("u2")) {
+    auto v = attr->get_var().value_raw().get_value<value::uint2>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK((*v)[0] == 7u);
+      TEST_CHECK((*v)[1] == 8u);
+    }
+  }
+  if (const Attribute *attr = check_attr("u2arr")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint2>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 2);
+      if (v->size() == 2) {
+        TEST_CHECK((*v)[0][0] == 0u);
+        TEST_CHECK((*v)[0][1] == 1u);
+        TEST_CHECK((*v)[1][0] == 2u);
+        TEST_CHECK((*v)[1][1] == 3u);
+      }
+    }
+  }
+  if (const Attribute *attr = check_attr("u3arr")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint3>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK((*v)[0][0] == 4u);
+        TEST_CHECK((*v)[0][1] == 5u);
+        TEST_CHECK((*v)[0][2] == 6u);
+      }
+    }
+  }
+  if (const Attribute *attr = check_attr("u4arr")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::uint4>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK((*v)[0][0] == 7u);
+        TEST_CHECK((*v)[0][1] == 8u);
+        TEST_CHECK((*v)[0][2] == 9u);
+        TEST_CHECK((*v)[0][3] == 10u);
+      }
+    }
+  }
+}
+
+void usdc_writer_half_role_values_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom texCoord2h st = (0.5, 0.25)
+  custom point3h p = (1, 2, 3)
+  custom normal3h[] n = [(0, 1, 0)]
+  custom color4h[] tint = [(0.25, 0.5, 0.75, 1)]
+  custom texCoord3h[] st3 = [(0.5, 0.25, 0)]
+}
+)";
+  RT_OK(usda);
+  const Xform *xform = find_root<Xform>(stage, "x");
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  auto check_attr = [&](const char *name) -> const Attribute * {
+    auto it = xform->props.find(name);
+    TEST_CHECK(it != xform->props.end());
+    if (it == xform->props.end()) return nullptr;
+    TEST_CHECK(it->second.is_attribute());
+    if (!it->second.is_attribute()) return nullptr;
+    return &it->second.get_attribute();
+  };
+  auto hf = [](value::half h) { return value::half_to_float(h); };
+  auto close = [](float a, float b) { return std::fabs(a - b) < 0.0001f; };
+
+  if (const Attribute *attr = check_attr("st")) {
+    auto v = attr->get_var().value_raw().get_value<value::texcoord2h>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(close(hf((*v)[0]), 0.5f));
+      TEST_CHECK(close(hf((*v)[1]), 0.25f));
+    }
+  }
+  if (const Attribute *attr = check_attr("p")) {
+    auto v = attr->get_var().value_raw().get_value<value::point3h>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(close(hf((*v)[0]), 1.0f));
+      TEST_CHECK(close(hf((*v)[1]), 2.0f));
+      TEST_CHECK(close(hf((*v)[2]), 3.0f));
+    }
+  }
+  if (const Attribute *attr = check_attr("n")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::normal3h>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK(close(hf((*v)[0][0]), 0.0f));
+        TEST_CHECK(close(hf((*v)[0][1]), 1.0f));
+        TEST_CHECK(close(hf((*v)[0][2]), 0.0f));
+      }
+    }
+  }
+  if (const Attribute *attr = check_attr("tint")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::color4h>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK(close(hf((*v)[0][0]), 0.25f));
+        TEST_CHECK(close(hf((*v)[0][1]), 0.5f));
+        TEST_CHECK(close(hf((*v)[0][2]), 0.75f));
+        TEST_CHECK(close(hf((*v)[0][3]), 1.0f));
+      }
+    }
+  }
+  if (const Attribute *attr = check_attr("st3")) {
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::texcoord3h>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK(close(hf((*v)[0][0]), 0.5f));
+        TEST_CHECK(close(hf((*v)[0][1]), 0.25f));
+        TEST_CHECK(close(hf((*v)[0][2]), 0.0f));
+      }
+    }
+  }
+}
+
+void usdc_writer_timecode_value_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom timecode frame = 24
+  custom timecode[] frames = [1, 12.5, 24]
+}
+)";
+  RT_OK(usda);
+  const Xform *xform = find_root<Xform>(stage, "x");
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  auto find_attr = [&](const char *name) -> const Attribute * {
+    auto it = xform->props.find(name);
+    TEST_CHECK(it != xform->props.end());
+    if (it == xform->props.end()) return nullptr;
+    TEST_CHECK(it->second.is_attribute());
+    if (!it->second.is_attribute()) return nullptr;
+    return &it->second.get_attribute();
+  };
+
+  if (const Attribute *attr = find_attr("frame")) {
+    TEST_CHECK(attr->type_name() == "timecode");
+    auto v = attr->get_var().value_raw().get_value<value::timecode>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(std::fabs(v->value - 24.0) < 1.0e-9);
+    }
+  }
+  if (const Attribute *attr = find_attr("frames")) {
+    TEST_CHECK(attr->type_name() == "timecode[]");
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::timecode>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 3);
+      if (v->size() == 3) {
+        TEST_CHECK(std::fabs((*v)[0].value - 1.0) < 1.0e-9);
+        TEST_CHECK(std::fabs((*v)[1].value - 12.5) < 1.0e-9);
+        TEST_CHECK(std::fabs((*v)[2].value - 24.0) < 1.0e-9);
+      }
+    }
+  }
+}
+
+void usdc_writer_matrixf_unregistered_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom matrix2f m2 = ((1, 2), (3, 4))
+  custom matrix3f[] m3 = [((1, 0, 0), (0, 2, 0), (0, 0, 3))]
+  custom matrix4f m4 = ((1, 0, 0, 0), (0, 2, 0, 0), (0, 0, 3, 0), (4, 5, 6, 1))
+}
+)";
+  RT_OK(usda);
+  const Xform *xform = find_root<Xform>(stage, "x");
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  auto find_attr = [&](const char *name) -> const Attribute * {
+    auto it = xform->props.find(name);
+    TEST_CHECK(it != xform->props.end());
+    if (it == xform->props.end()) return nullptr;
+    TEST_CHECK(it->second.is_attribute());
+    if (!it->second.is_attribute()) return nullptr;
+    return &it->second.get_attribute();
+  };
+
+  if (const Attribute *attr = find_attr("m2")) {
+    TEST_CHECK(attr->type_name() == "matrix2f");
+    auto v = attr->get_var().value_raw().get_value<value::matrix2f>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(std::fabs(v->m[0][0] - 1.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[0][1] - 2.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[1][0] - 3.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[1][1] - 4.0f) < 1.0e-6f);
+    }
+  }
+  if (const Attribute *attr = find_attr("m3")) {
+    TEST_CHECK(attr->type_name() == "matrix3f[]");
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::matrix3f>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 1);
+      if (v->size() == 1) {
+        TEST_CHECK(std::fabs((*v)[0].m[0][0] - 1.0f) < 1.0e-6f);
+        TEST_CHECK(std::fabs((*v)[0].m[1][1] - 2.0f) < 1.0e-6f);
+        TEST_CHECK(std::fabs((*v)[0].m[2][2] - 3.0f) < 1.0e-6f);
+      }
+    }
+  }
+  if (const Attribute *attr = find_attr("m4")) {
+    TEST_CHECK(attr->type_name() == "matrix4f");
+    auto v = attr->get_var().value_raw().get_value<value::matrix4f>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(std::fabs(v->m[3][0] - 4.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[3][1] - 5.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[3][2] - 6.0f) < 1.0e-6f);
+      TEST_CHECK(std::fabs(v->m[3][3] - 1.0f) < 1.0e-6f);
+    }
+  }
+}
+
+void usdc_writer_small_integer_unregistered_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "x" {
+  custom char c = -7
+  custom short s = -1234
+  custom ushort us = 65000
+  custom char3 c3 = (-1, 2, 3)
+  custom uchar4 uc4 = (1, 2, 3, 255)
+  custom short2 sh2 = (-300, 400)
+  custom ushort3 ush3 = (5, 6, 65535)
+  custom char2[] c2a = [(-1, 2), (3, 4)]
+}
+)";
+  RT_OK(usda);
+  const Xform *xform = find_root<Xform>(stage, "x");
+  TEST_CHECK(xform != nullptr);
+  if (!xform) return;
+
+  auto find_attr = [&](const char *name) -> const Attribute * {
+    auto it = xform->props.find(name);
+    TEST_CHECK(it != xform->props.end());
+    if (it == xform->props.end()) return nullptr;
+    TEST_CHECK(it->second.is_attribute());
+    if (!it->second.is_attribute()) return nullptr;
+    return &it->second.get_attribute();
+  };
+
+  if (const Attribute *attr = find_attr("c")) {
+    TEST_CHECK(attr->type_name() == "char");
+    auto v = attr->get_var().value_raw().get_value<char>();
+    TEST_CHECK(v.has_value());
+    if (v) TEST_CHECK(static_cast<int>(*v) == -7);
+  }
+  if (const Attribute *attr = find_attr("s")) {
+    TEST_CHECK(attr->type_name() == "short");
+    auto v = attr->get_var().value_raw().get_value<int16_t>();
+    TEST_CHECK(v.has_value());
+    if (v) TEST_CHECK(*v == int16_t(-1234));
+  }
+  if (const Attribute *attr = find_attr("us")) {
+    TEST_CHECK(attr->type_name() == "ushort");
+    auto v = attr->get_var().value_raw().get_value<uint16_t>();
+    TEST_CHECK(v.has_value());
+    if (v) TEST_CHECK(*v == uint16_t(65000));
+  }
+  if (const Attribute *attr = find_attr("c3")) {
+    TEST_CHECK(attr->type_name() == "char3");
+    auto v = attr->get_var().value_raw().get_value<value::char3>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(static_cast<int>((*v)[0]) == -1);
+      TEST_CHECK(static_cast<int>((*v)[1]) == 2);
+      TEST_CHECK(static_cast<int>((*v)[2]) == 3);
+    }
+  }
+  if (const Attribute *attr = find_attr("uc4")) {
+    TEST_CHECK(attr->type_name() == "uchar4");
+    auto v = attr->get_var().value_raw().get_value<value::uchar4>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK((*v)[0] == uint8_t(1));
+      TEST_CHECK((*v)[3] == uint8_t(255));
+    }
+  }
+  if (const Attribute *attr = find_attr("sh2")) {
+    TEST_CHECK(attr->type_name() == "short2");
+    auto v = attr->get_var().value_raw().get_value<value::short2>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK((*v)[0] == int16_t(-300));
+      TEST_CHECK((*v)[1] == int16_t(400));
+    }
+  }
+  if (const Attribute *attr = find_attr("ush3")) {
+    TEST_CHECK(attr->type_name() == "ushort3");
+    auto v = attr->get_var().value_raw().get_value<value::ushort3>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK((*v)[0] == uint16_t(5));
+      TEST_CHECK((*v)[2] == uint16_t(65535));
+    }
+  }
+  if (const Attribute *attr = find_attr("c2a")) {
+    TEST_CHECK(attr->type_name() == "char2[]");
+    auto v = attr->get_var().value_raw().get_value<std::vector<value::char2>>();
+    TEST_CHECK(v.has_value());
+    if (v) {
+      TEST_CHECK(v->size() == 2);
+      if (v->size() == 2) {
+        TEST_CHECK(static_cast<int>((*v)[0][0]) == -1);
+        TEST_CHECK(static_cast<int>((*v)[1][1]) == 4);
+      }
+    }
+  }
 }
 
 // =========================================================================

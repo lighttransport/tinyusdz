@@ -947,6 +947,11 @@ struct AnimationChannel {
   // For AnimationPath::CustomProperty channels.
   bool is_custom_property{false};    ///< true when `path == AnimationPath::CustomProperty`
   std::string property_name;         ///< The custom property name for this channel.
+  std::string target_prim_path;      ///< Optional unresolved/resolved target prim path.
+
+  // For AnimationPath::Weights channels sourced from UsdSkel blendShapeWeights.
+  // Values are stored in this target-name order.
+  std::vector<std::string> blendshape_target_names;
 
   /// Check if channel is valid based on its target type
   bool is_valid() const {

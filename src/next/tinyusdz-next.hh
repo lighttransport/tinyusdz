@@ -122,7 +122,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
 /// stage exposes the fully composed scene. External USDC layers are loaded
 /// lazily and anchored to `filename`'s directory. Self-contained / pre-flattened
 /// inputs skip composition entirely (identical to LoadUSD). USDA/USDZ external
-/// dependencies are not yet supported by the next loader.
+/// dependencies are supported through the next PCP layer registry, including
+/// direct `.usdz` layers and explicit package paths such as
+/// `asset.usdz[root.usdc]`.
 /// @param comp_opts Optional composition options (populated with defaults if
 ///                  null). variant_overrides in comp_opts are applied after
 ///                  authored variant selections.
