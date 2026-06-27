@@ -457,3 +457,7 @@ python/tinyusdz/_version.py
 priv/
 resume.md
 gpu-task.md
+
+# Vulkan validation-layer build (scripts/setup-vulkan-validation.ps1)
+/third_party/vulkan/
+/activate-vulkan-validation.ps1
