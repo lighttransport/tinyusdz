@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
+#include "gpu_budget_lod.hh"
 #include "gui_style.hh"
 #include "image-writer.hh"
 #include "imgui.h"
@@ -249,6 +250,27 @@ void App::applyLoaded(bool ok, bool progressive) {
       reconvApplied_ = animTime_;
     }
     updateSkinningEffective();
+    // Robust auto-frame bounds: compute from the full per-mesh set NOW, before
+    // the LOD merge collapses 80k meshes into one 42M-instance proxy (whose mass
+    // would otherwise swamp the weighting). Cached for the framing step below.
+    robustBoundsValid_ = false;
+    if (robustFrame_ && useNextLoader_) {
+      std::string rrep;
+      if (ComputeRobustSceneBounds(&draw_, 0.01f, robustBoundsMin_,
+                                   robustBoundsMax_, &rrep)) {
+        robustBoundsValid_ = true;
+        if (!rrep.empty()) LOGI("%s", rrep.c_str());
+      }
+    }
+    // GPU-budget LOD: bound the full-mesh draw count / VRAM for huge assembled
+    // scenes (e.g. Moana island ~84k meshes) by merging the long tail of small
+    // meshes into one instanced bbox-proxy soup, so the per-mesh-buffer raster
+    // upload doesn't create tens of thousands of buffers and stall for minutes.
+    if (useNextLoader_ && (maxFullMeshes_ > 0 || gpuMemBudgetBytes_ > 0)) {
+      std::string rep;
+      ApplyGpuBudgetLOD(&draw_, gpuMemBudgetBytes_, maxFullMeshes_, &rep);
+      if (!rep.empty()) LOGI("%s", rep.c_str());
+    }
     // --next GPU morph: detect instanced prototypes carrying morph channels so
     // the per-frame coefficient upload runs (independent of Tydra GPU skinning).
     hasNextMorph_ = false;
@@ -358,7 +380,20 @@ void App::applyLoaded(bool ok, bool progressive) {
         LOGW("camera '%s' not found (need --next + a Camera prim); auto-fitting",
              cameraName_.c_str());
       }
-      camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+      // Robust framing: huge assembled scenes (Moana island's horizon-spanning
+      // osOcean plane) blow up the fit-all bbox so the real geometry frames to a
+      // speck. Trim the outlier mesh-AABB endpoints and fit the bulk instead.
+      const float* fitMin = draw_.aabbMin;
+      const float* fitMax = draw_.aabbMax;
+      if (robustBoundsValid_) {
+        fitMin = robustBoundsMin_;
+        fitMax = robustBoundsMax_;
+        const float dx = robustBoundsMax_[0] - robustBoundsMin_[0],
+                    dy = robustBoundsMax_[1] - robustBoundsMin_[1],
+                    dz = robustBoundsMax_[2] - robustBoundsMin_[2];
+        camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
+      }
+      camera_.fitToScene(fitMin, fitMax);
       // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
       // peripheral geometry leaves the frustum -- exercises culling headlessly).
       if (camDolly_ > 0.0f && camDolly_ != 1.0f) {

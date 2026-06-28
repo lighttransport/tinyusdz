@@ -34,6 +34,9 @@ int main(int argc, char** argv) {
   std::string windowShot;
   int maxFrames = -1;
   long long maxTris = 0;      // 0 = default budget
+  double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
+  long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
+  bool robustFrame = true;      // trim outlier meshes from fit-all auto-frame
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -86,6 +89,12 @@ int main(int argc, char** argv) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
+      maxGpuMemGiB = std::atof(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
+      maxDrawMeshes = std::atoll(argv[++i]);
+    } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
+      robustFrame = false;
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -335,6 +344,12 @@ int main(int argc, char** argv) {
     app.setLoadOptions(lo);
   }
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);
+  app.setGpuBudget(
+      maxGpuMemGiB > 0.0 ? static_cast<std::size_t>(maxGpuMemGiB * 1024.0 *
+                                                    1024.0 * 1024.0)
+                         : 0,
+      static_cast<std::size_t>(maxDrawMeshes < 0 ? 0 : maxDrawMeshes));
+  app.setRobustFrame(robustFrame);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();

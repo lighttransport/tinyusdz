@@ -437,6 +437,73 @@ frame), the chosen set is composed in a single soup/BLAS (no eviction), and the
 cost charge ignores per-district size variation — so on a tight machine lower
 `-lodDistrictMem` (fewer promotions) or set `-maxMem` to a higher explicit cap.
 
+### 2.6.4 Realtime island preview: GPU-budget LOD + robust auto-framing (tusdview)
+
+`-lodStream` (above) is a tusdrender, ray-tracing, load-time selection. The
+interactive **tusdview** rasterizer hits a different wall on a fully assembled
+scene. The Moana island (`/mnt/disk1/data/island`) composes via `--next` to
+**83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
+dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
+~2.06 GiB). The problem is **draw/buffer count**: the per-mesh raster path
+creates ~84 k host-visible Vulkan buffers and stalls for **7+ minutes** before
+the first frame. (A plain `--next --backend vk` whole-island run times out in
+the buffer-creation loop, not on memory.)
+
+**`--max-draw-meshes N` / `--max-gpu-mem <GiB>` (GPU-budget LOD).**
+`gpu_budget_lod.cc:ApplyGpuBudgetLOD()` runs once after load: it ranks meshes by
+prototype size, keeps the **N most prominent** at full geometry within the count
+and VRAM budgets, and **merges the entire long tail into one instanced bbox-proxy
+mesh** — a unit cube instanced once per overflow instance, each instance
+transform box-fitting that original prototype's object-space AABB, tinted by the
+mesh's flat color. The proxy preserves instancing (so its ~2 GiB instance buffer
+still fits) and per-instance frustum cullability (proxy prototype AABB is the
+unit cube, transformed per instance). The scene then uploads as **~N+1 buffers**.
+Simple preview only: the proxy boxes shade flat, no shadows/GI.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
+# merge the other ~79.8 k meshes into one bbox proxy:
+systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
+  ./build/tusdview --headless --next --backend vk \
+    --max-tris 80000000 --max-gpu-mem 16 --max-draw-meshes 4000 \
+    --frames 2 --screenshot island.ppm $M
+```
+
+```
+next: 83801 draws, 42869753 instances, 56553204 unique tris, instXform VRAM ~2.06 GB
+gpu-budget LOD: 4000 meshes full (0.08 GiB), merged 79801 meshes / 42730328
+                instances into bbox proxy (now 4001 draws)
+render stats: 4001/4001 meshes visible, 42869757 instances, 581550424 drawn tris, 4001 draw calls
+```
+
+**`--no-robust-frame` (robust auto-framing, on by default).** The island's *raw*
+scene bbox is **170,091 units across** — a handful of far-flung meshes sit at
+±tens of thousands while the actual island occupies a ~9,200-unit region near the
+origin. `fitToScene` on the raw bbox renders the island as a sub-pixel speck.
+`ComputeRobustSceneBounds()` fixes the framing with **mass-weighted endpoint
+trimming**: each mesh's world-AABB min/max endpoints carry its geometry mass
+(`instanceCount × triCount`), and per axis 1% of the *mass* is trimmed from each
+tail. Sparse far elements weigh ~nothing and drop out; the dense island defines
+the kept range. It only overrides framing when the result is materially tighter
+(robust diag < 70% of full), so normal scenes that fill their bbox are
+untouched. It is computed from the full per-mesh set **before** the LOD merge
+(post-merge the proxy's 42 M instances would swamp the weighting) and cached.
+The named-USD-camera path (`--camera`) is unaffected.
+
+```
+robust auto-frame: trimmed 1% outliers, scene diag 170091.6 -> 9265.6 (95% smaller)
+```
+
+With both on, the whole island uploads in seconds instead of stalling, fits well
+under 16 GiB VRAM, renders all 42.9 M instances through the existing per-instance
+frustum culling, and frames Motunui (shoreline, palms as full trunks + bbox-proxy
+foliage) instead of a speck. **Limitations:** the proxy is rebuilt only on load
+(not per frame / per view), it is a flat-shaded box soup (no materials/textures
+on the merged tail), and the full-mesh set is chosen by prototype size, not
+screen-space importance — a per-view promotion pass (à la `-lodStream`) is the
+follow-up.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
