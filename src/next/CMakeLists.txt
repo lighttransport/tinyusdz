@@ -129,7 +129,12 @@ set(TINYUSDZ_NEXT_HEADERS
     crate/crate-format.hh
     crate/crate-reader-internal.hh
     crate/crate-reader.hh
+    crate/crate-writer-fields.inc
     crate/crate-writer-impl.inc
+    crate/crate-writer-sections.inc
+    crate/crate-writer-tables.inc
+    crate/crate-writer-values.inc
+    crate/crate-writer-write.inc
     crate/crate-writer-types.hh
     crate/crate-writer.hh
     crate/stream-reader.hh
