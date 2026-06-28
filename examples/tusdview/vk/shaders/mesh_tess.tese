@@ -44,7 +44,9 @@ layout(location = 6) out float vMorphInfl;
 void main() {
   vec3 bc = gl_TessCoord;
   vec3 pos = bc.x * tcPos[0] + bc.y * tcPos[1] + bc.z * tcPos[2];
-  vec3 nrm = normalize(bc.x * tcNrm[0] + bc.y * tcNrm[1] + bc.z * tcNrm[2]);
+  vec3 nsum = bc.x * tcNrm[0] + bc.y * tcNrm[1] + bc.z * tcNrm[2];
+  // normalize(vec3(0)) is NaN; guard so zero normals can't corrupt the position.
+  vec3 nrm = dot(nsum, nsum) > 1e-12 ? normalize(nsum) : vec3(0.0);
   vec2 uv = bc.x * tcUV[0] + bc.y * tcUV[1] + bc.z * tcUV[2];
   vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
   float disp = textureLod(uDisplacementTex, uv, 0.0).r * dsb.x + dsb.y;

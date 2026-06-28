@@ -61,7 +61,12 @@ void main() {
   // consistent with the deformed surface.
   vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
   float disp = textureLod(uDisplacementTex, aUV, 0.0).r * dsb.x + dsb.y;
-  pos += normalize(nrm) * (disp * fr.disp.x);
+  // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
+  // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
+  // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the
+  // whole triangle. Only offset when the normal is usable.
+  vec3 ndir = dot(nrm, nrm) > 1e-12 ? normalize(nrm) : vec3(0.0);
+  pos += ndir * (disp * fr.disp.x);
   // Normal matrix = inverse-transpose of the model's upper-left 3x3 (derived
   // here so it costs no push-constant space).
   mat3 nmat = transpose(inverse(mat3(pc.model)));
