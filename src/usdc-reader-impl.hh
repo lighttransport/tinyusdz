@@ -22,7 +22,7 @@
 #include "tinyusdz.hh"
 #include "value-types.hh"
 
-#if !defined(__wasi__)
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -209,15 +209,15 @@ class USDCReader::Impl {
   void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 
-#if defined(__wasi__)
-    _config.numThreads = 1;
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     if (_config.numThreads == -1) {
       _config.numThreads =
           (std::max)(1, int(std::thread::hardware_concurrency()));
     }
     // Limit to 1024 threads.
     _config.numThreads = (std::min)(1024, _config.numThreads);
+#else
+    _config.numThreads = 1;
 #endif
   }
 

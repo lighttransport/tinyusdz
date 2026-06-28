@@ -13,7 +13,9 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -301,15 +303,22 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
   // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
   if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
-  // Parallel composition is on by default (the per-prim opinion fill runs across
-  // cores; byte-identical to the serial fill). TUSDRENDER_COMPOSE_THREADS=N
-  // overrides the thread count (1 = force serial).
+  // Parallel composition is opt-in via TINYUSDZ_ENABLE_THREAD so wasm builds do
+  // not require Emscripten pthreads / SharedArrayBuffer by default.
+#if defined(TINYUSDZ_ENABLE_THREAD)
   copts.num_threads = std::thread::hardware_concurrency();
   if (copts.num_threads < 1) copts.num_threads = 1;
+#else
+  copts.num_threads = 1;
+#endif
   copts.max_layer_memory = load_options.max_memory;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
+#if defined(TINYUSDZ_ENABLE_THREAD)
     if (n >= 1) copts.num_threads = static_cast<unsigned>(n);
+#else
+    (void)n;
+#endif
   }
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.

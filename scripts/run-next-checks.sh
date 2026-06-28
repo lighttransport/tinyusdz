@@ -12,7 +12,7 @@ Environment overrides:
   BUILD_DIR            Build directory (default: $ROOT_DIR/build-next)
   JOBS                 Build parallelism (default: 16)
   BUILD_TYPE           CMake build type (default: Debug)
-  THREADS              TINYUSDZ_NEXT_ENABLE_THREAD value (default: ON)
+  THREADS              TINYUSDZ_NEXT_ENABLE_THREAD value (default: OFF)
   RUN_BENCH            Run opt-in memory/perf benchmarks when nonzero
   RUN_CORPUS           Run opt-in usd-wg asset corpus gate when nonzero
   USD_WG_ASSETS_DIR    usd-wg/assets checkout for RUN_CORPUS
@@ -31,7 +31,7 @@ JOBS="${JOBS:-16}"
 BUILD_TYPE="${BUILD_TYPE:-Debug}"
 RUN_BENCH="${RUN_BENCH:-0}"
 RUN_CORPUS="${RUN_CORPUS:-0}"
-THREADS="${THREADS:-ON}"
+THREADS="${THREADS:-OFF}"
 BENCH_LAZY_FILE_GENERATED=0
 
 cleanup_bench_file() {

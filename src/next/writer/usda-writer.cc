@@ -287,15 +287,10 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
     if (val && val->is_block()) {
       os << "None";  // a blocked sample (`123: None`)
     } else if (val) {
-      // Transient decode of lazy (crate-backed) sample arrays — see WriteProperty.
-      // On animation-heavy scenes the time samples dominate, so keeping them lazy
-      // (TimeSampleStorage::add_dedup) + decoding one at a time here is the main
-      // memory win.
-      if (val->is_lazy()) {
-        os << PrintValue(val->materialized_copy(), print_opts);
-      } else {
-        os << PrintValue(*val, print_opts);
-      }
+      // Stream large arrays directly; lazy crate-backed POD arrays can be
+      // borrowed without decoding, while unsupported encodings fall back to a
+      // transient materialized value inside the value printer.
+      PrintValue(os, *val, print_opts);
     } else {
       os << "None";
     }
@@ -385,15 +380,8 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     print_opts.double_precision = opts.double_precision;
     print_opts.max_array_elements = opts.max_elements_per_line;
     print_opts.compact = opts.compact;
-    // Lazy (crate-backed) arrays: decode into a throwaway temp and print that,
-    // leaving the Stage's Value lazy. Printing `*value` directly would call the
-    // const array accessors, which materialize in place and keep every array
-    // resident for the whole write. Transient decode bounds peak to ~one array.
-    if (value->is_lazy()) {
-      os << " = " << PrintValue(value->materialized_copy(), print_opts);
-    } else {
-      os << " = " << PrintValue(*value, print_opts);
-    }
+    os << " = ";
+    PrintValue(os, *value, print_opts);
     WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
   }

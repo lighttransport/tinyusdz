@@ -4,6 +4,8 @@
 // TinyUSDZ Next - Value Printer Implementation
 
 #include "value-printer.hh"
+#include "stream-writer.hh"
+#include "../types/value-view.hh"
 #include "../types/type-id.hh"
 #include "../strfmt.hh"
 #include "dtoa.hh"
@@ -56,6 +58,235 @@ std::string EscapeString(const std::string& s) {
 // Forward decl: recursive dictionary printer (defined after PrintValue).
 std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
                                     int base_depth);
+
+class ChunkedStream {
+ public:
+  explicit ChunkedStream(StreamWriter& out) : out_(out) {
+    buf_.reserve(kFlushAt + 256);
+  }
+
+  ~ChunkedStream() { flush(); }
+
+  void append(const char* s) {
+    while (*s) append(*s++);
+  }
+  void append(const char* s, size_t n) {
+    if (n >= kFlushAt) {
+      flush();
+      out_.write(s, n);
+      return;
+    }
+    if (buf_.size() + n > kFlushAt) flush();
+    buf_.append(s, n);
+  }
+  void append(const std::string& s) { append(s.data(), s.size()); }
+  void append(char c) {
+    if (buf_.size() == kFlushAt) flush();
+    buf_.push_back(c);
+  }
+  void append_int(int64_t v) {
+    num_.clear();
+    AppendInt(num_, v);
+    append(num_);
+  }
+  void append_uint(uint64_t v) {
+    num_.clear();
+    AppendUInt(num_, v);
+    append(num_);
+  }
+  void append_float(float v) {
+    num_.clear();
+    AppendFloat(num_, v);
+    append(num_);
+  }
+  void append_double(double v) {
+    num_.clear();
+    AppendDouble(num_, v);
+    append(num_);
+  }
+  void flush() {
+    if (!buf_.empty()) {
+      out_.write(buf_.data(), buf_.size());
+      buf_.clear();
+    }
+  }
+
+ private:
+  static constexpr size_t kFlushAt = 64u << 10;
+  StreamWriter& out_;
+  std::string buf_;
+  std::string num_;
+};
+
+template <typename T, typename Emit>
+void EmitScalarArray(ChunkedStream& out, const T* data, size_t n,
+                     size_t maxN, Emit emit) {
+  out.append('[');
+  size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+  for (size_t i = 0; i < limit; ++i) {
+    if (i) out.append(", ");
+    emit(data[i]);
+  }
+  if (limit < n) out.append(", ...");
+  out.append(']');
+}
+
+template <typename T, typename Emit>
+void EmitCompArray(ChunkedStream& out, const T* data, size_t flat_count,
+                   TypeId type_id, size_t maxN, Emit emit) {
+  const bool is_matrix =
+      (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d ||
+       type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d ||
+       type_id == TypeId::Matrix4f || type_id == TypeId::Matrix4d);
+  const size_t mat_dim =
+      (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d) ? 2 :
+      (type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d) ? 3 : 4;
+  size_t comp_count = GetComponentCount(type_id);
+  if (comp_count < 1) comp_count = 1;
+
+  const size_t n = flat_count / comp_count;
+  const size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+  out.append('[');
+  for (size_t i = 0; i < limit; ++i) {
+    if (i) out.append(", ");
+    const T* d = data + i * comp_count;
+    if (is_matrix) {
+      out.append('(');
+      for (size_t r = 0; r < mat_dim; ++r) {
+        if (r) out.append(", ");
+        out.append('(');
+        for (size_t c = 0; c < mat_dim; ++c) {
+          if (c) out.append(", ");
+          emit(d[r * mat_dim + c]);
+        }
+        out.append(')');
+      }
+      out.append(')');
+    } else if (comp_count > 1) {
+      out.append('(');
+      for (size_t c = 0; c < comp_count; ++c) {
+        if (c) out.append(", ");
+        emit(d[c]);
+      }
+      out.append(')');
+    } else {
+      emit(d[0]);
+    }
+  }
+  if (limit < n) out.append(", ...");
+  out.append(']');
+}
+
+bool PrintArrayToStream(StreamWriter& os, const Value& value,
+                        const PrintOptions& opts) {
+  if (!value.is_array()) return false;
+  ChunkedStream out(os);
+  const size_t maxN = opts.max_array_elements;
+  const TypeId type_id = value.type_id();
+
+  switch (type_id) {
+    case TypeId::Int: {
+      ArrayScratch<int32_t> scratch;
+      ArrayView<int32_t> view;
+      if (!GetIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](int32_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt: {
+      ArrayScratch<uint32_t> scratch;
+      ArrayView<uint32_t> view;
+      if (!GetUIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](uint32_t v) { out.append_uint(v); });
+      return true;
+    }
+    case TypeId::Int64: {
+      ArrayScratch<int64_t> scratch;
+      ArrayView<int64_t> view;
+      if (!GetInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](int64_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt64: {
+      ArrayScratch<uint64_t> scratch;
+      ArrayView<uint64_t> view;
+      if (!GetUInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](uint64_t v) { out.append_uint(v); });
+      return true;
+    }
+    case TypeId::Bool: {
+      Value tmp;
+      const Value* src = &value;
+      if (value.is_lazy()) {
+        tmp = value.materialized_copy();
+        src = &tmp;
+      }
+      const std::vector<uint8_t>* a = src->as_bool_array();
+      if (!a) return false;
+      out.append('[');
+      size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+      for (size_t i = 0; i < limit; ++i) {
+        if (i) out.append(", ");
+        out.append((*a)[i] ? "true" : "false");
+      }
+      if (limit < a->size()) out.append(", ...");
+      out.append(']');
+      return true;
+    }
+    case TypeId::Token:
+    case TypeId::String:
+    case TypeId::AssetPath: {
+      Value tmp;
+      const Value* src = &value;
+      if (value.is_lazy()) {
+        tmp = value.materialized_copy();
+        src = &tmp;
+      }
+      const std::vector<std::string>* a = src->as_token_array();
+      if (!a) return false;
+      out.append('[');
+      size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+      for (size_t i = 0; i < limit; ++i) {
+        if (i) out.append(", ");
+        if (type_id == TypeId::AssetPath) {
+          out.append('@');
+          out.append((*a)[i]);
+          out.append('@');
+        } else {
+          out.append(EscapeString((*a)[i]));
+        }
+      }
+      if (limit < a->size()) out.append(", ...");
+      out.append(']');
+      return true;
+    }
+    default: {
+      const TypeId component = GetComponentType(type_id);
+      const bool dbl = (component == TypeId::Double) || type_id == TypeId::Double;
+      const bool flt = (component == TypeId::Float) || type_id == TypeId::Float;
+      if (dbl) {
+        ArrayScratch<double> scratch;
+        ArrayView<double> view;
+        if (!GetDoubleArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](double v) { out.append_double(v); });
+        return true;
+      }
+      if (flt) {
+        ArrayScratch<float> scratch;
+        ArrayView<float> view;
+        if (!GetFloatArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](float v) { out.append_float(v); });
+        return true;
+      }
+      return false;
+    }
+  }
+}
 
 }  // anonymous namespace
 
@@ -473,6 +704,15 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
   std::string out;
   PrintValueInto(out, value, opts);
   return out;
+}
+
+void PrintValue(StreamWriter& out, const Value& value, const PrintOptions& opts) {
+  if (value.is_array() && PrintArrayToStream(out, value, opts)) {
+    return;
+  }
+  std::string tmp;
+  PrintValueInto(tmp, value, opts);
+  out.write(tmp);
 }
 
 namespace {

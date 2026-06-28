@@ -110,6 +110,11 @@ if (TINYUSDZ_WASM_DEMODEV)
   message(STATUS "demodev build")
 endif()
 
+# WASM/browser builds intentionally keep C++ threading disabled by default. Do
+# not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
+# browser-threading build option opts into it.
+set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
