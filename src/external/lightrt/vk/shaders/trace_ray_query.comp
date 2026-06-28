@@ -38,10 +38,15 @@ void main() {
     float tmax = fu(rays[rb + 7u]);
 
     rayQueryEXT rq;
+    // Primary visibility: closest-hit. All geometry is opaque, so the hardware
+    // commits the nearest intersection during traversal and we read it after the
+    // proceed loop. Do NOT set TerminateOnFirstHit here — that commits the first
+    // triangle traversal happens to find, not the closest (correct only for
+    // shadow/occlusion rays). Cull mask must be 0xFF to match the TLAS instance
+    // mask (0xFF); a 0x0 mask AND-culls every instance and returns no hits.
     rayQueryInitializeEXT(rq, tlas,
-                         gl_RayFlagsOpaqueEXT |
-                             gl_RayFlagsTerminateOnFirstHitEXT,
-                         0x0u, org, tmin, dir, tmax);
+                         gl_RayFlagsOpaqueEXT,
+                         0xFFu, org, tmin, dir, tmax);
     while (rayQueryProceedEXT(rq)) {}
 
     uint hb = gid * 4u;
