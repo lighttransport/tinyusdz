@@ -102,7 +102,10 @@ NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank
 at 1469×1284. The debug AOVs were spot-checked too: `--mode normals` produces
 smoothly varying RGB-encoded shading normals, and `--mode bvh-heatmap`
 (traversal cost, rmode 27) shows the nested BLAS/TLAS node bounds with elevated
-cost clustering on the silhouette — both correct.
+cost clustering on the silhouette. `--mode depth` gives a correct near→far ramp
+(dark, since the range is spread by `depthScale`), `--mode uv` shows the R=u/G=v
+UV gradient, and `--mode material-id` is a single uniform color (suzanne is one
+material, so one id) — all correct.
 
 ### Windows (llvm-mingw)
 
