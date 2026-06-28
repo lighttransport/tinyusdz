@@ -19,7 +19,10 @@ bool RunVulkanLightRT(const Options &opt,
   std::vector<float> flat_verts;
   std::vector<uint32_t> flat_idx;
   std::vector<Vec3> mesh_base_colors;
-  std::vector<Vec3> mesh_normals;  // per-triangle flat normals for shading
+  std::vector<Vec3> mesh_normals;  // per-triangle flat normals (shading fallback)
+  // Per-triangle vertex normals for smooth (barycentric-interpolated) shading.
+  // Zero when the mesh has no usable per-vertex normals -> flat fallback.
+  std::vector<Vec3> mesh_vn0, mesh_vn1, mesh_vn2;
   uint32_t base_idx = 0;
   for (const auto &g : geos) {
     uint32_t nv = uint32_t(g.positions.size() / 3);
@@ -31,6 +34,14 @@ bool RunVulkanLightRT(const Options &opt,
     for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
       flat_idx.push_back(g.indices[j] + base_idx);
     }
+    // Only trust per-vertex normals when they are exactly one-per-position
+    // (USD faceVarying normals have a different layout, so fall back to flat).
+    const bool perVertexN = (g.normals.size() == size_t(nv) * 3u);
+    auto vnorm = [&](uint32_t vi) -> Vec3 {
+      return perVertexN ? Vec3{g.normals[vi * 3 + 0], g.normals[vi * 3 + 1],
+                               g.normals[vi * 3 + 2]}
+                        : Vec3{0, 0, 0};
+    };
     // Store per-triangle shading data.
     for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
       uint32_t i0 = g.indices[j * 3 + 0];
@@ -43,6 +54,9 @@ bool RunVulkanLightRT(const Options &opt,
       Vec3 e1 = Sub(p1, p0), e2 = Sub(p2, p0);
       Vec3 n = Normalize(Cross(e1, e2));
       mesh_normals.push_back(n);
+      mesh_vn0.push_back(vnorm(i0));
+      mesh_vn1.push_back(vnorm(i1));
+      mesh_vn2.push_back(vnorm(i2));
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
     Vec3 bc = (&g - &geos[0]) < nm ? base_colors[&g - &geos[0]] : Vec3{0.5f, 0.5f, 0.5f};
@@ -124,7 +138,7 @@ bool RunVulkanLightRT(const Options &opt,
   float half_w = half_h * aspect;
   const int spp = std::max(1, opt.samples);
   const float ambient = opt.ambient;
-  const float light_dir[3] = {0.5f, 0.8f, 0.6f};
+  const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
   // One ray per (pixel, sample); ray index = (y*w + x)*spp + s.
   const size_t nrays = size_t(w) * size_t(h) * size_t(spp);
@@ -184,11 +198,28 @@ bool RunVulkanLightRT(const Options &opt,
           Vec3 bc = hit.prim_id < mesh_base_colors.size()
                         ? mesh_base_colors[hit.prim_id]
                         : Vec3{0.5f, 0.5f, 0.5f};
-          Vec3 N = hit.prim_id < mesh_normals.size()
-                       ? mesh_normals[hit.prim_id]
-                       : Vec3{0, 1, 0};
-          float diff = std::max(0.0f, Dot(N, Vec3{light_dir[0], light_dir[1], light_dir[2]}));
-          Vec3 shaded = Add(Mul(bc, diff), Mul(bc, ambient));
+          // Smooth normal: barycentric-interpolate the triangle's vertex normals
+          // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
+          // normal when vertex normals are absent/degenerate.
+          Vec3 N = mesh_normals[hit.prim_id];
+          const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
+          Vec3 sn = Add(Add(Mul(mesh_vn0[hit.prim_id], w0),
+                            Mul(mesh_vn1[hit.prim_id], w1)),
+                        Mul(mesh_vn2[hit.prim_id], w2));
+          if (Length(sn) > 1.0e-8f) N = Normalize(sn);
+          // Orient the normal toward the camera so a surface visible to the eye
+          // is never left unlit by a back-facing normal (USD winding/normals are
+          // not guaranteed consistent for a quick preview).
+          Vec3 V = Vec3{-rays[base + size_t(s)].dir[0],
+                        -rays[base + size_t(s)].dir[1],
+                        -rays[base + size_t(s)].dir[2]};
+          if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
+          // Fixed key light + a dim camera headlight so the silhouette reads even
+          // when the key grazes the surface; ambient lifts the shadow terminator.
+          float key = std::max(0.0f, Dot(N, light));
+          float head = std::max(0.0f, Dot(N, V));
+          float lit = ambient + 0.8f * key + 0.35f * head;
+          Vec3 shaded = Mul(bc, lit);
           color = Add(color, shaded);
         }
       }
