@@ -121,6 +121,8 @@ void PrintUsage(const char *prog) {
       << "  -lodDistrictVram <GiB> Est. VRAM charged per promoted district (def 3).\n"
       << "  -lodMinVerts <N>       Skip container children below N proxy verts\n"
       << "                         (trigger/volume prims; default 1000).\n"
+      << "  -lodMaxVerts <N>       Skip children above N proxy verts (sprawling\n"
+      << "                         non-district overlays; 0=off, default 2000000).\n"
       << "  -lodContainer <name>   Namespace prim whose children are LOD districts\n"
       << "                         (default mp_wz_island_geo, the Caldera layout).\n"
       << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
@@ -337,6 +339,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->lod_min_verts = g;
+    } else if (a == "-lodMaxVerts" || a == "--lodMaxVerts") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -lodMaxVerts (expected a count >= 0).\n";
+        return false;
+      }
+      opt->lod_max_verts = g;
     } else if (a == "-lodContainer" || a == "--lodContainer") {
       const char *v = need_value(a.c_str());
       if (!v) {
