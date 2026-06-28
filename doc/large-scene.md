@@ -214,7 +214,7 @@ T=tests; M=/mnt/disk1/data/caldera/caldera.usda
 ./build/tools/tusdrender/tusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
 ./build/tools/tusdrender/tusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
 ./build/tools/tusdrender/tusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
-# full LOD: add  -variant districtLod=full   (heavier; CPU -rtPreview streams best)
+# full LOD: NOT  -variant districtLod=full  (no-op — root authors per-district proxy). See §2.6.2 (wrapper layer).
 ```
 
 This needed the GPU-collector fix: `-vk/-vkr` previously emitted **raw local**
@@ -246,9 +246,83 @@ the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
 **Known limitations (follow-ups).** tusdview's VK **ray-query** (`--rt`) and
 **CUDA** paths build a single GPU acceleration structure over the *flattened*
 scene; at Caldera's ~24 M-triangle proxy this is blank/very slow on a 16 GB GPU
-(both render small scenes fine). Full `districtLod=full` in tusdview exceeds the
-triangle budget / GPU memory. The VK-raster flat shading wants the smooth-normal
-+ headlight treatment the tusdrender preview already uses.
+(both render small scenes fine). The VK-raster flat shading wants the
+smooth-normal + headlight treatment the tusdrender preview already uses. For
+full LOD, see §2.6.2.
+
+### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
+
+**Whole-island full LOD does not fit, and the wall is host RAM, not VRAM.**
+Both viewers (and every tusdrender backend, including `-vk`/`-vkr`) *eagerly
+compose all 45 districts' full payloads into host-RAM arrays and build a single
+in-memory triangle soup before anything is uploaded to the GPU.* On a 62 GiB
+host, promoting all districts to `full` climbs steadily during composition and
+exceeds **50 GiB while still composing** — it never reaches the triangle count
+or BVH build, let alone the GPU. So the 16 GiB VRAM budget is irrelevant: the
+host-side working set is the limit, and there is no out-of-core / chunked-BVH
+path today (one soup, one BLAS).
+
+Two gotchas when forcing full LOD:
+
+- **A global `-variant districtLod=full` has no effect.** The root `caldera.usda`
+  authors an explicit per-district `over … (variants = {string districtLod =
+  "proxy"})` for all 45 districts, and an authored selection beats a load-time
+  override. You must re-author the selection in a **stronger wrapper layer**.
+- **`-maxMem` does not bound composition.** It guards the triangle-stream / BVH
+  allocations (throwing `bad_alloc` → clean abort), but the `next` compose phase
+  balloons freely. Past the host's physical RAM the OS OOM-killer fires before
+  any clean abort — run heavy full-LOD jobs under a memory cgroup
+  (`systemd-run --user --scope -p MemoryMax=50G -p MemorySwapMax=0 …`) so only
+  the job dies, never the machine.
+
+**Per-shot full LOD is the production-correct approach and fits comfortably.**
+Promote only the district the shot frames; leave the rest proxy. Write a wrapper
+that sublayers the scene and re-authors *just that district* to `full`:
+
+```usda
+#usda 1.0
+(
+    subLayers = [ @/mnt/disk1/data/caldera/caldera.usda@ ]
+    upAxis = "Z"
+)
+over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
+    over "mp_wz_island_geo" {
+        over "map_phosphate_mine" ( variants = { string districtLod = "full" } ) {}
+    }
+}}}
+```
+
+Render the wrapper exactly like the scene, framing the matching camera:
+
+```sh
+W=caldera_mine_full.usda   # the wrapper above
+# tusdrender CPU ray tracing:
+./build/tools/tusdrender/tusdrender $W mine_cpu.png -rtPreview \
+    -camera phospate_mine_overview -w 1280 -height 720 -maxMem 45 -stats
+# tusdrender GPU ray query (hide guide: 'default' must be in the visible list):
+./build/tools/tusdrender/tusdrender $W mine_vkr.png -vkr \
+    -camera phospate_mine_overview -purpose default,render,proxy -w 1280 -height 720 -maxMem 45
+# tusdview VK rasterizer (raise --max-tris; full mine is ~88 M unique / ~184 M effective tris):
+./build/tusdview --headless --next --backend vk --camera phospate_mine_overview \
+    --max-tris 60000000 --frames 4 --screenshot mine_vk.ppm $W
+```
+
+Measured on the RTX 5060 Ti / 62 GiB host (phosphate-mine shot, mine at full,
+rest proxy):
+
+| Path | Result | Peak host RSS | Notes |
+|------|--------|--------------|-------|
+| tusdrender `-rtPreview` (CPU) | ✅ full detail | 11.9 GiB | 29.8 M default-purpose tris (vs 12.67 M proxy), 35 M unique |
+| tusdrender `-vkr` (GPU ray query) | ✅ full detail | 9.1 GiB | 35.3 M tris traced on the GPU; BLAS fits 16 GiB VRAM |
+| tusdview `--backend vk` (raster) | ✅ full detail | 15.3 GiB | 162.8 M tris drawn, 57 k instances; richest result |
+| tusdview `--rt` (VK ray query) | ⚠️ blank | 11.4 GiB | 30 M-tri cap truncates away the hero geometry (only guide lines remain) — the §2.6.1 large-scene VK-RT limitation |
+
+The mine at full LOD reveals geometry the proxy lacks — lattice crane towers,
+domed silos, palm trees, detailed buildings, the circular tank, rocks and
+pipework. Note tusdview counts ~88 M unique tris for the full mine (more than
+tusdrender's 35 M) because the `--next` converter expands instancing differently;
+its 30 M `--max-tris` default truncates heavily, so raise it for raster (which
+scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
 
 ### 2.7 RenderScene optimization for realtime viewers
 
