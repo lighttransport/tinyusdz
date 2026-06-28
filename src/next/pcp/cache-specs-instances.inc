@@ -43,7 +43,6 @@
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
     return spec_cache_.emplace(std::move(key), std::move(refs)).first->second;
   }
-
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const {
     std::vector<SpecRef> refs;
@@ -294,4 +293,3 @@
       }
     }
   }
-

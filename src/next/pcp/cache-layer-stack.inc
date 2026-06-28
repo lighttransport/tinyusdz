@@ -9,7 +9,6 @@
     issues_.push_back(CompositionIssue{code, site, message});
     if (err) *err += message + "\n";
   }
-
   // --- layer stacks -------------------------------------------------------
 
   static constexpr uint32_t kInvalidStack =
@@ -83,4 +82,3 @@
     }
     return true;
   }
-
