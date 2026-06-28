@@ -12,6 +12,8 @@
 namespace tinyusdz {
 namespace next {
 
+class StreamWriter;
+
 /// Options for value printing
 struct PrintOptions {
   /// Number of decimal places for floats
@@ -38,6 +40,12 @@ std::string PrintValue(const Value& value, const PrintOptions& opts = {});
 /// appending PrintValue(value, opts).
 void PrintValueInto(std::string& out, const Value& value,
                     const PrintOptions& opts = {});
+
+/// Print a Value directly to a StreamWriter. Large arrays are chunked so the
+/// writer does not allocate a full textual copy of the value before flushing.
+/// Output is byte-identical to PrintValue(value, opts).
+void PrintValue(StreamWriter& out, const Value& value,
+                const PrintOptions& opts = {});
 
 /// Print a Value type name
 std::string PrintTypeName(TypeId type_id, bool is_array = false);

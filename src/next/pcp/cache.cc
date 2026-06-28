@@ -193,7 +193,9 @@ struct Cache::Impl {
 
   #include "cache-stage-fill.inc"
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
   #include "cache-parallel-merge.inc"
+#endif
 
   #include "cache-parallel-warm.inc"
 

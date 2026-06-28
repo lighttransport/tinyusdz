@@ -231,8 +231,10 @@ add_library(tinyusdz_next STATIC
 # vendored dragonbox dtoa (writer/dtoa.cc).
 target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
 
-# Optional threading: enables the parallel layer-prefetch path in next::pcp.
-option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
+# Optional threading: enables std::thread parallel paths in next. Keep this OFF
+# for WASM/browser builds so they do not require Emscripten pthreads /
+# SharedArrayBuffer.
+option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next (default OFF; not for default WASM)" OFF)
 if(TINYUSDZ_NEXT_ENABLE_THREAD)
     find_package(Threads REQUIRED)
     target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)

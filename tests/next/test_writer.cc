@@ -13,15 +13,28 @@
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
 #include "next/types/value.hh"
+#include "next/reader/usdc-reader.hh"
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
 
 // Helper to check if string contains substring
 bool contains(const std::string& str, const std::string& substr) {
   return str.find(substr) != std::string::npos;
+}
+
+void assert_stream_value_matches_string(const Value& value,
+                                        const PrintOptions& opts = {}) {
+  const std::string expected = PrintValue(value, opts);
+  std::string actual;
+  {
+    StreamWriter writer(&actual);
+    PrintValue(writer, value, opts);
+  }
+  assert(actual == expected);
 }
 
 void test_value_printer() {
@@ -76,10 +89,85 @@ void test_value_printer() {
     assert(contains(s, "["));
     assert(contains(s, "1"));
     assert(contains(s, "5"));
+    assert_stream_value_matches_string(v);
     std::cout << "  Float array: " << s << "\n";
   }
 
+  {
+    assert_stream_value_matches_string(Value::MakeIntArray({1, -2, 3}));
+    assert_stream_value_matches_string(Value::MakeUIntArray({1u, 2u, 3u}));
+    assert_stream_value_matches_string(Value::MakeInt64Array({1, -2, 3}));
+    assert_stream_value_matches_string(Value::MakeUInt64Array({1, 2, 3}));
+    assert_stream_value_matches_string(Value::MakeBoolArray({true, false, true}));
+    assert_stream_value_matches_string(Value::MakeTokenArray({"a", "b", "c"}));
+    assert_stream_value_matches_string(Value::MakeFloat3Array({1, 2, 3, 4, 5, 6}));
+    assert_stream_value_matches_string(Value::MakeDoubleArray({1.25, 2.5, 3.75}));
+
+    PrintOptions snip;
+    snip.max_array_elements = 2;
+    assert_stream_value_matches_string(Value::MakeIntArray({1, 2, 3, 4}), snip);
+    assert_stream_value_matches_string(Value::MakeFloat3Array({
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9}), snip);
+  }
+
   std::cout << "  value-printer tests passed!\n\n";
+}
+
+void test_lazy_usdc_stream_value_printer() {
+  std::cout << "Testing lazy USDC array stream value-printer...\n";
+
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Mesh");
+  std::vector<float> points;
+  points.reserve(3000);
+  for (int i = 0; i < 1000; ++i) {
+    points.push_back(static_cast<float>(i));
+    points.push_back(static_cast<float>(i + 1));
+    points.push_back(static_cast<float>(i + 2));
+  }
+  std::vector<int32_t> indices;
+  indices.reserve(1000);
+  for (int i = 0; i < 1000; ++i) indices.push_back(i);
+  builder.add_property("points", Value::MakeFloat3Array(points));
+  builder.add_property("faceVertexIndices", Value::MakeIntArray(indices));
+  builder.end_prim();
+  builder.finalize();
+
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wr = WriteLayerToUSDCMemory(usdc, layer);
+  assert(wr.success);
+
+  USDCLoadResult lr = LoadUSDCFromMemory(usdc.data(), usdc.size());
+  assert(lr.success);
+  const Layer* loaded = lr.stage.GetRootLayer();
+  assert(loaded);
+  const PrimSpec* prim = loaded->prim_at_path("/Root");
+  assert(prim);
+  const Value* lazy_points = prim->property_value("points");
+  const Value* lazy_indices = prim->property_value("faceVertexIndices");
+  assert(lazy_points && lazy_points->is_lazy());
+  assert(lazy_indices && lazy_indices->is_lazy());
+
+  const std::string expected_points = PrintValue(lazy_points->materialized_copy());
+  std::string actual_points;
+  {
+    StreamWriter writer(&actual_points);
+    PrintValue(writer, *lazy_points);
+  }
+  assert(actual_points == expected_points);
+
+  const std::string expected_indices = PrintValue(lazy_indices->materialized_copy());
+  std::string actual_indices;
+  {
+    StreamWriter writer(&actual_indices);
+    PrintValue(writer, *lazy_indices);
+  }
+  assert(actual_indices == expected_indices);
+
+  std::cout << "  lazy USDC array stream value-printer test passed!\n\n";
 }
 
 void test_layer_printer() {
@@ -598,6 +686,7 @@ int main() {
 
   try {
     test_value_printer();
+    test_lazy_usdc_stream_value_printer();
     test_timesamples_metadata_placement();
     test_layer_printer();
     test_stage_writer();

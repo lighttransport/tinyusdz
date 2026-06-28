@@ -4,15 +4,19 @@
 #include "usdz-convert.hh"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
 #include <condition_variable>
+#endif
 #include <cstdio>
 #include <deque>
 #include <fstream>
 #include <map>
 #include <set>
+#if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
+#endif
 #include <utility>
 
 #include "tinyusdz.hh"
@@ -895,6 +899,16 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 template <typename Job, typename ProduceFn, typename RunFn>
 bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
                            const ProduceFn &produce, const RunFn &run) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)num_threads_option;
+  for (Job &job : jobs) {
+    if (!produce(job)) {
+      return false;
+    }
+    run(job);
+  }
+  return true;
+#else
   size_t num_threads =
       (num_threads_option > 0)
           ? size_t(num_threads_option)
@@ -973,6 +987,7 @@ bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
     worker.join();
   }
   return ok;
+#endif
 }
 
 bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
