@@ -183,11 +183,17 @@ struct Cache::Impl {
 
   #include "cache-specs-instances.inc"
 
+  #include "cache-arc-listops.inc"
+
   #include "cache-arc-expansion.inc"
 
   #include "cache-compose.inc"
 
   #include "cache-stage-build.inc"
+
+  #include "cache-stage-fill.inc"
+
+  #include "cache-parallel-merge.inc"
 
   #include "cache-parallel-warm.inc"
 

@@ -584,6 +584,68 @@ static void test_extracted_prototypes() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_extracted_prototypes_collision_and_remap() {
+  std::cout << "test_extracted_prototypes_collision_and_remap..." << std::endl;
+  const std::string f = "/tmp/next_extract_collision.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Scope \"Flattened_Prototype_1\" { int user = 7 }\n"
+         "def Scope \"Lib\" ( active = false )\n"
+         "{\n"
+         "    def Xform \"Asset\"\n"
+         "    {\n"
+         "        def Material \"Mat\" {}\n"
+         "        def Mesh \"Mesh\"\n"
+         "        {\n"
+         "            rel material:binding = </Lib/Asset/Mat>\n"
+         "        }\n"
+         "    }\n"
+         "}\n"
+         "def Xform \"World\"\n"
+         "{\n"
+         "    def Xform \"A\" ( instanceable = true references = </Lib/Asset> ) {}\n"
+         "    def Xform \"B\" ( instanceable = true references = </Lib/Asset> ) {}\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions opts;
+  opts.instance_flatten_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
+  opts.prototype_numbering = pcp::PrototypeNumbering::Deterministic;
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+
+  UsdPrim user = stage.GetPrimAtPath("/Flattened_Prototype_1");
+  assert(user.IsValid() && user.GetPropertyValue("user") &&
+         "user-authored /Flattened_Prototype_1 must survive name collision");
+  UsdPrim proto = stage.GetPrimAtPath("/Flattened_Prototype_2");
+  assert(proto.IsValid() && "extracted prototype did not skip occupied name");
+  UsdPrim mesh = stage.GetPrimAtPath("/Flattened_Prototype_2/Mesh");
+  assert(mesh.IsValid());
+  const std::vector<Path>* binding = mesh.GetRelationship("material:binding");
+  assert(binding && binding->size() == 1);
+  assert((*binding)[0].str() == "/Flattened_Prototype_2/Mat" &&
+         "internal relationship target was not remapped to extracted prototype");
+
+  UsdPrim a = stage.GetPrimAtPath("/World/A");
+  UsdPrim b = stage.GetPrimAtPath("/World/B");
+  assert(a.IsValid() && b.IsValid());
+  assert(a.GetChildCount() == 0 && b.GetChildCount() == 0 &&
+         "original instance members must be orphaned after extraction");
+  const bool a_refs = !a.GetMeta().references.empty() &&
+                      a.GetMeta().references[0] == "</Flattened_Prototype_2>";
+  const bool b_refs = !b.GetMeta().references.empty() &&
+                      b.GetMeta().references[0] == "</Flattened_Prototype_2>";
+  assert(a_refs && b_refs &&
+         "instance members must reference the extracted prototype root");
+
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // A referenced asset's attribute connection targets must be remapped from the
 // asset-local namespace into the composed (referencing) namespace -- including
 // connections to a property on the referenced ROOT prim itself ("/Mat.attr",
@@ -3084,6 +3146,7 @@ int main() {
   test_parallel_compose_byte_identical();
   test_value_block_roundtrip();
   test_extracted_prototypes();
+  test_extracted_prototypes_collision_and_remap();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();

@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <chrono>
+#include <cctype>
 #include <fstream>
 #include <iterator>  // std::istreambuf_iterator (not guaranteed via <fstream> on MSVC)
 #include <set>
@@ -157,6 +158,7 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
                    std::vector<uint8_t>* out, const CrateWriteSink* sink,
                    const FlattenOptions& opts, FlattenStats* stats,
                    std::string* err) {
+  if (stats) stats->input_was_mmap = rr.source_was_mmap;
   if (!rr.success) {
     if (err) *err = rr.errors.empty() ? "crate read failed" : rr.errors[0].message;
     return false;
@@ -170,6 +172,18 @@ uint64_t FileSizeBytes(const std::string& filename) {
   if (!f) return 0;
   std::streamoff end = f.tellg();
   return end > 0 ? static_cast<uint64_t>(end) : 0;
+}
+
+bool EndsWithNoCase(const std::string& s, const char* suffix) {
+  const size_t n = std::strlen(suffix);
+  if (s.size() < n) return false;
+  const size_t off = s.size() - n;
+  for (size_t i = 0; i < n; ++i) {
+    unsigned char a = static_cast<unsigned char>(s[off + i]);
+    unsigned char b = static_cast<unsigned char>(suffix[i]);
+    if (std::tolower(a) != std::tolower(b)) return false;
+  }
+  return true;
 }
 
 }  // namespace
@@ -268,6 +282,26 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
   if (stats) *stats = FlattenStats{};
   const auto read_begin = Clock::now();
 
+  FlattenOptions effective = opts;
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
+  if (!effective.resolver) effective.resolver = &resolver;
+  if (!effective.layer_loader) {
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+  }
+  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
+
+  if (EndsWithNoCase(filename, ".usdc")) {
+    CrateReader reader(opts.read);
+    CrateReadResult rr = reader.ReadFile(filename.c_str());
+    const auto read_end = Clock::now();
+    const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));
+    bool ok = FlattenLoaded(std::move(rr), input_bytes, &out, nullptr,
+                            effective, stats, err);
+    if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+    return ok;
+  }
+
   pcp::LayerLoadOptions lopts;
   lopts.max_memory = opts.read.max_memory;
   std::string warn;
@@ -278,15 +312,6 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
     if (err && err->empty()) *err = "failed to load root layer: " + filename;
     return false;
   }
-
-  FlattenOptions effective = opts;
-  AssetResolver resolver;
-  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
-  if (!effective.resolver) effective.resolver = &resolver;
-  if (!effective.layer_loader) {
-    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
-  }
-  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
 
   std::unique_ptr<Layer> root(new Layer(loaded->Clone()));
   const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));
@@ -303,6 +328,26 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
   if (stats) *stats = FlattenStats{};
   const auto read_begin = Clock::now();
 
+  FlattenOptions effective = opts;
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
+  if (!effective.resolver) effective.resolver = &resolver;
+  if (!effective.layer_loader) {
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+  }
+  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
+
+  if (EndsWithNoCase(filename, ".usdc")) {
+    CrateReader reader(opts.read);
+    CrateReadResult rr = reader.ReadFile(filename.c_str());
+    const auto read_end = Clock::now();
+    const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));
+    bool ok = FlattenLoaded(std::move(rr), input_bytes, nullptr, &sink,
+                            effective, stats, err);
+    if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+    return ok;
+  }
+
   pcp::LayerLoadOptions lopts;
   lopts.max_memory = opts.read.max_memory;
   std::string warn;
@@ -313,15 +358,6 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
     if (err && err->empty()) *err = "failed to load root layer: " + filename;
     return false;
   }
-
-  FlattenOptions effective = opts;
-  AssetResolver resolver;
-  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
-  if (!effective.resolver) effective.resolver = &resolver;
-  if (!effective.layer_loader) {
-    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
-  }
-  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
 
   std::unique_ptr<Layer> root(new Layer(loaded->Clone()));
   const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));

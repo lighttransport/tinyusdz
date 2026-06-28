@@ -26,6 +26,7 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
 
 CrateReadResult CrateReader::Impl::ParseFromSource() {
   result_ = CrateReadResult();
+  result_.source_was_mmap = source_ && source_->is_mmapped();
   tokens_.clear();
   string_indices_.clear();
   fields_.clear();

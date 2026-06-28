@@ -30,6 +30,7 @@ struct FlattenStats {
   size_t prim_count = 0;
   size_t arrays_passed_through = 0;  // arrays copied verbatim from the source
   size_t arrays_reencoded = 0;       // lazy arrays that fell back to re-encode
+  bool input_was_mmap = false;       // direct crate root was mmap-backed
   double read_ms = 0.0;
   double compose_ms = 0.0;
   double write_ms = 0.0;

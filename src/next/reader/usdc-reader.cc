@@ -29,6 +29,7 @@ USDCLoadResult ConvertResult(CrateReadResult&& crate_result) {
   result.errors = std::move(crate_result.errors);
   result.warnings = std::move(crate_result.warnings);
   result.version = crate_result.version;
+  result.source_was_mmap = crate_result.source_was_mmap;
 
   if (!result.errors.empty()) {
     const auto& first_err = result.errors[0];

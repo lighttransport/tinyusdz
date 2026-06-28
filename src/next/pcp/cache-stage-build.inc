@@ -105,29 +105,3 @@
       }
     }
   }
-
-  // Per-prim opinion records collected by the structure pass, drained by
-  // FillOpinions. Member (not local) so a single fill can cover every root.
-  std::vector<std::pair<uint32_t, std::string>> fill_;
-
-  // OPINION-FILL PASS: compose each slot's opinions from its (already cached)
-  // sources. Slots are disjoint PrimSpec objects, sources_cache is only read, and
-  // add_prim is done -- so distinct slots fill concurrently. Byte-identical to the
-  // serial ComposeInto: the same ComposeOpinions runs on the same (slot, srcs)
-  // pairs; only the order across independent slots changes.
-  void FillOpinions(Layer *out) {
-    // The serial structure pass has parsed every referenced layer, so the full
-    // set of property names is now interned. Freeze the name table: the parallel
-    // fill below does heavy find() (and intern() that all HIT) on it, and the
-    // per-call shared_lock otherwise contends purely on the lock's cache line
-    // (~12% of an Island render). Frozen, those go lock-free. A genuinely new
-    // name (not expected here) would unfreeze and fall back to locking.
-    GetPropNameTable().freeze();
-    auto do_range = [&](size_t b, size_t e) {
-      for (size_t i = b; i < e; ++i) {
-        auto it = sources_cache.find(fill_[i].second);
-        if (it == sources_cache.end()) continue;
-        if (PrimSpec *ps = out->prim_mutable(fill_[i].first))
-          ComposeOpinions(it->second, ps);
-      }
-    };
