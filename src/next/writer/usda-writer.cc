@@ -12,12 +12,10 @@
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
-#include <functional>
+#include <deque>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
 #include <thread>
 #endif
 
@@ -26,16 +24,86 @@ namespace next {
 
 namespace {
 
-// Parallel-stitch context. When non-null on WritePrimSpec, a child prim whose
-// index is a "frontier" subtree root is spliced from a precomputed string
-// (serialized in parallel on a worker thread) instead of being recursed into on
-// the main thread. `frontier_of[child_idx]` is the frontier slot (or -1); `emit`
-// blocks until that slot is ready, writes it to `os`, frees it, and advances the
-// consumer cursor. Splicing produces exactly what recursing would have, so the
-// byte output is independent of thread count.
-struct StitchCtx {
-  const std::vector<int>* frontier_of = nullptr;
-  std::function<void(StreamWriter&, int)> emit;
+// One unit of parallel write work, emitted in document order by a single serial
+// build pass. The main thread produces cheap structural glue as Text; every array
+// value worth offloading becomes a WholeValue task (formatted by one worker) or,
+// for a large chunkable array, a run of Chunk tasks (formatted by many workers).
+struct WriteTask {
+  enum class Kind : uint8_t { Text, WholeValue, Chunk } kind;
+  std::string text;             // Text: literal bytes, produced during the walk
+  const Value* value = nullptr; // WholeValue/Chunk: borrowed (Layer or holder)
+  size_t lo = 0;                // Chunk: USD element range [lo, hi)
+  size_t hi = 0;
+  bool open = false;            // Chunk: emit leading '['
+  bool close = false;           // Chunk: emit trailing ']'
+  int free_idx = -1;            // after consuming, free holder[free_idx] (or -1)
+};
+
+// Offload tuning. An array property with >= kOffloadMinElems USD elements is
+// formatted by a worker rather than inline on the build thread (tiny arrays stay
+// inline to avoid task spam). A directly chunkable array with >= kSplitMinElems
+// elements is split into kChunkElems-sized pieces so one giant array spreads
+// across workers; kChunkElems also bounds each worker buffer (~3 MB for float3 at
+// 64Ki). A giant chunkable-TYPE array that is not borrowable (compressed/lazy) is
+// decoded once into an owned buffer and then chunked, but only past the larger
+// kMaterializeChunkMin so the one-off decode pays off versus a single WholeValue.
+constexpr size_t kChunkElems = 64u * 1024u;
+constexpr size_t kSplitMinElems = 2u * kChunkElems;
+constexpr size_t kOffloadMinElems = 256u;
+constexpr size_t kMaterializeChunkMin = 1u << 20;  // 1Mi elements
+
+// Collects ordered tasks during the serial build walk. Structural bytes accrue in
+// `cur` (the StreamWriter target); each offloaded array flushes `cur` as a Text
+// task and appends WholeValue/Chunk task(s). The worker emits the array's full
+// `[...]`, so the build path writes nothing for the value itself. Giant
+// non-borrowable arrays are materialized into `holder` (stable addresses) so their
+// chunks can alias one decoded buffer; the buffer is freed once consumed.
+struct SegmentSink {
+  std::vector<WriteTask>* tasks = nullptr;
+  std::string* cur = nullptr;
+  const PrintOptions* po = nullptr;
+  std::deque<Value>* holder = nullptr;
+
+  void flush_text() {
+    if (cur && !cur->empty()) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::Text;
+      t.text = std::move(*cur);
+      cur->clear();
+      tasks->push_back(std::move(t));
+    }
+  }
+
+  void push_chunks(const Value* src, size_t n, int free_idx) {
+    for (size_t lo = 0; lo < n; lo += kChunkElems) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::Chunk;
+      t.value = src;
+      t.lo = lo;
+      t.hi = (lo + kChunkElems < n) ? (lo + kChunkElems) : n;
+      t.open = (lo == 0);
+      t.close = (t.hi == n);
+      if (t.close) t.free_idx = free_idx;  // free the decoded buffer last
+      tasks->push_back(std::move(t));
+    }
+  }
+
+  void offload_array(const Value* v) {
+    flush_text();
+    const size_t n = ArrayElementCount(*v);
+    if (n >= kSplitMinElems && IsChunkableArray(*v, *po)) {
+      push_chunks(v, n, /*free_idx=*/-1);  // borrowable: chunk in place
+    } else if (n >= kMaterializeChunkMin && holder && IsChunkableType(*v, *po)) {
+      holder->push_back(v->materialized_copy());  // decode once, then chunk
+      push_chunks(&holder->back(), n,
+                  static_cast<int>(holder->size() - 1));
+    } else {
+      WriteTask t;
+      t.kind = WriteTask::Kind::WholeValue;
+      t.value = v;
+      tasks->push_back(std::move(t));
+    }
+  }
 };
 
 // Freestanding integer -> decimal string: IntToStr/UIntToStr live in ../strfmt.hh
@@ -320,7 +388,8 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
 
 // Write a property value
 void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
-                   int depth, const USDAWriteOptions& opts) {
+                   int depth, const USDAWriteOptions& opts,
+                   SegmentSink* segsink = nullptr) {
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
 
@@ -398,7 +467,15 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     print_opts.max_array_elements = opts.max_elements_per_line;
     print_opts.compact = opts.compact;
     os << " = ";
-    PrintValue(os, *value, print_opts);
+    // Parallel build: offload a non-trivial array value to the worker pool, which
+    // emits its complete `[ ... ]` (byte-identical to the inline PrintValue). Tiny
+    // arrays and non-array values are formatted inline.
+    if (segsink && value->is_array() &&
+        ArrayElementCount(*value) >= kOffloadMinElems) {
+      segsink->offload_array(value);
+    } else {
+      PrintValue(os, *value, print_opts);
+    }
     WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
   }
@@ -460,11 +537,11 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 // Forward declaration
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
-                   const StitchCtx* sctx = nullptr);
+                   SegmentSink* segsink = nullptr);
 
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
-                   const StitchCtx* sctx) {
+                   SegmentSink* segsink) {
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -616,7 +693,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
   // Write properties
   for (const PropSlot* slot : prop_slots) {
-    WriteProperty(os, *slot, spec, content_depth, opts);
+    WriteProperty(os, *slot, spec, content_depth, opts, segsink);
   }
 
   // Write relationships. These live in the relationship map (add_relationship
@@ -629,18 +706,13 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
-  // Write children. In stitch mode, a child that is a frontier subtree root is
-  // spliced from its precomputed (parallel-serialized) string instead of being
-  // recursed into here; this yields exactly the same bytes as recursing.
+  // Write children. When `segsink` is active (the parallel build walk), the same
+  // sink propagates so each child's large array values are offloaded too.
   for (uint32_t child_idx : spec.child_indices()) {
     const PrimSpec* child = layer.prim(child_idx);
     if (child) {
       os << "\n";
-      if (sctx) {
-        int fs = (*sctx->frontier_of)[child_idx];
-        if (fs >= 0) { sctx->emit(os, fs); continue; }
-      }
-      WritePrimSpec(os, *child, layer, content_depth, opts, sctx);
+      WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
     }
   }
 
@@ -665,227 +737,176 @@ void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
 #if defined(TINYUSDZ_ENABLE_THREAD)
 
 // Resolve the effective worker count from the option (1 = serial; <=0 = auto;
-// >1 = exactly that many). USDA serialization of large scenes is memory-
-// bandwidth bound (it streams GBs of formatted text), so throughput peaks around
-// ~8 threads and degrades past that from allocator/bandwidth contention; the
-// auto default is therefore capped at kAutoCap. An explicit request is honored
-// as-is so callers can override on unusual hardware.
+// >1 = exactly that many). The parallel writer formats balanced segments (one
+// giant array no longer pins a single worker), so throughput scales with cores;
+// the auto default is capped at kAutoCap to stay reasonable on shared machines
+// while still feeding many cores. An explicit request is honored as-is so callers
+// can override on unusual hardware.
 int ResolveWriteThreads(int requested) {
   if (requested == 1) return 1;
   if (requested > 1) return requested;
-  constexpr int kAutoCap = 8;
+  constexpr int kAutoCap = 16;
   int hw = static_cast<int>(std::thread::hardware_concurrency());
   if (hw < 1) hw = 1;
   return std::min(hw, kAutoCap);
 }
 
-// Per-prim serialized-size proxy: a small base cost (header + scalar props) plus
-// the element count of every array-valued property (cheap: array_size() reads a
-// stored length, even for lazy/undecoded arrays — no materialization). This
-// reflects OUTPUT TEXT size, so a prim holding a giant array (e.g. instanced
-// geometry on Moana Island) is weighted heavily even though it is a single node;
-// a plain node-count proxy would mislabel it as light and never isolate it.
-uint64_t SelfWeight(const PrimSpec& spec) {
-  uint64_t w = 8;  // base: specifier/type/name/braces + small scalar props
-  for (const auto& slot : spec.properties().slots()) {
-    if (slot.is_relationship()) continue;
-    const Value* v = spec.property_value(slot.name_id);
-    if (v && v->is_array()) w += v->array_size();
-  }
-  return w;
+// Array-affecting subset of the write options (the value printer only consults
+// the precision/limit/compact fields). Mirrors the inline construction in
+// WriteProperty so frontier analysis sees the same chunkability decision.
+PrintOptions MakeArrayPrintOpts(const USDAWriteOptions& opts) {
+  PrintOptions p;
+  p.float_precision = opts.float_precision;
+  p.double_precision = opts.double_precision;
+  p.max_array_elements = opts.max_elements_per_line;
+  p.compact = opts.compact;
+  return p;
 }
 
-// Subtree weights (self + sum of children), iterative post-order so deep trees
-// don't overflow the stack.
-void ComputeSubtreeWeights(const Layer& layer, std::vector<uint64_t>& weight) {
-  const size_t n = layer.prim_count();
-  weight.assign(n, 0);
-  std::vector<std::pair<uint32_t, size_t>> st;  // (prim idx, child cursor)
-  for (uint32_t r : layer.root_indices()) {
-    if (!layer.prim(r)) continue;
-    st.emplace_back(r, 0);
-    while (!st.empty()) {
-      uint32_t idx = st.back().first;
-      size_t cursor = st.back().second;
-      const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-      if (cursor < ch.size()) {
-        st.back().second = cursor + 1;
-        uint32_t c = ch[cursor];
-        if (layer.prim(c)) st.emplace_back(c, 0);
-      } else {
-        uint64_t w = SelfWeight(*layer.prim(idx));
-        for (uint32_t c : ch) {
-          if (layer.prim(c)) w += weight[c];
-        }
-        weight[idx] = w;
-        st.pop_back();
-      }
-    }
-  }
-}
-
-// Pick a disjoint frontier of subtree roots covering all leaves. Splitting is
-// SIZE-bounded: a node becomes a frontier piece once its subtree weight (node
-// count) is at or below `threshold`, otherwise it is split into its children.
-// This caps the work AND the serialized-text size of any single piece, so no
-// worker ever builds a multi-GB buffer (the cause of the low-thread memory blow
-// up), and pieces are numerous/even enough to balance the pool — independent of
-// the thread count. `threshold` aims for ~nthreads*32 pieces but never goes
-// below a floor so we don't make a huge number of tiny pieces.
-void SelectFrontier(const Layer& layer, const std::vector<uint64_t>& weight,
-                    int nthreads, std::vector<char>& is_final) {
-  is_final.assign(layer.prim_count(), 0);
-  uint64_t total = 0;
-  for (uint32_t r : layer.root_indices()) {
-    if (layer.prim(r)) total += weight[r];
-  }
-  const uint64_t floor = 8192;
-  uint64_t threshold = floor;
-  const uint64_t aim = static_cast<uint64_t>(nthreads) * 32;
-  if (aim > 0 && total / aim > threshold) {
-    threshold = total / aim;
-  }
-
-  std::vector<uint32_t> st;  // nodes to classify
-  for (uint32_t r : layer.root_indices()) {
-    if (layer.prim(r)) st.push_back(r);
-  }
-  while (!st.empty()) {
-    uint32_t idx = st.back();
-    st.pop_back();
-    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-    bool has_child = false;
-    for (uint32_t c : ch) { if (layer.prim(c)) { has_child = true; break; } }
-    if (!has_child || weight[idx] <= threshold) {
-      is_final[idx] = 1;  // small enough (or a leaf) -> a frontier piece
-    } else {
-      for (uint32_t c : ch) {
-        if (layer.prim(c)) st.push_back(c);
-      }
-    }
-  }
-}
-
-// Pre-order DFS assigning each frontier node a slot in traversal order (so the
-// consumer hits slots 0,1,2,... in order); frontier nodes are not descended.
-void BuildPreorderFrontier(const Layer& layer, const std::vector<char>& is_final,
-                           std::vector<int>& frontier_of,
-                           std::vector<std::pair<uint32_t, int>>& flist) {
-  frontier_of.assign(layer.prim_count(), -1);
-  std::vector<std::pair<uint32_t, int>> st;  // (idx, depth)
-  const std::vector<uint32_t>& roots = layer.root_indices();
-  for (size_t i = roots.size(); i-- > 0;) {
-    if (layer.prim(roots[i])) st.emplace_back(roots[i], 0);
-  }
-  while (!st.empty()) {
-    uint32_t idx = st.back().first;
-    int depth = st.back().second;
-    st.pop_back();
-    if (is_final[idx]) {
-      frontier_of[idx] = static_cast<int>(flist.size());
-      flist.emplace_back(idx, depth);
-      continue;  // do not descend; serialized as a unit
-    }
-    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-    for (size_t i = ch.size(); i-- > 0;) {
-      if (layer.prim(ch[i])) st.emplace_back(ch[i], depth + 1);
-    }
-  }
-}
-
-// Parallel stage body: serialize frontier subtrees on a worker pool while the
-// main thread walks the tree and splices each subtree (in order) into `os`.
-// Bounded in-flight buffers (window W) keep peak memory near the serial path.
+// Parallel stage body. A single serial pre-order walk builds the document-ordered
+// task list: cheap structural bytes accrue inline as Text, while every array value
+// worth offloading (>= kOffloadMinElems elements) becomes WholeValue/Chunk task(s)
+// referencing the borrowed array. A worker pool then formats the offloaded arrays
+// concurrently -- this is where nearly all of a geometry-heavy stage's write time
+// goes -- while the main thread writes the task results strictly in order. A
+// bounded look-ahead window keeps in-flight result buffers (hence peak memory)
+// small. Output is byte-identical to the serial writer regardless of thread count.
 void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
-  std::vector<uint64_t> weight;
-  ComputeSubtreeWeights(layer, weight);
-  std::vector<char> is_final;
-  SelectFrontier(layer, weight, nthreads, is_final);
-  std::vector<int> frontier_of;
-  std::vector<std::pair<uint32_t, int>> flist;
-  BuildPreorderFrontier(layer, is_final, frontier_of, flist);
-
-  const size_t m = flist.size();
-  if (m <= 1) {  // nothing worth parallelizing
-    WriteStageBodySerial(os, layer, meta, opts);
-    return;
-  }
+  const PrintOptions po = MakeArrayPrintOpts(opts);
 
   // Pre-warm the global interning table on the main thread (its lazy init is the
   // only non-reentrant spot on the write path; reads are thread-safe after).
   (void)GetPropNameTable();
 
-  std::vector<std::string> results(m);
-  std::vector<char> ready(m, 0);
-  std::mutex mu;
-  std::condition_variable cv;
+  // Phase 1 (serial, cheap): walk the whole stage, emitting structure as Text and
+  // offloading array values. No giant array is formatted here, so this is fast.
+  std::vector<WriteTask> tasks;
+  std::deque<Value> holder;  // decoded buffers for materialized giant arrays
+  {
+    std::string cur;
+    StreamWriter sw(&cur);
+    SegmentSink sink;
+    sink.tasks = &tasks;
+    sink.cur = &cur;
+    sink.po = &po;
+    sink.holder = &holder;
+    WriteLayerMeta(sw, meta, opts);
+    for (uint32_t root_idx : layer.root_indices()) {
+      const PrimSpec* root = layer.prim(root_idx);
+      if (!root) continue;
+      WritePrimSpec(sw, *root, layer, 0, opts, &sink);
+      sw << "\n";
+    }
+    sink.flush_text();
+  }
+
+  const size_t m = tasks.size();
+  if (m == 0) return;
+
+  // Group the document-ordered tasks into ~K byte-balanced segments, each a
+  // contiguous task run. A worker formats an entire segment (its structure +
+  // arrays) into one buffer, so writing is just K large in-order copies -- cheap
+  // synchronization (K is small) with balanced formatting (segments are equal
+  // estimated bytes, so no worker gets stuck on one giant array's neighbourhood).
+  auto scalar_bytes = [](const Value& v, uint64_t elems) -> uint64_t {
+    // ~8 output chars per scalar component (digits + ", "); scale by components.
+    size_t comps = GetComponentCount(v.type_id());
+    if (comps < 1) comps = 1;
+    return elems * uint64_t(comps) * 8u + 2u;
+  };
+  auto task_bytes = [&](const WriteTask& t) -> uint64_t {
+    if (t.kind == WriteTask::Kind::Text) return t.text.size();
+    if (t.kind == WriteTask::Kind::Chunk) return scalar_bytes(*t.value, t.hi - t.lo);
+    return scalar_bytes(*t.value, ArrayElementCount(*t.value));  // WholeValue
+  };
+  uint64_t total_bytes = 0;
+  for (const auto& t : tasks) total_bytes += task_bytes(t);
+  const size_t k_target = std::max<size_t>(1, static_cast<size_t>(nthreads) * 64);
+  const uint64_t seg_target = std::max<uint64_t>(1, total_bytes / k_target);
+  std::vector<size_t> seg_begin;  // task index where each segment starts; +[m]
+  seg_begin.push_back(0);
+  uint64_t acc = 0;
+  for (size_t i = 0; i < m; ++i) {
+    acc += task_bytes(tasks[i]);
+    if (acc >= seg_target && seg_begin.back() != i + 1) {
+      seg_begin.push_back(i + 1);
+      acc = 0;
+    }
+  }
+  if (seg_begin.back() != m) seg_begin.push_back(m);
+  const size_t K = seg_begin.size() - 1;
+
+  // Per-segment list of decoded-buffer holder indices to free once that segment is
+  // written. A buffer's freeing flag sits on its last chunk; by the time that
+  // segment is consumed, all of the buffer's chunks (here and in earlier segments)
+  // have been formatted, so the decode can be released -- bounding peak memory.
+  std::vector<std::vector<int>> seg_free(K);
+  {
+    size_t seg = 0;
+    for (size_t i = 0; i < m; ++i) {
+      while (seg + 1 < K && i >= seg_begin[seg + 1]) ++seg;
+      if (tasks[i].free_idx >= 0) seg_free[seg].push_back(tasks[i].free_idx);
+    }
+  }
+
+  // Phase 2: workers format whole segments; the main thread writes segment buffers
+  // in order. Lock-free: each segment is claimed once via `next`, produced into
+  // results[k], published via ready[k]; the consumer spins (yielding) on ready[s]
+  // and advances `consumed`, back-pressuring workers past W segments ahead.
+  std::vector<std::string> results(K);
+  std::vector<std::atomic<uint8_t>> ready(K);
+  for (size_t i = 0; i < K; ++i) ready[i].store(0, std::memory_order_relaxed);
   std::atomic<size_t> next{0};
-  size_t consumed = 0;  // guarded by mu
+  std::atomic<size_t> consumed{0};
   const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
 
-  auto worker = [&]() {
-    std::string local;  // reused across pieces to amortize capacity
-    for (;;) {
-      size_t i = next.fetch_add(1);
-      if (i >= m) break;
-      {  // backpressure: stay within W of the consumer
-        std::unique_lock<std::mutex> lk(mu);
-        cv.wait(lk, [&] { return i < consumed + W; });
+  auto format_segment = [&](size_t k, std::string& buf) {
+    buf.clear();
+    StreamWriter sw(&buf);
+    for (size_t i = seg_begin[k]; i < seg_begin[k + 1]; ++i) {
+      WriteTask& t = tasks[i];
+      switch (t.kind) {
+        case WriteTask::Kind::Text:
+          sw.write(t.text.data(), t.text.size());
+          std::string().swap(t.text);  // free structure bytes once copied
+          break;
+        case WriteTask::Kind::Chunk:
+          PrintArrayRangeToStream(sw, *t.value, po, t.lo, t.hi, t.open, t.close);
+          break;
+        case WriteTask::Kind::WholeValue:
+          PrintValue(sw, *t.value, po);  // worker emits the full `[ ... ]`
+          break;
       }
-      // Serialize straight into a std::string via a string-target StreamWriter
-      // (no ostringstream double-buffer, no .str() copy of the whole subtree).
-      local.clear();
-      {
-        StreamWriter sw(&local);
-        WritePrimSpec(sw, *layer.prim(flist[i].first), layer, flist[i].second,
-                      opts, /*sctx=*/nullptr);
-      }
-      {
-        std::lock_guard<std::mutex> lk(mu);
-        results[i] = std::move(local);
-        ready[i] = 1;
-      }
-      cv.notify_all();
     }
   };
 
-  const int nw = std::min<int>(nthreads, static_cast<int>(m));
+  auto worker = [&]() {
+    std::string buf;
+    for (;;) {
+      size_t k = next.fetch_add(1, std::memory_order_relaxed);
+      if (k >= K) break;
+      while (k >= consumed.load(std::memory_order_acquire) + W) {
+        std::this_thread::yield();
+      }
+      format_segment(k, buf);
+      results[k] = std::move(buf);
+      ready[k].store(1, std::memory_order_release);
+    }
+  };
+
+  const int nw = std::min<int>(nthreads, static_cast<int>(K));
   std::vector<std::thread> pool;
   pool.reserve(nw);
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
-  auto emit = [&](StreamWriter& o, int slot) {
-    const size_t s = static_cast<size_t>(slot);
-    std::unique_lock<std::mutex> lk(mu);
-    cv.wait(lk, [&] { return ready[s] != 0; });
-    std::string str = std::move(results[s]);
-    results[s].clear();
-    results[s].shrink_to_fit();
-    lk.unlock();
-    o.write(str.data(), str.size());
-    lk.lock();
-    consumed = s + 1;
-    lk.unlock();
-    cv.notify_all();
-  };
-
-  StitchCtx sctx;
-  sctx.frontier_of = &frontier_of;
-  sctx.emit = emit;
-
-  WriteLayerMeta(os, meta, opts);
-  for (uint32_t root_idx : layer.root_indices()) {
-    const PrimSpec* root = layer.prim(root_idx);
-    if (!root) continue;
-    int fs = frontier_of[root_idx];
-    if (fs >= 0) {
-      emit(os, fs);
-    } else {
-      WritePrimSpec(os, *root, layer, 0, opts, &sctx);
-    }
-    os << "\n";
+  for (size_t s = 0; s < K; ++s) {
+    while (ready[s].load(std::memory_order_acquire) == 0) std::this_thread::yield();
+    os.write(results[s].data(), results[s].size());
+    std::string().swap(results[s]);  // free as we go
+    for (int idx : seg_free[s]) holder[idx] = Value{};  // release decoded buffers
+    consumed.store(s + 1, std::memory_order_release);
   }
 
   for (auto& th : pool) th.join();
