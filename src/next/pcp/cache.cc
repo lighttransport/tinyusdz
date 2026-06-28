@@ -6,6 +6,7 @@
 
 #include "cache.hh"
 
+#include "cache-lock.hh"
 #include "cache-utils.hh"
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 #include "../strfmt.hh"                    // IntToStr / UIntToStr
@@ -21,60 +22,12 @@
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
-#include <mutex>
 #include <thread>
-#if defined(TINYUSDZ_NEXT_FINE_LOCKS)
-#include <shared_mutex>
-#endif
 #endif
 
 namespace tinyusdz {
 namespace next {
 namespace pcp {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-// Serializes the Cache's shared mutable state so it is safe to use
-// (ComputePrimIndex / BuildStage / queries / payload edits) from multiple
-// threads. Compiles to nothing in non-threaded builds.
-//
-// Three lock policies, selected at compile time:
-//
-//  * default (Phase 9 F6): a single non-recursive std::mutex. Public entry
-//    points take the lock exactly once and delegate to lock-free `*_locked`
-//    internals, so no public method re-enters the lock. READ and WRITE locks
-//    are the same exclusive lock.
-//
-//  * TINYUSDZ_NEXT_FINE_LOCKS (Phase 9 F4): a std::shared_timed_mutex. Pure
-//    reads (cache hits in ComputePrimIndex, and the read-only query methods)
-//    take a shared lock and run concurrently; builds and writers take the
-//    exclusive lock. ComputePrimIndex tries the shared fast path first and,
-//    on a cache miss, re-acquires exclusively and double-checks (so the same
-//    prim is built once even under contention).
-//
-//  * TINYUSDZ_NEXT_RECURSIVE_LOCK: the original re-entrant recursive mutex --
-//    a bring-up escape hatch should a new re-entrant path be introduced.
-#if defined(TINYUSDZ_NEXT_FINE_LOCKS)
-#include <shared_mutex>
-using PcpMutex = std::shared_timed_mutex;
-// std::shared_lock lives in <shared_mutex> (included at file scope above).
-#define NEXT_PCP_READ_LOCK(m) std::shared_lock<PcpMutex> _pcp_rlk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::unique_lock<PcpMutex> _pcp_wlk(m)
-#elif defined(TINYUSDZ_NEXT_RECURSIVE_LOCK)
-using PcpMutex = std::recursive_mutex;
-#define NEXT_PCP_READ_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
-#else
-using PcpMutex = std::mutex;
-#define NEXT_PCP_READ_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
-#define NEXT_PCP_WRITE_LOCK(m) std::lock_guard<PcpMutex> _pcp_lk(m)
-#endif
-// Legacy alias: existing exclusive sites use NEXT_PCP_LOCK == write lock.
-#define NEXT_PCP_LOCK(m) NEXT_PCP_WRITE_LOCK(m)
-#else
-#define NEXT_PCP_READ_LOCK(m) (void)0
-#define NEXT_PCP_WRITE_LOCK(m) (void)0
-#define NEXT_PCP_LOCK(m) (void)0
-#endif
 
 namespace {
 
