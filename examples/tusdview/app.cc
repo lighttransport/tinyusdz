@@ -280,7 +280,7 @@ void App::applyLoaded(bool ok, bool progressive) {
     // One-shot upload (headless / threaded / failure). draw_ is empty when !ok.
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
-    const bool freeCpu = ok && useNextLoader_ && !cudaRt_;
+    const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
     postGpu([this, freeCpu] {
       std::string uerr;
       renderer_->uploadScene(draw_, &uerr);
@@ -342,7 +342,7 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, ~4ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
-    if (useNextLoader_ && !cudaRt_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+    if (useNextLoader_ && !cudaRt_ && !hipRt_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
     if (elapsedMs() > 4.0) break;
   }
