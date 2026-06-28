@@ -284,6 +284,298 @@ void CopyMatrixFromDoubles(const std::vector<double>& values,
   }
 }
 
+Matrix4 MatrixFromPointInstancerTransform(
+    const ::tinyusdz::next::PointInstancerTransform& src) {
+  Matrix4 dst;
+  for (size_t i = 0; i < 16; ++i) {
+    dst.m[i] = static_cast<float>(src.matrix[i]);
+  }
+  return dst;
+}
+
+Matrix4 MulMatrix4(const Matrix4& a, const Matrix4& b) {
+  Matrix4 r;
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      r.m[i * 4 + j] =
+          a.m[i * 4 + 0] * b.m[0 * 4 + j] +
+          a.m[i * 4 + 1] * b.m[1 * 4 + j] +
+          a.m[i * 4 + 2] * b.m[2 * 4 + j] +
+          a.m[i * 4 + 3] * b.m[3 * 4 + j];
+    }
+  }
+  return r;
+}
+
+std::vector<uint8_t> BuildInstanceVisibility(
+    size_t instance_count,
+    const std::vector<int64_t>& ids,
+    const std::vector<int64_t>& invisible_ids,
+    const std::vector<int64_t>& inactive_ids) {
+  std::vector<uint8_t> visible(instance_count, uint8_t{1});
+  if (instance_count == 0) return visible;
+
+  std::unordered_set<int64_t> hidden;
+  hidden.reserve(invisible_ids.size() + inactive_ids.size());
+  hidden.insert(invisible_ids.begin(), invisible_ids.end());
+  hidden.insert(inactive_ids.begin(), inactive_ids.end());
+  if (hidden.empty()) return visible;
+
+  if (ids.size() == instance_count) {
+    for (size_t i = 0; i < ids.size(); ++i) {
+      if (hidden.find(ids[i]) != hidden.end()) {
+        visible[i] = 0;
+      }
+    }
+    return visible;
+  }
+
+  for (int64_t id : hidden) {
+    if (id >= 0 && static_cast<size_t>(id) < instance_count) {
+      visible[static_cast<size_t>(id)] = 0;
+    }
+  }
+  return visible;
+}
+
+template <typename Chunked>
+void CopyChunkedArray(const Chunked& src, Chunked* dst) {
+  if (!dst) return;
+  dst->reserve(src.size());
+  for (size_t i = 0; i < src.size(); ++i) {
+    dst->push_back(src[i]);
+  }
+}
+
+Float3 TransformPoint(const Matrix4& m, float x, float y, float z) {
+  return Float3(
+      x * m.m[0] + y * m.m[4] + z * m.m[8] + m.m[12],
+      x * m.m[1] + y * m.m[5] + z * m.m[9] + m.m[13],
+      x * m.m[2] + y * m.m[6] + z * m.m[10] + m.m[14]);
+}
+
+Float3 TransformDirection(const Matrix4& m, float x, float y, float z) {
+  Float3 d(
+      x * m.m[0] + y * m.m[4] + z * m.m[8],
+      x * m.m[1] + y * m.m[5] + z * m.m[9],
+      x * m.m[2] + y * m.m[6] + z * m.m[10]);
+  const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+  if (len > 1.0e-8f) {
+    d.x /= len;
+    d.y /= len;
+    d.z /= len;
+  }
+  return d;
+}
+
+void CopyVertexAttribute(const VertexAttribute& src, VertexAttribute* dst) {
+  if (!dst) return;
+  dst->name = src.name;
+  dst->format = src.format;
+  dst->interpolation = src.interpolation;
+  CopyChunkedArray(src.float_data, &dst->float_data);
+  CopyChunkedArray(src.int_data, &dst->int_data);
+  CopyChunkedArray(src.uint_data, &dst->uint_data);
+  CopyChunkedArray(src.indices, &dst->indices);
+}
+
+void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
+  if (!dst) return;
+  CopyChunkedArray(src.face_vertex_counts, &dst->face_vertex_counts);
+  CopyChunkedArray(src.face_vertex_indices, &dst->face_vertex_indices);
+  CopyChunkedArray(src.texcoords_0, &dst->texcoords_0);
+  CopyChunkedArray(src.texcoords_1, &dst->texcoords_1);
+  CopyChunkedArray(src.colors, &dst->colors);
+  CopyChunkedArray(src.triangulated_indices, &dst->triangulated_indices);
+  dst->normals_interp = src.normals_interp;
+  dst->texcoords_0_interp = src.texcoords_0_interp;
+  dst->texcoords_1_interp = src.texcoords_1_interp;
+  dst->colors_interp = src.colors_interp;
+  dst->material_id = src.material_id;
+  dst->material_subsets = src.material_subsets;
+  dst->is_triangulated = src.is_triangulated;
+
+  dst->primvars.reserve(src.primvars.size());
+  for (const VertexAttribute& pv : src.primvars) {
+    VertexAttribute copy;
+    CopyVertexAttribute(pv, &copy);
+    dst->primvars.push_back(std::move(copy));
+  }
+
+  if (src.skin) {
+    dst->skin = std::make_unique<RenderMesh::SkinBinding>();
+    CopyChunkedArray(src.skin->joint_indices, &dst->skin->joint_indices);
+    CopyChunkedArray(src.skin->joint_weights, &dst->skin->joint_weights);
+    dst->skin->skeleton_id = src.skin->skeleton_id;
+    dst->skin->geom_bind_transform = src.skin->geom_bind_transform;
+  }
+
+  dst->blend_shapes.reserve(src.blend_shapes.size());
+  for (const RenderMesh::BlendShape& bs : src.blend_shapes) {
+    RenderMesh::BlendShape copy;
+    copy.name = bs.name;
+    CopyChunkedArray(bs.point_offsets, &copy.point_offsets);
+    CopyChunkedArray(bs.normal_offsets, &copy.normal_offsets);
+    copy.weight = bs.weight;
+    dst->blend_shapes.push_back(std::move(copy));
+  }
+}
+
+bool CloneMeshForPointInstance(const RenderMesh& src,
+                               const RenderPointInstanceDraw& draw,
+                               RenderMesh* dst) {
+  if (!dst) return false;
+  dst->name = src.name + "_pointInstance_" + std::to_string(draw.instance_index);
+  dst->prim_path = src.prim_path + ".pointInstance[" +
+                   std::to_string(draw.instance_index) + "]";
+  CopyRenderMeshCommon(src, dst);
+
+  dst->points.reserve(src.points.size());
+  for (size_t i = 0; i + 2 < src.points.size(); i += 3) {
+    const Float3 p = TransformPoint(draw.transform, src.points[i],
+                                    src.points[i + 1], src.points[i + 2]);
+    dst->points.push_back(p.x);
+    dst->points.push_back(p.y);
+    dst->points.push_back(p.z);
+  }
+
+  dst->normals.reserve(src.normals.size());
+  for (size_t i = 0; i + 2 < src.normals.size(); i += 3) {
+    const Float3 n = TransformDirection(draw.transform, src.normals[i],
+                                        src.normals[i + 1], src.normals[i + 2]);
+    dst->normals.push_back(n.x);
+    dst->normals.push_back(n.y);
+    dst->normals.push_back(n.z);
+  }
+
+  dst->tangents.reserve(src.tangents.size());
+  for (size_t i = 0; i + 3 < src.tangents.size(); i += 4) {
+    const Float3 t = TransformDirection(draw.transform, src.tangents[i],
+                                        src.tangents[i + 1], src.tangents[i + 2]);
+    dst->tangents.push_back(t.x);
+    dst->tangents.push_back(t.y);
+    dst->tangents.push_back(t.z);
+    dst->tangents.push_back(src.tangents[i + 3]);
+  }
+
+  if (dst->point_count() > 0) {
+    dst->bbox_min = Float3(1e30f, 1e30f, 1e30f);
+    dst->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
+    for (size_t i = 0; i + 2 < dst->points.size(); i += 3) {
+      dst->bbox_min.x = std::min(dst->bbox_min.x, dst->points[i]);
+      dst->bbox_min.y = std::min(dst->bbox_min.y, dst->points[i + 1]);
+      dst->bbox_min.z = std::min(dst->bbox_min.z, dst->points[i + 2]);
+      dst->bbox_max.x = std::max(dst->bbox_max.x, dst->points[i]);
+      dst->bbox_max.y = std::max(dst->bbox_max.y, dst->points[i + 1]);
+      dst->bbox_max.z = std::max(dst->bbox_max.z, dst->points[i + 2]);
+    }
+    dst->has_bbox = true;
+  }
+  return dst->point_count() == src.point_count();
+}
+
+void CollectMeshIdsUnderNode(const RenderScene& scene,
+                             int32_t node_id,
+                             const Matrix4& parent_relative,
+                             std::vector<int32_t>* out_ids,
+                             std::vector<Matrix4>* out_transforms) {
+  if (!out_ids || !out_transforms || node_id < 0 ||
+      static_cast<size_t>(node_id) >= scene.nodes.size()) {
+    return;
+  }
+
+  const SceneNode& node = scene.nodes[static_cast<size_t>(node_id)];
+  const Matrix4 relative = MulMatrix4(node.local_transform, parent_relative);
+  if (node.type == NodeType::Mesh && node.data_id >= 0) {
+    out_ids->push_back(node.data_id);
+    out_transforms->push_back(relative);
+  }
+
+  for (int32_t child_id : node.children) {
+    CollectMeshIdsUnderNode(scene, child_id, relative, out_ids, out_transforms);
+  }
+}
+
+void ResolvePointInstancerPrototypeBindings(RenderScene* scene,
+                                            RenderPointInstancer* instancer) {
+  if (!scene || !instancer) return;
+
+  instancer->prototype_node_ids.clear();
+  instancer->prototype_mesh_offsets.clear();
+  instancer->prototype_mesh_ids.clear();
+  instancer->prototype_mesh_transforms.clear();
+  instancer->prototype_node_ids.reserve(instancer->prototype_paths.size());
+  instancer->prototype_mesh_offsets.reserve(instancer->prototype_paths.size() + 1);
+  instancer->prototype_mesh_offsets.push_back(0);
+
+  for (const std::string& path : instancer->prototype_paths) {
+    int32_t node_id = -1;
+    const auto node_it = scene->node_by_path.find(path);
+    if (node_it != scene->node_by_path.end()) {
+      node_id = node_it->second;
+    }
+    instancer->prototype_node_ids.push_back(node_id);
+    CollectMeshIdsUnderNode(*scene, node_id, Matrix4::Identity(),
+                            &instancer->prototype_mesh_ids,
+                            &instancer->prototype_mesh_transforms);
+    instancer->prototype_mesh_offsets.push_back(
+        static_cast<uint32_t>(instancer->prototype_mesh_ids.size()));
+  }
+}
+
+void AppendPointInstanceDraws(int32_t instancer_id,
+                              RenderPointInstancer* instancer,
+                              RenderScene* scene) {
+  if (!scene || !instancer || instancer_id < 0) return;
+  instancer->draw_start = static_cast<uint32_t>(scene->point_instance_draws.size());
+  instancer->draw_count = 0;
+
+  const size_t instance_count = instancer->instance_count();
+  for (size_t instance_index = 0; instance_index < instance_count; ++instance_index) {
+    if (!instancer->instance_visible.empty() &&
+        !instancer->instance_visible[instance_index]) {
+      continue;
+    }
+    const int32_t proto_index = instancer->proto_indices[instance_index];
+    if (proto_index < 0 ||
+        static_cast<size_t>(proto_index + 1) >=
+            instancer->prototype_mesh_offsets.size()) {
+      continue;
+    }
+
+    const uint32_t begin =
+        instancer->prototype_mesh_offsets[static_cast<size_t>(proto_index)];
+    const uint32_t end =
+        instancer->prototype_mesh_offsets[static_cast<size_t>(proto_index) + 1];
+    for (uint32_t mesh_ref = begin; mesh_ref < end; ++mesh_ref) {
+      if (mesh_ref >= instancer->prototype_mesh_ids.size()) continue;
+      const int32_t mesh_id = instancer->prototype_mesh_ids[mesh_ref];
+      if (mesh_id < 0) continue;
+
+      RenderPointInstanceDraw draw;
+      draw.point_instancer_id = instancer_id;
+      draw.instance_index = static_cast<uint32_t>(instance_index);
+      draw.prototype_index = static_cast<uint32_t>(proto_index);
+      draw.mesh_id = mesh_id;
+      if (static_cast<size_t>(mesh_id) < scene->meshes.size()) {
+        draw.material_id = scene->meshes[static_cast<size_t>(mesh_id)].material_id;
+      }
+      Matrix4 instance_transform = Matrix4::Identity();
+      if (instance_index < instancer->transforms.size()) {
+        instance_transform = instancer->transforms[instance_index];
+      }
+      if (mesh_ref < instancer->prototype_mesh_transforms.size()) {
+        draw.transform = MulMatrix4(instancer->prototype_mesh_transforms[mesh_ref],
+                                    instance_transform);
+      } else {
+        draw.transform = instance_transform;
+      }
+      scene->point_instance_draws.push_back(draw);
+      ++instancer->draw_count;
+    }
+  }
+}
+
 std::string LeafNameFromJointPath(const std::string& path) {
   size_t pos = path.rfind('/');
   if (pos == std::string::npos) return path;
@@ -384,6 +676,20 @@ bool IsOpenPBRShaderId(const std::string& id) {
          id == "OpenPBRSurface";
 }
 
+std::string FindInheritedMaterialBinding(const Stage& stage,
+                                         const std::string& prim_path) {
+  std::string path = prim_path;
+  while (!path.empty() && path != "/") {
+    UsdPrim prim = stage.GetPrimAtPath(path);
+    if (prim.IsValid()) {
+      const std::string material_path = ::tinyusdz::next::GetBoundMaterialPath(prim);
+      if (!material_path.empty()) return material_path;
+    }
+    path = GetParentPath(path);
+  }
+  return "";
+}
+
 }  // namespace
 
 //
@@ -471,6 +777,39 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
+    for (const auto& rec : extracted.point_instancers) {
+      RenderPointInstancer instancer;
+      if (ConvertPointInstancer(rec.prim, &instancer)) {
+        int32_t instancer_id =
+            static_cast<int32_t>(result.scene.point_instancers.size());
+        result.scene.point_instancer_by_path[instancer.prim_path] = instancer_id;
+        if (!instancer.valid) {
+          warnings_.push_back("Invalid PointInstancer data at " +
+                              instancer.prim_path + ": " +
+                              instancer.validation_error);
+        }
+        ResolvePointInstancerPrototypeBindings(&result.scene, &instancer);
+        for (size_t proto_i = 0; proto_i < instancer.prototype_paths.size();
+             ++proto_i) {
+          if (proto_i >= instancer.prototype_node_ids.size() ||
+              instancer.prototype_node_ids[proto_i] < 0) {
+            warnings_.push_back("Unresolved PointInstancer prototype at " +
+                                instancer.prim_path + ": " +
+                                instancer.prototype_paths[proto_i]);
+          } else if (instancer.prototype_mesh_count(proto_i) == 0) {
+            warnings_.push_back("PointInstancer prototype has no meshes at " +
+                                instancer.prim_path + ": " +
+                                instancer.prototype_paths[proto_i]);
+          }
+        }
+        AppendPointInstanceDraws(instancer_id, &instancer, &result.scene);
+        result.scene.point_instancers.push_back(std::move(instancer));
+        AssignNodeDataId(&result.scene, rec.path, instancer_id);
+      } else {
+        warnings_.push_back("Failed to convert PointInstancer: " + rec.path);
+      }
+    }
+
     // Convert materials
     float mat_progress_start = 0.5f;
     float mat_progress_end = 0.7f;
@@ -492,6 +831,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       } else {
         warnings_.push_back("Failed to convert material: " + mat_prim.GetPath().str());
       }
+    }
+
+    AssignMaterialBindings(stage, &result.scene);
+    AssignPointInstanceDrawMaterials(&result.scene);
+    if (config_.point_instancer.duplicate_meshes) {
+      DuplicatePointInstanceMeshes(&result.scene);
     }
 
     // Convert lights
@@ -552,6 +897,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     // Determine node type
     const std::string& type = rec.type_name;
     if (type == "Mesh") node.type = NodeType::Mesh;
+    else if (type == "PointInstancer") node.type = NodeType::PointInstancer;
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
     else if (type == "Skeleton") node.type = NodeType::Skeleton;
@@ -595,6 +941,51 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     node.visible = parent_visible && LocalVisibility(prim);
 
     scene->nodes.push_back(std::move(node));
+  }
+}
+
+void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
+                                                  RenderScene* scene) {
+  if (!scene) return;
+  for (RenderMesh& mesh : scene->meshes) {
+    const std::string material_path =
+        FindInheritedMaterialBinding(stage, mesh.prim_path);
+    if (material_path.empty()) continue;
+    const auto it = scene->material_by_path.find(material_path);
+    if (it == scene->material_by_path.end()) continue;
+    mesh.material_id = it->second;
+  }
+}
+
+void RenderSceneConverter::AssignPointInstanceDrawMaterials(RenderScene* scene) {
+  if (!scene) return;
+  for (RenderPointInstanceDraw& draw : scene->point_instance_draws) {
+    if (draw.mesh_id < 0 ||
+        static_cast<size_t>(draw.mesh_id) >= scene->meshes.size()) {
+      draw.material_id = -1;
+      continue;
+    }
+    draw.material_id = scene->meshes[static_cast<size_t>(draw.mesh_id)].material_id;
+  }
+}
+
+void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
+  if (!scene) return;
+  const size_t draw_count = scene->point_instance_draws.size();
+  for (size_t draw_id = 0; draw_id < draw_count; ++draw_id) {
+    RenderPointInstanceDraw& draw = scene->point_instance_draws[draw_id];
+    if (draw.expanded_mesh_id >= 0) continue;
+    const RenderMesh* src = scene->get_mesh(draw.mesh_id);
+    if (!src) continue;
+
+    RenderMesh expanded;
+    if (!CloneMeshForPointInstance(*src, draw, &expanded)) {
+      continue;
+    }
+    const int32_t mesh_id = static_cast<int32_t>(scene->meshes.size());
+    scene->mesh_by_path[expanded.prim_path] = mesh_id;
+    scene->meshes.push_back(std::move(expanded));
+    draw.expanded_mesh_id = mesh_id;
   }
 }
 
@@ -744,6 +1135,48 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     mesh->colors.append(colors.view.data, colors.view.size);
   }
 
+  return true;
+}
+
+bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
+                                                 RenderPointInstancer* out) {
+  if (!out || !::tinyusdz::next::IsPointInstancer(prim)) {
+    last_error_ = "Invalid PointInstancer prim";
+    return false;
+  }
+
+  PointInstancerData data;
+  if (!ReadPointInstancerData(prim, config_.time_code, &data)) {
+    last_error_ = data.validation_error.empty()
+                      ? "Failed to read PointInstancer data"
+                      : data.validation_error;
+    return false;
+  }
+
+  out->name = prim.GetName();
+  out->prim_path = prim.GetPath().str();
+  out->prototype_paths.reserve(data.prototypes.size());
+  for (const ::tinyusdz::next::Path& path : data.prototypes) {
+    out->prototype_paths.push_back(path.str());
+  }
+  out->proto_indices = std::move(data.proto_indices);
+  out->positions = std::move(data.positions);
+  out->orientations = std::move(data.orientations);
+  out->scales = std::move(data.scales);
+  out->velocities = std::move(data.velocities);
+  out->angular_velocities = std::move(data.angular_velocities);
+  out->ids = std::move(data.ids);
+  out->invisible_ids = std::move(data.invisible_ids);
+  out->inactive_ids = std::move(data.inactive_ids);
+  out->transforms.reserve(data.transforms.size());
+  for (const ::tinyusdz::next::PointInstancerTransform& transform :
+       data.transforms) {
+    out->transforms.push_back(MatrixFromPointInstancerTransform(transform));
+  }
+  out->instance_visible = BuildInstanceVisibility(
+      out->instance_count(), out->ids, out->invisible_ids, out->inactive_ids);
+  out->valid = data.valid;
+  out->validation_error = std::move(data.validation_error);
   return true;
 }
 

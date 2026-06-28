@@ -6820,6 +6820,294 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_compressed_string_token_asset_array_test(void) {
+  std::string filename = get_temp_filename("test_compressed_string_token_asset_array");
+  std::string err;
+
+  Stage stage;
+
+  Xform prim_obj;
+  prim_obj.name = "TestPrim";
+  prim_obj.spec = Specifier::Def;
+
+  const std::vector<std::string> string_values = {
+      "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+      "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi", "rho",
+      "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega", "gamma",
+      "delta", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"};
+
+  const std::vector<value::token> token_values = {
+      value::token("tok_a"), value::token("tok_b"), value::token("tok_c"),
+      value::token("tok_d"), value::token("tok_e"), value::token("tok_f"),
+      value::token("tok_g"), value::token("tok_h"), value::token("tok_i"),
+      value::token("tok_j"), value::token("tok_k"), value::token("tok_l"),
+      value::token("tok_m"), value::token("tok_n"), value::token("tok_o"),
+      value::token("tok_p"), value::token("tok_q"), value::token("tok_r"),
+      value::token("tok_s"), value::token("tok_t"), value::token("tok_u"),
+      value::token("tok_v"), value::token("tok_w"), value::token("tok_x"),
+      value::token("tok_y"), value::token("tok_z"), value::token("tok_a"),
+      value::token("tok_b"), value::token("tok_c"), value::token("tok_d"),
+      value::token("tok_e"), value::token("tok_f"), value::token("tok_g")};
+
+  const std::vector<value::AssetPath> asset_values = {
+      value::AssetPath("textures/a.png"), value::AssetPath("textures/b.png"),
+      value::AssetPath("textures/c.png"), value::AssetPath("textures/d.png"),
+      value::AssetPath("textures/e.png"), value::AssetPath("textures/f.png"),
+      value::AssetPath("textures/g.png"), value::AssetPath("textures/h.png"),
+      value::AssetPath("textures/i.png"), value::AssetPath("textures/j.png"),
+      value::AssetPath("textures/k.png"), value::AssetPath("textures/l.png"),
+      value::AssetPath("textures/m.png"), value::AssetPath("textures/n.png"),
+      value::AssetPath("textures/o.png"), value::AssetPath("textures/p.png"),
+      value::AssetPath("textures/q.png"), value::AssetPath("textures/r.png"),
+      value::AssetPath("textures/s.png"), value::AssetPath("textures/t.png"),
+      value::AssetPath("textures/u.png"), value::AssetPath("textures/v.png"),
+      value::AssetPath("textures/w.png"), value::AssetPath("textures/x.png"),
+      value::AssetPath("textures/y.png"), value::AssetPath("textures/z.png"),
+      value::AssetPath("textures/a.png"), value::AssetPath("textures/b.png"),
+      value::AssetPath("textures/c.png"), value::AssetPath("textures/d.png"),
+      value::AssetPath("textures/e.png"), value::AssetPath("textures/f.png"),
+      value::AssetPath("textures/g.png")};
+
+  {
+    Attribute attr;
+    attr.set_type_name("string[]");
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(string_values));
+    attr.set_var(std::move(pvar));
+    prim_obj.props["stringArray"] = Property(attr, /* custom */ true);
+  }
+  {
+    Attribute attr;
+    attr.set_type_name("token[]");
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(token_values));
+    attr.set_var(std::move(pvar));
+    prim_obj.props["tokenArray"] = Property(attr, /* custom */ true);
+  }
+  {
+    Attribute attr;
+    attr.set_type_name("asset[]");
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(asset_values));
+    attr.set_var(std::move(pvar));
+    prim_obj.props["assetArray"] = Property(attr, /* custom */ true);
+  }
+
+  Prim prim("TestPrim", prim_obj);
+  prim.prim_type_name() = "Xform";
+  stage.root_prims().push_back(prim);
+
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    writer.Close();
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  writer.Close();
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  bool found_string_spec = false;
+  bool found_token_spec = false;
+  bool found_asset_spec = false;
+  bool compressed_string = false;
+  bool compressed_token = false;
+  bool compressed_asset = false;
+
+  auto compare_asset_paths = [](const std::vector<value::AssetPath>& lhs,
+                               const std::vector<value::AssetPath>& rhs) {
+    if (lhs.size() != rhs.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i].GetAssetPath() != rhs[i].GetAssetPath()) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  std::vector<uint8_t> data;
+  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    cleanup_file(filename);
+    return;
+  }
+
+  StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::crate::CrateReader reader(&sr, {});
+  TEST_CHECK(reader.ReadBootStrap());
+  TEST_CHECK(reader.ReadTOC());
+  TEST_CHECK(reader.ReadTokens());
+  TEST_CHECK(reader.ReadStrings());
+  TEST_CHECK(reader.ReadFields());
+  TEST_CHECK(reader.ReadFieldSets());
+  TEST_CHECK(reader.ReadPaths());
+  TEST_CHECK(reader.ReadSpecs());
+
+  if (!reader.GetError().empty()) {
+    TEST_MSG("CrateReader error: %s", reader.GetError().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  for (const auto& spec : reader.GetSpecs()) {
+    auto path = reader.GetPathString(spec.path_index);
+    if (!path) {
+      continue;
+    }
+
+    enum class ArrayKind { kString, kToken, kAsset, kUnknown };
+    ArrayKind kind = ArrayKind::kUnknown;
+    if (path->find("stringArray") != std::string::npos) {
+      kind = ArrayKind::kString;
+    } else if (path->find("tokenArray") != std::string::npos) {
+      kind = ArrayKind::kToken;
+    } else if (path->find("assetArray") != std::string::npos) {
+      kind = ArrayKind::kAsset;
+    } else {
+      continue;
+    }
+
+    tinyusdz::crate::FieldValuePairVector pairs;
+    TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
+    if (pairs.empty()) {
+      continue;
+    }
+
+    for (auto&& pair : pairs) {
+      if (pair.first != "default") {
+        continue;
+      }
+
+      if (kind == ArrayKind::kString) {
+        auto loaded = pair.second.get_value<std::vector<std::string>>();
+        TEST_CHECK(loaded.has_value());
+        if (loaded) {
+          TEST_CHECK(*loaded == string_values);
+          found_string_spec = true;
+        }
+      } else if (kind == ArrayKind::kToken) {
+        auto loaded = pair.second.get_value<std::vector<value::token>>();
+        TEST_CHECK(loaded.has_value());
+        if (loaded) {
+          TEST_CHECK(*loaded == token_values);
+          found_token_spec = true;
+        }
+      } else if (kind == ArrayKind::kAsset) {
+        auto loaded = pair.second.get_value<std::vector<value::AssetPath>>();
+        TEST_CHECK(loaded.has_value());
+        if (loaded) {
+          TEST_CHECK(compare_asset_paths(*loaded, asset_values));
+          found_asset_spec = true;
+        }
+      }
+    }
+
+    for (size_t idx = spec.fieldset_index.value;
+         idx < reader.GetFieldsetIndices().size() &&
+         reader.GetFieldsetIndices()[idx] != tinyusdz::crate::Index();
+         ++idx) {
+      const tinyusdz::crate::Index field_index = reader.GetFieldsetIndices()[idx];
+      if (field_index.value >= reader.GetFields().size()) {
+        continue;
+      }
+
+      const auto& field = reader.GetFields()[field_index.value];
+      auto token = reader.GetToken(field.token_index);
+      if (!token || token->str() != "default") {
+        continue;
+      }
+      TEST_CHECK(field.value_rep.IsArray());
+      TEST_CHECK(field.value_rep.IsCompressed());
+      if (kind == ArrayKind::kString &&
+          field.value_rep.IsArray() &&
+          field.value_rep.IsCompressed()) {
+        compressed_string = true;
+      }
+      if (kind == ArrayKind::kToken &&
+          field.value_rep.IsArray() &&
+          field.value_rep.IsCompressed()) {
+        compressed_token = true;
+      }
+      if (kind == ArrayKind::kAsset &&
+          field.value_rep.IsArray() &&
+          field.value_rep.IsCompressed()) {
+        compressed_asset = true;
+      }
+    }
+  }
+
+  TEST_CHECK(found_string_spec);
+  TEST_CHECK(found_token_spec);
+  TEST_CHECK(found_asset_spec);
+  TEST_CHECK(compressed_string);
+  TEST_CHECK(compressed_token);
+  TEST_CHECK(compressed_asset);
+
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("LoadUSDFromFile failed: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto prim_result = loaded_stage.GetPrimAtPath(Path("/TestPrim", ""));
+  TEST_CHECK(prim_result.has_value());
+  if (prim_result) {
+    const auto& loaded_prop_prim = prim_result.value();
+    const Xform* loaded_xform = loaded_prop_prim->data().as<Xform>();
+    TEST_CHECK(loaded_xform != nullptr);
+    if (loaded_xform) {
+      auto string_prop = loaded_xform->props.at("stringArray").get_attribute();
+      auto token_prop = loaded_xform->props.at("tokenArray").get_attribute();
+      auto asset_prop = loaded_xform->props.at("assetArray").get_attribute();
+      auto loaded_strings = string_prop.get_value<std::vector<std::string>>();
+      auto loaded_tokens = token_prop.get_value<std::vector<value::token>>();
+      auto loaded_assets = asset_prop.get_value<std::vector<value::AssetPath>>();
+      TEST_CHECK(loaded_strings.has_value());
+      TEST_CHECK(loaded_tokens.has_value());
+      TEST_CHECK(loaded_assets.has_value());
+      if (loaded_strings) {
+        TEST_CHECK(*loaded_strings == string_values);
+      }
+      if (loaded_tokens) {
+        TEST_CHECK(*loaded_tokens == token_values);
+      }
+      if (loaded_assets) {
+        TEST_CHECK(compare_asset_paths(*loaded_assets, asset_values));
+      }
+    }
+  }
+
+  cleanup_file(filename);
+}
+
 void crate_reader_parallel_inlined_fieldsets_test(void) {
   std::string filename = get_temp_filename("test_parallel_fieldsets");
   std::string err;

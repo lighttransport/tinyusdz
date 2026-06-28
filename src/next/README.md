@@ -64,18 +64,23 @@ API breakage and feature deletion are acceptable for this redesign. The goal is 
 ### Build Status
 
 ```bash
-# Build the library
-cd src/next/build
-cmake -DTINYUSDZ_NEXT_BUILD_TESTS=ON ..
-make -j8
+# Configure, build, and run the standalone next smoke tests.
+scripts/run-next-checks.sh
+scripts/run-next-checks.sh --help
 
-# Run tests
-./test_tinyusdz_next  # Basic type system tests
-./test_layer          # Layer/PrimSpec tests
-./test_stage          # Stage tests
-./test_usdc_reader    # USDC reading tests
-./test_writer         # USDA writer tests
-./test_usdc_writer    # USDC writer tests
+# Optional broader gates after the smoke tests.
+scripts/build-openusd-usdcat.sh --prepare-only  # clone/fetch v26.05 to ref/openusd
+scripts/build-openusd-usdcat.sh   # installs OpenUSD v26.05 usdcat to ref/dist/bin/usdcat
+scripts/build-openusd-usdcat.sh --full  # full OpenUSD release build to ref/dist
+OPENUSD_RETRY_NO_PYSIDE=0 scripts/build-openusd-usdcat.sh --full  # abort on first full-build failure
+OPENUSD_FETCH=0 scripts/build-openusd-usdcat.sh --prepare-only  # local-only refresh when v26.05 already checked out
+USDCAT_PATH=ref/dist/bin/usdcat scripts/run-next-checks.sh
+USD_WG_ASSETS_DIR=/path/to/usd-wg/assets RUN_CORPUS=1 scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+
+# Manual labeled test selection after configuring with TINYUSDZ_NEXT_BUILD_TESTS=ON.
+ctest --test-dir build-next --output-on-failure -L next -LE 'benchmark|corpus'
 ```
 
 ## Architecture
@@ -263,130 +268,59 @@ src/tydra/next/                  # Tydra render data conversion
 └── materialx.cc
 ```
 
-## TODO Tasks
+## Active Backlog
 
-### High Priority
+The original high-priority TODO list has mostly landed. Keep this section as the
+current cleanup/refactor queue rather than a historical checklist.
 
-- [x] **TimeSamples Support** ✅ COMPLETE
-  - ✅ Time sample parsing in USDA parser
-  - ✅ Time sample writing in USDA writer
-  - ✅ `GetValueAtTime()` / `GetTimeSampleTimes()` on UsdPrim
-  - ✅ `HasTimeSamples()` query API
-  - ✅ Value deduplication via hash-based lookup (60%+ memory savings)
-  - ✅ Time sample interpolation (linear/held modes)
-  - ✅ Time sample writing in USDC writer
+### Cleanup / Refactor
 
-- [x] **Attribute Evaluation** ✅ COMPLETE
-  - ✅ `AttributeEval` class for unified value resolution
-  - ✅ Time sample interpolation support
-  - ✅ Default value fallback
-  - ✅ Connection following for shader inputs
-  - ✅ Type-safe accessors (EvalFloat, EvalFloat3, EvalOr, etc.)
+- Split the largest implementation files into focused translation units:
+  `crate-reader`, `crate-writer`, `pcp/cache`, `value-parser`, and
+  `ascii-parser`.
+- Keep `doc/refator-next.md`, `doc/memory-and-performance.md`, and this README
+  synchronized with landed behavior and benchmark deltas.
+- Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for
+  the experimental next module.
 
-- [x] **Connection Support** ✅ COMPLETE
-  - ✅ Parse attribute connections (`.connect`)
-  - ✅ Store connections in PrimSpec (as string value with kFlagConnection)
-  - ✅ Write connections in USDA writer
+### Memory / Performance
 
-- [x] **Asset Resolution** ✅ COMPLETE
-  - ✅ `AssetResolver` class with search paths
-  - ✅ Package path parsing (USDZ support)
-  - ✅ Path normalization utilities
-  - ✅ File existence checking
+- Make benchmark output diff-friendly: struct sizes, layer/stage memory stats,
+  RSS, lazy/eager clone RSS, crate pass-through/reencode counts, and mmap-vs-heap
+  attribution.
+- Audit remaining large temporary buffers in the crate reader/writer and prefer
+  reusable scratch storage or direct streaming where behavior stays identical.
+- Preserve lazy crate arrays and copy-on-write materialized arrays through
+  composition, flatten, and write paths.
 
-- [x] **Composition Arcs** ✅ BASIC
-  - ✅ `Compositor` class with LIVRPS ordering
-  - ✅ Cycle detection
-  - ✅ Layer caching
-  - [x] Reference resolution with asset loading through `LayerRegistry`
-  - [x] USDZ package path resolution for referenced layers
-  - [ ] Payload lazy loading
-  - [ ] Variant selection with variant sets
+### Format Parity
 
-- [x] **Complete USDC Writer** ✅ INTERNAL ROUNDTRIP
-  - [x] Basic section structure (TOKENS, STRINGS, FIELDS, SPECS, PATHS)
-  - [x] Implement integer compression (USD's custom encoding)
-  - [x] Implement LZ4 compression for large arrays
-  - [x] Add proper fieldset encoding for full pxrUSD compatibility
-  - [x] Add internal USDC roundtrip tests
-  - [ ] Test roundtrip with pxrUSD tools
+- Keep next USDC writer compatibility checks covering memory/file byte parity
+  and write -> read -> USDA text semantics; add optional pxrUSD `usdcat`
+  comparison when available.
+- Keep explicit tests for unusual paths: compressed bool-array rejection,
+  bool-array roundtrip, arc metadata dictionaries beside references/payloads,
+  unknown crate layouts, and lazy TimeSamples.
+- Keep USDA backend parity tests covering string, file, `std::ostream`, and
+  `StreamWriter` output paths for both Stage and Layer writers.
 
-### Medium Priority
+### Remaining Features
 
-- [x] **Schema Support** ✅ COMPLETE
-  - [x] UsdGeomMesh (`schema/geom-mesh.hh`) - topology, points, UVs, normals
-  - [x] UsdGeomXform (`schema/geom-xform.hh`) - transform ops, local matrix
-  - [x] UsdGeomCamera (`schema/usd-geom-camera.hh`) - lens, FOV, projection
-  - [x] UsdLux (`schema/usd-lux.hh`) - all light types
-  - [x] UsdShade (`schema/usd-shade.hh`) - materials, shaders, PreviewSurface
-  - [ ] Add UsdSkelSkeleton convenience API
-  - [ ] Consider code generation for schema classes
-
-- [x] **Attribute Metadata** ✅ COMPLETE
-  - [x] Parse attribute qualifiers (custom, uniform, varying)
-  - [x] Store in PropSlot flags
-  - [x] Write qualifiers in USDA output
-  - [x] Parse interpolation metadata
-
-- [x] **#ifdef Integration** ✅ COMPLETE
-  - [x] Unified header (`tinyusdz-next.hh`)
-  - [x] Compatibility header (`compat.hh`)
-  - [x] `TINYUSDZ_USE_NEXT` cmake flag support
-
-- [x] **MaterialX Support** ✅ COMPLETE (in tydra/next)
-  - [x] `MtlxConverter` class
-  - [x] Standard Surface to PreviewSurface conversion
-  - [x] USD MaterialX material binding support
-  - [x] Texture data extraction
-  - [x] Texture colorspace/default metadata extraction
-
-- [x] **Tydra Render Extraction** ✅ BASIC
-  - [x] Shared render prim collection for meshes, cameras, lights, materials,
-        skeletons, and other renderable prims
-  - [x] Node hierarchy visibility propagation
-  - [x] Node `data_id` links to converted mesh/light/camera/skeleton arrays
-  - [x] Xform timeSamples extraction, including scalar rotateX/Y/Z channels
-
-- [ ] **Error Recovery**
-  - [ ] Add error recovery in USDA parser
-  - [ ] Continue parsing after errors
-  - [ ] Collect multiple errors before failing
-
-- [ ] **Debug Output**
-  - [ ] Add configurable debug/trace logging
-  - [x] Memory usage reporting (Layer::memory_usage(), Stage::GetMemoryUsage())
-  - [x] Statistics (Layer::stats(), Stage::GetStats())
-
-### Low Priority
-
-- [ ] **USDZ Support**
-  - [x] Add zip archive reading
-  - [x] Resolve package-relative referenced layers
-  - Add zip archive writing
-  - Handle embedded assets
-
-- [ ] **Performance Optimization**
-  - Profile and optimize hot paths
-  - Consider SIMD for array operations
-  - Optimize string interning
-
-- [ ] **API Polish**
-  - Add iterator support for prim traversal
-  - Add query API for finding prims by type
-  - Add modification API for editing Stage
-
-- [ ] **Documentation**
-  - Add API documentation comments
-  - Add usage examples
-  - Add migration guide from old API
-
-### Testing
-
-- [ ] Add fuzz testing for parsers
-- [ ] Add roundtrip tests (USDA → Stage → USDA)
-- [ ] Add roundtrip tests (USDC → Stage → USDC)
-- [ ] Add comparison tests with pxrUSD output
-- [ ] Add performance benchmarks
+- Keep PointInstancer direct-geometry duplication opt-in. Typed
+  `UsdGeomPointInstancer` accessors, `ReadPointInstancerData()`,
+  `RenderScene::point_instancers`, prototype mesh bindings, and lightweight
+  `point_instance_draws` are present, including direct/inherited mesh material
+  IDs, prototype-relative mesh transforms, and unresolved-prototype diagnostics
+  on draw refs. `RenderScene::get_point_instancer_draws()` provides O(1)
+  per-instancer draw ranges, `get_point_instance_draw_view()` provides
+  bounds-checked draw/instancer/mesh/material resolution, and validators check
+  draw ranges and prototype mesh bindings. `ConverterConfig::point_instancer
+  .duplicate_meshes` can materialize transformed mesh copies when a consumer
+  cannot use draw refs directly.
+- Add USDA dependency support to the low-memory flatten loader; the current
+  filesystem flatten loader is USDC-only.
+- Decide whether schema convenience APIs should keep growing manually or move to
+  generation once the shape stabilizes.
 
 ## Design Decisions
 

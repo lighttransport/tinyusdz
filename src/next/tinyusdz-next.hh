@@ -63,6 +63,7 @@
 
 // Schema APIs
 #include "schema/geom-mesh.hh"
+#include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/usd-lux.hh"
 #include "schema/usd-geom-camera.hh"

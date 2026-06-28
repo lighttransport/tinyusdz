@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "next/schema/geom-point-instancer.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value-view.hh"
 
@@ -63,9 +64,31 @@ struct RenderExtractResult {
   std::unordered_set<std::string> native_prototype_holders;
 };
 
+struct PointInstancerData {
+  ::tinyusdz::next::UsdPrim prim;
+  std::string path;
+  std::vector<::tinyusdz::next::Path> prototypes;
+  std::vector<int32_t> proto_indices;
+  std::vector<float> positions;
+  std::vector<float> orientations;
+  std::vector<float> scales;
+  std::vector<float> velocities;
+  std::vector<float> angular_velocities;
+  std::vector<int64_t> ids;
+  std::vector<int64_t> invisible_ids;
+  std::vector<int64_t> inactive_ids;
+  std::vector<::tinyusdz::next::PointInstancerTransform> transforms;
+  bool valid = false;
+  std::string validation_error;
+};
+
 bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
                         const RenderExtractOptions& options,
                         RenderExtractResult* out);
+
+bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
+                            double time_code,
+                            PointInstancerData* out);
 
 void GatherMeshPrims(const ::tinyusdz::next::UsdPrim& root,
                      std::vector<::tinyusdz::next::UsdPrim>* out);

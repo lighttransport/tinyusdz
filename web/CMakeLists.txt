@@ -133,6 +133,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-api.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc

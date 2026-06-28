@@ -61,11 +61,14 @@ bool ComputeDictionaryFrameSize(uint64_t count, const char* label,
     return false;
   }
 
-  uint64_t entries_size = 0;
-  uint64_t total_size = 0;
-  if (!safe::mul(count, uint64_t(20), &entries_size) ||
-      !safe::add(uint64_t(8), entries_size, &total_size) ||
-      total_size > uint64_t((std::numeric_limits<int64_t>::max)())) {
+  size_t entries_size = 0;
+  size_t total_size = 0;
+  if (!safe::mul(count, size_t(20), &entries_size) ||
+      !safe::add(size_t(8), entries_size, &total_size)
+#if SIZE_MAX > INT64_MAX
+      || total_size > size_t((std::numeric_limits<int64_t>::max)())
+#endif
+      ) {
     if (err) {
       *err = std::string(label ? label : "Dictionary") +
              " structure size overflow";
@@ -1304,12 +1307,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write string array count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& str : *string_array) {
-      crate::StringIndex idx = GetOrCreateString(str);
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write string array element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateString(str).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "string", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Asset array - reader expects StringIndex elements (uninlined/array path
@@ -1322,12 +1327,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write asset[] count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& ap : *asset_array) {
-      crate::StringIndex idx = GetOrCreateString(ap.GetAssetPath());
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write asset[] element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateString(ap.GetAssetPath()).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "assetPath", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Token array - special handling (tokens are stored as indices)
@@ -1337,12 +1344,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write token array count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& tok : *token_array) {
-      crate::TokenIndex idx = GetOrCreateToken(tok.str());
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write token array element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateToken(tok.str()).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "token", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Path array - special handling (paths are stored as indices)
