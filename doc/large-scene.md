@@ -202,7 +202,12 @@ The **default Tydra loader rejects Caldera** ("Unsafe asset path" on the
 (12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
 Points). The map is a flat ~8 km island, so **auto-framing the whole bounds is
 useless** — frame a scene camera instead (`layers/cameras.usd`:
-`phospate_mine_overview`, `capital_square`, `village`, …). The guide Points
+`phospate_mine_overview`, `map_capital_square`, `map_capital_overview`,
+`map_airfield_overview`, `tile_p_beach`, …). **Use the exact prim name** —
+most cameras are `map_`-prefixed (`map_capital_square`, not `capital_square`);
+a name that doesn't match **silently falls back to auto-fit** (the useless
+whole-island shot). List them with
+`build/tusdcat layers/cameras.usd | grep 'def Camera'`. The guide Points
 triangulate into huge planes that engulf the camera, so they must be hidden
 (both viewers hide `guide` by default).
 
