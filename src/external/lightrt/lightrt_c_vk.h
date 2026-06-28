@@ -64,6 +64,12 @@ uint32_t lrt_vk_engine_caps(const lrt_vk_engine *e);
 /* Selected physical-device name (e.g. "NVIDIA GeForce RTX 3070"). */
 const char *lrt_vk_engine_device_name(const lrt_vk_engine *e);
 
+/* Largest DEVICE_LOCAL memory heap (VRAM) in bytes, queried with a throwaway
+ * Vulkan instance (no engine needed). prefer_discrete!=0 favors a discrete GPU.
+ * Returns 0 if Vulkan or a suitable device is unavailable. Lets callers size GPU
+ * memory budgets before building anything. */
+uint64_t lrt_vk_device_local_bytes(int prefer_discrete);
+
 /* Human-readable message for the last failed call on this engine. */
 const char *lrt_vk_engine_last_error(const lrt_vk_engine *e);
 

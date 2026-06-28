@@ -111,6 +111,18 @@ void PrintUsage(const char *prog) {
       << "  -mask <PATH[,PATH...]> Restrict rendering to these prim subtrees.\n"
       << "  -variant <SET=SEL>     Override variant selection (e.g.\n"
       << "                         --variant districtLod=full). Repeatable.\n"
+      << "  -lodStream             View-dependent district LOD: a proxy pass picks\n"
+      << "                         the nearest districts to the camera and promotes\n"
+      << "                         them to districtLod=full under a memory budget\n"
+      << "                         (the rest stay proxy). Implies -rtPreview/next.\n"
+      << "  -maxVram <GiB>         GPU VRAM budget for -lodStream (0 = 0.5*device).\n"
+      << "  -lodDistrictMem <GiB>  Est. host RSS charged per promoted district\n"
+      << "                         (cost-model calibration; default 10).\n"
+      << "  -lodDistrictVram <GiB> Est. VRAM charged per promoted district (def 3).\n"
+      << "  -lodMinVerts <N>       Skip container children below N proxy verts\n"
+      << "                         (trigger/volume prims; default 1000).\n"
+      << "  -lodContainer <name>   Namespace prim whose children are LOD districts\n"
+      << "                         (default mp_wz_island_geo, the Caldera layout).\n"
       << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
 #ifdef TINYUSDZ_WITH_QJS
       << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
@@ -287,6 +299,51 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_mem_gib = g;
+    } else if (a == "-lodStream" || a == "--lodStream") {
+      opt->lod_stream = true;
+    } else if (a == "-maxVram" || a == "--maxVram") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -maxVram (expected GiB, e.g. -maxVram 8).\n";
+        return false;
+      }
+      opt->max_vram_gib = g;
+    } else if (a == "-lodDistrictMem" || a == "--lodDistrictMem") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -lodDistrictMem (expected GiB > 0).\n";
+        return false;
+      }
+      opt->lod_district_mem_gib = g;
+    } else if (a == "-lodDistrictVram" || a == "--lodDistrictVram") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -lodDistrictVram (expected GiB > 0).\n";
+        return false;
+      }
+      opt->lod_district_vram_gib = g;
+    } else if (a == "-lodMinVerts" || a == "--lodMinVerts") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -lodMinVerts (expected a count >= 0).\n";
+        return false;
+      }
+      opt->lod_min_verts = g;
+    } else if (a == "-lodContainer" || a == "--lodContainer") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "Invalid -lodContainer (expected a prim name).\n";
+        return false;
+      }
+      opt->lod_container = v;
     } else if (a == "-env" || a == "--env") {
       const char *v = need_value(a.c_str());
       if (!v) {
