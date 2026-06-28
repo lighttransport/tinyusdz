@@ -10,7 +10,6 @@
     const std::vector<Src> &srcs = SourcesForPath(path, warn, err);
     return ComputeInstanceKeyImpl(srcs);
   }
-
   // --- invalidation -------------------------------------------------------
 
   void DropIndex(const std::string &key) {
@@ -143,4 +142,3 @@
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
   }
-

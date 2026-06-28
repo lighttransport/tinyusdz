@@ -10,7 +10,6 @@
     // Pass 2 (weak->strong): compose child-name ORDER.
     return ComposeChildNames(srcs);
   }
-
   // ComposeInto's Pass 1 (opinion merge), factored out so the parallel compose
   // can fill PrimSpec opinion slots independently after a serial structure pass
   // has fixed every prim's index/parent/child-order. Writes only into `out`
@@ -221,4 +220,3 @@
     index_cache.emplace(key, std::move(index));
     return ret;
   }
-
