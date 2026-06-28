@@ -67,9 +67,9 @@ examples/tusdview/tests/run-vk-render.sh
 Vulkan 1.4), 2026-06-28.** Both rasterization and hardware ray query render the
 full scene correctly (raster vs ray-query agree to <1 LSB mean), at the default
 1469×1284 with no resolution-dependent hang. This is tusdview's **own** Vulkan
-backend (`examples/tusdview/vk/`); note the separate LightRT GPU trace used by
-`tusdrender -vk/-vkr` still mis-renders on this same GPU — see
-[`doc/tusdrender.md`](tusdrender.md).
+backend (`examples/tusdview/vk/`); the separate LightRT GPU trace used by
+`tusdrender -vk/-vkr` also renders correctly on this GPU after its geometry/setup
+fixes — see [`doc/tusdrender.md`](tusdrender.md).
 
 ### Windows (llvm-mingw)
 
