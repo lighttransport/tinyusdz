@@ -28,6 +28,12 @@ struct ArrayScratch {
   std::vector<T> storage;
 };
 
+/// True if `value` is a lazy array whose raw bytes can be aliased zero-copy from
+/// its source mapping (uncompressed, aligned, contiguous POD). When true, the
+/// Get*ArrayView borrow path returns a pointer into the source with no decode, so
+/// independent element ranges may be formatted concurrently from one shared view.
+bool CanBorrowLazyFlat(const Value& value);
+
 bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
                        ArrayView<float>* out);
 bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,
