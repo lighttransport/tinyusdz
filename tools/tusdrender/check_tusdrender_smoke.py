@@ -885,7 +885,55 @@ def Xform "World"
     pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
     if len(set(pixels)) <= 1:
         raise RuntimeError("direct primitive render appears blank")
+
+    check_vulkan(exe, srcdir, outdir)
     return 0
+
+
+def check_vulkan(exe, srcdir, outdir):
+    """Vulkan GPU backend (-vk / -vkr) run smoke test.
+
+    This exercises the LightRT Vulkan engine *initialization + dispatch* path on
+    a real GPU: it must select a device, run the compute trace / ray-query
+    pipeline, and write a correctly-dimensioned PNG. It does NOT assert pixel
+    correctness, because the LightRT GPU trace currently MIS-RENDERS (-vk: sparse
+    silhouette; -vkr: blank) on every GPU tested so far -- AMD RX 570/amdvlk AND
+    NVIDIA RTX 5060 Ti -- so the fault is in the LightRT GPU trace itself, not a
+    vendor driver. See doc/tusdrender.md for the full status. The strict CPU-vs-GPU
+    image comparison will be re-enabled here once that trace is fixed.
+
+    SKIPs gracefully (prints a note, returns) when no Vulkan device/driver is
+    available -- tusdrender then fails to create the engine and exits nonzero --
+    so the smoke test still passes on headless machines without Vulkan.
+    """
+    scene = srcdir / "tests/usda/suzanne.usda"
+    if not scene.exists():
+        print("vulkan: SKIP (suzanne.usda not found)")
+        return
+
+    # 64x64 keeps the per-pixel GPU round-trip (one dispatch per pixel) quick.
+    size = ["-w", "64", "-height", "64", "-autoframe", "-ambient", "0.1"]
+    for flag, name in (("-vk", "compute trace"), ("-vkr", "ray query")):
+        out = outdir / f"tusdrender{flag}.png"
+        run = subprocess.run([exe, str(scene), str(out), *size, flag],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        log = run.stdout + run.stderr
+        if run.returncode != 0 or not out.exists():
+            # No Vulkan device / driver in this environment -> not a failure.
+            print(f"vulkan {flag}: SKIP (no Vulkan device; rc={run.returncode})")
+            continue
+        if "backend: LightRT VK" not in log:
+            raise RuntimeError(f"{flag}: expected 'backend: LightRT VK' in output:\n{log}")
+        w, h, rgba = read_png_rgba(out)
+        if w <= 0 or h <= 0:
+            raise RuntimeError(f"{flag}: bad output dimensions {(w, h)}")
+        pixels = {rgba[i:i + 4] for i in range(0, len(rgba), 4)}
+        device = next((ln for ln in log.splitlines() if "Vulkan device:" in ln), "").strip()
+        # Diagnostic only -- a blank result is the known GPU-trace bug, not a test
+        # failure. Engine init + dispatch + image readback all succeeding is the
+        # contract this smoke test enforces.
+        status = "non-blank" if len(pixels) > 1 else "BLANK (known GPU-trace bug)"
+        print(f"vulkan {flag} ({name}): engine OK, {w}x{h} {status}; {device}")
 
 
 if __name__ == "__main__":

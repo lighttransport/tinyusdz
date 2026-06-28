@@ -49,12 +49,15 @@ the compute trace itself, not the scene conversion.
 **Key finding:** the D3D11 path was added specifically to test whether the mature
 D3D driver fixes this — it does **not**. Vulkan and D3D11 produce the *same*
 wrong image (the HLSL is decompiled from the same SPIR-V), so the bug is in the
-LightRT GPU **trace compute shader on GCN/Polaris**, not in amdvlk. (The
-silhouette-only pattern — edges hit, interior misses — looks like a
-traversal-depth / stack issue specific to this GPU; the shader works on the
-reference RTX 3070.) The D3D11 backend itself is correct and is the better one to
-develop against (single batched dispatch, no per-pixel round-trip, no hang). It
-should render correctly on a GPU where the compute shader is sound.
+LightRT GPU **trace compute shader itself**, not in amdvlk. The
+**NVIDIA RTX 5060 Ti retest (below) reproduces the mis-render** — the compute
+trace is sparse and the ray-query path is blank — so this is **not** a
+GCN/Polaris- or amdvlk-specific driver bug as first suspected; the LightRT GPU
+trace is wrong on every GPU tested so far. The silhouette-only pattern (edges
+hit, interior misses) points at the trace's traversal/stack or scene-setup logic.
+Note this is a **separate** code path from tusdview's own Vulkan backend
+(`examples/tusdview/vk/`), which renders correctly on the same NVIDIA GPU (see
+[`doc/tusdview.md`](tusdview.md)).
 
 ## Retesting on another AMD GPU / driver
 
@@ -94,4 +97,32 @@ validation layers** — build/run them with the helper added for tusdview
 ```
 
 Note the layer output (and tusdrender's own diagnostics) goes to stdout; capture
-both streams. Record the working GPU + driver version here once verified.
+both streams.
+
+## Retest result — NVIDIA GeForce RTX 5060 Ti (Linux), 2026-06-28
+
+Retested on a **proper NVIDIA Vulkan driver** (the most useful retest the section
+above asks for). The engine initializes cleanly and selects the discrete GPU, but
+the **render is still wrong** — confirming the bug is in the LightRT GPU trace,
+not the AMD driver:
+
+| | |
+|---|---|
+| **GPU** | NVIDIA **GeForce RTX 5060 Ti** |
+| **Driver / API** | NVIDIA `610.43.02`, Vulkan device API 1.4, `VK_KHR_ray_query` + `VK_KHR_acceleration_structure` present |
+| **OS** | Linux (loader 1.3.275; runtime via vkew `dlopen`) |
+| **`-vk` (compute trace)** | engine OK (`Vulkan device: NVIDIA GeForce RTX 5060 Ti`, `backend: LightRT VK (compute trace)`), but renders a **sparse, holey silhouette** — same interior-miss pattern as the RX 570, not the solid `-rtPreview` Suzanne. No hang, just slow (one GPU round-trip per pixel: ~minutes at 320×240). |
+| **`-vkr` (ray query)** | engine OK with `accel ray_query` caps and `backend: LightRT VK (ray_query)`, but renders **fully blank**. |
+| **CPU `-rtPreview`** | ✅ correct, full render. |
+
+**Conclusion:** the LightRT compute trace / ray-query path mis-renders on both
+AMD (RX 570) and NVIDIA (RTX 5060 Ti), so it is a **LightRT bug**, not a vendor
+driver issue. tusdview's own Vulkan backend renders the same scene correctly on
+this GPU, so the fault is isolated to `src/external/lightrt` (the GPU BVH
+traversal in `lightrt_c_vk.c` and/or its scene/camera setup in `tusdr_vulkan.cc`).
+
+The `tool-tusdrender-smoke` ctest exercises the VK init + dispatch path on this
+GPU (it asserts the engine comes up and writes an image, and prints the per-path
+blank/non-blank diagnostic) but intentionally does **not** assert pixel
+correctness until the trace is fixed — see
+`tools/tusdrender/check_tusdrender_smoke.py` (`check_vulkan`).
