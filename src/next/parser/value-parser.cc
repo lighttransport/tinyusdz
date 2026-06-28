@@ -4,11 +4,11 @@
 // TinyUSDZ Next - Value Parser implementation
 
 #include "value-parser.hh"
+#include "value-parser-numeric.hh"
 #include "../strfmt.hh"
 #include "lexer.hh"
 #include "../crate/crate-format.hh"
 #include "../types/type-info.hh"
-#include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -16,7 +16,6 @@
 #include <cctype>
 #include <cerrno>
 #include <limits>
-#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -33,28 +32,10 @@ namespace {
 // Value parsing functions
 // ============================================================
 
-// Freestanding float/double parse via the vendored fast_float (no libc
-// strtof/strtod). Bit-identical to strtod for everything the lexer emits,
-// including inf / -inf / infinity / nan (verified). fast_float is the only thing
-// that rejects a leading '+', so retry once past it. *out is left untouched on
-// failure (callers default it to 0, matching strtod's no-digit result).
-template <class T>
-static inline bool FfParse(const char* b, const char* e, T* out) {
-  auto r = fast_float::from_chars(b, e, *out);
-  if (r.ec == std::errc{} && r.ptr == e) return true;
-  if (b < e && *b == '+') {
-    r = fast_float::from_chars(b + 1, e, *out);
-    if (r.ec == std::errc{} && r.ptr == e) return true;
-  }
-  return false;
-}
-// Convenience for callers holding a clean number token.
-template <class T>
-static inline T FfParseTok(const std::string& s) {
-  T v = T(0);
-  FfParse(s.data(), s.data() + s.size(), &v);
-  return v;
-}
+using value_parser_detail::DecimalToI64;
+using value_parser_detail::DecimalToU64;
+using value_parser_detail::FastFloatParse;
+using value_parser_detail::FastFloatParseToken;
 
 ParseResult ParseBool(Lexer& lexer) {
   const Token& tok = lexer.peek();
@@ -66,7 +47,7 @@ ParseResult ParseBool(Lexer& lexer) {
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
     lexer.next();
-    return ParseResult::Ok(Value(FfParseTok<double>(tok.value) != 0.0));
+    return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value) != 0.0));
   }
   return ParseResult::Error("Expected boolean value");
 }
@@ -76,41 +57,13 @@ ParseResult ParseBool(Lexer& lexer) {
 // digits, ignore trailing chars, saturate on overflow (matching strtol's
 // ERANGE clamp after the int32/int64 cast). Callers pass clean lexer Number
 // tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
-static inline int64_t DecToI64(const char* s) {
-  if (!s) return 0;
-  bool neg = false;
-  if (*s == '+' || *s == '-') { neg = (*s == '-'); ++s; }
-  const uint64_t lim =
-      neg ? (static_cast<uint64_t>(INT64_MAX) + 1u) : static_cast<uint64_t>(INT64_MAX);
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (lim - d) / 10u) { v = lim; break; }  // saturate
-    v = v * 10u + d;
-    ++s;
-  }
-  return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
-}
-static inline uint64_t DecToU64(const char* s) {
-  if (!s) return 0;
-  if (*s == '+') ++s;
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (UINT64_MAX - d) / 10u) { v = UINT64_MAX; break; }  // saturate
-    v = v * 10u + d;
-    ++s;
-  }
-  return v;
-}
-
 ParseResult ParseInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = static_cast<int32_t>(DecToI64(tok.value.c_str()));
+  int32_t value = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -120,7 +73,7 @@ ParseResult ParseUInt(Lexer& lexer) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
+  uint32_t value = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
   return ParseResult::Ok(Value(value));
 }
 
@@ -130,7 +83,7 @@ ParseResult ParseInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
-  int64_t value = DecToI64(tok.value.c_str());
+  int64_t value = DecimalToI64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
@@ -140,7 +93,7 @@ ParseResult ParseUInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
-  uint64_t value = DecToU64(tok.value.c_str());
+  uint64_t value = DecimalToU64(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
@@ -167,7 +120,7 @@ ParseResult ParseFloat(Lexer& lexer) {
     return ParseResult::Error("Expected float value");
   }
   lexer.next();
-  return ParseResult::Ok(Value(FfParseTok<float>(tok.value)));
+  return ParseResult::Ok(Value(FastFloatParseToken<float>(tok.value)));
 }
 
 ParseResult ParseDouble(Lexer& lexer) {
@@ -176,7 +129,7 @@ ParseResult ParseDouble(Lexer& lexer) {
     return ParseResult::Error("Expected double value");
   }
   lexer.next();
-  return ParseResult::Ok(Value(FfParseTok<double>(tok.value)));
+  return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
 }
 
 ParseResult ParseString(Lexer& lexer) {
@@ -216,7 +169,7 @@ bool ParseFloatTuple(Lexer& lexer, float* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = FfParseTok<float>(tok.value);
+    out[i] = FastFloatParseToken<float>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -238,7 +191,7 @@ bool ParseDoubleTuple(Lexer& lexer, double* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = FfParseTok<double>(tok.value);
+    out[i] = FastFloatParseToken<double>(tok.value);
     lexer.next();
 
     if (i < count - 1) {
@@ -260,7 +213,7 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = static_cast<int32_t>(DecToI64(tok.value.c_str()));
+    out[i] = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
     lexer.next();
 
     if (i < count - 1) {
@@ -285,7 +238,7 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       lexer.set_error("Expected non-negative unsigned integer in tuple");
       return false;
     }
-    out[i] = static_cast<uint32_t>(DecToU64(tok.value.c_str()));
+    out[i] = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
     lexer.next();
 
     if (i < count - 1) {
@@ -327,7 +280,7 @@ ParseResult ParseHalf(Lexer& lexer) {
     return ParseResult::Error("Expected half value");
   }
   lexer.next();
-  uint16_t bits = FloatToHalf(FfParseTok<float>(tok.value));
+  uint16_t bits = FloatToHalf(FastFloatParseToken<float>(tok.value));
   return ParseResult::Ok(Value::MakeFromRaw(TypeId::Half, &bits));
 }
 
@@ -765,7 +718,7 @@ struct SliceParser {
     auto r = fast_float::from_chars(p, end, *out);
     if (r.ec == std::errc{} && r.ptr != p) { p = r.ptr; return true; }
     // Accept a leading '+' (fast_float's `general` format rejects it), to match
-    // the scalar FfParse path. The writer never emits one, so this only widens
+    // the scalar FastFloatParse path. The writer never emits one, so this only widens
     // accepted hand-authored input -- byte-identical on all oracles.
     if (p < end && *p == '+') {
       r = fast_float::from_chars(p + 1, end, *out);

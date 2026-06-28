@@ -122,6 +122,7 @@ set(TINYUSDZ_NEXT_HEADERS
     # ASCII parser
     parser/lexer.hh
     parser/value-parser.hh
+    parser/value-parser-numeric.hh
     parser/ascii-parser.hh
 
     # Crate (binary) reader/writer
