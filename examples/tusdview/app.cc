@@ -315,12 +315,56 @@ void App::applyLoaded(bool ok, bool progressive) {
     const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
     const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
     camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
-    camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
-    // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
-    // peripheral geometry leaves the frustum -- exercises culling headlessly).
-    if (camDolly_ > 0.0f && camDolly_ != 1.0f) {
-      camera_.setOrbit(camera_.target(), camera_.yaw(), camera_.pitch(),
-                       camera_.distance() * camDolly_);
+    const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
+    camera_.setUpAxis(upAxis);
+    NextCameraPose campose;
+    if (!cameraName_.empty() && useNextLoader_ && nextStage_ &&
+        FindNextCamera(*nextStage_, cameraName_, animTime_, &campose)) {
+      // Drive the orbit rig from a scene camera. The auto-fit framing is useless
+      // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
+      // USD camera gives a meaningful district view across raster / --rt / --cuda.
+      const float* E = campose.eye;
+      const float* F = campose.forward;
+      const float cx = 0.5f * (draw_.aabbMin[0] + draw_.aabbMax[0]);
+      const float cy = 0.5f * (draw_.aabbMin[1] + draw_.aabbMax[1]);
+      const float cz = 0.5f * (draw_.aabbMin[2] + draw_.aabbMax[2]);
+      float d = std::sqrt((cx - E[0]) * (cx - E[0]) + (cy - E[1]) * (cy - E[1]) +
+                          (cz - E[2]) * (cz - E[2]));
+      if (!(d > 1e-3f)) d = std::max(1.0f, camera_.distance());
+      // eye = target + dirToEye*distance with dirToEye = -forward; invert the
+      // OrbitCamera DirFromAngles convention (camera_nav.cc) to recover yaw/pitch.
+      const float dir[3] = {-F[0], -F[1], -F[2]};
+      float yaw, pitch;
+      if (upAxis == 2) {  // +Z up: dirToEye = (sy*cp, cy*cp, sp)
+        pitch = std::asin(std::max(-1.0f, std::min(1.0f, dir[2])));
+        yaw = std::atan2(dir[0], dir[1]);
+      } else {  // +Y up: dirToEye = (sy*cp, sp, cy*cp)
+        pitch = std::asin(std::max(-1.0f, std::min(1.0f, dir[1])));
+        yaw = std::atan2(dir[0], dir[2]);
+      }
+      const light3d::Vec3 target{E[0] + F[0] * d, E[1] + F[1] * d,
+                                 E[2] + F[2] * d};
+      camera_.setFovYDeg(campose.fovYDeg);
+      // Use the camera's authored clip range, not the auto-clip derived from the
+      // (huge) whole-scene radius -- on Caldera the far-flung guide bounds push
+      // the auto near plane out past the nearby district, clipping it away.
+      camera_.setAutoClip(false);
+      camera_.setClipPlanes(campose.zNear, campose.zFar);
+      camera_.setOrbit(target, yaw, pitch, d);
+      LOGI("camera: framing USD camera '%s' (fovY %.1f deg, clip %.2f..%.0f)",
+           cameraName_.c_str(), campose.fovYDeg, campose.zNear, campose.zFar);
+    } else {
+      if (!cameraName_.empty()) {
+        LOGW("camera '%s' not found (need --next + a Camera prim); auto-fitting",
+             cameraName_.c_str());
+      }
+      camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+      // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
+      // peripheral geometry leaves the frustum -- exercises culling headlessly).
+      if (camDolly_ > 0.0f && camDolly_ != 1.0f) {
+        camera_.setOrbit(camera_.target(), camera_.yaw(), camera_.pitch(),
+                         camera_.distance() * camDolly_);
+      }
     }
   }
   gui_.setScene(&loaded_, &draw_);

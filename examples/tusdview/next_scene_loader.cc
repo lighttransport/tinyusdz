@@ -837,7 +837,77 @@ void EmitInstancedProto(const tnext::Stage& stage,
   }
 }
 
+// Read a scalar float camera attribute, or `fallback` when absent/non-float.
+float ReadCamFloatN(const tnext::UsdPrim& prim, const char* name, float fallback) {
+  if (const tnext::Value* v = prim.GetPropertyValue(name)) {
+    if (const float* f = v->as_float()) return *f;
+  }
+  return fallback;
+}
+
+bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
+                       const std::string& name, double time,
+                       NextCameraPose* out) {
+  if (prim.GetTypeName() == "Camera") {
+    const std::string path = prim.GetPath().str();
+    const std::string pname = prim.GetName();
+    // Match by exact name, exact path, or a "/<name>" path suffix.
+    const bool match =
+        name.empty() || pname == name || path == name ||
+        (path.size() > name.size() &&
+         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
+         path[path.size() - name.size() - 1] == '/');
+    if (match) {
+      double mw[16];
+      if (tydn::ComputeWorldTransform(stage, prim, mw, time)) {
+        const matrix4d m = Mat4dFromArray(mw);
+        // Row-major (p*M): translation in row 3, local axes in rows 0..2. USD
+        // cameras look down local -Z with local +Y up (see Mat4dToO2W above).
+        float up[3] = {float(m.m[1][0]), float(m.m[1][1]), float(m.m[1][2])};
+        float fwd[3] = {-float(m.m[2][0]), -float(m.m[2][1]), -float(m.m[2][2])};
+        auto norm3 = [](float v[3]) {
+          float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+          if (l > 1e-12f) { v[0] /= l; v[1] /= l; v[2] /= l; }
+        };
+        norm3(up);
+        norm3(fwd);
+        out->eye[0] = float(m.m[3][0]);
+        out->eye[1] = float(m.m[3][1]);
+        out->eye[2] = float(m.m[3][2]);
+        for (int k = 0; k < 3; ++k) {
+          out->up[k] = up[k];
+          out->forward[k] = fwd[k];
+        }
+        const float focal = ReadCamFloatN(prim, "focalLength", 50.0f);
+        const float vap = ReadCamFloatN(prim, "verticalAperture", 15.2908f);
+        out->fovYDeg = 2.0f *
+                       std::atan(0.5f * vap / std::max(1.0e-6f, focal)) *
+                       (180.0f / 3.14159265358979323846f);
+        if (const tnext::Value* v = prim.GetPropertyValue("clippingRange")) {
+          if (const float* f = v->as_float2()) {
+            out->zNear = std::max(1.0e-4f, f[0]);
+            out->zFar = std::max(out->zNear + 1.0e-3f, f[1]);
+          }
+        }
+      }
+      return true;
+    }
+  }
+  for (const tnext::UsdPrim& child : prim.GetChildren()) {
+    if (FindNextCameraRec(stage, child, name, time, out)) return true;
+  }
+  return false;
+}
+
 }  // namespace
+
+bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
+                    double time, NextCameraPose* out) {
+  for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
+    if (FindNextCameraRec(stage, root, name, time, out)) return true;
+  }
+  return false;
+}
 
 void BuildNextMorphWeights(
     const tnext::Stage& stage, const DrawScene& draw, double time,
