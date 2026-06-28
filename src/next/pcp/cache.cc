@@ -6,8 +6,9 @@
 
 #include "cache.hh"
 
+#include "cache-utils.hh"
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
-#include "../strfmt.hh"                    // AppendUInt / IntToStr / UIntToStr
+#include "../strfmt.hh"                    // IntToStr / UIntToStr
 #include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
 
 #include <algorithm>
@@ -30,18 +31,6 @@
 namespace tinyusdz {
 namespace next {
 namespace pcp {
-
-// One-decimal fixed formatting (locale-free, no printf/iostream) for the
-// diagnostic timing readouts emitted through the logger.
-static std::string FmtMs(double ms) {
-  std::string s;
-  if (ms < 0) { s += '-'; ms = -ms; }
-  uint64_t tenths = static_cast<uint64_t>(ms * 10.0 + 0.5);  // rounded
-  AppendUInt(s, tenths / 10);
-  s += '.';
-  AppendUInt(s, tenths % 10);
-  return s;
-}
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 // Serializes the Cache's shared mutable state so it is safe to use
@@ -120,13 +109,6 @@ struct SiteHash {
            (std::hash<std::string>()(s.prim_path) << 1);
   }
 };
-
-// True if `child` == `base` or a namespace descendant of `base`.
-bool IsAtOrUnder(const std::string &child, const std::string &base) {
-  if (child == base) return true;
-  return child.size() > base.size() &&
-         child.compare(0, base.size(), base) == 0 && child[base.size()] == '/';
-}
 
 // One level of arc expansion, linked up the C++ call stack (OpenUSD
 // PcpPrimIndex_StackFrame analogue). Replaces the per-arc copied
@@ -705,7 +687,7 @@ struct Cache::Impl {
     // chain cannot see this (each child prim starts a fresh expansion), so
     // reject it here.
     if (arc_stack_idx == src.stack_idx && arc_site != src.site &&
-        IsAtOrUnder(src.site, arc_site)) {
+        IsPathAtOrUnder(src.site, arc_site)) {
       AddIssue(ErrorCode::ArcCycle, src.site,
                "Composition cycle detected: arc at " + src.site +
                    " targets ancestor " + arc_site,
@@ -1548,9 +1530,9 @@ struct Cache::Impl {
     }
     std::vector<std::pair<uint32_t, std::string>>().swap(fill_);
     if (options.enable_timing) {
-      TUSDZ_LOG_I("[next_build] sources=" + FmtMs(prof_sources_ns_ / 1e6) +
-                  "ms compose=" + FmtMs(prof_compose_ns_ / 1e6) +
-                  "ms register=" + FmtMs(prof_reg_ns_ / 1e6) + "ms");
+      TUSDZ_LOG_I("[next_build] sources=" + FormatMilliseconds(prof_sources_ns_ / 1e6) +
+                  "ms compose=" + FormatMilliseconds(prof_compose_ns_ / 1e6) +
+                  "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) + "ms");
     }
 
     switch (options.instance_flatten_mode) {
@@ -2030,9 +2012,9 @@ struct Cache::Impl {
       auto t_merge = PWClock::now();
       TUSDZ_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
                   " W=" + IntToStr(W) +
-                  " discover=" + FmtMs(ms(t_start, t_discover)) +
-                  "ms workers=" + FmtMs(ms(t_discover, t_workers)) +
-                  "ms merge=" + FmtMs(ms(t_workers, t_merge)) +
+                  " discover=" + FormatMilliseconds(ms(t_start, t_discover)) +
+                  "ms workers=" + FormatMilliseconds(ms(t_discover, t_workers)) +
+                  "ms merge=" + FormatMilliseconds(ms(t_workers, t_merge)) +
                   "ms cache=" + UIntToStr(sources_cache.size()));
     }
   }
@@ -2220,11 +2202,11 @@ struct Cache::Impl {
     // index_cache is a std::map (sorted). Use lower_bound to scan only entries
     // at/under base instead of the entire map (Fix #12).
     for (auto it = index_cache.lower_bound(base);
-         it != index_cache.end() && IsAtOrUnder(it->first, base); ++it) {
+         it != index_cache.end() && IsPathAtOrUnder(it->first, base); ++it) {
       to_drop.insert(it->first);
     }
     for (const auto &kv : site_to_indices) {
-      if (IsAtOrUnder(kv.first.prim_path, base)) {
+      if (IsPathAtOrUnder(kv.first.prim_path, base)) {
         for (const std::string &dep : kv.second) to_drop.insert(dep);
       }
     }
@@ -2232,21 +2214,21 @@ struct Cache::Impl {
 
     // sources_cache + deferred state may have descendants not in index_cache.
     for (auto it = sources_cache.begin(); it != sources_cache.end();) {
-      if (IsAtOrUnder(it->first, base)) it = sources_cache.erase(it);
+      if (IsPathAtOrUnder(it->first, base)) it = sources_cache.erase(it);
       else ++it;
     }
     for (auto it = deferred_payload_prims.begin();
          it != deferred_payload_prims.end();) {
-      if (IsAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
+      if (IsPathAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
       else ++it;
     }
     // Phase 10: drop lazily-composed specs at/under the path.
     for (auto it = composed_cache_.begin(); it != composed_cache_.end();) {
-      if (IsAtOrUnder(it->first, base)) it = composed_cache_.erase(it);
+      if (IsPathAtOrUnder(it->first, base)) it = composed_cache_.erase(it);
       else ++it;
     }
     for (auto it = composed_children_.begin(); it != composed_children_.end();) {
-      if (IsAtOrUnder(it->first, base)) it = composed_children_.erase(it);
+      if (IsPathAtOrUnder(it->first, base)) it = composed_children_.erase(it);
       else ++it;
     }
     // Diagnostics are a per-edit-cycle log: an invalidation begins a fresh
@@ -2512,8 +2494,8 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   bool ok = cache.BuildStage(out_stage, warn, err);
   const auto t2 = Clock::now();
   if (timing) {
-    TUSDZ_LOG_I("[next_compose] open=" + FmtMs(ms(t1 - t0)) +
-                "ms build_stage=" + FmtMs(ms(t2 - t1)) + "ms");
+    TUSDZ_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
+                "ms build_stage=" + FormatMilliseconds(ms(t2 - t1)) + "ms");
   }
   return ok;
 }

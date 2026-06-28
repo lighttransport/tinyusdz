@@ -25,6 +25,11 @@
 
 using namespace tinyusdz::next;
 
+static const Value* DictFind(const Value& dv, const char* key) {
+  if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
+  return dv.as_dictionary()->find(key);
+}
+
 // ============================================================
 // Minimal binary USDC section parser (inline, no reader dependency)
 // ============================================================
@@ -852,6 +857,66 @@ void test_roundtrip_arc_listops() {
   std::cout << "  arc list-op crate roundtrip passed!\n\n";
 }
 
+void test_roundtrip_arc_metadata_dicts() {
+  std::cout << "Testing arc metadata dictionary crate roundtrip...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("AssetRef", "Xform");
+  b.current()->meta().references.push_back("@asset.usda@</Model>");
+  b.current()->meta().payloads.push_back("@payload.usda@</Payload>");
+  {
+    Dict cd;
+    cd.set("source", Value("reference-fixture"));
+    cd.set("enabled", Value(true));
+    cd.set("revision", Value(int32_t(7)));
+    b.current()->meta().customData() = Value::MakeDictionary(std::move(cd));
+  }
+  {
+    Dict ai;
+    ai.set("identifier", Value::MakeAssetPath("asset.usda"));
+    ai.set("kind", Value::MakeToken("component"));
+    b.current()->meta().assetInfo() = Value::MakeDictionary(std::move(ai));
+  }
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of arc metadata dictionaries failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/AssetRef");
+  assert(p);
+
+  assert(p->meta().references.size() == 1);
+  assert(p->meta().references[0] == "@asset.usda@</Model>");
+  assert(p->meta().payloads.size() == 1);
+  assert(p->meta().payloads[0] == "@payload.usda@</Payload>");
+
+  const Value& cd = p->meta().customData();
+  assert(cd.is_dictionary());
+  const Value* source = DictFind(cd, "source");
+  assert(source && source->as_string() && *source->as_string() == "reference-fixture");
+  const Value* enabled = DictFind(cd, "enabled");
+  assert(enabled && enabled->as_bool() && *enabled->as_bool());
+  const Value* revision = DictFind(cd, "revision");
+  assert(revision && revision->as_int() && *revision->as_int() == 7);
+
+  const Value& ai = p->meta().assetInfo();
+  assert(ai.is_dictionary());
+  const Value* identifier = DictFind(ai, "identifier");
+  assert(identifier && identifier->as_asset_path() &&
+         *identifier->as_asset_path() == "asset.usda");
+  const Value* kind = DictFind(ai, "kind");
+  assert(kind && kind->as_token() && *kind->as_token() == "component");
+
+  std::cout << "  arc metadata dictionary crate roundtrip passed!\n\n";
+}
+
 void test_roundtrip_custom_qualifier() {
   std::cout << "Testing custom-qualifier crate roundtrip...\n";
   Layer layer;
@@ -918,6 +983,7 @@ int main() {
   try {
     test_half_conversion();
     test_roundtrip_arc_listops();
+    test_roundtrip_arc_metadata_dicts();
     test_roundtrip_custom_qualifier();
     test_roundtrip_api_schemas();
     test_roundtrip_schema_types();

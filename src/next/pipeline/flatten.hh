@@ -3,11 +3,11 @@
 //
 // TinyUSDZ Next - Low-memory flatten pipeline
 //
-// One-call "load USDC (lazy) -> compose/flatten (structural) -> write USDC
-// (verbatim byte pass-through)" facade. Designed for both native use and the
-// WASM binding: numeric array payloads are never decoded unless edited, so a
-// flatten of a 200 MB scene stays close to the input size in heap instead of
-// the 5-10x blow-up of the eager path.
+// One-call "load USD (lazy when crate-backed) -> compose/flatten (structural)
+// -> write USDC (verbatim byte pass-through)" facade. Designed for both native
+// use and the WASM binding: numeric array payloads are never decoded unless
+// edited, so a flatten of a 200 MB scene stays close to the input size in heap
+// instead of the 5-10x blow-up of the eager path.
 
 #pragma once
 
@@ -63,10 +63,26 @@ struct FlattenOptions {
 };
 
 /// Filesystem-backed LayerLoader for native multi-file flattens: reads the
-/// resolved path and parses it as a (lazy) USDC crate. The loaded layer keeps
-/// its source bytes alive via the crate data source, so arrays still pass
-/// through verbatim. USDA dependencies are not supported by this loader yet.
+/// resolved path and parses it as USDA / USDC / USDZ via the PCP layer loader.
+/// Crate-backed layers keep their source bytes alive via the crate data source,
+/// so arrays still pass through verbatim.
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts = {});
+
+/// Load a root USD file (.usda/.usd/.usdc/.usdz), optionally flatten it through
+/// filesystem-resolved dependencies, and write a USDC buffer. This is the native
+/// low-memory path for scenes whose root is USDA but whose heavy dependencies
+/// are crate-backed.
+bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out,
+                          const FlattenOptions& opts = {},
+                          FlattenStats* stats = nullptr,
+                          std::string* err = nullptr);
+
+/// Streaming-sink form of FlattenUSDFileToUSDC.
+bool FlattenUSDFileToUSDCToSink(const std::string& filename,
+                                const CrateWriteSink& sink,
+                                const FlattenOptions& opts = {},
+                                FlattenStats* stats = nullptr,
+                                std::string* err = nullptr);
 
 /// Read a USDC buffer, (optionally) flatten it, and write a USDC buffer, keeping
 /// numeric arrays as lazy references throughout so they are copied straight
