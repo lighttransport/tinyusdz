@@ -86,7 +86,7 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
 option(TINYUSDZ_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
-option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
+option(TINYUSDZ_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
 option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
@@ -142,14 +142,7 @@ option(TINYUSDZ_WITH_COROUTINE
        ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
 
 
-if(WIN32)
-  # Windows STL configurations generally require exception support, so leave the
-  # toolchain exception mode enabled there by default. TinyUSDZ sources still do
-  # not use C++ exceptions.
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
-else()
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
-endif()
+set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
 
 # Enable /MP flags(multi processor build) for Visual Studio
 # Based on VTK's Cmake
@@ -172,7 +165,7 @@ if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 option(TINYUSDZ_CXX_EXCEPTIONS
-       "Enable/Disable C++ exceptions(default: Off except on Windows)"
+       "Enable/Disable C++ exceptions (default: Off; tinyusdz uses no exceptions)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 # tinyusdz (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
@@ -1821,7 +1814,7 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE TINYUSDZ_CXX_EXCEPTIONS=1)
   else()
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=0)
+                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=0 JSON_NOEXCEPTION=1)
   endif()
 
   if(TINYUSDZ_CXX_RTTI)

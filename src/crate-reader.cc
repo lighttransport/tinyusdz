@@ -12,8 +12,7 @@
 
 #include "crate-reader.hh"
 
-#ifdef __wasi__
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -90,16 +89,17 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
     : _sr(sr), owned_memory_manager_(config.maxMemoryBudget), memory_manager_(&owned_memory_manager_), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
-#if defined(__wasi__)
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
     PUSH_WARN("# of thread to use: " << std::to_string(_config.numThreads));
+#else
+    _config.numThreads = 1;
 #endif
   }
 
 
-#if defined(__wasi__)
-  PUSH_WARN("Threading is disabled for WASI build.");
+#if !defined(TINYUSDZ_ENABLE_THREAD) || defined(__wasi__) || defined(__EMSCRIPTEN__)
+  PUSH_WARN("Threading is disabled for this build.");
   _config.numThreads = 1;
 #else
 
@@ -1872,7 +1872,7 @@ bool CrateReader::BuildLiveFieldSets() {
       }
     }
   }
-#if !defined(__wasi__)
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
   else {
     std::vector<FieldValuePairVector> decoded(_fieldset_start_indices.size());
     std::atomic<size_t> next_position{0};
