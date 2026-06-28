@@ -345,9 +345,23 @@ only the whole *island* at full that does not fit (see top of this section).
 | `map_arsenal` (`map_arsenal_ship`) | 24.1 M | ![arsenal shipyard](images/caldera/caldera-arsenal-shipyard-full.jpg) |
 | `map_agricultural_center` (`map_agricultural_center_bridge`) | 18.1 M | ![agricultural center](images/caldera/caldera-agricultural-center-full.jpg) |
 
+Every other authored camera frames one of these same districts from a different
+pose — the district is promoted to `full` exactly as above, only the `-camera`
+changes:
+
+| District (camera) | Default tris @ full | View |
+|---|---:|---|
+| `map_phosphate_mine` (`phospate_mine_bridge`) | 29.8 M | ![mine bridge](images/caldera/caldera-phosphate-mine-bridge-full.jpg) |
+| `map_capital` (`map_capital_overview`) | 44.3 M | ![capital overview](images/caldera/caldera-capital-overview-full.jpg) |
+| `map_beachhead` (`map_beachhead_overview`) | 23.6 M | ![beachhead overview](images/caldera/caldera-beachhead-overview-full.jpg) |
+| `map_tile_p` (`tile_p_road`) | 27.8 M | ![tile_p road](images/caldera/caldera-tile-p-road-full.jpg) |
+| `map_airfield` (`map_airfield_waiting_room`) | 36.9 M | ![airfield waiting room](images/caldera/caldera-airfield-waiting-room-full.jpg) |
+| `map_arsenal` (`map_arsenal_overview`) | 24.1 M | ![arsenal overview](images/caldera/caldera-arsenal-overview-full.jpg) |
+
 (1280×720 `tusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
-to 1024 px JPEG for the repo. The colored speckles in some frames are neighboring
-districts still at `proxy`, drawn with their `displayColor`.)
+to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
+districts still at `proxy`, drawn with their `displayColor`. The default-tri
+count is per *district*, so it is identical across that district's cameras.)
 
 ### 2.7 RenderScene optimization for realtime viewers
 
