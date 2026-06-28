@@ -428,10 +428,14 @@ band — outside it lie trigger/volume prims (tiny) and sprawling non-district
 overlays (e.g. the 14.6 M-vert `map_vehicle_spawns` spawn-marker set) that
 author no `full` geometry and would otherwise hijack the ranking. Tune
 `-lodDistrictMem` up to promote fewer districts / down to promote more.
-**Limitations** (true streaming follow-ups): the selection is computed once at
-load (not per frame), the chosen set is composed in a single soup/BLAS (no
-eviction), and the cost charge ignores per-district size variation — so leave
-host headroom or lower `-lodDistrictMem` on a tight machine.
+When `-maxMem` is not set, the hard memory-abort cap is raised to 90% of
+MemAvailable — *above* the 50%-of-avail selection budget — so a modest
+underestimate on the heaviest district pair completes instead of aborting (the
+abort cap stays an OOM safety net, not a tight selection bound). **Limitations**
+(true streaming follow-ups): the selection is computed once at load (not per
+frame), the chosen set is composed in a single soup/BLAS (no eviction), and the
+cost charge ignores per-district size variation — so on a tight machine lower
+`-lodDistrictMem` (fewer promotions) or set `-maxMem` to a higher explicit cap.
 
 ### 2.7 RenderScene optimization for realtime viewers
 

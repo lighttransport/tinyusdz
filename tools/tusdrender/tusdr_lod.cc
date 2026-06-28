@@ -244,6 +244,16 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const double cost_vram = opt->lod_district_vram_gib * kGiB;
   const double base_host = double(MemBudget::ProcessRSS());  // proxy structure
 
+  // Give the hard memory-abort cap headroom ABOVE the selection budget: the flat
+  // per-district charge can undershoot the heaviest district pair, and with the
+  // auto cap equal to the selection budget a modest underestimate aborts the
+  // render instead of completing. When -maxMem was set, that value is the user's
+  // explicit hard cap and is respected; otherwise raise the cap to 90% of avail
+  // (still an OOM safety net, well under physical RAM).
+  if (opt->max_mem_gib <= 0.0 && host_avail > 0.0) {
+    MemBudget::Get().Init(0.9 * host_avail / kGiB);
+  }
+
   // 6) Greedy promotion, nearest first, under both budgets. Always promote the
   //    nearest district so we render something even on a tiny budget.
   double host_used = base_host, vram_used = 0.0;
