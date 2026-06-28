@@ -150,10 +150,10 @@ int main(int argc, char **argv) {
     return RunRTPreviewNext(opt);
   }
 
-#ifdef HAVE_VULKAN
-  // Vulkan backend: loads the scene through the `next` lazy loader, then
-  // renders via Vulkan rasterizer or ray tracer.
-  if (opt.vulkan) {
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11)
+  // GPU backends (Vulkan / Direct3D 11): load the scene through the `next` lazy
+  // loader, build the geometry once, then trace on the selected GPU backend.
+  if (opt.vulkan || opt.use_d3d) {
     // Load through next loader.
     tinyusdz::next::Stage stage;
     std::string warn, err;
@@ -369,10 +369,24 @@ int main(int argc, char **argv) {
       camera.yfov = 45.0f * 3.14159265f / 180.0f;
     }
 
-    if (!RunVulkanLightRT(opt, base_colors, geos, camera, out_height)) {
-      return EXIT_FAILURE;
+#ifdef HAVE_D3D11
+    if (opt.use_d3d) {
+      if (!RunD3D11LightRT(opt, base_colors, geos, camera, out_height)) {
+        return EXIT_FAILURE;
+      }
+      return EXIT_SUCCESS;
     }
-    return EXIT_SUCCESS;
+#endif
+#ifdef HAVE_VULKAN
+    if (opt.vulkan) {
+      if (!RunVulkanLightRT(opt, base_colors, geos, camera, out_height)) {
+        return EXIT_FAILURE;
+      }
+      return EXIT_SUCCESS;
+    }
+#endif
+    std::cerr << "Requested GPU backend not built in.\n";
+    return EXIT_FAILURE;
   }
 #endif
 
