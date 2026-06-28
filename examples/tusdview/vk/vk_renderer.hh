@@ -485,6 +485,20 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};
   VkImageView rtImageView_{VK_NULL_HANDLE};
 
+  // Progressive accumulation: an rgba32f radiance buffer the trace adds into each
+  // frame while the view is static (sub-pixel jittered -> anti-aliased, and the
+  // stochastic AOVs like AO / soft-shadow converge). Reset to sample 0 whenever
+  // the camera, render mode, viewport, or geometry changes.
+  VkImage accumImage_{VK_NULL_HANDLE};
+  VkDeviceMemory accumImageMem_{VK_NULL_HANDLE};
+  VkImageView accumImageView_{VK_NULL_HANDLE};
+  uint32_t rtAccumFrame_{0};        // current accumulated sample index (0 = reset)
+  float lastRtPV_[16]{};            // proj*view of the last traced frame
+  int lastRtMode_{-1};              // render mode of the last traced frame
+  uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
+  uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
+  bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};
   VkDescriptorSet rtSet_{VK_NULL_HANDLE};

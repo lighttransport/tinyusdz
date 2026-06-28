@@ -57,15 +57,24 @@ layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[];
 layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 matRows[]; };
 #define mat(id, k) matRows[(id) * 3u + (k)]
 layout(set = 0, binding = 4, scalar) readonly buffer Insts  { InstInfo insts[]; };
+// Progressive accumulation buffer (radiance sum). Read+write rgba32f.
+layout(set = 0, binding = 5, rgba32f) uniform image2D accumImg;
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
   vec4 camPos;       // xyz = camera world position, w = RenderMode
   vec4 lightDir;     // xyz = unit direction *towards* the light, w = depthScale
   vec4 clearColor;   // rgb background for ray misses
-  vec4 sceneMin;     // position AOV bbox min
-  vec4 sceneExtent;  // position AOV bbox size
+  vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
+  vec4 sceneExtent;  // xyz = position AOV bbox size, w = accumulate enable (>0.5)
 } pc;
+
+// Radical-inverse (Halton) low-discrepancy sequence for sub-pixel jitter.
+float halton(uint i, uint b) {
+  float f = 1.0, r = 0.0;
+  while (i > 0u) { f /= float(b); r += f * float(i % b); i /= b; }
+  return r;
+}
 
 vec3 fetchPos(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 0u], vb.v[vi * 8u + 1u], vb.v[vi * 8u + 2u]);
@@ -115,10 +124,18 @@ void main() {
   ivec2 size = imageSize(outImg);
   if (px.x >= size.x || px.y >= size.y) return;
 
+  // Progressive sample index (0 = first sample after a reset). Drives both the
+  // sub-pixel jitter (anti-aliasing) and the stochastic-AOV RNG so they converge.
+  uint fi = uint(pc.sceneMin.w + 0.5);
+  bool accumulate = pc.sceneExtent.w > 0.5;
+
   // Pixel -> NDC -> world ray via the inverse view-projection. Flip Y so image
   // row 0 maps to ndc.y=+1 (scene top), matching the raster path's negative-
-  // height viewport; otherwise the traced image is vertically inverted.
-  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  // height viewport; otherwise the traced image is vertically inverted. Jitter the
+  // sample point inside the pixel by a Halton(2,3) offset for anti-aliasing.
+  vec2 jit = accumulate ? (vec2(halton(fi + 1u, 2u), halton(fi + 1u, 3u)) - 0.5)
+                        : vec2(0.0);
+  vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
   vec4 farH  = pc.invViewProj * vec4(ndc, 1.0, 1.0);
@@ -355,7 +372,7 @@ void main() {
       vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
       if (dot(Ng, dir) > 0.0) Ng = -Ng;
       float aoRadius = max(pc.lightDir.w, 1e-3) * 0.15;  // 15% of scene extent
-      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + 1u);
+      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + fi * 26699u + 1u);
       const int NS = 24;
       float occ = 0.0;
       for (int s = 0; s < NS; ++s) {
@@ -373,7 +390,7 @@ void main() {
       vec3 Lc = normalize(pc.lightDir.xyz);
       vec3 tt = normalize(abs(Lc.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
       vec3 bb = normalize(cross(Lc, tt)); tt = cross(bb, Lc);
-      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + 7u);
+      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + fi * 40503u + 7u);
       const int NS = 16; float vis = 0.0; const float coneR = 0.08;
       for (int s = 0; s < NS; ++s) {
         float a = rnd(seed) * 6.2831853, rr = sqrt(rnd(seed)) * coneR;
@@ -390,5 +407,13 @@ void main() {
     }
   }
 
+  // Progressive accumulation: add this sample's radiance to the running sum and
+  // display the average. fi==0 (or accumulation off) overwrites, so a stale or
+  // uninitialised accum buffer never bleeds into a fresh trace.
+  if (accumulate) {
+    vec3 sum = (fi == 0u) ? outc : (imageLoad(accumImg, px).rgb + outc);
+    imageStore(accumImg, px, vec4(sum, 1.0));
+    outc = sum / float(fi + 1u);
+  }
   imageStore(outImg, px, vec4(outc, 1.0));
 }

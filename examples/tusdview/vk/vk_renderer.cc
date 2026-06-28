@@ -3400,11 +3400,12 @@ void VulkanRenderer::rebuildTlas() {
   vkUpdateDescriptorSets(device_, 4, w, 0, nullptr);
 
   tlasDirty_ = false;
+  ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
 }
 
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
-  VkDescriptorSetLayoutBinding b[5]{};
+  VkDescriptorSetLayoutBinding b[6]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = 1;
@@ -3421,16 +3422,18 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[3].binding = 3;
   b[4] = b[2];
   b[4].binding = 4;  // per-TLAS-instance info SSBO
+  b[5] = b[1];
+  b[5].binding = 5;  // rgba32f progressive-accumulation image
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 5;
+  lci.bindingCount = 6;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
   ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3489,67 +3492,91 @@ void VulkanRenderer::createRtImage() {
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
+  if (accumImageView_) { vkDestroyImageView(device_, accumImageView_, nullptr); accumImageView_ = VK_NULL_HANDLE; }
+  if (accumImage_) { vkDestroyImage(device_, accumImage_, nullptr); accumImage_ = VK_NULL_HANDLE; }
+  if (accumImageMem_) { vkFreeMemory(device_, accumImageMem_, nullptr); accumImageMem_ = VK_NULL_HANDLE; }
 
-  VkImageCreateInfo ici{};
-  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-  ici.imageType = VK_IMAGE_TYPE_2D;
-  ici.format = colorFormat_;
-  ici.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
-  ici.mipLevels = 1;
-  ici.arrayLayers = 1;
-  ici.samples = VK_SAMPLE_COUNT_1_BIT;
-  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-  ici.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  if (vkCreateImage(device_, &ici, nullptr, &rtImage_) != VK_SUCCESS) return;
-  VkMemoryRequirements req;
-  vkGetImageMemoryRequirements(device_, rtImage_, &req);
-  VkMemoryAllocateInfo mai{};
-  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  mai.allocationSize = req.size;
-  mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  if (vkAllocateMemory(device_, &mai, nullptr, &rtImageMem_) != VK_SUCCESS) return;
-  vkBindImageMemory(device_, rtImage_, rtImageMem_, 0);
-  VkImageViewCreateInfo vci{};
-  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  vci.image = rtImage_;
-  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  vci.format = colorFormat_;
-  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  vci.subresourceRange.levelCount = 1;
-  vci.subresourceRange.layerCount = 1;
-  if (vkCreateImageView(device_, &vci, nullptr, &rtImageView_) != VK_SUCCESS) return;
+  // Create one storage image. fmt = the display format for rtImage_ (copied out),
+  // or rgba32f for the accumulation buffer (never copied, full float precision).
+  auto makeStorageImage = [&](VkFormat fmt, VkImageUsageFlags usage, VkImage* img,
+                              VkDeviceMemory* mem, VkImageView* view) -> bool {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fmt;
+    ici.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = usage;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device_, &ici, nullptr, img) != VK_SUCCESS) return false;
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, *img, &req);
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device_, &mai, nullptr, mem) != VK_SUCCESS) return false;
+    vkBindImageMemory(device_, *img, *mem, 0);
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = *img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    return vkCreateImageView(device_, &vci, nullptr, view) == VK_SUCCESS;
+  };
 
-  // Transition UNDEFINED -> GENERAL (kept GENERAL between frames).
+  if (!makeStorageImage(colorFormat_,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        &rtImage_, &rtImageMem_, &rtImageView_))
+    return;
+  if (!makeStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT,
+                        &accumImage_, &accumImageMem_, &accumImageView_))
+    return;
+
+  // Transition both UNDEFINED -> GENERAL (kept GENERAL between frames).
   VkCommandBuffer cb = beginOneShot();
-  VkImageMemoryBarrier toGen{};
-  toGen.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  toGen.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  toGen.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-  toGen.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toGen.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  toGen.image = rtImage_;
-  toGen.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  toGen.subresourceRange.levelCount = 1;
-  toGen.subresourceRange.layerCount = 1;
+  VkImageMemoryBarrier toGen[2]{};
+  VkImage imgs[2] = {rtImage_, accumImage_};
+  for (int k = 0; k < 2; ++k) {
+    toGen[k].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toGen[k].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toGen[k].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toGen[k].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGen[k].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGen[k].image = imgs[k];
+    toGen[k].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toGen[k].subresourceRange.levelCount = 1;
+    toGen[k].subresourceRange.layerCount = 1;
+  }
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                       &toGen);
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                       toGen);
   endOneShot(cb);
 
   if (rtSet_) {
-    VkDescriptorImageInfo ii{};
-    ii.imageView = rtImageView_;
-    ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkWriteDescriptorSet w{};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = rtSet_;
-    w.dstBinding = 1;
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    w.pImageInfo = &ii;
-    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+    VkDescriptorImageInfo ii[2]{};
+    ii[0].imageView = rtImageView_;
+    ii[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ii[1].imageView = accumImageView_;
+    ii[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet w[2]{};
+    for (int k = 0; k < 2; ++k) {
+      w[k].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      w[k].dstSet = rtSet_;
+      w[k].descriptorCount = 1;
+      w[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    }
+    w[0].dstBinding = 1; w[0].pImageInfo = &ii[0];
+    w[1].dstBinding = 5; w[1].pImageInfo = &ii[1];
+    vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
   }
+  ++rtAccumGen_;  // viewport changed -> the accumulated history is stale
 }
 
 void VulkanRenderer::traceRt(VkCommandBuffer cb) {
@@ -3562,6 +3589,20 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   if (!Mat4Inverse(PV.m, pc.invViewProj)) {
     for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
   }
+  // Progressive accumulation bookkeeping: if the camera (proj*view), render mode,
+  // or geometry/viewport generation changed since the last traced frame, restart
+  // accumulation at sample 0; otherwise advance the sample index so the trace adds
+  // a fresh jittered sample to the running average. A static view thus converges
+  // (anti-aliased, AO/soft-shadow noise averaged out) while motion stays at 1 spp.
+  bool reset = !rtAccumEnabled_ || rtMode_ != lastRtMode_ ||
+               rtAccumGen_ != lastRtAccumGen_ ||
+               std::memcmp(PV.m, lastRtPV_, sizeof(lastRtPV_)) != 0;
+  if (reset) rtAccumFrame_ = 0;
+  else ++rtAccumFrame_;
+  std::memcpy(lastRtPV_, PV.m, sizeof(lastRtPV_));
+  lastRtMode_ = rtMode_;
+  lastRtAccumGen_ = rtAccumGen_;
+
   pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1]; pc.camPos[2] = cameraPos_[2];
   pc.camPos[3] = static_cast<float>(rtMode_);  // RenderMode (read as camPos.w)
   // Same fixed light direction as mesh.frag.
@@ -3571,6 +3612,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lightDir[3] = depthScale_;  // depth AOV normalizer
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
+  pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
+  pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -3640,6 +3683,9 @@ void VulkanRenderer::destroyRt() {
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
+  if (accumImageView_) { vkDestroyImageView(device_, accumImageView_, nullptr); accumImageView_ = VK_NULL_HANDLE; }
+  if (accumImage_) { vkDestroyImage(device_, accumImage_, nullptr); accumImage_ = VK_NULL_HANDLE; }
+  if (accumImageMem_) { vkFreeMemory(device_, accumImageMem_, nullptr); accumImageMem_ = VK_NULL_HANDLE; }
   if (rtPipeline_) { vkDestroyPipeline(device_, rtPipeline_, nullptr); rtPipeline_ = VK_NULL_HANDLE; }
   if (rtPipelineLayout_) { vkDestroyPipelineLayout(device_, rtPipelineLayout_, nullptr); rtPipelineLayout_ = VK_NULL_HANDLE; }
   if (rtPool_) { vkDestroyDescriptorPool(device_, rtPool_, nullptr); rtPool_ = VK_NULL_HANDLE; rtSet_ = VK_NULL_HANDLE; }
