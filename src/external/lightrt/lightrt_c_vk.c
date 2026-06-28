@@ -650,6 +650,7 @@ lrt_vk_engine *lrt_vk_engine_create(const lrt_vk_engine_options *opts,
         asf.pNext = &rqf;
         v12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         v12.bufferDeviceAddress = VK_TRUE;
+        v12.descriptorIndexing = VK_TRUE;
         v12.pNext = &asf;
         f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         f2.pNext = &v12;
@@ -1522,6 +1523,16 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
     int ok = cb != VK_NULL_HANDLE;
     if (ok) {
         vkCmdBuildAccelerationStructuresKHR(cb, 1, &bgi, &pranges);
+        VkMemoryBarrier mb;
+        memset(&mb, 0, sizeof(mb));
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        vkCmdPipelineBarrier(cb,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
         ok = vk_cmd_end_submit(e, cb);
     }
     vk_buffer_destroy(e, &scratch);
