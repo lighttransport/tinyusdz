@@ -539,6 +539,7 @@ int print_memstats_file(const std::string& filename) {
   const std::string ext = lower_ext(filename);
   Stage stage;
   bool loaded = false;
+  bool load_source_mmap = false;
   Timer timer;
   timer.start();
   if (ext == ".usda" || ext == ".usd") {
@@ -554,6 +555,7 @@ int print_memstats_file(const std::string& filename) {
     opts.crate_options.lazy_arrays = true;
     USDCLoadResult lr = LoadUSDCFromFile(filename, opts);
     loaded = lr.success;
+    load_source_mmap = lr.source_was_mmap;
     if (loaded) {
       stage = std::move(lr.stage);
     } else {
@@ -564,6 +566,7 @@ int print_memstats_file(const std::string& filename) {
     return 1;
   }
   printf("load_success=%d\n", loaded ? 1 : 0);
+  printf("load_source_mmap=%d\n", load_source_mmap ? 1 : 0);
   printf("load_ms=%.3f\n", timer.elapsed_ms());
   print_bytes_metric("rss_after_load_bytes", current_rss_bytes());
   print_bytes_metric("peak_rss_after_load_bytes", peak_rss_bytes());
@@ -604,6 +607,7 @@ int print_memstats_file(const std::string& filename) {
   printf("flatten_input_bytes=%zu\n", fstats.input_bytes);
   printf("flatten_output_bytes=%zu\n", fstats.output_bytes);
   printf("flatten_prims=%zu\n", fstats.prim_count);
+  printf("flatten_input_mmap=%d\n", fstats.input_was_mmap ? 1 : 0);
   printf("flatten_arrays_passed_through=%zu\n", fstats.arrays_passed_through);
   printf("flatten_arrays_reencoded=%zu\n", fstats.arrays_reencoded);
   printf("flatten_composition_errors=%zu\n", fstats.composition_errors.size());

@@ -121,7 +121,11 @@ private:
 
   #include "crate-writer-tables.inc"
 
+  #include "crate-writer-passthrough.inc"
+
   #include "crate-writer-values.inc"
+
+  #include "crate-writer-properties.inc"
 
   #include "crate-writer-fields.inc"
 

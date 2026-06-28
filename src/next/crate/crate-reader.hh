@@ -69,6 +69,7 @@ struct CrateReadResult {
   std::vector<CrateError> errors;
   std::vector<std::string> warnings;
   CrateVersion version;
+  bool source_was_mmap = false;
 };
 
 /// USDC Crate file reader

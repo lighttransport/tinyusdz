@@ -134,8 +134,32 @@ Landed so far:
   FIELD/FIELDSET/SPECS payloads. These live alongside crash replay fixtures and
   assert returned errors rather than crashes or unbounded allocation.
 - **Crate reader TU split** — public `CrateReader` API wrappers and source
-  selection moved to `crate-reader-api.cc`; the heavy binary section/value
-  parser stays in `crate-reader.cc` behind `crate-reader-internal.hh`.
+  selection moved to `crate-reader-api.cc`; stage reconstruction moved to
+  `crate-reader-stage.cc`; array decode/lazy-array probing moved to
+  `crate-reader-arrays.cc`; scalar-vector decode moved to
+  `crate-reader-vectors.cc`; scalar/non-array value dispatch stays in
+  `crate-reader.cc` behind `crate-reader-internal.hh`.
+- **ASCII parser TU split** — private parser implementation declarations moved
+  to `ascii-parser-internal.hh`; stage/layer metadata parsing moved to
+  `ascii-parser-metadata.cc`; namespaced-name parsing, skip helpers, property
+  metadata, and parser diagnostics moved to `ascii-parser-utils.cc`;
+  prim/property/relationship parsing moved to `ascii-parser-prim.cc`;
+  `timeSamples` and variant parsing moved to dedicated TUs.
+- **Writer/PCP helper split** — crate lazy-array pass-through policy moved to
+  `crate-writer-passthrough.inc`; crate property/spec emission moved to
+  `crate-writer-properties.inc`; PCP stage opinion fill, worker merge helpers,
+  and arc list-op merge moved to focused includes.
+- **Comprehensive generated USDC fixture** — `next_test_usdc_roundtrip` now
+  builds a dense in-memory layer and writes/reads it through Crate. The fixture
+  covers layer metadata, `customLayerData`, prim `customData`/`assetInfo`/
+  `apiSchemas`, composition arcs, mesh arrays, per-property metadata,
+  relationships, connection-flagged properties, Shader/Material connections,
+  PointInstancer prototype/array data, `ids`/`invisibleIds`, and time samples.
+- **Focused split-regression tests** — `next_test_usdc_writer` now pins
+  `EncodeValue` fallback roundtrips for non-inline scalars/vectors/matrix,
+  string/token/asset, and nested dictionaries; `next_test_pcp` now pins
+  extracted-prototype collision handling, internal relationship remapping, and
+  original-instance subtree orphaning.
 
 `apply_list_ops` is now **default ON** (set false for legacy strong-first
 concatenation). The decision rests on three checks:
@@ -157,32 +181,51 @@ double-consume bug, now fixed — and that the Release test build compiled out
 `assert()`; tests now build with `-UNDEBUG`.) **The 10-phase roadmap is
 complete.** The sections below are the original spec.
 
-## Current follow-up backlog
+## Current Cleanup Backlog
 
-The items below are the active cleanup/refactor targets after the roadmap:
+The 10-phase roadmap is complete. The active work is now cleanup, validation,
+and behavior-neutral split work:
 
 1. **Docs/status hygiene** — keep this file, `src/next/README.md`, and
    `doc/memory-and-performance.md` aligned with landed behavior and benchmark
-   deltas.
-2. **Standalone validation polish** — use `scripts/run-next-checks.sh` as the
-   canonical next smoke/regression entrypoint; keep `next` outside the main
-   regression gate until the assert-based tests are fully hardened.
-3. **Monolithic TU split** — continue the behavior-neutral split work:
-   `src/next/crate/crate-reader.cc` has its API layer separated; remaining
-   targets are reader section/value units, `src/next/crate/crate-writer.cc`,
-   `src/next/pcp/cache.cc`, `src/next/parser/value-parser.cc`, and
-   `src/next/parser/ascii-parser.cc`. The writer split should first move or
-   expose its anonymous-namespace helper ownership deliberately; avoid a thin
-   wrapper-only extraction that changes object lifetime just to satisfy the
-   split.
+   deltas. When changing next test coverage, also update `doc/testing-cpp.md`.
+2. **Standalone validation polish** — `scripts/run-next-checks.sh` is the
+   canonical next smoke/regression entrypoint. Keep `next` outside the main
+   regression gate until the assert-based tests are fully converted or otherwise
+   hardened, even though the standalone CMake now forces asserts on for test
+   targets.
+3. **Behavior-neutral TU split** — the high-value split pass is complete:
+   `crate-reader` API/source/stage/array/vector helpers, parser implementation/
+   metadata/property/timeSamples/variant helpers, writer pass-through/property
+   helpers, PCP helper/opinion-fill/merge/list-op includes, and value-parser
+   helper include units are separated. Remaining cleanup is opportunistic only:
+   smaller `EncodeValue` scalar/array subhelpers, deeper PCP instance-flatten
+   extraction, or further parser arc/metadata refinements if future edits touch
+   those sections.
 4. **Memory observability** — make benchmark output stable enough to diff:
    struct sizes, `Layer::stats()`, RSS, lazy/eager clone RSS, crate write
-   pass-through/reencode counts, and mmap-vs-heap attribution.
-5. **Format parity** — expand next USDA/USDC writer parity tests, including
-   optional pxrUSD `usdcat` comparison when available.
-6. **Remaining feature gaps** — USDA dependency support in the low-memory
-   flatten loader. Compressed bool arrays are explicitly rejected by policy and
-   covered by regression tests.
+   pass-through/reencode counts, and mmap-vs-heap attribution. Current
+   `benchmark_next memstats` / `memstats-file` output covers these basics,
+   including public `source_was_mmap` / `input_was_mmap` result fields.
+5. **Format parity** — maintain the dense generated USDC fixture and focused
+   malformed-crate fixtures. Continue adding next USDA/USDC writer parity tests
+   and optional pxrUSD `usdcat` comparison when available.
+6. **Remaining feature gaps** — keep broadening low-memory flatten coverage for
+   mixed USDA/USDC/USDZ dependency graphs. Basic filesystem USDA sublayers and
+   references are supported and covered. Compressed bool arrays are explicitly
+   rejected by policy and covered by regression tests.
+
+Recently closed cleanup items:
+
+- Blender/nanobind experimental bindings were deprecated out of the active next
+  plan.
+- PointInstancer support now includes typed accessors, extracted instance data,
+  Tydra draw references, prototype material/transform bindings, validation, and
+  opt-in transformed mesh duplication.
+- Malformed USDC coverage now includes generated TOC/table/payload edge cases
+  plus crash replay fixtures.
+- A broad generated USDC roundtrip fixture now covers cross-feature read/write
+  reconstruction instead of relying only on small single-feature tests.
 
 Goals, in priority order:
 

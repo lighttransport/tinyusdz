@@ -4,24 +4,6 @@
 // TinyUSDZ Next - PCP Cache parallel source warming and index prewarm.
 // Included inside Cache::Impl.
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-    unsigned nt = options.num_threads;
-    if (nt > 1 && fill_.size() >= 2048) {
-      if (nt > 64) nt = 64;
-      std::vector<std::thread> pool;
-      pool.reserve(nt);
-      for (unsigned t = 0; t < nt; ++t) {
-        size_t b = fill_.size() * t / nt;
-        size_t e = fill_.size() * (t + 1) / nt;
-        if (b < e) pool.emplace_back([&do_range, b, e]() { do_range(b, e); });
-      }
-      for (std::thread &th : pool) th.join();
-      return;
-    }
-#endif
-    do_range(0, fill_.size());
-  }
-
   bool BuildStage(Stage *stage, std::string *warn, std::string *err) {
     NEXT_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
@@ -305,61 +287,6 @@
     return idx;
   }
 
-  // Fold the worker-built PrimIndex for `key` into the main cache, remapping its
-  // private layer-stack / path-table indices onto the shared tables. Sites use
-  // identifier strings, so they need no remap. Instancing is assigned in the
-  // caller's (input) order so the prototype choice matches a serial build.
-
-  void MergeWorkerIndex(Impl &w, const std::string &key) {
-    auto wit = w.index_cache.find(key);
-    if (wit == w.index_cache.end()) return;  // worker didn't build it (nullptr)
-    if (index_cache.count(key)) return;      // already merged (duplicate path)
-    std::unique_ptr<PrimIndex> idx = std::move(wit->second);
-
-    std::unordered_map<uint32_t, uint32_t> stack_remap, path_remap;
-    const size_t n = idx->GetNodes().size();
-    for (size_t i = 0; i < n; ++i) {
-      CompNode &node = idx->MutableNode(static_cast<uint16_t>(i));
-      auto sr = stack_remap.find(node.layer_stack_idx);
-      if (sr == stack_remap.end()) {
-        uint32_t m = AdoptStack(w.layer_stacks[node.layer_stack_idx]);
-        stack_remap.emplace(node.layer_stack_idx, m);
-        node.layer_stack_idx = m;
-      } else {
-        node.layer_stack_idx = sr->second;
-      }
-      auto pr = path_remap.find(node.site_path_idx);
-      if (pr == path_remap.end()) {
-        uint32_t m = InternPath(w.path_table[node.site_path_idx]);
-        path_remap.emplace(node.site_path_idx, m);
-        node.site_path_idx = m;
-      } else {
-        node.site_path_idx = pr->second;
-      }
-    }
-    idx->SetLayerStacks(&layer_stacks);
-    // Remap above already interned every site into path_table, so its size is
-    // final for this index's snapshot (F3).
-    idx->SetPathTable(&path_table, path_table.size());
-
-    auto sit = w.index_to_sites.find(key);
-    if (sit != w.index_to_sites.end()) {
-      for (const Site &s : sit->second) site_to_indices[s].insert(key);
-      index_to_sites[key] = sit->second;
-    }
-
-    index_cache.emplace(key, std::move(idx));
-
-    if (options.detect_instances) {
-      auto piit = w.pending_instance_.find(key);
-      if (piit != w.pending_instance_.end() && piit->second.first) {
-        // Match the per-prim cache's deterministic min-path rule so the
-        // parallel merge and a serial ComputePrimIndex agree (F5).
-        AssignPrototype(key, piit->second.second, /*prefer_min=*/true);
-      }
-    }
-  }
-
   // Worker-side: warm this (private, SEEDED) Impl's sources_cache for the whole
   // subtree rooted at `root`, following the same child namespace the serial
   // compose walks (ComposeChildNames). The Impl was seeded with a snapshot of the
@@ -395,44 +322,6 @@
       for (auto cit = children.rbegin(); cit != children.rend(); ++cit) {
         stack.push_back({it.p.append_child(*cit), it.depth + 1});
       }
-    }
-  }
-
-  // Fold a seeded worker's warmed sources_cache into this (main) Impl. Layer-stack
-  // indices below `seed_stack_count` are identical to main (the worker started
-  // from main's snapshot) and pass through unremapped; only worker-NEW stacks
-  // (>= seed_stack_count) are AdoptStack'd onto the shared table (dedup by
-  // identifier). Sites are identifier strings and the variant pointer is into a
-  // shared layer -> neither needs remap. Entries already present are skipped.
-  void MergeSources(Impl &w, size_t seed_stack_count, size_t seed_pool_count) {
-    std::unordered_map<uint32_t, uint32_t> stack_remap;
-    auto remap = [&](uint32_t ws) -> uint32_t {
-      if (ws < seed_stack_count) return ws;  // identical to main (seeded)
-      auto it = stack_remap.find(ws);
-      if (it != stack_remap.end()) return it->second;
-      uint32_t m = AdoptStack(w.layer_stacks[ws]);
-      stack_remap.emplace(ws, m);
-      return m;
-    };
-    // nm_pool_ entries below seed_pool_count are the seeded prefix (identical to
-    // main); worker-NEW mappings (>= seed_pool_count) are re-interned into main.
-    std::unordered_map<uint32_t, uint32_t> map_remap;
-    auto remap_map = [&](uint32_t wm) -> uint32_t {
-      if (wm < seed_pool_count) return wm;  // identical to main (seeded)
-      auto it = map_remap.find(wm);
-      if (it != map_remap.end()) return it->second;
-      uint32_t m = InternMapping(w.nm_pool_[wm]);
-      map_remap.emplace(wm, m);
-      return m;
-    };
-    for (auto &kv : w.sources_cache) {
-      if (sources_cache.count(kv.first)) continue;
-      std::vector<Src> srcs = kv.second;
-      for (Src &s : srcs) {
-        s.stack_idx = remap(s.stack_idx);
-        s.map_idx = remap_map(s.map_idx);
-      }
-      sources_cache.emplace(kv.first, std::move(srcs));
     }
   }
 
@@ -704,4 +593,3 @@
 #endif
     return true;
   }
-

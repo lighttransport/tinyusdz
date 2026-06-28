@@ -153,80 +153,6 @@
                err);
   }
 
-  // --- cross-layer list-op merge (Phase 7 S5) -----------------------------
-
-  enum class ArcSel { References, Payloads, Inherits, Specializes };
-
-  static const std::vector<std::string> &SelectInlineArc(const PrimSpecMeta &m,
-                                                         ArcSel f) {
-    switch (f) {
-      case ArcSel::References: return m.references;
-      case ArcSel::Payloads: return m.payloads;
-      case ArcSel::Inherits: return m.inherits;
-      default: return m.specializes;
-    }
-  }
-  static const ArcEdit *SelectArcEdit(const PrimSpecMeta &m, ArcSel f) {
-    const ArcListOpEdits *e = m.arc_edits();
-    if (!e) return nullptr;
-    switch (f) {
-      case ArcSel::References: return &e->references;
-      case ArcSel::Payloads: return &e->payloads;
-      case ArcSel::Inherits: return &e->inherits;
-      default: return &e->specializes;
-    }
-  }
-
-  // Compose one arc field across a site's specs (input is strong-first) per the
-  // AOUSD list-op rules, applying weakest->strongest. Returns the merged arc
-  // list in strong-first order (prepended-of-strongest ... appended-of-strongest).
-  // A spec that does not author the field is a no-op; a bare/explicit list
-  // replaces the weaker accumulation; prepend/append/delete edit it.
-  // Returns (arc-string, authoring-layer-id) pairs so a relative reference/
-  // payload asset path can be anchored to the layer that authored it (not the
-  // layer-stack root). The layer-id rides along through the list-op merge.
-  std::vector<std::pair<std::string, std::string>> MergeArcField(
-      const std::vector<SpecRef> &specs, ArcSel f) const {
-    std::vector<std::pair<std::string, std::string>> result;
-    for (auto it = specs.rbegin(); it != specs.rend(); ++it) {  // weakest first
-      const PrimSpecMeta &m = it->spec->meta();
-      const std::string &lid = it->layer_id;
-      const ArcEdit *e = SelectArcEdit(m, f);
-      const std::vector<std::string> &inl = SelectInlineArc(m, f);
-      if ((!e || !e->authored) && inl.empty()) {
-        continue;  // field not authored on this spec
-      }
-      auto tag = [&](const std::vector<std::string> &v) {
-        std::vector<std::pair<std::string, std::string>> out;
-        out.reserve(v.size());
-        for (const std::string &s : v) out.emplace_back(s, lid);
-        return out;
-      };
-      if (!e || !e->authored || e->is_explicit) {
-        result = tag(inl);  // bare/explicit replaces weaker layers
-        continue;
-      }
-      auto removeAll = [&](const std::vector<std::string> &rm) {
-        for (const std::string &x : rm) {
-          result.erase(std::remove_if(result.begin(), result.end(),
-                                      [&](const auto &p) { return p.first == x; }),
-                       result.end());
-        }
-      };
-      removeAll(e->deleted);
-      removeAll(e->prepended);  // dedup before re-adding
-      removeAll(e->appended);
-      std::vector<std::pair<std::string, std::string>> merged;
-      merged.reserve(e->prepended.size() + result.size() + e->appended.size());
-      auto pre = tag(e->prepended), app = tag(e->appended);
-      merged.insert(merged.end(), pre.begin(), pre.end());
-      merged.insert(merged.end(), result.begin(), result.end());
-      merged.insert(merged.end(), app.begin(), app.end());
-      result.swap(merged);
-    }
-    return result;
-  }
-
   // Pre-order DFS == strength order. Per source: local (pushed) > inherits >
   // references > payloads; specializes routed to `spec_out` (globally weakest).
   void ExpandArcs(const Src &src, const ExpansionFrame *frame,
@@ -526,4 +452,3 @@
   // name fixes its position and stronger duplicates are skipped (e.g. a
   // reference's `[LOD0, Materials]` precedes a local-only `LOD1` ->
   // `[LOD0, Materials, LOD1]`). So we collect names in a separate reverse pass.
-

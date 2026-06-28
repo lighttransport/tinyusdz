@@ -429,6 +429,7 @@ int main() {
     // Filesystem facade: USDA root + USDA sublayer must compose and write USDC.
     {
       const char* sub_path = "/tmp/tinyusdz_next_flatten_usda_sub.usda";
+      const char* ref_path = "/tmp/tinyusdz_next_flatten_usda_ref.usda";
       const char* root_path = "/tmp/tinyusdz_next_flatten_usda_root.usda";
       {
         std::ofstream sub(sub_path, std::ios::binary);
@@ -444,6 +445,19 @@ int main() {
                "}\n";
       }
       {
+        std::ofstream ref(ref_path, std::ios::binary);
+        ref << "#usda 1.0\n"
+               "def Xform \"Referenced\"\n"
+               "{\n"
+               "  def Mesh \"FromReference\"\n"
+               "  {\n"
+               "    int[] faceVertexCounts = [3]\n"
+               "    int[] faceVertexIndices = [0, 1, 2]\n"
+               "    point3f[] points = [(0, 0, 0), (0, 1, 0), (0, 0, 1)]\n"
+               "  }\n"
+               "}\n";
+      }
+      {
         std::ofstream root(root_path, std::ios::binary);
         root << "#usda 1.0\n"
                 "(\n"
@@ -452,6 +466,9 @@ int main() {
                 "def Xform \"World\"\n"
                 "{\n"
                 "  def Xform \"Local\" {}\n"
+                "  def Xform \"RefSlot\" (\n"
+                "    prepend references = [@./tinyusdz_next_flatten_usda_ref.usda@</Referenced>]\n"
+                "  ) {}\n"
                 "}\n";
       }
       pipeline::FlattenStats file_stats;
@@ -465,8 +482,9 @@ int main() {
       assert(file_lr.success);
       assert(file_lr.stage.GetPrimAtPath("/World/FromSub").IsValid());
       assert(file_lr.stage.GetPrimAtPath("/World/Local").IsValid());
+      assert(file_lr.stage.GetPrimAtPath("/World/RefSlot/FromReference").IsValid());
       assert(file_stats.prim_count >= 3);
-      std::cout << "  FlattenUSDFileToUSDC composes USDA sublayers" << std::endl;
+      std::cout << "  FlattenUSDFileToUSDC composes USDA sublayers/references" << std::endl;
     }
 
     // Owned (single-copy) facade path produces the same result.
@@ -505,6 +523,7 @@ int main() {
     for (size_t i = 0; i < points.size(); i++) assert((*mpa)[i] == points[i]);
     // The mapping must outlive the reader: a lazy value materialized after the
     // load (above) already proved the shared_ptr keeps the mapping alive.
+    assert(lm.source_was_mmap);
     std::cout << "  file load is mmap-backed and materializes correctly"
               << std::endl;
 
@@ -513,6 +532,7 @@ int main() {
     opt.crate_options.use_mmap = false;
     USDCLoadResult lo = LoadUSDCFromFile(path, opt);
     assert(lo.success);
+    assert(!lo.source_was_mmap);
     const Value* opv =
         lo.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
     assert(opv && opv->is_lazy());
@@ -521,6 +541,15 @@ int main() {
     const std::vector<float>* opa = opv->as_float_array();
     assert(opa && *opa == *mpa);
     std::cout << "  use_mmap=false falls back to owned buffer, same data"
+              << std::endl;
+
+    pipeline::FlattenStats mmap_stats;
+    std::vector<uint8_t> mmap_out;
+    std::string mmap_err;
+    assert(pipeline::FlattenUSDFileToUSDC(path, mmap_out, {}, &mmap_stats,
+                                          &mmap_err));
+    assert(mmap_stats.input_was_mmap);
+    std::cout << "  file-path flatten reports mmap input attribution"
               << std::endl;
 
     std::remove(path);

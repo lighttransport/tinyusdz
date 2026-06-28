@@ -205,14 +205,24 @@ src/next/
 │   ├── value-parser.hh
 │   ├── value-parser.cc
 │   ├── ascii-parser.hh
-│   └── ascii-parser.cc
+│   ├── ascii-parser.cc            # Parser entry/body
+│   ├── ascii-parser-internal.hh   # Private Impl declaration
+│   ├── ascii-parser-metadata.cc   # Stage/layer metadata
+│   ├── ascii-parser-prim.cc       # Prim/property/relationship bodies
+│   ├── ascii-parser-timesamples.cc # timeSamples blocks
+│   ├── ascii-parser-utils.cc      # Helpers/property metadata/diagnostics
+│   └── ascii-parser-variants.cc   # Variant sets/options
 │
 ├── crate/                       # Binary format
 │   ├── crate-format.hh         # Crate structures, ValueRep
 │   ├── crate-format.cc
 │   ├── stream-reader.hh        # Binary stream helper
 │   ├── crate-reader.hh
-│   ├── crate-reader.cc
+│   ├── crate-reader.cc          # Scalar value dispatch
+│   ├── crate-reader-api.cc      # Public API/source selection
+│   ├── crate-reader-arrays.cc   # Array decode/lazy arrays
+│   ├── crate-reader-stage.cc    # CrateData -> Stage reconstruction
+│   ├── crate-reader-vectors.cc  # Token/String/DoubleVector decode
 │   ├── crate-writer.hh
 │   └── crate-writer.cc
 │
@@ -277,17 +287,25 @@ current cleanup/refactor queue rather than a historical checklist.
 
 - Split the largest implementation files into focused translation units:
   `crate-reader`, `crate-writer`, `pcp/cache`, `value-parser`, and
-  `ascii-parser`.
+  `ascii-parser`. The reader API/source-selection layer, PCP cache helper include
+  units/opinion-fill/merge/list-op passes, value-parser helper include units,
+  crate stage/array/vector units, writer pass-through/property helpers, and
+  ASCII parser metadata/prim/helper/timeSamples/variant units have landed. The
+  remaining split work is opportunistic cleanup around smaller EncodeValue
+  subhelpers or future sections being edited anyway.
 - Keep `doc/refator-next.md`, `doc/memory-and-performance.md`, and this README
-  synchronized with landed behavior and benchmark deltas.
+  synchronized with landed behavior and benchmark deltas. Update
+  `doc/testing-cpp.md` when next test coverage changes.
 - Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for
-  the experimental next module.
+  the experimental next module. The main regression build still excludes `next`
+  by design.
 
 ### Memory / Performance
 
 - Make benchmark output diff-friendly: struct sizes, layer/stage memory stats,
   RSS, lazy/eager clone RSS, crate pass-through/reencode counts, and mmap-vs-heap
-  attribution.
+  attribution. `benchmark_next memstats` and `benchmark_next memstats-file`
+  provide the current stable key/value output.
 - Audit remaining large temporary buffers in the crate reader/writer and prefer
   reusable scratch storage or direct streaming where behavior stays identical.
 - Preserve lazy crate arrays and copy-on-write materialized arrays through
@@ -300,7 +318,8 @@ current cleanup/refactor queue rather than a historical checklist.
   comparison when available.
 - Keep explicit tests for unusual paths: compressed bool-array rejection,
   bool-array roundtrip, arc metadata dictionaries beside references/payloads,
-  unknown crate layouts, and lazy TimeSamples.
+  unknown crate layouts, lazy TimeSamples, malformed TOC/table/payload edge
+  cases, and the dense generated USDC fixture in `test_usdc_roundtrip`.
 - Keep USDA backend parity tests covering string, file, `std::ostream`, and
   `StreamWriter` output paths for both Stage and Layer writers.
 
@@ -317,8 +336,9 @@ current cleanup/refactor queue rather than a historical checklist.
   draw ranges and prototype mesh bindings. `ConverterConfig::point_instancer
   .duplicate_meshes` can materialize transformed mesh copies when a consumer
   cannot use draw refs directly.
-- Add USDA dependency support to the low-memory flatten loader; the current
-  filesystem flatten loader is USDC-only.
+- Keep broadening low-memory flatten coverage for mixed USDA/USDC/USDZ
+  dependency graphs. Basic filesystem USDA sublayers and references are
+  supported and covered by `test_lazy_array`.
 - Decide whether schema convenience APIs should keep growing manually or move to
   generation once the shape stabilizes.
 

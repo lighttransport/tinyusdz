@@ -526,6 +526,95 @@ void test_usdc_relationship_connection_roundtrip() {
   std::cout << "  USDC relationship/connection roundtrip test passed!\n\n";
 }
 
+void test_usdc_encode_value_fallback_roundtrip() {
+  std::cout << "Testing USDC EncodeValue fallback roundtrip...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("Root");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+
+  float matrix4f[16] = {
+      1.0f, 2.0f, 3.0f, 4.0f,
+      5.0f, 6.0f, 7.0f, 8.0f,
+      9.0f, 10.0f, 11.0f, 12.0f,
+      13.0f, 14.0f, 15.0f, 16.0f};
+  Dict nested;
+  nested.set("label", Value("inner"));
+  nested.set("weight", Value(2.5));
+  Dict dict;
+  dict.set("name", Value("fallback"));
+  dict.set("asset", Value::MakeAssetPath("tex/albedo.png"));
+  dict.set("nested", Value::MakeDictionary(std::move(nested)));
+
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("i64", Value(int64_t(-1234567890123LL)));
+  layer.add_property("u64", Value(uint64_t(1234567890123ULL)));
+  layer.add_property("f2", Value::MakeFloat2(1.25f, -2.5f));
+  layer.add_property("f4", Value::MakeFloat4(1.0f, 2.0f, 3.0f, 4.0f));
+  layer.add_property("d2", Value::MakeDouble2(10.0, -20.0));
+  layer.add_property("d3", Value::MakeDouble3(1.0, 2.0, 3.0));
+  layer.add_property("m4f", Value::MakeMatrix4f(matrix4f));
+  layer.add_property("str", Value("hello"));
+  layer.add_property("tok", Value::MakeToken("render"));
+  layer.add_property("asset", Value::MakeAssetPath("model.usda"));
+  layer.add_property("dict", Value::MakeDictionary(std::move(dict)));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  std::vector<uint8_t> buffer;
+  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
+  assert(write_result.success);
+  assert(!buffer.empty());
+
+  USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
+  if (!read_result.success) {
+    std::cout << "  Error: " << read_result.error_summary << "\n";
+  }
+  assert(read_result.success);
+
+  UsdPrim root = read_result.stage.GetPrimAtPath("/Root");
+  assert(root.IsValid());
+  auto prop = [&](const char* name) -> const Value* {
+    const Value* v = root.GetPropertyValue(name);
+    assert(v && "expected property missing");
+    return v;
+  };
+
+  assert(prop("i64")->as_int64() && *prop("i64")->as_int64() == -1234567890123LL);
+  assert(prop("u64")->as_uint64() && *prop("u64")->as_uint64() == 1234567890123ULL);
+  assert(prop("f2")->as_float2() && prop("f2")->as_float2()[0] == 1.25f &&
+         prop("f2")->as_float2()[1] == -2.5f);
+  assert(prop("f4")->as_float4() && prop("f4")->as_float4()[3] == 4.0f);
+  assert(prop("d2")->as_double2() && prop("d2")->as_double2()[1] == -20.0);
+  assert(prop("d3")->as_double3() && prop("d3")->as_double3()[2] == 3.0);
+  // Matrix4f is encoded in crate as Matrix4d, matching OpenUSD's crate type.
+  assert(prop("m4f")->as_matrix4d());
+  for (int i = 0; i < 16; ++i) {
+    assert(prop("m4f")->as_matrix4d()[i] == static_cast<double>(matrix4f[i]));
+  }
+  assert(prop("str")->as_string() && *prop("str")->as_string() == "hello");
+  assert(prop("tok")->as_token() && *prop("tok")->as_token() == "render");
+  assert(prop("asset")->as_asset_path() &&
+         *prop("asset")->as_asset_path() == "model.usda");
+
+  const Dict* rd = prop("dict")->as_dictionary();
+  assert(rd);
+  const Value* name = rd->find("name");
+  assert(name && name->as_string() && *name->as_string() == "fallback");
+  const Value* asset = rd->find("asset");
+  assert(asset && asset->as_asset_path() &&
+         *asset->as_asset_path() == "tex/albedo.png");
+  const Value* nested_value = rd->find("nested");
+  assert(nested_value && nested_value->as_dictionary());
+  const Value* label = nested_value->as_dictionary()->find("label");
+  assert(label && label->as_string() && *label->as_string() == "inner");
+  const Value* weight = nested_value->as_dictionary()->find("weight");
+  assert(weight && weight->as_double() && *weight->as_double() == 2.5);
+
+  std::cout << "  USDC EncodeValue fallback roundtrip test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
 
@@ -540,6 +629,7 @@ int main() {
     test_usdc_api_error_paths();
     test_usdc_bool_array_roundtrip();
     test_usdc_relationship_connection_roundtrip();
+    test_usdc_encode_value_fallback_roundtrip();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;
