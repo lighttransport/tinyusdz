@@ -103,21 +103,53 @@ int lrt_vk_build_scene(lrt_vk_engine *e, const float *vertices, uint32_t ntris,
  * Hits match a Moller-Trumbore CPU trace within fp tolerance: t is in units of
  * |dir|, (u,v) are hit barycentrics, prim_id is the triangle index. Unlike Path
  * A/B this takes raw triangles (the AS is a vendor-opaque blob and cannot be fed
- * back into lrt_tri_scene), so it is a trace-only backend. */
+ * back into lrt_tri_scene), so it is a trace-only backend.
+ *
+ * IMPORTANT: this rebuilds the acceleration structure on every call. It is a
+ * convenience for a single batch — do NOT call it once per ray/pixel in a
+ * render loop. To trace many batches against the same geometry, build a resident
+ * lrt_vk_rtx_scene ONCE (below) and reuse it; that is both correct and orders of
+ * magnitude faster. */
 int lrt_vk_trace_scene_rtx(lrt_vk_engine *e, const float *vertices, uint32_t ntris,
                            const lrt_ray *rays, uint32_t n, lrt_hit *out,
                            lrt_result *err);
+
+/* As lrt_vk_trace_scene_rtx, but for INDEXED geometry: `vertices` is 3*nverts
+ * floats of unique positions and `indices` is 3*ntris vertex ids — so callers
+ * with shared/welded vertices need not expand to a 9*ntris soup. prim_id is the
+ * triangle index (0..ntris-1). Same per-call AS-rebuild caveat as above. */
+int lrt_vk_trace_scene_rtx_indexed(lrt_vk_engine *e, const float *vertices,
+                                   uint32_t nverts, const uint32_t *indices,
+                                   uint32_t ntris, const lrt_ray *rays, uint32_t n,
+                                   lrt_hit *out, lrt_result *err);
 
 /* Resident ray-tracing scene: build the acceleration structure ONCE and trace
  * many ray batches against it. Unlike the one-shot lrt_vk_trace_scene_rtx (which
  * rebuilds the AS per call), the BLAS+TLAS stay device-resident and the trace
  * uses device-local ray/hit buffers (bulk staged), so lrt_vk_rtx_scene_trace
  * measures GPU traversal throughput rather than per-batch build + transfer cost.
- * The engine must outlive the scene. */
+ * The engine must outlive the scene.
+ *
+ * This is the API a renderer should use: build the scene once, then push every
+ * frame's rays through lrt_vk_rtx_scene_trace in as few batches as possible
+ * (ideally one), rather than calling a one-shot per pixel. */
 typedef struct lrt_vk_rtx_scene lrt_vk_rtx_scene;
 
+/* Build from a de-indexed triangle soup: `vertices` = 9*ntris floats (v0 v1 v2
+ * per triangle). */
 lrt_vk_rtx_scene *lrt_vk_rtx_scene_build(lrt_vk_engine *e, const float *vertices,
                                          uint32_t ntris, lrt_result *err);
+
+/* Build from INDEXED geometry: `vertices` = 3*nverts floats of unique positions,
+ * `indices` = 3*ntris vertex ids (uint32). Equivalent to de-indexing into a soup
+ * and calling lrt_vk_rtx_scene_build, but it uploads the shared vertices once and
+ * lets the driver index them — cheaper for welded meshes. prim_id stays the
+ * triangle index (0..ntris-1). `indices` must be non-NULL. */
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_indexed(lrt_vk_engine *e,
+                                                 const float *vertices,
+                                                 uint32_t nverts,
+                                                 const uint32_t *indices,
+                                                 uint32_t ntris, lrt_result *err);
 
 /* Trace n rays against the resident AS. Returns #rays that hit, or -1 on error.
  * Trace buffers are reused/grown across calls. */
