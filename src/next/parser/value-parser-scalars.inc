@@ -18,7 +18,6 @@ ParseResult ParseBool(Lexer& lexer) {
   }
   return ParseResult::Error("Expected boolean value");
 }
-
 // Our own decimal string->int (no libc strtol, no octal/hex; USD integers are
 // decimal). Lenient like the strtol-family it replaces: optional sign + decimal
 // digits, ignore trailing chars, saturate on overflow (matching strtol's
@@ -522,4 +521,3 @@ ParseFn GetParseFunction(TypeId type_id) {
       return nullptr;
   }
 }
-

@@ -13,7 +13,6 @@ bool IsFloat3Like(TypeId type) {
          type == TypeId::Color3h || type == TypeId::Color3f ||
          type == TypeId::Texcoord3h || type == TypeId::Texcoord3f;
 }
-
 // Helper to check if type stores float2-like data
 bool IsFloat2Like(TypeId type) {
   return type == TypeId::Float2 || type == TypeId::Half2 ||
@@ -885,4 +884,3 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
   // Default: try to return float array
   return ParseResult::Ok(Value::MakeFloatArray(std::move(float_data)));
 }
-
