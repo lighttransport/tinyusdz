@@ -367,11 +367,20 @@ count is per *district*, so it is identical across that district's cameras.)
 
 The per-shot wrappers above pick the `full` district by hand. `tusdrender
 -lodStream` does it automatically: a cheap **proxy pass** composes the scene,
-measures each district's camera distance + proxy size, then promotes the
-districts **nearest the camera** to `full` (via a generated wrapper layer) until
-a host-RSS / GPU-VRAM budget is hit; the rest stay `proxy`. This is the
-load-time form of streamed LOD — only the selected `full` payloads get composed
-and made resident — and the designed use of the `districtLod` variant.
+scores each district by **screen-space importance**, then promotes the
+top-scoring districts to `full` (via a generated wrapper layer) until a host-RSS
+/ GPU-VRAM budget is hit; the rest stay `proxy`. This is the load-time form of
+streamed LOD — only the selected `full` payloads get composed and made resident
+— and the designed use of the `districtLod` variant.
+
+The importance score is **projected coverage × view-alignment**:
+`proxyVerts / distance² × max(0, dot(dir-to-district, camera-forward))²`. Pure
+camera distance is not enough — for an *overview* camera it rewards small
+gameplay overlays sitting near the eye over the dense district the shot actually
+frames. Coverage adds geometric weight; the alignment term adds "what the camera
+looks at". (E.g. `phospate_mine_overview`: distance ranks `map_loot_zones`
+first and `map_phosphate_mine` 8th; the coverage+alignment score ranks the mine
+first at `align=0.98`.)
 
 ```sh
 M=/mnt/disk1/data/caldera/caldera.usda
@@ -385,36 +394,44 @@ M=/mnt/disk1/data/caldera/caldera.usda
 Flags: `-maxMem <GiB>` (host budget, else 50% MemAvailable), `-maxVram <GiB>`
 (GPU budget, else 50% of the device-local heap — queried via a new
 `lrt_vk_device_local_bytes()`), `-lodDistrictMem`/`-lodDistrictVram` (the flat
-per-district cost charge; default 10 / 3 GiB), `-lodMinVerts` (skip
-trigger/volume children that author no `full` geometry; default 1000),
+per-district cost charge; default 10 / 3 GiB), `-lodMinVerts`/`-lodMaxVerts`
+(proxy-vert band; skip tiny trigger/volume children and sprawling non-district
+overlays that author no `full` geometry — e.g. a 14.6 M-vert spawn-marker set
+that would otherwise hijack the ranking; defaults 1000 / 2000000),
 `-lodContainer` (the namespace prim whose children are districts; default
 `mp_wz_island_geo`).
 
-Measured (`map_capital_square`, RTX 5060 Ti / 62 GiB host, default budgets):
+Measured (`phospate_mine_overview`, RTX 5060 Ti / 62 GiB host, default budgets):
 
 ```
-[lodStream] budgets: host 24.7 GiB (avail 49.4, proxy 2.1), vram 7.96 GiB (device 15.9)
-[lodStream] 37 districts (9 sub-threshold skipped), promoting 2 to full ...
-[lodStream]   FULL  map_tile_o  dist=6122   FULL  map_capital  dist=11452   proxy (rest) ...
+[lodStream] budgets: host 24.7 GiB (avail 49.4, proxy 2.1)
+[lodStream] 36 districts (10 sub-threshold skipped), promoting 2 to full ...
+[lodStream]   FULL map_phosphate_mine score=1.67e-3 align=0.98   FULL map_tile_f align=0.92   proxy (rest) ...
 ```
 
-It auto-promoted `map_capital` (what the camera frames) + the adjacent
-`map_tile_o`, leaving the other 35 districts proxy. CPU peak RSS **19.5 GiB**
-(est 22.1 — the estimate runs slightly high, i.e. safe); GPU built the 50 M-tri
-BLAS within the 16 GiB card, with VRAM the binding budget (7.96 GiB → 2
-districts).
+It auto-promoted `map_phosphate_mine` (what the camera frames) + the in-view
+`map_tile_f`, leaving the other 34 districts proxy. CPU peak RSS **13.7 GiB**.
+Across `map_capital_square` / `phospate_mine_overview` / `map_beachhead_village`
+the score always promotes the framed district first (capital, mine, beachhead
+respectively). On the capital shot at default budgets, GPU built the 50 M-tri
+BLAS within the 16 GiB card with VRAM the binding budget (7.96 GiB → 2
+districts); CPU peak RSS there was 19.5 GiB (est 22.1 — the estimate runs
+slightly high, i.e. safe).
 
 **Cost model is intentionally simple.** Proxy geometry does not predict `full`
-cost (a low-poly stand-in's vertex count is uncorrelated with the heavy
-geometry behind its `full` variant — e.g. a 14.6 M-vert `map_vehicle_spawns`
-non-district vs a 0.25 M-vert capital that explodes to 44 M `full` tris), so the
-charge is a flat per-district constant rather than a proxy-scaled estimate, and
-sub-`-lodMinVerts` children are skipped. Tune `-lodDistrictMem` up to promote
-fewer districts / down to promote more. **Limitations** (true streaming
-follow-ups): the selection is computed once at load (not per frame), the chosen
-set is composed in a single soup/BLAS (no eviction), and the cost charge ignores
-per-district size variation — so leave host headroom or lower `-lodDistrictMem`
-on a tight machine.
+cost (a low-poly stand-in's vertex count is uncorrelated with the heavy geometry
+behind its `full` variant — a 0.25 M-vert capital proxy explodes to 44 M `full`
+tris), so the charge is a **flat per-district constant** rather than a
+proxy-scaled estimate. Proxy-vert count is used only as a coarse
+importance/footprint signal, and only within the `-lodMinVerts`..`-lodMaxVerts`
+band — outside it lie trigger/volume prims (tiny) and sprawling non-district
+overlays (e.g. the 14.6 M-vert `map_vehicle_spawns` spawn-marker set) that
+author no `full` geometry and would otherwise hijack the ranking. Tune
+`-lodDistrictMem` up to promote fewer districts / down to promote more.
+**Limitations** (true streaming follow-ups): the selection is computed once at
+load (not per frame), the chosen set is composed in a single soup/BLAS (no
+eviction), and the cost charge ignores per-district size variation — so leave
+host headroom or lower `-lodDistrictMem` on a tight machine.
 
 ### 2.7 RenderScene optimization for realtime viewers
 

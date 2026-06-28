@@ -415,9 +415,13 @@ struct Options {
   // peaks (heavy Caldera districts compose at ~10-20 GiB host, ~2.5 GiB BLAS).
   double lod_district_mem_gib{10.0};   // -lodDistrictMem
   double lod_district_vram_gib{3.0};   // -lodDistrictVram
-  // Skip container children with fewer proxy verts than this (trigger/volume/
-  // bounds prims that author no `full` geometry -- promoting them is a no-op).
-  double lod_min_verts{1000.0};        // -lodMinVerts
+  // Skip container children outside this proxy-vert band: below min are tiny
+  // trigger/volume/bounds prims; above max are sprawling non-district overlays
+  // (e.g. a 14.6 M-vert spawn-marker set) whose vert count dwarfs real districts
+  // (~<=0.5 M) and would hijack the importance ranking. Both author no `full`
+  // geometry, so promoting them is a wasted, no-op budget slot.
+  double lod_min_verts{1000.0};         // -lodMinVerts
+  double lod_max_verts{2000000.0};      // -lodMaxVerts (0 = no upper bound)
   // Namespace component whose immediate children are the LOD districts
   // (Caldera: .../mp_wz_island_geo/<district>). -lodContainer to override.
   std::string lod_container{"mp_wz_island_geo"};

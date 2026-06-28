@@ -55,7 +55,9 @@ struct District {
   Vec3 bbmax{-1e30f, -1e30f, -1e30f};
   bool has_bounds = false;
   // filled later
-  float dist = 0.0f;
+  float dist = 0.0f;   // camera distance to the district centroid
+  float align = 1.0f;  // dot(dir-to-district, camera forward): 1=ahead, <0=behind
+  double score = 0.0;  // ranking: projected coverage weighted by view-alignment
   bool full = false;
 };
 
@@ -185,23 +187,40 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
                  " centre.\n";
   }
 
-  // 4) Rank by camera distance. Skip trivially-small children (trigger/volume/
-  //    bounds prims that author no `full` geometry, and would only waste budget).
+  // 4) Rank by a screen-space-importance score: projected coverage
+  //    (proxyVerts / distance^2) weighted by how centred the district is in the
+  //    view (dot of the to-district direction with the camera forward, squared).
+  //    Pure distance fails for "overview" cameras -- it rewards small gameplay
+  //    overlays that happen to sit near the eye over the dense district the shot
+  //    actually frames; coverage adds geometric weight, alignment adds "what the
+  //    camera looks at". Skip trivially-small children (trigger/volume/bounds
+  //    prims that author no `full` geometry and would only waste budget).
   std::vector<District> ranked;
   ranked.reserve(districts.size());
   int n_skipped = 0;
   for (auto &kv : districts) {
     District d = kv.second;
-    if (d.verts < opt->lod_min_verts) {
+    if (d.verts < opt->lod_min_verts ||
+        (opt->lod_max_verts > 0.0 && d.verts > opt->lod_max_verts)) {
       ++n_skipped;
       continue;
     }
     Vec3 centre = d.has_bounds ? Mul(Add(d.bbmin, d.bbmax), 0.5f) : Vec3{0, 0, 0};
-    d.dist = Length(Sub(centre, cam_ref));
+    Vec3 to = Sub(centre, cam_ref);
+    d.dist = Length(to);
+    // View alignment: 1 dead-ahead, 0 at 90 deg, <0 behind. No camera -> treat
+    // all as ahead (fall back to pure coverage ranking around the scene centre).
+    d.align = (have_cam && d.dist > 1e-3f)
+                  ? Dot(Mul(to, 1.0f / d.dist), cam.forward)
+                  : 1.0f;
+    const double dist2 = double(d.dist) * double(d.dist) + 1.0;  // +1: avoid /0
+    const double coverage = d.verts / dist2;
+    const double a = d.align > 0.0f ? double(d.align) : 0.0;
+    d.score = coverage * a * a;  // behind-camera districts score ~0
     ranked.push_back(d);
   }
   std::sort(ranked.begin(), ranked.end(),
-            [](const District &a, const District &b) { return a.dist < b.dist; });
+            [](const District &a, const District &b) { return a.score > b.score; });
   if (ranked.empty()) {
     std::cerr << "[lodStream] no districts above " << opt->lod_min_verts
               << " proxy verts -- rendering scene as authored.\n";
@@ -258,8 +277,9 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   std::cerr << "\n";
   for (const District &d : ranked) {
     std::cerr << "[lodStream]   " << (d.full ? "FULL  " : "proxy ")
-              << d.name << "  dist=" << d.dist
-              << "  proxyVerts=" << uint64_t(d.verts) << "\n";
+              << d.name << "  score=" << d.score << "  dist=" << d.dist
+              << "  align=" << d.align << "  proxyVerts=" << uint64_t(d.verts)
+              << "\n";
   }
 
   // 8) Generate the wrapper layer: subLayer the original (absolute) and promote
