@@ -20,15 +20,23 @@ cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build_ninja -j16 --target tusdview
 ```
 
-- **Vulkan** is enabled automatically when `find_package(Vulkan)` succeeds (needs
-  a build-time `glslangValidator` to compile the shaders to SPIR-V). Force a
-  GL-only build with `-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`.
-- **Vulkan ray tracing** (`--rt`) additionally needs a `glslangValidator` that
-  supports `GL_EXT_ray_query` (≈ glslang ≥ 11 / a Vulkan SDK build) and a GPU
-  exposing `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`. CMake probes the
-  compiler at configure time; if it can't compile `vk/shaders/raytrace.comp` the
-  Vulkan backend silently uses rasterization. Build a local glslang once if the
-  system one is too old: `examples/common/build-glslang.sh`.
+- **Vulkan** is ON by default (`-DTUSDVIEW_WITH_VULKAN=ON`) and needs **no Vulkan
+  SDK, no `libvulkan-dev`, and no `glslangValidator`**: the API is resolved at
+  runtime via the vendored **volk** meta-loader (`dlopen`), the headers are
+  vendored (`examples/common/vulkan-headers`), and the shaders ship as committed
+  **embedded SPIR-V** (`vk/shaders/embedded/*.spv.h`). Only the runtime Vulkan
+  loader (`libvulkan.so.1`) + an ICD are needed to *run*. Look for
+  `tusdview: Vulkan backend ENABLED (... embedded SPIR-V, ray query ON)` in the
+  configure log. Force a GL-only build with `-DTUSDVIEW_WITH_VULKAN=OFF`.
+  (Regenerate the embedded SPIR-V with `vk/shaders/build-shaders.sh` after a
+  shader change — that script is the only thing that needs `glslangValidator`.)
+- **Vulkan ray tracing** (`--rt`) is compiled in whenever
+  `vk/shaders/embedded/raytrace_comp.spv.h` is present (it is, by default) and
+  activates at runtime on a GPU exposing `VK_KHR_acceleration_structure` +
+  `VK_KHR_ray_query`; otherwise it falls back to rasterization. Regenerating that
+  header is the only step that needs a `GL_EXT_ray_query`-capable glslang (≈
+  glslang ≥ 11); build one once with `examples/common/build-glslang.sh` if you
+  edit `vk/shaders/raytrace.comp`.
 - **Experimental threaded render path** (a dedicated render thread owns the GL
   context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
   is gated behind a default-OFF option:
@@ -39,6 +47,29 @@ cmake --build build_ninja -j16 --target tusdview
 
   See [`threading-stage2.md`](../examples/tusdview/doc/threading-stage2.md). When
   OFF, `--threaded` is a no-op and the single-threaded path is unchanged.
+
+## Vulkan run test (verified working on NVIDIA)
+
+The Vulkan backend is exercised end-to-end by the **`tusdview-vk-render`** ctest
+(`examples/tusdview/tests/run-vk-render.sh`): it renders headless via
+`--backend vk` and `--rt` (ray query) and asserts a non-blank frame. The
+`--headless` path is Vulkan-only and renders offscreen, so the test needs **no
+window / X server**; it SKIPs (return 77) when no Vulkan device is available, so
+headless CI without a GPU stays green.
+
+```sh
+cd build && ctest -R tusdview-vk-render --output-on-failure
+# or directly:
+examples/tusdview/tests/run-vk-render.sh
+```
+
+**Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
+Vulkan 1.4), 2026-06-28.** Both rasterization and hardware ray query render the
+full scene correctly (raster vs ray-query agree to <1 LSB mean), at the default
+1469×1284 with no resolution-dependent hang. This is tusdview's **own** Vulkan
+backend (`examples/tusdview/vk/`); note the separate LightRT GPU trace used by
+`tusdrender -vk/-vkr` still mis-renders on this same GPU — see
+[`doc/tusdrender.md`](tusdrender.md).
 
 ### Windows (llvm-mingw)
 

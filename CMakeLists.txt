@@ -2128,6 +2128,22 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    #
+    # tusdview: Vulkan backend run test. Renders headless via --backend vk and
+    # --rt (ray query) and asserts a non-blank frame. Needs a real Vulkan device
+    # (no window/X server: the headless path renders offscreen); SKIPs (return
+    # 77) when no Vulkan driver is available, so it is harmless on headless CI.
+    #
+    add_test(
+      NAME tusdview-vk-render
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-render.sh
+    )
+    set_tests_properties(tusdview-vk-render PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #
