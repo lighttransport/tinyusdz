@@ -9,15 +9,18 @@
 #include <cassert>
 #include <cstdio>
 #include <iterator>
+#include <limits>
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
 #include "next/types/value.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/strfmt.hh"
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/dtoa.hh"
 
 using namespace tinyusdz::next;
 
@@ -113,6 +116,112 @@ void test_value_printer() {
   }
 
   std::cout << "  value-printer tests passed!\n\n";
+}
+
+// Hot-path regression coverage for the per-element number formatting rewrite
+// (dtos_to / IntTo / UIntTo + the num_-free ChunkedStream): stream-vs-string
+// parity across every hot array element type, including edge-case formatting
+// (-0.0, inf/nan, INT64_MIN, scientific crossover, large magnitudes).
+void test_hot_array_formatting_parity() {
+  std::cout << "Testing hot-array number formatting parity...\n";
+
+  const float fedge[] = {
+      0.0f, -0.0f, 1.0f, -1.0f, 3.14159265f, 1e-30f, 1e30f, 123456.789f,
+      0.0001f, 1234567.0f, std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
+      std::numeric_limits<float>::quiet_NaN(),
+      std::numeric_limits<float>::max(), std::numeric_limits<float>::min()};
+  const double dedge[] = {
+      0.0, -0.0, 1.0, -1.0, 3.141592653589793, 1e-300, 1e300, 13.944,
+      0.000123456789, 9876543210.123, std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity(),
+      std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::max(), std::numeric_limits<double>::min()};
+
+  // Scalar float / double arrays.
+  {
+    std::vector<float> fa(std::begin(fedge), std::end(fedge));
+    assert_stream_value_matches_string(Value::MakeFloatArray(fa));
+    std::vector<double> da(std::begin(dedge), std::end(dedge));
+    assert_stream_value_matches_string(Value::MakeDoubleArray(da));
+  }
+
+  // float3 / double-comp (vec3) tuples exercise the per-component path.
+  {
+    std::vector<float> f3 = {0.0f, -0.0f, 1e30f, 3.14f, -1.0f, 1e-30f};
+    assert_stream_value_matches_string(Value::MakeFloat3Array(f3));
+    std::vector<double> d3 = {0.0, -0.0, 1e300, 3.14, -1.0, 1e-300};
+    assert_stream_value_matches_string(
+        Value::MakeDoubleCompArray(std::move(d3), TypeId::Double3, 3));
+  }
+
+  // matrix4d (16-component) tuples exercise the nested matrix path.
+  {
+    std::vector<double> m(32);
+    for (size_t i = 0; i < m.size(); ++i) m[i] = double(i) * 0.5 - 4.0;
+    assert_stream_value_matches_string(
+        Value::MakeDoubleCompArray(std::move(m), TypeId::Matrix4d, 16));
+  }
+
+  // Integer arrays incl. INT64_MIN and UINT64_MAX.
+  {
+    assert_stream_value_matches_string(Value::MakeIntArray(
+        {0, 1, -1, 2147483647, -2147483647 - 1}));
+    assert_stream_value_matches_string(Value::MakeInt64Array(
+        {0, 1, -1, std::numeric_limits<int64_t>::min(),
+         std::numeric_limits<int64_t>::max()}));
+    assert_stream_value_matches_string(Value::MakeUIntArray(
+        {0u, 1u, std::numeric_limits<uint32_t>::max()}));
+    assert_stream_value_matches_string(Value::MakeUInt64Array(
+        {0u, 1u, std::numeric_limits<uint64_t>::max()}));
+  }
+
+  // token / bool arrays.
+  {
+    assert_stream_value_matches_string(
+        Value::MakeTokenArray({"a", "b c", "quote\"here", "back\\slash"}));
+    assert_stream_value_matches_string(
+        Value::MakeBoolArray({true, false, true, true, false}));
+  }
+
+  // dtos_to / IntTo / UIntTo must be byte-identical to the append variants.
+  {
+    for (float v : fedge) {
+      char buf[24];
+      size_t n = dtos_to(buf, v);
+      std::string s_append;
+      dtos_append(s_append, v);
+      assert(std::string(buf, n) == s_append);
+    }
+    for (double v : dedge) {
+      char buf[32];
+      size_t n = dtos_to(buf, v);
+      std::string s_append;
+      dtos_append(s_append, v);
+      assert(std::string(buf, n) == s_append);
+    }
+    const int64_t ivals[] = {0, 1, -1, 123456789, -987654321,
+                             std::numeric_limits<int64_t>::min(),
+                             std::numeric_limits<int64_t>::max()};
+    for (int64_t v : ivals) {
+      char buf[21];
+      size_t n = IntTo(buf, v);
+      std::string s_append;
+      AppendInt(s_append, v);
+      assert(std::string(buf, n) == s_append);
+    }
+    const uint64_t uvals[] = {0u, 1u, 123456789u,
+                              std::numeric_limits<uint64_t>::max()};
+    for (uint64_t v : uvals) {
+      char buf[20];
+      size_t n = UIntTo(buf, v);
+      std::string s_append;
+      AppendUInt(s_append, v);
+      assert(std::string(buf, n) == s_append);
+    }
+  }
+
+  std::cout << "  hot-array number formatting parity passed!\n\n";
 }
 
 void test_lazy_usdc_stream_value_printer() {
@@ -686,6 +795,7 @@ int main() {
 
   try {
     test_value_printer();
+    test_hot_array_formatting_parity();
     test_lazy_usdc_stream_value_printer();
     test_timesamples_metadata_placement();
     test_layer_printer();

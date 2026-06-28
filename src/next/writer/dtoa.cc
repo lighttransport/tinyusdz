@@ -333,18 +333,31 @@ std::string dtos(double v) {
   return std::string(buffer, end);
 }
 
+// Format straight into a caller-provided buffer, returning the byte count.
+// `dst` must have capacity >= 24 (float) / >= 32 (double). Reuses the same
+// dtoa_impl as dtos()/dtos_append (byte-for-byte identical result), so the value
+// printer's hot path can format a scalar into a stack buffer and append it to the
+// chunk buffer in a single copy (no intermediate std::string).
+size_t dtos_to(char* dst, float v) {
+  char* end = dtoa_impl(v, dst);
+  return static_cast<size_t>(end - dst);
+}
+
+size_t dtos_to(char* dst, double v) {
+  char* end = dtoa_impl(v, dst);
+  return static_cast<size_t>(end - dst);
+}
+
 // Append variants: format straight into `out` with no intermediate std::string,
 // reusing the exact same dtoa_impl as dtos() (byte-for-byte identical result).
 void dtos_append(std::string& out, float v) {
   char buffer[24];
-  char* end = dtoa_impl(v, buffer);
-  out.append(buffer, static_cast<size_t>(end - buffer));
+  out.append(buffer, dtos_to(buffer, v));
 }
 
 void dtos_append(std::string& out, double v) {
   char buffer[32];
-  char* end = dtoa_impl(v, buffer);
-  out.append(buffer, static_cast<size_t>(end - buffer));
+  out.append(buffer, dtos_to(buffer, v));
 }
 
 std::string format_g(double v, int precision) {
