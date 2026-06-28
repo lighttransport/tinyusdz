@@ -7,14 +7,15 @@
 # array to vkCreateShaderModule. Run this only after editing a .comp; it needs
 # glslangValidator (Vulkan SDK) or, as a fallback, glslc (shaderc).
 #
-# Usage:  scripts/compile_shaders.sh
-#         GLSLANG=/path/to/glslangValidator scripts/compile_shaders.sh
+# Usage:  src/external/lightrt/vk/shaders/compile_shaders.sh
+#         GLSLANG=/path/to/glslangValidator vk/shaders/compile_shaders.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SH="${SCRIPT_DIR}/../vk/shaders"
+# The .comp sources and committed .spv.h headers live alongside this script.
+SH="${SCRIPT_DIR}"
 
 # Prefer the locally built glslang (scripts/setup-and-build-glslang.sh): the
 # trace_ray_query shader needs GL_EXT_ray_query, which older system glslang
