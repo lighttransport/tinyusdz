@@ -184,9 +184,13 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/layer-registry.hh
     pcp/cache-arc-expansion.inc
     pcp/cache.hh
+    pcp/cache-compose.inc
+    pcp/cache-invalidation.inc
     pcp/cache-layer-stack.inc
     pcp/cache-lock.hh
+    pcp/cache-parallel-warm.inc
     pcp/cache-specs-instances.inc
+    pcp/cache-stage-build.inc
     pcp/cache-utils.hh
 
     # High-level API
