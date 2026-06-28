@@ -65,6 +65,7 @@ add_executable(tusdrender
   tusdr_next.cc
   tusdr_legacy.cc
   tusdr_vulkan.cc
+  tusdr_d3d.cc
 )
 
 target_link_libraries(tusdrender
@@ -129,6 +130,20 @@ if(TUSDRENDER_WITH_VULKAN)
                                     ${LIGHTRT_VK_SRC}/lightrt_vkew.c)
   target_compile_definitions(tusdrender PRIVATE HAVE_VULKAN=1)
   target_include_directories(tusdrender PRIVATE ${LIGHTRT_VK_SRC})
+endif()
+
+# --- LightRT Direct3D 11 backend (Windows only) ----------------------------
+# A D3D11 compute trace path mirroring the Vulkan one (the trace shader is
+# decompiled from the Vulkan SPIR-V via SPIRV-Cross). d3d11 + d3dcompiler +
+# dxgi ship with Windows, so no SDK is required. Useful where the AMD amdvlk
+# Vulkan path mis-renders but the D3D driver is solid.
+option(TUSDRENDER_WITH_D3D11 "Build the Direct3D 11 GPU-interop backend" ON)
+if(TUSDRENDER_WITH_D3D11 AND WIN32)
+  set(LIGHTRT_D3D_SRC ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+  target_sources(tusdrender PRIVATE ${LIGHTRT_D3D_SRC}/lightrt_c_d3d11.cpp)
+  target_include_directories(tusdrender PRIVATE ${LIGHTRT_D3D_SRC})
+  target_compile_definitions(tusdrender PRIVATE HAVE_D3D11=1)
+  target_link_libraries(tusdrender d3d11 dxgi d3dcompiler)
 endif()
 
 # MinGW (e.g. llvm-mingw): statically link the C++/runtime support libs so the

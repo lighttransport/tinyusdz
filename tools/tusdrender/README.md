@@ -15,7 +15,7 @@ Common flags:
 | flag | meaning |
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
-| `-vk` / `-vkr` | GPU (Vulkan) compute trace / hardware ray query — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for backend status + testing |
+| `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |

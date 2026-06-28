@@ -1,49 +1,60 @@
-# tusdrender — Vulkan backend testing
+# tusdrender — GPU backend testing (Vulkan / Direct3D 11)
 
 `tusdrender` (CPU preview ray-tracer, see
-[`tools/tusdrender/README.md`](../tools/tusdrender/README.md)) also has an
-optional **GPU backend** built on the vendored LightRT Vulkan path
-(`src/external/lightrt/lightrt_c_vk.c` + `lightrt_vkew.c`, driven by
-`tools/tusdrender/tusdr_vulkan.cc`). It is **runtime-loaded via vkew** — no
-Vulkan SDK is needed to build, and it is compiled in whenever
-`-DTUSDRENDER_WITH_VULKAN=ON` (the default). At runtime it picks a Vulkan device,
-uploads the LightRT BVH, and traces in a compute shader (buffer-device-address);
-`-vkr` additionally uses hardware ray tracing when the device exposes it,
-otherwise it falls back to the same compute trace.
+[`tools/tusdrender/README.md`](../tools/tusdrender/README.md)) has two optional
+**GPU compute backends** that traverse the same LightRT BVH:
+
+- **Vulkan** (`-vk` / `-vkr`) — `src/external/lightrt/lightrt_c_vk.c` +
+  `lightrt_vkew.c`, driven by `tusdr_vulkan.cc`. Runtime-loaded via vkew (no
+  Vulkan SDK to build), on by default (`-DTUSDRENDER_WITH_VULKAN=ON`). `-vkr`
+  uses hardware ray tracing when present, else falls back to compute trace.
+- **Direct3D 11** (`-d3d`) — `src/external/lightrt/lightrt_c_d3d11.cpp`, driven
+  by `tusdr_d3d.cc`. Windows-only, on by default
+  (`-DTUSDRENDER_WITH_D3D11=ON`); d3d11/dxgi/d3dcompiler ship with the OS, so no
+  SDK is needed. Its compute shader (`d3d/shaders/trace_bvh.hlsl`) is
+  **decompiled from the Vulkan SPIR-V with SPIRV-Cross**, so it traverses the
+  BVH bit-for-bit identically; it just runs through the (much more mature on
+  older AMD cards) D3D driver. Unlike the Vulkan helper it batches the whole
+  frame's rays into **one** dispatch.
 
 ```sh
 # CPU reference (always correct):
 tusdrender models/suzanne-pbr.usda cpu.png -rtPreview -w 320 -height 240 -autoframe
 # Vulkan compute trace:
-tusdrender models/suzanne-pbr.usda vk.png  -vk      -w 320 -height 240 -autoframe
+tusdrender models/suzanne-pbr.usda vk.png  -vk  -w 320 -height 240 -autoframe
 # Vulkan hardware ray query (RDNA2+; else falls back to compute trace):
-tusdrender models/suzanne-pbr.usda vkr.png -vkr     -w 320 -height 240 -autoframe
+tusdrender models/suzanne-pbr.usda vkr.png -vkr -w 320 -height 240 -autoframe
+# Direct3D 11 compute trace (Windows):
+tusdrender models/suzanne-pbr.usda d3d.png -d3d -w 320 -height 240 -autoframe
 ```
 
-A correct `-vk`/`-vkr` image must match the `-rtPreview` reference (same framed
-mesh). The startup log prints the chosen device and path, e.g.:
-
-```
-Vulkan device: <GPU name>
-Vulkan caps: compute=1 buf_addr
-backend: LightRT VK (compute trace)   # or "(ray query)" with -vkr on RT hardware
-```
+A correct GPU image must match the `-rtPreview` reference (same framed mesh).
+The startup log prints the chosen device + path, e.g. `backend: LightRT VK
+(compute trace)` / `LightRT D3D11 (compute trace, N rays in 1 dispatch)`.
 
 ## ⚠️ Known-broken configuration (please retest elsewhere)
 
-On the dev machine the Vulkan backend is **broken**, but the CPU path renders the
-same scene perfectly — so the BVH/geometry is fine and the fault is GPU-side
-(driver or the LightRT VK compute path), not in the scene conversion.
+On the dev machine **both** GPU backends mis-render, while the CPU path renders
+the scene perfectly — so the BVH/geometry is fine and the fault is GPU-side, in
+the compute trace itself, not the scene conversion.
 
 | | |
 |---|---|
 | **GPU** | AMD **Radeon RX 570** (Polaris / GCN 4, 2017) |
-| **Driver** | AMD Windows driver — reports driverID `AMD_PROPRIETARY` (amdvlk64.dll) |
-| **Symptom** | `-vk`/`-vkr` run (`rc=0`) but render only a sparse scatter of fragments instead of the mesh; **hangs** at larger resolutions (320×240 timed out >2 min) |
+| **Driver** | AMD Windows driver — Vulkan driverID `AMD_PROPRIETARY` (amdvlk64.dll) |
+| **`-vk` / `-vkr`** | run (`rc=0`) but render only a sparse Suzanne silhouette (most interior rays miss); **hang** at larger resolutions (320×240 timed out >2 min — the Vulkan helper does one GPU round-trip *per pixel*) |
+| **`-d3d`** | runs (`rc=0`, one batched dispatch, no hang) but produces the **same** sparse silhouette as Vulkan |
 | **CPU `-rtPreview`** | ✅ correct, full render |
 
-This is the same GPU/driver that exposed an unrelated Vulkan bug in `tusdview`
-(amdvlk's low `maxPushConstantsSize`); amdvlk on this Polaris card is suspect.
+**Key finding:** the D3D11 path was added specifically to test whether the mature
+D3D driver fixes this — it does **not**. Vulkan and D3D11 produce the *same*
+wrong image (the HLSL is decompiled from the same SPIR-V), so the bug is in the
+LightRT GPU **trace compute shader on GCN/Polaris**, not in amdvlk. (The
+silhouette-only pattern — edges hit, interior misses — looks like a
+traversal-depth / stack issue specific to this GPU; the shader works on the
+reference RTX 3070.) The D3D11 backend itself is correct and is the better one to
+develop against (single batched dispatch, no per-pixel round-trip, no hang). It
+should render correctly on a GPU where the compute shader is sound.
 
 ## Retesting on another AMD GPU / driver
 

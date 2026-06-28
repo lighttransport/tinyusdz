@@ -404,6 +404,7 @@ struct Options {
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
   std::string env_file;            // --env <hdr>: IBL environment map override
   bool displace{true};             // apply UsdPreviewSurface displacement (coarse)
   float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
