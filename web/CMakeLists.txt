@@ -133,11 +133,19 @@ list(
   ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-arrays.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-decode.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-api.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-sections.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-stage.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-unpack.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc

@@ -387,31 +387,28 @@ bool CrateReader::Impl::ReadFields() {
 
   std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
 
-  if (reps_size == field_value_rep_bytes) {
-    if (!reader_->read(value_reps.data(), static_cast<size_t>(reps_size))) {
-      AddError("Failed to read value reps");
-      return false;
-    }
-  } else {
-    std::vector<uint8_t> reps_data;
-    if (!reader_->read(reps_data, static_cast<size_t>(reps_size))) {
-      AddError("Failed to read compressed value reps");
-      return false;
-    }
+  std::vector<uint8_t> reps_data;
+  if (!reader_->read(reps_data, static_cast<size_t>(reps_size))) {
+    AddError("Failed to read value reps");
+    return false;
+  }
 
-    DecompressResult rdr = DecompressCrateBlob(
-        reps_data.data(), reps_data.size(), field_value_rep_bytes);
-    if (!rdr.success) {
-      AddError("Failed to decompress value reps");
-      return false;
-    }
-    if (rdr.data.size() < field_value_rep_bytes) {
-      AddError("Decompressed value reps shorter than expected");
-      return false;
-    }
+  // ValueRep[] is normally TfFastCompression/LZ4-compressed bytes. Do not
+  // classify by byte count alone: small OpenUSD files can have compressed size
+  // equal to the uncompressed `num_fields * 8` length.
+  DecompressResult rdr = DecompressCrateBlob(
+      reps_data.data(), reps_data.size(), field_value_rep_bytes);
+  if (rdr.success && rdr.data.size() >= field_value_rep_bytes) {
     if (field_value_rep_bytes > 0) {
       std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
     }
+  } else if (reps_size == field_value_rep_bytes) {
+    if (field_value_rep_bytes > 0) {
+      std::memcpy(value_reps.data(), reps_data.data(), field_value_rep_bytes);
+    }
+  } else {
+    AddError("Failed to decompress value reps");
+    return false;
   }
 
   fields_.resize(static_cast<size_t>(num_fields));

@@ -16,6 +16,7 @@
 #include "../crate/crate-writer.hh"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,7 @@ struct FlattenStats {
   double compose_ms = 0.0;
   double write_ms = 0.0;
   std::vector<std::string> referenced_assets;  // asset-valued fields in output layer
+  size_t asset_paths_remapped = 0;
   // Non-fatal composition errors (unresolved/unloadable external arcs). The
   // flatten still succeeds with those arcs skipped; callers should surface
   // these so silent partial composition is visible.
@@ -61,6 +63,10 @@ struct FlattenOptions {
   // for resumable/async loaders that need to fetch a missing layer and retry
   // rather than silently emitting a partial flatten.
   bool fail_on_composition_error = false;
+
+  // Asset-valued property rewrite applied after composition and before writing.
+  // Used by USDZ texture conversion when packed texture names change.
+  std::map<std::string, std::string> asset_path_remap;
 };
 
 /// Filesystem-backed LayerLoader for native multi-file flattens: reads the

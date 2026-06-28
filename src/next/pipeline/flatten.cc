@@ -131,6 +131,18 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   const auto after_compose = Clock::now();
   FlattenMemLog("after-compose");
 
+  size_t asset_paths_remapped = 0;
+  if (!opts.asset_path_remap.empty()) {
+    Layer* mutable_layer = composed ? composed.get() : root_owner.get();
+    if (mutable_layer) {
+      for (size_t i = 0; i < mutable_layer->prim_count(); ++i) {
+        PrimSpec* prim = mutable_layer->prim_mutable(static_cast<uint32_t>(i));
+        if (!prim) continue;
+        asset_paths_remapped += prim->remap_asset_paths(opts.asset_path_remap);
+      }
+    }
+  }
+
   CrateWriter writer(opts.write);
   CrateWriteResult wr = sink ? writer.WriteLayerToSink(*sink, *layer)
                              : writer.WriteLayerToMemory(*out, *layer);
@@ -147,6 +159,7 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     stats->prim_count = layer->prim_count();
     stats->arrays_passed_through = wr.arrays_passed_through;
     stats->arrays_reencoded = wr.arrays_reencoded;
+    stats->asset_paths_remapped = asset_paths_remapped;
     stats->compose_ms = ElapsedMs(compose_begin, after_compose);
     stats->write_ms = ElapsedMs(after_compose, after_write);
     CollectReferencedAssets(*layer, &stats->referenced_assets);

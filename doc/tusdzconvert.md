@@ -58,6 +58,7 @@ omitted the output is `<input>.usdz`.
 | `-pngEncoder <fpnge\|fpng>` | PNG encoder backend (default `fpnge` when available). |
 | `-jpegQuality <1-100>` | JPEG quality when (re-)encoding (default `90`). |
 | `-noReencode` | Copy unmodified textures through byte-for-byte. |
+| `-includeUnusedTextures` | Also convert/package image files in the input layer directories that are not referenced by `UsdUVTexture`. |
 
 ## Material optimization
 
