@@ -348,16 +348,17 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     F3 base=mk(cv[0]*w0+cv[3]*bu+cv[6]*bv, cv[1]*w0+cv[4]*bu+cv[7]*bv, cv[2]*w0+cv[5]*bu+cv[8]*bv);
     base=mk(base.x*I->tint[0], base.y*I->tint[1], base.z*I->tint[2]);  // per-instance tint
 
+    // Default shaded view: match the tusdrender -vk/-vkr preview exactly so the
+    // two GPU ray-traced previews agree (tools/tusdrender/tusdr_vulkan.cc). Orient
+    // the shading normal toward the eye (USD winding/normals are not guaranteed
+    // consistent), then key light + a dim camera headlight + ambient (0.05). No
+    // cast shadows here: -vkr has none, and parity is the goal for this view.
+    F3 V=norm3(scale(d,-1.f));               // toward the eye
+    F3 Ns=(dot3(N,V)<0.f)?scale(N,-1.f):N;   // forward-facing shading normal
     F3 L=norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]));
-    float diff=fmaxf(dot3(N,L),0.f);
-    float shadow=1.f;
-    if (diff>0.f){
-      int sht,si; float su,sv;
-      F3 so=add(hit,scale(N,1e-3f));
-      traverseTLAS(tlas,insts,blas,tris,so,L,1e30f,&sht,&su,&sv,&si,true);
-      if (sht>=0) shadow=0.f;
-    }
-    float k=0.25f+0.85f*diff*shadow;
+    float key=fmaxf(dot3(Ns,L),0.f);
+    float head=fmaxf(dot3(Ns,V),0.f);
+    float k=0.05f+0.8f*key+0.35f*head;
     outc=mk(base.x*k,base.y*k,base.z*k);
     // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
     // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).

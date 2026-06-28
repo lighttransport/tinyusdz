@@ -81,6 +81,13 @@ owns the screenshot (it bypasses the rasterized capture) and supports the
 `RenderMode` AOV/debug views, selectable headless with `--mode <name>` (shaded,
 normals, bvh-heatmap, material-id, uv, depth, …).
 
+The default **shaded** view uses the same lighting model as the `tusdrender
+-vk/-vkr` GPU previews (`tools/tusdrender/tusdr_vulkan.cc`) so the two ray-traced
+previews agree: a camera-oriented shading normal, then `0.05 ambient + 0.8·key +
+0.35·camera-headlight` with the shared fixed key light `(0.5, 0.8, 0.6)` and no
+cast shadows. (The traced AOV modes — `ao`, `soft-shadow` — still do their own
+GI/visibility tracing.)
+
 ```sh
 # headless, no window/X server needed:
 ./build/tusdview --headless --cuda --frames 4 --screenshot out.ppm model.usda
