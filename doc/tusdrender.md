@@ -1,13 +1,21 @@
-# tusdrender — GPU backend testing (Vulkan / Direct3D 11)
+# tusdrender — GPU backend testing (Vulkan / Direct3D 11 / HIP)
 
 `tusdrender` (CPU preview ray-tracer, see
-[`tools/tusdrender/README.md`](../tools/tusdrender/README.md)) has two optional
+[`tools/tusdrender/README.md`](../tools/tusdrender/README.md)) has several optional
 **GPU compute backends** that traverse the same LightRT BVH:
 
 - **Vulkan** (`-vk` / `-vkr`) — `src/external/lightrt/lightrt_c_vk.c` +
   `lightrt_vkew.c`, driven by `tusdr_vulkan.cc`. Runtime-loaded via vkew (no
   Vulkan SDK to build), on by default (`-DTUSDRENDER_WITH_VULKAN=ON`). `-vkr`
   uses hardware ray tracing when present, else falls back to compute trace.
+- **HIP/ROCm** (`-hip`) — `src/external/lightrt/lightrt_c_hip.c` +
+  `src/external/hipew/hipew.c`, driven by `tusdr_hip.cc`. Runtime-loaded via
+  hipew (opens `libamdhip64` + `libhiprtc`; no ROCm SDK to build), on by default
+  (`-DTUSDRENDER_WITH_HIP=ON`, non-Windows). The trace kernel
+  (`src/external/lightrt/hip/trace_bvh_hip.h`) is a **direct port of
+  `trace_bvh.comp`** compiled at runtime with hiprtc, so it traverses the
+  serialized LRTS BVH bit-for-bit identically to the Vulkan compute path
+  (`-hip` ≈ `-vk`). Verified on AMD Radeon RX 9070 XT (gfx1201).
 - **Direct3D 11** (`-d3d`) — `src/external/lightrt/lightrt_c_d3d11.cpp`, driven
   by `tusdr_d3d.cc`. Windows-only, on by default
   (`-DTUSDRENDER_WITH_D3D11=ON`); d3d11/dxgi/d3dcompiler ship with the OS, so no
@@ -24,6 +32,8 @@ tusdrender models/suzanne-pbr.usda cpu.png -rtPreview -w 320 -height 240 -autofr
 tusdrender models/suzanne-pbr.usda vk.png  -vk  -w 320 -height 240 -autoframe
 # Vulkan hardware ray query (RDNA2+; else falls back to compute trace):
 tusdrender models/suzanne-pbr.usda vkr.png -vkr -w 320 -height 240 -autoframe
+# HIP/ROCm compute trace (AMD; kernel compiled at runtime via hiprtc):
+tusdrender models/suzanne-pbr.usda hip.png -hip -w 320 -height 240 -autoframe
 # Direct3D 11 compute trace (Windows):
 tusdrender models/suzanne-pbr.usda d3d.png -d3d -w 320 -height 240 -autoframe
 ```

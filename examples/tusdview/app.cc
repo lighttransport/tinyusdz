@@ -1403,6 +1403,58 @@ int App::run(const std::string& initialFile, int maxFrames,
     return 0;  // CUDA path owns the screenshot; skip the rasterized capture.
   }
 
+  // HIP/ROCm ray tracing: AMD counterpart of the CUDA path above (HIP runtime +
+  // hiprtc loaded at runtime via hipew). Same scene flatten / BVH / kernel.
+  if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
+    std::string cerr;
+    if (!hipTracer_.init(&cerr)) {
+      LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
+    } else if (!hipTracer_.build(draw_, cudaMaxTris_, &cerr,
+                                 gui_.displacementScale())) {
+      LOGW("HIP ray tracing build failed: %s", cerr.c_str());
+    } else {
+      std::vector<uint8_t> sizeProbe;
+      int w = 0, h = 0;
+      renderer_->captureViewport(&sizeProbe, &w, &h);
+      if (w <= 0 || h <= 0) { w = 1024; h = 768; }
+      camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+      const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+      const light3d::Mat4 inv = pv.inverse();
+      const light3d::Vec3 eye = camera_.eye();
+      const float camPos[3] = {eye.x, eye.y, eye.z};
+      const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
+      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const int rmode = static_cast<int>(gui_.renderMode());
+      float depthScale = 1.0f;
+      float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
+      if (draw_.hasBounds) {
+        const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+        const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+        const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+        depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        for (int i = 0; i < 3; ++i) {
+          sceneMin[i] = draw_.aabbMin[i];
+          sceneExtent[i] = std::max(1e-4f, draw_.aabbMax[i] - draw_.aabbMin[i]);
+        }
+      }
+      std::vector<uint8_t> rgba;
+      if (hipTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+                           sceneExtent, w, h, &rgba, &cerr)) {
+        std::string werr;
+        if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
+          LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
+               hipTracer_.triangleCount(),
+               hipTracer_.truncated() ? ", truncated" : "", hipTracer_.deviceName());
+        } else {
+          LOGW("HIP RT screenshot write failed: %s", werr.c_str());
+        }
+      } else {
+        LOGW("HIP ray trace failed: %s", cerr.c_str());
+      }
+    }
+    return 0;  // HIP path owns the screenshot; skip the rasterized capture.
+  }
+
   shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
   return 0;

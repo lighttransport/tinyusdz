@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -128,6 +129,8 @@ int main(int argc, char** argv) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
+    } else if (std::strcmp(argv[i], "--hip") == 0) {
+      wantHip = true;
     } else if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
@@ -207,6 +210,8 @@ int main(int argc, char** argv) {
           "(implies --backend vk).\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
+          "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
+          "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
@@ -345,6 +350,7 @@ int main(int argc, char** argv) {
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
+  app.setHipRt(wantHip);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);

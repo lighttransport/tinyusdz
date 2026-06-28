@@ -21,6 +21,7 @@
 #include "camera_nav.hh"
 #include "cuda/cuda_raytracer.hh"
 #include "gpu_scene.hh"
+#include "hip/hip_raytracer.hh"
 #include "gui.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
@@ -116,6 +117,8 @@ class App
   void setHeadless(bool on) { headless_ = on; }
   // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
   void setCudaRt(bool on) { cudaRt_ = on; }
+  // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
+  void setHipRt(bool on) { hipRt_ = on; }
   // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
   void setBlendWeight(const std::string& name, float w) {
@@ -246,6 +249,8 @@ class App
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
+  bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
+  HipRayTracer hipTracer_;
 
   // Ray tracing: requested via --rt; rtPath_ is the effective state after the
   // renderer reports capability (drives the RT-friendly conversion config).
