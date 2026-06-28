@@ -106,6 +106,11 @@ struct UsdzConvertOptions {
   // unmodified textures are copied through byte-for-byte.
   bool reencode{true};
 
+  // Also package image files found under the input layer directories even when
+  // no authored UsdUVTexture inputs:file references them. Default false keeps
+  // USDZ output limited to referenced texture assets.
+  bool include_unused_textures{false};
+
   // Worker threads for texture decode/resize/encode. 0 = auto
   // (hardware_concurrency), 1 = sequential.
   int num_threads{0};
@@ -148,6 +153,7 @@ struct UsdzConvertStats {
   size_t num_textures_resized{0};
   size_t num_textures_reencoded{0};
   size_t num_textures_passthrough{0};
+  size_t num_unused_textures_included{0};
   size_t num_materials_before{0};
   size_t num_materials_after{0};
   size_t num_materials_deduped{0};

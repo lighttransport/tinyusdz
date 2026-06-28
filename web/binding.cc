@@ -6660,10 +6660,18 @@ class TinyUSDZLoaderNative {
   /// outputBytes, primCount, arraysPassedThrough, arraysReencoded}.
   // Shared: flatten an owned USDC buffer and build the JS result object.
   emscripten::val nextFlattenOwned(std::string &&input, bool lazyArrays) {
+    return nextFlattenOwnedRemap(std::move(input), lazyArrays,
+                                 std::map<std::string, std::string>());
+  }
+
+  emscripten::val nextFlattenOwnedRemap(
+      std::string &&input, bool lazyArrays,
+      const std::map<std::string, std::string> &remap) {
     emscripten::val result = emscripten::val::object();
     std::vector<uint8_t> out;
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
+    opts.asset_path_remap = remap;
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
@@ -6681,6 +6689,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6722,6 +6732,25 @@ class TinyUSDZLoaderNative {
     return nextFlattenOwned(std::move(input), lazyArrays);
   }
 
+  emscripten::val nextFlattenBufferRemap(const std::string &uuid,
+                                         bool lazyArrays,
+                                         emscripten::val remap) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    std::map<std::string, std::string> remap_map;
+    if (!parseAssetPathRemap(remap, &remap_map)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
+    return nextFlattenOwnedRemap(std::move(input), lazyArrays, remap_map);
+  }
+
   /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
   /// emitted to `chunkCb(view)` in file order, so the full output crate is never
   /// materialized in the wasm heap (peak stays ~= retained input + small
@@ -6731,6 +6760,14 @@ class TinyUSDZLoaderNative {
   /// chunkCb may return false to abort. Returns stats only (no `data`).
   emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
                                           emscripten::val chunkCb) {
+    return nextFlattenBufferToSinkRemap(
+        uuid, lazyArrays, chunkCb, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenBufferToSinkRemap(const std::string &uuid,
+                                               bool lazyArrays,
+                                               emscripten::val chunkCb,
+                                               emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6741,6 +6778,11 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;
     opts.write.streaming = true;
+    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool aborted = false;
@@ -6767,6 +6809,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6798,6 +6842,15 @@ class TinyUSDZLoaderNative {
       const std::string &uuid, const std::string &rootName, bool lazyArrays,
       emscripten::val chunkCb, emscripten::val layerExistsCb,
       emscripten::val layerFetchCb) {
+    return nextFlattenMultiBufferToSinkFetchRemap(
+        uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb,
+        emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenMultiBufferToSinkFetchRemap(
+      const std::string &uuid, const std::string &rootName, bool lazyArrays,
+      emscripten::val chunkCb, emscripten::val layerExistsCb,
+      emscripten::val layerFetchCb, emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6809,6 +6862,11 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;
     opts.root_anchor_path = rootName;
+    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
 
     // Resolver: map an arc's asset path to a wasm asset-cache KEY. Cache keys
     // are root-relative forward-slash names, so try the anchor-relative join
@@ -6953,6 +7011,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6983,6 +7043,14 @@ class TinyUSDZLoaderNative {
   emscripten::val nextFlattenAsyncBegin(const std::string &uuid,
                                         const std::string &rootName,
                                         bool lazyArrays) {
+    return nextFlattenAsyncBeginRemap(
+        uuid, rootName, lazyArrays, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenAsyncBeginRemap(const std::string &uuid,
+                                             const std::string &rootName,
+                                             bool lazyArrays,
+                                             emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6996,6 +7064,11 @@ class TinyUSDZLoaderNative {
     session.root = std::move(input);
     session.root_name = rootName;
     session.lazy_arrays = lazyArrays;
+    if (!parseAssetPathRemap(remap, &session.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
     next_async_flatten_sessions_[session_id] = std::move(session);
 
     result.set("success", true);
@@ -7049,6 +7122,7 @@ class TinyUSDZLoaderNative {
     opts.read.lazy_arrays = state.lazy_arrays;
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
+    opts.asset_path_remap = state.asset_path_remap;
 
     using tinyusdz::next::AssetResolver;
     AssetResolver resolver;
@@ -7205,6 +7279,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -8510,10 +8586,26 @@ class TinyUSDZLoaderNative {
     std::string root;
     std::string root_name;
     bool lazy_arrays = true;
+    std::map<std::string, std::string> asset_path_remap;
     std::map<std::string, std::string> layers;
     std::map<std::string, std::shared_ptr<tinyusdz::next::Layer>> parsed_layers;
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
+
+  bool parseAssetPathRemap(emscripten::val remap,
+                           std::map<std::string, std::string> *out) {
+    if (!out) return false;
+    out->clear();
+    if (remap.isUndefined() || remap.isNull()) return true;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      (*out)[k] = remap[k].as<std::string>();
+    }
+    return true;
+  }
 
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
@@ -9861,14 +9953,22 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
+      .function("nextFlattenBufferRemap",
+                &TinyUSDZLoaderNative::nextFlattenBufferRemap)
       .function("nextFlattenBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenBufferToSink)
+      .function("nextFlattenBufferToSinkRemap",
+                &TinyUSDZLoaderNative::nextFlattenBufferToSinkRemap)
       .function("nextFlattenMultiBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSink)
       .function("nextFlattenMultiBufferToSinkFetch",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetch)
+      .function("nextFlattenMultiBufferToSinkFetchRemap",
+                &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetchRemap)
       .function("nextFlattenAsyncBegin",
                 &TinyUSDZLoaderNative::nextFlattenAsyncBegin)
+      .function("nextFlattenAsyncBeginRemap",
+                &TinyUSDZLoaderNative::nextFlattenAsyncBeginRemap)
       .function("nextFlattenAsyncProvideLayer",
                 &TinyUSDZLoaderNative::nextFlattenAsyncProvideLayer)
       .function("nextFlattenAsyncStep",
