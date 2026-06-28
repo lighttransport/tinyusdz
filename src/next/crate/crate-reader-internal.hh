@@ -127,6 +127,8 @@ class CrateReader::Impl {
   bool UnpackTimeSamples(ValueRep rep, Value& out);
   bool DecodeTimeSamples(ValueRep rep,
                          std::vector<std::pair<double, Value>>* out);
+  bool UnpackTokenOrStringVector(ValueRep rep, CrateTypeId type_id, Value& out);
+  bool UnpackDoubleVector(ValueRep rep, Value& out);
   bool UnpackVec2i(ValueRep rep, Value& out);
   bool UnpackVec3i(ValueRep rep, Value& out);
   bool UnpackVec4i(ValueRep rep, Value& out);

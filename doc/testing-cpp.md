@@ -517,6 +517,22 @@ ctest --test-dir build-next --output-on-failure
 > `ParseUSDCBinary()` call was compiled out). Build with `-DCMAKE_BUILD_TYPE=Debug`
 > for meaningful validation, and keep side-effecting calls out of `assert()`.
 
+Current USDC-focused next coverage:
+
+- `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
+  magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
+  counts, missing required sections, allocation caps, and malformed
+  FIELD/FIELDSET/SPECS payloads. Prefer adding compact generated cases here when
+  a malformed input can be described structurally.
+- `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
+  from `tests/next/crash_regressions/`. Prefer this only when the exact byte
+  sequence matters.
+- `next_test_usdc_roundtrip` includes focused roundtrip cases plus a dense
+  generated fixture covering layer metadata, dictionaries, composition arcs,
+  mesh arrays, per-property metadata, relationships, connection-flagged
+  properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
+  time samples.
+
 ### CMake targets not in ctest
 
 These targets exist in the CMake test infrastructure but are not currently registered with `ctest`:

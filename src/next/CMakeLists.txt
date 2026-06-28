@@ -33,16 +33,24 @@ set(TINYUSDZ_NEXT_SOURCES
     parser/value-parser.cc
     parser/value-parser-types.cc
     parser/ascii-parser.cc
+    parser/ascii-parser-metadata.cc
+    parser/ascii-parser-prim.cc
+    parser/ascii-parser-timesamples.cc
+    parser/ascii-parser-utils.cc
+    parser/ascii-parser-variants.cc
     parser/simd-scan.cc
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
     crate/crate-data-source.cc
+    crate/crate-reader-arrays.cc
     crate/crate-reader-decode.cc
     crate/crate-reader-api.cc
     crate/crate-reader.cc
     crate/crate-reader-sections.cc
+    crate/crate-reader-stage.cc
     crate/crate-reader-unpack.cc
+    crate/crate-reader-vectors.cc
     crate/crate-writer-types.cc
     crate/crate-writer.cc
 
@@ -126,6 +134,7 @@ set(TINYUSDZ_NEXT_HEADERS
     parser/value-parser-dict.inc
     parser/value-parser-numeric.hh
     parser/value-parser-scalars.inc
+    parser/ascii-parser-internal.hh
     parser/ascii-parser.hh
 
     # Crate (binary) reader/writer
