@@ -565,6 +565,56 @@ decode at parse/clone, no giant-string copy. The §2 bounded loader is still the
 path to use when geometry must stay on disk entirely; the difference here is that
 a *full* flatten no longer carries gratuitous peak overhead.
 
+### 6.1 Native `next_usdcat` vs current `tusdcat` (2026-06-29)
+
+The table below is a TinyUSDZ-vs-TinyUSDZ snapshot of the native full-compose
+path on the public large scenes. `next_usdcat` uses the `src/next` PCP engine and
+streams the flattened USDA directly to a `FILE*`; `tusdcat` is the current
+library pipeline. Both write USDA to `/dev/null` so the output text is generated
+but not stored on disk.
+
+Commands:
+
+```sh
+/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+  build-next/next_usdcat -f -o /dev/null <root.usda>
+
+/usr/bin/time -v \
+  build_ninja/tusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
+```
+
+| Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `tusdcat` result |
+|---|---:|---:|---:|---|
+| Caldera `caldera.usda` | 11.6 s | 30.8 s | 2.86 GiB | 1:46.7 total, 10.37 GiB max RSS |
+| Moana Island `island.usda` | 50.5 s | 2:55.2 | 9.21 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
+| ALab `ALab/entry.usda` | 1.14 s | 1.19 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
+
+`next_usdcat` streamed 4.25 GB of flattened USDA for Caldera at ~220 MB/s and
+10.18 GB for Island at ~79 MB/s. The Island run completed with non-fatal
+warnings for several XGen USDC layers whose arrays exceed the current
+`max_array_elements` guard, so it is a large-scene stress result rather than a
+full-fidelity Island flatten.
+
+For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
+memory from composition:
+
+```sh
+/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+  build-next/next_usdcat -l /mnt/disk1/data/caldera/build/caldera.flattened.usdc
+
+/usr/bin/time -v \
+  build_ninja/tusdcat -l --memstat /mnt/disk1/data/caldera/build/caldera.flattened.usdc
+```
+
+| Input | Parser | Load/elapsed | Max RSS | Notes |
+|---|---|---:|---:|---|
+| `caldera.flattened.usdc` | `next_usdcat -l` | 7.97 s load / 9.05 s elapsed | 1.77 GiB | 53,972 prims; warns for unsupported string arrays |
+| `caldera.flattened.usdc` | `tusdcat -l --memstat` | 7.30 s elapsed | 3.34 GiB | Stage in-use memory 2.53 GiB; USDC parser peak 189.8 MiB |
+
+The current `next` reader is therefore lower-memory on this crate parse
+(~47 % lower max RSS) but not faster yet. On the full Caldera compose+stream
+path, `next` is both faster (~3.5x wall-clock) and lower-memory (~3.6x RSS).
+
 ## 7. Verification
 
 ```
