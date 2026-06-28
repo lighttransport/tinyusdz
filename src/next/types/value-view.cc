@@ -56,6 +56,23 @@ bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
   return true;
 }
 
+// Scalar byte size / alignment for the borrowable POD component types. Returns 0
+// for unsupported types (which are therefore not borrowable).
+size_t ScalarByteSize(TypeId comp) {
+  switch (comp) {
+    case TypeId::Float:
+    case TypeId::Int:
+    case TypeId::UInt:
+      return 4;
+    case TypeId::Double:
+    case TypeId::Int64:
+    case TypeId::UInt64:
+      return 8;
+    default:
+      return 0;
+  }
+}
+
 template <typename T>
 bool FinishOwnedView(std::vector<T>* storage, ArrayView<T>* out) {
   if (!storage) return false;
@@ -65,6 +82,35 @@ bool FinishOwnedView(std::vector<T>* storage, ArrayView<T>* out) {
 }
 
 }  // namespace
+
+bool CanBorrowLazyFlat(const Value& value) {
+  // Mirrors BorrowLazyFlatArray's preconditions WITHOUT materializing: true only
+  // when the lazy array's bytes can be aliased zero-copy from the source mapping
+  // (so independent element ranges can be formatted concurrently, with no decode).
+  if (!value.is_lazy()) return false;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->is_compressed) return false;
+  const size_t ts = ScalarByteSize(ScalarComponent(ref->value_type));
+  if (ts == 0) return false;
+  const size_t comps = GetComponentCount(ref->value_type);
+  if (comps == 0) return false;
+  if (ref->src_elem_stride != comps * ts) return false;
+  if (ref->element_count == 0) return true;
+  if (ref->block_offset == 0 || ref->block_len < 8) return false;
+  const uint64_t flat_count = ref->element_count * uint64_t(comps);
+  const uint64_t byte_count = flat_count * uint64_t(ts);
+  if (flat_count / comps != ref->element_count) return false;
+  if (byte_count / ts != flat_count) return false;
+  if (flat_count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
+  if (byte_count > ref->block_len - 8) return false;
+  const uint64_t data_off = ref->block_offset + 8;
+  if (data_off < ref->block_offset || data_off > ref->source->size()) return false;
+  if (byte_count > ref->source->size() - data_off) return false;
+  const uintptr_t addr =
+      reinterpret_cast<uintptr_t>(ref->source->base() + data_off);
+  if ((addr % ts) != 0) return false;  // ts == alignof(T) for these PODs
+  return true;
+}
 
 bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
                        ArrayView<float>* out) {
