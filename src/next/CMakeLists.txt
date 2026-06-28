@@ -183,6 +183,7 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/prim-index.hh
     pcp/layer-registry.hh
     pcp/cache.hh
+    pcp/cache-layer-stack.inc
     pcp/cache-lock.hh
     pcp/cache-utils.hh
 
