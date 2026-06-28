@@ -590,15 +590,14 @@ Commands:
 | Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
 | ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
 
-`next_usdcat` streamed 4.25 GB of flattened USDA for Caldera in 5.57 s
-(~728 MB/s) and 10.18 GB for Island in 26.17 s (~371 MB/s). The Island run
-completed with non-fatal
-warnings for several XGen USDC layers whose arrays exceed the current
-`max_array_elements` guard, so it is a large-scene stress result rather than a
-full-fidelity Island flatten. With writer threading forced off
-(`TINYUSDZ_NEXT_NUM_THREADS=1`), the same Island write is 44.24 s (~219 MB/s),
-so the chunked writer is useful serially and the parallel subtree stitcher
-provides the remaining speedup.
+The table above is the pre-optimization snapshot; the ASCII writer was then
+optimized substantially (§6.2). After that work `next_usdcat` streams the
+flattened USDA for Caldera at ~850–925 MB/s and for Island at ~1000 MB/s (auto
+threads), with the Island write phase dropping from 26.17 s to ~11.7 s and peak
+RSS from 9.67 GiB to ~8.0 GiB. The Island run completes with non-fatal warnings
+for several XGen USDC layers whose arrays exceed the current `max_array_elements`
+guard, so it is a large-scene stress result rather than a full-fidelity Island
+flatten.
 
 For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
 memory from composition:
@@ -620,6 +619,86 @@ The current `next` reader is therefore faster and lower-memory on this crate
 parse (~2.3x faster elapsed, ~47 % lower max RSS). On the full Caldera
 compose+stream path, `next` is both faster (~11x wall-clock) and lower-memory
 (~3.5x RSS).
+
+### 6.2 ASCII (USDA) writer optimizations
+
+On a fully-composed large scene the **write phase dominates** total wall-clock
+(Caldera ~57 %, Island ~63 % before this work). The `src/next` USDA writer
+(`src/next/writer/{value-printer,usda-writer,dtoa}.{hh,cc}`) was optimized in two
+passes. Every change is **byte-identical** to the serial writer — verified by
+`cmp`/sha256 against the prior binary across the 615-file `tests/usda` +
+`tests/usdc` corpus and on Caldera + Island (10.18 GB hash match) + ALab, in both
+serial and threaded (4/8/16) modes. Output to `/dev/null`, Release build, on a
+32-thread / 16-core workstation:
+
+| Scene (flatten write phase) | Before | After |
+|---|---:|---:|
+| Caldera (4.25 GB) | 728 MB/s | **~850–925 MB/s** |
+| Island (10.18 GB) | 371 MB/s, 26.2 s | **~1000 MB/s, ~11.7 s** |
+| Island peak RSS | 9.67 GiB | **~8.0 GiB** |
+
+#### Pass 1 — per-element number formatting
+
+Large arrays are the bulk of the bytes, so per-scalar formatting is the serial
+hot loop. Two byte-identical changes:
+
+- **No `num_` round-trip.** Each scalar used to format into a stack buffer, append
+  to a reused member `std::string`, then be copied *again* into the chunk buffer.
+  It now formats once into a stack buffer and appends directly. New
+  `dtos_to(char*, float/double)` (`writer/dtoa`) and `IntTo`/`UIntTo(char*, …)`
+  (`strfmt.hh`); `ChunkedStream` drops the `num_` member. Serial writer
+  +~16 % (Caldera 218 → 253 MB/s, Island piped 162 → 176 MB/s).
+- **Indent cache.** `WriteIndent` emits the indentation prefix in one write from a
+  `thread_local` cached padding string instead of `depth` tiny writes.
+
+#### Pass 2 — parallel writer rearchitecture
+
+A profile (a debug switch that skips array-value formatting) showed **~95 % of
+Island's write phase was array formatting running serially on the main thread**.
+The previous parallel design split work by **subtree frontier**, which only
+parallelized *leaf* subtrees — but Island's geometry lives in *interior* prims,
+whose arrays were serialized on the main thread regardless of thread count (write
+scaled only ~1.6× from 1→8 threads).
+
+The writer was rebuilt around a **document-ordered task list**:
+
+1. **Phase 1 (serial, cheap):** one pre-order walk of the whole stage emits cheap
+   structural bytes inline as `Text` tasks and **offloads every array value**
+   (≥ 256 elements) as a task referencing the borrowed array. No giant array is
+   formatted here, so the walk is fast (~1.6 s on Island).
+2. **Phase 2 (parallel):** a worker pool formats **byte-balanced segments** (each
+   a contiguous task run) while the main thread writes the finished segment
+   buffers **in document order**. Synchronization is lock-free (atomics + a
+   bounded look-ahead window that back-pressures workers and bounds in-flight
+   memory) — no per-task mutex/condvar, so it scales to ~250 k tasks.
+
+The critical refinement is that **no single giant array may pin one worker** (a
+single 44 M-element array was an 8 s serial segment). Giant arrays are split into
+element-range chunks formatted concurrently:
+
+- **Directly chunkable arrays** — non-lazy, or *uncompressed*-lazy that can be
+  aliased zero-copy from the memory-mapped crate (new `CanBorrowLazyFlat`,
+  `types/value-view`) — are chunked **in place** with no decode or copy.
+- **Giant compressed-lazy** numeric arrays are **decoded once** into an owned
+  buffer (held in a deque, freed as soon as their chunks are consumed, so peak
+  memory stays bounded) and then chunked.
+- **Half-backed types** (`half`, `quath`, …) widen to float via `as_float_array`,
+  so Island's 21 M-element `quath` orientation arrays chunk through the float
+  range printer too. This was the last serial bottleneck.
+
+New `value-printer` API: `ArrayElementCount`, `IsChunkableType`,
+`IsChunkableArray`, and `PrintArrayRangeToStream` (formatting an element range is
+byte-identical to the full array printer — the foundation of chunk splitting). The
+serial path (`TINYUSDZ_NEXT_NUM_THREADS=1`) is untouched and remains the
+correctness oracle. The auto worker cap was raised 8 → 16 now that the balanced
+design scales with cores (both scenes still improve at 16+).
+
+Tests: `test_array_range_split_parity` (range reconstruction == full print across
+types and cut points) and `test_parallel_writer_parity` (1-thread vs 8-thread
+byte-identical) in `tests/next/test_writer.cc`.
+
+The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
+overlapped with Phase 2) — the next available lever.
 
 ## 7. Verification
 
