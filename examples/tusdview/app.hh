@@ -55,6 +55,18 @@ class App
     loadCtrl_.convertTimeBudgetSec = convertTimeBudgetSec;
   }
 
+  // GPU-budget LOD for the realtime raster preview (huge assembled scenes).
+  // gpuMemBudgetBytes>0 caps full-mesh VRAM; maxFullMeshes>0 caps the full-mesh
+  // (draw) count; overflow meshes merge into one bbox-proxy soup. 0/0 = off.
+  void setGpuBudget(std::size_t gpuMemBudgetBytes, std::size_t maxFullMeshes) {
+    gpuMemBudgetBytes_ = gpuMemBudgetBytes;
+    maxFullMeshes_ = maxFullMeshes;
+  }
+
+  // Robust auto-framing: trim horizon-scale outlier meshes from the fit-all bbox
+  // (default on). --no-robust-frame disables it to frame the literal scene bbox.
+  void setRobustFrame(bool on) { robustFrame_ = on; }
+
   // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
   void setUiScale(float s) {
     if (s > 0.25f) {
@@ -253,6 +265,12 @@ class App
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
+  std::size_t gpuMemBudgetBytes_{0};  // --max-gpu-mem: raster full-mesh VRAM cap
+  std::size_t maxFullMeshes_{0};      // --max-draw-meshes: raster full-mesh count cap
+  bool robustFrame_{true};            // trim outlier meshes from fit-all bbox
+  bool robustBoundsValid_{false};     // robust bounds computed (pre-LOD) this load
+  float robustBoundsMin_[3]{0, 0, 0};
+  float robustBoundsMax_[3]{0, 0, 0};
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   HipRayTracer hipTracer_;
 
