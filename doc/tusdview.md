@@ -71,6 +71,32 @@ backend (`examples/tusdview/vk/`); the separate LightRT GPU trace used by
 `tusdrender -vk/-vkr` also renders correctly on this GPU after its geometry/setup
 fixes — see [`doc/tusdrender.md`](tusdrender.md).
 
+## CUDA ray-tracing run test (verified working on NVIDIA)
+
+`--cuda` traces the loaded scene's BVH on the GPU using the **CUDA driver API +
+NVRTC loaded at runtime via cuew** (`examples/common/cuew/`) — there is **no
+link-time dependency on the CUDA toolkit**; only the NVIDIA driver
+(`libcuda.so.1`) and an `libnvrtc.so` need to be present to *run*. The CUDA path
+owns the screenshot (it bypasses the rasterized capture) and supports the
+`RenderMode` views (shaded, normals, BVH heatmap, …).
+
+```sh
+# headless, no window/X server needed:
+./build/tusdview --headless --cuda --frames 4 --screenshot out.ppm model.usda
+```
+
+The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
+(return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
+green.
+
+```sh
+cd build && ctest -R tusdview-cuda-render --output-on-failure
+```
+
+**Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
+NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank
+at 1469×1284.
+
 ### Windows (llvm-mingw)
 
 tusdview cross/host-builds with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)

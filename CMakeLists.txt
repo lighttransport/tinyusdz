@@ -2144,6 +2144,22 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    #
+    # tusdview: CUDA ray-tracing backend run test. Renders headless via --cuda
+    # (CUDA driver API + NVRTC loaded at runtime through cuew; no link-time CUDA
+    # toolkit) and asserts a non-blank frame. Needs a real NVIDIA device; SKIPs
+    # (return 77) when CUDA is unavailable, so it is harmless on non-NVIDIA CI.
+    #
+    add_test(
+      NAME tusdview-cuda-render
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-render.sh
+    )
+    set_tests_properties(tusdview-cuda-render PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #
