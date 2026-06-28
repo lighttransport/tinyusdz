@@ -18,6 +18,61 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
+  if (rep.is_array()) return 8;  // array element count header.
+  switch (rep.type_id()) {
+    case CrateTypeId::Bool: return 1;
+    case CrateTypeId::UChar: return 1;
+    case CrateTypeId::Half: return 2;
+    case CrateTypeId::Int:
+    case CrateTypeId::UInt:
+    case CrateTypeId::Float: return 4;
+    case CrateTypeId::Int64:
+    case CrateTypeId::UInt64:
+    case CrateTypeId::Double:
+    case CrateTypeId::TimeCode: return 8;
+    case CrateTypeId::Vec2i:
+    case CrateTypeId::Vec2f:
+    case CrateTypeId::Vec2h: return 8;
+    case CrateTypeId::Vec3i:
+    case CrateTypeId::Vec3f:
+    case CrateTypeId::Vec3h: return 12;
+    case CrateTypeId::Vec4i:
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quatf:
+    case CrateTypeId::Quath: return 16;
+    case CrateTypeId::Vec2d: return 16;
+    case CrateTypeId::Vec3d: return 24;
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Matrix2d: return 32;
+    case CrateTypeId::Matrix3d: return 72;
+    case CrateTypeId::Matrix4d: return 128;
+    case CrateTypeId::Dictionary:
+    case CrateTypeId::TokenVector:
+    case CrateTypeId::StringVector:
+    case CrateTypeId::DoubleVector:
+    case CrateTypeId::PathVector:
+    case CrateTypeId::VariantSelectionMap:
+      return 8;
+    case CrateTypeId::PathListOp:
+    case CrateTypeId::ReferenceListOp:
+    case CrateTypeId::PayloadListOp:
+    case CrateTypeId::TokenListOp:
+    case CrateTypeId::StringListOp:
+      return 1;
+    case CrateTypeId::TimeSamples:
+      return 32;
+    default:
+      return 0;
+  }
+}
+
+}  // namespace
+
 bool CrateReader::Impl::ReadBootstrap() {
   // Check magic
   char magic[8];
@@ -222,6 +277,10 @@ bool CrateReader::Impl::ReadStrings() {
       AddError("Failed to read string index");
       return false;
     }
+    if (idx >= tokens_.size()) {
+      AddError("String token index out of range");
+      return false;
+    }
     string_indices_[i] = idx;
   }
 
@@ -359,6 +418,119 @@ bool CrateReader::Impl::ReadFields() {
   for (size_t i = 0; i < num_fields; i++) {
     fields_[i].token_index.value = token_indices[i];
     fields_[i].value_rep = ValueRep(value_reps[i]);
+    const ValueRep rep = fields_[i].value_rep;
+    if (!rep.is_inlined()) {
+      const int64_t off = rep.payload_as_offset();
+      if (off < 0) {
+        AddError("Field ValueRep payload offset is negative");
+        return false;
+      }
+      if (rep.payload() != 0 &&
+          static_cast<uint64_t>(off) >= static_cast<uint64_t>(reader_->size())) {
+        AddError("Field ValueRep payload offset is outside file");
+        return false;
+      }
+      if (rep.payload() != 0) {
+        const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep);
+        const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+        if (min_bytes > 0 &&
+            (min_bytes > file_size ||
+             static_cast<uint64_t>(off) > file_size - min_bytes)) {
+          AddError("Field ValueRep payload is truncated");
+          return false;
+        }
+      }
+      if (rep.is_array() && rep.payload() != 0) {
+        const size_t saved = reader_->position();
+        if (!reader_->seek(static_cast<size_t>(off))) {
+          AddError("Failed to seek to array ValueRep payload");
+          return false;
+        }
+        uint64_t count = 0;
+        if (!reader_->read_u64(count)) {
+          AddError("Failed to read array ValueRep element count");
+          return false;
+        }
+        if (!reader_->seek(saved)) {
+          AddError("Failed to restore FIELDS reader position");
+          return false;
+        }
+        if (count > options_.max_array_elements) {
+          AddError("Array ValueRep element count exceeds max_array_elements limit");
+          return false;
+        }
+        const uint64_t stride = CrateArrayElemStride(rep.type_id());
+        const uint64_t elem_bytes = stride ? stride : 1;
+        if (elem_bytes != 0 &&
+            count > (std::numeric_limits<uint64_t>::max)() / elem_bytes) {
+          AddError("Array ValueRep payload byte size overflow");
+          return false;
+        }
+        if (!CheckByteAllocation(count * elem_bytes, "Array ValueRep payload")) {
+          return false;
+        }
+      } else if (rep.payload() != 0) {
+        const CrateTypeId tid = rep.type_id();
+        const bool count_header =
+            tid == CrateTypeId::Dictionary ||
+            tid == CrateTypeId::TokenVector ||
+            tid == CrateTypeId::StringVector ||
+            tid == CrateTypeId::DoubleVector ||
+            tid == CrateTypeId::PathVector ||
+            tid == CrateTypeId::VariantSelectionMap;
+        if (count_header) {
+          const size_t saved = reader_->position();
+          if (!reader_->seek(static_cast<size_t>(off))) {
+            AddError("Failed to seek to counted ValueRep payload");
+            return false;
+          }
+          uint64_t count = 0;
+          if (!reader_->read_u64(count)) {
+            AddError("Failed to read counted ValueRep payload");
+            return false;
+          }
+          if (!reader_->seek(saved)) {
+            AddError("Failed to restore FIELDS reader position");
+            return false;
+          }
+          if (count > options_.max_array_elements) {
+            AddError("Counted ValueRep payload exceeds max_array_elements limit");
+            return false;
+          }
+        }
+
+        const bool list_op =
+            tid == CrateTypeId::PathListOp ||
+            tid == CrateTypeId::ReferenceListOp ||
+            tid == CrateTypeId::PayloadListOp ||
+            tid == CrateTypeId::TokenListOp ||
+            tid == CrateTypeId::StringListOp;
+        if (list_op) {
+          const size_t saved = reader_->position();
+          if (!reader_->seek(static_cast<size_t>(off))) {
+            AddError("Failed to seek to list-op ValueRep payload");
+            return false;
+          }
+          uint8_t bits = 0;
+          if (!reader_->read_u8(bits)) {
+            AddError("Failed to read list-op ValueRep header");
+            return false;
+          }
+          if (!reader_->seek(saved)) {
+            AddError("Failed to restore FIELDS reader position");
+            return false;
+          }
+          const uint8_t kKnownListOpBits = 0x7e;
+          if ((bits & kKnownListOpBits) != 0) {
+            const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+            if (file_size < 9u || static_cast<uint64_t>(off) > file_size - 9u) {
+              AddError("List-op ValueRep payload is truncated");
+              return false;
+            }
+          }
+        }
+      }
+    }
   }
 
   return true;
@@ -699,11 +871,17 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
+  std::vector<uint8_t> seen_path_slot(static_cast<size_t>(num_paths), uint8_t{0});
   for (size_t i = 0; i < n; ++i) {
     if (path_indices[i] >= num_paths) {
       AddError("Path table index out of range");
       return false;
     }
+    if (seen_path_slot[path_indices[i]]) {
+      AddError("Duplicate path table index");
+      return false;
+    }
+    seen_path_slot[path_indices[i]] = uint8_t{1};
 
     int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     const bool is_prop = elem_token < 0;
@@ -787,6 +965,17 @@ bool CrateReader::Impl::ReadPaths() {
         }
       };
   build(0, std::string(), 0);
+
+  for (const CrateSpec& spec : specs_) {
+    if (spec.path_index.value >= paths_.size()) {
+      AddError("Spec path index out of range");
+      return false;
+    }
+    if (paths_[spec.path_index.value].empty()) {
+      AddError("Spec path index references an empty path slot");
+      return false;
+    }
+  }
 
   return true;
 }

@@ -132,6 +132,13 @@ std::vector<uint8_t> FieldsEmpty() {
   return out;
 }
 
+std::vector<uint8_t> StringsTable(const std::vector<uint32_t>& token_indices) {
+  std::vector<uint8_t> out;
+  PutU64(&out, static_cast<uint64_t>(token_indices.size()));
+  for (uint32_t idx : token_indices) PutU32(&out, idx);
+  return out;
+}
+
 std::vector<uint8_t> CompressedFieldIndices(
     const std::vector<uint32_t>& indices) {
   std::vector<uint8_t> delta =
@@ -174,6 +181,20 @@ std::vector<uint8_t> FieldTable(const std::vector<uint32_t>& token_indices,
   return out;
 }
 
+std::vector<uint8_t> FieldTableRawReps(
+    const std::vector<uint32_t>& token_indices,
+    const std::vector<ValueRep>& reps) {
+  assert(token_indices.size() == reps.size());
+  std::vector<uint8_t> out;
+  PutU64(&out, static_cast<uint64_t>(token_indices.size()));
+  std::vector<uint8_t> indices = CompressedFieldIndices(token_indices);
+  PutU64(&out, static_cast<uint64_t>(indices.size()));
+  out.insert(out.end(), indices.begin(), indices.end());
+  PutU64(&out, static_cast<uint64_t>(reps.size() * sizeof(uint64_t)));
+  for (const ValueRep& rep : reps) PutU64(&out, rep.raw());
+  return out;
+}
+
 std::vector<uint8_t> FieldsetsEmpty() {
   return U64Section(0);
 }
@@ -207,18 +228,44 @@ std::vector<uint8_t> PathsRootOnly() {
   return U64Section(0);
 }
 
-std::vector<uint8_t> PathsCompressed(const std::vector<uint32_t>& path_indices,
-                                     const std::vector<uint32_t>& element_tokens,
-                                     const std::vector<uint32_t>& jumps) {
+std::vector<uint8_t> PathsCompressedCount(uint64_t total_paths,
+                                          const std::vector<uint32_t>& path_indices,
+                                          const std::vector<uint32_t>& element_tokens,
+                                          const std::vector<uint32_t>& jumps) {
   assert(path_indices.size() == element_tokens.size());
   assert(path_indices.size() == jumps.size());
   std::vector<uint8_t> out;
-  PutU64(&out, static_cast<uint64_t>(path_indices.size()));
+  PutU64(&out, total_paths);
   PutU64(&out, static_cast<uint64_t>(path_indices.size()));
   AppendCompressedU32Array(&out, path_indices);
   AppendCompressedU32Array(&out, element_tokens);
   AppendCompressedU32Array(&out, jumps);
   return out;
+}
+
+std::vector<uint8_t> PathsCompressed(const std::vector<uint32_t>& path_indices,
+                                     const std::vector<uint32_t>& element_tokens,
+                                     const std::vector<uint32_t>& jumps) {
+  return PathsCompressedCount(static_cast<uint64_t>(path_indices.size()),
+                              path_indices, element_tokens, jumps);
+}
+
+std::vector<uint8_t> BuildFieldValuePayloadCase(
+    CrateTypeId type, bool is_array, const std::vector<uint8_t>& payload) {
+  const std::vector<uint8_t> tokens = TokensFromRaw(1, {'a', '\0'});
+  const std::vector<uint8_t> dummy_fields = FieldTableRawReps(
+      {0}, {ValueRep::Make(type, 0, is_array, false, false)});
+  const size_t section_count = 3;
+  const size_t payload_base = kCrateBootstrapSize + 8 + section_count * (16 + 8 + 8);
+  const size_t payload_start = payload_base + tokens.size() + dummy_fields.size();
+  std::vector<uint8_t> fields = FieldTableRawReps(
+      {0}, {ValueRep::Make(type, static_cast<uint64_t>(payload_start),
+                           is_array, false, false)});
+  CrateShell c;
+  c.AddSection("TOKENS", tokens);
+  c.AddSection("FIELDS", std::move(fields));
+  c.AddSection("JUNK", payload);
+  return c.Build();
 }
 
 CrateShell PrefixThroughTokens() {
@@ -373,6 +420,13 @@ int main() {
   }
 
   {
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1, {'\0'}));
+    c.AddSection("STRINGS", StringsTable({1}));
+    ExpectReject("string token index out of range", c.Build());
+  }
+
+  {
     CrateShell c = PrefixThroughTokens();
     c.AddSection("FIELDS", U64Section(2));
     ExpectReject("field count over cap", c.Build());
@@ -440,6 +494,50 @@ int main() {
     PutU64(&fields, 16);  // value-rep payload claims bytes not present
     c.AddSection("FIELDS", std::move(fields));
     ExpectReject("truncated compressed field value reps", c.Build());
+  }
+
+  {
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1, {'a', '\0'}));
+    const uint64_t raw = (static_cast<uint64_t>(CrateTypeId::Int) << 48) |
+                         0x800000000000ull;
+    c.AddSection("FIELDS", FieldTable({0}, {ValueRep(raw)}));
+    ExpectReject("negative ValueRep payload offset", c.Build());
+  }
+
+  {
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1, {'a', '\0'}));
+    c.AddSection("FIELDS", FieldTable(
+        {0},
+        {ValueRep::Make(CrateTypeId::Int, 999999, false, false, false)}));
+    ExpectReject("ValueRep payload offset outside file", c.Build());
+  }
+
+  {
+    std::vector<uint8_t> payload(4, 0);
+    ExpectReject("truncated scalar ValueRep payload",
+                 BuildFieldValuePayloadCase(CrateTypeId::Double, false, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 17);
+    ExpectReject("array ValueRep count over cap",
+                 BuildFieldValuePayloadCase(CrateTypeId::Int, true, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 17);
+    ExpectReject("dictionary ValueRep count over cap",
+                 BuildFieldValuePayloadCase(CrateTypeId::Dictionary, false, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload = {0x02};
+    ExpectReject("truncated list-op ValueRep payload",
+                 BuildFieldValuePayloadCase(CrateTypeId::TokenListOp, false, payload));
   }
 
   {
@@ -554,6 +652,28 @@ int main() {
         {0}, {0}, {static_cast<uint32_t>(SpecType::PseudoRoot)}));
     c.AddSection("PATHS", PathsCompressed({0}, {0}, {3}));
     ExpectReject("path jump outside encoded table", c.Build());
+  }
+
+  {
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1, {'\0'}));
+    c.AddSection("FIELDS", FieldsEmpty());
+    c.AddSection("FIELDSETS", FieldsetsCompressed({0xFFFFFFFFu}));
+    c.AddSection("SPECS", SpecsCompressed(
+        {0}, {0}, {static_cast<uint32_t>(SpecType::PseudoRoot)}));
+    c.AddSection("PATHS", PathsCompressedCount(2, {0, 0}, {0, 0}, {0, 0xFFFFFFFEu}));
+    ExpectReject("duplicate path table index", c.Build());
+  }
+
+  {
+    CrateShell c;
+    c.AddSection("TOKENS", TokensFromRaw(1, {'\0'}));
+    c.AddSection("FIELDS", FieldsEmpty());
+    c.AddSection("FIELDSETS", FieldsetsCompressed({0xFFFFFFFFu}));
+    c.AddSection("SPECS", SpecsCompressed(
+        {1}, {0}, {static_cast<uint32_t>(SpecType::PseudoRoot)}));
+    c.AddSection("PATHS", PathsCompressedCount(2, {0}, {0}, {0xFFFFFFFEu}));
+    ExpectReject("spec references empty path slot", c.Build());
   }
 
   std::cout << "All malformed USDC tests passed!" << std::endl;
