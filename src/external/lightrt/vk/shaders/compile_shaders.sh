@@ -45,5 +45,6 @@ gen() {
 gen trace_bvh        trace_bvh_spv
 gen build_morton     build_morton_spv
 gen trace_ray_query  trace_ray_query_spv  # needs VK_KHR_ray_query (SPIR-V 1.4)
+gen shade_analytic   shade_analytic_spv   # analytic sphere/box forward shading
 
 echo "done."

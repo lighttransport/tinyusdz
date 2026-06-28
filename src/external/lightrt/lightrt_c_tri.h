@@ -365,6 +365,281 @@ lrt_tri_scene *lrt_sphere_scene_build(const float *spheres, size_t nprims,
                                       const lrt_tri_build_options *opts,
                                       lrt_result *err);
 
+/* --- Planar quad + solid tetrahedron primitives ---------------------------
+ *
+ * Quad: planar 4-vertex face, tested as two triangles (v0,v1,v2)+(v0,v2,v3).
+ * quads = 12*nquads floats (v0.xyz v1.xyz v2.xyz v3.xyz per quad, in order
+ * around the face). Hit reports prim_id = quad index, (u,v) = the barycentrics
+ * of whichever sub-triangle was hit.
+ *
+ * Tetra: solid tetrahedron, closest of its four triangular faces. tetras =
+ * 12*ntetras floats (v0 v1 v2 v3 per tetra). Hit reports prim_id = tetra index,
+ * (u,v) = the barycentrics of the nearest face. A ray that starts inside still
+ * reports the nearest exit face.
+ *
+ * Both force BVH4 layout and are queried through the same lrt_tri_* functions. */
+lrt_tri_scene *lrt_quad_scene_build(const float *quads, size_t nquads,
+                                    const lrt_tri_build_options *opts,
+                                    lrt_result *err);
+lrt_tri_scene *lrt_tetra_scene_build(const float *tetras, size_t ntetras,
+                                     const lrt_tri_build_options *opts,
+                                     lrt_result *err);
+
+/* --- Bilinear patch (true ruled surface, exact intersection) --------------
+ *
+ * A curved bilinear patch P(u,v) = bilerp(q00,q10,q11,q01) — Embree's GRID cell
+ * / a non-planar quad — intersected exactly via the closed-form quadratic solve
+ * (Reshetov "Cool Patches"). corners = 12*npatch floats: q00 q10 q11 q01 in
+ * order around the patch. Hit reports prim_id = patch index and (u,v) in
+ * [0,1]^2. BVH4 only; queried through the lrt_tri_* functions. (Distinct from
+ * lrt_quad_scene_build, which is a planar two-triangle quad.) */
+lrt_tri_scene *lrt_bilinear_scene_build(const float *corners, size_t npatch,
+                                        const lrt_tri_build_options *opts,
+                                        lrt_result *err);
+
+/* --- Bicubic Bézier surface patch (direct intersection) -------------------
+ *
+ * A bicubic (4x4 control point) Bézier surface patch, intersected directly via
+ * adaptive (u,v) subdivision + Newton on (u,v,t) — no tessellation (exceeds
+ * Embree). cps = 48*npatch floats: 16 control points xyz, point k = j*4 + i
+ * (i = u index 0..3, j = v index 0..3), stored cps[(k)*3 + axis]. Hit reports
+ * prim_id = patch index and (u,v) in [0,1]^2. BVH4 only. */
+lrt_tri_scene *lrt_bezpatch_scene_build(const float *cps, size_t npatch,
+                                        const lrt_tri_build_options *opts,
+                                        lrt_result *err);
+
+/* --- NURBS surface (rational B-spline -> rational Bézier extraction) -------
+ *
+ * A single NURBS surface, decomposed at BUILD time into rational bicubic Bézier
+ * patches (knot insertion / Bézier extraction + degree elevation to bicubic),
+ * then intersected directly (no tessellation). Inputs:
+ *   net      = 3*(nu+1)*(nv+1) control points xyz, index (j*(nu+1)+i)*3 + axis
+ *              (i = u 0..nu, j = v 0..nv);
+ *   nu, nv   = last control-point index in u / v (so nu+1, nv+1 CPs);
+ *   knots_u  = nu+degu+2 floats; knots_v = nv+degv+2 floats (clamped);
+ *   weights  = (nu+1)*(nv+1) floats, all > 0, or NULL for all-ones;
+ *   degu,degv= surface degrees (1..8; elevated to bicubic internally).
+ * Hits report prim_id = extracted-patch index and (u,v) in the GLOBAL surface
+ * parameter domain. BVH4 only. */
+lrt_tri_scene *lrt_nurbs_scene_build(const float *net, int nu, int nv,
+                                     const float *knots_u, const float *knots_v,
+                                     const float *weights, int degu, int degv,
+                                     const lrt_tri_build_options *opts,
+                                     lrt_result *err);
+
+/* --- Trimmed NURBS surface ------------------------------------------------
+ *
+ * As lrt_nurbs_scene_build, plus trim loops in (u,v) parameter space: a hit on
+ * the surface is kept only if its (u,v) is visible under the EVEN-ODD rule over
+ * all loops (so a single outer loop bounds the surface and inner loops cut
+ * holes — orientation-agnostic). trim_pts = concatenated (u,v) points of all
+ * loops (2 floats each); loop_lengths[nloops] = points per loop (each loop is a
+ * closed polyline; Bézier trim curves should be flattened to polylines by the
+ * caller). nloops = 0 is identical to lrt_nurbs_scene_build. Serializes via the
+ * LRTS v2 aux region (the trim loops ride after the blocks). */
+lrt_tri_scene *lrt_trimnurbs_scene_build(
+    const float *net, int nu, int nv, const float *knots_u,
+    const float *knots_v, const float *weights, int degu, int degv,
+    const float *trim_pts, const uint32_t *loop_lengths, int nloops,
+    const lrt_tri_build_options *opts, lrt_result *err);
+
+/* As lrt_trimnurbs_scene_build, but each trim loop is a CLOSED sequence of cubic
+ * Bezier segments in (u,v) space instead of a polyline. The library flattens the
+ * curves (adaptive de Casteljau to a max chord deviation of `tol` in (u,v)) into
+ * a polyline and builds the same trimmed scene — so it serializes and GPU-traces
+ * exactly like a polyline-trim scene. C0 continuity is assumed (each segment's
+ * 4th control point coincides with the next segment's 1st; the loop closes from
+ * the last segment's end back to the first segment's start).
+ *
+ *   trim_bez   = 8 floats per segment: 4 (u,v) control points, concatenated over
+ *                all segments of all loops in order.
+ *   seg_counts = nloops entries: cubic segments per loop (>= 1; >= 2 for a real
+ *                region — a loop that flattens to < 3 points is ignored, as in
+ *                the polyline path).
+ *   tol        = max (u,v) chord deviation for flattening (e.g. 1e-3); must be
+ *                > 0.
+ *
+ * Returns the trimmed scene; LRT_RESULT_INVALID_ARGUMENT (bad nloops / NULL
+ * arrays / tol <= 0 / a seg_count of 0) or OUT_OF_MEMORY. nloops == 0 builds an
+ * untrimmed NURBS. */
+lrt_tri_scene *lrt_trimnurbs_bezier_scene_build(
+    const float *net, int nu, int nv, const float *knots_u,
+    const float *knots_v, const float *weights, int degu, int degv,
+    const float *trim_bez, const uint32_t *seg_counts, int nloops, float tol,
+    const lrt_tri_build_options *opts, lrt_result *err);
+
+/* Post-hit shading data for the parametric SURFACE primitives (bilinear /
+ * bicubic Bezier / NURBS / trimmed NURBS). Given a hit's prim_id and (u,v) as
+ * reported by lrt_tri_intersect1, evaluates the surface point P, the geometric
+ * normal Ng = cross(dP/du, dP/dv) (NOT normalized), and the two parametric
+ * tangents dP/du, dP/dv. Any of the four output pointers may be NULL.
+ *
+ * (u,v) is the value reported in lrt_hit: local [0,1]^2 for bilinear/bezpatch,
+ * GLOBAL surface domain for NURBS/trimmed NURBS (remapped internally; the
+ * returned tangents are w.r.t. those global parameters).
+ *
+ * Works on serialized/mmapped scenes too: the control data is reconstructed
+ * from the leaf blocks on load. Returns LRT_RESULT_OK; LRT_RESULT_INVALID_ARGUMENT
+ * (NULL scene, prim_id out of range, or a non-surface scene);
+ * LRT_RESULT_UNSUPPORTED only if the shade data could not be built (allocation
+ * failure). Curves and the analytic primitives are not served by this query.
+ * Thread-safe. */
+lrt_result lrt_tri_surface_normal(const lrt_tri_scene *s, uint32_t prim_id,
+                                  float u, float v, float P_out[3],
+                                  float Ng_out[3], float dPdu_out[3],
+                                  float dPdv_out[3]);
+
+/* Post-hit centerline frame for the LINEAR curve primitives (round-linear and
+ * flat/ribbon). Given a hit's prim_id (segment index) and u in [0,1] along that
+ * segment, returns the centerline point C(u), the (unnormalized) tangent
+ * T = dC/du, and the interpolated radius r(u). Any output pointer may be NULL.
+ *
+ * A curve carries no single normal; the caller forms the surface shading normal
+ * from its own hit point P (= ray.org + t*ray.dir) by removing the tangential
+ * component of the radial vector:
+ *     d  = P - C;  Ng = normalize(d - (dot(d,T)/dot(T,T)) * T);
+ *
+ * The cubic-Bezier curve type is NOT served: it pre-subdivides at build time
+ * and reports u local to the (unrecorded) sub-arc, so a global segment
+ * parameter cannot be reconstructed (returns LRT_RESULT_INVALID_ARGUMENT).
+ *
+ * Works on serialized/mmapped scenes too (the per-segment data is reconstructed
+ * from the leaf blocks on load). Returns LRT_RESULT_OK; LRT_RESULT_INVALID_ARGUMENT
+ * (NULL scene, prim_id out of range, or an unsupported scene kind);
+ * LRT_RESULT_UNSUPPORTED only if the shade data could not be built (allocation
+ * failure). Thread-safe. */
+lrt_result lrt_tri_curve_frame(const lrt_tri_scene *s, uint32_t prim_id, float u,
+                               float C_out[3], float T_out[3], float *r_out);
+
+/* Tessellate a parametric SURFACE scene (bilinear / bicubic Bezier / NURBS /
+ * trimmed NURBS) into a triangle mesh — for rasterization preview, OBJ export,
+ * or a collision proxy. Each patch is sampled on a (segu x segv) grid in its
+ * parameter domain (its per-patch (u,v) span for NURBS, [0,1]^2 otherwise),
+ * emitting 2*segu*segv triangles per patch. For trimmed NURBS a cell is dropped
+ * when its centroid is outside the trim region (so the actual count is data-
+ * dependent and <= the bound). Reuses lrt_tri_surface_normal per grid vertex.
+ *
+ * lrt_tri_surface_tessellate_bound returns the upper-bound triangle count
+ * (ignores trimming); size the buffers with it. Returns 0 for a non-surface or
+ * shadeless scene.
+ *
+ * lrt_tri_surface_tessellate writes up to `cap` triangles, 3 vertices each, into
+ * the caller's buffers (each may be NULL): pos[9*cap] / nrm[9*cap] (geometric,
+ * normalized by the caller if needed) / uv[6*cap] (the sample's (u,v); global
+ * domain for NURBS). *ntris_out gets the full triangle count produced — if it
+ * exceeds cap, only the first cap were written (size with the bound to avoid
+ * truncation). Returns LRT_RESULT_OK; INVALID_ARGUMENT (NULL/zero seg/non-
+ * surface scene); UNSUPPORTED if shade data is unavailable. Thread-safe. */
+size_t lrt_tri_surface_tessellate_bound(const lrt_tri_scene *s, uint32_t segu,
+                                        uint32_t segv);
+lrt_result lrt_tri_surface_tessellate(const lrt_tri_scene *s, uint32_t segu,
+                                      uint32_t segv, float *pos, float *nrm,
+                                      float *uv, size_t cap, size_t *ntris_out);
+
+/* Indexed (welded) variant: emits a shared (segu+1)x(segv+1) vertex grid per
+ * patch plus a triangle index buffer — what GPU vertex buffers / OBJ-style
+ * exporters want (~6x less vertex data than the soup form). Vertex v at patch p,
+ * grid (i,j) is at index p*(segu+1)*(segv+1) + j*(segu+1) + i; eval at the
+ * patch's (u,v). For trimmed NURBS the full vertex grid is still emitted (a few
+ * unreferenced verts) but only kept cells contribute index triples.
+ *
+ * _bound returns the vertex count (nprims*(segu+1)*(segv+1)) and the upper-bound
+ * index count (nprims*segu*segv*6) via the out-params (either may be NULL); both
+ * 0 for a non-surface/shadeless scene. The fill writes up to vcap verts and icap
+ * indices and reports the full counts in *nverts_out / *nidx_out (size with the
+ * bound to avoid truncation). Returns LRT_RESULT_OK; INVALID_ARGUMENT (NULL/zero
+ * seg/non-surface); UNSUPPORTED if shade data is unavailable. Thread-safe. */
+void lrt_tri_surface_tessellate_indexed_bound(const lrt_tri_scene *s,
+                                              uint32_t segu, uint32_t segv,
+                                              size_t *nverts, size_t *nindices);
+lrt_result lrt_tri_surface_tessellate_indexed(
+    const lrt_tri_scene *s, uint32_t segu, uint32_t segv, float *pos, float *nrm,
+    float *uv, size_t vcap, uint32_t *indices, size_t icap, size_t *nverts_out,
+    size_t *nidx_out);
+
+/* Closest-point projection: find the (u,v) on parametric SURFACE patch prim_id
+ * nearest to the query point Q (the inverse of evaluation), for collision
+ * response, decal/texture projection, or snapping. Gauss-Newton minimization of
+ * |S(u,v)-Q|^2 from several starts (robust to local minima on wavy patches),
+ * clamped to the patch's parameter domain. u_out/v_out get the parameters (in
+ * the global domain for NURBS, matching the intersector and surface_normal);
+ * P_out gets the foot point S(u,v) (any output NULL-able). The result is the
+ * nearest point on the GIVEN patch — for a whole NURBS surface, call per patch
+ * (prim_id over [0,shade_nprims)) and keep the closest. Returns LRT_RESULT_OK;
+ * INVALID_ARGUMENT (NULL/non-surface/prim_id out of range); UNSUPPORTED if shade
+ * data is unavailable. Thread-safe. */
+lrt_result lrt_tri_surface_project(const lrt_tri_scene *s, uint32_t prim_id,
+                                   const float Q[3], float *u_out, float *v_out,
+                                   float P_out[3]);
+
+/* Tessellate a ROUND-LINEAR curve (hair) scene into a tube mesh — for preview /
+ * export / collision proxy. Each segment becomes a tapered cone frustum with
+ * `nsides` (>= 3) radial faces, 2*nsides triangles, no end caps; vertices ride
+ * the cone surface at radius r(t), normals are the (outward) cone-surface
+ * normals. Only round-linear scenes are served: flat curves are view-dependent
+ * ribbons with no static mesh, and the Bezier hit u is sub-arc-local — both
+ * return INVALID_ARGUMENT.
+ *
+ * lrt_tri_curve_tessellate_bound returns the triangle count (2*nsides per
+ * segment) for sizing; 0 for a non-round-linear/shadeless scene.
+ * lrt_tri_curve_tessellate writes up to `cap` triangles (3 verts each) into the
+ * caller's pos[9*cap] / nrm[9*cap] (each NULL-able); *ntris_out gets the full
+ * count. Degenerate (zero-length) segments are skipped. Returns LRT_RESULT_OK;
+ * INVALID_ARGUMENT (NULL/nsides<3/non-round-linear); UNSUPPORTED if shade data
+ * is unavailable. Thread-safe. */
+size_t lrt_tri_curve_tessellate_bound(const lrt_tri_scene *s, uint32_t nsides);
+lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
+                                    float *pos, float *nrm, size_t cap,
+                                    size_t *ntris_out);
+
+/* Direct access to a scene's resident node/block buffers + metadata, for GPU
+ * backends that upload in-memory scenes without the LRTS serialization round
+ * trip (needed for trimmed NURBS, whose trim loops are not in the v1 blob).
+ * Any out pointer may be NULL. Returns 0 on success, -1 if s is NULL. */
+int lrt_tri_scene_raw(const lrt_tri_scene *s, const void **nodes,
+                      uint32_t *node_count, uint32_t *node_stride,
+                      const void **blocks, uint32_t *block_count,
+                      uint32_t *block_stride, uint32_t *root, uint32_t *layout,
+                      uint32_t *prim_kind, uint32_t *point_type);
+
+/* Trim loops of a trimmed-NURBS scene (nloops=0 for other kinds). loop_off has
+ * nloops+1 prefix offsets into pts; npts = total (u,v) points (2 floats each). */
+int lrt_tri_scene_trim_data(const lrt_tri_scene *s, uint32_t *nloops,
+                            const uint32_t **loop_off, const float **pts,
+                            uint32_t *npts);
+
+/* Access the post-hit shade arrays (per-prim_id control points, indexed by
+ * prim_id), for GPU backends that compute surface/curve normals on the device.
+ * Layout matches lrt_tri_surface_normal / lrt_tri_curve_frame: stride floats/prim
+ * (12 bilinear, 48 bezpatch, 64 rational-bezier/NURBS, 8 linear-curve); dom is
+ * 4 floats/prim (umin,umax,vmin,vmax) for NURBS (stride 64), else NULL. Any out
+ * may be NULL. Returns 0 if shade data is present, -1 otherwise (non-surface/
+ * non-linear-curve scene, or shade data not built). */
+int lrt_tri_surface_shade_data(const lrt_tri_scene *s, const float **cps,
+                               const float **dom, uint32_t *nprims,
+                               uint32_t *stride);
+
+/* --- Built-in implicit / SDF primitives (GPU-resident, no callbacks) -------
+ *
+ * A device-friendly alternative to lrt_user_scene_build's host callbacks: each
+ * primitive is a built-in analytic distance field (sphere-traced on both CPU and
+ * GPU), so these scenes serialize and trace on the HIP backend. types = nprims
+ * shape ids (lrt_sdf_shape); centers = 3*nprims object-space centers; params =
+ * 3*nprims shape params (sphere: radius,_,_; box: half-extent x,y,z; torus:
+ * major R, minor r, _ — torus axis is y). Queried through lrt_tri_*; hits report
+ * prim_id, u=v=0. BVH4 only. */
+typedef enum lrt_sdf_shape {
+    LRT_SDF_SPHERE = 0,
+    LRT_SDF_BOX = 1,
+    LRT_SDF_TORUS = 2
+} lrt_sdf_shape;
+
+lrt_tri_scene *lrt_sdfprim_scene_build(const uint32_t *types,
+                                       const float *centers, const float *params,
+                                       size_t nprims,
+                                       const lrt_tri_build_options *opts,
+                                       lrt_result *err);
+
 /* --- Quantized triangle scenes (approximate / LOD / preview) ---------------
  *
  * Triangle vertices are stored in a low-precision format to cut memory and
@@ -541,6 +816,33 @@ lrt_tri_scene *lrt_tri_scene_open_mmap(const char *path, lrt_result *err);
  * stays correct). Triangle scenes only; rejects mmapped (read-only) scenes. */
 lrt_result lrt_tri_scene_refit(lrt_tri_scene *s, const float *vertices,
                                size_t ntris);
+
+/* Refit a parametric SURFACE scene in place for animation (deforming patches):
+ * replace the control points and recompute node bounds without rebuilding the
+ * tree. Supported for bilinear (cps = 12*nprims: q00 q10 q11 q01 per patch) and
+ * bicubic Bezier (cps = 48*nprims) scenes — the direct-control-point kinds;
+ * nprims must equal the original patch count, in build order. NURBS/trimmed
+ * NURBS are rejected (their leaves are extracted rational patches with no 1:1
+ * map back to the input net). The post-hit shade cache is refreshed, so
+ * lrt_tri_surface_normal / _tessellate reflect the new geometry. Tree topology
+ * is preserved (large deformations degrade traversal quality but stay correct).
+ * Rejects mmapped (read-only) scenes. Returns LRT_RESULT_OK or INVALID_ARGUMENT
+ * (NULL/zero args, wrong kind, mmap, or a prim id >= nprims). */
+lrt_result lrt_tri_surface_refit(lrt_tri_scene *s, const float *cps,
+                                 size_t nprims);
+
+/* Refit a round-linear or flat (ribbon) curve (hair) scene in place for
+ * animation: re-derive the segments from a new strand set (points + radii) and
+ * recompute node bounds without rebuilding the tree. The strand topology must
+ * match the original build (same strand_first/strand_count layout, hence the
+ * same segment count) — only the point positions / radii change. The CSG
+ * neighbor data of round-linear segments is re-derived too, so joints stay
+ * correct. Refreshes the shade cache (lrt_tri_curve_frame / _tessellate). Tree
+ * topology is preserved (large motion degrades traversal but stays correct).
+ * Rejects mmapped scenes and non-(round/flat)-curve kinds. Returns
+ * LRT_RESULT_OK; INVALID_ARGUMENT (NULL/topology change/wrong kind/mmap);
+ * INVALID_BOUNDS (non-finite point or non-positive radii). */
+lrt_result lrt_curve_refit(lrt_tri_scene *s, const lrt_hair_strands *strands);
 
 /* --- Instancing / TLAS ----------------------------------------------------
  *

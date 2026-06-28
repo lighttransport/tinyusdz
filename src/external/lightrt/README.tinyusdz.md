@@ -1,17 +1,59 @@
-# LightRT Vendor Import
+# LightRT Vendor Import (maintained fork)
 
-Source: `/mnt/nvme02/work/lightrt`
+Upstream: https://github.com/syoyo/lightrt (local: `~/work/lightrt`)
 
-Imported files:
+This is a **copied vendor import that has diverged into a maintained fork**, not a
+pristine snapshot and not a git submodule. Both sides have evolved: tinyusdz added
+features/fixes here, and upstream advanced independently. Keep that in mind before
+re-syncing — a blind overwrite would drop tinyusdz-only code that `tusdrender`
+depends on.
 
-- `LICENSE`
-- `lightrt_c.h`
-- `lightrt_c.c`
-- `lightrt_c_tri.h`
-- `lightrt_c_tri.c`
+## Last re-sync
 
-This is a copied vendor import, not a git submodule.
+3-way merged against upstream `main` @ `c5ca37b` on 2026-06-28. Per-file fork
+bases (the upstream commit each file was originally imported from, used as the
+merge base):
 
-License note: the imported top-level `LICENSE` is MIT. Some copied C source
-files currently contain `SPDX-License-Identifier: Apache-2.0` comments. The
-files are preserved unchanged to keep upstream provenance intact.
+- `lightrt_c.{c,h}`, `lightrt_c_tri.{c,h}` — base `1759b1e`
+- `lightrt_c_vk.{c,h}` — base `7024f46`
+- `lightrt_vkew.{c,h}`, `vk/shaders/*.comp` — track upstream verbatim
+
+To re-sync again: for each diverged file run
+`git merge-file --diff3 ours <base> <upstream-main>`, resolve any conflicts
+(they cluster in `rtx_scene_build_core`; keep the staging-buffer side — see
+below), then rebuild + run `ctest -R tool-tusdrender-smoke`.
+
+## tinyusdz-local patches (must survive a re-sync)
+
+Core CPU kernel (`lightrt_c_tri.{c,h}`), not upstream:
+- `lrt_tri_scene_build_indexed()` (indexed triangle build)
+- hit-vertex recovery from BVH leaves (drops the resident vertex soup, −1.5 GB)
+- memory-capped + parallelized 22M-instance TLAS build
+- cache-coherent leaf-slot color reorder (opt-in)
+- MinGW/MSVC Windows portability (`_aligned_malloc`, `<threads.h>` gating,
+  `_BitScanReverse64`/`Forward` fallbacks)
+
+Vulkan (`lightrt_c_vk.c`):
+- ray-query AS build inputs are **staged into device-local memory** (the AS build
+  input must be device-local on some drivers — "NVIDIA requires it"). Upstream
+  uploads them host-visible; on a re-sync, keep the tinyusdz staging path.
+
+tinyusdz-only files (no upstream counterpart — never overwrite):
+- `lightrt_c_d3d11.{cpp,h}`, `d3d/shaders/*` — the Direct3D 11 compute backend
+- `vk/shaders/compile_shaders.sh` — relocated next to the shaders (upstream keeps
+  it under `scripts/`); its `SH` path is adjusted accordingly
+- `README.tinyusdz.md` (this file), `test_indexed_build.c`
+
+## Imported / tracked files
+
+`LICENSE`, `lightrt_c.{c,h}`, `lightrt_c_tri.{c,h}`, `lightrt_c_vk.{c,h}`,
+`lightrt_vkew.{c,h}`, `vk/shaders/{trace_bvh,build_morton,trace_ray_query,shade_analytic}.{comp,spv.h}`.
+
+The committed `*.spv.h` are regenerated from the `*.comp` with
+`vk/shaders/compile_shaders.sh` (needs a `GL_EXT_ray_query`-capable glslang).
+
+## License
+
+The top-level `LICENSE` is MIT. Some copied C sources carry
+`SPDX-License-Identifier: Apache-2.0` comments; preserved unchanged to keep
+upstream provenance intact.
