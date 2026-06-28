@@ -252,6 +252,55 @@ void test_read_usdc_file() {
   std::cout << "  USDC file reading test completed!" << std::endl;
 }
 
+void test_openusd_compressed_value_reps_equal_raw_size() {
+  std::cout << "Testing OpenUSD compressed ValueRep table edge case..." << std::endl;
+
+  const char* paths[] = {
+    "../../../tests/usdc/composition/references-001.usdc",
+    "../../tests/usdc/composition/references-001.usdc",
+    "../tests/usdc/composition/references-001.usdc",
+    "./tests/usdc/composition/references-001.usdc",
+  };
+
+  const char* found = nullptr;
+  for (const char* path : paths) {
+    std::ifstream f(path, std::ios::binary);
+    if (f.good()) {
+      found = path;
+      break;
+    }
+  }
+
+  if (!found) {
+    std::cout << "  Skipping (references-001.usdc fixture not found)" << std::endl;
+    return;
+  }
+
+  std::ifstream ifs(found, std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(ifs)),
+                    std::istreambuf_iterator<char>());
+  assert(!bytes.empty());
+
+  CrateReader reader;
+  CrateReadResult result = reader.ReadOwned(std::move(bytes));
+  if (!result.success) {
+    std::cout << "  Error: "
+              << (result.errors.empty() ? std::string("(none)")
+                                        : result.errors[0].message)
+              << std::endl;
+  }
+  assert(result.success);
+
+  const Layer* layer = result.stage.GetRootLayer();
+  assert(layer);
+  const PrimSpec* sphere = layer->prim_at_path("/sphere1");
+  assert(sphere);
+  assert(sphere->meta().references.size() == 1);
+  assert(sphere->meta().references[0].find("scene-001.usdc") != std::string::npos);
+
+  std::cout << "  OpenUSD compressed ValueRep edge case passed!" << std::endl;
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -268,6 +317,7 @@ int main() {
     test_lz4_decompression();
     test_crate_reader_invalid();
     test_read_usdc_file();
+    test_openusd_compressed_value_reps_equal_raw_size();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

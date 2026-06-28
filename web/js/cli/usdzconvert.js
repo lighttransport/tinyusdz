@@ -68,9 +68,16 @@ Convert options:
                            .usdz with a top-level USDC root; falls back to legacy
                            otherwise. 'stream-next': the stream source combined
                            with the next multi-asset compose+flatten in wasm
-                           (USDC layers only, --texture-format keep); falls back
-                           to the legacy stream compose when the input doesn't
+                           (USDC layers only; supports texture rename remaps
+                           for --texture-format png/jpeg/exr); falls back to
+                           the legacy stream compose when the input doesn't
                            qualify. Also via TINYUSDZ_PIPELINE env.
+  --include-unused-textures
+                           With --pipeline stream-next, convert/package texture
+                           files from the input folder even when the next-composed
+                           root does not reference them. Default is to skip
+                           unreferenced textures for lower memory and smaller
+                           USDZ output.
   --stream-textures        Re-encode/resize textures one at a time and repack in
                            JS, so decoded images never accumulate in the WASM
                            heap. This is the DEFAULT for a single .usdz with
@@ -155,6 +162,7 @@ function parseArgs() {
     materialAtlasPadding: 2,
     materialAtlasMinGroupSize: 2,
     optimizeGeometry: 'off',
+    includeUnusedTextures: false,
     meshMergeMaxInputFaces: 2048,
     meshMergeMaxInputPoints: 4096,
     meshMergeMaxAggregateFaces: 65536,
@@ -187,6 +195,7 @@ function parseArgs() {
     else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '--texture-codec') o.textureCodec = args[++i];
     else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
+    else if (a === '--include-unused-textures') o.includeUnusedTextures = true;
     else if (a === '--optimize-materials') o.optimizeMaterials = args[++i];
     else if (a === '--material-atlas-size') o.materialAtlasSize = parseInt(args[++i], 10) || 4096;
     else if (a === '--material-atlas-tile-size') o.materialAtlasTileSize = parseInt(args[++i], 10) || 512;
@@ -311,6 +320,7 @@ async function runStreamingConvert(native, o) {
       materialAtlasPadding: o.materialAtlasPadding,
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       optimizeGeometry: o.optimizeGeometry,
+      includeUnusedTextures: o.includeUnusedTextures,
       meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
       meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
       meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
@@ -550,6 +560,7 @@ async function main() {
       materialAtlasPadding: o.materialAtlasPadding,
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       optimizeGeometry: o.optimizeGeometry,
+      includeUnusedTextures: o.includeUnusedTextures,
       meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
       meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
       meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
