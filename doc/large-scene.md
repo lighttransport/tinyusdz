@@ -191,6 +191,65 @@ prims and the value-clip `GEO` behind the `alfro=render` variant — in a few Mi
 with the multi-GB binaries and the value-clip layer deferred. This needed the
 variant-content fix (§3.5).
 
+### 2.6.1 Rendering Caldera (tusdrender + tusdview, NVIDIA RTX 5060 Ti)
+
+Both viewers compose Caldera through the `next` loader (`LoadUSDComposed`,
+payloads eager), which handles its `..`-relative payload paths and variant LOD.
+The **default Tydra loader rejects Caldera** ("Unsafe asset path" on the
+`..`-relative payloads), so tusdview must use `--next`.
+
+**Scene facts.** The default (root-authored) LOD is `districtLod = proxy`
+(12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
+Points). The map is a flat ~8 km island, so **auto-framing the whole bounds is
+useless** — frame a scene camera instead (`layers/cameras.usd`:
+`phospate_mine_overview`, `capital_square`, `village`, …). The guide Points
+triangulate into huge planes that engulf the camera, so they must be hidden
+(both viewers hide `guide` by default).
+
+**tusdrender** (ray tracing) — renders the proxy correctly on every backend at
+1280×720, `~4–5 GiB` RSS:
+
+```sh
+T=tests; M=/mnt/disk1/data/caldera/caldera.usda
+./build/tools/tusdrender/tusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
+./build/tools/tusdrender/tusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
+./build/tools/tusdrender/tusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
+# full LOD: add  -variant districtLod=full   (heavier; CPU -rtPreview streams best)
+```
+
+This needed the GPU-collector fix: `-vk/-vkr` previously emitted **raw local**
+points for every Mesh (no world transform / purpose / mask), piling all
+districts at the origin; they now reuse the CPU path's world-space,
+purpose-filtered, masked collection. (Native instances are not yet emitted on
+the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
+
+**tusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
+
+```sh
+./build/tusdview --headless --next --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
+./build/tusdview --headless --next --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
+```
+
+- `--camera <name>` resolves the named USD Camera's world pose from the `--next`
+  stage and drives the orbit rig (tusdview otherwise auto-fits the whole scene
+  and ignores USD cameras).
+- The **GL** backend renders the district cleanly (buildings, terrain, the mine
+  tank). The **VK rasterizer** renders the geometry correctly but with flat
+  geometric-normal shading (dark, low contrast — a *shading* limitation, not a
+  geometry one). This path was unblocked by fixing a latent
+  `normalize(vec3(0))` NaN in `mesh.vert` that clipped every zero-normal mesh
+  (the `--next` flat preview stores zero normals); before the fix `--next`
+  rasterized **nothing** on VK (even plain suzanne).
+- tusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
+  (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
+
+**Known limitations (follow-ups).** tusdview's VK **ray-query** (`--rt`) and
+**CUDA** paths build a single GPU acceleration structure over the *flattened*
+scene; at Caldera's ~24 M-triangle proxy this is blank/very slow on a 16 GB GPU
+(both render small scenes fine). Full `districtLod=full` in tusdview exceeds the
+triangle budget / GPU memory. The VK-raster flat shading wants the smooth-normal
++ headlight treatment the tusdrender preview already uses.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
