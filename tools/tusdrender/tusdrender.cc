@@ -168,44 +168,26 @@ int main(int argc, char **argv) {
     }
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
 
-    // Collect meshes and build geometry.
-    std::vector<tinyusdz::next::UsdPrim> mesh_prims;
-    std::vector<matrix4d> worlds;
+    // Collect meshes and build geometry. Only base_colors + geos feed the GPU
+    // backends (RunVulkanLightRT / RunD3D11LightRT).
     std::vector<Vec3> base_colors;
-    std::vector<int32_t> tex_ids;
-    std::vector<float> roughnesses;
-    std::vector<float> metallics;
     std::vector<RTPreviewStats::MeshGeometry> geos;
 
     {
-      // Traverse and collect meshes.
-      std::vector<tinyusdz::next::UsdPrim> mesh_stack;
+      // Collect meshes WITH their world transforms, purpose, and -mask, exactly
+      // like the CPU -rtPreview path (CollectRTPreviewMeshesNext). The GPU
+      // backends previously walked every Mesh and emitted its RAW LOCAL points,
+      // ignoring world transforms, purpose, and -mask -- correct only for a
+      // single mesh at the origin (suzanne), but for any composed/production
+      // scene (e.g. Caldera) it collapsed every transformed district to the
+      // origin and pulled in the guide breadcrumb/endpoint Points, burying the
+      // camera. (Native instances stay in their own proto/TLAS pool and are not
+      // emitted here yet -- negligible for Caldera; see doc/large-scene.md.)
+      std::vector<MeshJobNext> mesh_jobs;
       for (const auto &root : stage.GetRootPrims()) {
-        std::vector<tinyusdz::next::UsdPrim> stack;
-        stack.push_back(root);
-        while (!stack.empty()) {
-          auto prim = stack.back();
-          stack.pop_back();
-          if (prim.GetTypeName() == "Mesh") {
-            mesh_stack.push_back(prim);
-            Vec3 bc{0.5f, 0.5f, 0.5f};
-            // Try to get displayColor.
-            const tinyusdz::next::Value *dcv = prim.GetPropertyValue("primvars:displayColor");
-            if (dcv) {
-              const std::vector<float> *dc = dcv->as_float_array();
-              if (dc && dc->size() >= 3) {
-                bc = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
-              }
-            }
-            base_colors.push_back(bc);
-            tex_ids.push_back(-1);
-            roughnesses.push_back(0.5f);
-            metallics.push_back(0.0f);
-          }
-          for (const auto &child : prim.GetChildren()) {
-            stack.push_back(child);
-          }
-        }
+        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+                                   tinyusdz::Purpose::Default, opt.timecode,
+                                   opt.mask, &mesh_jobs);
       }
 
       // Displacement textures for the -vk/-vkr preview (loaded from disk relative
@@ -216,8 +198,13 @@ int main(int argc, char **argv) {
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
 
-      // Stream geometry.
-      for (auto &prim : mesh_stack) {
+      // Stream geometry in WORLD space.
+      for (MeshJobNext &job : mesh_jobs) {
+        // Purpose visibility: hide guide (and others per -purpose) like the CPU
+        // path; the GPU path used to render every purpose unconditionally, so the
+        // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
+        if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
+        tinyusdz::next::UsdPrim &prim = job.prim;
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
         const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
@@ -225,16 +212,34 @@ int main(int argc, char **argv) {
         const std::vector<float> *pts = val->as_float_array();
         if (!pts || pts->empty()) continue;
         nv = uint32_t(pts->size() / 3);
-        geo.positions = *pts;
+        // Transform local points into world space by the job's world matrix.
+        geo.positions.resize(size_t(nv) * 3);
+        for (uint32_t j = 0; j < nv; ++j) {
+          Vec3 wp = TransformPoint(
+              job.world,
+              Vec3{(*pts)[j * 3 + 0], (*pts)[j * 3 + 1], (*pts)[j * 3 + 2]});
+          geo.positions[j * 3 + 0] = wp.x;
+          geo.positions[j * 3 + 1] = wp.y;
+          geo.positions[j * 3 + 2] = wp.z;
+        }
 
         val = prim.GetPropertyValue("normals");
         if (val) {
           const std::vector<float> *nrm = val->as_float_array();
-          if (nrm && nrm->size() >= nv * 3)
-            geo.normals = *nrm;
+          if (nrm && nrm->size() >= nv * 3) {
+            geo.normals.resize(size_t(nv) * 3);
+            for (uint32_t j = 0; j < nv; ++j) {
+              Vec3 wn = TransformVector(
+                  job.world,
+                  Vec3{(*nrm)[j * 3 + 0], (*nrm)[j * 3 + 1], (*nrm)[j * 3 + 2]});
+              geo.normals[j * 3 + 0] = wn.x;
+              geo.normals[j * 3 + 1] = wn.y;
+              geo.normals[j * 3 + 2] = wn.z;
+            }
+          }
         }
         if (geo.normals.empty()) {
-          geo.normals.resize(nv * 3, 0);
+          geo.normals.resize(size_t(nv) * 3, 0);
         }
 
         val = prim.GetPropertyValue("primvars:st");
@@ -348,6 +353,14 @@ int main(int argc, char **argv) {
           }
         }
 
+        // Base color from primvars:displayColor (constant); mid-grey default.
+        Vec3 bc{0.5f, 0.5f, 0.5f};
+        if (const tinyusdz::next::Value *dcv =
+                prim.GetPropertyValue("primvars:displayColor")) {
+          const std::vector<float> *dc = dcv->as_float_array();
+          if (dc && dc->size() >= 3) bc = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
+        }
+        base_colors.push_back(bc);
         geos.push_back(std::move(geo));
       }
     }
