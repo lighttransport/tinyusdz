@@ -84,25 +84,24 @@ class ChunkedStream {
     if (buf_.size() == kFlushAt) flush();
     buf_.push_back(c);
   }
+  // Number formatters write into a small stack buffer and append it to the chunk
+  // buffer in a single copy -- no intermediate std::string per scalar (this is
+  // the per-element hot path for large numeric arrays).
   void append_int(int64_t v) {
-    num_.clear();
-    AppendInt(num_, v);
-    append(num_);
+    char t[21];
+    append(t, IntTo(t, v));
   }
   void append_uint(uint64_t v) {
-    num_.clear();
-    AppendUInt(num_, v);
-    append(num_);
+    char t[20];
+    append(t, UIntTo(t, v));
   }
   void append_float(float v) {
-    num_.clear();
-    AppendFloat(num_, v);
-    append(num_);
+    char t[24];
+    append(t, dtos_to(t, v));
   }
   void append_double(double v) {
-    num_.clear();
-    AppendDouble(num_, v);
-    append(num_);
+    char t[32];
+    append(t, dtos_to(t, v));
   }
   void flush() {
     if (!buf_.empty()) {
@@ -115,7 +114,6 @@ class ChunkedStream {
   static constexpr size_t kFlushAt = 64u << 10;
   StreamWriter& out_;
   std::string buf_;
-  std::string num_;
 };
 
 template <typename T, typename Emit>

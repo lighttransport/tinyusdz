@@ -51,11 +51,28 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
   }
 }
 
-// Write indent
+// Write indent.
+//
+// Emits `depth` copies of `indent` in a single write, backed by a thread-local
+// cache of the repeated unit (grown on demand). This avoids `depth` tiny writes
+// per prim/property on the hot path. The cache is thread_local so it stays
+// correct under the parallel subtree stitcher (each worker has its own
+// StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
 void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
-  for (int i = 0; i < depth; ++i) {
-    os << indent;
+  if (depth <= 0 || indent.empty()) return;
+  thread_local std::string pad;    // cached repetition of `unit`
+  thread_local std::string unit;   // the indent unit `pad` was built from
+  thread_local int levels = 0;     // number of `unit` copies currently in `pad`
+  if (unit != indent) {
+    unit = indent;
+    pad.clear();
+    levels = 0;
   }
+  if (depth > levels) {
+    pad.reserve(static_cast<size_t>(depth) * indent.size());
+    for (; levels < depth; ++levels) pad += indent;
+  }
+  os.write(pad.data(), static_cast<size_t>(depth) * indent.size());
 }
 
 // Escape a string for USDA output
