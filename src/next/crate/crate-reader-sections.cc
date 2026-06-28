@@ -497,6 +497,68 @@ bool CrateReader::Impl::ReadFields() {
             AddError("Counted ValueRep payload exceeds max_array_elements limit");
             return false;
           }
+          if (tid == CrateTypeId::Dictionary && count > 0) {
+            const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+            if (count >
+                ((std::numeric_limits<uint64_t>::max)() - 8u) / 20u) {
+              AddError("Dictionary ValueRep payload size overflow");
+              return false;
+            }
+            const uint64_t min_payload = 8u + count * 20u;
+            if (min_payload > file_size ||
+                static_cast<uint64_t>(off) > file_size - min_payload) {
+              AddError("Dictionary ValueRep payload is truncated");
+              return false;
+            }
+            if (!reader_->seek(static_cast<size_t>(off + 8))) {
+              AddError("Failed to seek to dictionary ValueRep entries");
+              return false;
+            }
+            for (uint64_t entry = 0; entry < count; ++entry) {
+              uint32_t key_index = 0;
+              if (!reader_->read_u32(key_index)) {
+                AddError("Failed to read dictionary key index");
+                return false;
+              }
+              if (key_index >= string_indices_.size()) {
+                AddError("Dictionary key string index out of range");
+                return false;
+              }
+              const size_t value_start = reader_->position();
+              uint64_t recursive_offset_raw = 0;
+              if (!reader_->read_u64(recursive_offset_raw)) {
+                AddError("Failed to read dictionary recursive offset");
+                return false;
+              }
+              const int64_t recursive_offset =
+                  static_cast<int64_t>(recursive_offset_raw);
+              if (recursive_offset < 8) {
+                AddError("Dictionary recursive offset is invalid");
+                return false;
+              }
+              const uint64_t value_start_u64 =
+                  static_cast<uint64_t>(value_start);
+              const uint64_t recursive_offset_u64 =
+                  static_cast<uint64_t>(recursive_offset);
+              if (recursive_offset_u64 >
+                  (std::numeric_limits<uint64_t>::max)() - value_start_u64 ||
+                  value_start_u64 + recursive_offset_u64 >
+                      file_size - sizeof(uint64_t)) {
+                AddError("Dictionary recursive ValueRep is outside file");
+                return false;
+              }
+              const size_t next_entry_pos = static_cast<size_t>(
+                  value_start_u64 + recursive_offset_u64 + sizeof(uint64_t));
+              if (!reader_->seek(next_entry_pos)) {
+                AddError("Failed to seek to next dictionary entry");
+                return false;
+              }
+            }
+            if (!reader_->seek(saved)) {
+              AddError("Failed to restore FIELDS reader position");
+              return false;
+            }
+          }
         }
 
         const bool list_op =
@@ -526,6 +588,47 @@ bool CrateReader::Impl::ReadFields() {
             if (file_size < 9u || static_cast<uint64_t>(off) > file_size - 9u) {
               AddError("List-op ValueRep payload is truncated");
               return false;
+            }
+            const uint64_t item_bytes =
+                (tid == CrateTypeId::ReferenceListOp ||
+                 tid == CrateTypeId::PayloadListOp) ? 8u : 4u;
+            uint64_t pos = static_cast<uint64_t>(off + 1);
+            const uint8_t order[] = {0x02, 0x04, 0x20, 0x40, 0x08, 0x10};
+            for (uint8_t bit : order) {
+              if ((bits & bit) == 0) continue;
+              if (pos > file_size - sizeof(uint64_t)) {
+                AddError("List-op ValueRep run is truncated");
+                return false;
+              }
+              const size_t saved = reader_->position();
+              if (!reader_->seek(static_cast<size_t>(pos))) {
+                AddError("Failed to seek to list-op ValueRep run");
+                return false;
+              }
+              uint64_t count = 0;
+              if (!reader_->read_u64(count)) {
+                AddError("Failed to read list-op ValueRep run count");
+                return false;
+              }
+              if (!reader_->seek(saved)) {
+                AddError("Failed to restore FIELDS reader position");
+                return false;
+              }
+              if (count > options_.max_array_elements) {
+                AddError("List-op ValueRep run count exceeds max_array_elements limit");
+                return false;
+              }
+              if (count >
+                  ((std::numeric_limits<uint64_t>::max)() - 8u) / item_bytes) {
+                AddError("List-op ValueRep run byte size overflow");
+                return false;
+              }
+              const uint64_t run_bytes = 8u + count * item_bytes;
+              if (run_bytes > file_size || pos > file_size - run_bytes) {
+                AddError("List-op ValueRep run is truncated");
+                return false;
+              }
+              pos += run_bytes;
             }
           }
         }

@@ -268,6 +268,27 @@ std::vector<uint8_t> BuildFieldValuePayloadCase(
   return c.Build();
 }
 
+std::vector<uint8_t> BuildFieldValuePayloadCaseWithStrings(
+    CrateTypeId type, const std::vector<uint8_t>& payload) {
+  const std::vector<uint8_t> tokens = TokensFromRaw(1, {'a', '\0'});
+  const std::vector<uint8_t> strings = StringsTable({0});
+  const std::vector<uint8_t> dummy_fields = FieldTableRawReps(
+      {0}, {ValueRep::Make(type, 0, false, false, false)});
+  const size_t section_count = 4;
+  const size_t payload_base = kCrateBootstrapSize + 8 + section_count * (16 + 8 + 8);
+  const size_t payload_start =
+      payload_base + tokens.size() + strings.size() + dummy_fields.size();
+  std::vector<uint8_t> fields = FieldTableRawReps(
+      {0}, {ValueRep::Make(type, static_cast<uint64_t>(payload_start),
+                           false, false, false)});
+  CrateShell c;
+  c.AddSection("TOKENS", tokens);
+  c.AddSection("STRINGS", strings);
+  c.AddSection("FIELDS", std::move(fields));
+  c.AddSection("JUNK", payload);
+  return c.Build();
+}
+
 CrateShell PrefixThroughTokens() {
   CrateShell c;
   c.AddSection("TOKENS", TokensEmpty());
@@ -535,8 +556,49 @@ int main() {
   }
 
   {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
+    ExpectReject("dictionary ValueRep entry truncated",
+                 BuildFieldValuePayloadCaseWithStrings(CrateTypeId::Dictionary, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
+    PutU32(&payload, 0);
+    PutU64(&payload, 0);  // recursive ValueRep cannot point into the offset field
+    PutU64(&payload, ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
+    ExpectReject("dictionary recursive offset invalid",
+                 BuildFieldValuePayloadCaseWithStrings(CrateTypeId::Dictionary, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
+    PutU32(&payload, 0);
+    PutU64(&payload, 1024);  // recursive ValueRep points beyond EOF
+    PutU64(&payload, ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
+    ExpectReject("dictionary recursive ValueRep outside file",
+                 BuildFieldValuePayloadCaseWithStrings(CrateTypeId::Dictionary, payload));
+  }
+
+  {
     std::vector<uint8_t> payload = {0x02};
     ExpectReject("truncated list-op ValueRep payload",
+                 BuildFieldValuePayloadCase(CrateTypeId::TokenListOp, false, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload = {0x02};
+    PutU64(&payload, 17);
+    ExpectReject("list-op ValueRep run count over cap",
+                 BuildFieldValuePayloadCase(CrateTypeId::TokenListOp, false, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload = {0x02};
+    PutU64(&payload, 1);
+    ExpectReject("list-op ValueRep run items truncated",
                  BuildFieldValuePayloadCase(CrateTypeId::TokenListOp, false, payload));
   }
 
