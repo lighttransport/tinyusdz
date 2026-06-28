@@ -159,6 +159,81 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
 
 void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s);
 
+/* --- Analytic-primitive GPU shading (spheres + boxes) ---------------------
+ *
+ * Scope: GPU *shading evaluation* only — no triangle BVH, no MaterialX node
+ * graph. A compute shader casts one primary ray per pixel against a small set
+ * of analytic spheres / axis-aligned boxes (linear scan), forward-shades the
+ * closest hit with an OpenPBR-core layered BSDF (Lambert diffuse + GGX specular
+ * with metallic/dielectric Schlick Fresnel), one directional "sun" via a hard
+ * shadow ray, plus a 2-colour hemisphere environment (ambient + background),
+ * and writes a linear RGBA image. The intent is to evaluate constant OpenPBR
+ * parameters (e.g. baked per-object from a MaterialX graph on the CPU) on the
+ * GPU; the math mirrors the CPU reference in examples/vk_shade so the two agree
+ * within fp tolerance.
+ *
+ * Each primitive is 16 tightly-packed floats (no struct padding): center.xyz,
+ * radius (sphere), half.xyz (box half-extents), type (0=sphere,1=box),
+ * base_color.xyz, metalness, roughness, specular_ior, emission, opacity. */
+typedef struct lrt_vk_shade_prim {
+    float center[3];
+    float radius;        /* sphere radius (boxes ignore)                  */
+    float half_extent[3];/* box half-extents (spheres ignore)            */
+    float type;          /* 0.0 = sphere, 1.0 = box                       */
+    float base_color[3];
+    float metalness;
+    float roughness;
+    float specular_ior;
+    float emission;      /* emissive weight; radiance = base_color*emission */
+    float opacity;       /* reserved (currently unused by the shader)     */
+} lrt_vk_shade_prim;
+
+/* Camera + lighting description. Direction vectors should be normalized;
+ * aspect = width/height (the host fills it in when 0). */
+typedef struct lrt_vk_shade_desc {
+    uint32_t width, height;
+    uint32_t spp;          /* anti-alias samples (deterministic jitter)    */
+    float cam_origin[3];
+    float tan_half_fov;    /* tan(0.5 * vertical fov)                      */
+    float cam_forward[3];  /* normalized view direction                   */
+    float aspect;          /* width/height; 0 -> host computes            */
+    float cam_right[3];
+    float cam_up[3];
+    float sun_dir[3];      /* direction TOWARD the sun (normalized)       */
+    float sun_radiance[3]; /* zero disables the sun                       */
+    float env_top[3];      /* sky-dome colour at +Y                       */
+    float env_bottom[3];   /* ground colour at -Y                         */
+} lrt_vk_shade_desc;
+
+/* Shade `nprims` analytic primitives into out_rgba (width*height*4 floats,
+ * linear, caller-allocated). Returns 0 on success, -1 on error (err set).
+ *
+ * This one-shot form (re)allocates and uploads every buffer per call. For
+ * repeated rendering of the same scene (animation, an orbit, parameter sweeps)
+ * prefer the resident API below, which uploads the primitives once and reuses
+ * the device buffers + descriptor set across frames. */
+int lrt_vk_shade_analytic(lrt_vk_engine *e, const lrt_vk_shade_prim *prims,
+                          uint32_t nprims, const lrt_vk_shade_desc *desc,
+                          float *out_rgba, lrt_result *err);
+
+/* Resident analytic-shading scene: upload the primitives ONCE and render many
+ * frames against them. The primitive buffer and descriptor set are reused; the
+ * output buffer is reused and only grown when a larger frame is requested. The
+ * engine must outlive the scene. */
+typedef struct lrt_vk_shade_scene lrt_vk_shade_scene;
+
+lrt_vk_shade_scene *lrt_vk_shade_scene_build(lrt_vk_engine *e,
+                                             const lrt_vk_shade_prim *prims,
+                                             uint32_t nprims, lrt_result *err);
+
+/* Render one frame of a resident scene into out_rgba (width*height*4 floats).
+ * Uploads only the small per-frame description; reuses everything else. */
+int lrt_vk_shade_scene_render(lrt_vk_engine *e, lrt_vk_shade_scene *s,
+                              const lrt_vk_shade_desc *desc, float *out_rgba,
+                              lrt_result *err);
+
+void lrt_vk_shade_scene_free(lrt_vk_engine *e, lrt_vk_shade_scene *s);
+
 #ifdef __cplusplus
 }
 #endif
