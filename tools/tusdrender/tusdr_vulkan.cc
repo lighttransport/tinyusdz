@@ -150,22 +150,14 @@ bool RunVulkanLightRT(const Options &opt,
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
   if (has_rt && opt.vulkan_rt) {
-    // The ray-query BLAS expects a de-indexed triangle soup (9 floats/tri, no
-    // index buffer: primitiveIndex == build order == caller triangle index), but
-    // flat_verts is the *indexed* unique-vertex array. Expand it once so the GPU
-    // builds the same geometry the CPU/compute paths trace.
-    std::vector<float> soup;
-    soup.reserve(size_t(ntris) * 9u);
-    for (uint32_t t = 0; t < ntris; ++t) {
-      for (int k = 0; k < 3; ++k) {
-        uint32_t vi = flat_idx[size_t(t) * 3u + size_t(k)];
-        soup.push_back(flat_verts[size_t(vi) * 3u + 0u]);
-        soup.push_back(flat_verts[size_t(vi) * 3u + 1u]);
-        soup.push_back(flat_verts[size_t(vi) * 3u + 2u]);
-      }
-    }
-    // Build the acceleration structure once, trace every ray, free.
-    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build(vk, soup.data(), ntris, &trerr);
+    // Build the ray-query acceleration structure directly from the indexed mesh
+    // (flat_verts = unique positions, flat_idx = triangle vertex ids); the GPU
+    // builds a VK_INDEX_TYPE_UINT32 BLAS, so we don't have to de-index into a
+    // soup. primitiveIndex == triangle build order == caller index, matching the
+    // CPU/compute paths. Build once, trace the whole frame, free.
+    uint32_t nverts = uint32_t(flat_verts.size() / 3u);
+    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
+        vk, flat_verts.data(), nverts, flat_idx.data(), ntris, &trerr);
     if (rtx) {
       traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(nrays),
                                       hits.data(), &trerr);
