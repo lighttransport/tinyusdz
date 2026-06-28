@@ -78,11 +78,15 @@ NVRTC loaded at runtime via cuew** (`examples/common/cuew/`) — there is **no
 link-time dependency on the CUDA toolkit**; only the NVIDIA driver
 (`libcuda.so.1`) and an `libnvrtc.so` need to be present to *run*. The CUDA path
 owns the screenshot (it bypasses the rasterized capture) and supports the
-`RenderMode` views (shaded, normals, BVH heatmap, …).
+`RenderMode` AOV/debug views, selectable headless with `--mode <name>` (shaded,
+normals, bvh-heatmap, material-id, uv, depth, …).
 
 ```sh
 # headless, no window/X server needed:
 ./build/tusdview --headless --cuda --frames 4 --screenshot out.ppm model.usda
+# a debug AOV instead of the shaded image:
+./build/tusdview --headless --cuda --mode normals     --frames 4 --screenshot n.ppm model.usda
+./build/tusdview --headless --cuda --mode bvh-heatmap --frames 4 --screenshot h.ppm model.usda
 ```
 
 The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
@@ -95,7 +99,10 @@ cd build && ctest -R tusdview-cuda-render --output-on-failure
 
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank
-at 1469×1284.
+at 1469×1284. The debug AOVs were spot-checked too: `--mode normals` produces
+smoothly varying RGB-encoded shading normals, and `--mode bvh-heatmap`
+(traversal cost, rmode 27) shows the nested BLAS/TLAS node bounds with elevated
+cost clustering on the silhouette — both correct.
 
 ### Windows (llvm-mingw)
 
