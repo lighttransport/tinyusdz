@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
   bool useNextLoader = false;             // --next: next loader + flat GL preview
   bool noCull = false;                     // --no-cull: disable frustum culling
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
+  std::string cameraName;                   // --camera: USD camera to frame (--next)
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
@@ -101,6 +102,8 @@ int main(int argc, char** argv) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
+      cameraName = argv[++i];
     } else if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -212,6 +215,8 @@ int main(int argc, char** argv) {
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
+          "  --camera NAME Frame a named USD Camera (--next path) instead of "
+          "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
@@ -351,6 +356,7 @@ int main(int argc, char** argv) {
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
   app.setHipRt(wantHip);
+  app.setCameraName(cameraName);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);

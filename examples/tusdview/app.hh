@@ -119,6 +119,9 @@ class App
   void setCudaRt(bool on) { cudaRt_ = on; }
   // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
   void setHipRt(bool on) { hipRt_ = on; }
+  // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
+  // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
+  void setCameraName(const std::string& n) { cameraName_ = n; }
   // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
   void setBlendWeight(const std::string& name, float w) {
@@ -247,6 +250,7 @@ class App
   std::string windowShot_;
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  std::string cameraName_;  // --camera: named USD camera to frame (--next path)
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
