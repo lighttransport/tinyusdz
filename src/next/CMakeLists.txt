@@ -185,6 +185,7 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/cache.hh
     pcp/cache-layer-stack.inc
     pcp/cache-lock.hh
+    pcp/cache-specs-instances.inc
     pcp/cache-utils.hh
 
     # High-level API
