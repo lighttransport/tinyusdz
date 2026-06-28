@@ -329,6 +329,26 @@ tusdrender's 35 M) because the `--next` converter expands instancing differently
 its 30 M `--max-tris` default truncates heavily, so raise it for raster (which
 scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
 
+**Per-district full-LOD gallery.** The same per-shot recipe (one district to
+`full`, frame its camera, `tusdrender -rtPreview`) renders any district at full
+detail within the host budget. Every district measured so far fits comfortably
+as a single promotion (18–50 M default-purpose tris, ≤21 GiB host RSS) — it is
+only the whole *island* at full that does not fit (see top of this section).
+
+| District (camera) | Default tris @ full | View |
+|---|---:|---|
+| `map_phosphate_mine` (`phospate_mine_overview`) | 29.8 M | ![phosphate mine](images/caldera/caldera-phosphate-mine-full.jpg) |
+| `map_capital` (`map_capital_square`) | 44.3 M | ![capital square](images/caldera/caldera-capital-square-full.jpg) |
+| `map_beachhead` (`map_beachhead_village`) | 23.6 M | ![beachhead village](images/caldera/caldera-beachhead-village-full.jpg) |
+| `map_tile_p` (`tile_p_beach`) | 27.8 M | ![tile_p beach](images/caldera/caldera-tile-p-beach-full.jpg) |
+| `map_airfield` (`map_airfield_overview`) | 36.9 M | ![airfield](images/caldera/caldera-airfield-full.jpg) |
+| `map_arsenal` (`map_arsenal_ship`) | 24.1 M | ![arsenal shipyard](images/caldera/caldera-arsenal-shipyard-full.jpg) |
+| `map_agricultural_center` (`map_agricultural_center_bridge`) | 18.1 M | ![agricultural center](images/caldera/caldera-agricultural-center-full.jpg) |
+
+(1280×720 `tusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
+to 1024 px JPEG for the repo. The colored speckles in some frames are neighboring
+districts still at `proxy`, drawn with their `displayColor`.)
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
