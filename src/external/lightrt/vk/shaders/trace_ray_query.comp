@@ -9,7 +9,10 @@
 // read directly. Writes the same lrt_hit layout (t,u,v,prim_id) as the software
 // trace shader: t is in units of |dir|, (u,v) are the hit barycentrics (which
 // coincide with Moller-Trumbore u,v), prim_id = triangle index (single geometry,
-// no index buffer => primitive index == build order == caller index).
+// no index buffer => primitive index == build order == caller index). The
+// geometry is split across multiple chunk BLASes (one TLAS instance each, in
+// chunk order), so the global triangle id is recovered as
+// instanceId*tri_chunk + primitiveIndex.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -21,6 +24,7 @@ layout(std430, binding = 2) writeonly buffer Hits { uint hits[]; }; // 4 words /
 
 layout(push_constant) uniform PC {
     uint ray_count;
+    uint tri_chunk;   // triangles per BLAS chunk; global prim_id = instanceId*tri_chunk + primIndex
 } pc;
 
 const uint NO_HIT = 0xFFFFFFFFu;
@@ -54,7 +58,9 @@ void main() {
         gl_RayQueryCommittedIntersectionTriangleEXT) {
         float t   = rayQueryGetIntersectionTEXT(rq, true);
         vec2  bc  = rayQueryGetIntersectionBarycentricsEXT(rq, true);
-        uint  pid = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        uint  prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        uint  inst = uint(rayQueryGetIntersectionInstanceIdEXT(rq, true));
+        uint  pid = inst * pc.tri_chunk + prim;
         hits[hb + 0u] = floatBitsToUint(t);
         hits[hb + 1u] = floatBitsToUint(bc.x);
         hits[hb + 2u] = floatBitsToUint(bc.y);

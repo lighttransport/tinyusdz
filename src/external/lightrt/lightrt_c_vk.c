@@ -1461,7 +1461,8 @@ typedef struct vk_accel {
  * the build, and resolves the AS device address. */
 static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
                           const VkAccelerationStructureGeometryKHR *geom,
-                          uint32_t prim_count, vk_accel *out) {
+                          uint32_t prim_count, uint32_t prim_offset,
+                          uint32_t first_vertex, vk_accel *out) {
     memset(out, 0, sizeof(*out));
     VkAccelerationStructureBuildGeometryInfoKHR bgi;
     memset(&bgi, 0, sizeof(bgi));
@@ -1514,8 +1515,8 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
     bgi.scratchData.deviceAddress = scratch_addr;
     VkAccelerationStructureBuildRangeInfoKHR range;
     range.primitiveCount = prim_count;
-    range.primitiveOffset = 0;
-    range.firstVertex = 0;
+    range.primitiveOffset = prim_offset;
+    range.firstVertex = first_vertex;
     range.transformOffset = 0;
     const VkAccelerationStructureBuildRangeInfoKHR *pranges = &range;
 
@@ -1560,7 +1561,14 @@ static void vk_accel_destroy(lrt_vk_engine *e, vk_accel *a) {
 
 typedef struct rtx_push {
     uint32_t ray_count;
+    uint32_t tri_chunk; /* prim_id = instanceId*tri_chunk + primitiveIndex */
 } rtx_push;
+
+/* Triangles per BLAS chunk. Kept well below the count at which RADV/gfx1201's
+ * vkGetAccelerationStructureBuildSizesKHR returns a corrupted (under-sized)
+ * scratch size and the build GPU-faults (empirically OK at 16M, broken by 24M).
+ * Must be a power of two? No — the trace shader just multiplies by it. */
+#define LRT_VK_BLAS_CHUNK (8u * 1024u * 1024u)
 
 static vk_pipeline *rtx_get_pipeline(lrt_vk_engine *e) {
     if (e->rtx_pipe.valid) return &e->rtx_pipe;
@@ -1648,7 +1656,14 @@ static int vk_descriptors_bind_rtx(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
  * staging) is allocated lazily and reused/grown across traces. This is what
  * makes lrt_vk_rtx_scene_trace measure traversal, not per-call AS build. */
 struct lrt_vk_rtx_scene {
-    vk_accel blas;
+    /* The geometry is split into chunks of <= LRT_VK_BLAS_CHUNK triangles, one
+     * BLAS per chunk, to work around drivers (e.g. RADV/gfx1201) whose AS
+     * build-size query overflows for very large single-BLAS builds and then
+     * GPU-faults. A single TLAS holds one identity instance per chunk; the trace
+     * shader recovers the global triangle id as instanceId*tri_chunk + primIndex. */
+    vk_accel *blas;      /* nblas chunk BLASes */
+    uint32_t nblas;
+    uint32_t tri_chunk;  /* triangles per chunk (the prim_id stride) */
     vk_accel tlas;
     vk_buffer rays_dev;   /* device-local STORAGE | TRANSFER_DST */
     vk_buffer hits_dev;   /* device-local STORAGE | TRANSFER_SRC */
@@ -1759,23 +1774,56 @@ static lrt_vk_rtx_scene *rtx_scene_build_core(lrt_vk_engine *e,
         } else {
             tgeom.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
         }
-        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                            &tgeom, ntris, &s->blas))
-            break;
+        /* Split into chunk BLASes (one TLAS instance each). The build range's
+         * primitiveOffset is a BYTE offset into the index buffer (indexed) or the
+         * vertex buffer (soup); the shared tgeom keeps the full buffer addresses
+         * and maxVertex. */
+        const uint32_t chunk = LRT_VK_BLAS_CHUNK;
+        const uint32_t nblas = (ntris + chunk - 1u) / chunk;
+        s->blas = (vk_accel *)calloc(nblas, sizeof(vk_accel));
+        if (!s->blas) break;
+        s->nblas = nblas;
+        s->tri_chunk = chunk;
+        int blas_ok = 1;
+        for (uint32_t c = 0; c < nblas; c++) {
+            uint32_t base = c * chunk;
+            uint32_t ct = (ntris - base < chunk) ? (ntris - base) : chunk;
+            uint32_t prim_off =
+                indices ? base * 3u * (uint32_t)sizeof(uint32_t)
+                        : base * 3u * 3u * (uint32_t)sizeof(float);
+            if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                                &tgeom, ct, prim_off, 0u, &s->blas[c])) {
+                blas_ok = 0;
+                break;
+            }
+        }
+        if (!blas_ok) break;
 
-        VkAccelerationStructureInstanceKHR inst;
-        memset(&inst, 0, sizeof(inst));
-        inst.transform.matrix[0][0] = 1.0f;
-        inst.transform.matrix[1][1] = 1.0f;
-        inst.transform.matrix[2][2] = 1.0f;
-        inst.mask = 0xFFu;
-        inst.accelerationStructureReference = s->blas.address;
-        if (!vk_buffer_create_ex(
-                e, sizeof(inst),
+        /* One identity instance per chunk BLAS, in chunk order, so the hit's
+         * instanceId (build order) recovers the global triangle id in the trace
+         * shader as instanceId*tri_chunk + primitiveIndex. */
+        VkAccelerationStructureInstanceKHR *insts =
+            (VkAccelerationStructureInstanceKHR *)calloc(
+                nblas, sizeof(VkAccelerationStructureInstanceKHR));
+        if (!insts) break;
+        for (uint32_t c = 0; c < nblas; c++) {
+            insts[c].transform.matrix[0][0] = 1.0f;
+            insts[c].transform.matrix[1][1] = 1.0f;
+            insts[c].transform.matrix[2][2] = 1.0f;
+            insts[c].mask = 0xFFu;
+            insts[c].instanceCustomIndex = c;
+            insts[c].accelerationStructureReference = s->blas[c].address;
+        }
+        VkDeviceSize inst_bytes =
+            (VkDeviceSize)nblas * sizeof(VkAccelerationStructureInstanceKHR);
+        int ibuilt =
+            vk_buffer_create_ex(
+                e, inst_bytes,
                 VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                1, 1, &instbuf))
-            break;
-        if (!vk_buffer_write(e, &instbuf, &inst, sizeof(inst))) break;
+                1, 1, &instbuf) &&
+            vk_buffer_write(e, &instbuf, insts, (size_t)inst_bytes);
+        free(insts);
+        if (!ibuilt) break;
         uint64_t iaddr = vk_device_address(e, &instbuf);
 
         VkAccelerationStructureGeometryKHR igeom;
@@ -1788,7 +1836,7 @@ static lrt_vk_rtx_scene *rtx_scene_build_core(lrt_vk_engine *e,
         igeom.geometry.instances.arrayOfPointers = VK_FALSE;
         igeom.geometry.instances.data.deviceAddress = iaddr;
         if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, &igeom,
-                            1, &s->tlas))
+                            nblas, 0u, 0u, &s->tlas))
             break;
         ok = 1;
     } while (0);
@@ -1800,7 +1848,10 @@ static lrt_vk_rtx_scene *rtx_scene_build_core(lrt_vk_engine *e,
     vk_buffer_destroy(e, &instbuf);
     if (!ok) {
         vk_accel_destroy(e, &s->tlas);
-        vk_accel_destroy(e, &s->blas);
+        if (s->blas) {
+            for (uint32_t c = 0; c < s->nblas; c++) vk_accel_destroy(e, &s->blas[c]);
+            free(s->blas);
+        }
         free(s);
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return NULL;
@@ -1907,6 +1958,7 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         rtx_push pc;
         pc.ray_count = n;
+        pc.tri_chunk = s->tri_chunk;
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe->pipe);
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe->layout, 0,
                                 1, &set, 0, NULL);
@@ -1948,7 +2000,10 @@ void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s) {
     vk_buffer_destroy(e, &s->rays_stage);
     vk_buffer_destroy(e, &s->hits_stage);
     vk_accel_destroy(e, &s->tlas);
-    vk_accel_destroy(e, &s->blas);
+    if (s->blas) {
+        for (uint32_t c = 0; c < s->nblas; c++) vk_accel_destroy(e, &s->blas[c]);
+        free(s->blas);
+    }
     free(s);
 }
 
