@@ -31,13 +31,19 @@ set(TINYUSDZ_NEXT_SOURCES
     # ASCII parser
     parser/lexer.cc
     parser/value-parser.cc
+    parser/value-parser-types.cc
     parser/ascii-parser.cc
     parser/simd-scan.cc
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
     crate/crate-data-source.cc
+    crate/crate-reader-decode.cc
+    crate/crate-reader-api.cc
     crate/crate-reader.cc
+    crate/crate-reader-sections.cc
+    crate/crate-reader-unpack.cc
+    crate/crate-writer-types.cc
     crate/crate-writer.cc
 
     # High-level readers
@@ -55,6 +61,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Schema convenience APIs
     schema/geom-mesh.cc
+    schema/geom-point-instancer.cc
     schema/geom-xform.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
@@ -119,9 +126,13 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Crate (binary) reader/writer
     crate/crate-format.hh
+    crate/crate-reader-internal.hh
     crate/crate-reader.hh
+    crate/crate-writer-impl.inc
+    crate/crate-writer-types.hh
     crate/crate-writer.hh
     crate/stream-reader.hh
+    crate/stream-writer.hh
 
     # High-level readers
     reader/usda-reader.hh
@@ -136,6 +147,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Schema convenience APIs
     schema/geom-mesh.hh
+    schema/geom-point-instancer.hh
     schema/geom-xform.hh
     schema/usd-lux.hh
     schema/usd-geom-camera.hh
@@ -165,6 +177,7 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/prim-index.hh
     pcp/layer-registry.hh
     pcp/cache.hh
+    pcp/cache-utils.hh
 
     # High-level API
     tinyusdz-next.hh
@@ -386,6 +399,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     target_link_libraries(test_crash_regressions PRIVATE tinyusdz_next)
     target_compile_definitions(test_crash_regressions PRIVATE
         CRASH_REGRESSION_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/crash_regressions")
+
+    add_executable(test_usdc_malformed
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_malformed.cc
+    )
+    target_link_libraries(test_usdc_malformed PRIVATE tinyusdz_next)
 endif()
 
 # ============================================================
@@ -530,10 +548,43 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_malformed COMMAND test_usdc_malformed
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    set(TINYUSDZ_NEXT_SMOKE_TESTS
+        next_test_tinyusdz
+        next_test_layer
+        next_test_stage
+        next_test_pcp
+        next_test_pcp_parallel
+        next_test_writer
+        next_test_usdc_writer
+        next_test_usdc_reader
+        next_test_usdc_roundtrip
+        next_test_complex_usda
+        next_test_roundtrip_fidelity
+        next_test_crate_dict
+        next_test_crate_alloc_guard
+        next_test_lazy_array
+        next_test_schemas
+        next_test_schemas_ext
+        next_test_usdcat_roundtrip
+        next_test_usdz_writer
+        next_test_composition
+        next_test_crash_regressions
+        next_test_usdc_malformed
+        next_test_load_rules
+        next_test_tydra)
+    set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
+        PROPERTIES LABELS "next")
+    set_tests_properties(next_benchmark
+        PROPERTIES LABELS "next;benchmark")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when
@@ -561,6 +612,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     # raising it requires justification.
                     --max-fail 3
         )
+        set_tests_properties(next_corpus_parse
+            PROPERTIES LABELS "next;corpus")
     endif()
 endif()
 

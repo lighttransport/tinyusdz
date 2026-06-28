@@ -66,6 +66,12 @@ int main() {
   for (int i = 0; i < 32 * 4; i++) tangents.push_back(float(i) * 0.25f);
   std::vector<double> extents;      // 48 vec2d
   for (int i = 0; i < 48 * 2; i++) extents.push_back(double(i) * -0.5);
+  std::vector<float> velocities0;   // 16 vec3f time sample
+  std::vector<float> velocities1;   // 16 vec3f time sample
+  for (int i = 0; i < 16 * 3; i++) {
+    velocities0.push_back(float(i) * 0.125f);
+    velocities1.push_back(float(i) * -0.25f + 7.0f);
+  }
 
   StageBuilder sb;
   sb.SetDefaultPrim("Mesh1");
@@ -87,6 +93,10 @@ int main() {
   lb.add_property("extent",
                   Value::MakeDoubleCompArray(std::vector<double>(extents),
                                              TypeId::Double2, 2));
+  lb.add_time_sample("velocities", 0.0,
+                     Value::MakeFloat3Array(std::vector<float>(velocities0)));
+  lb.add_time_sample("velocities", 1.0,
+                     Value::MakeFloat3Array(std::vector<float>(velocities1)));
   lb.end_prim();
   lb.finalize();
   Stage stage = sb.Build();
@@ -110,6 +120,37 @@ int main() {
   assert(mesh.IsValid());
   const PrimSpec* ps = mesh.GetPrimSpec();
   assert(ps);
+
+  // ---- TimeSamples: lazy array values --------------------------------------
+  assert(mesh.HasTimeSamples("velocities"));
+  std::vector<double> velocity_times = mesh.GetTimeSampleTimes("velocities");
+  assert(velocity_times.size() == 2);
+  assert(velocity_times[0] == 0.0);
+  assert(velocity_times[1] == 1.0);
+  const Value* v0 = mesh.GetValueAtTime("velocities", 0.0);
+  const Value* v1 = mesh.GetValueAtTime("velocities", 1.0);
+  assert(v0 && v1);
+  assert(v0->is_array() && v1->is_array());
+  assert(v0->is_lazy() && v1->is_lazy());
+  assert(!v0->is_dirty() && !v1->is_dirty());
+  assert(v0->array_size() == velocities0.size() / 3);
+  assert(v1->array_size() == velocities1.size() / 3);
+  {
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(*v0, &scratch, &view));
+    assert(view.size == velocities0.size());
+    for (size_t i = 0; i < velocities0.size(); i++) {
+      assert(view[i] == velocities0[i]);
+    }
+    assert(v0->is_lazy());
+  }
+  Value v1_copy = v1->materialized_copy();
+  assert(!v1_copy.is_lazy());
+  assert(v1->is_lazy());
+  const std::vector<float>* v1_arr = v1_copy.as_float_array();
+  assert(v1_arr && *v1_arr == velocities1);
+  std::cout << "  time-sampled array values came back lazy" << std::endl;
 
   // ---- points: lazy Vec3f -> Float3 ----------------------------------------
   const Value* pv = ps->property_value("points");
@@ -296,9 +337,9 @@ int main() {
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
     // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
-    // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d)
-    // copied verbatim.
-    assert(wres.arrays_passed_through >= 8);
+    // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d, and
+    // two velocities TimeSamples) copied verbatim.
+    assert(wres.arrays_passed_through >= 10);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -306,6 +347,8 @@ int main() {
     // Re-read the pass-through output and verify contents are bit-identical.
     USDCLoadResult lr4 = LoadUSDCFromMemory(out.data(), out.size());
     assert(lr4.success);
+    UsdPrim mesh4 = lr4.stage.GetPrimAtPath("/Mesh1");
+    assert(mesh4.IsValid());
     const PrimSpec* ps4 = lr4.stage.GetRootLayer()->prim_at_path("/Mesh1");
     assert(ps4);
     const std::vector<float>* pa = ps4->property_value("points")->as_float_array();
@@ -326,6 +369,13 @@ int main() {
     const std::vector<double>* xm =
         ps4->property_value("xforms")->as_double_array();
     assert(xm && *xm == matrices);
+    const Value* rv0 = mesh4.GetValueAtTime("velocities", 0.0);
+    const Value* rv1 = mesh4.GetValueAtTime("velocities", 1.0);
+    assert(rv0 && rv1 && rv0->is_lazy() && rv1->is_lazy());
+    const std::vector<float>* rv0a = rv0->as_float_array();
+    const std::vector<float>* rv1a = rv1->as_float_array();
+    assert(rv0a && *rv0a == velocities0);
+    assert(rv1a && *rv1a == velocities1);
     std::cout << "  pass-through output re-reads identically" << std::endl;
 
     // Dirty flag: a mutable accessor marks the value so pass-through is skipped.
@@ -345,7 +395,7 @@ int main() {
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
     assert(ok);
-    assert(fstats.arrays_passed_through >= 4);
+    assert(fstats.arrays_passed_through >= 10);
     assert(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="
@@ -354,6 +404,8 @@ int main() {
     // Flattened output re-reads with identical array contents.
     USDCLoadResult lr5 = LoadUSDCFromMemory(fout.data(), fout.size());
     assert(lr5.success);
+    UsdPrim mesh5 = lr5.stage.GetPrimAtPath("/Mesh1");
+    assert(mesh5.IsValid());
     const PrimSpec* ps5 = lr5.stage.GetRootLayer()->prim_at_path("/Mesh1");
     assert(ps5);
     const std::vector<float>* fpa = ps5->property_value("points")->as_float_array();
@@ -365,7 +417,57 @@ int main() {
     const std::vector<double>* fma =
         ps5->property_value("xforms")->as_double_array();
     assert(fma && *fma == matrices);
+    const Value* fv0 = mesh5.GetValueAtTime("velocities", 0.0);
+    const Value* fv1 = mesh5.GetValueAtTime("velocities", 1.0);
+    assert(fv0 && fv1);
+    const std::vector<float>* fv0a = fv0->as_float_array();
+    const std::vector<float>* fv1a = fv1->as_float_array();
+    assert(fv0a && *fv0a == velocities0);
+    assert(fv1a && *fv1a == velocities1);
     std::cout << "  facade output re-reads identically" << std::endl;
+
+    // Filesystem facade: USDA root + USDA sublayer must compose and write USDC.
+    {
+      const char* sub_path = "/tmp/tinyusdz_next_flatten_usda_sub.usda";
+      const char* root_path = "/tmp/tinyusdz_next_flatten_usda_root.usda";
+      {
+        std::ofstream sub(sub_path, std::ios::binary);
+        sub << "#usda 1.0\n"
+               "def Xform \"World\"\n"
+               "{\n"
+               "  def Mesh \"FromSub\"\n"
+               "  {\n"
+               "    int[] faceVertexCounts = [3]\n"
+               "    int[] faceVertexIndices = [0, 1, 2]\n"
+               "    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n"
+               "  }\n"
+               "}\n";
+      }
+      {
+        std::ofstream root(root_path, std::ios::binary);
+        root << "#usda 1.0\n"
+                "(\n"
+                "  subLayers = [@./tinyusdz_next_flatten_usda_sub.usda@]\n"
+                ")\n"
+                "def Xform \"World\"\n"
+                "{\n"
+                "  def Xform \"Local\" {}\n"
+                "}\n";
+      }
+      pipeline::FlattenStats file_stats;
+      std::vector<uint8_t> file_out;
+      std::string file_err;
+      assert(pipeline::FlattenUSDFileToUSDC(root_path, file_out, fopts,
+                                            &file_stats, &file_err));
+      assert(!file_out.empty());
+      USDCLoadResult file_lr = LoadUSDCFromMemory(file_out.data(),
+                                                  file_out.size());
+      assert(file_lr.success);
+      assert(file_lr.stage.GetPrimAtPath("/World/FromSub").IsValid());
+      assert(file_lr.stage.GetPrimAtPath("/World/Local").IsValid());
+      assert(file_stats.prim_count >= 3);
+      std::cout << "  FlattenUSDFileToUSDC composes USDA sublayers" << std::endl;
+    }
 
     // Owned (single-copy) facade path produces the same result.
     pipeline::FlattenStats ostats;

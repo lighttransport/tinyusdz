@@ -5,7 +5,10 @@
 
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <cassert>
+#include <cstdio>
+#include <iterator>
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
@@ -324,6 +327,207 @@ void test_roundtrip() {
   std::cout << "  roundtrip test passed!\n\n";
 }
 
+void test_usda_backend_parity() {
+  std::cout << "Testing USDA writer backend parity...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("Root");
+  stage_builder.SetUpAxis("Z");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("xformOp:translate", Value::MakeFloat3(1.25f, 2.5f, 3.75f));
+  layer.add_property("userProperties:note", Value(std::string("stream parity")));
+  layer.end_prim();
+
+  layer.begin_prim("Mesh", "Mesh");
+  layer.add_property("faceVertexCounts", Value::MakeIntArray({3}));
+  layer.add_property("faceVertexIndices", Value::MakeIntArray({0, 1, 2}));
+  layer.add_property("points", Value::MakeFloat3Array({
+      0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f}));
+  layer.end_prim();
+  layer.finalize();
+
+  Stage stage = stage_builder.Build();
+  USDAWriteOptions opts;
+  opts.float_precision = 4;
+  opts.sort_properties = true;
+
+  const std::string expected = WriteUSDAToString(stage, opts);
+  assert(!expected.empty());
+
+  std::string stream_string;
+  {
+    StreamWriter writer(&stream_string);
+    USDAWriteResult result = WriteUSDA(writer, stage, opts);
+    assert(result.success);
+    assert(result.bytes_written == expected.size());
+  }
+  assert(stream_string == expected);
+
+  std::string sink_string;
+  {
+    StreamWriter writer(
+        [&sink_string](const char* data, size_t n) {
+          sink_string.append(data, n);
+          return true;
+        },
+        7);
+    USDAWriteResult result = WriteUSDA(writer, stage, opts);
+    assert(result.success);
+    assert(result.bytes_written == expected.size());
+  }
+  assert(sink_string == expected);
+
+  std::ostringstream oss;
+  USDAWriteResult ostream_result = WriteUSDA(oss, stage, opts);
+  assert(ostream_result.success);
+  assert(ostream_result.bytes_written == expected.size());
+  assert(oss.str() == expected);
+
+  const char* path = "/tmp/tinyusdz_next_writer_backend_parity.usda";
+  USDAWriteResult file_result = WriteUSDAToFile(path, stage, opts);
+  assert(file_result.success);
+  assert(file_result.bytes_written == expected.size());
+  std::ifstream ifs(path, std::ios::binary);
+  std::string file_text((std::istreambuf_iterator<char>(ifs)),
+                        std::istreambuf_iterator<char>());
+  assert(file_text == expected);
+  std::remove(path);
+
+  std::cout << "  USDA writer backend parity test passed!\n\n";
+}
+
+void test_usda_layer_backend_parity() {
+  std::cout << "Testing USDA layer writer backend parity...\n";
+
+  Layer layer;
+  layer.meta().defaultPrim = "LayerRoot";
+  layer.meta().upAxis = "Z";
+  layer.meta().comment = "layer backend parity";
+
+  LayerBuilder builder(layer);
+  builder.begin_prim("LayerRoot", "Xform");
+  builder.add_property("xformOp:translate", Value::MakeFloat3(-1.0f, 2.0f, 4.0f));
+  builder.end_prim();
+
+  builder.begin_prim("Child", "Scope");
+  builder.add_property("purpose", Value::MakeToken("render"));
+  builder.end_prim();
+  builder.finalize();
+
+  USDAWriteOptions opts;
+  opts.float_precision = 4;
+  opts.sort_properties = true;
+
+  const std::string expected = WriteLayerToString(layer, opts);
+  assert(!expected.empty());
+
+  std::string stream_string;
+  {
+    StreamWriter writer(&stream_string);
+    USDAWriteResult result = WriteLayer(writer, layer, opts);
+    assert(result.success);
+    assert(result.bytes_written == expected.size());
+  }
+  assert(stream_string == expected);
+
+  std::string sink_string;
+  {
+    StreamWriter writer(
+        [&sink_string](const char* data, size_t n) {
+          sink_string.append(data, n);
+          return true;
+        },
+        5);
+    USDAWriteResult result = WriteLayer(writer, layer, opts);
+    assert(result.success);
+    assert(result.bytes_written == expected.size());
+  }
+  assert(sink_string == expected);
+
+  std::ostringstream oss;
+  USDAWriteResult ostream_result = WriteLayer(oss, layer, opts);
+  assert(ostream_result.success);
+  assert(ostream_result.bytes_written == expected.size());
+  assert(oss.str() == expected);
+
+  const std::string path = "/tmp/tinyusdz_next_layer_backend_parity.usda";
+  USDAWriteResult file_result = WriteLayerToFile(path, layer, opts);
+  assert(file_result.success);
+  assert(file_result.bytes_written == expected.size());
+  std::ifstream ifs(path, std::ios::binary);
+  std::string file_text((std::istreambuf_iterator<char>(ifs)),
+                        std::istreambuf_iterator<char>());
+  assert(file_text == expected);
+  std::remove(path.c_str());
+
+  std::cout << "  USDA layer writer backend parity test passed!\n\n";
+}
+
+void test_usda_stream_failure() {
+  std::cout << "Testing USDA StreamWriter failure propagation...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("Root");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("visibility", Value::MakeToken("inherited"));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  {
+    StreamWriter writer(
+        [](const char*, size_t) {
+          return false;
+        },
+        8);
+    USDAWriteResult result = WriteUSDA(writer, stage);
+    assert(!result.success);
+    assert(!result.error.empty());
+  }
+
+  Layer raw_layer;
+  LayerBuilder builder(raw_layer);
+  builder.begin_prim("LayerRoot", "Xform");
+  builder.end_prim();
+  builder.finalize();
+
+  {
+    StreamWriter writer(
+        [](const char*, size_t) {
+          return false;
+        },
+        8);
+    USDAWriteResult result = WriteLayer(writer, raw_layer);
+    assert(!result.success);
+    assert(!result.error.empty());
+  }
+
+  std::cout << "  USDA StreamWriter failure propagation test passed!\n\n";
+}
+
+void test_usda_api_error_paths() {
+  std::cout << "Testing USDA writer API error paths...\n";
+
+  Stage empty_stage;
+  std::string out;
+  StreamWriter stream(&out);
+  USDAWriteResult empty_stage_result = WriteUSDA(stream, empty_stage);
+  assert(!empty_stage_result.success);
+  assert(!empty_stage_result.error.empty());
+
+  USDAWriteResult null_file_result =
+      WriteUSDAToFile(static_cast<const char*>(nullptr), empty_stage);
+  assert(!null_file_result.success);
+  assert(!null_file_result.error.empty());
+
+  std::cout << "  USDA writer API error path test passed!\n\n";
+}
+
 // The deprecated `custom` qualifier is OMITTED by default and re-emitted only
 // when USDAWriteOptions::emit_custom is set (e.g. under --openusd-compat).
 void test_custom_qualifier_opt_in() {
@@ -399,6 +603,10 @@ int main() {
     test_stage_writer();
     test_time_samples();
     test_roundtrip();
+    test_usda_backend_parity();
+    test_usda_layer_backend_parity();
+    test_usda_stream_failure();
+    test_usda_api_error_paths();
     test_custom_qualifier_opt_in();
 
     std::cout << "=== All writer tests passed! ===\n";

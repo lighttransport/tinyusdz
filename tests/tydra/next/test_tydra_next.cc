@@ -183,6 +183,13 @@ void TestRenderScene() {
   auto stats = scene.get_stats();
   assert(stats.node_count == 1);
   assert(stats.mesh_count == 1);
+  assert(scene.get_node(0) == &scene.nodes[0]);
+  assert(scene.get_mesh(0) == &scene.meshes[0]);
+  assert(scene.get_node(-1) == nullptr);
+  assert(scene.get_mesh(9) == nullptr);
+  assert(scene.get_material(-1) == nullptr);
+  assert(scene.get_point_instancer(0) == nullptr);
+  assert(scene.get_point_instance_draw(0) == nullptr);
 
   std::cout << "  RenderScene: PASSED\n";
 }
@@ -270,8 +277,14 @@ def Xform "World"
     def PointInstancer "Inst"
     {
         rel prototypes = </World/MeshA>
-        point3f[] positions = [(0, 0, 0)]
-        int[] protoIndices = [0]
+        point3f[] positions = [(0, 0, 0), (3, 0, 0)]
+        int[] protoIndices = [0, 0]
+        quatf[] orientations = [(1, 0, 0, 0), (1, 0, 0, 0)]
+        float3[] scales = [(1, 1, 1), (2, 2, 2)]
+        float3[] velocities = [(0, 0, 1), (0, 0, 2)]
+        float3[] angularVelocities = [(0, 1, 0), (0, 2, 0)]
+        int64[] ids = [10, 11]
+        int64[] invisibleIds = [11]
     }
 
     def Camera "Cam" {}
@@ -303,6 +316,22 @@ def Xform "World"
   assert(er.curves.size() == 1);
   assert(er.meshes[0].purpose == "render");
   assert(er.meshes[0].path == "/World/MeshA");
+  PointInstancerData pid;
+  assert(ReadPointInstancerData(er.point_instancers[0].prim, 0.0, &pid));
+  assert(pid.valid);
+  assert(pid.path == "/World/Inst");
+  assert(pid.prototypes.size() == 1);
+  assert(pid.prototypes[0].str() == "/World/MeshA");
+  assert(pid.proto_indices == std::vector<int32_t>({0, 0}));
+  assert(pid.positions == std::vector<float>({0, 0, 0, 3, 0, 0}));
+  assert(pid.scales == std::vector<float>({1, 1, 1, 2, 2, 2}));
+  assert(pid.velocities == std::vector<float>({0, 0, 1, 0, 0, 2}));
+  assert(pid.angular_velocities == std::vector<float>({0, 1, 0, 0, 2, 0}));
+  assert(pid.ids == std::vector<int64_t>({10, 11}));
+  assert(pid.invisible_ids == std::vector<int64_t>({11}));
+  assert(pid.transforms.size() == 2);
+  assert(pid.transforms[1].matrix[0] == 2.0);
+  assert(pid.transforms[1].matrix[12] == 3.0);
 
   std::unordered_set<std::string> prototypes;
   CollectPrototypePaths(lr.stage, &prototypes);
@@ -359,6 +388,7 @@ def Xform "World"
 
     def Mesh "Plane"
     {
+        rel material:binding = </World/AnimatedMaterial>
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
@@ -366,6 +396,33 @@ def Xform "World"
         texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
             interpolation = "vertex"
         )
+    }
+
+    def Xform "ProtoGroup"
+    {
+        rel material:binding = </World/AnimatedMaterial>
+
+        def Mesh "NestedPlane"
+        {
+            double3 xformOp:translate = (1, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (0, 0, 1), (1, 0, 0)]
+        }
+    }
+
+    def PointInstancer "Inst"
+    {
+        rel prototypes = [</World/Plane>, </World/ProtoGroup>]
+        point3f[] positions = [(0, 0, 0), (4, 0, 0), (8, 0, 0)]
+        int[] protoIndices = [0, 1, 1]
+        quatf[] orientations = [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)]
+        float3[] scales = [(1, 1, 1), (0.5, 0.5, 0.5), (2, 2, 2)]
+        float3[] velocities = [(0, 0, 1), (0, 0, 2), (0, 0, 3)]
+        float3[] angularVelocities = [(0, 1, 0), (0, 2, 0), (0, 3, 0)]
+        int64[] ids = [20, 21, 22]
+        int64[] invisibleIds = [22]
     }
 
     def Skeleton "Rig"
@@ -422,7 +479,13 @@ def Xform "World"
     return;
   }
 
-  assert(result.scene.meshes.size() == 2);
+  assert(result.scene.meshes.size() == 3);
+  assert(result.scene.point_instancers.size() == 1);
+  assert(result.scene.get_stats().point_instancer_count == 1);
+  assert(result.scene.get_stats().point_instance_count == 3);
+  assert(result.scene.get_stats().visible_point_instance_count == 2);
+  assert(result.scene.get_stats().point_instance_draw_count == 2);
+  assert(result.scene.has_valid_point_instance_draw_ranges());
 
   const RenderMesh* mesh = &result.scene.meshes[0];
   if (mesh->name != "Plane") {
@@ -449,6 +512,108 @@ def Xform "World"
          result.scene.meshes.size());
   assert(result.scene.meshes[result.scene.nodes[plane_node_it->second].data_id].name ==
          "Plane");
+  assert(result.scene.meshes[result.scene.nodes[plane_node_it->second].data_id].material_id >=
+         0);
+
+  auto inst_node_it = result.scene.node_by_path.find("/World/Inst");
+  assert(inst_node_it != result.scene.node_by_path.end());
+  const SceneNode& inst_node = result.scene.nodes[inst_node_it->second];
+  assert(inst_node.type == NodeType::PointInstancer);
+  assert(inst_node.data_id == 0);
+  const RenderPointInstancer& instancer = result.scene.point_instancers[0];
+  assert(instancer.name == "Inst");
+  assert(instancer.prim_path == "/World/Inst");
+  assert(instancer.valid);
+  assert(instancer.prototype_paths ==
+         std::vector<std::string>({"/World/Plane", "/World/ProtoGroup"}));
+  assert(instancer.prototype_node_ids.size() == 2);
+  assert(instancer.prototype_node_ids[0] >= 0);
+  assert(instancer.prototype_node_ids[1] >= 0);
+  assert(instancer.prototype_mesh_offsets == std::vector<uint32_t>({0, 1, 2}));
+  assert(instancer.has_valid_prototype_mesh_bindings());
+  assert(instancer.prototype_mesh_ids.size() == 2);
+  assert(instancer.prototype_mesh_transforms.size() == 2);
+  assert(instancer.prototype_mesh_count(0) == 1);
+  assert(instancer.prototype_mesh_count(1) == 1);
+  assert(std::abs(instancer.prototype_mesh_transforms[1].m[12] - 1.0f) < 0.001f);
+  assert(instancer.proto_indices == std::vector<int32_t>({0, 1, 1}));
+  assert(instancer.positions == std::vector<float>({0, 0, 0, 4, 0, 0, 8, 0, 0}));
+  assert(instancer.scales == std::vector<float>({1, 1, 1, 0.5f, 0.5f, 0.5f, 2, 2, 2}));
+  assert(instancer.velocities == std::vector<float>({0, 0, 1, 0, 0, 2, 0, 0, 3}));
+  assert(instancer.angular_velocities == std::vector<float>({0, 1, 0, 0, 2, 0, 0, 3, 0}));
+  assert(instancer.has_velocities());
+  assert(instancer.has_angular_velocities());
+  assert(instancer.ids == std::vector<int64_t>({20, 21, 22}));
+  assert(instancer.invisible_ids == std::vector<int64_t>({22}));
+  assert(instancer.instance_visible == std::vector<uint8_t>({1, 1, 0}));
+  assert(instancer.visible_instance_count() == 2);
+  assert(instancer.transforms.size() == 3);
+  assert(std::abs(instancer.transforms[1].m[0] - 0.5f) < 0.001f);
+  assert(std::abs(instancer.transforms[1].m[12] - 4.0f) < 0.001f);
+  assert(result.scene.point_instance_draws.size() == 2);
+  assert(instancer.draw_start == 0);
+  assert(instancer.draw_count == 2);
+  assert(instancer.has_valid_draw_range(result.scene.point_instance_draws.size()));
+  assert(result.scene.get_point_instancer(0) == &result.scene.point_instancers[0]);
+  assert(result.scene.get_point_instance_draw(0) == &result.scene.point_instance_draws[0]);
+  assert(result.scene.get_point_instance_draw(9) == nullptr);
+  RenderPointInstanceDrawRange draw_range = result.scene.get_point_instancer_draws(0);
+  assert(draw_range.size == 2);
+  assert(!draw_range.empty());
+  assert(draw_range.data == result.scene.point_instance_draws.data());
+  assert(draw_range.begin() == result.scene.point_instance_draws.data());
+  assert(draw_range.end() == result.scene.point_instance_draws.data() + 2);
+  assert(draw_range[1].instance_index == 1);
+  assert(result.scene.get_point_instancer_draws(-1).empty());
+  assert(result.scene.get_point_instancer_draws(9).empty());
+  RenderPointInstanceDrawView draw_view = result.scene.get_point_instance_draw_view(0);
+  assert(draw_view.valid());
+  assert(draw_view.instancer == &instancer);
+  assert(draw_view.mesh == result.scene.get_mesh(result.scene.point_instance_draws[0].mesh_id));
+  assert(draw_view.material ==
+         result.scene.get_material(result.scene.point_instance_draws[0].material_id));
+  assert(!result.scene.get_point_instance_draw_view(9).valid());
+  assert(result.scene.point_instance_draws[0].point_instancer_id == 0);
+  assert(result.scene.point_instance_draws[0].instance_index == 0);
+  assert(result.scene.point_instance_draws[0].prototype_index == 0);
+  assert(result.scene.point_instance_draws[0].mesh_id == instancer.prototype_mesh_ids[0]);
+  assert(result.scene.get_mesh(result.scene.point_instance_draws[0].mesh_id));
+  assert(result.scene.point_instance_draws[0].material_id >= 0);
+  assert(result.scene.get_material(result.scene.point_instance_draws[0].material_id));
+  assert(result.scene.point_instance_draws[0].expanded_mesh_id == -1);
+  assert(result.scene.point_instance_draws[1].point_instancer_id == 0);
+  assert(result.scene.point_instance_draws[1].instance_index == 1);
+  assert(result.scene.point_instance_draws[1].prototype_index == 1);
+  assert(result.scene.point_instance_draws[1].mesh_id == instancer.prototype_mesh_ids[1]);
+  assert(result.scene.point_instance_draws[1].material_id >= 0);
+  assert(result.scene.point_instance_draws[0].material_id ==
+         result.scene.point_instance_draws[1].material_id);
+  assert(std::abs(result.scene.point_instance_draws[1].transform.m[12] - 4.5f) < 0.001f);
+
+  ConverterConfig duplicate_config = config;
+  duplicate_config.point_instancer.duplicate_meshes = true;
+  RenderSceneConverter duplicate_converter(duplicate_config);
+  ConvertResult duplicate_result = duplicate_converter.Convert(load_result.stage);
+  assert(duplicate_result.success);
+  assert(duplicate_result.scene.point_instance_draws.size() == 2);
+  assert(duplicate_result.scene.meshes.size() == 5);
+  assert(duplicate_result.scene.point_instance_draws[0].expanded_mesh_id >= 3);
+  assert(duplicate_result.scene.point_instance_draws[1].expanded_mesh_id >= 3);
+  RenderPointInstanceDrawView duplicate_view =
+      duplicate_result.scene.get_point_instance_draw_view(1);
+  assert(duplicate_view.valid());
+  assert(duplicate_view.expanded_mesh);
+  assert(duplicate_view.expanded_mesh->material_id ==
+         duplicate_view.draw->material_id);
+  assert(duplicate_view.expanded_mesh->point_count() == duplicate_view.mesh->point_count());
+  assert(std::abs(duplicate_view.expanded_mesh->points[0] - 4.5f) < 0.001f);
+  assert(std::abs(duplicate_view.expanded_mesh->points[1]) < 0.001f);
+  assert(std::abs(duplicate_view.expanded_mesh->points[2]) < 0.001f);
+  assert(duplicate_result.scene.has_valid_point_instance_draw_ranges());
+
+  auto inst_lookup_it = result.scene.point_instancer_by_path.find("/World/Inst");
+  assert(inst_lookup_it != result.scene.point_instancer_by_path.end());
+  assert(inst_lookup_it->second == 0);
 
   auto hidden_it = result.scene.node_by_path.find("/World/Hidden/HiddenPlane");
   assert(hidden_it != result.scene.node_by_path.end());
@@ -633,6 +798,119 @@ def Xform "World"
   std::cout << "  RenderConverter materials: PASSED\n";
 }
 
+void TestRenderConverterPointInstancerWarnings() {
+  std::cout << "Testing RenderConverter PointInstancer diagnostics...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def PointInstancer "Inst"
+    {
+        rel prototypes = </World/Missing>
+        point3f[] positions = [(0, 0, 0)]
+        int[] protoIndices = [0]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse diagnostic USDA)\n";
+    return;
+  }
+
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  assert(result.scene.point_instancers.size() == 1);
+  assert(result.scene.point_instancers[0].valid);
+  assert(result.scene.point_instancers[0].prototype_node_ids.size() == 1);
+  assert(result.scene.point_instancers[0].prototype_node_ids[0] == -1);
+  assert(result.scene.point_instancers[0].draw_count == 0);
+  assert(result.scene.point_instance_draws.empty());
+  assert(result.scene.get_point_instancer_draws(0).empty());
+  assert(result.scene.has_valid_point_instance_draw_ranges());
+
+  bool found_warning = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("Unresolved PointInstancer prototype") != std::string::npos &&
+        warning.find("/World/Missing") != std::string::npos) {
+      found_warning = true;
+    }
+  }
+  assert(found_warning);
+
+  std::cout << "  RenderConverter PointInstancer diagnostics: PASSED\n";
+}
+
+void TestRenderConverterPointInstancerIndexVisibility() {
+  std::cout << "Testing RenderConverter PointInstancer index visibility...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Proto"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def PointInstancer "Inst"
+    {
+        rel prototypes = </World/Proto>
+        point3f[] positions = [(0, 0, 0), (2, 0, 0), (4, 0, 0)]
+        int[] protoIndices = [0, 0, 0]
+        int64[] invisibleIds = [2]
+        int64[] inactiveIds = [0]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse index-visibility USDA)\n";
+    return;
+  }
+
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  assert(result.scene.point_instancers.size() == 1);
+  assert(result.scene.point_instance_draws.size() == 1);
+  assert(result.scene.get_stats().point_instance_count == 3);
+  assert(result.scene.get_stats().visible_point_instance_count == 1);
+  assert(result.scene.get_stats().point_instance_draw_count == 1);
+  assert(result.scene.has_valid_point_instance_draw_ranges());
+
+  const RenderPointInstancer& instancer = result.scene.point_instancers[0];
+  assert(instancer.ids.empty());
+  assert(instancer.invisible_ids == std::vector<int64_t>({2}));
+  assert(instancer.inactive_ids == std::vector<int64_t>({0}));
+  assert(instancer.instance_visible == std::vector<uint8_t>({0, 1, 0}));
+  assert(instancer.draw_start == 0);
+  assert(instancer.draw_count == 1);
+
+  const RenderPointInstanceDraw& draw = result.scene.point_instance_draws[0];
+  assert(draw.point_instancer_id == 0);
+  assert(draw.instance_index == 1);
+  assert(draw.prototype_index == 0);
+  assert(std::abs(draw.transform.m[12] - 2.0f) < 0.001f);
+  RenderPointInstanceDrawRange range = result.scene.get_point_instancer_draws(0);
+  assert(range.size == 1);
+  assert(range[0].instance_index == 1);
+
+  std::cout << "  RenderConverter PointInstancer index visibility: PASSED\n";
+}
+
 void TestMaterialXUtilities() {
   std::cout << "Testing MaterialX utilities...\n";
 
@@ -763,6 +1041,8 @@ int main() {
   // Converter tests
   TestRenderConverter();
   TestRenderConverterMaterials();
+  TestRenderConverterPointInstancerWarnings();
+  TestRenderConverterPointInstancerIndexVisibility();
   TestMaterialXUtilities();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

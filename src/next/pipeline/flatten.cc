@@ -12,6 +12,8 @@
 #include <set>
 
 #include "../layer/layer.hh"
+#include "../pcp/layer-registry.hh"
+#include "../reader/usdc-reader.hh"
 #include "../stage/stage.hh"
 
 #include <memory>
@@ -84,16 +86,13 @@ void CollectReferencedAssets(const Layer& layer, std::vector<std::string>* out) 
 // or `sink` (streaming) — exactly one is non-null. `rr.stage`'s lazy Values hold
 // their own shared_ptr to the retained source buffer, so it stays alive through
 // the write regardless of the reader's lifetime.
-bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t>* out,
-                   const CrateWriteSink* sink, const FlattenOptions& opts,
-                   FlattenStats* stats, std::string* err) {
-  if (!rr.success) {
-    if (err) *err = rr.errors.empty() ? "crate read failed" : rr.errors[0].message;
-    return false;
-  }
+bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
+                  std::vector<uint8_t>* out, const CrateWriteSink* sink,
+                  const FlattenOptions& opts, FlattenStats* stats,
+                  std::string* err) {
   FlattenMemLog("after-read");
 
-  const Layer* root = rr.stage.GetRootLayer();
+  const Layer* root = root_owner.get();
   if (!root) {
     if (err) *err = "no root layer";
     return false;
@@ -152,6 +151,25 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes, std::vector<uint8_t
     CollectReferencedAssets(*layer, &stats->referenced_assets);
   }
   return true;
+}
+
+bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
+                   std::vector<uint8_t>* out, const CrateWriteSink* sink,
+                   const FlattenOptions& opts, FlattenStats* stats,
+                   std::string* err) {
+  if (!rr.success) {
+    if (err) *err = rr.errors.empty() ? "crate read failed" : rr.errors[0].message;
+    return false;
+  }
+  return FlattenLayer(rr.stage.ReleaseRootLayer(), input_bytes, out, sink, opts,
+                      stats, err);
+}
+
+uint64_t FileSizeBytes(const std::string& filename) {
+  std::ifstream f(filename, std::ios::binary | std::ios::ate);
+  if (!f) return 0;
+  std::streamoff end = f.tellg();
+  return end > 0 ? static_cast<uint64_t>(end) : 0;
 }
 
 }  // namespace
@@ -232,32 +250,85 @@ bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts) {
   return [read_opts](const std::string& resolved_path,
                      std::string* error) -> std::unique_ptr<Layer> {
-    std::ifstream ifs(resolved_path, std::ios::binary);
-    if (!ifs) {
-      if (error) *error = "cannot open: " + resolved_path;
-      return nullptr;
-    }
-    std::string bytes((std::istreambuf_iterator<char>(ifs)),
-                      std::istreambuf_iterator<char>());
-    if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
-      if (error) *error = "not a USDC crate (USDA dependencies are not supported by the next loader yet): " + resolved_path;
-      return nullptr;
-    }
-    CrateReader reader(read_opts);
-    CrateReadResult rr = reader.ReadOwned(std::move(bytes));
-    if (!rr.success) {
-      if (error) {
-        *error = rr.errors.empty() ? ("crate read failed: " + resolved_path)
-                                   : rr.errors[0].message;
-      }
-      return nullptr;
-    }
-    std::unique_ptr<Layer> layer = rr.stage.ReleaseRootLayer();
-    if (layer) {
-      layer->build_path_index();  // compositor looks prims up by path
-    }
+    pcp::LayerLoadOptions lopts;
+    lopts.max_memory = read_opts.max_memory;
+    std::string warn;
+    std::shared_ptr<Layer> loaded =
+        pcp::LoadLayerFromFile(resolved_path, &warn, error, lopts);
+    if (!loaded) return nullptr;
+    std::unique_ptr<Layer> layer(new Layer(loaded->Clone()));
+    layer->build_path_index();  // compositor looks prims up by path
     return layer;
   };
+}
+
+bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out,
+                          const FlattenOptions& opts, FlattenStats* stats,
+                          std::string* err) {
+  if (stats) *stats = FlattenStats{};
+  const auto read_begin = Clock::now();
+
+  pcp::LayerLoadOptions lopts;
+  lopts.max_memory = opts.read.max_memory;
+  std::string warn;
+  std::shared_ptr<Layer> loaded =
+      pcp::LoadLayerFromFile(filename, &warn, err, lopts);
+  const auto read_end = Clock::now();
+  if (!loaded) {
+    if (err && err->empty()) *err = "failed to load root layer: " + filename;
+    return false;
+  }
+
+  FlattenOptions effective = opts;
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
+  if (!effective.resolver) effective.resolver = &resolver;
+  if (!effective.layer_loader) {
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+  }
+  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
+
+  std::unique_ptr<Layer> root(new Layer(loaded->Clone()));
+  const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));
+  bool ok = FlattenLayer(std::move(root), input_bytes, &out, nullptr, effective,
+                         stats, err);
+  if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+  return ok;
+}
+
+bool FlattenUSDFileToUSDCToSink(const std::string& filename,
+                                const CrateWriteSink& sink,
+                                const FlattenOptions& opts,
+                                FlattenStats* stats, std::string* err) {
+  if (stats) *stats = FlattenStats{};
+  const auto read_begin = Clock::now();
+
+  pcp::LayerLoadOptions lopts;
+  lopts.max_memory = opts.read.max_memory;
+  std::string warn;
+  std::shared_ptr<Layer> loaded =
+      pcp::LoadLayerFromFile(filename, &warn, err, lopts);
+  const auto read_end = Clock::now();
+  if (!loaded) {
+    if (err && err->empty()) *err = "failed to load root layer: " + filename;
+    return false;
+  }
+
+  FlattenOptions effective = opts;
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
+  if (!effective.resolver) effective.resolver = &resolver;
+  if (!effective.layer_loader) {
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+  }
+  if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
+
+  std::unique_ptr<Layer> root(new Layer(loaded->Clone()));
+  const size_t input_bytes = static_cast<size_t>(FileSizeBytes(filename));
+  bool ok = FlattenLayer(std::move(root), input_bytes, nullptr, &sink, effective,
+                         stats, err);
+  if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+  return ok;
 }
 
 }  // namespace pipeline

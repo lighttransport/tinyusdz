@@ -1125,8 +1125,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
-
       // AssetPath is encoded as StringIndex for uninlined and array value
       // NOTE: inlined value uses TokenIndex.
 
@@ -1167,11 +1165,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read StringIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed StringIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read StringIndex array.");
+            return false;
+          }
         }
 
         size_t apaths_bytes;
@@ -1283,8 +1289,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
-
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
@@ -1303,11 +1307,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read TokenIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed StringIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read TokenIndex array.");
+            return false;
+          }
         }
 
         size_t strs_bytes;
@@ -3064,7 +3076,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
       // std::vector<Index>
       uint64_t n{0};
       if (!_sr->read8(&n)) {
@@ -3086,11 +3097,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (n > 0) {
-        if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
-                       static_cast<size_t>(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(indices.data()))) {
-          PUSH_ERROR("Failed to read TokenVector value.");
-          return false;
+        if (rep.IsCompressed()) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(indices.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed TokenVector value.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+                         static_cast<size_t>(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(indices.data()))) {
+            PUSH_ERROR("Failed to read TokenVector value.");
+            return false;
+          }
         }
       }
 

@@ -6,12 +6,24 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 #include "next/tinyusdz-next.hh"
 #include "next/layer/layer.hh"
+#include "next/pcp/prim-index.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/pipeline/flatten.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/reader/usdc-reader.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -428,10 +440,192 @@ void benchmark_usdc_reading() {
 }
 
 // ============================================================
+// Memory observability: stable struct/layer stats
+// ============================================================
+
+int print_memstats(int num_prims) {
+  if (num_prims < 1) num_prims = 1;
+  printf("TinyUSDZ Next - Memory Stats\n");
+  printf("sizeof(Value)=%zu\n", sizeof(Value));
+  printf("sizeof(PrimSpec)=%zu\n", sizeof(PrimSpec));
+  printf("sizeof(PrimSpecMeta)=%zu\n", sizeof(PrimSpecMeta));
+  printf("sizeof(PrimSpecMetaExt)=%zu\n", sizeof(PrimSpecMetaExt));
+  printf("sizeof(pcp::CompNode)=%zu\n", sizeof(pcp::CompNode));
+
+  Layer layer;
+  LayerBuilder builder(layer);
+  for (int i = 0; i < num_prims; ++i) {
+    builder.begin_prim("Prim_" + std::to_string(i), "Xform");
+    if ((i % 16) == 0) {
+      builder.add_property("visibility", Value::MakeToken("inherited"));
+    }
+    builder.end_prim();
+  }
+  builder.finalize();
+
+  const Layer::Stats stats = layer.stats();
+  printf("synthetic_prims=%zu\n", stats.prim_count);
+  printf("synthetic_roots=%zu\n", stats.root_count);
+  printf("synthetic_properties=%zu\n", stats.total_properties);
+  printf("synthetic_time_samples=%zu\n", stats.total_time_samples);
+  printf("synthetic_memory_bytes=%zu\n", stats.memory_bytes);
+  printf("synthetic_bytes_per_prim=%.2f\n",
+         stats.prim_count ? double(stats.memory_bytes) / stats.prim_count : 0.0);
+  return 0;
+}
+
+uint64_t file_size_bytes(const std::string& filename) {
+  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
+  if (!ifs) return 0;
+  std::streamoff end = ifs.tellg();
+  return end > 0 ? static_cast<uint64_t>(end) : 0;
+}
+
+std::string lower_ext(const std::string& filename) {
+  size_t dot = filename.find_last_of('.');
+  if (dot == std::string::npos) return std::string();
+  std::string ext = filename.substr(dot);
+  for (char& c : ext) {
+    if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+  }
+  return ext;
+}
+
+uint64_t current_rss_bytes() {
+#if defined(__linux__)
+  std::ifstream statm("/proc/self/statm");
+  uint64_t size_pages = 0;
+  uint64_t resident_pages = 0;
+  statm >> size_pages >> resident_pages;
+  const long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) return 0;
+  return resident_pages * static_cast<uint64_t>(page_size);
+#else
+  return 0;
+#endif
+}
+
+uint64_t peak_rss_bytes() {
+#if defined(__linux__) || defined(__APPLE__)
+  struct rusage ru;
+  std::memset(&ru, 0, sizeof(ru));
+  if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+#if defined(__APPLE__)
+  return static_cast<uint64_t>(ru.ru_maxrss);
+#else
+  return static_cast<uint64_t>(ru.ru_maxrss) * 1024ull;
+#endif
+#else
+  return 0;
+#endif
+}
+
+void print_bytes_metric(const char* name, uint64_t bytes) {
+  if (bytes == 0) {
+    printf("%s=unavailable\n", name);
+  } else {
+    printf("%s=%llu\n", name, static_cast<unsigned long long>(bytes));
+  }
+}
+
+int print_memstats_file(const std::string& filename) {
+  printf("TinyUSDZ Next - Real File Memory Stats\n");
+  printf("file=%s\n", filename.c_str());
+  printf("file_size_bytes=%llu\n",
+         static_cast<unsigned long long>(file_size_bytes(filename)));
+  print_bytes_metric("rss_start_bytes", current_rss_bytes());
+  print_bytes_metric("peak_rss_start_bytes", peak_rss_bytes());
+
+  const std::string ext = lower_ext(filename);
+  Stage stage;
+  bool loaded = false;
+  Timer timer;
+  timer.start();
+  if (ext == ".usda" || ext == ".usd") {
+    LoadResult lr = LoadUSDAFromFile(filename);
+    loaded = lr.success;
+    if (loaded) {
+      stage = std::move(lr.stage);
+    } else {
+      printf("load_error=%s\n", lr.error_summary.c_str());
+    }
+  } else if (ext == ".usdc") {
+    USDCLoadOptions opts;
+    opts.crate_options.lazy_arrays = true;
+    USDCLoadResult lr = LoadUSDCFromFile(filename, opts);
+    loaded = lr.success;
+    if (loaded) {
+      stage = std::move(lr.stage);
+    } else {
+      printf("load_error=%s\n", lr.error_summary.c_str());
+    }
+  } else {
+    printf("load_error=unsupported extension for memstats-file\n");
+    return 1;
+  }
+  printf("load_success=%d\n", loaded ? 1 : 0);
+  printf("load_ms=%.3f\n", timer.elapsed_ms());
+  print_bytes_metric("rss_after_load_bytes", current_rss_bytes());
+  print_bytes_metric("peak_rss_after_load_bytes", peak_rss_bytes());
+  if (!loaded) return 1;
+
+  const Layer* root = stage.GetRootLayer();
+  if (root) {
+    const Layer::Stats stats = root->stats();
+    printf("stage_prims=%zu\n", stats.prim_count);
+    printf("stage_roots=%zu\n", stats.root_count);
+    printf("stage_properties=%zu\n", stats.total_properties);
+    printf("stage_time_samples=%zu\n", stats.total_time_samples);
+    printf("stage_memory_bytes=%zu\n", stats.memory_bytes);
+  }
+
+  std::vector<uint8_t> written;
+  timer.start();
+  USDCWriteResult wr = WriteUSDCToMemory(written, stage);
+  printf("write_success=%d\n", wr.success ? 1 : 0);
+  printf("write_ms=%.3f\n", timer.elapsed_ms());
+  printf("write_output_bytes=%zu\n", written.size());
+  if (!wr.success) printf("write_error=%s\n", wr.error.c_str());
+  print_bytes_metric("rss_after_write_bytes", current_rss_bytes());
+  print_bytes_metric("peak_rss_after_write_bytes", peak_rss_bytes());
+
+  std::vector<uint8_t> flattened;
+  pipeline::FlattenStats fstats;
+  std::string ferr;
+  pipeline::FlattenOptions fopts;
+  fopts.read.lazy_arrays = true;
+  timer.start();
+  bool fok = pipeline::FlattenUSDFileToUSDC(filename, flattened, fopts, &fstats, &ferr);
+  printf("flatten_success=%d\n", fok ? 1 : 0);
+  printf("flatten_wall_ms=%.3f\n", timer.elapsed_ms());
+  printf("flatten_read_ms=%.3f\n", fstats.read_ms);
+  printf("flatten_compose_ms=%.3f\n", fstats.compose_ms);
+  printf("flatten_write_ms=%.3f\n", fstats.write_ms);
+  printf("flatten_input_bytes=%zu\n", fstats.input_bytes);
+  printf("flatten_output_bytes=%zu\n", fstats.output_bytes);
+  printf("flatten_prims=%zu\n", fstats.prim_count);
+  printf("flatten_arrays_passed_through=%zu\n", fstats.arrays_passed_through);
+  printf("flatten_arrays_reencoded=%zu\n", fstats.arrays_reencoded);
+  printf("flatten_composition_errors=%zu\n", fstats.composition_errors.size());
+  if (!fok) printf("flatten_error=%s\n", ferr.c_str());
+  print_bytes_metric("rss_after_flatten_bytes", current_rss_bytes());
+  print_bytes_metric("peak_rss_after_flatten_bytes", peak_rss_bytes());
+  return fok ? 0 : 1;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
 int main(int argc, char** argv) {
+  if (argc > 2 && std::string(argv[1]) == "memstats-file") {
+    return print_memstats_file(argv[2]);
+  }
+  if (argc > 1 && std::string(argv[1]) == "memstats") {
+    int n = argc > 2 ? std::atoi(argv[2]) : 100000;
+    return print_memstats(n);
+  }
+
   int scale = 1;
   if (argc > 1) {
     scale = std::atoi(argv[1]);

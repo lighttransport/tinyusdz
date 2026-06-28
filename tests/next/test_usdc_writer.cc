@@ -6,7 +6,11 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
+#include <iterator>
+#include <string>
+#include <vector>
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
@@ -14,9 +18,34 @@
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/usda-writer.hh"
 #include "next/reader/usdc-reader.hh"
 
 using namespace tinyusdz::next;
+
+bool contains(const std::string& str, const std::string& substr) {
+  return str.find(substr) != std::string::npos;
+}
+
+std::vector<uint8_t> read_file_bytes(const std::string& path) {
+  std::ifstream ifs(path, std::ios::binary | std::ios::ate);
+  assert(ifs.is_open());
+  std::vector<uint8_t> bytes(static_cast<size_t>(ifs.tellg()));
+  ifs.seekg(0);
+  if (!bytes.empty()) {
+    ifs.read(reinterpret_cast<char*>(bytes.data()),
+             static_cast<std::streamsize>(bytes.size()));
+    assert(static_cast<size_t>(ifs.gcount()) == bytes.size());
+  }
+  return bytes;
+}
+
+std::string read_file_text(const std::string& path) {
+  std::ifstream ifs(path, std::ios::binary);
+  assert(ifs.is_open());
+  return std::string((std::istreambuf_iterator<char>(ifs)),
+                     std::istreambuf_iterator<char>());
+}
 
 void test_crate_writer_basic() {
   std::cout << "Testing crate-writer basic...\n";
@@ -145,12 +174,17 @@ void test_usdc_writer_file() {
   size_t file_size = check.tellg();
   assert(file_size == result.bytes_written);
   std::cout << "  File size verified: " << file_size << " bytes\n";
+  check.close();
+  std::string debug_usda = read_file_text("/tmp/test_output.usda");
+  assert(debug_usda == WriteUSDAToString(stage));
+  std::remove(test_file);
+  std::remove("/tmp/test_output.usda");
 
   std::cout << "  usdc-writer file test passed!\n\n";
 }
 
 void test_usdc_roundtrip() {
-  std::cout << "Testing USDC roundtrip (write -> read)...\n";
+  std::cout << "Testing USDC roundtrip (write -> read -> USDA text)...\n";
 
   // Create a stage
   StageBuilder stage_builder;
@@ -170,27 +204,77 @@ void test_usdc_roundtrip() {
 
   Stage stage = stage_builder.Build();
 
-  // Write to file
-  const char* test_file = "/tmp/test_roundtrip.usdc";
-  USDCWriteResult write_result = WriteUSDCToFile(test_file, stage);
+  // Write to memory and read back through the high-level USDC reader.
+  std::vector<uint8_t> buffer;
+  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
   assert(write_result.success);
   std::cout << "  Written " << write_result.bytes_written << " bytes\n";
 
-  // Note: The reader may not be fully compatible with our simplified writer format yet.
-  // Just verify the binary output has a valid magic number.
-  std::ifstream ifs(test_file, std::ios::binary);
-  char magic[8];
-  ifs.read(magic, 8);
-  assert(std::memcmp(magic, kCrateMagic, 8) == 0);
-  std::cout << "  Read verified magic number\n";
+  assert(buffer.size() == write_result.bytes_written);
+  assert(buffer.size() >= 64);
+  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
-  // Check that the file is large enough to contain sections
-  ifs.seekg(0, std::ios::end);
-  size_t file_size = static_cast<size_t>(ifs.tellg());
-  assert(file_size >= 64);
-  std::cout << "  File size verified: " << file_size << " bytes\n";
+  USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
+  assert(read_result.success);
+  std::string actual_usda = WriteUSDAToString(read_result.stage);
+  assert(read_result.stage.GetPrimCount() == stage.GetPrimCount());
+  assert(read_result.stage.GetMeta().defaultPrim == "TestPrim");
+  UsdPrim root = read_result.stage.GetPrimAtPath("/TestPrim");
+  assert(root.IsValid());
+  assert(root.GetTypeName() == "Xform");
+  UsdPrim cube = read_result.stage.GetPrimAtPath("/Cube");
+  assert(cube.IsValid());
+  assert(cube.GetTypeName() == "Mesh");
+  const Value* read_points = cube.GetPropertyValue("points");
+  assert(read_points != nullptr);
+  assert(read_points->array_size() == 3);
+  const std::vector<float>* read_points_array = read_points->as_float_array();
+  assert(read_points_array != nullptr);
+  assert(*read_points_array == points);
+  assert(contains(actual_usda, "def Xform \"TestPrim\""));
+  assert(contains(actual_usda, "def Mesh \"Cube\""));
+  assert(contains(actual_usda, "float3[] points"));
 
   std::cout << "  USDC roundtrip test passed!\n\n";
+}
+
+void test_usdc_stage_backend_parity() {
+  std::cout << "Testing USDC Stage memory/file backend parity...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("Root");
+  stage_builder.SetUpAxis("Z");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("visibility", Value::MakeToken("inherited"));
+  layer.end_prim();
+
+  layer.begin_prim("Mesh", "Mesh");
+  layer.add_property("faceVertexCounts", Value::MakeIntArray({3}));
+  layer.add_property("faceVertexIndices", Value::MakeIntArray({0, 1, 2}));
+  layer.add_property("points", Value::MakeFloat3Array({
+      0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f}));
+  layer.end_prim();
+  layer.finalize();
+
+  Stage stage = stage_builder.Build();
+  std::vector<uint8_t> memory;
+  USDCWriteResult memory_result = WriteUSDCToMemory(memory, stage);
+  assert(memory_result.success);
+  assert(memory_result.bytes_written == memory.size());
+
+  const std::string path = "/tmp/tinyusdz_next_usdc_stage_backend_parity.usdc";
+  USDCWriteResult file_result = WriteUSDCToFile(path, stage);
+  assert(file_result.success);
+  assert(file_result.bytes_written == memory_result.bytes_written);
+  std::vector<uint8_t> file_bytes = read_file_bytes(path);
+  assert(file_bytes == memory);
+  std::remove(path.c_str());
+
+  std::cout << "  USDC Stage backend parity test passed!\n\n";
 }
 
 void test_layer_to_usdc() {
@@ -227,6 +311,40 @@ void test_layer_to_usdc() {
   std::cout << "  Layer to USDC test passed!\n\n";
 }
 
+void test_usdc_layer_backend_parity() {
+  std::cout << "Testing USDC Layer memory/file backend parity...\n";
+
+  Layer layer;
+  layer.meta().defaultPrim = "Asset";
+  layer.meta().upAxis = "Y";
+  LayerBuilder builder(layer);
+  builder.begin_prim("Asset", "Xform");
+  builder.add_property("purpose", Value::MakeToken("render"));
+  builder.end_prim();
+  builder.begin_prim("Geom", "Mesh");
+  builder.add_property("points", Value::MakeFloat3Array({
+      -1.0f, 0.0f, 0.0f,
+       1.0f, 0.0f, 0.0f,
+       0.0f, 1.0f, 0.0f}));
+  builder.end_prim();
+  builder.finalize();
+
+  std::vector<uint8_t> memory;
+  USDCWriteResult memory_result = WriteLayerToUSDCMemory(memory, layer);
+  assert(memory_result.success);
+  assert(memory_result.bytes_written == memory.size());
+
+  const std::string path = "/tmp/tinyusdz_next_usdc_layer_backend_parity.usdc";
+  USDCWriteResult file_result = WriteLayerToUSDCFile(path, layer);
+  assert(file_result.success);
+  assert(file_result.bytes_written == memory_result.bytes_written);
+  std::vector<uint8_t> file_bytes = read_file_bytes(path);
+  assert(file_bytes == memory);
+  std::remove(path.c_str());
+
+  std::cout << "  USDC Layer backend parity test passed!\n\n";
+}
+
 void test_usdc_path_check() {
   std::cout << "Testing IsUSDCPath...\n";
 
@@ -240,6 +358,174 @@ void test_usdc_path_check() {
   std::cout << "  IsUSDCPath test passed!\n\n";
 }
 
+void test_usdc_api_error_paths() {
+  std::cout << "Testing USDC API error paths...\n";
+
+  StageBuilder stage_builder;
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  USDCWriteResult null_write = WriteUSDCToFile(static_cast<const char*>(nullptr), stage);
+  assert(!null_write.success);
+  assert(!null_write.error.empty());
+
+  USDCLoadResult null_read = LoadUSDCFromFile(static_cast<const char*>(nullptr));
+  assert(!null_read.success);
+  assert(!null_read.error_summary.empty());
+
+  const uint8_t not_usdc[] = {'n', 'o', 't', 'u', 's', 'd', 'c'};
+  assert(!IsUSDCData(not_usdc, sizeof(not_usdc)));
+  USDCLoadResult load_result = LoadUSDCFromMemory(not_usdc, sizeof(not_usdc));
+  assert(!load_result.success);
+  assert(!load_result.error_summary.empty() || !load_result.errors.empty());
+
+  const std::string bad_path = "/tmp/tinyusdz_next_not_usdc.txt";
+  std::remove(bad_path.c_str());
+  {
+    std::ofstream ofs(bad_path, std::ios::binary);
+    ofs.write(reinterpret_cast<const char*>(not_usdc),
+              static_cast<std::streamsize>(sizeof(not_usdc)));
+    assert(ofs.good());
+  }
+  assert(!IsUSDCFile(bad_path.c_str()));
+  USDCLoadResult bad_file_result = LoadUSDCFromFile(bad_path);
+  assert(!bad_file_result.success);
+  assert(!bad_file_result.error_summary.empty() ||
+         !bad_file_result.errors.empty());
+  std::remove(bad_path.c_str());
+
+  std::vector<uint8_t> buffer;
+  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
+  assert(write_result.success);
+  const std::string good_path = "/tmp/tinyusdz_next_is_usdc_file.usdc";
+  std::remove(good_path.c_str());
+  {
+    std::ofstream ofs(good_path, std::ios::binary);
+    ofs.write(reinterpret_cast<const char*>(buffer.data()),
+              static_cast<std::streamsize>(buffer.size()));
+    assert(ofs.good());
+  }
+  assert(IsUSDCFile(good_path.c_str()));
+  USDCLoadResult good_file_result = LoadUSDCFromFile(good_path);
+  assert(good_file_result.success);
+  std::remove(good_path.c_str());
+
+  std::cout << "  USDC API error path test passed!\n\n";
+}
+
+void test_usdc_bool_array_roundtrip() {
+  std::cout << "Testing USDC bool array roundtrip...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("Root");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("boolArray", Value::MakeBoolArray({
+      true, false, true, true, false, false, true, false, true}));
+  layer.add_property("singleBool", Value(true));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  std::vector<uint8_t> buffer;
+  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
+  assert(write_result.success);
+  assert(!buffer.empty());
+
+  USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
+  if (!read_result.success) {
+    std::cout << "  Error: " << read_result.error_summary << "\n";
+  }
+  assert(read_result.success);
+  UsdPrim root = read_result.stage.GetPrimAtPath("/Root");
+  assert(root.IsValid());
+
+  const Value* bool_array_value = root.GetPropertyValue("boolArray");
+  assert(bool_array_value);
+  const std::vector<uint8_t>* bool_array = bool_array_value->as_bool_array();
+  assert(bool_array);
+  assert((*bool_array) == std::vector<uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}));
+
+  const Value* single_bool_value = root.GetPropertyValue("singleBool");
+  assert(single_bool_value);
+  const bool* single_bool = single_bool_value->as_bool();
+  assert(single_bool && *single_bool);
+
+  const std::string usda = WriteUSDAToString(read_result.stage);
+  assert(contains(usda, "bool[] boolArray"));
+  assert(contains(usda, "bool singleBool = true"));
+
+  std::cout << "  USDC bool array roundtrip test passed!\n\n";
+}
+
+void test_usdc_relationship_connection_roundtrip() {
+  std::cout << "Testing USDC relationship/connection roundtrip...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("World");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+
+  layer.begin_prim("World", "Xform");
+  layer.end_prim();
+
+  layer.begin_prim("Mat", "Material");
+  layer.add_property("outputs:surface", Value::MakeToken("surface"));
+  layer.end_prim();
+
+  layer.begin_prim("Shader", "Shader");
+  layer.add_property("outputs:surface", Value::MakeToken("UsdPreviewSurface"));
+  layer.end_prim();
+
+  layer.begin_prim("Mesh", "Mesh");
+  layer.add_relationship("material:binding", Path("/Mat"));
+  PropNameId color_id = GetPropNameTable().intern("inputs:diffuseColor");
+  layer.current()->add_property_slot(
+      color_id, TypeId::Float3, PropSlot::kFlagConnection);
+  layer.current()->set_property_type_name("inputs:diffuseColor", "color3f");
+  layer.current()->add_connection("inputs:diffuseColor",
+                                  Path("/Shader.outputs:surface"));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  std::vector<uint8_t> buffer;
+  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
+  assert(write_result.success);
+  assert(!buffer.empty());
+
+  USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
+  if (!read_result.success) {
+    std::cout << "  Error: " << read_result.error_summary << "\n";
+  }
+  assert(read_result.success);
+
+  UsdPrim mesh = read_result.stage.GetPrimAtPath("/Mesh");
+  assert(mesh.IsValid());
+  const std::vector<Path>* binding = mesh.GetRelationship("material:binding");
+  assert(binding && binding->size() == 1);
+  assert((*binding)[0].str() == "/Mat");
+
+  const PrimSpec* spec = mesh.GetPrimSpec();
+  assert(spec);
+  const std::vector<Path>* conns = spec->connection("inputs:diffuseColor");
+  assert(conns && conns->size() == 1);
+  assert((*conns)[0].str() == "/Shader.outputs:surface");
+  const PropSlot* slot = spec->property("inputs:diffuseColor");
+  assert(slot && slot->is_connection());
+  assert(spec->property_value("inputs:diffuseColor") == nullptr);
+
+  const std::string usda = WriteUSDAToString(read_result.stage);
+  assert(contains(usda, "rel material:binding"));
+  assert(contains(usda, "</Mat>"));
+  assert(contains(usda, "inputs:diffuseColor.connect"));
+  assert(contains(usda, "</Shader.outputs:surface>"));
+
+  std::cout << "  USDC relationship/connection roundtrip test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
 
@@ -247,8 +533,13 @@ int main() {
     test_crate_writer_basic();
     test_usdc_writer_file();
     test_usdc_roundtrip();
+    test_usdc_stage_backend_parity();
     test_layer_to_usdc();
+    test_usdc_layer_backend_parity();
     test_usdc_path_check();
+    test_usdc_api_error_paths();
+    test_usdc_bool_array_roundtrip();
+    test_usdc_relationship_connection_roundtrip();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;

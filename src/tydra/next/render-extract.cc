@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "next/schema/geom-point-instancer.hh"
 #include "scene-access.hh"
 
 namespace tinyusdz {
@@ -149,6 +150,35 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
   for (const ::tinyusdz::next::UsdPrim& root : stage.GetRootPrims()) {
     CollectRec(root, options, identity, "default", out);
   }
+  return true;
+}
+
+bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
+                            double time_code,
+                            PointInstancerData* out) {
+  if (!out) return false;
+  *out = PointInstancerData();
+  ::tinyusdz::next::UsdGeomPointInstancer pi(prim);
+  if (!pi) {
+    out->prim = prim;
+    out->path = prim.IsValid() ? prim.GetPath().str() : std::string();
+    out->validation_error = "not a PointInstancer";
+    return false;
+  }
+  out->prim = prim;
+  out->path = prim.GetPath().str();
+  out->prototypes = pi.GetPrototypes();
+  out->proto_indices = pi.GetProtoIndices(time_code);
+  out->positions = pi.GetPositions(time_code);
+  out->orientations = pi.GetOrientations(time_code);
+  out->scales = pi.GetScales(time_code);
+  out->velocities = pi.GetVelocities(time_code);
+  out->angular_velocities = pi.GetAngularVelocities(time_code);
+  out->ids = pi.GetIds(time_code);
+  out->invisible_ids = pi.GetInvisibleIds(time_code);
+  out->inactive_ids = pi.GetInactiveIds();
+  out->transforms = pi.ComputeInstanceTransforms(time_code);
+  out->valid = pi.HasValidInstanceArrays(time_code, &out->validation_error);
   return true;
 }
 
