@@ -516,6 +516,18 @@ std::string SubstituteFrame(const std::string &path, long frame);
 
 int RunRTPreviewNext(const Options &opt);
 
+// ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
+// Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.
+size_t QueryDeviceLocalVRAMBytes();
+
+// When opt.lod_stream is set, compose the scene in proxy LOD, rank districts by
+// camera distance, and write a wrapper layer that promotes the nearest districts
+// to districtLod=full within the host/VRAM budgets. On success rewrites
+// opt->input to the generated wrapper path (so the normal render flow loads it)
+// and returns true. Returns false (leaving opt->input unchanged) if no districts
+// were found or composition failed -- the caller renders the scene as-is.
+bool PrepareLodStream(Options *opt, std::string *generated_wrapper);
+
 // ---- shared helpers (defined in tusdrender.cc) ----
 void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
                               const std::vector<int> &counts,

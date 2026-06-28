@@ -63,6 +63,7 @@ add_executable(tusdrender
   tusdr_integrator.cc
   tusdr_scripting.cc
   tusdr_next.cc
+  tusdr_lod.cc
   tusdr_legacy.cc
   tusdr_vulkan.cc
   tusdr_d3d.cc

@@ -754,6 +754,59 @@ const char *lrt_vk_engine_last_error(const lrt_vk_engine *e) {
     return e ? e->err : "";
 }
 
+uint64_t lrt_vk_device_local_bytes(int prefer_discrete) {
+    if (!vkewInit()) return 0;
+    VkApplicationInfo app;
+    memset(&app, 0, sizeof(app));
+    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "lightrt";
+    app.pEngineName = "lightrt";
+    app.apiVersion = VK_API_VERSION_1_2;
+    VkInstanceCreateInfo ici;
+    memset(&ici, 0, sizeof(ici));
+    ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo = &app;
+    VkInstance inst = VK_NULL_HANDLE;
+    if (vkCreateInstance(&ici, NULL, &inst) != VK_SUCCESS) return 0;
+    if (!vkewLoadInstance(inst)) {
+        vkDestroyInstance(inst, NULL);
+        return 0;
+    }
+    uint32_t ndev = 0;
+    vkEnumeratePhysicalDevices(inst, &ndev, NULL);
+    if (ndev == 0) {
+        vkDestroyInstance(inst, NULL);
+        return 0;
+    }
+    if (ndev > 16) ndev = 16;
+    VkPhysicalDevice devs[16];
+    vkEnumeratePhysicalDevices(inst, &ndev, devs);
+    uint64_t best = 0;
+    int best_discrete = 0;
+    for (uint32_t d = 0; d < ndev; d++) {
+        VkPhysicalDeviceProperties pp;
+        vkGetPhysicalDeviceProperties(devs[d], &pp);
+        int is_discrete = (pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(devs[d], &mp);
+        uint64_t local = 0;
+        for (uint32_t h = 0; h < mp.memoryHeapCount; h++) {
+            if ((mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
+                mp.memoryHeaps[h].size > local) {
+                local = mp.memoryHeaps[h].size;
+            }
+        }
+        /* Prefer a discrete GPU's VRAM; otherwise take the largest local heap. */
+        if ((prefer_discrete && is_discrete && !best_discrete) ||
+            (is_discrete == best_discrete && local > best)) {
+            best = local;
+            best_discrete = is_discrete;
+        }
+    }
+    vkDestroyInstance(inst, NULL);
+    return best;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Path A: CPU build -> GPU trace.                                           */
 /* ------------------------------------------------------------------------- */

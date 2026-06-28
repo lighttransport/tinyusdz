@@ -143,6 +143,20 @@ int main(int argc, char **argv) {
 #endif
   }
 
+  // View-dependent district LOD (-lodStream): compose the scene in proxy LOD,
+  // promote the districts nearest the camera to `full` under the host/VRAM
+  // budget, and rewrite opt.input to a generated wrapper layer. Then fall
+  // through to the normal next-loader render. Best-effort: on failure (no
+  // districts / compose error) opt.input is left untouched and we render as-is.
+  std::string lod_wrapper;
+  if (opt.lod_stream) {
+    if (!opt.rt_preview && !opt.vulkan && !opt.vulkan_rt && !opt.use_d3d &&
+        !opt.hip) {
+      opt.rt_preview = true;  // default the LOD render to the CPU rtPreview path
+    }
+    PrepareLodStream(&opt, &lod_wrapper);
+  }
+
   // RT preview backend: the `next` lazy loader (fast, low-memory compose +
   // mmap USDC; also handles .usdz + .usda). Falls back to the legacy eager
   // loader for other inputs or when -legacyLoad is requested.

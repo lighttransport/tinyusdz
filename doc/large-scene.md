@@ -363,6 +363,59 @@ to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
 districts still at `proxy`, drawn with their `displayColor`. The default-tri
 count is per *district*, so it is identical across that district's cameras.)
 
+### 2.6.3 `-lodStream`: automatic view-dependent district LOD (tusdrender)
+
+The per-shot wrappers above pick the `full` district by hand. `tusdrender
+-lodStream` does it automatically: a cheap **proxy pass** composes the scene,
+measures each district's camera distance + proxy size, then promotes the
+districts **nearest the camera** to `full` (via a generated wrapper layer) until
+a host-RSS / GPU-VRAM budget is hit; the rest stay `proxy`. This is the
+load-time form of streamed LOD — only the selected `full` payloads get composed
+and made resident — and the designed use of the `districtLod` variant.
+
+```sh
+M=/mnt/disk1/data/caldera/caldera.usda
+# CPU ray tracing, default budgets (host = 50% of MemAvailable):
+./build/tools/tusdrender/tusdrender $M out.png -lodStream -rtPreview \
+    -camera map_capital_square -purpose default,render,proxy -w 1280 -height 720 -stats
+# GPU ray query also caps by VRAM (default = 50% of the device-local heap):
+./build/tools/tusdrender/tusdrender $M out.png -lodStream -vkr -camera map_capital_square ...
+```
+
+Flags: `-maxMem <GiB>` (host budget, else 50% MemAvailable), `-maxVram <GiB>`
+(GPU budget, else 50% of the device-local heap — queried via a new
+`lrt_vk_device_local_bytes()`), `-lodDistrictMem`/`-lodDistrictVram` (the flat
+per-district cost charge; default 10 / 3 GiB), `-lodMinVerts` (skip
+trigger/volume children that author no `full` geometry; default 1000),
+`-lodContainer` (the namespace prim whose children are districts; default
+`mp_wz_island_geo`).
+
+Measured (`map_capital_square`, RTX 5060 Ti / 62 GiB host, default budgets):
+
+```
+[lodStream] budgets: host 24.7 GiB (avail 49.4, proxy 2.1), vram 7.96 GiB (device 15.9)
+[lodStream] 37 districts (9 sub-threshold skipped), promoting 2 to full ...
+[lodStream]   FULL  map_tile_o  dist=6122   FULL  map_capital  dist=11452   proxy (rest) ...
+```
+
+It auto-promoted `map_capital` (what the camera frames) + the adjacent
+`map_tile_o`, leaving the other 35 districts proxy. CPU peak RSS **19.5 GiB**
+(est 22.1 — the estimate runs slightly high, i.e. safe); GPU built the 50 M-tri
+BLAS within the 16 GiB card, with VRAM the binding budget (7.96 GiB → 2
+districts).
+
+**Cost model is intentionally simple.** Proxy geometry does not predict `full`
+cost (a low-poly stand-in's vertex count is uncorrelated with the heavy
+geometry behind its `full` variant — e.g. a 14.6 M-vert `map_vehicle_spawns`
+non-district vs a 0.25 M-vert capital that explodes to 44 M `full` tris), so the
+charge is a flat per-district constant rather than a proxy-scaled estimate, and
+sub-`-lodMinVerts` children are skipped. Tune `-lodDistrictMem` up to promote
+fewer districts / down to promote more. **Limitations** (true streaming
+follow-ups): the selection is computed once at load (not per frame), the chosen
+set is composed in a single soup/BLAS (no eviction), and the cost charge ignores
+per-district size variation — so leave host headroom or lower `-lodDistrictMem`
+on a tight machine.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have

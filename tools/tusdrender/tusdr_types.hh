@@ -402,6 +402,25 @@ struct Options {
   bool default_time{false};       // -defaultTime: evaluate at the default time
   double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
+  // -lodStream: view-dependent district LOD. A cheap proxy pass measures each
+  // district's camera distance + proxy size, then promotes the nearest districts
+  // to the `full` districtLod variant (via a generated wrapper layer) until the
+  // host/VRAM budgets are hit; the rest stay proxy. See tusdr_lod.cc.
+  bool lod_stream{false};
+  double max_vram_gib{0.0};       // -maxVram <GiB>: GPU budget, 0 = auto 0.5*VRAM
+  // Cost model: a flat estimated host RSS / GPU VRAM charge per promoted
+  // district. Deliberately simple + conservative (proxy geometry does not
+  // predict full cost, so per-district variation is not modelled). Tune up to
+  // promote fewer / down to promote more. Calibrated to observed single-district
+  // peaks (heavy Caldera districts compose at ~10-20 GiB host, ~2.5 GiB BLAS).
+  double lod_district_mem_gib{10.0};   // -lodDistrictMem
+  double lod_district_vram_gib{3.0};   // -lodDistrictVram
+  // Skip container children with fewer proxy verts than this (trigger/volume/
+  // bounds prims that author no `full` geometry -- promoting them is a no-op).
+  double lod_min_verts{1000.0};        // -lodMinVerts
+  // Namespace component whose immediate children are the LOD districts
+  // (Caldera: .../mp_wz_island_geo/<district>). -lodContainer to override.
+  std::string lod_container{"mp_wz_island_geo"};
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
