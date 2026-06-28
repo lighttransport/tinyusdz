@@ -38,7 +38,10 @@ void main() {
     float tmax = fu(rays[rb + 7u]);
 
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, org, tmin, dir, tmax);
+    rayQueryInitializeEXT(rq, tlas,
+                         gl_RayFlagsOpaqueEXT |
+                             gl_RayFlagsTerminateOnFirstHitEXT,
+                         0x0u, org, tmin, dir, tmax);
     while (rayQueryProceedEXT(rq)) {}
 
     uint hb = gid * 4u;
