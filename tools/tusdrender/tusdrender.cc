@@ -150,10 +150,10 @@ int main(int argc, char **argv) {
     return RunRTPreviewNext(opt);
   }
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11)
-  // GPU backends (Vulkan / Direct3D 11): load the scene through the `next` lazy
-  // loader, build the geometry once, then trace on the selected GPU backend.
-  if (opt.vulkan || opt.use_d3d) {
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+  // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
+  // lazy loader, build the geometry once, then trace on the selected GPU backend.
+  if (opt.vulkan || opt.use_d3d || opt.hip) {
     // Load through next loader.
     tinyusdz::next::Stage stage;
     std::string warn, err;
@@ -422,6 +422,14 @@ int main(int argc, char **argv) {
 #ifdef HAVE_VULKAN
     if (opt.vulkan) {
       if (!RunVulkanLightRT(opt, base_colors, geos, camera, out_height)) {
+        return EXIT_FAILURE;
+      }
+      return EXIT_SUCCESS;
+    }
+#endif
+#ifdef HAVE_HIP
+    if (opt.hip) {
+      if (!RunHipLightRT(opt, base_colors, geos, camera, out_height)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;

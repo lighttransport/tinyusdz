@@ -126,6 +126,7 @@ void PrintUsage(const char *prog) {
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
+      << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
       << "  -noDirectPrims         Tessellate USD shapes/curves/NURBS instead of\n"
       << "                         using tusdrender direct primitive paths.\n"
       << "  -stats                 Print scene/BVH stats.\n"
@@ -366,6 +367,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->vulkan_rt = true;
     } else if (a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
       opt->use_d3d = true;
+    } else if (a == "-hip" || a == "--hip") {
+      opt->hip = true;
     } else if (a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {

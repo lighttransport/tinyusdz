@@ -66,6 +66,7 @@ add_executable(tusdrender
   tusdr_legacy.cc
   tusdr_vulkan.cc
   tusdr_d3d.cc
+  tusdr_hip.cc
 )
 
 target_link_libraries(tusdrender
@@ -130,6 +131,22 @@ if(TUSDRENDER_WITH_VULKAN)
                                     ${LIGHTRT_VK_SRC}/lightrt_vkew.c)
   target_compile_definitions(tusdrender PRIVATE HAVE_VULKAN=1)
   target_include_directories(tusdrender PRIVATE ${LIGHTRT_VK_SRC})
+endif()
+
+# --- LightRT HIP/ROCm backend (optional, runtime-loaded via hipew) ----------
+# A GPU compute trace path mirroring the Vulkan one. The trace kernel is compiled
+# at runtime with hiprtc; libamdhip64 + libhiprtc are opened at runtime via hipew,
+# so there is NO link-time ROCm dependency and a build with no ROCm still runs
+# (the -hip flag then reports the backend unavailable and falls back).
+option(TUSDRENDER_WITH_HIP "Build the HIP/ROCm GPU-interop backend" ON)
+if(TUSDRENDER_WITH_HIP AND NOT WIN32)
+  set(LIGHTRT_HIP_SRC ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+  set(HIPEW_SRC ${PROJECT_SOURCE_DIR}/src/external/hipew)
+  target_sources(tusdrender PRIVATE ${LIGHTRT_HIP_SRC}/lightrt_c_hip.c
+                                    ${HIPEW_SRC}/hipew.c)
+  target_compile_definitions(tusdrender PRIVATE HAVE_HIP=1)
+  target_include_directories(tusdrender PRIVATE ${LIGHTRT_HIP_SRC} ${HIPEW_SRC})
+  target_link_libraries(tusdrender ${CMAKE_DL_LIBS})
 endif()
 
 # --- LightRT Direct3D 11 backend (Windows only) ----------------------------

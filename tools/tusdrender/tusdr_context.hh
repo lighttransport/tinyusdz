@@ -297,6 +297,13 @@ bool RunD3D11LightRT(const Options &opt,
                      const CameraFrame &camera, int height);
 #endif
 
+#ifdef HAVE_HIP
+bool RunHipLightRT(const Options &opt,
+                   const std::vector<Vec3> &base_colors,
+                   const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                   const CameraFrame &camera, int height);
+#endif
+
 // ---- tusdr_next.cc (next loader + driver) ----
 unsigned WorkerThreadCount(int requested);
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);

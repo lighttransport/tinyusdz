@@ -100,6 +100,27 @@ The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
 (return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
 green.
 
+## HIP/ROCm ray-tracing run test (verified working on AMD)
+
+`--hip` is the AMD counterpart of `--cuda`: it traces the same scene BVH and runs
+the **same trace kernel** (shared via `examples/tusdview/raytracer_kernel.inc`),
+but on the **HIP runtime + hiprtc loaded at runtime via hipew**
+(`src/external/hipew/`) — **no link-time ROCm dependency**; only `libamdhip64`
+and `libhiprtc` need to be present to *run*. The kernel is compiled at runtime
+with hiprtc (which auto-targets the live device's gfx arch — no `--offload-arch`
+needed). Like `--cuda`, the HIP path owns the screenshot and supports all
+`--mode` AOV/debug views.
+
+```sh
+# headless, no window/X server needed:
+./build/tusdview --headless --hip --frames 4 --screenshot out.ppm model.usda
+./build/tusdview --headless --hip --mode normals --frames 4 --screenshot n.ppm model.usda
+```
+
+The **`tusdview-hip-render`** ctest exercises this end-to-end; it SKIPs
+(return 77) when no AMD/ROCm device is available so non-AMD CI stays green.
+Verified on AMD Radeon RX 9070 XT (gfx1201).
+
 ```sh
 cd build && ctest -R tusdview-cuda-render --output-on-failure
 ```

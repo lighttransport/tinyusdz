@@ -2160,6 +2160,21 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    # tusdview: HIP/ROCm ray-tracing backend run test. Renders headless via --hip
+    # (HIP runtime + hiprtc loaded at runtime through hipew; no link-time ROCm
+    # toolkit) and asserts a non-blank frame. Needs a real AMD/ROCm device; SKIPs
+    # (return 77) when HIP is unavailable, so it is harmless on non-AMD CI.
+    #
+    add_test(
+      NAME tusdview-hip-render
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-hip-render.sh
+    )
+    set_tests_properties(tusdview-hip-render PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #

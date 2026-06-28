@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "cuda_raytracer.hh"
+#include "hip_raytracer.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-#include "cuew.h"
+#include "hipew.h"
 #include "displacement_bake.hh"
 
 namespace tusdview {
@@ -44,17 +44,16 @@ struct Inst {
   int instId;      // stable instance id (instance-id AOV)
 };
 
-// Trace kernel source, shared with the HIP backend (compiled at runtime by
-// NVRTC here, hiprtc there).
+// Trace kernel source, shared with the CUDA backend (compiled at runtime by
+// hiprtc here, NVRTC there).
 #include "raytracer_kernel.inc"
 
 #define CU_OK(call, what)                                          \
   do {                                                             \
-    CUresult _r = (call);                                          \
-    if (_r != CUDA_SUCCESS) {                                      \
-      const char* _s = nullptr;                                    \
-      if (cuGetErrorString) cuGetErrorString(_r, &_s);             \
-      if (err) *err = std::string("CUDA ") + (what) + ": " + (_s ? _s : "error"); \
+    hipError_t _r = (call);                                        \
+    if (_r != hipSuccess) {                                        \
+      const char* _s = hipGetErrorString ? hipGetErrorString(_r) : nullptr; \
+      if (err) *err = std::string("HIP ") + (what) + ": " + (_s ? _s : "error"); \
       return false;                                                \
     }                                                              \
   } while (0)
@@ -126,16 +125,15 @@ inline void O2WAabb(const float o2w[12], const float lo[3], const float hi[3],
 
 }  // namespace
 
-CudaRayTracer::~CudaRayTracer() {
-  if (ctx_) {
+HipRayTracer::~HipRayTracer() {
+  if (ready_) {
     freeScene();
-    if (module_) cuModuleUnload(reinterpret_cast<CUmodule>(module_));
-    cuCtxDestroy(reinterpret_cast<CUcontext>(ctx_));
+    if (module_) hipModuleUnload(reinterpret_cast<hipModule_t>(module_));
   }
 }
 
-void CudaRayTracer::freeScene() {
-  auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
+void HipRayTracer::freeScene() {
+  auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
   F(dVolDens_); F(dVolParams_);
@@ -145,65 +143,61 @@ void CudaRayTracer::freeScene() {
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
 
-bool CudaRayTracer::init(std::string* err) {
-  if (ctx_) return true;
-  if (cuewInit(CUEW_INIT_CUDA) != CUEW_SUCCESS) {
-    if (err) *err = "cuew: CUDA driver not available";
+bool HipRayTracer::init(std::string* err) {
+  if (ready_) return true;
+  if (hipewInit(HIPEW_INIT_HIP) != HIPEW_SUCCESS) {
+    if (err) *err = "hipew: HIP runtime not available";
     return false;
   }
-  if (cuewInit(CUEW_INIT_NVRTC) != CUEW_SUCCESS) {
-    if (err) *err = "cuew: NVRTC not available (needed for runtime kernel compile)";
+  if (hipewInit(HIPEW_INIT_HIPRTC) != HIPEW_SUCCESS) {
+    if (err) *err = "hipew: hiprtc not available (needed for runtime kernel compile)";
     return false;
   }
-  CU_OK(cuInit(0), "cuInit");
+  CU_OK(hipInit(0), "hipInit");
   int count = 0;
-  CU_OK(cuDeviceGetCount(&count), "cuDeviceGetCount");
-  if (count < 1) { if (err) *err = "no CUDA device"; return false; }
-  CUdevice dev;
-  CU_OK(cuDeviceGet(&dev, 0), "cuDeviceGet");
-  device_ = dev;
+  CU_OK(hipGetDeviceCount(&count), "hipGetDeviceCount");
+  if (count < 1) { if (err) *err = "no HIP device"; return false; }
+  device_ = 0;
+  CU_OK(hipSetDevice(device_), "hipSetDevice");
+  hipDevice_t dev = 0;
+  CU_OK(hipDeviceGet(&dev, device_), "hipDeviceGet");
   char name[256] = {0};
-  cuDeviceGetName(name, sizeof(name), dev);
+  hipDeviceGetName(name, sizeof(name), dev);
   deviceName_ = name;
-  int major = 0, minor = 0;
-  cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
-  cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
-  CUcontext ctx;
-  CU_OK(cuCtxCreate(&ctx, 0, dev), "cuCtxCreate");
-  ctx_ = ctx;
 
-  // NVRTC compile the kernel for this device's architecture.
-  nvrtcProgram prog;
-  if (nvrtcCreateProgram(&prog, kKernelSrc, "trace.cu", 0, nullptr, nullptr) !=
-      NVRTC_SUCCESS) {
-    if (err) *err = "nvrtcCreateProgram failed";
+  // hiprtc compile the kernel. No --offload-arch is passed: hiprtc targets the
+  // current device automatically. (Unlike NVRTC there is no PTX step; hiprtc
+  // emits a loadable code object directly.)
+  hiprtcProgram prog;
+  if (hiprtcCreateProgram(&prog, kKernelSrc, "trace.hip", 0, nullptr, nullptr) !=
+      HIPRTC_SUCCESS) {
+    if (err) *err = "hiprtcCreateProgram failed";
     return false;
   }
-  std::string arch = "--gpu-architecture=compute_" + std::to_string(major) +
-                     std::to_string(minor);
-  const char* opts[] = {arch.c_str(), "--use_fast_math"};
-  nvrtcResult nr = nvrtcCompileProgram(prog, 2, opts);
-  if (nr != NVRTC_SUCCESS) {
+  const char* opts[] = {"-ffast-math"};
+  hiprtcResult nr = hiprtcCompileProgram(prog, 1, opts);
+  if (nr != HIPRTC_SUCCESS) {
     size_t logSize = 0;
-    nvrtcGetProgramLogSize(prog, &logSize);
+    hiprtcGetProgramLogSize(prog, &logSize);
     std::string log(logSize, '\0');
-    if (logSize) nvrtcGetProgramLog(prog, &log[0]);
-    if (err) *err = "NVRTC compile failed:\n" + log;
-    nvrtcDestroyProgram(&prog);
+    if (logSize) hiprtcGetProgramLog(prog, &log[0]);
+    if (err) *err = "hiprtc compile failed:\n" + log;
+    hiprtcDestroyProgram(&prog);
     return false;
   }
-  size_t ptxSize = 0;
-  nvrtcGetPTXSize(prog, &ptxSize);
-  std::string ptx(ptxSize, '\0');
-  nvrtcGetPTX(prog, &ptx[0]);
-  nvrtcDestroyProgram(&prog);
+  size_t codeSize = 0;
+  hiprtcGetCodeSize(prog, &codeSize);
+  std::string code(codeSize, '\0');
+  hiprtcGetCode(prog, &code[0]);
+  hiprtcDestroyProgram(&prog);
 
-  CUmodule mod;
-  CU_OK(cuModuleLoadData(&mod, ptx.c_str()), "cuModuleLoadData");
+  hipModule_t mod;
+  CU_OK(hipModuleLoadData(&mod, code.c_str()), "hipModuleLoadData");
   module_ = mod;
-  CUfunction fn;
-  CU_OK(cuModuleGetFunction(&fn, mod, "trace"), "cuModuleGetFunction(trace)");
+  hipFunction_t fn;
+  CU_OK(hipModuleGetFunction(&fn, mod, "trace"), "hipModuleGetFunction(trace)");
   kernel_ = fn;
+  ready_ = true;
   return true;
 }
 
@@ -298,10 +292,10 @@ int BuildTlas(std::vector<Node>& nodes, std::vector<int>& idx, int first, int co
 }
 }  // namespace
 
-bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err,
+bool HipRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err,
                           float displacementScale) {
-  if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
-  cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+  if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
+  CU_OK(hipSetDevice(device_), "hipSetDevice");
   freeScene();
   truncated_ = false;
 
@@ -522,7 +516,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
   triCount_ = gTris.size() / 9;
   instCount_ = instances.size();
-  if (triCount_ == 0 || instCount_ == 0) { if (err) *err = "CUDA: no geometry"; return false; }
+  if (triCount_ == 0 || instCount_ == 0) { if (err) *err = "HIP: no geometry"; return false; }
   blasNodeCount_ = gBlas.size();
 
   // Build the TLAS over instance world AABBs (reorders the instance table to leaf
@@ -543,10 +537,10 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
 
   // Upload.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
-    CUdeviceptr p;
-    CU_OK(cuMemAlloc(&p, bytes), "cuMemAlloc");
-    CU_OK(cuMemcpyHtoD(p, host, bytes), "cuMemcpyHtoD");
-    *dptr = static_cast<uintptr_t>(p);
+    void* p = nullptr;
+    CU_OK(hipMalloc(&p, bytes ? bytes : 1), "hipMalloc");
+    if (bytes) CU_OK(hipMemcpyHtoD(p, host, bytes), "hipMemcpyHtoD");
+    *dptr = reinterpret_cast<uintptr_t>(p);
     return true;
   };
   if (!up(gTris.data(), gTris.size() * sizeof(float), &dTris_)) return false;
@@ -628,19 +622,19 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* e
   return true;
 }
 
-bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
+bool HipRayTracer::trace(const float invViewProj[16], const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err) {
-  if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
-  cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+  if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
+  CU_OK(hipSetDevice(device_), "hipSetDevice");
   const size_t bytes = size_t(w) * h * 4;
   if (outCap_ < bytes) {
-    if (dOut_) cuMemFree(static_cast<CUdeviceptr>(dOut_));
-    CUdeviceptr p;
-    CU_OK(cuMemAlloc(&p, bytes), "cuMemAlloc(out)");
-    dOut_ = static_cast<uintptr_t>(p);
+    if (dOut_) hipFree(reinterpret_cast<void*>(dOut_));
+    void* p = nullptr;
+    CU_OK(hipMalloc(&p, bytes), "hipMalloc(out)");
+    dOut_ = reinterpret_cast<uintptr_t>(p);
     outCap_ = bytes;
   }
   Cam cam{};
@@ -653,11 +647,15 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   cam.clear[3] = static_cast<float>(renderMode);
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
-  CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
-              dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
-              dI = dInstances_, dO = dOut_;
-  CUdeviceptr dVD = dVolDens_, dVP = dVolParams_;
+  void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
+        *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
+        *dM = reinterpret_cast<void*>(dMat_), *dMP = reinterpret_cast<void*>(dMatPbr_),
+        *dU = reinterpret_cast<void*>(dUV_), *dU1 = reinterpret_cast<void*>(dUV1_),
+        *dIn = reinterpret_cast<void*>(dInfl_), *dF = reinterpret_cast<void*>(dFace_),
+        *dDw = reinterpret_cast<void*>(dDomW_), *dDj = reinterpret_cast<void*>(dDomJoint_),
+        *dBl = reinterpret_cast<void*>(dBlasNodes_), *dTl = reinterpret_cast<void*>(dTlasNodes_),
+        *dI = reinterpret_cast<void*>(dInstances_), *dO = reinterpret_cast<void*>(dOut_);
+  void* dVD = reinterpret_cast<void*>(dVolDens_), *dVP = reinterpret_cast<void*>(dVolParams_);
   int numMats = numMats_;
   int numVols = numVols_;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
@@ -667,13 +665,13 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
                   &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
-  CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
-                       nullptr, args, nullptr),
-        "cuLaunchKernel");
-  CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
+  CU_OK(hipModuleLaunchKernel(reinterpret_cast<hipFunction_t>(kernel_), gx, gy, 1,
+                              8, 8, 1, 0, nullptr, args, nullptr),
+        "hipModuleLaunchKernel");
+  CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
   rgba->resize(bytes);
-  CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
-        "cuMemcpyDtoH");
+  CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
+        "hipMemcpyDtoH");
   return true;
 }
 
