@@ -246,11 +246,36 @@ int main(int argc, char **argv) {
         }
         if (geo.uvs.empty()) geo.uvs.resize(nv * 2, 0);
 
+        // Fan-triangulate the polygons into a triangle-soup index list. The GPU
+        // backends (RunVulkanLightRT / RunD3D11LightRT) consume geo.indices as
+        // groups of three, so quads/n-gons MUST be split here using
+        // faceVertexCounts — feeding the raw faceVertexIndices chunked by 3 drops
+        // and scrambles triangles (e.g. a 468-quad + 32-tri Suzanne collapses
+        // from 968 triangles to 656, rendering with holes).
         val = prim.GetPropertyValue("faceVertexIndices");
+        const tinyusdz::next::Value *cval =
+            prim.GetPropertyValue("faceVertexCounts");
         if (val) {
           const std::vector<int> *idx = val->as_int_array();
+          const std::vector<int> *cnt = cval ? cval->as_int_array() : nullptr;
           if (idx && !idx->empty()) {
-            geo.indices.assign(idx->begin(), idx->end());
+            if (cnt && !cnt->empty()) {
+              size_t off = 0;
+              for (int c : *cnt) {
+                if (c >= 3 && off + size_t(c) <= idx->size()) {
+                  int v0 = (*idx)[off];
+                  for (int k = 1; k + 1 < c; ++k) {
+                    geo.indices.push_back(v0);
+                    geo.indices.push_back((*idx)[off + size_t(k)]);
+                    geo.indices.push_back((*idx)[off + size_t(k) + 1]);
+                  }
+                }
+                off += size_t(c < 0 ? 0 : c);
+              }
+            } else {
+              // No counts: assume an already-triangulated soup.
+              geo.indices.assign(idx->begin(), idx->end());
+            }
           }
         }
 
@@ -356,17 +381,34 @@ int main(int argc, char **argv) {
       }
     }
     bounds.valid = true;
-    int out_height = opt.height > 0 ? opt.height : 540;
-
+    // Resolve the camera the SAME way the CPU -rtPreview path does
+    // (ResolveCameraNext): a named camera, else the USD record camera for
+    // -autoframe, else auto-fit. This keeps -vk/-vkr framed identically to the
+    // -rtPreview reference (the GPU backends previously used the tilted auto-fit
+    // camera here, so the same scene framed differently from the CPU image).
+    const int cam_width = opt.width > 0 ? opt.width : 960;
+    int out_height = opt.height;
     Options auto_opt = opt;
     auto_opt.camera.clear();
-    if (opt.autoframe) {
-      camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+    auto_opt.width = cam_width;
+    if (!opt.camera.empty()) {
+      float cam_aspect = 16.0f / 9.0f;
+      if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera,
+                              &cam_aspect)) {
+        if (out_height <= 0)
+          out_height =
+              std::max(1, int(std::lround(float(cam_width) / cam_aspect)));
+      } else {
+        std::cerr << "WARN: camera not found: " << opt.camera
+                  << ". Using auto-fit.\n";
+        if (out_height <= 0) out_height = 540;
+        camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+      }
+    } else if (opt.autoframe) {
+      camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, &out_height);
     } else {
-      camera.origin = Vec3{0, 0, 5};
-      camera.forward = Normalize(Sub(Vec3{0, 0, 0}, camera.origin));
-      camera.up = Vec3{0, 1, 0};
-      camera.yfov = 45.0f * 3.14159265f / 180.0f;
+      if (out_height <= 0) out_height = 540;
+      camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
     }
 
 #ifdef HAVE_D3D11
