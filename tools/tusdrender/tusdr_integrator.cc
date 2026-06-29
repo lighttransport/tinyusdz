@@ -1044,8 +1044,12 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   img.format = tinyusdz::Image::PixelFormat::UInt;
   img.data.resize(size_t(img.width) * size_t(img.height) * 4);
   float aspect = float(img.width) / float(img.height);
-  int spp_side = int(std::ceil(std::sqrt(float(opt.samples))));
-  int spp = spp_side * spp_side;
+  // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)
+  // low-discrepancy sequence (PixelJitter). This supersedes the old
+  // ceil(sqrt(N))^2 regular grid, which both rounded the sample count up to a
+  // square and aliased against regular geometry/texture patterns; Halton spreads
+  // the same N samples evenly while staying fully deterministic in `s`.
+  int spp = std::max(1, opt.samples);
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
@@ -1053,31 +1057,29 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
     for (int y = y_begin; y < y_end; y++) {
       for (int x = 0; x < img.width; x++) {
         Vec3 color{0.0f, 0.0f, 0.0f};
-        for (int sy = 0; sy < spp_side; sy++) {
-          for (int sx = 0; sx < spp_side; sx++) {
-            float fx = (float(x) + (float(sx) + 0.5f) / float(spp_side)) /
-                       float(img.width);
-            float fy = (float(y) + (float(sy) + 0.5f) / float(spp_side)) /
-                       float(img.height);
-            Vec3 org;
-            Vec3 dir;
-            MakeRay(camera, aspect, fx, fy, &org, &dir);
-            // One-pixel ray differentials for texture footprint / mip LOD
-            // (origin + dir cover both pinhole and ortho cameras).
-            RayDiff rd;
-            MakeRay(camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
-                    &rd.dx);
-            MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
-                    &rd.dy);
-            rd.valid = true;
-            Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
-                              org, dir, textures, tri_uvs, tlas, blas, instances,
-                              rd, 0, tri_colors, tri_normals);
-            if (volumes && !volumes->empty()) {
-              surf = CompositeVolumes(*volumes, org, dir, surf);
-            }
-            color = Add(color, surf);
+        for (int s = 0; s < spp; s++) {
+          float jx, jy;
+          PixelJitter(s, spp, &jx, &jy);
+          float fx = (float(x) + jx) / float(img.width);
+          float fy = (float(y) + jy) / float(img.height);
+          Vec3 org;
+          Vec3 dir;
+          MakeRay(camera, aspect, fx, fy, &org, &dir);
+          // One-pixel ray differentials for texture footprint / mip LOD
+          // (origin + dir cover both pinhole and ortho cameras).
+          RayDiff rd;
+          MakeRay(camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
+                  &rd.dx);
+          MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
+                  &rd.dy);
+          rd.valid = true;
+          Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
+                            org, dir, textures, tri_uvs, tlas, blas, instances,
+                            rd, 0, tri_colors, tri_normals);
+          if (volumes && !volumes->empty()) {
+            surf = CompositeVolumes(*volumes, org, dir, surf);
           }
+          color = Add(color, surf);
         }
         color = Mul(color, 1.0f / float(spp));
         size_t ofs = (size_t(y) * size_t(img.width) + size_t(x)) * 4;
