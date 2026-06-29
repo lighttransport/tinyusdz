@@ -2191,6 +2191,21 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    # tusdview: HIP AOV-mode smoke. Traces every representative RenderMode AOV
+    # (normals, depth, uv, material-id, ao, soft-shadow, ...) via --hip and
+    # asserts each is non-blank, exercising the hiprtc-compiled kernel's AOV
+    # branches on a real AMD GPU. SKIPs (77) when HIP is unavailable.
+    #
+    add_test(
+      NAME tusdview-hip-aov
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-hip-aov.sh
+    )
+    set_tests_properties(tusdview-hip-aov PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #
