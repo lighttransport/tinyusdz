@@ -119,6 +119,67 @@ private:
   }
 
 
+  // Effective worker count: 1 = serial; <=0 = auto (hardware_concurrency capped
+  // at 16); >1 = as requested. Always 1 in a non-threaded build.
+  int ResolveThreads() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    const int req = options_.num_threads;
+    if (req == 1) return 1;
+    if (req > 1) return req;
+    int hw = static_cast<int>(std::thread::hardware_concurrency());
+    if (hw < 1) hw = 1;
+    return std::min(hw, 16);
+#else
+    return 1;
+#endif
+  }
+
+  // Sort `v` with `cmp` across `nthreads` workers: sort P contiguous chunks in
+  // parallel, then pairwise-merge the sorted runs (log P rounds, parallel within
+  // a round). Falls back to std::sort when serial or small. Result is identical
+  // to std::sort(v, cmp) for a strict-weak-ordering `cmp` with unique elements.
+  template <class Cmp>
+  static void ParallelSortIndices(std::vector<uint32_t>& v, Cmp cmp,
+                                  int nthreads) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    const size_t N = v.size();
+    if (nthreads <= 1 || N < 200000) {
+      std::sort(v.begin(), v.end(), cmp);
+      return;
+    }
+    int P = 1;
+    while (P * 2 <= nthreads && P * 2 <= 16 && (N / (P * 2)) >= 50000) P *= 2;
+    if (P <= 1) { std::sort(v.begin(), v.end(), cmp); return; }
+    std::vector<size_t> bnd(P + 1);
+    for (int i = 0; i <= P; ++i) bnd[i] = N * static_cast<size_t>(i) / P;
+    {
+      std::vector<std::thread> pool;
+      pool.reserve(P);
+      for (int t = 0; t < P; ++t) {
+        pool.emplace_back([&, t] {
+          std::sort(v.begin() + bnd[t], v.begin() + bnd[t + 1], cmp);
+        });
+      }
+      for (auto& th : pool) th.join();
+    }
+    for (int step = 1; step < P; step *= 2) {
+      std::vector<std::thread> pool;
+      for (int t = 0; t + step < P; t += 2 * step) {
+        const size_t lo = bnd[t];
+        const size_t mid = bnd[t + step];
+        const size_t hi = bnd[std::min(t + 2 * step, P)];
+        pool.emplace_back([&v, &cmp, lo, mid, hi] {
+          std::inplace_merge(v.begin() + lo, v.begin() + mid, v.begin() + hi, cmp);
+        });
+      }
+      for (auto& th : pool) th.join();
+    }
+#else
+    (void)nthreads;
+    std::sort(v.begin(), v.end(), cmp);
+#endif
+  }
+
   #include "crate-writer-tables.inc"
 
   #include "crate-writer-passthrough.inc"
