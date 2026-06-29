@@ -56,6 +56,7 @@ set(TUSDVIEW_SOURCES
     next_scene_loader.cc
     mesh_build.cc
     gpu_budget_lod.cc
+    rt_lod.cc
     displacement_bake.cc
     gizmo_build.cc
     parametric_tess.cc
