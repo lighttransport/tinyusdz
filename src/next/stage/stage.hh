@@ -23,6 +23,14 @@ struct StageMeta {
   double timeCodesPerSecond = 24.0;
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
+  // Authored-tracking for value-defaulted fields (mirrors LayerMeta): lets the
+  // writer re-emit an authored `upAxis`/`metersPerUnit`/... even when it equals
+  // the schema default, matching pxr usdcat on flatten.
+  bool upAxis_set = false;
+  bool metersPerUnit_set = false;
+  bool timeCodesPerSecond_set = false;
+  bool startTimeCode_set = false;
+  bool endTimeCode_set = false;
   double framesPerSecond = 24.0;
   bool framesPerSecond_set = false;
   double kilogramsPerUnit = 1.0;
