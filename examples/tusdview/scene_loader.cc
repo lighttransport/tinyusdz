@@ -62,6 +62,7 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
                                                        : nullptr;
 
   tinyusdz::PayloadCompositionOptions pl_opts;
+  pl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.payloadPolicy != PayloadPolicy::LoadAll) {
     pl_opts.load_policy = [whitelist, deferred](
                               const tinyusdz::Path& prim_path,
@@ -76,6 +77,7 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
   }
 
   tinyusdz::ReferencesCompositionOptions ref_opts;
+  ref_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.deferReferences) {
     ref_opts.load_policy = [whitelist, deferred](
                                const tinyusdz::Path& prim_path,
@@ -269,9 +271,11 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
   // this layer (CompositePayload strips payload metadata even for deferred
   // arcs, so the composed result alone cannot load payloads later).
   if (!root.metas().subLayers.empty()) {
+    tinyusdz::SublayersCompositionOptions sl_opts;
+    sl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
     tinyusdz::Layer tmp;
     if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, &out->warn,
-                                      &out->err)) {
+                                      &out->err, sl_opts)) {
       return false;
     }
     root = std::move(tmp);
