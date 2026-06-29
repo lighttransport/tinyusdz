@@ -2440,6 +2440,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createDescriptorInfra(err)) return false;
   if (!createPipeline(err)) return false;       // needs texSetLayout_
   if (!createInstPipeline(err)) return false;   // instanced flat prototypes
+  initBoxProxyRaster();                          // raster LOD box-proxy geometry
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
   if (!createVolumePipeline(err)) return false; // UsdVol volume raymarch
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
@@ -3267,6 +3268,112 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
       }
     }
   }
+}
+
+// Static geometry for the raster LOD box proxies: an 8-vertex unit cube + 36
+// indices (binding 0/index), plus constant white per-vertex color (binding 3) and
+// zero morph (binding 4) so a box draw reuses the prototype instanced pipeline.
+// The per-instance box-fit o2w (binding 1) + tint (binding 2) are uploaded per
+// frame in drawBoxProxies. Built once in init().
+void VulkanRenderer::initBoxProxyRaster() {
+  DrawVertex vtx[8]{};
+  for (int c = 0; c < 8; ++c) {
+    float p[3];
+    UnitCubeCorner(c, p);
+    vtx[c].px = p[0]; vtx[c].py = p[1]; vtx[c].pz = p[2];
+    vtx[c].ny = 1.0f;  // ignored (box shades by geometric normal)
+  }
+  createHostBuffer(sizeof(vtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vtx,
+                   &boxRasterVbo_, &boxRasterVboMem_);
+  createHostBuffer(sizeof(kBoxIndices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, kBoxIndices,
+                   &boxRasterEbo_, &boxRasterEboMem_);
+  float white[8 * 3];
+  for (int i = 0; i < 8 * 3; ++i) white[i] = 1.0f;
+  createHostBuffer(sizeof(white), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, white,
+                   &boxRasterVtxColBuf_, &boxRasterVtxColMem_);
+  uint32_t morph[8 * 2] = {0};  // (offset,count) = (0,0): the shader skips the morph
+  createHostBuffer(sizeof(morph), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, morph,
+                   &boxRasterMorphBuf_, &boxRasterMorphMem_);
+}
+
+// Stage the box-proxy placements (called on the cull/upload path). Only copies into
+// CPU vectors; the GPU upload + (re)allocation happens in drawBoxProxies during
+// command recording, where the in-flight fence has already been waited (safe to
+// grow/free). count==0 clears the proxies (e.g. LOD turned off).
+void VulkanRenderer::updateProxyInstances(const float* xforms, const float* tints,
+                                          uint32_t count) {
+  boxRasterCount_ = count;
+  if (count == 0) {
+    boxProxyXforms_.clear();
+    boxProxyTints_.clear();
+    return;
+  }
+  boxProxyXforms_.assign(xforms, xforms + size_t(count) * 12);
+  boxProxyTints_.assign(tints, tints + size_t(count) * 3);
+}
+
+// Upload the staged box proxies and draw them as one instanced pass of the shared
+// unit cube. Mirrors the prototype instanced pass (instPipeline_, set 5 Frame UBO,
+// dummy morph sets 7-9); meshId=-1 + geometricNormal flag match the GL box draw.
+void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
+  if (boxRasterCount_ == 0 || !instPipeline_ || boxRasterVbo_ == VK_NULL_HANDLE)
+    return;
+  // Upload per-instance o2w + tint, growing the buffers on demand (free is safe
+  // here -- the previous frame's fence was waited at the top of presentImpl).
+  const VkDeviceSize xb = VkDeviceSize(boxRasterCount_) * 12 * sizeof(float);
+  const VkDeviceSize tb = VkDeviceSize(boxRasterCount_) * 3 * sizeof(float);
+  if (xb > boxRasterInstCap_) {
+    if (boxRasterInstBuf_) vkDestroyBuffer(device_, boxRasterInstBuf_, nullptr);
+    if (boxRasterInstMem_) vkFreeMemory(device_, boxRasterInstMem_, nullptr);
+    boxRasterInstBuf_ = VK_NULL_HANDLE; boxRasterInstMem_ = VK_NULL_HANDLE;
+    if (!createHostBuffer(xb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          boxProxyXforms_.data(), &boxRasterInstBuf_,
+                          &boxRasterInstMem_))
+      return;
+    boxRasterInstCap_ = xb;
+  } else {
+    void* p = nullptr;
+    vkMapMemory(device_, boxRasterInstMem_, 0, xb, 0, &p);
+    std::memcpy(p, boxProxyXforms_.data(), static_cast<size_t>(xb));
+    vkUnmapMemory(device_, boxRasterInstMem_);
+  }
+  if (tb > boxRasterTintCap_) {
+    if (boxRasterTintBuf_) vkDestroyBuffer(device_, boxRasterTintBuf_, nullptr);
+    if (boxRasterTintMem_) vkFreeMemory(device_, boxRasterTintMem_, nullptr);
+    boxRasterTintBuf_ = VK_NULL_HANDLE; boxRasterTintMem_ = VK_NULL_HANDLE;
+    if (!createHostBuffer(tb, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          boxProxyTints_.data(), &boxRasterTintBuf_,
+                          &boxRasterTintMem_))
+      return;
+    boxRasterTintCap_ = tb;
+  } else {
+    void* p = nullptr;
+    vkMapMemory(device_, boxRasterTintMem_, 0, tb, 0, &p);
+    std::memcpy(p, boxProxyTints_.data(), static_cast<size_t>(tb));
+    vkUnmapMemory(device_, boxRasterTintMem_);
+  }
+
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+  if (dispParamsSet_ != VK_NULL_HANDLE) {
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_,
+                            5, 1, &dispParamsSet_, 0, nullptr);
+  }
+  InstPushC ipc{};
+  ipc.emissive[0] = ipc.emissive[1] = ipc.emissive[2] = 0.0f;
+  ipc.ids[0] = -1;  // meshId: no source-face SSBO lookup (matches GL box draw)
+  ipc.ids[1] = 1;   // flags: geometricNormal (box has no useful vertex normals)
+  vkCmdPushConstants(cb, instPipelineLayout_,
+                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                     sizeof(InstPushC), &ipc);
+  VkBuffer bufs[5] = {boxRasterVbo_, boxRasterInstBuf_, boxRasterTintBuf_,
+                      boxRasterVtxColBuf_, boxRasterMorphBuf_};
+  VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
+  vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
+  VkDescriptorSet morphSets[3] = {dummyMorphDesc_, dummyMorphDesc_, dummyMorphDesc_};
+  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_, 7,
+                          3, morphSets, 0, nullptr);
+  vkCmdBindIndexBuffer(cb, boxRasterEbo_, 0, VK_INDEX_TYPE_UINT32);
+  vkCmdDrawIndexed(cb, 36, boxRasterCount_, 0, 0, 0);
 }
 
 void VulkanRenderer::buildBoxBlas() {
@@ -4494,6 +4601,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
       }
     }
+    // Raster LOD box proxies (optimization B): distant instances the cull collapsed
+    // to a shared unit cube, drawn as one instanced pass.
+    drawBoxProxies(cb);
     // UsdVol volume raymarch (proxy-box, translucent "over" opaque geometry).
     recordVolumePass(cb, volumePipeline_);
 
@@ -4780,6 +4890,13 @@ void VulkanRenderer::shutdown() {
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
   if (instPipelineLayout_) { vkDestroyPipelineLayout(device_, instPipelineLayout_, nullptr); instPipelineLayout_ = VK_NULL_HANDLE; }
+  // Raster LOD box-proxy buffers (optimization B).
+  for (VkBuffer* b : {&boxRasterVbo_, &boxRasterEbo_, &boxRasterVtxColBuf_,
+                      &boxRasterMorphBuf_, &boxRasterInstBuf_, &boxRasterTintBuf_})
+    if (*b) { vkDestroyBuffer(device_, *b, nullptr); *b = VK_NULL_HANDLE; }
+  for (VkDeviceMemory* m : {&boxRasterVboMem_, &boxRasterEboMem_, &boxRasterVtxColMem_,
+                            &boxRasterMorphMem_, &boxRasterInstMem_, &boxRasterTintMem_})
+    if (*m) { vkFreeMemory(device_, *m, nullptr); *m = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }

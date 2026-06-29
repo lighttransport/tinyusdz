@@ -44,6 +44,11 @@ class VulkanRenderer final : public Renderer {
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, uint32_t count) override;
+  // Raster LOD box proxies (optimization B): the VK raster path collapses distant
+  // instances to a shared unit cube (box-fit per instance) instead of dropping them.
+  bool supportsProxyDraw() const override { return true; }
+  void updateProxyInstances(const float* xforms, const float* tints,
+                            uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
@@ -220,6 +225,8 @@ class VulkanRenderer final : public Renderer {
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
   void buildBlas(VkMeshGPU& m);
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
+  void initBoxProxyRaster();            // static box geometry for raster LOD proxies
+  void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
   void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
   void createRtImage();                // storage image sized to the viewport
   void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
@@ -547,6 +554,29 @@ class VulkanRenderer final : public Renderer {
   // every Proxy-LOD instance, so the long tail of distant prototypes needs no
   // full BLAS. Built once (buildBoxBlas). boxMesh_ holds only vbo/ebo/blas.
   VkMeshGPU boxMesh_;
+
+  // Raster LOD box proxies (optimization B, VK raster path). Static unit-cube
+  // geometry drawn with instPipeline_; per-instance box-fit o2w (binding 1) + tint
+  // (binding 2) are uploaded each frame from boxProxyXforms_/boxProxyTints_ (filled
+  // by updateProxyInstances on the cull/upload path). bindings 3/4 carry constant
+  // white per-vertex color + zero morph so the box reuses the prototype pipeline.
+  VkBuffer boxRasterVbo_{VK_NULL_HANDLE};        // 8x DrawVertex (binding 0)
+  VkDeviceMemory boxRasterVboMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterEbo_{VK_NULL_HANDLE};        // 36 indices
+  VkDeviceMemory boxRasterEboMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterVtxColBuf_{VK_NULL_HANDLE};  // 8x vec3(1,1,1) (binding 3)
+  VkDeviceMemory boxRasterVtxColMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterMorphBuf_{VK_NULL_HANDLE};   // 8x uvec2(0,0) (binding 4)
+  VkDeviceMemory boxRasterMorphMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterInstBuf_{VK_NULL_HANDLE};    // per-instance o2w (binding 1)
+  VkDeviceMemory boxRasterInstMem_{VK_NULL_HANDLE};
+  VkDeviceSize boxRasterInstCap_{0};             // allocated bytes
+  VkBuffer boxRasterTintBuf_{VK_NULL_HANDLE};    // per-instance tint (binding 2)
+  VkDeviceMemory boxRasterTintMem_{VK_NULL_HANDLE};
+  VkDeviceSize boxRasterTintCap_{0};             // allocated bytes
+  uint32_t boxRasterCount_{0};                   // proxies to draw this frame
+  std::vector<float> boxProxyXforms_;            // 12 floats/proxy (CPU staging)
+  std::vector<float> boxProxyTints_;             // 3 floats/proxy (CPU staging)
 
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};
