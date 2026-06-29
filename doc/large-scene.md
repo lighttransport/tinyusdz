@@ -504,6 +504,73 @@ on the merged tail), and the full-mesh set is chosen by prototype size, not
 screen-space importance — a per-view promotion pass (à la `-lodStream`) is the
 follow-up.
 
+### 2.6.5 Per-frame view-dependent raster LOD (`--raster-lod`, tusdview)
+
+§2.6.4's GPU-budget LOD is a **load-time** decision: it bounds upload/VRAM by
+fixing one full/proxy split for the whole session. `--raster-lod` is the
+**per-frame, view-dependent** follow-up it called for. It runs inside the
+existing raster instance cull (`compactMeshInstances`, shared by the sync,
+headless, and async-worker cull paths), so it composes with — and is independent
+of — the load-time merge.
+
+For every instance that passes the frustum cull, the cull classifies it by its
+**projected screen radius** (`ProjectedRadiusPx` = `focalPx · worldRadius /
+viewDepth`, from the instance's world-AABB):
+
+- `px < --raster-lod-cull-px` (default `1.5`) → **dropped** (sub-pixel).
+- `px < --raster-lod-full-px` (default `48`) → **collapsed to a shared unit-box
+  proxy** (box-fit onto the instance's world AABB via `BoxFitXform`, tinted by
+  the instance color), accumulated across all prototypes into one instanced draw.
+- otherwise → drawn **full-detail**.
+
+Box proxies render on both raster backends: GL (`initBoxProxy`) and Vulkan
+(`initBoxProxyRaster` / `drawBoxProxies`, reusing the prototype instanced
+pipeline — meshId `-1`, geometric-normal shading). This matters for the headless
+path specifically: **headless forces the Vulkan backend**, so on island/Caldera
+captures the VK box proxies are what keep the distant scene visible. The feature
+is **off by default** and the LOD-off path is byte-identical (verified MAE 0 on
+both backends). The cull itself is accelerated by a coarse per-prototype spatial
+grid (`BuildRtLodGrid`) that frustum-rejects whole cells before the per-instance
+loop.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# Whole island, VK raster, robust auto-frame; collapse anything under 48 px to a
+# box, drop anything under 1 px:
+systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
+  ./build/tusdview --headless --next --backend vk \
+    --raster-lod --raster-lod-cull-px 1 --raster-lod-full-px 48 \
+    --max-tris 80000000 --frames 4 --screenshot island.ppm $M
+```
+
+Measured on the RTX 5060 Ti (whole island, 42.9 M instances, VK raster, robust
+auto-frame, 4 frames so the focal length settles — see note below):
+
+| Mode | Full-detail instances | `present` (GPU+readback) | Distant scene |
+|------|----------------------|--------------------------|---------------|
+| `--raster-lod` off | 23.7 M visible | ~5620 ms | full |
+| size-cull only (`--raster-lod-cull-px 4`, no proxy) | 69 k | ~555 ms | **dropped** |
+| box proxies (`--raster-lod-cull-px 1 --raster-lod-full-px 48`) | 15 + box soup | ~480–610 ms | **kept as boxes** |
+
+So size-culling alone cuts visible instances ~340× (23.7 M → 69 k) and the GPU
+present ~10× (5.6 s → 0.56 s); switching the drop to a box proxy keeps the same
+~10× frame-time win **without** losing the distant island — the far vegetation
+clumps become cheap gray boxes (~12 tris each) instead of vanishing. Unlike
+§2.6.4's merge this re-selects every time the camera settles, so pulling the
+camera in promotes near boxes back to full geometry.
+
+> **Note on focal length.** The viewport height / aspect are not final until
+> after the first `resizeViewport`, so frame 1's projected-radius math uses a
+> stale focal length and the cull re-runs on frame 2. Use `--frames ≥ 4` for
+> headless LOD captures so the final frame reflects the settled camera.
+
+This is a per-frame raster analogue of the RT path's view-dependent LOD
+(`rt_lod.{hh,cc}`, §2.6.3-adjacent), sharing the same `ProjectedRadiusPx` /
+`BoxFitXform` math (`lod_math.hh`). **Limitations:** hard switch at `full-px`
+(no stochastic crossfade band — the raster path has no accumulator to resolve a
+dither), box proxies are flat-shaded (no materials/textures), and `full-px` is a
+single global threshold rather than a per-prototype importance score.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
