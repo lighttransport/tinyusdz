@@ -462,3 +462,6 @@ gpu-task.md
 /third_party/vulkan/
 /activate-vulkan-validation.ps1
 /third_party/spirv-cross/
+
+# Local reference checkouts (e.g. ref/SaschaWillems-Vulkan), not part of the repo.
+/ref/
