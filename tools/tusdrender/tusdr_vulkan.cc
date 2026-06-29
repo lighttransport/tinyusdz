@@ -1,95 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdrender — LightRT Vulkan backend (GPU BVH traversal via lightrt_c_vk).
-// Compiles to nothing unless HAVE_VULKAN is defined.
+// Compiles to nothing unless HAVE_VULKAN is defined. Geometry flatten, ray
+// generation and shading are shared with the HIP backend (tusdr_gpu_common).
 #ifdef HAVE_VULKAN
 #include <vector>
 
-#include "image-writer.hh"
 #include "lightrt_c_vk.h"
 #include "tusdr_context.hh"
+#include "tusdr_gpu_common.hh"
 
 namespace tusdr {
 
-bool RunVulkanLightRT(const Options &opt,
-                              const std::vector<Vec3> &base_colors,
-                              const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                              const CameraFrame &camera, int height) {
-  // Build an lrt_tri_scene from the geometry.
-  // Flatten all meshes into a single vertex/index array that LightRT expects.
-  std::vector<float> flat_verts;
-  std::vector<uint32_t> flat_idx;
-  std::vector<Vec3> mesh_base_colors;
-  std::vector<Vec3> mesh_normals;  // per-triangle flat normals (shading fallback)
-  // Per-triangle vertex normals for smooth (barycentric-interpolated) shading.
-  // Zero when the mesh has no usable per-vertex normals -> flat fallback.
-  std::vector<Vec3> mesh_vn0, mesh_vn1, mesh_vn2;
-  uint32_t base_idx = 0;
-  for (const auto &g : geos) {
-    uint32_t nv = uint32_t(g.positions.size() / 3);
-    for (uint32_t j = 0; j < nv; ++j) {
-      flat_verts.push_back(g.positions[j * 3 + 0]);
-      flat_verts.push_back(g.positions[j * 3 + 1]);
-      flat_verts.push_back(g.positions[j * 3 + 2]);
-    }
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
-      flat_idx.push_back(g.indices[j] + base_idx);
-    }
-    // Only trust per-vertex normals when they are exactly one-per-position
-    // (USD faceVarying normals have a different layout, so fall back to flat).
-    const bool perVertexN = (g.normals.size() == size_t(nv) * 3u);
-    auto vnorm = [&](uint32_t vi) -> Vec3 {
-      return perVertexN ? Vec3{g.normals[vi * 3 + 0], g.normals[vi * 3 + 1],
-                               g.normals[vi * 3 + 2]}
-                        : Vec3{0, 0, 0};
-    };
-    // Store per-triangle shading data.
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
-      uint32_t i0 = g.indices[j * 3 + 0];
-      uint32_t i1 = g.indices[j * 3 + 1];
-      uint32_t i2 = g.indices[j * 3 + 2];
-      // Face normal.
-      Vec3 p0{g.positions[i0 * 3 + 0], g.positions[i0 * 3 + 1], g.positions[i0 * 3 + 2]};
-      Vec3 p1{g.positions[i1 * 3 + 0], g.positions[i1 * 3 + 1], g.positions[i1 * 3 + 2]};
-      Vec3 p2{g.positions[i2 * 3 + 0], g.positions[i2 * 3 + 1], g.positions[i2 * 3 + 2]};
-      Vec3 e1 = Sub(p1, p0), e2 = Sub(p2, p0);
-      Vec3 n = Normalize(Cross(e1, e2));
-      mesh_normals.push_back(n);
-      mesh_vn0.push_back(vnorm(i0));
-      mesh_vn1.push_back(vnorm(i1));
-      mesh_vn2.push_back(vnorm(i2));
-    }
-    size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
-    Vec3 bc = (&g - &geos[0]) < nm ? base_colors[&g - &geos[0]] : Vec3{0.5f, 0.5f, 0.5f};
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
-      mesh_base_colors.push_back(bc);
-    }
-    base_idx += nv;
-  }
-
-  uint32_t ntris = uint32_t(flat_idx.size() / 3);
-  if (ntris == 0) {
-    std::cerr << "No triangles to render.\n";
-    return false;
-  }
-
-  // Build the BVH scene.
-  lrt_tri_build_options bopts;
-  std::memset(&bopts, 0, sizeof(bopts));
-  bopts.quality = LRT_TRI_BUILD_DEFAULT;
-  bopts.layout = LRT_TRI_LAYOUT_BVH4;
-  bopts.num_threads = 1;
-
-  lrt_result lrterr = LRT_RESULT_OK;
-  // Indexed build: flat_verts holds the unique vertices and flat_idx the 3*ntris
-  // vertex ids. (The plain lrt_tri_scene_build expects a de-indexed 9*ntris soup,
-  // so passing the unique-vertex array there over-reads and fails the build.)
-  lrt_tri_scene *scene = lrt_tri_scene_build_indexed(
-      flat_verts.data(), flat_verts.size() / 3, flat_idx.data(), ntris, &bopts,
-      &lrterr);
-  if (!scene || lrterr != LRT_RESULT_OK) {
-    std::cerr << "Failed to build LightRT scene.\n";
-    return false;
-  }
+bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
+                      const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      const CameraFrame &camera, int height) {
+  GpuTriScene s;
+  if (!BuildGpuTriScene(base_colors, geos, &s)) return false;
 
   // Create the Vulkan engine.
   lrt_vk_engine_options vopts;
@@ -101,7 +27,7 @@ bool RunVulkanLightRT(const Options &opt,
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
   if (!vk) {
     std::cerr << "Failed to create LightRT Vulkan engine.\n";
-    lrt_tri_scene_free(scene);
+    lrt_tri_scene_free(s.scene);
     return false;
   }
 
@@ -114,147 +40,50 @@ bool RunVulkanLightRT(const Options &opt,
             << ((vk_caps & LRT_VK_CAP_RAY_QUERY) ? " ray_query" : "")
             << "\n";
 
-  // Render — generate every primary ray, trace the whole frame in ONE batched
-  // GPU dispatch, then shade. (The previous code traced one ray per GPU submit
-  // and, on the ray-query path, rebuilt the acceleration structure per pixel —
-  // correct in spirit but minutes-slow and, for -vkr, fed the wrong vertices.)
+  // Generate every primary ray and trace the whole frame in ONE batched GPU
+  // dispatch (the -vkr ray-query AS is built once, not per pixel).
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
-  tinyusdz::Image img;
-  img.width = w;
-  img.height = h;
-  img.channels = 4;
-  img.bpp = 8;
-  img.data.resize(size_t(w) * size_t(h) * 4, 0);
-
-  Vec3 eye = camera.origin;
-  Vec3 fwd = camera.forward;
-  Vec3 up = camera.up;
-  Vec3 right = Normalize(Cross(fwd, up));
-  Vec3 camUp = Cross(right, fwd);
-  float aspect = float(w) / float(h);
-  float fov = camera.yfov;
-  float half_h = std::tan(fov * 0.5f);
-  float half_w = half_h * aspect;
   const int spp = std::max(1, opt.samples);
-  const float ambient = opt.ambient;
-  const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
 
-  // One ray per (pixel, sample); ray index = (y*w + x)*spp + s. Each sample gets
-  // a distinct Halton(2,3) sub-pixel offset so -samples actually supersamples for
-  // anti-aliasing. (Previously every sample reused the pixel-center direction, so
-  // -samples N traced N identical rays and produced no AA at all.)
-  const size_t nrays = size_t(w) * size_t(h) * size_t(spp);
-  std::vector<lrt_ray> rays(nrays);
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
-      for (int s = 0; s < spp; ++s) {
-        float jx, jy;
-        PixelJitter(s, spp, &jx, &jy);
-        float fx = (float(x) + jx) / float(w) * 2.0f - 1.0f;
-        float fy = (float(y) + jy) / float(h) * 2.0f - 1.0f;
-        Vec3 dir = Add(Mul(right, fx * half_w), Add(Mul(camUp, fy * half_h), fwd));
-        dir = Normalize(dir);
-        lrt_ray &ray = rays[base + size_t(s)];
-        ray.org[0] = eye.x; ray.org[1] = eye.y; ray.org[2] = eye.z;
-        ray.tmin = 0.001f;
-        ray.dir[0] = dir.x; ray.dir[1] = dir.y; ray.dir[2] = dir.z;
-        ray.tmax = 1.0e10f;
-      }
-    }
-  }
-
-  std::vector<lrt_hit> hits(nrays);
+  std::vector<lrt_hit> hits(rays.size());
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
   if (has_rt && opt.vulkan_rt) {
     // Build the ray-query acceleration structure directly from the indexed mesh
-    // (flat_verts = unique positions, flat_idx = triangle vertex ids); the GPU
-    // builds a VK_INDEX_TYPE_UINT32 BLAS, so we don't have to de-index into a
-    // soup. primitiveIndex == triangle build order == caller index, matching the
+    // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
+    // primitiveIndex == triangle build order == caller index, matching the
     // CPU/compute paths. Build once, trace the whole frame, free.
-    uint32_t nverts = uint32_t(flat_verts.size() / 3u);
+    uint32_t nverts = uint32_t(s.flat_verts.size() / 3u);
     lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
-        vk, flat_verts.data(), nverts, flat_idx.data(), ntris, &trerr);
+        vk, s.flat_verts.data(), nverts, s.flat_idx.data(), s.ntris, &trerr);
     if (rtx) {
-      traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(nrays),
+      traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(rays.size()),
                                       hits.data(), &trerr);
       lrt_vk_rtx_scene_free(vk, rtx);
     }
   } else {
-    traced = lrt_vk_trace_scene(vk, scene, rays.data(), uint32_t(nrays),
+    traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), uint32_t(rays.size()),
                                 hits.data(), &trerr);
   }
   if (traced < 0) {
     std::cerr << "Vulkan trace failed (rc=" << trerr << ").\n";
-    lrt_tri_scene_free(scene);
+    lrt_tri_scene_free(s.scene);
     lrt_vk_engine_destroy(vk);
     return false;
   }
 
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
-      Vec3 color{0, 0, 0};
-      for (int s = 0; s < spp; ++s) {
-        const lrt_hit &hit = hits[base + size_t(s)];
-        if (hit.prim_id != 0xFFFFFFFFu && hit.prim_id < ntris) {
-          Vec3 bc = hit.prim_id < mesh_base_colors.size()
-                        ? mesh_base_colors[hit.prim_id]
-                        : Vec3{0.5f, 0.5f, 0.5f};
-          // Smooth normal: barycentric-interpolate the triangle's vertex normals
-          // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
-          // normal when vertex normals are absent/degenerate.
-          Vec3 N = mesh_normals[hit.prim_id];
-          const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
-          Vec3 sn = Add(Add(Mul(mesh_vn0[hit.prim_id], w0),
-                            Mul(mesh_vn1[hit.prim_id], w1)),
-                        Mul(mesh_vn2[hit.prim_id], w2));
-          if (Length(sn) > 1.0e-8f) N = Normalize(sn);
-          // Orient the normal toward the camera so a surface visible to the eye
-          // is never left unlit by a back-facing normal (USD winding/normals are
-          // not guaranteed consistent for a quick preview).
-          Vec3 V = Vec3{-rays[base + size_t(s)].dir[0],
-                        -rays[base + size_t(s)].dir[1],
-                        -rays[base + size_t(s)].dir[2]};
-          if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
-          // Fixed key light + a dim camera headlight so the silhouette reads even
-          // when the key grazes the surface; ambient lifts the shadow terminator.
-          float key = std::max(0.0f, Dot(N, light));
-          float head = std::max(0.0f, Dot(N, V));
-          float lit = ambient + 0.8f * key + 0.35f * head;
-          Vec3 shaded = Mul(bc, lit);
-          color = Add(color, shaded);
-        }
-      }
-      color = Mul(color, 1.0f / float(spp));
-      size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
-      img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
-      img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
-      img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
-      img.data[pi + 3] = 255;
-    }
+  bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
+  if (ok) {
+    std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
+    std::cerr << "backend: LightRT VK ("
+              << (has_rt && opt.vulkan_rt ? "ray_query" : "compute trace") << ")\n";
   }
-
-  // Write PNG.
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
-  if (!ret) {
-    std::cerr << "Failed to write PNG: " << ret.error() << "\n";
-    lrt_tri_scene_free(scene);
-    lrt_vk_engine_destroy(vk);
-    return false;
-  }
-
-  std::cerr << "triangles: " << ntris << " (" << geos.size() << " meshes)\n";
-  std::cerr << "backend: LightRT VK ("
-            << (has_rt && opt.vulkan_rt ? "ray_query" : "compute trace")
-            << ")\n";
-  lrt_tri_scene_free(scene);
+  lrt_tri_scene_free(s.scene);
   lrt_vk_engine_destroy(vk);
-  return true;
+  return ok;
 }
 
 }  // namespace tusdr
