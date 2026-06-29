@@ -167,6 +167,10 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
     uint32_t instanceCount{0};
     uint32_t drawInstanceCount{0};
+    // Coarse per-prototype instance grid for RT LOD cell rejection (P5). Built
+    // lazily on the first LOD-enabled rebuild; instance transforms are static.
+    RtLodGrid lodGrid;
+    bool lodGridTried{false};
   };
 
   // setup helpers

@@ -36,6 +36,26 @@ struct RtLodCamera {
   std::uint32_t ditherSeed{0};  // stable for a settled pose (stochastic crossfade)
 };
 
+// One coarse cell of an RtLodGrid: a combined world AABB over a contiguous run of
+// instance indices in RtLodGrid::order.
+struct RtLodGridCell {
+  float wmn[3];
+  float wmx[3];
+  std::uint32_t begin{0};  // offset into RtLodGrid::order
+  std::uint32_t count{0};
+};
+
+// A coarse spatial grid over a prototype's instance world AABBs. At selection time
+// a whole cell can be frustum- or size-rejected before any of its instances are
+// touched, so reselect cost scales with the *visible* cell set rather than the
+// total instance count (the mechanism that keeps tens-of-millions-of-instances
+// scenes interactive). Built once per prototype; instance transforms are static.
+struct RtLodGrid {
+  std::vector<std::uint32_t> order;  // instance indices grouped cell-by-cell
+  std::vector<RtLodGridCell> cells;  // non-empty cells only
+  bool valid{false};                 // false => fall back to the flat per-instance loop
+};
+
 // A prototype's data the selector reads (a non-owning view onto a VkMeshGPU).
 struct RtLodProto {
   const float* instanceXforms{nullptr};  // 12 floats/inst (3x4 row-major), or null
@@ -46,6 +66,7 @@ struct RtLodProto {
   const float* protoAabbMin{nullptr};    // object space
   const float* protoAabbMax{nullptr};
   std::uint32_t meshId{0};               // index into the renderer mesh/desc arrays
+  const RtLodGrid* grid{nullptr};        // optional coarse cell grid (P5), or null
 };
 
 // One emitted TLAS instance, ready to memcpy into the instance + instInfo arrays.
@@ -65,6 +86,13 @@ struct RtLodStats {
 // pixel half-extent given the camera focal length, using view-space depth so an
 // off-axis instance is not over-promoted by its larger Euclidean distance.
 float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam);
+
+// Build a coarse spatial grid over `proto`'s instance world AABBs for fast cell
+// rejection in SelectInstanceLOD. No-op (grid->valid = false) when the prototype is
+// non-instanced, degenerate, or has fewer than `minInstances` placements (the flat
+// loop is already cheap there). Deterministic; call once per prototype.
+void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
+                    RtLodGrid* grid);
 
 // Classify and emit every visible placement across all prototypes. Appends to
 // `out` (caller may reserve). `boxMeshId` is the descriptor index of the shared

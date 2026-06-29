@@ -43,6 +43,12 @@ void ProtoWorldBounds(const float o2w[12], const float mn[3], const float mx[3],
   *radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+// World 3x4 o2w of placement k (instanced or the single non-instanced matrix).
+const float* PlacementXform(const RtLodProto& proto, std::uint32_t k,
+                            const float singleO2w[12]) {
+  return proto.instanceCount ? &proto.instanceXforms[k * 12] : singleO2w;
+}
+
 }  // namespace
 
 float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam) {
@@ -50,6 +56,100 @@ float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam) {
   float depth = dx * cam.forward.x + dy * cam.forward.y + dz * cam.forward.z;
   depth = std::max(depth, cam.nearPlane);
   return cam.focalPx * r / depth;
+}
+
+void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
+                    RtLodGrid* grid) {
+  grid->order.clear();
+  grid->cells.clear();
+  grid->valid = false;
+  const std::uint32_t n = proto.instanceCount;
+  if (n < minInstances || n < 2 || !proto.instanceXforms || !proto.protoAabbMin ||
+      !proto.protoAabbMax)
+    return;
+  const float* mn = proto.protoAabbMin;
+  const float* mx = proto.protoAabbMax;
+  if (!(mx[0] > mn[0] || mx[1] > mn[1] || mx[2] > mn[2])) return;  // degenerate
+
+  // Per-instance world AABB centers + overall center bounds.
+  std::vector<float> cx(n), cy(n), cz(n);
+  float gmn[3] = {1e30f, 1e30f, 1e30f}, gmx[3] = {-1e30f, -1e30f, -1e30f};
+  for (std::uint32_t k = 0; k < n; ++k) {
+    float center[3], radius, wmn[3], wmx[3];
+    ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
+    cx[k] = center[0]; cy[k] = center[1]; cz[k] = center[2];
+    for (int r = 0; r < 3; ++r) {
+      gmn[r] = std::min(gmn[r], center[r]);
+      gmx[r] = std::max(gmx[r], center[r]);
+    }
+  }
+  const float ext[3] = {gmx[0] - gmn[0], gmx[1] - gmn[1], gmx[2] - gmn[2]};
+  const float maxext = std::max({ext[0], ext[1], ext[2]});
+  if (maxext <= 0.0f) return;  // all centers coincide
+
+  // Aim for ~256 instances/cell. Size cells using only the *populated* axes (an
+  // axis whose extent is negligible vs the largest gets one cell), so a flat layout
+  // (e.g. an ocean plane: ~zero Y extent) does not blow the cell count up. cellSize
+  // is the geometric mean cell edge over the D effective dimensions.
+  const float flatEps = 1e-4f * maxext;
+  float prodExt = 1.0f;
+  int effDim = 0;
+  for (int r = 0; r < 3; ++r)
+    if (ext[r] > flatEps) { prodExt *= ext[r]; ++effDim; }
+  const float target = std::max(1.0f, float(n) / 256.0f);
+  const float cellSize =
+      std::pow(prodExt / target, 1.0f / float(std::max(effDim, 1)));
+  int dim[3];
+  for (int r = 0; r < 3; ++r) {
+    int d = (ext[r] > flatEps && cellSize > 0.0f)
+                ? int(std::ceil(ext[r] / cellSize)) : 1;
+    dim[r] = std::min(std::max(d, 1), 256);
+  }
+  if (dim[0] == 1 && dim[1] == 1 && dim[2] == 1) return;  // no benefit
+  // inv maps a center coord into [0,dim) along each axis (flat axes -> bin 0).
+  const std::uint32_t ncell =
+      std::uint32_t(dim[0]) * std::uint32_t(dim[1]) * std::uint32_t(dim[2]);
+  const float inv[3] = {ext[0] > flatEps ? dim[0] / ext[0] : 0.0f,
+                        ext[1] > flatEps ? dim[1] / ext[1] : 0.0f,
+                        ext[2] > flatEps ? dim[2] / ext[2] : 0.0f};
+
+  auto cellOf = [&](std::uint32_t k) -> std::uint32_t {
+    int ix = std::min(int((cx[k] - gmn[0]) * inv[0]), dim[0] - 1);
+    int iy = std::min(int((cy[k] - gmn[1]) * inv[1]), dim[1] - 1);
+    int iz = std::min(int((cz[k] - gmn[2]) * inv[2]), dim[2] - 1);
+    ix = std::max(ix, 0); iy = std::max(iy, 0); iz = std::max(iz, 0);
+    return std::uint32_t((iz * dim[1] + iy) * dim[0] + ix);
+  };
+
+  // Counting sort instances into cells (one O(n) pass each).
+  std::vector<std::uint32_t> head(ncell + 1, 0);
+  for (std::uint32_t k = 0; k < n; ++k) ++head[cellOf(k) + 1];
+  for (std::uint32_t c = 0; c < ncell; ++c) head[c + 1] += head[c];
+  grid->order.resize(n);
+  std::vector<std::uint32_t> cursor(head.begin(), head.end() - 1);
+  for (std::uint32_t k = 0; k < n; ++k) grid->order[cursor[cellOf(k)]++] = k;
+
+  // Emit non-empty cells with their combined world AABB.
+  grid->cells.reserve(64);
+  for (std::uint32_t c = 0; c < ncell; ++c) {
+    const std::uint32_t b = head[c], e = head[c + 1];
+    if (e == b) continue;
+    RtLodGridCell cell;
+    cell.begin = b;
+    cell.count = e - b;
+    for (int r = 0; r < 3; ++r) { cell.wmn[r] = 1e30f; cell.wmx[r] = -1e30f; }
+    for (std::uint32_t i = b; i < e; ++i) {
+      const std::uint32_t k = grid->order[i];
+      float center[3], radius, wmn[3], wmx[3];
+      ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
+      for (int r = 0; r < 3; ++r) {
+        cell.wmn[r] = std::min(cell.wmn[r], wmn[r]);
+        cell.wmx[r] = std::max(cell.wmx[r], wmx[r]);
+      }
+    }
+    grid->cells.push_back(cell);
+  }
+  grid->valid = !grid->cells.empty();
 }
 
 RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
@@ -83,8 +183,11 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
         for (int k = 0; k < 12; ++k) singleO2w[k] = (k % 5 == 0) ? 1.f : 0.f;
     }
 
-    for (std::uint32_t k = 0; k < count; ++k) {
-      const float* o2w = ninst ? &proto.instanceXforms[k * 12] : singleO2w;
+    // Classify + emit one placement k. Identical decision regardless of whether k
+    // was reached by the flat loop or via a grid cell -> grid acceleration is a
+    // pure early-out, the emitted set is order-independent.
+    auto classify = [&](std::uint32_t k) {
+      const float* o2w = PlacementXform(proto, k, singleO2w);
 
       float center[3], radius, wmn[3], wmx[3];
       ProtoWorldBounds(o2w, mn, mx, center, &radius, wmn, wmx);
@@ -95,12 +198,12 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
             frustum.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
                 light3d::CullResult::Outside) {
           ++stats.culled;
-          continue;
+          return;
         }
         const float px = ProjectedRadiusPx(center, radius, cam);
         if (px < cam.cullPx) {
           ++stats.culled;
-          continue;
+          return;
         }
         if (!cam.proxyEnabled) {
           level = RtLod::Full;  // P1: cull-only, distant-but-visible stays Full
@@ -139,6 +242,49 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
         ++stats.full;
       }
       out->push_back(inst);
+    };
+
+    // Coarse grid path (P5): reject whole cells before any per-instance work. A
+    // cell's AABB contains every instance AABB inside it, and its near-depth +
+    // bounding-sphere radius over-estimate every contained instance's projected
+    // radius, so both rejections are conservative -> identical kept set, but the
+    // off-screen / sub-pixel tail never iterates. Only when LOD is actually active.
+    if (cam.lodEnabled && !degenerate && ninst && proto.grid && proto.grid->valid) {
+      const RtLodGrid& g = *proto.grid;
+      for (const RtLodGridCell& cell : g.cells) {
+        if (cam.frustumCull &&
+            frustum.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                             {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
+                light3d::CullResult::Outside) {
+          stats.culled += cell.count;
+          continue;
+        }
+        // Conservative projected radius: nearest cell depth, full-cell radius.
+        float ccen[3], crad, nearDepth = 1e30f;
+        for (int r = 0; r < 3; ++r) ccen[r] = 0.5f * (cell.wmn[r] + cell.wmx[r]);
+        const float cdx = cell.wmx[0] - cell.wmn[0], cdy = cell.wmx[1] - cell.wmn[1],
+                    cdz = cell.wmx[2] - cell.wmn[2];
+        crad = 0.5f * std::sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
+        for (int corner = 0; corner < 8; ++corner) {
+          const float p[3] = {(corner & 1) ? cell.wmx[0] : cell.wmn[0],
+                              (corner & 2) ? cell.wmx[1] : cell.wmn[1],
+                              (corner & 4) ? cell.wmx[2] : cell.wmn[2]};
+          const float depth = (p[0] - cam.eye.x) * cam.forward.x +
+                              (p[1] - cam.eye.y) * cam.forward.y +
+                              (p[2] - cam.eye.z) * cam.forward.z;
+          nearDepth = std::min(nearDepth, depth);
+        }
+        const float cellPx =
+            cam.focalPx * crad / std::max(nearDepth, cam.nearPlane);
+        if (cellPx < cam.cullPx) {
+          stats.culled += cell.count;
+          continue;
+        }
+        for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
+          classify(g.order[i]);
+      }
+    } else {
+      for (std::uint32_t k = 0; k < count; ++k) classify(k);
     }
   }
   return stats;
