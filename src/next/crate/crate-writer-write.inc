@@ -39,6 +39,25 @@
     // Reserve space for bootstrap header
     buffer_.resize(kCrateBootstrapSize, 0);
 
+    // Reserve table/map capacity up front: a big scene appends millions of
+    // paths/specs/fields and dedup entries, and the repeated geometric reallocs +
+    // unordered_map rehashes are a top serial cost (alloc churn, ~18% on Island).
+    // Each prim yields ~1 prim spec + 1 spec per property; sizes are heuristic
+    // (over-reserve is cheaper than rehashing), so this never changes output.
+    {
+      size_t nprim = layer.prims().size();
+      size_t nprop = 0;
+      for (const auto& p : layer.prims()) nprop += p.properties().slots().size();
+      const size_t nspec = nprim + nprop + 16;
+      paths_.reserve(nspec);
+      path_to_index_.reserve(nspec * 2);
+      specs_.reserve(nspec);
+      fieldsets_.reserve(nspec);
+      fields_.reserve(nspec * 3);
+      value_data_.reserve(nprop + nprim + 16);
+      block_dedup_.reserve(nprop + nprim + 16);
+    }
+
     // Build tables from layer
     BuildTables(layer);
 
