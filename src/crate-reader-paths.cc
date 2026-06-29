@@ -19,6 +19,8 @@
 #endif
 
 #include <algorithm>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include <stack>
 
@@ -37,6 +39,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
+#include "safe-arithmetic.hh"
 
 //
 #ifdef __clang__
@@ -209,7 +212,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
       if (hasChild) {
         if (hasSibling) {
-          // NOTE(syoyo): This recursive call can be parallelized
           auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
 
           if (siblingIndex >= jumps.size()) {
@@ -434,7 +436,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
     if (hasChild) {
       if (hasSibling) {
-        // NOTE(syoyo): This recursive call can be parallelized
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
         if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                         siblingIndex, parentPath)) {
@@ -454,378 +455,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
       // Have a child (may have also had a sibling). Reset parent path.
       parentPath = _paths[idx];
-    }
-    // If we had only a sibling, we just continue since the parent path is
-    // unchanged and the next thing in the reader stream is the sibling's
-    // header.
-  } while (hasChild || hasSibling);
-
-  return true;
-}
-#endif
-
-#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
-bool CrateReader::BuildNodeHierarchy(
-    std::vector<uint32_t> const &pathIndexes,
-    std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps,
-    std::vector<bool> &visit_table, /* inout */
-    size_t _curIndex,
-    int64_t _parentNodeIndex) {
-
-  (void)elementTokenIndexes;
-
-  std::stack<int64_t> parentNodeIndexStack;
-  std::stack<size_t> startIndexStack;
-  std::stack<size_t> endIndexStack;
-
-  size_t nIter = 0;
-  const size_t maxIter = _config.maxPathIndicesDecodeIteration;
-
-  size_t startIndex = _curIndex;
-  size_t endIndex = pathIndexes.size() - 1;
-  int64_t parentNodeIndex = _parentNodeIndex;
-
-  // NOTE: Need to indirectly lookup index through pathIndexes[] when accessing
-  // `_nodes`
-  while (nIter < maxIter) {
-
-    for (size_t thisIndex = startIndex; thisIndex < (endIndex + 1); thisIndex++) {
-      if (parentNodeIndex == -1) {
-        // root node.
-        // Assume single root node in the scene.
-        //assert(thisIndex == 0);
-        if (thisIndex != 0) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
-        }
-
-        if (thisIndex >= pathIndexes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
-        }
-
-        size_t pathIdx = pathIndexes[thisIndex];
-        if (pathIdx >= _paths.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        if (pathIdx >= _nodes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        if (pathIdx >= visit_table.size()) {
-          // This should not be happan though
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
-        }
-
-        if (visit_table[pathIdx]) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
-        }
-
-        _nodes[pathIdx] = Node(parentNodeIndex, _paths[pathIdx]);
-        visit_table[pathIdx] = true;
-
-        parentNodeIndex = int64_t(thisIndex);
-
-      } else {
-        //if (parentNodeIndex >= int64_t(_nodes.size())) {
-        //  PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
-        //}
-
-        if (parentNodeIndex >= int64_t(pathIndexes.size())) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
-        }
-
-        if (thisIndex >= pathIndexes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
-        }
-
-        DCOUT("Hierarchy. parent[" << pathIndexes[size_t(parentNodeIndex)]
-                                   << "].add_child = " << pathIndexes[thisIndex]);
-
-        size_t pathIdx = pathIndexes[thisIndex];
-        if (pathIdx >= _paths.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        if (pathIdx >= _nodes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        if (pathIdx >= visit_table.size()) {
-          // This should not be happan though
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
-        }
-
-        if (visit_table[pathIdx]) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
-        }
-
-
-        // Ensure parent is not set yet.
-        if (_nodes[pathIdx].GetParent() != -2) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
-        }
-
-        Node node(parentNodeIndex, _paths[pathIdx]);
-        _nodes[pathIdx] = node;
-
-        visit_table[pathIdx] = true;
-
-        if (pathIdx >= _elemPaths.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        //std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
-        std::string name = _elemPaths[pathIdx].full_path_name();
-        DCOUT("childName = " << name);
-
-        size_t parentNodeIdx = size_t(parentNodeIndex);
-        if (parentNodeIdx >= pathIndexes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "ParentNodeIdx out-of-range.");
-        }
-
-        size_t parentPathIdx = pathIndexes[parentNodeIdx];
-        if (parentPathIdx >= _nodes.size()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-        }
-
-        if (!_nodes[parentPathIdx].AddChildren(
-            name, pathIdx)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format(
-              "Invalid path index. (duplicate child `{}` under parent `{}`, thisIndex={} pathIdx={})",
-              name, _paths[parentPathIdx].full_path_name(), thisIndex, pathIdx));
-        }
-      }
-
-      if (thisIndex >= jumps.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Index is out-of-range");
-      }
-
-      bool hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
-      bool hasSibling = (jumps[thisIndex] >= 0);
-
-      if (hasChild) {
-        if (hasSibling) {
-          auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-
-          if (siblingIndex >= jumps.size()) {
-            PUSH_ERROR_AND_RETURN("jump index corrupted.");
-          }
-
-          // Find subtree end.
-          size_t subtreeStartIdx = siblingIndex;
-          size_t subtreeIdx = subtreeStartIdx;
-
-          for (; subtreeIdx < jumps.size(); subtreeIdx++) {
-
-            bool has_child = (jumps[subtreeIdx] > 0) || (jumps[subtreeIdx] == -1);
-            bool has_sibling = (jumps[subtreeIdx] >= 0);
-
-            if (has_child || has_sibling) {
-              continue;
-            }
-            break;
-          }
-
-          size_t subtreeEndIdx = subtreeIdx;
-          if (subtreeEndIdx >= jumps.size()) {
-            // Guess corrupted.
-            PUSH_ERROR_AND_RETURN("jump indices seems corrupted.");
-          }
-
-          DCOUT("subtree startIdx " << subtreeStartIdx << ", subtree endIndex " << subtreeEndIdx);
-
-          if (subtreeEndIdx >= subtreeStartIdx) {
-
-            // index range after traversing subtree
-            if (jumps[thisIndex] > 1) {
-                startIndexStack.push(thisIndex+1);
-                // jumps should be always positive, so no siblingIndex < thisIndex
-                endIndexStack.push(siblingIndex-1); // endIndex is inclusive so subtract 1.
-                parentNodeIndexStack.push(int64_t(thisIndex));
-            }
-
-            startIndexStack.push(subtreeStartIdx);
-            endIndexStack.push(subtreeEndIdx);
-            parentNodeIndexStack.push(parentNodeIndex);
-
-            DCOUT("stack size: " << startIndexStack.size());
-
-            nIter++;
-
-            break; // goto `(A)`
-          }
-
-        }
-        // Have a child (may have also had a sibling). Reset parent node index
-        parentNodeIndex = int64_t(thisIndex);
-        DCOUT("parentNodeIndex = " << parentNodeIndex);
-      }
-    }
-
-    // (A)
-
-    if (startIndexStack.empty()) {
-      break; // end traversal
-    }
-
-    startIndex = startIndexStack.top();
-    startIndexStack.pop();
-
-    endIndex = endIndexStack.top();
-    endIndexStack.pop();
-
-    parentNodeIndex = parentNodeIndexStack.top();
-    parentNodeIndexStack.pop();
-
-    nIter++;
-  }
-
-  if (nIter >= maxIter) {
-    PUSH_ERROR_AND_RETURN("PathIndex tree Too deep.");
-  }
-
-  return true;
-}
-#else
-// TODO(syoyo): Refactor. Code is mostly identical to BuildDecompressedPathsImpl
-bool CrateReader::BuildNodeHierarchy(
-    std::vector<uint32_t> const &pathIndexes,
-    std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps,
-    std::vector<bool> &visit_table, /* inout */
-    size_t curIndex,
-    int64_t parentNodeIndex) {
-  bool hasChild = false, hasSibling = false;
-
-  // NOTE: Need to indirectly lookup index through pathIndexes[] when accessing
-  // `_nodes`
-  do {
-    auto thisIndex = curIndex++;
-    DCOUT("thisIndex = " << thisIndex << ", curIndex = " << curIndex);
-    if (parentNodeIndex == -1) {
-      // root node.
-      // Assume single root node in the scene.
-      //assert(thisIndex == 0);
-      if (thisIndex != 0) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
-      }
-
-      if (thisIndex >= pathIndexes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
-      }
-
-      size_t pathIdx = pathIndexes[thisIndex];
-      if (pathIdx >= _paths.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      if (pathIdx >= _nodes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      if (pathIdx >= visit_table.size()) {
-        // This should not be happan though
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
-      }
-
-      if (visit_table[pathIdx]) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
-      }
-
-      Node root(parentNodeIndex, _paths[pathIdx]);
-
-      _nodes[pathIdx] = root;
-      visit_table[pathIdx] = true;
-
-      parentNodeIndex = int64_t(thisIndex);
-
-    } else {
-      //if (parentNodeIndex >= int64_t(_nodes.size())) {
-      //  PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
-      //}
-
-      if (parentNodeIndex >= int64_t(pathIndexes.size())) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
-      }
-
-      if (thisIndex >= pathIndexes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
-      }
-
-      DCOUT("Hierarchy. parent[" << pathIndexes[size_t(parentNodeIndex)]
-                                 << "].add_child = " << pathIndexes[thisIndex]);
-
-      size_t pathIdx = pathIndexes[thisIndex];
-      if (pathIdx >= _paths.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      if (pathIdx >= _nodes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      if (pathIdx >= visit_table.size()) {
-        // This should not be happan though
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
-      }
-
-      if (visit_table[pathIdx]) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
-      }
-
-      Node node(parentNodeIndex, _paths[pathIdx]);
-
-      // Ensure parent is not set yet.
-      if (_nodes[pathIdx].GetParent() != -2) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
-      }
-
-      _nodes[pathIdx] = node;
-      visit_table[pathIdx] = true;
-
-      if (pathIdx >= _elemPaths.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      //std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
-      std::string name = _elemPaths[pathIdx].full_path_name();
-      DCOUT("childName = " << name);
-
-      size_t parentNodeIdx = size_t(parentNodeIndex);
-      if (parentNodeIdx >= pathIndexes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "ParentNodeIdx out-of-range.");
-      }
-
-      size_t parentPathIdx = pathIndexes[parentNodeIdx];
-      if (parentPathIdx >= _nodes.size()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
-      }
-
-      if (!_nodes[parentPathIdx].AddChildren(
-          name, pathIdx)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid path index.");
-      }
-    }
-
-    if (thisIndex >= jumps.size()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Index is out-of-range");
-    }
-
-    hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
-    hasSibling = (jumps[thisIndex] >= 0);
-
-    if (hasChild) {
-      if (hasSibling) {
-        auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
-                                siblingIndex, parentNodeIndex)) {
-          return false;
-        }
-      }
-      // Have a child (may have also had a sibling). Reset parent node index
-      parentNodeIndex = int64_t(thisIndex);
-      DCOUT("parentNodeIndex = " << parentNodeIndex);
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -859,8 +488,17 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
 
-  // 3 = pathIndex, elementTokenIndex, jump
-  CHECK_MEMORY_USAGE(size_t(numEncodedPaths) * sizeof(int32_t) * 3);
+  // Scratch decode arrays are local to this method. Keep their memory budget
+  // scoped so malformed streams that return early do not leak the cap counter.
+  size_t decode_arrays_bytes{0};
+  if (!safe::mul(size_t(numEncodedPaths), sizeof(int32_t) * size_t(3),
+                 &decode_arrays_bytes)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in path array size computation.");
+  }
+  auto decode_arrays_budget = memory_manager_->ReserveScoped(decode_arrays_bytes);
+  if (!decode_arrays_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed path arrays.");
+  }
 
   pathIndexes.resize(static_cast<size_t>(numEncodedPaths));
   elementTokenIndexes.resize(static_cast<size_t>(numEncodedPaths));
@@ -868,15 +506,9 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(numEncodedPaths));
   size_t workspaceBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(numEncodedPaths));
-  CHECK_MEMORY_USAGE(compBufferSize);
-  CHECK_MEMORY_USAGE(workspaceBufferSize);
 
-  // Optimized implementation: reuse buffers across calls
-  if (_decomp_comp_buffer.size() < compBufferSize) {
-    _decomp_comp_buffer.resize(compBufferSize);
-  }
-  if (_decomp_working_buffer.size() < workspaceBufferSize) {
-    _decomp_working_buffer.resize(workspaceBufferSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, workspaceBufferSize)) {
+    return false;
   }
   // Create references for compatibility with existing code
   std::vector<char> &compBuffer = _decomp_comp_buffer;
@@ -893,8 +525,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     if (compPathIndexesSize > compBufferSize) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed PathIndexes size.");
     }
-
-    CHECK_MEMORY_USAGE(size_t(compPathIndexesSize));
 
     if (compPathIndexesSize !=
         _sr->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
@@ -928,8 +558,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
 
-    CHECK_MEMORY_USAGE(size_t(compElementTokenIndexesSize));
-
     if (compElementTokenIndexesSize !=
         _sr->read(size_t(compElementTokenIndexesSize),
                   size_t(compElementTokenIndexesSize),
@@ -961,8 +589,6 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     if (compJumpsSize > compBufferSize) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
     }
-
-    CHECK_MEMORY_USAGE(size_t(compJumpsSize));
 
     if (compJumpsSize !=
         _sr->read(size_t(compJumpsSize), size_t(compJumpsSize),
@@ -1009,7 +635,10 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   // For circular tree check
   std::vector<bool> visit_table;
-  CHECK_MEMORY_USAGE(_paths.size()); // TODO: divide by 8?
+  auto visit_table_budget = memory_manager_->ReserveScoped(_paths.size());
+  if (!visit_table_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for path visit table.");
+  }
 
   // `_paths` is already initialized just before calling this ReadCompressedPaths
   visit_table.resize(_paths.size());
@@ -1063,8 +692,100 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   for (size_t i = 0; i < visit_table.size(); i++) {
     visit_table[i] = false;
   }
-  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
-                          /* curIndex */ 0, /* parent node index */ -1)) {
+
+  auto build_node_hierarchy_from_decoded_paths = [&]() -> bool {
+    std::unordered_map<std::string, size_t> path_to_index;
+    path_to_index.reserve(_paths.size());
+
+    for (size_t path_idx = 0; path_idx < _paths.size(); ++path_idx) {
+      if (!_paths[path_idx].is_valid()) {
+        continue;
+      }
+      path_to_index.emplace(_paths[path_idx].full_path_name(), path_idx);
+    }
+
+    std::function<bool(size_t)> build_one = [&](const size_t path_idx) -> bool {
+      if (path_idx >= _paths.size() || path_idx >= _nodes.size() ||
+          path_idx >= visit_table.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+      if (!_paths[path_idx].is_valid()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid decoded path.");
+      }
+      if (visit_table[path_idx]) {
+        return true;
+      }
+      if (_nodes[path_idx].GetParent() != -2) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Corrupted path hierarchy: duplicate node.");
+      }
+
+      int64_t parent_node_index = -1;
+      Path parent_path = _paths[path_idx].get_parent_path();
+      while (parent_path.is_valid() && !parent_path.full_path_name().empty()) {
+        const auto parent_it = path_to_index.find(parent_path.full_path_name());
+        if (parent_it != path_to_index.end()) {
+          parent_node_index = static_cast<int64_t>(parent_it->second);
+          if (!visit_table[parent_it->second] &&
+              !build_one(parent_it->second)) {
+            return false;
+          }
+          break;
+        }
+
+        const Path next_parent = parent_path.get_parent_path();
+        if (!next_parent.is_valid() ||
+            next_parent.full_path_name() == parent_path.full_path_name()) {
+          break;
+        }
+        parent_path = next_parent;
+      }
+
+      Node node(parent_node_index, _paths[path_idx]);
+      if (path_idx < _elemPaths.size()) {
+        node.SetElementPath(_elemPaths[path_idx]);
+      }
+      _nodes[path_idx] = node;
+      visit_table[path_idx] = true;
+
+      if (parent_node_index >= 0) {
+        const size_t parent_idx = static_cast<size_t>(parent_node_index);
+        if (parent_idx >= _nodes.size()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent node index out-of-range.");
+        }
+        std::string child_name;
+        if (path_idx < _elemPaths.size() && _elemPaths[path_idx].is_valid() &&
+            !_elemPaths[path_idx].is_empty()) {
+          child_name = _elemPaths[path_idx].full_path_name();
+        } else {
+          child_name = _paths[path_idx].full_path_name();
+        }
+        if (!_nodes[parent_idx].AddChildren(child_name, path_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag,
+              fmt::format("Duplicate child `{}` under parent `{}`.",
+                          child_name,
+                          _paths[parent_idx].full_path_name()));
+        }
+      }
+
+      return true;
+    };
+
+    for (size_t encoded_idx = 0; encoded_idx < pathIndexes.size();
+         ++encoded_idx) {
+      const size_t path_idx = pathIndexes[encoded_idx];
+      if (!build_one(path_idx)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  (void)elementTokenIndexes;
+  (void)jumps;
+  if (!build_node_hierarchy_from_decoded_paths()) {
     return false;
   }
 
@@ -1075,7 +796,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     }
   }
   if (sumDecodedPaths != numEncodedPaths) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Decoded {} paths but numEncodedPaths in BuildNodeHierarchy is {}. Possible corruption of Crate data.",
+    PUSH_ERROR_AND_RETURN(fmt::format("Decoded {} paths but numEncodedPaths during hierarchy build is {}. Possible corruption of Crate data.",
       sumDecodedPaths, numEncodedPaths));
   }
 

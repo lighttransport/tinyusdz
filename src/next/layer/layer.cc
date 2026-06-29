@@ -119,6 +119,11 @@ PrimSpec* Layer::prim_at_path_mutable(const std::string& path) {
   return prim(it->second);
 }
 
+uint32_t Layer::index_at_path(const std::string& path) const {
+  auto it = path_to_index_.find(path);
+  return it == path_to_index_.end() ? UINT32_MAX : it->second;
+}
+
 PrimSpec* Layer::prim_mutable(uint32_t index) {
   if (index >= prims_.size()) return nullptr;
   return &prims_[index];

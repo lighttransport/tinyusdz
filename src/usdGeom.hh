@@ -64,6 +64,12 @@ constexpr auto kGeomTetMesh = "TetMesh";
 constexpr auto kGeomNurbsPatch = "NurbsPatch";
 constexpr auto kGeomHermiteCurves = "HermiteCurves";
 
+// UsdVol
+constexpr auto kVolume = "Volume";
+constexpr auto kFieldAsset = "FieldAsset";
+constexpr auto kOpenVDBAsset = "OpenVDBAsset";
+constexpr auto kField3DAsset = "Field3DAsset";
+
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
@@ -578,6 +584,12 @@ struct GeomMesh : GPrim {
     SubdivisionSchemeNone,  // "none"
   };
 
+  // catmullClark-only `triangleSubdivisionRule`.
+  enum class TriangleSubdivisionRule {
+    CatmullClark,  // "catmullClark"
+    Smooth,        // "smooth"
+  };
+
   //
   // Predefined attribs.
   //
@@ -678,6 +690,9 @@ struct GeomMesh : GPrim {
       faceVaryingLinearInterpolation{
           FaceVaryingLinearInterpolation::
               CornersPlus1};  // token faceVaryingLinearInterpolation
+  TypedAttributeWithFallback<TriangleSubdivisionRule> triangleSubdivisionRule{
+      TriangleSubdivisionRule::
+          CatmullClark};  // uniform token triangleSubdivisionRule
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
   nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
@@ -1139,6 +1154,44 @@ bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
                        std::vector<bool> *out_mask, std::string *err);
 
 
+//
+// UsdVol schema (OpenVDB / Field3D volumes).
+//
+// `Volume` is a Gprim that aggregates one or more field primitives via
+// `field:<name>` relationships. Each field prim (OpenVDBAsset / Field3DAsset)
+// references a volume asset file and names the grid to read from it.
+//
+
+// Base class for field-asset prims (UsdVolFieldAsset). Modeled as a GPrim for
+// reconstruct reuse (it is Xformable in USD; the extra Boundable/Collection
+// members are harmless and unauthored by default).
+struct FieldAsset : GPrim {
+  TypedAttribute<Animatable<value::AssetPath>> filePath;   // asset filePath
+  TypedAttribute<Animatable<value::token>> fieldName;      // token fieldName
+  TypedAttribute<Animatable<value::token>> fieldDataType;  // token fieldDataType
+  TypedAttribute<Animatable<int>> fieldIndex;              // int fieldIndex
+};
+
+// OpenVDB field asset (UsdVolOpenVDBAsset).
+struct OpenVDBAsset : FieldAsset {
+  // token fieldClass ("levelSet", "fogVolume", "staggered", "unknown")
+  TypedAttribute<Animatable<value::token>> fieldClass;
+};
+
+// Field3D field asset (UsdVolField3DAsset).
+struct Field3DAsset : FieldAsset {
+  TypedAttribute<Animatable<value::token>> fieldPurpose;  // token fieldPurpose
+};
+
+// Volume Gprim (UsdVolVolume). `field:<name>` relationships map a field name to
+// the path of a field-asset prim. Because the names are dynamic, they are kept
+// in `fieldRelationships` (parsed from any `field:*` relationship) in addition
+// to GPrim::props.
+struct Volume : GPrim {
+  // field name (e.g. "density") -> relationship targeting the field prim.
+  std::map<std::string, Relationship> fieldRelationships;
+};
+
 // --- ComputeExtent helpers ---
 
 bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
@@ -1197,6 +1250,12 @@ DEFINE_TYPE_TRAIT(GeomCapsule_1, kGeomCapsule_1, TYPE_ID_GEOM_CAPSULE_1, 1);
 DEFINE_TYPE_TRAIT(GeomTetMesh, kGeomTetMesh, TYPE_ID_GEOM_TET_MESH, 1);
 DEFINE_TYPE_TRAIT(GeomNurbsPatch, kGeomNurbsPatch, TYPE_ID_GEOM_NURBS_PATCH, 1);
 DEFINE_TYPE_TRAIT(GeomHermiteCurves, kGeomHermiteCurves, TYPE_ID_GEOM_HERMITE_CURVES, 1);
+
+// UsdVol
+DEFINE_TYPE_TRAIT(Volume, kVolume, TYPE_ID_VOLUME, 1);
+DEFINE_TYPE_TRAIT(FieldAsset, kFieldAsset, TYPE_ID_FIELD_ASSET, 1);
+DEFINE_TYPE_TRAIT(OpenVDBAsset, kOpenVDBAsset, TYPE_ID_OPENVDB_ASSET, 1);
+DEFINE_TYPE_TRAIT(Field3DAsset, kField3DAsset, TYPE_ID_FIELD3D_ASSET, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

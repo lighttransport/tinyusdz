@@ -443,9 +443,23 @@ std::string DumpAnimation(const AnimationClip &anim, uint32_t indent) {
       case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
     }
     ss << "\n";
+    if (!ch.target_prim_path.empty()) {
+      ss << pprint::Indent(indent + 2) << "target_prim_path: "
+         << quote(ch.target_prim_path) << "\n";
+    }
     if (ch.is_custom_property && !ch.property_name.empty()) {
       ss << pprint::Indent(indent + 2) << "property_name: "
          << ch.property_name << "\n";
+    }
+    if (!ch.blendshape_target_names.empty()) {
+      ss << pprint::Indent(indent + 2) << "blendshape_target_names: [";
+      for (size_t j = 0; j < ch.blendshape_target_names.size(); j++) {
+        if (j > 0) {
+          ss << ", ";
+        }
+        ss << quote(ch.blendshape_target_names[j]);
+      }
+      ss << "]\n";
     }
     ss << pprint::Indent(indent + 1) << "}\n";
   }
@@ -1076,9 +1090,20 @@ static void DumpAnimationYAML(std::stringstream &ss, const AnimationClip &anim, 
         case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
       }
       ss << "\n";
+      if (!ch.target_prim_path.empty()) {
+        ss << yaml_indent(indent + 2) << "target_prim_path: "
+           << yaml_escape(ch.target_prim_path) << "\n";
+      }
       if (ch.is_custom_property && !ch.property_name.empty()) {
         ss << yaml_indent(indent + 2) << "property_name: "
            << yaml_escape(ch.property_name) << "\n";
+      }
+      if (!ch.blendshape_target_names.empty()) {
+        ss << yaml_indent(indent + 2) << "blendshape_target_names:\n";
+        for (const std::string &name : ch.blendshape_target_names) {
+          ss << yaml_indent(indent + 3) << "- " << yaml_escape(name)
+             << "\n";
+        }
       }
     }
   }
@@ -1500,10 +1525,39 @@ static void DumpAnimationJSON(std::stringstream &ss, const AnimationClip &anim, 
       case AnimationPath::Weights: ss << "Weights"; break;
       case AnimationPath::CustomProperty: ss << "CustomProperty"; break;
     }
-    ss << "\"\n";
+    ss << "\"";
+    if (!ch.target_prim_path.empty() ||
+        (ch.is_custom_property && !ch.property_name.empty()) ||
+        !ch.blendshape_target_names.empty()) {
+      ss << ",";
+    }
+    ss << "\n";
+    if (!ch.target_prim_path.empty()) {
+      ss << json_indent(indent + 3) << "\"target_prim_path\": \""
+         << json_escape(ch.target_prim_path) << "\"";
+      if ((ch.is_custom_property && !ch.property_name.empty()) ||
+          !ch.blendshape_target_names.empty()) {
+        ss << ",";
+      }
+      ss << "\n";
+    }
     if (ch.is_custom_property && !ch.property_name.empty()) {
       ss << json_indent(indent + 3) << "\"property_name\": \""
-         << json_escape(ch.property_name) << "\",\n";
+         << json_escape(ch.property_name) << "\"";
+      if (!ch.blendshape_target_names.empty()) {
+        ss << ",";
+      }
+      ss << "\n";
+    }
+    if (!ch.blendshape_target_names.empty()) {
+      ss << json_indent(indent + 3) << "\"blendshape_target_names\": [";
+      for (size_t j = 0; j < ch.blendshape_target_names.size(); j++) {
+        if (j > 0) {
+          ss << ", ";
+        }
+        ss << "\"" << json_escape(ch.blendshape_target_names[j]) << "\"";
+      }
+      ss << "]\n";
     }
     ss << json_indent(indent + 2) << "}" << (i == anim.channels.size() - 1 ? "" : ",") << "\n";
   }

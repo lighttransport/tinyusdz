@@ -966,6 +966,10 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::Xform:
       obj["type"] = "Group";
       break;
+    case NodeType::Volume:
+      // three.js has no native VDB volume; emit a Group placeholder.
+      obj["type"] = "Group";
+      break;
     case NodeType::Camera:
       obj["type"] = "Camera";
       break;
@@ -1318,6 +1322,18 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
       };
     } else {
       continue; // Unknown path type
+    }
+
+    if (!channel.target_prim_path.empty() ||
+        !channel.blendshape_target_names.empty()) {
+      track["userData"] = json::object();
+      if (!channel.target_prim_path.empty()) {
+        track["userData"]["target_prim_path"] = channel.target_prim_path;
+      }
+      if (!channel.blendshape_target_names.empty()) {
+        track["userData"]["blendshape_target_names"] =
+            channel.blendshape_target_names;
+      }
     }
 
     anim_json["tracks"].push_back(track);

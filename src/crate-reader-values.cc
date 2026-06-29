@@ -102,8 +102,11 @@ bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
       return false;
     }
 
-    // TODO: Duplicate key check?
-    d->emplace(key, value);
+    if (d->find(key) != d->end()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format(
+          "Duplicate key `{}` in VariantSelectionMap.", key));
+    }
+    d->emplace(std::move(key), std::move(value));
   }
 
   return true;
@@ -162,12 +165,17 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of Dictionary element.");
     }
 
-    // CrateValue -> MetaVariable (duplicated key is ok, later value wins)
+    if (dict.find(key) != dict.end()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format(
+          "Duplicate key `{}` in Dictionary value.", key));
+    }
+
+    // CrateValue -> MetaVariable
     MetaVariable var;
 
     var.set_value(key, value.get_raw());
 
-    dict[key] = var;
+    dict.emplace(key, std::move(var));
 
     if (!_sr->seek_set(saved_position)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
@@ -192,7 +200,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
   }
 
   if (rep.IsCompressed()) {
-    PUSH_ERROR("Inlinved value must not be compressed.");
+    PUSH_ERROR("Inlined value must not be compressed.");
     return false;
   }
 
@@ -207,7 +215,6 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
   uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
   DCOUT("d = " << d);
 
-  // TODO(syoyo): Use template SFINE?
   switch (dty.dtype_id) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
@@ -649,10 +656,8 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY: {
-      // empty dict is allowed
-      // TODO: empty(zero value) check?
-      //crate::CrateValue::Dictionary dict;
-      CustomDataType dict; // use CustomDataType for Dict
+      // Inlined dictionary encodes an empty dictionary.
+      CustomDataType dict;  // use CustomDataType for Dict
       value->Set(dict);
       return true;
     }
@@ -711,6 +716,95 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
   }
 
   // Should never reach here.
+  return false;
+}
+
+bool CrateReader::IsThreadSafeInlinedValueRep(const crate::ValueRep &rep) const {
+  if (!rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
+    return false;
+  }
+
+  const auto tyRet = crate::GetCrateDataType(rep.GetType());
+  if (!tyRet) {
+    return false;
+  }
+
+  const uint32_t d =
+      uint32_t(rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+  const auto dty = tyRet.value();
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK:
+      return true;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN:
+      return d < _tokens.size();
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
+      return (d < _string_indices.size()) &&
+             (_string_indices[d].value < _tokens.size());
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER:
+      return d < static_cast<uint32_t>(Specifier::Invalid);
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
+      return d < static_cast<uint32_t>(Permission::Invalid);
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY:
+      return d < static_cast<uint32_t>(Variability::Invalid);
+    case crate::CrateDataTypeId::NumDataTypes:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
+      return false;
+  }
+
   return false;
 }
 
@@ -1058,9 +1152,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: value->Set(std::vector<value::matrix2d>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: value->Set(std::vector<value::matrix3d>()); break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: value->Set(std::vector<value::matrix4d>()); break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: value->Set(std::vector<value::timecode>()); break;
       default:
         DCOUT("Empty array: unhandled type " << crate::GetCrateDataTypeName(tyRet0.value().dtype_id));
-        break;  // leave as void — pprint will show TODO
+        break;  // leave as void for unknown/unhandled empty array types
     }
     return true;
   }
@@ -1130,8 +1225,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
-
       // AssetPath is encoded as StringIndex for uninlined and array value
       // NOTE: inlined value uses TokenIndex.
 
@@ -1172,11 +1265,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read StringIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed StringIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read StringIndex array.");
+            return false;
+          }
         }
 
         size_t apaths_bytes;
@@ -1223,7 +1324,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
@@ -1251,11 +1351,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         std::vector<crate::Index> v;
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read TokenIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                  static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed TokenIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read TokenIndex array.");
+            return false;
+          }
         }
 
         size_t tokens_bytes;
@@ -1281,8 +1389,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
-
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
@@ -1301,11 +1407,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                       size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read TokenIndex array.");
-          return false;
+        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed StringIndex array.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                         size_t(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read TokenIndex array.");
+            return false;
+          }
         }
 
         size_t strs_bytes;
@@ -1325,21 +1439,65 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("stringArray = " << stringArray);
 
-        // TODO: Use token type?
+        // String arrays are encoded as string-token indices in Crate.
         value->Set(std::move(stringArray));
 
         return true;
       } else {
-        // TODO: support non-array string?
+        CHECK_MEMORY_USAGE(sizeof(crate::Index));
+
+        crate::Index v;
+        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read StringIndex data.");
+          return false;
+        }
+
+        if (auto stok = GetStringToken(v)) {
+          value->Set(stok.value().str());
+          return true;
+        }
+
+        PUSH_ERROR("Invalid StringIndex for String value.");
         return false;
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
-      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray "
-                 << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
-      return false;
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
+
+      CHECK_MEMORY_USAGE(sizeof(uint32_t));
+
+      uint32_t raw{0};
+      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+                     reinterpret_cast<uint8_t *>(&raw))) {
+        PUSH_ERROR("Failed to read enum value.");
+        return false;
+      }
+
+      if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER) {
+        if (raw >= static_cast<uint32_t>(Specifier::Invalid)) {
+          PUSH_ERROR("Invalid value for Specifier.");
+          return false;
+        }
+        value->Set(static_cast<Specifier>(raw));
+      } else if (dty.dtype_id ==
+                 crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION) {
+        if (raw >= static_cast<uint32_t>(Permission::Invalid)) {
+          PUSH_ERROR("Invalid value for Permission.");
+          return false;
+        }
+        value->Set(static_cast<Permission>(raw));
+      } else {
+        if (raw >= static_cast<uint32_t>(Variability::Invalid)) {
+          PUSH_ERROR("Invalid value for Variability.");
+          return false;
+        }
+        value->Set(static_cast<Variability>(raw));
+      }
+      return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
       COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -1562,8 +1720,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
 
-        PUSH_ERROR("Non-inlined, non-array Float value is not supported.");
-        return false;
+        CHECK_MEMORY_USAGE(sizeof(float));
+
+        float v{0.0f};
+        if (!_sr->read_float(&v)) {
+          PUSH_ERROR("Failed to read Float value.");
+          return false;
+        }
+
+        DCOUT("Float " << v);
+
+        value->Set(v);
+
+        return true;
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
@@ -1599,6 +1768,42 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         value->Set(v);
 
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<value::timecode> empty_v;
+          value->Set(std::move(empty_v));
+          return true;
+        }
+
+        std::vector<double> raw;
+        if (!ReadDoubleArray(rep.IsCompressed(), &raw)) {
+          PUSH_ERROR("Failed to read TimeCode array value.");
+          return false;
+        }
+
+        std::vector<value::timecode> v;
+        v.reserve(raw.size());
+        for (double d : raw) {
+          v.push_back(value::timecode{d});
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(double));
+
+        value::timecode v{0.0};
+        if (!_sr->read_double(&v.value)) {
+          PUSH_ERROR("Failed to read TimeCode value.");
+          return false;
+        }
+
+        value->Set(v);
         return true;
       }
     }
@@ -2452,8 +2657,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_float3_size);
 
         {
-          // Regular allocation for compressed data or when mmap is disabled
-          // TODO: Chunked
+          // Regular allocation for compressed data or when mmap is disabled.
           std::vector<value::float3> v;
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::float3),
@@ -2972,7 +3176,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
-      COMPRESS_UNSUPPORTED_CHECK(dty)
       // std::vector<Index>
       uint64_t n{0};
       if (!_sr->read8(&n)) {
@@ -2994,11 +3197,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (n > 0) {
-        if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
-                       static_cast<size_t>(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(indices.data()))) {
-          PUSH_ERROR("Failed to read TokenVector value.");
-          return false;
+        if (rep.IsCompressed()) {
+          if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(indices.data()),
+                                 static_cast<size_t>(n))) {
+            PUSH_ERROR("Failed to read compressed TokenVector value.");
+            return false;
+          }
+        } else {
+          if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+                         static_cast<size_t>(n) * sizeof(crate::Index),
+                         reinterpret_cast<uint8_t *>(indices.data()))) {
+            PUSH_ERROR("Failed to read TokenVector value.");
+            return false;
+          }
         }
       }
 
@@ -3206,22 +3417,23 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      // TODO: use crate::ValueRep for set container type.
-      if (unpackRecursionGuard.count(local_rep.GetData())) {
+      const uint64_t local_rep_key = local_rep.GetData();
+      if (unpackRecursionGuard.count(local_rep_key)) {
         // Recursion detected.
         PUSH_ERROR(
             "Corrupted Value data detected.");
         return false;
       } else {
+        unpackRecursionGuard.insert(local_rep_key);
+
         crate::CrateValue local_val;
         bool ret = UnpackValueRep(local_rep, &local_val);
+        unpackRecursionGuard.erase(local_rep_key);
         if (!ret) {
           return false;
         }
 
         (*value) = std::move(local_val);
-
-        unpackRecursionGuard.erase(local_rep.GetData());
         return true;
       }
     }
@@ -3494,8 +3706,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(std::move(sd));
       return true;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
           "Uninlined value: " +

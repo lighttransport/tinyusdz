@@ -15,6 +15,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <map>
 
 namespace tinyusdz {
 namespace next {
@@ -468,6 +469,9 @@ public:
   /// Get value at offset
   const Value* value(uint32_t offset) const;
 
+  /// Rewrite scalar asset path sample values.
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+
   /// Check if property has time samples
   bool has(PropNameId name_id) const;
 
@@ -597,6 +601,10 @@ public:
   /// connection-only opinion. Returns true if a value was filled.
   bool fill_property_value_if_absent(PropNameId name_id, Value value);
 
+  /// Replace an existing property's authored default value. Returns false when
+  /// the slot is absent or has no authored default value.
+  bool set_property_value(PropNameId name_id, Value value);
+
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
 
@@ -618,6 +626,9 @@ public:
 
   /// Get value at a specific time sample offset
   const Value* time_sample_value(uint32_t offset) const;
+
+  /// Rewrite scalar asset paths stored in defaults and time samples.
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
 
   /// Get all property names that have time samples
   std::vector<PropNameId> time_sampled_properties() const;
@@ -647,8 +658,21 @@ public:
   // Relationships
   // ============================================================
 
+  enum class RelationshipListOp {
+    Append,
+    Prepend,
+    Add,
+    Delete,
+  };
+
   /// Add a relationship target
   void add_relationship(const std::string& name, const Path& target);
+
+  /// Apply same-spec relationship list-op targets. Used by USDA body syntax
+  /// such as `prepend rel prototypes = [...]`.
+  void apply_relationship_list_op(const std::string& name,
+                                  const std::vector<Path>& targets,
+                                  RelationshipListOp op);
 
   /// Get relationship targets
   const std::vector<Path>* relationship(const std::string& name) const;

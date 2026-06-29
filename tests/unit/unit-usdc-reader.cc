@@ -20,6 +20,7 @@
 #include "usdSkel.hh"
 #include "core/model-scope.hh"
 #include "math-util.inc"
+#include "crate-writer.hh"
 
 #include <cstring>
 
@@ -495,6 +496,111 @@ def Material "mat" {
   if (mat->surface.authored()) {
     auto paths = mat->surface.get_connections();
     TEST_CHECK(paths.size() == 1);
+    TEST_CHECK(paths[0].full_path_name() == "/mat/surf.outputs:surface");
+  }
+
+  // Verify `.connect` reconstruction from a standalone Connection spec (targetPaths
+  // form), which was previously parsed as a relationship.
+  {
+    std::string build_err;
+    std::string warn2;
+    std::string err2;
+    auto stream =
+        std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+    auto *stream_ptr = stream.get();
+    tinyusdz::experimental::CrateWriter writer(std::move(stream));
+
+    TEST_CHECK(writer.Open(&build_err));
+    if (!build_err.empty()) {
+      TEST_MSG("failed to open writer: %s", build_err.c_str());
+    }
+
+    tinyusdz::crate::FieldValuePairVector pseudo_fields;
+    TEST_CHECK(writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields,
+                            &build_err));
+
+    tinyusdz::crate::FieldValuePairVector mat_fields;
+    tinyusdz::crate::CrateValue spec_value;
+    spec_value.Set(Specifier::Def);
+    mat_fields.push_back({"specifier", spec_value});
+    tinyusdz::crate::CrateValue type_name_value;
+    type_name_value.Set(value::token("Material"));
+    mat_fields.push_back({"typeName", type_name_value});
+    TEST_CHECK(writer.AddSpec(Path("/mat", ""), SpecType::Prim, mat_fields,
+                            &build_err));
+
+    tinyusdz::crate::FieldValuePairVector mat_empty_fields = mat_fields;
+    TEST_CHECK(writer.AddSpec(Path("/mat_empty", ""), SpecType::Prim,
+                            mat_empty_fields, &build_err));
+
+    tinyusdz::crate::FieldValuePairVector conn_fields;
+    tinyusdz::crate::CrateValue target_paths;
+    std::vector<Path> conn_targets;
+    conn_targets.push_back(Path("/surf", "outputs:surface"));
+    target_paths.Set(conn_targets);
+    conn_fields.push_back({"targetPaths", target_paths});
+    tinyusdz::crate::CrateValue conn_type_name;
+    conn_type_name.Set(value::token("token"));
+    conn_fields.push_back({"typeName", conn_type_name});
+    TEST_CHECK(writer.AddSpec(Path("/mat", "outputs:surface.connect"),
+                             SpecType::Connection, conn_fields, &build_err));
+
+    tinyusdz::crate::FieldValuePairVector empty_conn_fields;
+    tinyusdz::crate::CrateValue empty_target_paths;
+    std::vector<Path> empty_conn_targets;
+    empty_target_paths.Set(empty_conn_targets);
+    empty_conn_fields.push_back({"targetPaths", empty_target_paths});
+    tinyusdz::crate::CrateValue empty_conn_type_name;
+    empty_conn_type_name.Set(value::token("token"));
+    empty_conn_fields.push_back({"typeName", empty_conn_type_name});
+    TEST_CHECK(writer.AddSpec(Path("/mat_empty", "outputs:surface.connect"),
+                             SpecType::Connection, empty_conn_fields,
+                             &build_err));
+
+    TEST_CHECK(writer.Finalize(&build_err));
+    if (!build_err.empty()) {
+      TEST_MSG("failed to build manual usdc: %s", build_err.c_str());
+    }
+    writer.Close();
+
+    std::vector<uint8_t> usdc_bytes;
+    if (stream_ptr) {
+      usdc_bytes = stream_ptr->TakeBuffer();
+    }
+
+    Stage manual_stage;
+    bool ok_conn = LoadUSDCFromMemory(
+        usdc_bytes.data(), usdc_bytes.size(), "manual_conn.usdc", &manual_stage,
+        &warn2, &err2);
+    TEST_CHECK(ok_conn);
+    if (!ok_conn) {
+      if (!err2.empty()) {
+        TEST_MSG("manual connection usdc load failed: %s", err2.c_str());
+      }
+    } else {
+      auto manual_result = manual_stage.GetPrimAtPath(Path("/mat", ""));
+      TEST_CHECK(manual_result != nullptr);
+      if (!manual_result) return;
+
+      const Material *manual_mat = (*manual_result)->as<Material>();
+      TEST_CHECK(manual_mat != nullptr);
+      if (manual_mat) {
+        auto manual_paths = manual_mat->surface.get_connections();
+        TEST_CHECK(manual_paths.size() == 1);
+        TEST_CHECK(manual_paths[0].full_path_name() == "/surf.outputs:surface");
+      }
+
+      auto empty_result = manual_stage.GetPrimAtPath(Path("/mat_empty", ""));
+      TEST_CHECK(empty_result != nullptr);
+      if (!empty_result) return;
+
+      const Material *empty_mat = (*empty_result)->as<Material>();
+      TEST_CHECK(empty_mat != nullptr);
+      if (empty_mat) {
+        auto empty_paths = empty_mat->surface.get_connections();
+        TEST_CHECK(empty_paths.empty());
+      }
+    }
   }
 }
 

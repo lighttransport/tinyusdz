@@ -149,13 +149,6 @@ bool IsDoubleBackedArray(TypeId id) {
   }
 }
 
-// Check if type requires heap allocation
-bool RequiresHeap(TypeId id, bool is_array) {
-  if (is_array) return true;
-  if (id == TypeId::Dictionary) return true;
-  return false;
-}
-
 }  // anonymous namespace
 
 // ============================================================
@@ -1356,6 +1349,109 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   }
 
   return nullptr;
+}
+
+Value LerpValue(const Value& a, const Value& b, double t) {
+  if (a.type_id() != b.type_id()) return a;  // held on type mismatch
+  const double s = 1.0 - t;
+  auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
+  auto ld = [&](double x, double y) { return s * x + t * y; };
+
+  switch (a.type_id()) {
+    case TypeId::Float: {
+      const float* pa = a.as_float();
+      const float* pb = b.as_float();
+      if (pa && pb) return Value(lf(*pa, *pb));
+      break;
+    }
+    case TypeId::Double: {
+      const double* pa = a.as_double();
+      const double* pb = b.as_double();
+      if (pa && pb) return Value(ld(*pa, *pb));
+      break;
+    }
+    case TypeId::Float2: {
+      const float* pa = a.as_float2();
+      const float* pb = b.as_float2();
+      if (pa && pb) return Value::MakeFloat2(lf(pa[0], pb[0]), lf(pa[1], pb[1]));
+      break;
+    }
+    case TypeId::Float3:
+    case TypeId::Point3f:
+    case TypeId::Vector3f:
+    case TypeId::Normal3f:
+    case TypeId::Color3f: {
+      const float* pa = a.as_float3();
+      const float* pb = b.as_float3();
+      if (!pa || !pb) break;
+      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]), z = lf(pa[2], pb[2]);
+      switch (a.type_id()) {
+        case TypeId::Point3f: return Value::MakePoint3f(x, y, z);
+        case TypeId::Vector3f: return Value::MakeVector3f(x, y, z);
+        case TypeId::Normal3f: return Value::MakeNormal3f(x, y, z);
+        case TypeId::Color3f: return Value::MakeColor3f(x, y, z);
+        default: return Value::MakeFloat3(x, y, z);
+      }
+    }
+    case TypeId::Float4:
+    case TypeId::Color4f: {
+      const float* pa = a.as_float4();
+      const float* pb = b.as_float4();
+      if (!pa || !pb) break;
+      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]);
+      const float z = lf(pa[2], pb[2]), w = lf(pa[3], pb[3]);
+      if (a.type_id() == TypeId::Color4f) return Value::MakeColor4f(x, y, z, w);
+      return Value::MakeFloat4(x, y, z, w);
+    }
+    case TypeId::Double2: {
+      const double* pa = a.as_double2();
+      const double* pb = b.as_double2();
+      if (pa && pb) return Value::MakeDouble2(ld(pa[0], pb[0]), ld(pa[1], pb[1]));
+      break;
+    }
+    case TypeId::Double3:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d: {
+      const double* pa = a.as_double3();
+      const double* pb = b.as_double3();
+      if (!pa || !pb) break;
+      const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]), z = ld(pa[2], pb[2]);
+      switch (a.type_id()) {
+        case TypeId::Point3d: return Value::MakePoint3d(x, y, z);
+        case TypeId::Vector3d: return Value::MakeVector3d(x, y, z);
+        case TypeId::Normal3d: return Value::MakeNormal3d(x, y, z);
+        default: return Value::MakeDouble3(x, y, z);
+      }
+    }
+    case TypeId::Double4: {
+      const double* pa = a.as_double4();
+      const double* pb = b.as_double4();
+      if (pa && pb)
+        return Value::MakeDouble4(ld(pa[0], pb[0]), ld(pa[1], pb[1]),
+                                  ld(pa[2], pb[2]), ld(pa[3], pb[3]));
+      break;
+    }
+    case TypeId::Matrix4f: {
+      const float* pa = a.as_matrix4f();
+      const float* pb = b.as_matrix4f();
+      if (!pa || !pb) break;
+      float m[16];
+      for (int i = 0; i < 16; ++i) m[i] = lf(pa[i], pb[i]);
+      return Value::MakeMatrix4f(m);
+    }
+    case TypeId::Matrix4d: {
+      const double* pa = a.as_matrix4d();
+      const double* pb = b.as_matrix4d();
+      if (!pa || !pb) break;
+      double m[16];
+      for (int i = 0; i < 16; ++i) m[i] = ld(pa[i], pb[i]);
+      return Value::MakeMatrix4d(m);
+    }
+    default:
+      break;  // non-interpolatable (int/bool/string/token/quat/...) -> held
+  }
+  return a;
 }
 
 }  // namespace next

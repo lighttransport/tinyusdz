@@ -465,5 +465,15 @@ CompressResult WriteCompressedU32(const uint32_t* values, size_t count);
 DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
                                          uint32_t* dst, size_t count);
 
+/// Decode uint64_t values from pxrUSD delta-coded format (64-bit variant of
+/// DecodeDeltaU32: int64 common value, int16/int32/int64 code widths).
+bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size,
+                    uint64_t* dst, size_t count);
+
+/// Deserialize a pxrUSD compressed 64-bit integer section
+/// (read u64 size + LZ4-decompress + 64-bit delta-decode).
+DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
+                                         uint64_t* dst, size_t count);
+
 }  // namespace next
 }  // namespace tinyusdz

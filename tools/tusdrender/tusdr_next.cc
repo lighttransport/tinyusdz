@@ -1,0 +1,3579 @@
+// SPDX-License-Identifier: Apache-2.0
+// tusdrender — the `next` lazy-loader pipeline: streamed geometry/material/volume
+// /curve collection, instancing split, parallel triangle streaming + BVH build,
+// next light/IBL setup, camera resolve, and the RunRTPreviewNext driver.
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <limits>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "image-loader.hh"
+#include "image-writer.hh"
+#include "tsd/tinysubdiv.hh"
+#include "tydra/attribute-eval.hh"
+#include "tydra/next/render-extract.hh"
+#include "usdVol.hh"
+#include "tusdr_context.hh"
+
+namespace tusdr {
+
+bool ReadFloatArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+                            const char *name, double time,
+                            tinyusdz::tydra::next::ValueArrayRead<float> *out) {
+  return tinyusdz::tydra::next::ReadFloatArray(prim, name, time, out);
+}
+
+bool ReadIntArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+                          const char *name, double time,
+                          tinyusdz::tydra::next::ValueArrayRead<int32_t> *out) {
+  return tinyusdz::tydra::next::ReadIntArray(prim, name, time, out);
+}
+
+std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name, double time) {
+  return tinyusdz::tydra::next::ReadFloatArrayCopy(prim, name, time);
+}
+
+std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                      const char *name, double time) {
+  return tinyusdz::tydra::next::ReadIntArrayCopy(prim, name, time);
+}
+
+std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
+                                        const char *name, double time) {
+  return tinyusdz::tydra::next::ReadInt64ArrayCopy(prim, name, time);
+}
+
+// Templated on the output buffer type so the flat path can stream into plain
+// std::vector (ctx.tris) while the instanced path streams into the budget-tracked
+// Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
+template <class FVec, class TVec>
+void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
+                          const matrix4d &world, tinyusdz::Purpose purpose,
+                          uint32_t purpose_mask, double time,
+                          const Vec3 &base_color, int32_t tex_id,
+                          int32_t normal_tex_id, float roughness, float metallic,
+                          const ScalarTex &rough_tex, const ScalarTex &metal_tex,
+                          const Vec3 &emission, int32_t emission_tex_id,
+                          float occlusion, const ScalarTex &occ_tex,
+                          const ScalarTex &opacity_tex, float opacity_threshold,
+                          float clearcoat, float clearcoat_roughness,
+                          const ScalarTex &clearcoat_tex,
+                          const ScalarTex &clearcoat_rough_tex,
+                          const Vec3 &specular_color, int32_t specular_tex_id,
+                          float ior, uint8_t use_specular_workflow,
+                          const UvXform &uv_xform, bool want_uvs,
+                          FVec *vertices, TVec *tris, FVec *tri_uvs,
+                          Bounds *bounds, RTPreviewStats *stats,
+                          bool purpose_cull = false,
+                          TriMat *out_job_mat = nullptr, float opacity = 1.0f,
+                          bool want_colors = false, ByteVec *tri_colors = nullptr,
+                          bool want_normals = false, FVec *tri_normals = nullptr,
+                          // Indexed geometry (Phase 2b): when out_uverts != null,
+                          // emit 1x unique verts + 3 vertex indices/tri (offset by
+                          // *io_vbase) instead of writing the de-indexed soup.
+                          FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr,
+                          uint32_t *io_vbase = nullptr,
+                          // Coarse displacement (UsdPreviewSurface inputs:displacement):
+                          // each unique vertex is offset along its smooth normal by the
+                          // sampled height (const + optional channel-aware texture from
+                          // tex_pool). disp_scale == 0 disables it.
+                          float displacement = 0.0f,
+                          int32_t displacement_tex_id = -1,
+                          uint8_t displacement_ch = 0,
+                          const std::vector<Texture> *tex_pool = nullptr,
+                          float disp_scale = 0.0f,
+                          float displacement_tex_scale = 1.0f,
+                          float displacement_tex_bias = 0.0f) {
+  // When the output is the slim TriStore (instanced BLAS), the per-mesh material
+  // is emitted once into out_job_mat and each triangle stores only its mat_id.
+  if (out_job_mat) {
+    out_job_mat->base_color = base_color;
+    out_job_mat->emission = emission;
+    out_job_mat->roughness = roughness;
+    out_job_mat->metallic = metallic;
+    out_job_mat->tex_id = tex_id;
+    out_job_mat->normal_tex_id = normal_tex_id;
+    out_job_mat->rough_tex_id = rough_tex.id;
+    out_job_mat->metal_tex_id = metal_tex.id;
+    out_job_mat->emission_tex_id = emission_tex_id;
+    out_job_mat->occ_tex_id = occ_tex.id;
+    out_job_mat->occlusion = occlusion;
+    out_job_mat->opacity = opacity;
+    out_job_mat->opacity_tex_id = opacity_tex.id;
+    out_job_mat->opacity_threshold = opacity_threshold;
+    out_job_mat->clearcoat = clearcoat;
+    out_job_mat->clearcoat_roughness = clearcoat_roughness;
+    out_job_mat->clearcoat_tex_id = clearcoat_tex.id;
+    out_job_mat->clearcoat_rough_tex_id = clearcoat_rough_tex.id;
+    out_job_mat->rough_ch = rough_tex.ch;
+    out_job_mat->metal_ch = metal_tex.ch;
+    out_job_mat->occ_ch = occ_tex.ch;
+    out_job_mat->opacity_ch = opacity_tex.ch;
+    out_job_mat->clearcoat_ch = clearcoat_tex.ch;
+    out_job_mat->clearcoat_rough_ch = clearcoat_rough_tex.ch;
+    out_job_mat->specular_color = specular_color;
+    out_job_mat->specular_tex_id = specular_tex_id;
+    out_job_mat->ior = ior;
+    out_job_mat->use_specular_workflow = use_specular_workflow;
+  }
+  // Read core geometry without permanently materializing it into the stage.
+  // Uncompressed USDC arrays are borrowed from the retained crate buffer; other
+  // encodings decode into function-local scratch and are freed after this mesh.
+  tinyusdz::tydra::next::ValueArrayRead<float> points;
+  tinyusdz::tydra::next::ValueArrayRead<int32_t> counts;
+  tinyusdz::tydra::next::ValueArrayRead<int32_t> indices;
+  ReadFloatArrayViewLazy(prim, "points", time, &points);
+  ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
+  ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
+  if (points.empty() || counts.empty() || indices.empty()) {
+    stats->skipped_meshes++;
+    return;
+  }
+  const size_t npts = points.size() / 3;
+  // Transform each unique vertex ONCE up front. The triangle-fan loop below would
+  // otherwise re-transform a shared/fan-center vertex for every incident corner
+  // (~6x on a typical triangle mesh) via the double-precision matrix. These are
+  // the same world-space floats the loop produced before, just deduplicated, so
+  // the emitted soup / normals are byte-identical. (Phase 2b hands this array
+  // straight to the indexed build instead of re-expanding it into a soup.)
+  std::vector<Vec3> wpts(npts);
+  for (size_t i = 0; i < npts; i++) {
+    wpts[i] = TransformPoint(
+        world, Vec3{points[3 * i], points[3 * i + 1], points[3 * i + 2]});
+  }
+
+  // UV (primvars:st) for the diffuse texture. Stored flat [u0,v0,u1,v1,...].
+  // Interpolation is inferred from sizes: per-point ("vertex"/"varying") when
+  // the UV count matches the point count, otherwise per-face-vertex
+  // ("faceVarying"). primvars:st:indices indirection is honored when present.
+  std::vector<float> st;
+  std::vector<int32_t> st_indices;
+  bool st_facevarying = false;
+  bool have_st = false;
+  if ((want_uvs || displacement_tex_id >= 0) &&
+      (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
+       metal_tex.id >= 0 || emission_tex_id >= 0 || occ_tex.id >= 0 ||
+       opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
+       clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
+       displacement_tex_id >= 0)) {
+    st = ReadFloatArrayLazy(prim, "primvars:st", time);
+    if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
+    if (!st.empty()) {
+      st_indices = ReadIntArrayLazy(prim, "primvars:st:indices", time);
+      const size_t uv_count =
+          st_indices.empty() ? (st.size() / 2) : st_indices.size();
+      // Per-point if it matches the points; per-face-vertex if it matches the
+      // face-vertex stream (== faceVertexIndices length).
+      if (uv_count == npts) {
+        st_facevarying = false;
+        have_st = true;
+      } else if (uv_count == indices.size()) {
+        st_facevarying = true;
+        have_st = true;
+      }
+    }
+  }
+  // Fetch the UV for face-vertex slot `fv` (position in the face-vertex stream)
+  // whose underlying point index is `pi`. Returns {u,v}.
+  auto uv_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
+    if (!have_st) return {0.0f, 0.0f};
+    size_t s = st_facevarying ? fv : size_t(pi);
+    if (!st_indices.empty()) {
+      if (s >= st_indices.size()) return {0.0f, 0.0f};
+      int32_t idx = st_indices[s];
+      if (idx < 0) return {0.0f, 0.0f};
+      s = size_t(idx);
+    }
+    if (s * 2 + 1 >= st.size()) return {0.0f, 0.0f};
+    return {st[s * 2 + 0], st[s * 2 + 1]};
+  };
+
+  // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
+  // vertex normal by the sampled displacement scalar. Watertight (a shared vertex
+  // moves exactly once) and memory-free (no new geometry). Geometric normals are
+  // recomputed per-triangle from the displaced positions in the fan loop below, so
+  // authored normals are intentionally dropped for displaced meshes (see below).
+  const bool do_displace =
+      disp_scale != 0.0f && (displacement_tex_id >= 0 || displacement != 0.0f);
+  if (do_displace) {
+    std::vector<Vec3> vn(npts, Vec3{0.0f, 0.0f, 0.0f});
+    size_t cur = 0;
+    for (int32_t c : counts) {
+      if (c >= 3 && cur + size_t(c) <= indices.size()) {
+        for (int32_t k = 1; k + 1 < c; k++) {
+          int32_t a = indices[cur + 0], b = indices[cur + size_t(k)],
+                  e = indices[cur + size_t(k + 1)];
+          if (a < 0 || b < 0 || e < 0 || size_t(a) >= npts ||
+              size_t(b) >= npts || size_t(e) >= npts)
+            continue;
+          // Area-weighted (un-normalized cross product) face normal accumulation.
+          Vec3 fn = Cross(Sub(wpts[size_t(b)], wpts[size_t(a)]),
+                          Sub(wpts[size_t(e)], wpts[size_t(a)]));
+          vn[size_t(a)] = Add(vn[size_t(a)], fn);
+          vn[size_t(b)] = Add(vn[size_t(b)], fn);
+          vn[size_t(e)] = Add(vn[size_t(e)], fn);
+        }
+      }
+      cur += size_t(std::max<int32_t>(0, c));
+    }
+    // First face-vertex slot referencing each point, for faceVarying UV lookup.
+    std::vector<int64_t> first_fv;
+    const bool need_fv = displacement_tex_id >= 0 && st_facevarying;
+    if (need_fv) {
+      first_fv.assign(npts, -1);
+      cur = 0;
+      for (int32_t c : counts) {
+        if (c >= 0 && cur + size_t(c) <= indices.size())
+          for (int32_t j = 0; j < c; j++) {
+            int32_t pi = indices[cur + size_t(j)];
+            if (pi >= 0 && size_t(pi) < npts && first_fv[size_t(pi)] < 0)
+              first_fv[size_t(pi)] = int64_t(cur + size_t(j));
+          }
+        cur += size_t(std::max<int32_t>(0, c));
+      }
+    }
+    const Texture *dtex =
+        (displacement_tex_id >= 0 && tex_pool &&
+         size_t(displacement_tex_id) < tex_pool->size())
+            ? &(*tex_pool)[size_t(displacement_tex_id)]
+            : nullptr;
+    for (size_t i = 0; i < npts; i++) {
+      if (Length(vn[i]) < 1.0e-12f) continue;
+      Vec3 n = Normalize(vn[i]);
+      float d = displacement;
+      if (dtex) {
+        std::pair<float, float> uv =
+            (need_fv && first_fv[i] >= 0)
+                ? uv_at(size_t(first_fv[i]), int32_t(i))
+                : uv_at(0, int32_t(i));
+        uv_xform.apply(&uv.first, &uv.second);
+        d = dtex->sample_channel(uv.first, uv.second, 0.0f, displacement_ch) *
+                displacement_tex_scale +
+            displacement_tex_bias;
+      }
+      wpts[i] = Add(wpts[i], Mul(n, d * disp_scale));
+    }
+  }
+
+  // Per-corner displayColor/displayOpacity (RGBA), when the scene has any
+  // non-constant display primvar. Interpolation is inferred from array size:
+  // vertex (== npoints), faceVarying (== face-vertex count), uniform (== nfaces);
+  // a 1-element array (or absent) falls back to the constant base_color/opacity.
+  std::vector<float> dcol, dopac;
+  int dc_mode = 0, do_mode = 0;  // 0=const, 1=vertex, 2=faceVarying, 3=uniform
+  if (want_colors) {
+    dcol = ReadFloatArrayLazy(prim, "primvars:displayColor", time);
+    const size_t nc = dcol.size() / 3;
+    if (nc == npts) dc_mode = 1;
+    else if (nc == indices.size()) dc_mode = 2;
+    else if (nc == counts.size()) dc_mode = 3;
+    dopac = ReadFloatArrayLazy(prim, "primvars:displayOpacity", time);
+    const size_t no = dopac.size();
+    if (no == npts) do_mode = 1;
+    else if (no == indices.size()) do_mode = 2;
+    else if (no == counts.size()) do_mode = 3;
+  }
+  // RGBA for face-vertex slot `fv` (point index `pi`, face `face`).
+  auto col_at = [&](size_t fv, int32_t pi, size_t face, float out[4]) {
+    out[0] = base_color.x; out[1] = base_color.y; out[2] = base_color.z;
+    out[3] = opacity;
+    if (dc_mode) {
+      size_t ci = dc_mode == 1 ? size_t(pi) : dc_mode == 2 ? fv : face;
+      if (ci * 3 + 2 < dcol.size()) {
+        out[0] = dcol[ci * 3 + 0]; out[1] = dcol[ci * 3 + 1];
+        out[2] = dcol[ci * 3 + 2];
+      }
+    }
+    if (do_mode) {
+      size_t oi = do_mode == 1 ? size_t(pi) : do_mode == 2 ? fv : face;
+      if (oi < dopac.size()) out[3] = std::min(1.0f, std::max(0.0f, dopac[oi]));
+    }
+  };
+
+  // Authored normals for smooth shading (`-smooth`). Stored per corner in the
+  // job's frame (world for flat, prototype-local for instanced — `world` is
+  // identity there), transformed at hit. Falls back to the geometric normal when
+  // absent. Interpolation inferred from size (vertex / faceVarying).
+  std::vector<float> nrm;
+  int nrm_mode = 0;  // 0=none, 1=vertex, 2=faceVarying
+  // Displaced meshes shade with the geometric normal of the deformed surface, so
+  // authored (pre-displacement) normals are ignored -- they no longer match.
+  if (want_normals && !do_displace) {
+    nrm = ReadFloatArrayLazy(prim, "normals", time);
+    if (nrm.empty()) nrm = ReadFloatArrayLazy(prim, "primvars:normals", time);
+    const size_t nn = nrm.size() / 3;
+    if (nn == npts) nrm_mode = 1;
+    else if (nn == indices.size()) nrm_mode = 2;
+  }
+  // World-space normal for face-vertex slot `fv` (point index `pi`); `geom` is the
+  // face's geometric normal (already in the job frame) used as the fallback.
+  auto norm_at = [&](size_t fv, int32_t pi, const Vec3 &geom) -> Vec3 {
+    if (!nrm_mode) return geom;
+    size_t ni = nrm_mode == 1 ? size_t(pi) : fv;
+    if (ni * 3 + 2 >= nrm.size()) return geom;
+    Vec3 ln{nrm[ni * 3 + 0], nrm[ni * 3 + 1], nrm[ni * 3 + 2]};
+    Vec3 wn = TransformVector(world, ln);  // job-frame (world for flat path)
+    float len = Length(wn);
+    return len > 1.0e-12f ? Mul(wn, 1.0f / len) : geom;
+  };
+
+  // Reserve from the exact triangle-fan estimate. StreamMeshJobs gives each mesh
+  // its OWN thread-local buffers (one mesh's worth), so a single up-front reserve
+  // replaces the per-triangle geometric reallocations (the TriInfo realloc churn
+  // perf flagged). (This is safe ONLY because the buffers are per-job now; the
+  // old shared-buffer design would have reallocated multi-GB on every mesh.)
+  size_t tri_estimate = 0;
+  for (int32_t c : counts) {
+    if (c >= 3) tri_estimate += size_t(c - 2);
+  }
+  if (tri_estimate) {
+    if (out_uverts) {
+      out_indices->reserve(out_indices->size() + tri_estimate * 3);
+    } else {
+      vertices->reserve(vertices->size() + tri_estimate * 9);
+    }
+    tris->reserve(tris->size() + tri_estimate);
+    if (want_uvs) tri_uvs->reserve(tri_uvs->size() + tri_estimate * 6);
+    if (want_colors) tri_colors->reserve(tri_colors->size() + tri_estimate * 12);
+    if (want_normals) tri_normals->reserve(tri_normals->size() + tri_estimate * 9);
+  }
+  // Indexed path: append this mesh's unique world-space vertices once; triangle
+  // indices below are offset by the BLAS-local base. The soup path leaves these
+  // untouched. All npts are appended (index space == point ids) even if some are
+  // unreferenced -- simpler base arithmetic, negligible waste.
+  const uint32_t vbase = (out_uverts && io_vbase) ? *io_vbase : 0u;
+  if (out_uverts) {
+    out_uverts->reserve(out_uverts->size() + npts * 3);
+    for (size_t i = 0; i < npts; i++) {
+      out_uverts->push_back(wpts[i].x);
+      out_uverts->push_back(wpts[i].y);
+      out_uverts->push_back(wpts[i].z);
+    }
+    if (io_vbase) *io_vbase += uint32_t(npts);
+  }
+
+  // Material + purpose are constant across a mesh's triangles, so resolve them
+  // ONCE here instead of rebuilding a full TriInfo per triangle. The slim TLAS
+  // path (TriStore) stores the material once in mat_table and needs none of these
+  // per-tri; the flat path copies this template and overwrites only the positions.
+  const uint32_t purpose_bit = PurposeBit(purpose);
+  const bool visible_for_fit = PurposeVisible(purpose_bit, purpose_mask);
+  TriInfo tmpl;
+  tmpl.base_color = base_color;
+  tmpl.tex_id = tex_id;
+  tmpl.normal_tex_id = normal_tex_id;
+  tmpl.roughness = roughness;
+  tmpl.metallic = metallic;
+  tmpl.rough_tex_id = rough_tex.id;
+  tmpl.rough_ch = rough_tex.ch;
+  tmpl.metal_tex_id = metal_tex.id;
+  tmpl.metal_ch = metal_tex.ch;
+  tmpl.emission = emission;
+  tmpl.emission_tex_id = emission_tex_id;
+  tmpl.occlusion = occlusion;
+  tmpl.occ_tex_id = occ_tex.id;
+  tmpl.occ_ch = occ_tex.ch;
+  tmpl.opacity = opacity;
+  tmpl.opacity_tex_id = opacity_tex.id;
+  tmpl.opacity_ch = opacity_tex.ch;
+  tmpl.opacity_threshold = opacity_threshold;
+  tmpl.clearcoat = clearcoat;
+  tmpl.clearcoat_roughness = clearcoat_roughness;
+  tmpl.clearcoat_tex_id = clearcoat_tex.id;
+  tmpl.clearcoat_ch = clearcoat_tex.ch;
+  tmpl.clearcoat_rough_tex_id = clearcoat_rough_tex.id;
+  tmpl.clearcoat_rough_ch = clearcoat_rough_tex.ch;
+  tmpl.specular_color = specular_color;
+  tmpl.specular_tex_id = specular_tex_id;
+  tmpl.ior = ior;
+  tmpl.use_specular_workflow = use_specular_workflow;
+  tmpl.purpose_bit = purpose_bit;
+
+  size_t cursor = 0;
+  size_t face_idx = 0;
+  for (int32_t c : counts) {
+    const size_t face = face_idx++;
+    if (c < 3 || cursor + size_t(c) > indices.size()) {
+      cursor += size_t(std::max<int32_t>(0, c));
+      continue;
+    }
+    for (int32_t k = 1; k + 1 < c; k++) {
+      int32_t i0 = indices[cursor + 0];
+      int32_t i1 = indices[cursor + size_t(k)];
+      int32_t i2 = indices[cursor + size_t(k + 1)];
+      if (i0 < 0 || i1 < 0 || i2 < 0 || size_t(i0) >= npts ||
+          size_t(i1) >= npts || size_t(i2) >= npts) {
+        continue;
+      }
+      const Vec3 &p0 = wpts[size_t(i0)];
+      const Vec3 &p1 = wpts[size_t(i1)];
+      const Vec3 &p2 = wpts[size_t(i2)];
+      Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
+      if (Length(n) < 1.0e-12f) continue;
+
+      if (purpose_bit == kPurposeRenderBit) {
+        stats->purpose_render_triangles++;
+      } else if (purpose_bit == kPurposeProxyBit) {
+        stats->purpose_proxy_triangles++;
+      } else if (purpose_bit == kPurposeGuideBit) {
+        stats->purpose_guide_triangles++;
+      } else {
+        stats->purpose_default_triangles++;
+      }
+      // TLAS mode culls purpose-invisible triangles at build time (closest-hit
+      // can't filter per-prim like the flat multi-hit path does).
+      if (purpose_cull && !visible_for_fit) continue;
+      if (out_indices) {
+        out_indices->push_back(vbase + uint32_t(i0));
+        out_indices->push_back(vbase + uint32_t(i1));
+        out_indices->push_back(vbase + uint32_t(i2));
+      } else {
+        vertices->insert(vertices->end(),
+                         {p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z});
+      }
+      if constexpr (std::is_same<typename TVec::value_type, TriStore>::value) {
+        // Slim store: only mat_id (positions are in `vertices` above; the global
+        // mat_id is assigned by StreamMeshJobs when it concatenates jobs).
+        TriStore ts;
+        ts.mat_id = 0;
+        tris->push_back(ts);
+      } else if constexpr (std::is_same<typename TVec::value_type,
+                                        FlatTri>::value) {
+        // Flat slim store: per-tri geometry + purpose + a mat_id into the flat
+        // material table (assigned at concat by StreamMeshJobs, like TriStore).
+        FlatTri ft;
+        ft.p0 = p0;
+        ft.p1 = p1;
+        ft.p2 = p2;
+        ft.n = n;
+        ft.purpose_bit = purpose_bit;
+        ft.mat_id = 0;
+        tris->push_back(ft);
+      } else {
+        TriInfo tri = tmpl;  // per-mesh material; per-tri geometry below
+        tri.p0 = p0;
+        tri.p1 = p1;
+        tri.p2 = p2;
+        tri.n = n;
+        tris->push_back(tri);
+      }
+      if (want_uvs) {
+        // Keep tri_uvs parallel to tris (6 floats/tri). uv0=vert0, uv1=vert(k),
+        // uv2=vert(k+1) in fan order, matching i0/i1/i2 above.
+        auto uv0 = uv_at(cursor + 0, i0);
+        auto uv1 = uv_at(cursor + size_t(k), i1);
+        auto uv2 = uv_at(cursor + size_t(k + 1), i2);
+        // Bake the UsdTransform2d (if any) into the stored UVs.
+        uv_xform.apply(&uv0.first, &uv0.second);
+        uv_xform.apply(&uv1.first, &uv1.second);
+        uv_xform.apply(&uv2.first, &uv2.second);
+        tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
+                                         uv1.second, uv2.first, uv2.second});
+      }
+      if (want_colors) {
+        // Per-corner RGBA8 parallel to tris (12 bytes/tri), fan order matching
+        // i0/i1/i2. Constant meshes replicate base_color/opacity at all corners.
+        float c0[4], c1[4], c2[4];
+        col_at(cursor + 0, i0, face, c0);
+        col_at(cursor + size_t(k), i1, face, c1);
+        col_at(cursor + size_t(k + 1), i2, face, c2);
+        auto q = [](float x) -> uint8_t {
+          x = x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
+          return uint8_t(int(x * 255.0f + 0.5f));
+        };
+        tri_colors->insert(tri_colors->end(),
+                           {q(c0[0]), q(c0[1]), q(c0[2]), q(c0[3]), q(c1[0]),
+                            q(c1[1]), q(c1[2]), q(c1[3]), q(c2[0]), q(c2[1]),
+                            q(c2[2]), q(c2[3])});
+      }
+      if (want_normals) {
+        // Per-corner normals (9 floats/tri), fan order matching i0/i1/i2.
+        Vec3 n0 = norm_at(cursor + 0, i0, n);
+        Vec3 n1 = norm_at(cursor + size_t(k), i1, n);
+        Vec3 n2 = norm_at(cursor + size_t(k + 1), i2, n);
+        tri_normals->insert(tri_normals->end(),
+                            {n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y,
+                             n2.z});
+      }
+      stats->triangles++;
+      if (visible_for_fit) {
+        Expand(bounds, p0);
+        Expand(bounds, p1);
+        Expand(bounds, p2);
+      }
+    }
+    cursor += size_t(c);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Material/texture resolution for the `next` render path.
+//
+// Resolves a Mesh's bound material (material:binding -> Material ->
+// outputs:surface -> UsdPreviewSurface, including MaterialX's
+// ND_UsdPreviewSurface_surfaceshader) into a flat diffuse base color and/or a
+// diffuse (base color) texture sampled through inputs:diffuseColor ->
+// UsdUVTexture(inputs:file). Done serially before the parallel triangle stream.
+// ---------------------------------------------------------------------------
+
+// Directory portion of a path (without trailing slash), or "" if none.
+std::string DirName(const std::string &path) {
+  size_t slash = path.find_last_of("/\\");
+  if (slash == std::string::npos) return "";
+  return path.substr(0, slash);
+}
+
+// Loaded RGB(A) textures + a key->index cache so each (file, wrap, colorspace)
+// loads once. `usdz`, when set, is searched first so textures packed inside a
+// .usdz archive resolve without touching the filesystem.
+
+// True if a usdz entry name refers to the same asset as `asset_path` (which may
+// be relative, "./tex.png", or "tex.png"). Matches on full path or basename.
+bool UsdzEntryMatches(const std::string &entry, const std::string &asset) {
+  std::string a = asset;
+  if (a.rfind("./", 0) == 0) a = a.substr(2);
+  if (entry == a) return true;
+  if (entry.size() > a.size() &&
+      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
+      entry[entry.size() - a.size() - 1] == '/') {
+    return true;
+  }
+  auto base = [](const std::string &s) {
+    size_t p = s.find_last_of('/');
+    return p == std::string::npos ? s : s.substr(p + 1);
+  };
+  return base(entry) == base(a);
+}
+
+int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
+                          WrapMode ws, WrapMode wt, bool srgb,
+                          const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
+                          const Vec3 &bias = Vec3{0.0f, 0.0f, 0.0f}) {
+  const std::string key = asset_path + "|" + std::to_string(int(ws)) + "," +
+                          std::to_string(int(wt)) + (srgb ? "|s" : "|r") + "|" +
+                          std::to_string(scale.x) + "," + std::to_string(bias.x);
+  auto it = tc.by_key.find(key);
+  if (it != tc.by_key.end()) return it->second;
+
+  auto adopt = [&](const tinyusdz::Image &img) -> int32_t {
+    if (img.width <= 0 || img.height <= 0 || img.bpp != 8 || img.data.empty()) {
+      return -1;
+    }
+    Texture t;
+    t.width = img.width;
+    t.height = img.height;
+    t.channels = img.channels;
+    t.pixels = img.data;
+    t.wrap_s = ws;
+    t.wrap_t = wt;
+    t.srgb = srgb;
+    t.scale = scale;
+    t.bias = bias;
+    t.build_mips();
+    int32_t id = int32_t(tc.textures->size());
+    tc.textures->push_back(std::move(t));
+    return id;
+  };
+
+  int32_t id = -1;
+  // 1. usdz-embedded.
+  if (tc.usdz) {
+    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
+      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
+      auto res = tinyusdz::image::LoadImageFromMemory(
+          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
+      if (res) id = adopt(res.value().image);
+      break;
+    }
+  }
+  // 2. filesystem (anchored to the input dir).
+  if (id < 0 && (!asset_path.empty())) {
+    std::string path = asset_path;
+    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
+    auto res = tinyusdz::image::LoadImageFromFile(path);
+    if (res) id = adopt(res.value().image);
+  }
+  if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  tc.by_key[key] = id;
+  return id;
+}
+
+// Follow a connection on `prim` (e.g. "outputs:surface",
+// "inputs:diffuseColor") to its target prim, or an invalid prim if unconnected.
+tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
+                                          const tinyusdz::next::UsdPrim &prim,
+                                          const std::string &prop) {
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  if (!spec) return tinyusdz::next::UsdPrim();
+  const std::vector<tinyusdz::next::Path> *c = spec->connection(prop);
+  if (!c || c->empty()) return tinyusdz::next::UsdPrim();
+  return stage.GetPrimAtPath((*c)[0].prim_path());
+}
+
+WrapMode ParseWrapMode(const std::string &s) {
+  if (s == "clamp") return WrapMode::Clamp;
+  if (s == "mirror") return WrapMode::Mirror;
+  if (s == "black") return WrapMode::Black;
+  return WrapMode::Repeat;  // "repeat"/"useMetadata"/default
+}
+
+// Resolve a scalar PBR input (inputs:roughness / inputs:metallic) that connects
+// to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Loads the raw texture
+// and records the source channel.
+void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
+                              const tinyusdz::next::UsdPrim &surf,
+                              const std::string &input, TextureCache &tc,
+                              ScalarTex *out) {
+  const tinyusdz::next::PrimSpec *spec = surf.GetPrimSpec();
+  if (!spec) return;
+  const std::vector<tinyusdz::next::Path> *c = spec->connection(input);
+  if (!c || c->empty()) return;
+  const tinyusdz::next::Path &target = (*c)[0];
+  tinyusdz::next::UsdPrim tex = stage.GetPrimAtPath(target.prim_path());
+  if (!tex.IsValid()) return;
+  const tinyusdz::next::Value *fv = tex.GetPropertyValue("inputs:file");
+  if (!fv) return;
+  const std::string *ap = fv->as_asset_path();
+  if (!ap) ap = fv->as_string();
+  if (!ap || ap->empty()) return;
+  WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
+    if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
+    if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+  int32_t id = LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false);
+  if (id < 0) return;
+  out->id = id;
+  const std::string prop = target.property_name();  // e.g. "outputs:g"
+  if (!prop.empty()) {
+    switch (prop.back()) {
+      case 'g': out->ch = 1; break;
+      case 'b': out->ch = 2; break;
+      case 'a': out->ch = 3; break;
+      default: out->ch = 0; break;  // r / rgb
+    }
+  }
+  // UsdUVTexture inputs:scale / inputs:bias for the sampled channel (float4 or
+  // scalar). out = raw*scale + bias. Stored for all scalar inputs; the caller
+  // applies it only for displacement.
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
+    if (const float *f = v->as_float4()) out->scale = f[std::min<int>(out->ch, 3)];
+    else if (const float *s = v->as_float()) out->scale = *s;
+  }
+  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
+    if (const float *f = v->as_float4()) out->bias = f[std::min<int>(out->ch, 3)];
+    else if (const float *s = v->as_float()) out->bias = *s;
+  }
+}
+
+// If a UsdUVTexture's inputs:st chain runs through a UsdTransform2d, read its
+// rotation (deg, CCW) / scale / translation. Otherwise returns identity.
+UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &uvtex) {
+  UvXform x;
+  tinyusdz::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
+  if (!st.IsValid()) return x;
+  const tinyusdz::next::Value *idv = st.GetPropertyValue("info:id");
+  const std::string *id = idv ? idv->as_token() : nullptr;
+  if (!id || *id != "UsdTransform2d") return x;
+  float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:rotation"))
+    if (const float *f = v->as_float()) rot = *f;
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:scale"))
+    if (const float *f = v->as_float2()) { sx = f[0]; sy = f[1]; }
+  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:translation"))
+    if (const float *f = v->as_float2()) { tx = f[0]; ty = f[1]; }
+  if (rot == 0.0f && sx == 1.0f && sy == 1.0f && tx == 0.0f && ty == 0.0f) {
+    return x;  // identity
+  }
+  float rad = rot * 3.14159265358979f / 180.0f;
+  x.rc = std::cos(rad);
+  x.rs = std::sin(rad);
+  x.sx = sx;
+  x.sy = sy;
+  x.tx = tx;
+  x.ty = ty;
+  x.identity = false;
+  return x;
+}
+
+void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
+                             const tinyusdz::next::UsdPrim &mesh,
+                             TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
+                             float *roughness, float *metallic,
+                             int32_t *normal_tex_id, UvXform *uv_xform,
+                             ScalarTex *rough_tex, ScalarTex *metal_tex,
+                             Vec3 *emission, int32_t *emission_tex_id,
+                             float *occlusion, ScalarTex *occ_tex,
+                             float *opacity, ScalarTex *opacity_tex,
+                             float *opacity_threshold, float *clearcoat,
+                             float *clearcoat_roughness, ScalarTex *clearcoat_tex,
+                             ScalarTex *clearcoat_rough_tex, Vec3 *specular_color,
+                             int32_t *specular_tex_id, float *ior,
+                             uint8_t *use_specular_workflow,
+                             bool *vertex_color, float *displacement,
+                             ScalarTex *displacement_tex) {
+  // Geometry display primvars: the unmaterialed base color/opacity (e.g. ALab
+  // geom-only meshes). The first value seeds the constant base; a >1-element
+  // array is per-vertex/faceVarying/uniform and sets *vertex_color so the stream
+  // stores per-corner colors (see AddRTPreviewMeshNext). A bound material below
+  // overrides the constant color.
+  constexpr double kDefaultTime = std::numeric_limits<double>::quiet_NaN();
+  tinyusdz::tydra::next::ValueArrayRead<float> dc;
+  if (tinyusdz::tydra::next::ReadFloatArray(
+          mesh, "primvars:displayColor", kDefaultTime, &dc)) {
+    if (dc.size() >= 3) *base_color = Vec3{dc[0], dc[1], dc[2]};
+    if (vertex_color && dc.size() > 3) *vertex_color = true;
+  }
+  if (opacity) {
+    tinyusdz::tydra::next::ValueArrayRead<float> od;
+    if (tinyusdz::tydra::next::ReadFloatArray(
+            mesh, "primvars:displayOpacity", kDefaultTime, &od)) {
+      if (!od.empty()) *opacity = std::min(1.0f, std::max(0.0f, od[0]));
+      if (vertex_color && od.size() > 1) *vertex_color = true;
+    }
+  }
+  const std::vector<tinyusdz::next::Path> *bind =
+      mesh.GetRelationship("material:binding");
+  if (!bind || bind->empty()) return;
+  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+  if (!mat.IsValid()) return;
+  tinyusdz::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
+  if (!surf.IsValid()) {
+    surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+  }
+  if (!surf.IsValid()) return;
+
+  // Scalar PBR params (UsdPreviewSurface inputs:roughness / inputs:metallic).
+  if (const tinyusdz::next::Value *r = surf.GetPropertyValue("inputs:roughness")) {
+    if (const float *f = r->as_float()) *roughness = std::min(1.0f, std::max(0.0f, *f));
+  }
+  if (const tinyusdz::next::Value *m = surf.GetPropertyValue("inputs:metallic")) {
+    if (const float *f = m->as_float()) *metallic = std::min(1.0f, std::max(0.0f, *f));
+  }
+  // Roughness/metallic textures (channel-aware; ORM packing).
+  if (rough_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:roughness", tc, rough_tex);
+  if (metal_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:metallic", tc, metal_tex);
+
+  // Occlusion (AO) scalar + optional texture.
+  if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:occlusion"))
+    if (const float *f = o->as_float())
+      if (occlusion) *occlusion = std::min(1.0f, std::max(0.0f, *f));
+  if (occ_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:occlusion", tc, occ_tex);
+
+  // Displacement: UsdPreviewSurface inputs:displacement offsets the surface along
+  // its normal (scene units). A scalar constant and/or a channel-aware height
+  // texture (raw, like roughness/opacity). Applied per-vertex at mesh-build time
+  // (coarse displacement) -- see AddRTPreviewMeshNext.
+  if (const tinyusdz::next::Value *d =
+          surf.GetPropertyValue("inputs:displacement"))
+    if (const float *f = d->as_float())
+      if (displacement) *displacement = *f;
+  if (displacement_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+                             displacement_tex);
+
+  // Transparency: UsdPreviewSurface inputs:opacity (scalar const, multiplied into
+  // any displayOpacity) + optional channel-aware texture (commonly the diffuse
+  // map's alpha, outputs:a). inputs:opacityThreshold > 0 turns it into an alpha
+  // cutout (mask) instead of translucent blending.
+  if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:opacity"))
+    if (const float *f = o->as_float())
+      if (opacity) *opacity *= std::min(1.0f, std::max(0.0f, *f));
+  if (opacity_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:opacity", tc, opacity_tex);
+  if (const tinyusdz::next::Value *ot =
+          surf.GetPropertyValue("inputs:opacityThreshold"))
+    if (const float *f = ot->as_float())
+      if (opacity_threshold) *opacity_threshold = std::max(0.0f, *f);
+
+  // Clearcoat: a second specular lobe (weight + roughness), each a scalar const
+  // plus optional channel-aware texture. Only contributes under IBL (like base
+  // roughness/metallic).
+  if (const tinyusdz::next::Value *c = surf.GetPropertyValue("inputs:clearcoat"))
+    if (const float *f = c->as_float())
+      if (clearcoat) *clearcoat = std::min(1.0f, std::max(0.0f, *f));
+  if (const tinyusdz::next::Value *cr =
+          surf.GetPropertyValue("inputs:clearcoatRoughness"))
+    if (const float *f = cr->as_float())
+      if (clearcoat_roughness)
+        *clearcoat_roughness = std::min(1.0f, std::max(0.0f, *f));
+  if (clearcoat_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:clearcoat", tc, clearcoat_tex);
+  if (clearcoat_rough_tex)
+    ResolveScalarTextureNext(stage, surf, "inputs:clearcoatRoughness", tc,
+                             clearcoat_rough_tex);
+
+  // Specular workflow: inputs:useSpecularWorkflow swaps the metallic F0 derivation
+  // for an explicit inputs:specularColor (constant + optional color texture).
+  // inputs:ior sets the dielectric F0 in the (default) metallic workflow; ior 1.5
+  // reproduces the fixed 0.04 used before, so the default is byte-identical.
+  if (const tinyusdz::next::Value *uw =
+          surf.GetPropertyValue("inputs:useSpecularWorkflow")) {
+    if (const int32_t *i = uw->as_int())
+      if (use_specular_workflow) *use_specular_workflow = (*i != 0) ? 1 : 0;
+  }
+  if (const tinyusdz::next::Value *iv = surf.GetPropertyValue("inputs:ior"))
+    if (const float *f = iv->as_float())
+      if (ior && *f > 0.0f) *ior = *f;
+  if (const tinyusdz::next::Value *sc =
+          surf.GetPropertyValue("inputs:specularColor"))
+    if (const float *f = sc->as_float3())
+      if (specular_color) *specular_color = Vec3{f[0], f[1], f[2]};
+  if (specular_tex_id) {
+    tinyusdz::next::UsdPrim stex =
+        ConnectedPrimNext(stage, surf, "inputs:specularColor");
+    if (stex.IsValid()) {
+      if (const tinyusdz::next::Value *fv =
+              stex.GetPropertyValue("inputs:file")) {
+        const std::string *ap = fv->as_asset_path();
+        if (!ap) ap = fv->as_string();
+        if (ap && !ap->empty()) {
+          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
+            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
+            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          bool srgb = true;
+          if (const tinyusdz::next::Value *v =
+                  stex.GetPropertyValue("inputs:sourceColorSpace"))
+            if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+          int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb);
+          if (id >= 0) {
+            *specular_tex_id = id;
+            if (specular_color) *specular_color = Vec3{1.0f, 1.0f, 1.0f};
+          }
+        }
+      }
+    }
+  }
+
+  // Emissive color: constant + optional UsdUVTexture (sRGB color).
+  if (const tinyusdz::next::Value *e =
+          surf.GetPropertyValue("inputs:emissiveColor"))
+    if (const float *f = e->as_float3())
+      if (emission) *emission = Vec3{f[0], f[1], f[2]};
+  if (emission_tex_id) {
+    tinyusdz::next::UsdPrim etex =
+        ConnectedPrimNext(stage, surf, "inputs:emissiveColor");
+    if (etex.IsValid()) {
+      if (const tinyusdz::next::Value *fv =
+              etex.GetPropertyValue("inputs:file")) {
+        const std::string *ap = fv->as_asset_path();
+        if (!ap) ap = fv->as_string();
+        if (ap && !ap->empty()) {
+          WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
+            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
+            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          int32_t id = LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/true);
+          if (id >= 0) {
+            *emission_tex_id = id;
+            if (emission) *emission = Vec3{1.0f, 1.0f, 1.0f};  // texture is the tint
+          }
+        }
+      }
+    }
+  }
+
+  // Constant diffuse color (also the texture's fallback tint).
+  if (const tinyusdz::next::Value *dc =
+          surf.GetPropertyValue("inputs:diffuseColor")) {
+    if (const float *f = dc->as_float3()) {
+      *base_color = Vec3{f[0], f[1], f[2]};
+    }
+  }
+  // Diffuse texture: inputs:diffuseColor -> UsdUVTexture(inputs:file), honoring
+  // its wrapS/wrapT and sourceColorSpace (sRGB by default for color).
+  tinyusdz::next::UsdPrim tex =
+      ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
+  if (tex.IsValid()) {
+    if (const tinyusdz::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
+      const std::string *ap = fv->as_asset_path();
+      if (!ap) ap = fv->as_string();
+      if (ap && !ap->empty()) {
+        WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
+          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
+          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+        bool srgb = true;
+        if (const tinyusdz::next::Value *v =
+                tex.GetPropertyValue("inputs:sourceColorSpace")) {
+          if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+        }
+        // inputs:scale/bias tint the sampled color (default identity).
+        Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale"))
+          if (const float *f = v->as_float3()) sc = Vec3{f[0], f[1], f[2]};
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias"))
+          if (const float *f = v->as_float3()) bi = Vec3{f[0], f[1], f[2]};
+        int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb, sc, bi);
+        if (id >= 0) {
+          *tex_id = id;
+          // A textured surface tints by the texture, not the (often unauthored)
+          // diffuseColor constant. Use white so sampling shows true texels.
+          *base_color = Vec3{1.0f, 1.0f, 1.0f};
+          if (uv_xform) *uv_xform = ResolveUvXform(stage, tex);
+        }
+      }
+    }
+  }
+
+  // Tangent-space normal map: inputs:normal -> UsdUVTexture(inputs:file). Always
+  // raw (non-sRGB); scale/bias default to the UsdPreviewSurface convention
+  // (2,-1) that unpacks a [0,1] texel to a [-1,1] tangent-space normal.
+  tinyusdz::next::UsdPrim ntex = ConnectedPrimNext(stage, surf, "inputs:normal");
+  if (ntex.IsValid()) {
+    if (const tinyusdz::next::Value *fv = ntex.GetPropertyValue("inputs:file")) {
+      const std::string *ap = fv->as_asset_path();
+      if (!ap) ap = fv->as_string();
+      if (ap && !ap->empty()) {
+        WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:wrapS"))
+          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
+          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+        Vec3 scale{2.0f, 2.0f, 2.0f}, bias{-1.0f, -1.0f, -1.0f};
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:scale"))
+          if (const float *f = v->as_float3()) scale = Vec3{f[0], f[1], f[2]};
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:bias"))
+          if (const float *f = v->as_float3()) bias = Vec3{f[0], f[1], f[2]};
+        int32_t id =
+            LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false, scale, bias);
+        if (id >= 0) {
+          *normal_tex_id = id;
+          if (uv_xform && uv_xform->identity)
+            *uv_xform = ResolveUvXform(stage, ntex);
+        }
+      }
+    }
+  }
+}
+
+// The full resolved-material result for one bound material (everything
+// ResolveMeshMaterialNext writes). Memoized by bound-material path so a scene
+// with many meshes sharing few materials (e.g. Island's 605k coral meshes over a
+// handful of coral materials) resolves each material — and its shader-graph walk
+// + texture lookups — exactly once instead of per mesh.
+
+// Resolve a mesh job's material with per-material memoization. The result is a
+// pure function of the bound material (+ shared texture cache), so a cache hit
+// skips the shader-graph walk entirely. Unbound meshes keep MeshJobNext defaults.
+void ResolveMeshMaterialCached(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
+    TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
+    MeshJobNext *job) {
+  const std::vector<tinyusdz::next::Path> *bind =
+      mesh.GetRelationship("material:binding");
+  const std::string key =
+      (bind && !bind->empty()) ? (*bind)[0].str() : std::string();
+  if (!key.empty()) {
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+      const ResolvedMat &r = it->second;
+      job->base_color = r.base_color;
+      job->tex_id = r.tex_id;
+      job->roughness = r.roughness;
+      job->metallic = r.metallic;
+      job->normal_tex_id = r.normal_tex_id;
+      job->uv_xform = r.uv_xform;
+      job->rough_tex = r.rough_tex;
+      job->metal_tex = r.metal_tex;
+      job->emission = r.emission;
+      job->emission_tex_id = r.emission_tex_id;
+      job->occlusion = r.occlusion;
+      job->occ_tex = r.occ_tex;
+      job->opacity = r.opacity;
+      job->opacity_tex = r.opacity_tex;
+      job->opacity_threshold = r.opacity_threshold;
+      job->clearcoat = r.clearcoat;
+      job->clearcoat_roughness = r.clearcoat_roughness;
+      job->clearcoat_tex = r.clearcoat_tex;
+      job->clearcoat_rough_tex = r.clearcoat_rough_tex;
+      job->specular_color = r.specular_color;
+      job->specular_tex_id = r.specular_tex_id;
+      job->ior = r.ior;
+      job->use_specular_workflow = r.use_specular_workflow;
+      job->vertex_color = r.vertex_color;
+      job->displacement = r.displacement;
+      job->displacement_tex = r.displacement_tex;
+      return;
+    }
+  }
+  ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
+                          &job->roughness, &job->metallic, &job->normal_tex_id,
+                          &job->uv_xform, &job->rough_tex, &job->metal_tex,
+                          &job->emission, &job->emission_tex_id, &job->occlusion,
+                          &job->occ_tex, &job->opacity, &job->opacity_tex,
+                          &job->opacity_threshold, &job->clearcoat,
+                          &job->clearcoat_roughness, &job->clearcoat_tex,
+                          &job->clearcoat_rough_tex, &job->specular_color,
+                          &job->specular_tex_id, &job->ior,
+                          &job->use_specular_workflow, &job->vertex_color,
+                          &job->displacement, &job->displacement_tex);
+  if (!key.empty()) {
+    ResolvedMat r;
+    r.base_color = job->base_color;
+    r.tex_id = job->tex_id;
+    r.roughness = job->roughness;
+    r.metallic = job->metallic;
+    r.normal_tex_id = job->normal_tex_id;
+    r.uv_xform = job->uv_xform;
+    r.rough_tex = job->rough_tex;
+    r.metal_tex = job->metal_tex;
+    r.emission = job->emission;
+    r.emission_tex_id = job->emission_tex_id;
+    r.occlusion = job->occlusion;
+    r.occ_tex = job->occ_tex;
+    r.opacity = job->opacity;
+    r.opacity_tex = job->opacity_tex;
+    r.opacity_threshold = job->opacity_threshold;
+    r.clearcoat = job->clearcoat;
+    r.clearcoat_roughness = job->clearcoat_roughness;
+    r.clearcoat_tex = job->clearcoat_tex;
+    r.clearcoat_rough_tex = job->clearcoat_rough_tex;
+    r.specular_color = job->specular_color;
+    r.specular_tex_id = job->specular_tex_id;
+    r.ior = job->ior;
+    r.use_specular_workflow = job->use_specular_workflow;
+    r.vertex_color = job->vertex_color;
+    r.displacement = job->displacement;
+    r.displacement_tex = job->displacement_tex;
+    cache.emplace(key, r);
+  }
+}
+
+// True when `path` is one of the mask paths or a descendant of one. An empty
+// mask matches everything.
+bool PathMatchesMask(const std::string &path,
+                     const std::vector<std::string> &mask) {
+  if (mask.empty()) return true;
+  for (const std::string &m : mask) {
+    if (path == m) return true;
+    if (path.size() > m.size() && path.compare(0, m.size(), m) == 0 &&
+        path[m.size()] == '/') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// True if any of the prim's authored xform ops are time-sampled (so its local
+// transform varies with time).
+bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
+  const tinyusdz::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
+  const std::vector<std::string> *order =
+      orderv ? orderv->as_token_array() : nullptr;
+  if (!order) return false;
+  for (const std::string &raw : *order) {
+    std::string op = raw;
+    if (op.rfind("!invert!", 0) == 0) op = op.substr(8);
+    if (op == "!resetXformStack!") continue;
+    if (prim.HasTimeSamples(op)) return true;
+  }
+  return false;
+}
+
+// True if the mesh's own geometry (points/topology) is time-sampled.
+bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
+  return prim.HasTimeSamples("points") ||
+         prim.HasTimeSamples("faceVertexIndices") ||
+         prim.HasTimeSamples("faceVertexCounts");
+}
+
+// True if the subtree contains a rendered (masked) Mesh whose world-space
+// geometry varies with time: either the mesh's own points/topology are
+// time-sampled, or some xform op on the path (this prim or an ancestor) is.
+// Cameras and non-rendered prims are ignored, so camera-only animation does not
+// flag the geometry as dynamic (the BVH can then be reused across frames).
+bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
+                             const std::vector<std::string> &mask,
+                             bool ancestor_xform_animated) {
+  const bool xform_anim =
+      ancestor_xform_animated || PrimHasAnimatedXform(prim);
+  if (prim.GetTypeName() == "Mesh" &&
+      PathMatchesMask(prim.GetPath().str(), mask)) {
+    if (xform_anim || MeshHasAnimatedGeom(prim)) return true;
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (SubtreeGeometryAnimated(child, mask, xform_anim)) return true;
+  }
+  return false;
+}
+
+bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
+                           const std::vector<std::string> &mask) {
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    if (SubtreeGeometryAnimated(root, mask, false)) return true;
+  }
+  return false;
+}
+
+// Serial walk: resolve parent-dependent world matrices (at `time`) + purpose and
+// flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
+// meshes at/under those prim paths (usdrecord --mask); the full tree is still
+// walked so transform chains remain correct.
+void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
+                                const tinyusdz::next::UsdPrim &prim,
+                                const matrix4d &parent_world,
+                                tinyusdz::Purpose inherited_purpose, double time,
+                                const std::vector<std::string> &mask,
+                                std::vector<MeshJobNext> *jobs) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") {
+        purpose = tinyusdz::Purpose::Render;
+      } else if (*t == "proxy") {
+        purpose = tinyusdz::Purpose::Proxy;
+      } else if (*t == "guide") {
+        purpose = tinyusdz::Purpose::Guide;
+      }
+      // "default"/unknown: keep the inherited purpose.
+    }
+  }
+
+  // Nested instancing: a prototype subtree may itself contain a PointInstancer or a
+  // scenegraph (instanceable) instance. That geometry is NOT baked into this
+  // prototype's base BLAS -- CollectProtoMeshNesting records those placements
+  // separately and the TLAS flattens them (one level, composed per outer
+  // placement). So do not descend here (mirror CollectSceneSplit). No-op for the
+  // common leaf prototype (plain meshes), so non-nested scenes are byte-identical.
+  if (prim.GetTypeName() == "PointInstancer") return;
+  {
+    const tinyusdz::next::PrimSpec *ispec = prim.GetPrimSpec();
+    if (ispec && !ispec->meta().instance_prototype().empty()) return;
+  }
+  if (prim.GetTypeName() == "Mesh" &&
+      PathMatchesMask(prim.GetPath().str(), mask)) {
+    MeshJobNext job;
+    job.prim = prim;
+    job.world = world;
+    job.purpose = purpose;
+    jobs->push_back(std::move(job));
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs);
+  }
+}
+
+// `next`-path UsdVol volumes: serial walk resolving world matrices; for each
+// Volume prim, follow `field:*` -> field-asset prim -> filePath, load the .vdb
+// (relative to `baseDir`), and build a VolumeData for raymarching.
+void CollectVolumesNext(const tinyusdz::next::Stage &stage,
+                        const tinyusdz::next::UsdPrim &prim,
+                        const matrix4d &parent_world, double time,
+                        const std::string &baseDir,
+                        std::vector<VolumeData> *out) {
+  if (!prim.IsActive()) return;
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  if (prim.GetTypeName() == "Volume") {
+    for (const std::string &relName : prim.GetRelationshipNames()) {
+      if (relName.rfind("field:", 0) != 0) continue;
+      const std::vector<tinyusdz::next::Path> *targets =
+          prim.GetRelationship(relName);
+      if (!targets || targets->empty()) continue;
+      tinyusdz::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
+      if (!field) continue;
+
+      const tinyusdz::next::Value *fp = field.GetPropertyValue("filePath");
+      const std::string *ap = fp ? fp->as_asset_path() : nullptr;
+      if (!ap || ap->empty()) continue;
+      std::string fieldName = relName.substr(std::strlen("field:"));
+      if (const tinyusdz::next::Value *fn = field.GetPropertyValue("fieldName")) {
+        if (const std::string *tk = fn->as_token()) fieldName = *tk;
+      }
+      std::string vpath = *ap;
+      if (!vpath.empty() && vpath[0] != '/' && !baseDir.empty()) {
+        vpath = baseDir + "/" + vpath;
+      }
+      std::vector<tinyusdz::usdVol::VDBGrid> grids;
+      std::string vw, ve;
+      if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
+          grids.empty()) {
+        continue;
+      }
+      const tinyusdz::usdVol::VDBGrid *g = nullptr;
+      for (const auto &gg : grids)
+        if (gg.name == fieldName) { g = &gg; break; }
+      if (!g) g = &grids[0];
+      if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
+        continue;
+
+      VolumeData vd;
+      vd.dim[0] = g->dim[0];
+      vd.dim[1] = g->dim[1];
+      vd.dim[2] = g->dim[2];
+      vd.density = g->data;
+      float lo[3], hi[3];
+      for (int a = 0; a < 3; a++) {
+        lo[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
+                float(g->world_translation[a]);
+        hi[a] = float(g->origin[a] + g->dim[a]) * float(g->voxel_size[a]) +
+                float(g->world_translation[a]);
+      }
+      vd.bmin = Vec3{lo[0], lo[1], lo[2]};
+      vd.bmax = Vec3{hi[0], hi[1], hi[2]};
+      matrix4d invw;
+      if (!tinyusdz::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
+      vd.inv_world = invw;
+      vd.background = g->background;
+      out->push_back(std::move(vd));
+    }
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    CollectVolumesNext(stage, child, world, time, baseDir, out);
+  }
+}
+
+// Read a UsdGeomCamera attribute (float, with double fallback).
+float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       float fallback) {
+  if (const tinyusdz::next::Value *v = prim.GetPropertyValue(name)) {
+    if (const float *f = v->as_float()) return *f;
+    if (const double *d = v->as_double()) return float(*d);
+  }
+  return fallback;
+}
+
+// Find a (named) UsdGeomCamera in the next stage and build a CameraFrame plus
+// its aperture aspect (horizontal/vertical). An empty query matches the first
+// camera. Mirrors CameraFrameFromGeomCamera but on the next stage with
+// bit-exact world transforms.
+bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
+                                  const tinyusdz::next::UsdPrim &prim,
+                                  const matrix4d &parent_world,
+                                  const std::string &query, double time,
+                                  CameraFrame *frame, float *aspect) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  if (prim.GetTypeName() == "Camera") {
+    const std::string path = prim.GetPath().str();
+    const std::string name = prim.GetName();
+    const bool match =
+        query.empty() || name == query || path == query ||
+        (path.size() > query.size() &&
+         path.compare(path.size() - query.size(), query.size(), query) == 0 &&
+         path[path.size() - query.size() - 1] == '/');
+    if (match) {
+      const float focal = ReadCamFloatNext(prim, "focalLength", 50.0f);
+      const float vap = ReadCamFloatNext(prim, "verticalAperture", 15.2908f);
+      const float hap = ReadCamFloatNext(prim, "horizontalAperture", 20.955f);
+      float znear = 0.1f, zfar = 1.0e6f;
+      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("clippingRange")) {
+        if (const float *f = v->as_float2()) { znear = f[0]; zfar = f[1]; }
+      }
+      std::string proj = "perspective";
+      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("projection")) {
+        if (const std::string *t = v->as_token()) proj = *t;
+      }
+      frame->origin = Vec3{float(world.m[3][0]), float(world.m[3][1]),
+                           float(world.m[3][2])};
+      frame->right = Normalize(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
+      frame->up = Normalize(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
+      frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
+      frame->yfov = 2.0f * std::atan(0.5f * vap / std::max(1.0e-6f, focal));
+      frame->xmag = hap;
+      frame->ymag = vap;
+      frame->znear = std::max(1.0e-5f, znear);
+      frame->zfar = std::max(frame->znear, zfar);
+      frame->ortho = (proj == "orthographic");
+      if (aspect) *aspect = hap / std::max(1.0e-6f, vap);
+      return true;
+    }
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (FindNextCameraFrameRecursive(stage, child, world, query, time, frame,
+                                     aspect)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
+                         const std::string &query, double time,
+                         CameraFrame *frame, float *aspect) {
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    if (FindNextCameraFrameRecursive(stage, root, matrix4d::identity(), query,
+                                     time, frame, aspect)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// OpenUSD usdrecord-style auto framing: replicates
+// UsdAppUtilsFrameRecorder's default-GfCamera framing (focal 50mm, aperture
+// 20.955 x 15.2908 -> horizontal FOV ~23.66 deg, aspect ~1.37). Positions a
+// perspective camera on the depth axis so the bbox fits the horizontal FOV,
+// front-on for Y-up and rotated for Z-up. Writes the aperture-derived image
+// height (width / aspect) to `out_height`.
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
+                                int width, int *out_height) {
+  constexpr float kPi = 3.14159265358979323846f;
+  const float focal = 50.0f, hap = 20.955f, vap = 15.2908f;
+  const float aspect = hap / vap;  // ~1.370
+  const float half_hfov = std::atan(0.5f * hap / focal);
+  if (out_height) {
+    *out_height = std::max(1, int(std::lround(float(width) / aspect)));
+  }
+
+  Vec3 center{0.0f, 0.0f, 0.0f};
+  Vec3 dim{2.0f, 2.0f, 2.0f};
+  if (bounds.valid) {
+    center = Mul(Add(bounds.lo, bounds.hi), 0.5f);
+    dim = Sub(bounds.hi, bounds.lo);
+  }
+
+  CameraFrame frame;
+  frame.yfov = 2.0f * std::atan(0.5f * vap / focal);
+  frame.ortho = false;
+
+  // Plane corner (half-extents in the focal plane) and the depth half-extent.
+  float plane_x, plane_y, depth;
+  Vec3 pos_dir, up_vec, fwd;
+  if (up_axis == tinyusdz::Axis::Z) {
+    plane_x = dim.x * 0.5f; plane_y = dim.z * 0.5f; depth = dim.y * 0.5f;
+    pos_dir = Vec3{0.0f, -1.0f, 0.0f};  // back up along -Y
+    fwd = Vec3{0.0f, 1.0f, 0.0f};
+    up_vec = Vec3{0.0f, 0.0f, 1.0f};
+  } else if (up_axis == tinyusdz::Axis::X) {
+    plane_x = dim.y * 0.5f; plane_y = dim.z * 0.5f; depth = dim.x * 0.5f;
+    pos_dir = Vec3{-1.0f, 0.0f, 0.0f};
+    fwd = Vec3{1.0f, 0.0f, 0.0f};
+    up_vec = Vec3{0.0f, 0.0f, 1.0f};
+  } else {  // Y-up
+    plane_x = dim.x * 0.5f; plane_y = dim.y * 0.5f; depth = dim.z * 0.5f;
+    pos_dir = Vec3{0.0f, 0.0f, 1.0f};  // back up along +Z (look down -Z)
+    fwd = Vec3{0.0f, 0.0f, -1.0f};
+    up_vec = Vec3{0.0f, 1.0f, 0.0f};
+  }
+  const float plane_radius =
+      std::sqrt(plane_x * plane_x + plane_y * plane_y);
+  float distance = plane_radius / std::max(1.0e-6f, std::tan(half_hfov)) + depth;
+  (void)kPi;
+
+  frame.origin = Add(center, Mul(pos_dir, distance));
+  frame.forward = Normalize(fwd);
+  frame.right = Normalize(Cross(frame.forward, up_vec));
+  if (Length(frame.right) < 1.0e-6f) frame.right = Vec3{1.0f, 0.0f, 0.0f};
+  frame.up = Normalize(Cross(frame.right, frame.forward));
+  const float diag = Length(dim);
+  frame.znear = std::max(1.0e-4f, distance - diag);
+  frame.zfar = distance + diag * 2.0f;
+  return frame;
+}
+
+// Persistent render context: the loaded next stage, extracted geometry, and the
+// built BVH are kept alive so the camera/render parameters can be changed and
+// the scene re-rendered repeatedly without re-parsing or rebuilding the BVH
+// (memory-persistent rendering, e.g. animation with a moving camera).
+
+// Resolve the camera (named / autoframe / auto-fit) into ctx.camera and the
+// image height into ctx.height, from the current ctx.opt + ctx.bounds.
+void ResolveCameraNext(RenderContext &ctx) {
+  const Options &opt = ctx.opt;
+  RenderScene empty_render_scene;
+  int height = opt.height;
+  if (!opt.camera.empty()) {
+    float cam_aspect = 16.0f / 9.0f;
+    if (FindNextCameraFrame(ctx.stage, opt.camera, ctx.frame_time, &ctx.camera,
+                            &cam_aspect)) {
+      if (height <= 0) {
+        height = std::max(1, int(std::lround(float(ctx.width) / cam_aspect)));
+      }
+    } else {
+      std::cerr << "WARN: camera not found: " << opt.camera
+                << ". Using auto-fit.\n";
+      if (height <= 0) height = 540;
+      Options auto_opt = opt;
+      auto_opt.camera.clear();
+      auto_opt.width = ctx.width;
+      ctx.camera = MakeCameraFrame(empty_render_scene, auto_opt, ctx.bounds,
+                                   height, ctx.up_axis);
+    }
+  } else if (opt.autoframe) {
+    ctx.camera = MakeUsdRecordCamera(ctx.bounds, ctx.up_axis, ctx.width, &height);
+  } else {
+    if (height <= 0) height = 540;
+    Options auto_opt = opt;
+    auto_opt.camera.clear();
+    auto_opt.width = ctx.width;
+    ctx.camera = MakeCameraFrame(empty_render_scene, auto_opt, ctx.bounds,
+                                 height, ctx.up_axis);
+  }
+  ctx.height = height;
+}
+
+// Prototype BLAS to build: the holder prim's path + the inherited purpose
+// context it was instanced under (part of the dedup key, so instances under a
+// guide ancestor get a separate, purpose-culled BLAS).
+
+// A curve prim (UsdGeomBasisCurves / NurbsCurves) to ray-trace as hair strands
+// in the next path. `world` is the world transform; the linear-strand geometry is
+// built into the RenderContext's DirectScene (shared by the flat and TLAS render
+// paths) — see BuildNextCurves.
+
+bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
+  const std::string &t = prim.GetTypeName();
+  return t == "BasisCurves" || t == "NurbsCurves";
+}
+
+// Read a curve prim's `points` into a point3f vector via the lazy float accessor.
+std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
+    const tinyusdz::next::UsdPrim &prim, double time) {
+  const std::vector<float> pf = ReadFloatArrayLazy(prim, "points", time);
+  std::vector<tinyusdz::value::point3f> pts(pf.size() / 3);
+  for (size_t i = 0; i < pts.size(); ++i)
+    pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
+  return pts;
+}
+
+// Build the collected curve jobs into the RenderContext's DirectScene as LightRT
+// hair-strand scenes (round by default; flat/ribbon when the prim authors
+// `normals`), reusing AppendLinearCurveStrands + the same intersectors the
+// legacy direct path uses. Curve hits/occlusion are then traced by RenderImage's
+// existing DirectScene path regardless of use_tlas. Returns false only on a
+// LightRT build failure.
+bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
+                     double time) {
+  if (jobs.empty()) return true;
+  std::vector<float> round_points, round_radii, flat_points, flat_radii;
+  std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
+  for (const CurveJobNext &job : jobs) {
+    std::vector<tinyusdz::value::point3f> points =
+        ReadCurvePointsNext(job.prim, time);
+    std::vector<int32_t> counts32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (points.empty() || counts32.empty()) continue;
+    std::vector<int> counts(counts32.begin(), counts32.end());
+    std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
+    const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
+    if (flat) {
+      AppendLinearCurveStrands(points, counts, widths, job.world, &flat_points,
+                               &flat_radii, &flat_first, &flat_count,
+                               &ctx.direct.flat_curve_info, &ctx.bounds);
+    } else {
+      AppendLinearCurveStrands(points, counts, widths, job.world, &round_points,
+                               &round_radii, &round_first, &round_count,
+                               &ctx.direct.round_curve_info, &ctx.bounds);
+    }
+  }
+
+  lrt_tri_build_options build_opts;
+  std::memset(&build_opts, 0, sizeof(build_opts));
+  build_opts.quality = ctx.opt.quality;
+  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
+  build_opts.num_threads = WorkerThreadCount(ctx.opt.threads);
+  lrt_result lrt_err = LRT_RESULT_OK;
+  auto make_strands = [](const std::vector<float> &pts,
+                         const std::vector<float> &radii,
+                         const std::vector<uint32_t> &first,
+                         const std::vector<uint32_t> &count) {
+    lrt_hair_strands s;
+    std::memset(&s, 0, sizeof(s));
+    s.points = pts.data();
+    s.radius = radii.data();
+    s.strand_first = first.data();
+    s.strand_count = count.data();
+    s.nstrands = first.size();
+    s.npoints = radii.size();
+    return s;
+  };
+  if (!round_first.empty()) {
+    lrt_hair_strands s =
+        make_strands(round_points, round_radii, round_first, round_count);
+    ctx.direct.round_curves.reset(
+        lrt_roundcurve_scene_build(&s, &build_opts, &lrt_err));
+    if (!ctx.direct.round_curves) {
+      std::cerr << "Failed to build LightRT round curve scene.\n";
+      return false;
+    }
+  }
+  if (!flat_first.empty()) {
+    lrt_hair_strands s =
+        make_strands(flat_points, flat_radii, flat_first, flat_count);
+    ctx.direct.flat_curves.reset(
+        lrt_flatcurve_scene_build(&s, &build_opts, &lrt_err));
+    if (!ctx.direct.flat_curves) {
+      std::cerr << "Failed to build LightRT flat curve scene.\n";
+      return false;
+    }
+  }
+  return true;
+}
+
+// Build a UsdGeomPointInstancer per-instance object->world matrix in the
+// row-vector convention (p' = p * M): scale, then orient, then translate, all in
+// the instancer's local space (USD's instance transform order). `quat_xyzw` is
+// the orientation as stored by the next loader (imaginary x,y,z then real w);
+// `scale3`/`pos` are per-axis scale and translation.
+matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
+                     const float *scale3) {
+  tinyusdz::value::quatf q;
+  q.imag[0] = quat_xyzw[0];
+  q.imag[1] = quat_xyzw[1];
+  q.imag[2] = quat_xyzw[2];
+  q.real = quat_xyzw[3];
+  // 3x3 rotation in the same convention as the rest of the xform stack.
+  tinyusdz::value::matrix3d rot = tinyusdz::to_matrix3x3(q);
+  // p * S * R with S diagonal scales row i of R by scale[i].
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) rot.m[i][j] *= double(scale3[i]);
+  tinyusdz::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
+  return tinyusdz::to_matrix(rot, t);  // translation into row 3
+}
+
+// Recursively collect curve prims under `prim`, accumulating world transforms in
+// the row-vector convention. Used both at scene level and to gather a
+// PointInstancer prototype's curves (relative to the prototype root).
+void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
+                          const matrix4d &parent_world,
+                          tinyusdz::Purpose inherited_purpose, double time,
+                          std::vector<CurveJobNext> *out) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") purpose = tinyusdz::Purpose::Render;
+      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
+      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+    }
+  }
+  // Nested instancers under a prototype are NOT baked into its curve BLAS -- their
+  // (curve) instancing is flattened separately, like the mesh path (else the nested
+  // instancer's scatter collapses to a single curve copy). No-op for plain curve
+  // prototypes.
+  if (prim.GetTypeName() == "PointInstancer") return;
+  {
+    const tinyusdz::next::PrimSpec *s = prim.GetPrimSpec();
+    if (s && !s->meta().instance_prototype().empty()) return;
+  }
+  if (IsCurvePrimNext(prim)) {
+    CurveJobNext cj;
+    cj.prim = prim;
+    cj.world = world;
+    cj.purpose = purpose;
+    out->push_back(std::move(cj));
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+    CollectCurvesNextRec(child, world, purpose, time, out);
+}
+
+// Collect a PointInstancer prototype's curves with transforms relative to the
+// prototype root (root at identity, replaced by the instance transform).
+void CollectProtoCurves(const tinyusdz::next::Stage &stage,
+                        const std::string &proto_path,
+                        tinyusdz::Purpose start_purpose, double time,
+                        std::vector<CurveJobNext> *out) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  if (IsCurvePrimNext(proto)) {
+    CurveJobNext cj;
+    cj.prim = proto;
+    cj.world = matrix4d::identity();
+    cj.purpose = start_purpose;
+    out->push_back(std::move(cj));
+  }
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+    CollectCurvesNextRec(child, matrix4d::identity(), start_purpose, time, out);
+}
+
+// Reserve (deduped by path+purpose) a curve BLAS for a prototype's curves, shared
+// by PointInstancer and native-instance placements. Returns its index in
+// curve_inst->protos, or -1 if curve_inst is null or the prototype has no curves.
+int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
+                          const std::string &proto_path,
+                          tinyusdz::Purpose purpose, double time,
+                          CurveProtoCollect *curve_inst) {
+  if (!curve_inst) return -1;
+  const std::string key =
+      proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+  auto it = curve_inst->ids.find(key);
+  if (it != curve_inst->ids.end()) return int32_t(it->second);
+  std::vector<CurveJobNext> probe;
+  CollectProtoCurves(stage, proto_path, purpose, time, &probe);
+  if (probe.empty()) return -1;
+  const uint32_t idx = uint32_t(curve_inst->protos.size());
+  curve_inst->ids[key] = idx;
+  curve_inst->protos.push_back({proto_path, purpose, 0});
+  return int32_t(idx);
+}
+
+// Expand a UsdGeomPointInstancer into TLAS placements: each prototype becomes a
+// deduped BLAS (shared with the native-instance pool) and every visible instance
+// becomes an InstanceRT placing that BLAS at scale*orient*translate composed with
+// the instancer's world transform. Prototype paths come from the `prototypes`
+// relationship; they are normally descendants of the instancer, so we resolve
+// each target by leaf name among the instancer's children first (robust to
+// whether composition re-rooted the authored target paths) and fall back to an
+// absolute stage lookup. `invisibleIds` are skipped. The instancer's children
+// are the prototypes, so the caller must NOT descend into it. Curve prototypes
+// are deduped into a curve BLAS and instanced through the same TLAS as meshes.
+void CollectPointInstancer(const tinyusdz::next::Stage &stage,
+                           const tinyusdz::next::UsdPrim &instancer,
+                           const matrix4d &instancer_world,
+                           tinyusdz::Purpose purpose, double time,
+                           const std::vector<std::string> &mask,
+                           std::vector<InstanceRT> *instances,
+                           std::unordered_map<std::string, uint32_t> *proto_ids,
+                           std::vector<ProtoBuildReq> *protos,
+                           CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                           // When set, curve placements go here (in `instancer_world`
+                           // space) instead of curve_inst->instances -- used to
+                           // capture a NESTED instancer's curve placements per
+                           // prototype for later flattening. Curve prototypes are
+                           // still deduped into curve_inst.
+                           std::vector<CurveInstanceRT> *curve_out) {
+  if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
+  const std::vector<tinyusdz::next::Path> *targets =
+      instancer.GetRelationship("prototypes");
+  if (!targets || targets->empty()) return;
+
+  // Resolve each prototype target to a live stage prim and reserve its mesh BLAS
+  // id (deduped by path + purpose, matching the native-instance path) and, if the
+  // prototype has curves, a curve BLAS id (also deduped) — both stored once and
+  // instanced via the TLAS rather than baked per instance.
+  std::unordered_map<std::string, tinyusdz::next::UsdPrim> children_by_name;
+  for (const tinyusdz::next::UsdPrim &c : instancer.GetChildren())
+    children_by_name.emplace(c.GetName(), c);
+  std::vector<int32_t> proto_blas(targets->size(), -1);
+  std::vector<int32_t> proto_curve(targets->size(), -1);  // CurveProtoCollect idx
+  for (size_t pi = 0; pi < targets->size(); ++pi) {
+    const tinyusdz::next::Path &tp = (*targets)[pi];
+    tinyusdz::next::UsdPrim proto;
+    auto cit = children_by_name.find(tp.name());
+    if (cit != children_by_name.end()) proto = cit->second;
+    else proto = stage.GetPrimAtPath(tp.str());
+    if (!proto.IsValid()) continue;
+    const std::string proto_path = proto.GetPath().str();
+    const std::string key =
+        proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+    auto it = proto_ids->find(key);
+    if (it == proto_ids->end()) {
+      const uint32_t blas_id = uint32_t(protos->size()) + 1;  // blas[0] = base
+      (*proto_ids)[key] = blas_id;
+      protos->push_back({proto_path, purpose, blas_id});
+      proto_blas[pi] = int32_t(blas_id);
+    } else {
+      proto_blas[pi] = int32_t(it->second);
+    }
+    proto_curve[pi] =
+        ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+  }
+
+  // Per-instance arrays. `positions` drives the instance count; the rest default
+  // (identity orientation, unit scale, proto 0) when absent or shorter.
+  const std::vector<float> positions =
+      ReadFloatArrayLazy(instancer, "positions", time);
+  if (positions.empty()) return;
+  const size_t n = positions.size() / 3;
+  const std::vector<int32_t> proto_indices =
+      ReadIntArrayLazy(instancer, "protoIndices", time);
+  const std::vector<float> orientations =
+      ReadFloatArrayLazy(instancer, "orientations", time);
+  const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
+  const std::vector<int64_t> invisible =
+      ReadInt64ArrayLazy(instancer, "invisibleIds", time);
+  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
+                                                  invisible.end());
+
+  static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
+  size_t emitted = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
+    if (pidx < 0 || size_t(pidx) >= proto_blas.size()) continue;
+    const int32_t blas_id = proto_blas[size_t(pidx)];
+    const int32_t curve_idx = proto_curve[size_t(pidx)];
+    if (blas_id < 0 && curve_idx < 0) continue;
+    const float *q = (orientations.size() >= (i + 1) * 4) ? &orientations[i * 4]
+                                                          : kIdentQuat;
+    const float *s =
+        (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+    const matrix4d inst_world =
+        InstanceTRS(&positions[i * 3], q, s) * instancer_world;
+    float o2w[12];
+    Mat4ToObj2World(inst_world, o2w);
+    if (blas_id >= 0) {
+      InstanceRT inst;
+      inst.blas_id = uint32_t(blas_id);
+      std::memcpy(inst.o2w, o2w, sizeof(o2w));
+      instances->push_back(inst);
+    }
+    if (curve_idx >= 0 && curve_inst) {
+      CurveInstanceRT ci;
+      ci.curve_proto_idx = uint32_t(curve_idx);
+      std::memcpy(ci.o2w, o2w, sizeof(o2w));
+      (curve_out ? *curve_out : curve_inst->instances).push_back(ci);
+    }
+    emitted++;
+  }
+  if (stats) {
+    stats->point_instancers++;
+    stats->point_instances += emitted;
+  }
+}
+
+// Walk the composed stage, splitting it into (a) base mesh jobs — geometry not
+// under any native instance, emitted in world space — and (b) instance
+// placements that reference a per-prototype BLAS. Native instances (prims with
+// instance_prototype set) and UsdGeomPointInstancer prims are NOT descended
+// into; instead each placement is recorded as an InstanceRT and its prototype
+// (deduped by path+purpose) is queued for a BLAS build. This keeps each
+// prototype's geometry stored once. Honors `mask`.
+void CollectSceneSplit(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &prim,
+                       const matrix4d &parent_world,
+                       tinyusdz::Purpose inherited_purpose, double time,
+                       const std::vector<std::string> &mask,
+                       std::vector<MeshJobNext> *base_jobs,
+                       std::vector<InstanceRT> *instances,
+                       std::unordered_map<std::string, uint32_t> *proto_ids,
+                       std::vector<ProtoBuildReq> *protos,
+                       std::vector<CurveJobNext> *curve_jobs,
+                       CurveProtoCollect *curve_inst, RTPreviewStats *stats,
+                       const std::unordered_set<std::string> *proto_holders) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") purpose = tinyusdz::Purpose::Render;
+      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
+      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+    }
+  }
+
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  std::string proto_path = spec ? spec->meta().instance_prototype() : std::string();
+  // A prototype HOLDER (the target of some instance_prototype) is itself a placed
+  // instanceable prim -- Pixar renders every instanceable sibling, including the one
+  // composition picked as the prototype source. So emit it as an instance of its OWN
+  // geometry (keyed by its own path, the same BLAS its siblings reference) rather
+  // than skipping it. Its subtree is the prototype geometry (collected once via
+  // CollectProtoJobs), so do not descend. (Without this, one of N instanceable
+  // siblings -- e.g. one of isIronwoodA1's two trees -- silently vanished.)
+  if (proto_path.empty() && proto_holders &&
+      proto_holders->count(prim.GetPath().str())) {
+    proto_path = prim.GetPath().str();
+  }
+  if (!proto_path.empty()) {
+    // Native instance (or self-instancing holder): record placement + queue its
+    // prototype. Do not descend (the instance proxy's children come from the
+    // prototype).
+    if (PathMatchesMask(prim.GetPath().str(), mask)) {
+      const std::string key =
+          proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+      auto it = proto_ids->find(key);
+      uint32_t blas_id;
+      if (it == proto_ids->end()) {
+        blas_id = uint32_t(protos->size()) + 1;  // blas[0] is the base scene
+        (*proto_ids)[key] = blas_id;
+        protos->push_back({proto_path, purpose, blas_id});
+      } else {
+        blas_id = it->second;
+      }
+      float o2w[12];
+      Mat4ToObj2World(world, o2w);
+      InstanceRT inst;
+      inst.blas_id = blas_id;
+      std::memcpy(inst.o2w, o2w, sizeof(o2w));
+      instances->push_back(inst);
+      // Curves under the prototype: place them per native instance via a deduped
+      // curve BLAS (the prototype's own copy is collected once as base geometry).
+      const int32_t curve_idx =
+          ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+      if (curve_idx >= 0 && curve_inst) {
+        CurveInstanceRT ci;
+        ci.curve_proto_idx = uint32_t(curve_idx);
+        std::memcpy(ci.o2w, o2w, sizeof(o2w));
+        curve_inst->instances.push_back(ci);
+      }
+    }
+    return;
+  }
+
+  // UsdGeomPointInstancer: expand into TLAS placements (one BLAS per prototype,
+  // shared with the native-instance pool) plus instanced curves. Its children are
+  // the prototypes, so do not descend (that would emit each prototype once,
+  // un-instanced).
+  if (prim.GetTypeName() == "PointInstancer") {
+    CollectPointInstancer(stage, prim, world, purpose, time, mask, instances,
+                          proto_ids, protos, curve_inst, stats);
+    return;
+  }
+
+  if (prim.GetTypeName() == "Mesh" &&
+      PathMatchesMask(prim.GetPath().str(), mask)) {
+    MeshJobNext job;
+    job.prim = prim;
+    job.world = world;
+    job.purpose = purpose;
+    base_jobs->push_back(std::move(job));
+  } else if (curve_jobs && IsCurvePrimNext(prim) &&
+             PathMatchesMask(prim.GetPath().str(), mask)) {
+    CurveJobNext cj;
+    cj.prim = prim;
+    cj.world = world;
+    cj.purpose = purpose;
+    curve_jobs->push_back(std::move(cj));
+  }
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    CollectSceneSplit(stage, child, world, purpose, time, mask, base_jobs,
+                      instances, proto_ids, protos, curve_jobs, curve_inst,
+                      stats, proto_holders);
+  }
+}
+
+// Recurse a prototype subtree collecting its NESTED instance placements (nested
+// PointInstancer expansions + scenegraph-instanceable instances), recorded in
+// prototype-LOCAL space. Each placement references a deduped leaf-prototype BLAS
+// queued into the shared proto_ids/protos pool, so deeper nesting is collected on
+// later iterations of the proto loop and composed by the TLAS expansion. Mesh-only:
+// nested instanced curves are routed to a throwaway collector (their geometry still
+// renders once via the per-prototype curve BLAS). Mirrors the instance branches of
+// CollectSceneSplit; base meshes are left to CollectProtoJobs.
+void CollectProtoMeshNestingRec(
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
+    const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
+    const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
+    std::vector<CurveInstanceRT> *nested_curves,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
+    RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  tinyusdz::Purpose purpose = inherited_purpose;
+  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+    if (const std::string *t = pv->as_token()) {
+      if (*t == "render") purpose = tinyusdz::Purpose::Render;
+      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
+      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+    }
+  }
+
+  // Nested scenegraph instance: record a placement + queue its prototype.
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const std::string proto_path =
+      spec ? spec->meta().instance_prototype() : std::string();
+  if (!proto_path.empty()) {
+    if (PathMatchesMask(prim.GetPath().str(), mask)) {
+      const std::string key =
+          proto_path + "\x1f" + std::to_string(PurposeBit(purpose));
+      auto it = proto_ids->find(key);
+      uint32_t blas_id;
+      if (it == proto_ids->end()) {
+        blas_id = uint32_t(protos->size()) + 1;
+        (*proto_ids)[key] = blas_id;
+        protos->push_back({proto_path, purpose, blas_id});
+      } else {
+        blas_id = it->second;
+      }
+      InstanceRT inst;
+      inst.blas_id = blas_id;
+      Mat4ToObj2World(world, inst.o2w);
+      nested->push_back(inst);
+      // Curves under the nested native instance's prototype, placed (proto-local)
+      // via a deduped curve BLAS -- flattened with the outer placements later.
+      const int32_t curve_idx =
+          ReserveCurveProto(stage, proto_path, purpose, time, curve_inst);
+      if (curve_idx >= 0 && nested_curves) {
+        CurveInstanceRT ci;
+        ci.curve_proto_idx = uint32_t(curve_idx);
+        std::memcpy(ci.o2w, inst.o2w, sizeof(inst.o2w));
+        nested_curves->push_back(ci);
+      }
+    }
+    return;
+  }
+
+  // Nested PointInstancer: reuse the top-level expander, directing its mesh
+  // placements into `nested` and curve placements into `nested_curves` (both
+  // prototype-local); mesh + curve protos dedup into the shared pools.
+  if (prim.GetTypeName() == "PointInstancer") {
+    CollectPointInstancer(stage, prim, world, purpose, time, mask, nested,
+                          proto_ids, protos, curve_inst, stats, nested_curves);
+    return;
+  }
+
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
+    CollectProtoMeshNestingRec(stage, child, world, purpose, time, mask, nested,
+                               nested_curves, proto_ids, protos, curve_inst, stats,
+                               proto_holders);
+  }
+}
+
+// Entry: root the nested-instance walk at the prototype's CHILDREN with an identity
+// world (the prototype root's own transform is replaced by each outer placement,
+// matching CollectProtoJobs). Appends prototype-local placements to `nested`.
+void CollectProtoMeshNesting(
+    const tinyusdz::next::Stage &stage, const std::string &proto_path,
+    tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
+    std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
+    std::unordered_map<std::string, uint32_t> *proto_ids,
+    std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
+    RTPreviewStats *stats,
+    const std::unordered_set<std::string> *proto_holders) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
+    if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
+    CollectProtoMeshNestingRec(stage, child, matrix4d::identity(), purpose, time,
+                               mask, nested, nested_curves, proto_ids, protos,
+                               curve_inst, stats, proto_holders);
+  }
+}
+
+// Pre-pass: gather the paths of native-instance prototype holders (the targets
+// of instance_prototype()). Walks the same prims CollectSceneSplit collects as
+// base geometry -- it stops at instance proxies and PointInstancers, so its cost
+// is one base-graph traversal (no instance multiplicity), not the expanded set.
+void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
+                           std::unordered_set<std::string> *out) {
+  if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  if (spec && !spec->meta().instance_prototype().empty()) {
+    out->insert(spec->meta().instance_prototype());
+    return;  // proxy children come from the prototype; don't descend
+  }
+  if (prim.GetTypeName() == "PointInstancer") return;
+  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+    CollectPrototypePaths(child, out);
+}
+
+// Collect a prototype's mesh jobs in prototype-LOCAL space (the holder prim at
+// identity): traverse the holder's children with parent_world = identity, where
+// GetChildren() transparently expands any nested instances inline (bounded —
+// built once per unique prototype). The instance's world transform is applied
+// later by the TLAS.
+void CollectProtoJobs(const tinyusdz::next::Stage &stage,
+                      const std::string &proto_path,
+                      tinyusdz::Purpose start_purpose, double time,
+                      std::vector<MeshJobNext> *jobs) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  static const std::vector<std::string> kNoMask;
+  // A prototype root is placed at identity (its own transform is replaced by the
+  // instance transform), but if the prototype prim IS a Mesh (a PointInstancer
+  // prototype can point straight at a Mesh) it must still be collected.
+  if (proto.GetTypeName() == "Mesh") {
+    MeshJobNext job;
+    job.prim = proto;
+    job.world = matrix4d::identity();
+    job.purpose = start_purpose;
+    jobs->push_back(std::move(job));
+  }
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
+    CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), start_purpose,
+                               time, kNoMask, jobs);
+  }
+}
+
+// Build one curve prototype into a curve BLAS (round hair) in prototype-LOCAL
+// space, with one TriInfo per segment for hit resolution. The instance transform
+// is applied later by the TLAS. Instanced curves are treated as round (the common
+// XGen case; per-instance flat/ribbon curves are not separated). Returns false
+// only on a LightRT build failure.
+bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
+                    const std::string &proto_path, tinyusdz::Purpose purpose,
+                    double time, const lrt_tri_build_options &build_opts,
+                    Blas *out, Bounds *local,
+                    // Sub-BLAS split: a large curve prototype is split into
+                    // several disjoint sub-BLAS so their (serial) LBVH collapses
+                    // run CONCURRENTLY. The first sub-BLAS fills `out`/`local`;
+                    // any extras are appended here (the caller places each as a
+                    // TLAS instance at the prototype's transform). Null => never
+                    // split (single BLAS, byte-identical to the old path).
+                    std::vector<Blas> *extra_blas = nullptr,
+                    std::vector<Bounds> *extra_bounds = nullptr) {
+  std::vector<CurveJobNext> curves;
+  CollectProtoCurves(stage, proto_path, purpose, time, &curves);
+  if (curves.empty()) return true;
+  std::vector<float> pts, radii;
+  std::vector<uint32_t> first, count;
+  // Curve endpoints (curve_seg) are derived directly from the transformed points
+  // below, so pass info == null: AppendLinearCurveStrands skips the redundant
+  // 120 B/segment TriInfo intermediate (its only payload here is p0/p1 -- already
+  // in pts -- and the constant kCurveColor). On a 3 M-segment prototype that
+  // removes ~360 MB of build + slim work that was the dominant serial cost.
+  // The FULL prototype bounds (over all points). Every sub-BLAS reports this same
+  // bounds so the TLAS / autoframe is byte-identical to the unsplit path: the
+  // world bounds is the transformed-AABB hull, and a union of partial AABB hulls
+  // is tighter than the full AABB's hull under a rotated transform (would reframe
+  // the camera). Conservative per sub-BLAS but correct (geometry is within).
+  Bounds proto_bounds;
+  for (const CurveJobNext &job : curves) {
+    std::vector<tinyusdz::value::point3f> p = ReadCurvePointsNext(job.prim, time);
+    std::vector<int32_t> c32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (p.empty() || c32.empty()) continue;
+    std::vector<int> c(c32.begin(), c32.end());
+    std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
+    AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
+                             /*info=*/nullptr, &proto_bounds);
+  }
+  if (first.empty()) return true;
+  const TriMat kCurveMat = ExtractTriMat([] {
+    TriInfo t;
+    t.base_color = kCurveColor;
+    return t;
+  }());
+
+  // Partition strands into groups of ~kCurveSplitSegs segments so each group's
+  // BLAS build/collapse is a separate, concurrent job. Small prototypes (the
+  // common case) stay a single BLAS -> byte-identical to the unsplit path.
+  size_t total_segs = 0;
+  for (uint32_t c : count) total_segs += size_t(c) - 1u;
+  const size_t kCurveSplitSegs = size_t(1) << 20;  // ~1M segments/sub-BLAS
+  std::vector<std::array<size_t, 2>> groups;  // {s0, s1}
+  if (!extra_blas || total_segs <= kCurveSplitSegs) {
+    groups.push_back({0, first.size()});
+  } else {
+    const size_t nsub = (total_segs + kCurveSplitSegs - 1) / kCurveSplitSegs;
+    const size_t per = (total_segs + nsub - 1) / nsub;
+    size_t s0 = 0, acc = 0;
+    for (size_t s = 0; s < first.size(); s++) {
+      acc += size_t(count[s]) - 1u;
+      if (acc >= per && s + 1 < first.size()) {
+        groups.push_back({s0, s + 1});
+        s0 = s + 1;
+        acc = 0;
+      }
+    }
+    groups.push_back({s0, first.size()});
+  }
+  if (extra_blas && groups.size() > 1) {
+    extra_blas->resize(groups.size() - 1);
+    extra_bounds->resize(groups.size() - 1);
+  }
+
+  // Phase A (serial): for each group, derive its per-segment endpoints
+  // (curve_seg) straight from the shared transformed points and cut its rebased
+  // strand offsets. One material (kCurveMat) covers every segment. Points are NOT
+  // copied: each sub-scene reads the shared pts/radii at a base offset.
+  struct SubGeom {
+    std::vector<uint32_t> sf, sc;  // rebased strand offsets/counts
+    uint32_t pbase, npts;
+    Blas *dst;
+  };
+  std::vector<SubGeom> subs(groups.size());
+  for (size_t g = 0; g < groups.size(); ++g) {
+    const size_t s0 = groups[g][0], s1 = groups[g][1];
+    Blas *dst = g == 0 ? out : &(*extra_blas)[g - 1];
+    *(g == 0 ? local : &(*extra_bounds)[g - 1]) = proto_bounds;  // full bounds
+    SubGeom &sg = subs[g];
+    sg.dst = dst;
+    sg.pbase = first[s0];
+    sg.npts = first[s1 - 1] + count[s1 - 1] - sg.pbase;
+    sg.sf.resize(s1 - s0);
+    sg.sc.resize(s1 - s0);
+    size_t nseg_sub = 0;
+    for (size_t s = s0; s < s1; s++) {
+      sg.sf[s - s0] = first[s] - sg.pbase;
+      sg.sc[s - s0] = count[s];
+      nseg_sub += size_t(count[s]) - 1u;
+    }
+    dst->mat_table.push_back(kCurveMat);  // index 0 for every segment
+    dst->curve_seg.reserve(nseg_sub * 6);
+    dst->curve_seg_mat.assign(nseg_sub, 0u);
+    for (size_t s = s0; s < s1; s++) {
+      const size_t pf = first[s];  // global point base (pts is concatenated)
+      for (uint32_t i = 0; i + 1u < count[s]; i++) {
+        const float *a = &pts[(pf + i) * 3];
+        const float *b = &pts[(pf + i + 1) * 3];
+        dst->curve_seg.push_back(a[0]);
+        dst->curve_seg.push_back(a[1]);
+        dst->curve_seg.push_back(a[2]);
+        dst->curve_seg.push_back(b[0]);
+        dst->curve_seg.push_back(b[1]);
+        dst->curve_seg.push_back(b[2]);
+      }
+    }
+  }
+
+  // Phase B (parallel): build each sub-BLAS's round-hair scene (its serial LBVH
+  // collapse runs concurrently with the others). Reads the shared pts/radii.
+  std::atomic<bool> ok{true};
+  std::atomic<size_t> gcur{0};
+  auto gw = [&]() {
+    for (;;) {
+      const size_t g = gcur.fetch_add(1, std::memory_order_relaxed);
+      if (g >= subs.size()) break;
+      SubGeom &sg = subs[g];
+      lrt_hair_strands hs;
+      std::memset(&hs, 0, sizeof(hs));
+      hs.points = pts.data() + size_t(sg.pbase) * 3;
+      hs.radius = radii.data() + sg.pbase;
+      hs.strand_first = sg.sf.data();
+      hs.strand_count = sg.sc.data();
+      hs.nstrands = sg.sf.size();
+      hs.npoints = sg.npts;
+      lrt_result e = LRT_RESULT_OK;
+      sg.dst->scene = lrt_roundcurve_scene_build(&hs, &build_opts, &e);
+      sg.dst->is_curve = true;
+      if (!sg.dst->scene) ok.store(false, std::memory_order_relaxed);
+    }
+  };
+  const unsigned gt = std::min<unsigned>(
+      WorkerThreadCount(int(build_opts.num_threads)), unsigned(subs.size()));
+  if (gt <= 1) {
+    gw();
+  } else {
+    std::vector<std::thread> pool;
+    pool.reserve(gt);
+    for (unsigned t = 0; t < gt; ++t) pool.emplace_back(gw);
+    for (std::thread &th : pool) th.join();
+  }
+  if (!ok.load()) {
+    std::cerr << "Failed to build curve BLAS.\n";
+    return false;
+  }
+  return true;
+}
+
+// Upper bound on the triangles a mesh job emits: the fan-triangulation count
+// (sum of max(0, c-2) over faceVertexCounts). Invalid/degenerate/purpose-culled
+// triangles only reduce the actual count, so this never under-reserves -- used to
+// reserve the stream output up front so the chunked append never reallocates.
+inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
+                                 double time) {
+  const std::vector<int32_t> counts =
+      ReadIntArrayLazy(prim, "faceVertexCounts", time);
+  size_t est = 0;
+  for (int32_t c : counts)
+    if (c >= 3) est += size_t(c - 2);
+  return est;
+}
+
+// Stream a list of (material-resolved) mesh jobs into packed triangle buffers +
+// a bounds, in parallel, appending in job order (deterministic). Geometry is
+// emitted in each job's `world` space. `purpose_cull` drops purpose-invisible
+// triangles at build time (TLAS path).
+// Returns false if a memory-cap allocation failure (std::bad_alloc from
+// PoolAlloc) interrupted streaming — the caller then aborts the render cleanly
+// instead of letting the process get OOM-killed.
+template <class FVec, class TVec>
+bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
+                    double time, bool want_uvs, bool purpose_cull, int threads,
+                    FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
+                    Bounds *out_bounds, RTPreviewStats *out_stats,
+                    std::vector<TriMat> *out_mat_table = nullptr,
+                    bool want_colors = false, ByteVec *out_tri_colors = nullptr,
+                    bool want_normals = false, FVec *out_tri_normals = nullptr,
+                    // Indexed geometry (Phase 2b): when both non-null, emit unique
+                    // verts + 3 indices/tri here instead of the de-indexed soup
+                    // in out_vertices.
+                    FVec *out_uverts = nullptr, IdxVec *out_indices = nullptr,
+                    // Coarse displacement: per-vertex offset along the smooth normal
+                    // by the resolved displacement (texture from tex_pool). disp_scale
+                    // == 0 disables it (then renders are byte-identical to before).
+                    const std::vector<Texture> *tex_pool = nullptr,
+                    float disp_scale = 0.0f) {
+  const bool indexed = (out_uverts && out_indices);
+  struct R {
+    FVec v;
+    TVec t;
+    FVec uv;
+    ByteVec col;  // per-corner RGBA8 (12 bytes/tri) when want_colors
+    FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
+    FVec uvv;  // unique verts (3 floats each) when indexed
+    IdxVec idx;  // job-local vertex indices (3/tri) when indexed
+    Bounds b;
+    RTPreviewStats s;
+    TriMat mat;  // this job's single material (slim TriStore path only)
+  };
+  const unsigned nthreads =
+      std::min<unsigned>(WorkerThreadCount(threads),
+                         jobs.empty() ? 1u : unsigned(jobs.size()));
+
+  // Reserve the outputs from a triangle upper bound (so the appends never
+  // reallocate), then stream in CHUNKS: only one chunk's per-job buffers are held
+  // at a time and appended (in job order) into the reserved outputs before the
+  // next chunk runs. This keeps the FULL per-job set and the concatenated copy
+  // from ever coexisting -- the transient that drove the streaming-phase peak RSS
+  // on big multi-mesh scenes (isCoral's base). Byte-identical to the old
+  // all-jobs-then-concat: same job-order append, same content.
+  size_t est_tris = 0;
+  for (const MeshJobNext &job : jobs) est_tris += EstimateTrisForJob(job.prim, time);
+  try {
+    // Test the pointers directly (not the `indexed` bool) so the compiler's
+    // -Wnonnull analysis can prove the dereferenced output is non-null -- it does
+    // not propagate `indexed == (out_uverts && out_indices)` to these sites.
+    if (out_uverts && out_indices)
+      out_indices->reserve(out_indices->size() + est_tris * 3);
+    else if (out_vertices)
+      out_vertices->reserve(out_vertices->size() + est_tris * 9);
+    out_tris->reserve(out_tris->size() + est_tris);
+    if (want_uvs) out_tri_uvs->reserve(out_tri_uvs->size() + est_tris * 6);
+    if (want_colors && out_tri_colors)
+      out_tri_colors->reserve(out_tri_colors->size() + est_tris * 12);
+    if (want_normals && out_tri_normals)
+      out_tri_normals->reserve(out_tri_normals->size() + est_tris * 9);
+  } catch (const std::bad_alloc &) {
+    return false;
+  }
+
+  std::vector<R> results(jobs.size());
+  std::atomic<bool> oom{false};
+  const size_t njobs = jobs.size();
+  const size_t chunk = std::max<size_t>(size_t(nthreads) * 2u, 1u);
+  try {
+    for (size_t cstart = 0;
+         cstart < njobs && !oom.load(std::memory_order_relaxed);
+         cstart += chunk) {
+      const size_t cend = std::min(cstart + chunk, njobs);
+      std::atomic<size_t> cursor{cstart};
+      // A bad_alloc must be caught INSIDE each worker thread (an exception
+      // escaping a std::thread calls std::terminate); it signals the cap was hit.
+      auto worker = [&]() {
+        try {
+          for (;;) {
+            const size_t i = cursor.fetch_add(1, std::memory_order_relaxed);
+            if (i >= cend || oom.load(std::memory_order_relaxed)) break;
+            const MeshJobNext &job = jobs[i];
+            R &r = results[i];
+            uint32_t jvb = 0;  // job-local vertex base (indices rebased at concat)
+            AddRTPreviewMeshNext(
+                job.prim, job.world, job.purpose, purpose_mask, time,
+                job.base_color, job.tex_id, job.normal_tex_id, job.roughness,
+                job.metallic, job.rough_tex, job.metal_tex, job.emission,
+                job.emission_tex_id, job.occlusion, job.occ_tex,
+                job.opacity_tex, job.opacity_threshold, job.clearcoat,
+                job.clearcoat_roughness, job.clearcoat_tex,
+                job.clearcoat_rough_tex, job.specular_color,
+                job.specular_tex_id, job.ior, job.use_specular_workflow,
+                job.uv_xform,
+                want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
+                job.opacity, want_colors, &r.col, want_normals, &r.nrm,
+                indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
+                indexed ? &jvb : nullptr, job.displacement,
+                job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
+                disp_scale, job.displacement_tex.scale,
+                job.displacement_tex.bias);
+          }
+        } catch (const std::bad_alloc &) {
+          oom.store(true, std::memory_order_relaxed);
+        }
+      };
+      const unsigned cn =
+          std::min<unsigned>(nthreads, unsigned(cend - cstart));
+      if (cn <= 1) {
+        worker();
+      } else {
+        std::vector<std::thread> pool;
+        pool.reserve(cn);
+        for (unsigned t = 0; t < cn; ++t) pool.emplace_back(worker);
+        for (std::thread &th : pool) th.join();
+      }
+      if (oom.load(std::memory_order_relaxed)) break;
+      // Append this chunk in job order into the (reserved) outputs; free as we go.
+      for (size_t i = cstart; i < cend; ++i) {
+        R &r = results[i];
+        // Direct pointer test (== indexed) so -Wnonnull can prove the appends below
+        // dereference non-null outputs.
+        if (out_uverts && out_indices) {
+          // Rebase this job's local vertex indices by the BLAS-global vertex
+          // count, then append its unique verts. Byte-identical triangle set to
+          // the soup path (same vertices, same per-tri order).
+          const uint32_t base = uint32_t(out_uverts->size() / 3);
+          out_uverts->insert(out_uverts->end(), r.uvv.begin(), r.uvv.end());
+          for (uint32_t id : r.idx) out_indices->push_back(base + id);
+        } else if (out_vertices) {
+          out_vertices->insert(out_vertices->end(), r.v.begin(), r.v.end());
+        }
+        // Slim store: assign each of this job's triangles a global material id and
+        // append the job's material to the shared table (one entry per job). Both
+        // the instanced (TriStore) and flat (FlatTri) slim records carry a mat_id.
+        if constexpr (std::is_same<typename TVec::value_type, TriStore>::value ||
+                      std::is_same<typename TVec::value_type, FlatTri>::value) {
+          if (out_mat_table) {
+            const uint32_t mid = uint32_t(out_mat_table->size());
+            out_mat_table->push_back(r.mat);
+            for (auto &ts : r.t) ts.mat_id = mid;
+          }
+        }
+        out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
+        if (want_uvs)
+          out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
+        if (want_colors && out_tri_colors)
+          out_tri_colors->insert(out_tri_colors->end(), r.col.begin(),
+                                 r.col.end());
+        if (want_normals && out_tri_normals)
+          out_tri_normals->insert(out_tri_normals->end(), r.nrm.begin(),
+                                  r.nrm.end());
+        MergeBounds(out_bounds, r.b);
+        MergeStats(out_stats, r.s);
+        FVec().swap(r.v);
+        TVec().swap(r.t);
+        FVec().swap(r.uv);
+        ByteVec().swap(r.col);
+        FVec().swap(r.nrm);
+        FVec().swap(r.uvv);
+        IdxVec().swap(r.idx);
+      }
+    }
+  } catch (const std::bad_alloc &) {
+    return false;
+  }
+  if (oom.load(std::memory_order_relaxed)) return false;
+  return true;
+}
+
+// Expand `g` by a local AABB transformed by a 3x4 object->world (8 corners).
+void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
+                                  const float o2w[12]) {
+  if (!local.valid) return;
+  for (int c = 0; c < 8; ++c) {
+    Vec3 corner{(c & 1) ? local.hi.x : local.lo.x,
+                (c & 2) ? local.hi.y : local.lo.y,
+                (c & 4) ? local.hi.z : local.lo.z};
+    Expand(g, TransformPointO2W(o2w, corner));
+  }
+}
+
+// (Re)stream triangles at `time` and (re)build the BVH. Safe to call repeatedly
+// (e.g. once per animation frame): frees the previous BVH and clears the
+// previous geometry first. Honors ctx.opt.mask. Geometry/transforms are
+// evaluated at `time` (NaN = default value). When the composed scene has native
+// instances, builds a two-level BVH (per-prototype BLAS + TLAS) so instanced
+// geometry is stored once; otherwise builds a single flat scene (byte-identical
+// to the historical path).
+bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
+  const Options &opt = ctx.opt;
+  ctx.frame_time = time;
+  if (ctx.tlas) {
+    lrt_tlas_free(ctx.tlas);
+    ctx.tlas = nullptr;
+  }
+  if (ctx.scene) {
+    lrt_tri_scene_free(ctx.scene);
+    ctx.scene = nullptr;
+  }
+  ctx.vertices.clear();
+  ctx.tris.clear();
+  ctx.flat_mats.clear();
+  ctx.textures.clear();
+  ctx.tri_uvs.clear();
+  ctx.tri_colors.clear();
+  ctx.tri_normals.clear();
+  ctx.blas.clear();
+  ctx.instances.clear();
+  ctx.use_tlas = false;
+  ctx.bounds = Bounds();
+  ctx.stats = RTPreviewStats();
+
+  const auto stream_t0 = std::chrono::steady_clock::now();
+  std::vector<MeshJobNext> base_jobs;
+  std::vector<InstanceRT> instances;
+  std::unordered_map<std::string, uint32_t> proto_ids;
+  std::vector<ProtoBuildReq> protos;
+  std::vector<CurveJobNext> curve_jobs;
+  CurveProtoCollect curve_inst;
+  // Gather native-instance prototype holders up front so the base-geometry
+  // traversal can skip them (they are rendered via their instance proxies).
+  std::unordered_set<std::string> proto_holders;
+  tinyusdz::tydra::next::CollectPrototypePaths(ctx.stage, &proto_holders);
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
+    CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
+                      tinyusdz::Purpose::Default, time, opt.mask, &base_jobs,
+                      &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
+                      &ctx.stats, &proto_holders);
+  }
+  // Curves (BasisCurves/NurbsCurves, plus any baked from curve-prototype
+  // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
+  // them via the DirectScene path in both the flat and TLAS render modes.
+  if (!BuildNextCurves(ctx, curve_jobs, time)) return false;
+  ctx.stats.curve_strands = curve_jobs.size();
+
+  lrt_tri_build_options build_opts;
+  std::memset(&build_opts, 0, sizeof(build_opts));
+  build_opts.quality = opt.quality;
+  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
+  build_opts.max_leaf_size = 0;
+  build_opts.num_threads = WorkerThreadCount(opt.threads);
+
+  // Embedded textures: if the input is a .usdz package, open it so material
+  // resolution can pull packed textures from the archive (else nullptr -> the
+  // texture cache falls back to the filesystem).
+  tinyusdz::next::USDZReader usdz_archive;
+  const tinyusdz::next::USDZReader *usdz_ptr = nullptr;
+  {
+    const std::string &in = opt.input;
+    if (in.size() >= 5 && in.compare(in.size() - 5, 5, ".usdz") == 0 &&
+        usdz_archive.OpenFile(in)) {
+      usdz_ptr = &usdz_archive;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Flat path: no native instances and no instanced curve prototypes. Identical
+  // to the historical single-scene build (preserves byte-for-byte renders of
+  // self-contained scenes).
+  // -------------------------------------------------------------------------
+  if (instances.empty() && curve_inst.instances.empty()) {
+    ctx.stats.meshes = base_jobs.size();
+    {
+      TextureCache tc;
+      tc.textures = &ctx.textures;
+      tc.base_dir = DirName(opt.input);
+      tc.usdz = usdz_ptr;
+      std::unordered_map<std::string, ResolvedMat> mat_cache;
+      for (MeshJobNext &job : base_jobs) {
+        ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
+      }
+    }
+    const bool want_uvs = !ctx.textures.empty();
+    bool want_colors = false;
+    for (const MeshJobNext &j : base_jobs)
+      if (j.vertex_color) { want_colors = true; break; }
+    const float disp_scale = opt.displace ? opt.displace_scale : 0.0f;
+    if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
+                        /*purpose_cull=*/false, opt.threads, &ctx.vertices,
+                        &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
+                        /*out_mat_table=*/&ctx.flat_mats, want_colors,
+                        &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
+                        /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
+                        /*out_indices=*/static_cast<IdxVec *>(nullptr),
+                        &ctx.textures, disp_scale)) {
+      std::cerr << "Aborting: triangle stream exceeded memory cap "
+                << MemBudget::GiB(MemBudget::Get().Cap())
+                << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
+      return false;
+    }
+    const auto stream_t1 = std::chrono::steady_clock::now();
+    ctx.stream_seconds =
+        std::chrono::duration<double>(stream_t1 - stream_t0).count();
+    ctx.stats.build_seconds = ctx.stream_seconds;
+    ctx.stats.packed_triangle_bytes =
+        uint64_t(ctx.vertices.size()) * sizeof(float);
+    const bool have_curves = ctx.direct.round_curves || ctx.direct.flat_curves ||
+                             ctx.direct.bez_curves;
+    if (ctx.tris.empty()) {
+      if (have_curves) return true;  // curves-only scene: traced via DirectScene
+      std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
+      return false;
+    }
+    // LightRT builds its BVH outside our allocator: it copies the triangle
+    // vertices into its own layout (~36 B/tri) plus nodes (~kBvhBytesPerTri/tri).
+    // Guard the process RSS against the cap before committing to the build.
+    std::string why;
+    if (MemBudget::Get().WouldExceed(ctx.tris.size() * kBvhBytesPerTri, &why)) {
+      std::cerr << "Aborting BVH build: " << why
+                << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
+      return false;
+    }
+    const auto bvh_t0 = std::chrono::steady_clock::now();
+    lrt_result lrt_err = LRT_RESULT_OK;
+    ctx.scene = lrt_tri_scene_build(ctx.vertices.data(), ctx.tris.size(),
+                                    &build_opts, &lrt_err);
+    const auto bvh_t1 = std::chrono::steady_clock::now();
+    if (!ctx.scene) {
+      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
+      return false;
+    }
+    ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Two-level (instanced) path: base BLAS + one BLAS per unique prototype,
+  // placed by a TLAS. Geometry is stored once per prototype.
+  // -------------------------------------------------------------------------
+  ctx.use_tlas = true;
+  // proto_jobs[i] = prototype i's base meshes; proto_nested[i] = its nested-instance
+  // placements (prototype-local, referencing other prototype BLASes). `protos` GROWS
+  // here as nested prototypes are queued, so iterate by index and extend the
+  // parallel arrays. Copy path/purpose to locals first: collecting nesting can
+  // reallocate `protos`, dangling a `protos[i]` reference mid-call.
+  std::vector<std::vector<MeshJobNext>> proto_jobs;
+  std::vector<std::vector<InstanceRT>> proto_nested;
+  std::vector<std::vector<CurveInstanceRT>> proto_nested_curves;
+  for (size_t i = 0; i < protos.size(); ++i) {
+    const std::string ppath = protos[i].path;
+    const tinyusdz::Purpose ppurpose = protos[i].purpose;
+    std::vector<MeshJobNext> jobs;
+    std::vector<InstanceRT> nested;
+    std::vector<CurveInstanceRT> nested_curves;
+    CollectProtoJobs(ctx.stage, ppath, ppurpose, time, &jobs);
+    CollectProtoMeshNesting(ctx.stage, ppath, ppurpose, time, opt.mask, &nested,
+                            &nested_curves, &proto_ids, &protos, &curve_inst,
+                            &ctx.stats, &proto_holders);
+    if (proto_jobs.size() < protos.size()) proto_jobs.resize(protos.size());
+    if (proto_nested.size() < protos.size()) proto_nested.resize(protos.size());
+    if (proto_nested_curves.size() < protos.size())
+      proto_nested_curves.resize(protos.size());
+    proto_jobs[i] = std::move(jobs);
+    proto_nested[i] = std::move(nested);
+    proto_nested_curves[i] = std::move(nested_curves);
+  }
+  // Material resolution over base + every prototype's meshes (shared cache).
+  {
+    TextureCache tc;
+    tc.textures = &ctx.textures;
+    tc.base_dir = DirName(opt.input);
+    tc.usdz = usdz_ptr;
+    std::unordered_map<std::string, ResolvedMat> mat_cache;
+    for (MeshJobNext &job : base_jobs) {
+      ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
+    }
+    for (std::vector<MeshJobNext> &pj : proto_jobs) {
+      for (MeshJobNext &job : pj) {
+        ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
+      }
+    }
+  }
+  const bool want_uvs = !ctx.textures.empty();
+  // displayColor/Opacity is stored per-corner (48 B/tri) only for BLAS that
+  // actually carry a *varying* (per-vertex/faceVarying/uniform) primvar. A BLAS
+  // whose meshes are all constant-color needs no per-tri storage: the shader
+  // falls back to the material base_color (which holds the constant displayColor),
+  // so this is byte-identical while skipping the dominant Island footprint
+  // (isCoral: ~800 MB of per-corner color across prototypes that don't vary).
+  auto jobs_have_color = [](const std::vector<MeshJobNext> &jobs) {
+    for (const MeshJobNext &j : jobs)
+      if (j.vertex_color) return true;
+    return false;
+  };
+
+  // Partition the (world-space, non-instanced) base geometry into ~2M-triangle
+  // groups, each built as its OWN BLAS and placed as a TLAS instance at identity.
+  // One 17M-tri base build allocates a huge BVH-scratch arena (2*ntris bnodes)
+  // that dominates peak RSS; per-group builds keep that arena small (freed between
+  // groups). Byte-identical: same world-space triangles, same closest hits (the
+  // groups partition by mesh, so no triangle's coincidences are split).
+  const size_t kBaseGroupTris = size_t(1) << 20;  // ~2M tris/group
+  std::vector<std::vector<size_t>> base_group_idx;
+  {
+    std::vector<size_t> cur;
+    size_t cur_tris = 0;
+    for (size_t i = 0; i < base_jobs.size(); ++i) {
+      const size_t e = EstimateTrisForJob(base_jobs[i].prim, time);
+      if (!cur.empty() && cur_tris + e > kBaseGroupTris) {
+        base_group_idx.push_back(std::move(cur));
+        cur.clear();
+        cur_tris = 0;
+      }
+      cur_tris += e;
+      cur.push_back(i);
+    }
+    if (!cur.empty()) base_group_idx.push_back(std::move(cur));
+    if (base_group_idx.empty()) base_group_idx.emplace_back();  // keep blas[0]
+  }
+  const size_t n_base_groups = base_group_idx.size();
+
+  // blas layout: [0] base group 0, [1..P] mesh protos, [P+1..P+C] curve protos,
+  // [P+C+1..] base groups 1..n-1 (appended so proto/curve ids stay stable).
+  const size_t curve_base = 1 + protos.size();
+  const size_t n_curve_protos = curve_inst.protos.size();
+  ctx.blas.clear();
+  ctx.blas.resize(curve_base + n_curve_protos + (n_base_groups - 1));
+  std::vector<Bounds> local_bounds(ctx.blas.size());
+  auto base_blas_id = [&](size_t g) -> uint32_t {
+    return g == 0 ? 0u : uint32_t(curve_base + n_curve_protos + (g - 1));
+  };
+
+  // Stream base groups CONCURRENTLY, each into its own disjoint BLAS with internal
+  // threads=1: isCoral's base is a few huge meshes, so the per-mesh threading
+  // inside one StreamMeshJobs leaves most cores cold; running the groups across a
+  // pool instead uses them. Byte-identical -- outputs are disjoint and per-group
+  // stats are summed afterward (order-independent).
+  std::vector<RTPreviewStats> gstats(n_base_groups);
+  std::atomic<bool> gstream_ok{true};
+  std::atomic<size_t> gcur{0};
+  auto gworker = [&]() {
+    for (;;) {
+      const size_t g = gcur.fetch_add(1, std::memory_order_relaxed);
+      if (g >= n_base_groups || !gstream_ok.load(std::memory_order_relaxed)) break;
+      const uint32_t b = base_blas_id(g);
+      std::vector<MeshJobNext> gjobs;
+      gjobs.reserve(base_group_idx[g].size());
+      for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
+      if (!StreamMeshJobs(
+              gjobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
+              /*threads=*/1, &ctx.blas[b].vertices, &ctx.blas[b].tris,
+              &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
+              &ctx.blas[b].mat_table, jobs_have_color(gjobs),
+              &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
+              /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
+              &ctx.textures, opt.displace ? opt.displace_scale : 0.0f))
+        gstream_ok.store(false, std::memory_order_relaxed);
+    }
+  };
+  const unsigned gthreads = std::min<unsigned>(
+      WorkerThreadCount(opt.threads), unsigned(n_base_groups ? n_base_groups : 1));
+  if (gthreads <= 1) {
+    gworker();
+  } else {
+    std::vector<std::thread> gpool;
+    gpool.reserve(gthreads);
+    for (unsigned t = 0; t < gthreads; ++t) gpool.emplace_back(gworker);
+    for (std::thread &th : gpool) th.join();
+  }
+  for (const RTPreviewStats &gs : gstats) MergeStats(&ctx.stats, gs);
+  bool stream_ok = gstream_ok.load();
+  // Each mesh prototype (local space) -> blas[blas_id].
+  for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
+    const uint32_t b = protos[i].blas_id;
+    RTPreviewStats discard;
+    stream_ok = StreamMeshJobs(proto_jobs[i], opt.purpose_mask, time, want_uvs,
+                               /*purpose_cull=*/true, opt.threads,
+                               &ctx.blas[b].vertices, &ctx.blas[b].tris,
+                               &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
+                               &ctx.blas[b].mat_table, jobs_have_color(proto_jobs[i]),
+                               &ctx.blas[b].tri_colors, opt.smooth,
+                               &ctx.blas[b].tri_normals,
+                               /*out_uverts=*/static_cast<FloatVec *>(nullptr),
+                               /*out_indices=*/static_cast<IdxVec *>(nullptr),
+                               &ctx.textures,
+                               opt.displace ? opt.displace_scale : 0.0f);
+  }
+  if (!stream_ok) {
+    std::cerr << "Aborting: triangle stream exceeded memory cap "
+              << MemBudget::GiB(MemBudget::Get().Cap())
+              << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
+    return false;
+  }
+  // Each curve prototype -> blas[curve_base + i] (its first sub-BLAS); a large
+  // prototype is split into extra sub-BLAS appended at the end of ctx.blas so
+  // their LBVH collapses build concurrently. curve_proto_blas[i] lists every
+  // sub-BLAS id for prototype i, used below to place one TLAS instance per
+  // sub-BLAS at the prototype's transform.
+  std::vector<std::vector<uint32_t>> curve_proto_blas(curve_inst.protos.size());
+  for (size_t i = 0; i < curve_inst.protos.size(); ++i) {
+    const size_t b = curve_base + i;
+    std::vector<Blas> extra;
+    std::vector<Bounds> extra_b;
+    if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
+                        curve_inst.protos[i].purpose, time, build_opts,
+                        &ctx.blas[b], &local_bounds[b], &extra, &extra_b)) {
+      return false;
+    }
+    curve_proto_blas[i].push_back(uint32_t(b));
+    for (size_t j = 0; j < extra.size(); ++j) {
+      curve_proto_blas[i].push_back(uint32_t(ctx.blas.size()));
+      ctx.blas.push_back(std::move(extra[j]));
+      local_bounds.push_back(extra_b[j]);
+    }
+  }
+  const auto stream_t1 = std::chrono::steady_clock::now();
+  ctx.stream_seconds =
+      std::chrono::duration<double>(stream_t1 - stream_t0).count();
+
+  // Guard the BLAS builds (LightRT allocates outside our pool): the build adds
+  // ~kBvhBytesPerTri per UNIQUE triangle (prototypes stored once).
+  {
+    size_t unique_tris = 0;
+    for (const Blas &b : ctx.blas) unique_tris += b.tris.size();
+    std::string why;
+    if (MemBudget::Get().WouldExceed(unique_tris * kBvhBytesPerTri, &why)) {
+      std::cerr << "Aborting BVH build: " << why
+                << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
+      return false;
+    }
+  }
+
+  // Build the BLAS with a size-split strategy: LARGE prototypes are built one at
+  // a time but each with full intra-build threading (LightRT only parallelizes a
+  // single build at >=4096 tris), while the many SMALL prototypes are built in
+  // one batch parallelized ACROSS scenes (each single-threaded). Using the batch
+  // for everything would force big BLAS single-threaded and regress heavily
+  // instanced scenes; the serial loop alone leaves the small-BLAS fleet building
+  // one-at-a-time.
+  // Drop a BLAS's vertex soup (9 floats/tri) as soon as its BVH is built --
+  // ResolveTLASHit recovers a hit triangle's object-space vertices from the BVH
+  // leaves (lrt_tri_get_verts, byte-exact). Freeing each soup at build time
+  // (rather than all at the end) keeps them from accumulating, so the build-phase
+  // peak holds at most one large soup + the built BVHs instead of every soup at
+  // once (isCoral ~600 MB off peak). Curve BLAS / unrecoverable leaves keep theirs.
+  std::atomic<uint64_t> freed_soup_bytes{0};
+  auto drop_soup = [&](size_t b) {
+    if (ctx.blas[b].scene && !ctx.blas[b].is_curve &&
+        lrt_tri_scene_has_verts(ctx.blas[b].scene)) {
+      if (!ctx.blas[b].vertices.empty()) {
+        freed_soup_bytes.fetch_add(
+            uint64_t(ctx.blas[b].vertices.size()) * sizeof(float),
+            std::memory_order_relaxed);
+        FloatVec().swap(ctx.blas[b].vertices);
+      }
+      // Indexed BLAS: the leaf holds the de-indexed verts, so the unique-vertex
+      // array + indices are no longer needed (lrt_tri_get_verts recovers hits).
+      if (!ctx.blas[b].indices.empty()) {
+        freed_soup_bytes.fetch_add(
+            uint64_t(ctx.blas[b].uverts.size()) * sizeof(float) +
+                uint64_t(ctx.blas[b].indices.size()) * sizeof(uint32_t),
+            std::memory_order_relaxed);
+        FloatVec().swap(ctx.blas[b].uverts);
+        IdxVec().swap(ctx.blas[b].indices);
+      }
+    }
+  };
+  // Build a BLAS from whichever geometry form it streamed: indexed (uverts +
+  // indices, the base groups) or de-indexed soup (everything else). The leaf is
+  // identical either way (lrt_tri_scene_build_indexed gathers through indices).
+  auto build_blas = [](Blas &bl, const lrt_tri_build_options *o,
+                       lrt_result *e) -> lrt_tri_scene * {
+    if (!bl.indices.empty())
+      return lrt_tri_scene_build_indexed(bl.uverts.data(), bl.uverts.size() / 3,
+                                         bl.indices.data(), bl.tris.size(), o, e);
+    return lrt_tri_scene_build(bl.vertices.data(), bl.tris.size(), o, e);
+  };
+  const auto bvh_t0 = std::chrono::steady_clock::now();
+  {
+    const size_t nb = ctx.blas.size();
+    const size_t kLargeTris = 32768;  // above this, intra-build threading wins
+    // Pass 1: large BLAS. Build with BOUNDED concurrency -- kBuildPar builds run
+    // at once, each with a few INTRA-build threads (kBuildPar * intra_t cores), so
+    // the morton/radix/tree steps (tri_parallel_for) use the cores that a
+    // single-threaded build leaves idle (the bvh phase otherwise ran ~3/32 cores).
+    // kBuildPar bounds the coexisting build scratch to hold peak under Embree.
+    // Byte-identical: each BLAS builds independently from its own geometry.
+    std::vector<size_t> large;
+    for (size_t b = 0; b < nb; ++b)
+      if (ctx.blas[b].tris.size() >= kLargeTris) large.push_back(b);
+    lrt_tri_build_options sbuild = build_opts;
+    const unsigned kBuildPar = std::min<unsigned>(
+        WorkerThreadCount(opt.threads), large.empty() ? 1u : 3u);  // cap for peak
+    // Give each concurrent build a few intra-build threads (verified sweet spot
+    // ~4: k=3 x 4 = 12 cores, bvh 1.7->1.5s, peak still ~180MB under Embree;
+    // higher T tightens peak for little gain). Scales down on smaller machines.
+    sbuild.num_threads = std::max(
+        1u, std::min(4u, WorkerThreadCount(opt.threads) / kBuildPar));
+    std::atomic<size_t> lcur{0};
+    std::atomic<bool> lfail{false};
+    auto lworker = [&]() {
+      for (;;) {
+        const size_t i = lcur.fetch_add(1, std::memory_order_relaxed);
+        if (i >= large.size() || lfail.load(std::memory_order_relaxed)) break;
+        const size_t b = large[i];
+        lrt_result e = LRT_RESULT_OK;
+        ctx.blas[b].scene = build_blas(ctx.blas[b], &sbuild, &e);
+        if (!ctx.blas[b].scene) {
+          lfail.store(true, std::memory_order_relaxed);
+          break;
+        }
+        drop_soup(b);
+      }
+    };
+    if (kBuildPar <= 1) {
+      lworker();
+    } else {
+      std::vector<std::thread> lpool;
+      lpool.reserve(kBuildPar);
+      for (unsigned t = 0; t < kBuildPar; ++t) lpool.emplace_back(lworker);
+      for (std::thread &th : lpool) th.join();
+    }
+    if (lfail.load()) {
+      std::cerr << "Failed to build BLAS.\n";
+      return false;
+    }
+    // Pass 2: small BLAS, batched across workers (bntris==0 skips large/empty).
+    std::vector<const float *> bverts(nb, nullptr);
+    std::vector<size_t> bntris(nb, 0);
+    std::vector<lrt_tri_scene *> bscenes(nb, nullptr);
+    std::vector<lrt_result> berrs(nb, LRT_RESULT_OK);
+    for (size_t b = 0; b < nb; ++b) {
+      const size_t nt = ctx.blas[b].tris.size();
+      if (nt > 0 && nt < kLargeTris) {
+        if (!ctx.blas[b].indices.empty()) {
+          // Small indexed BLAS (not expected -- base groups are large -- but kept
+          // correct): the soup batch can't consume indexed input, so build it now.
+          lrt_result e = LRT_RESULT_OK;
+          ctx.blas[b].scene = build_blas(ctx.blas[b], &build_opts, &e);
+          if (!ctx.blas[b].scene) {
+            std::cerr << "Failed to build BLAS (err=" << int(e) << ").\n";
+            return false;
+          }
+          drop_soup(b);
+        } else {
+          bverts[b] = ctx.blas[b].vertices.data();
+          bntris[b] = nt;
+        }
+      }
+    }
+    lrt_tri_scene_build_batch(bverts.data(), bntris.data(), nb, &build_opts,
+                              bscenes.data(), berrs.data());
+    for (size_t b = 0; b < nb; ++b) {
+      if (bntris[b] > 0) {
+        ctx.blas[b].scene = bscenes[b];
+        if (!bscenes[b]) {
+          std::cerr << "Failed to build BLAS (err=" << int(berrs[b]) << ").\n";
+          return false;
+        }
+        drop_soup(b);
+      }
+    }
+  }
+
+  // Phase 5 (opt-in via TUSD_COHCOLOR): reorder each BLAS's per-corner colors
+  // from prim_id order into BVH leaf-slot order, so hits within a leaf read
+  // adjacent color records instead of scattered ones (the prim_id->slot map is
+  // already touched by lrt_tri_get_verts at every hit). Per-BLAS scatter +
+  // immediate free of the old array keeps the transient to one BLAS's colors.
+  // Off by default: it adds a build-time scatter pass that isn't worth it for the
+  // tiny primary-only preview render, but helps render-heavy (hi-res) use.
+  // Byte-identical: same 12 bytes, relocated and read back through the same slot.
+  if (std::getenv("TUSD_COHCOLOR")) {
+    const size_t nb = ctx.blas.size();
+    std::atomic<size_t> ccur{0};
+    auto cworker = [&]() {
+      for (;;) {
+        const size_t b = ccur.fetch_add(1, std::memory_order_relaxed);
+        if (b >= nb) break;
+        Blas &bl = ctx.blas[b];
+        if (bl.tri_colors.empty() || !bl.scene) continue;
+        const uint32_t ns = lrt_tri_slot_count(bl.scene);
+        if (!ns) continue;
+        ByteVec cs(size_t(ns) * 12, 0);
+        const size_t nt = bl.tris.size();
+        for (size_t p = 0; p < nt; p++) {
+          const uint32_t slot = lrt_tri_get_slot(bl.scene, uint32_t(p));
+          if (slot != LRT_TRI_NO_HIT && size_t(slot) * 12 + 11 < cs.size())
+            std::memcpy(&cs[size_t(slot) * 12], &bl.tri_colors[p * 12], 12);
+        }
+        bl.tri_colors_slot = std::move(cs);
+        ByteVec().swap(bl.tri_colors);
+      }
+    };
+    const unsigned cn = std::min<unsigned>(WorkerThreadCount(opt.threads),
+                                           nb ? unsigned(nb) : 1u);
+    if (cn <= 1) {
+      cworker();
+    } else {
+      std::vector<std::thread> cp;
+      cp.reserve(cn);
+      for (unsigned t = 0; t < cn; ++t) cp.emplace_back(cworker);
+      for (std::thread &th : cp) th.join();
+    }
+  }
+
+  // Flatten nested instancing into the single level a TLAS expresses. A prototype
+  // whose subtree contains instancers contributed nested placements (in that
+  // prototype's local space, `proto_nested[blas-1]`). Each top-level placement of
+  // such a prototype must ALSO place that prototype's nested geometry, composed with
+  // the outer transform -- recursively, to any depth. Geometry stays deduped (each
+  // leaf BLAS is stored once); only the 48 B/placement instance list grows. No-op
+  // (byte-identical) when nothing nests.
+  {
+    const size_t nb = ctx.blas.size();
+    bool any_nested = false;
+    for (const std::vector<InstanceRT> &v : proto_nested)
+      if (!v.empty()) { any_nested = true; break; }
+    for (const std::vector<CurveInstanceRT> &v : proto_nested_curves)
+      if (!v.empty()) { any_nested = true; break; }
+    if (any_nested) {
+      // Per-blas flattened nested placements (mesh + curve), in blas-local space.
+      // flat[b]/flatC[b] = ALL geometry reachable through nested instancing under b.
+      std::vector<std::vector<InstanceRT>> flat(nb);
+      std::vector<std::vector<CurveInstanceRT>> flatC(nb);
+      std::vector<uint8_t> visit(nb, 0);  // 0=unvisited 1=in-progress 2=done
+      std::function<void(uint32_t)> build = [&](uint32_t b) {
+        if (b >= nb || visit[b]) return;  // done -> cached; in-progress -> cycle
+        visit[b] = 1;
+        std::vector<InstanceRT> outM;
+        std::vector<CurveInstanceRT> outC;
+        const size_t pi = size_t(b) - 1;  // proto index for blas b (base=0: none)
+        if (b >= 1) {
+          if (pi < proto_nested_curves.size())  // curves directly nested in b
+            for (const CurveInstanceRT &c : proto_nested_curves[pi]) outC.push_back(c);
+          if (pi < proto_nested.size()) {
+            for (const InstanceRT &d : proto_nested[pi]) {  // child placed at d.o2w
+              const uint32_t cb = d.blas_id;
+              if (cb < nb && ctx.blas[cb].scene) outM.push_back(d);  // child's base
+              build(cb);
+              if (cb < nb) {
+                for (const InstanceRT &g : flat[cb]) {  // child's nested meshes
+                  InstanceRT e;
+                  e.blas_id = g.blas_id;
+                  Compose3x4(d.o2w, g.o2w, e.o2w);  // apply g (cb-local) then d
+                  outM.push_back(e);
+                }
+                for (const CurveInstanceRT &g : flatC[cb]) {  // child's nested curves
+                  CurveInstanceRT e;
+                  e.curve_proto_idx = g.curve_proto_idx;
+                  Compose3x4(d.o2w, g.o2w, e.o2w);
+                  outC.push_back(e);
+                }
+              }
+            }
+          }
+        }
+        flat[b] = std::move(outM);
+        flatC[b] = std::move(outC);
+        visit[b] = 2;
+      };
+
+      std::vector<InstanceRT> expanded;
+      expanded.reserve(instances.size());
+      size_t addedM = 0, addedC = 0;
+      // Guard the expanded instance arrays against the process memory cap before
+      // materializing them (build() is memoized, so this pre-pass is cheap and the
+      // expansion loop below reuses the cached flat[]/flatC[]). Nested instancing can
+      // multiply the placement count (outer x nested), so a pathological scene could
+      // blow the budget on 48 B/placement alone.
+      {
+        size_t projM = instances.size(), projC = curve_inst.instances.size();
+        for (const InstanceRT &it : instances) {
+          build(it.blas_id);
+          if (it.blas_id < nb) {
+            projM += flat[it.blas_id].size();
+            projC += flatC[it.blas_id].size();
+          }
+        }
+        std::string why;
+        if (MemBudget::Get().WouldExceed(
+                projM * sizeof(InstanceRT) + projC * sizeof(CurveInstanceRT),
+                &why)) {
+          std::cerr << "Aborting nested-instance expansion: " << why
+                    << ".\n  Raise -maxMem or restrict with -mask.\n";
+          return false;
+        }
+      }
+      for (const InstanceRT &it : instances) {
+        expanded.push_back(it);  // the prototype's own base at its outer transform
+        build(it.blas_id);
+        if (it.blas_id < nb) {
+          for (const InstanceRT &g : flat[it.blas_id]) {
+            InstanceRT e;
+            e.blas_id = g.blas_id;
+            Compose3x4(it.o2w, g.o2w, e.o2w);  // leaf-local -> world: apply g then it
+            expanded.push_back(e);
+            ++addedM;
+          }
+          for (const CurveInstanceRT &g : flatC[it.blas_id]) {
+            CurveInstanceRT e;
+            e.curve_proto_idx = g.curve_proto_idx;
+            Compose3x4(it.o2w, g.o2w, e.o2w);
+            curve_inst.instances.push_back(e);  // nested curve placed in world space
+            ++addedC;
+          }
+        }
+      }
+      if (addedM) instances = std::move(expanded);
+      ctx.stats.nested_instances = addedM;
+      ctx.stats.curve_instances = curve_inst.instances.size();
+    }
+  }
+
+  // LightRT tolerates NULL entries in the BLAS array (empty prototypes — e.g.
+  // fully purpose-culled) as long as no instance references them, so the BLAS
+  // index used by both the TLAS and shade-time ResolveTLASHit is just the
+  // ctx.blas index — no compaction/remap needed.
+  std::vector<lrt_tri_scene *> blas_ptrs(ctx.blas.size(), nullptr);
+  for (size_t b = 0; b < ctx.blas.size(); ++b) blas_ptrs[b] = ctx.blas[b].scene;
+
+  // Placements: instance 0 is the base scene at identity, then each native
+  // instance whose prototype BLAS is non-empty, then each instanced curve
+  // prototype placement. instance_id indexes ctx.instances (resolved back to
+  // blas_id + transform at shade time).
+  //
+  // For Island-scale scenes this is tens of millions of instances. The per-
+  // instance fill (two 3x4 copies + an 8-corner bounds expand) is independent,
+  // so it runs in parallel: a validity mask is filled in parallel, an exclusive
+  // scan assigns each kept instance its output slot (preserving the serial
+  // base->instances->curves order, hence identical instance_id), then the
+  // InstanceRT/lrt_instance arrays are scattered in parallel with per-thread
+  // bounds and triangle-count reductions. Output is byte-identical to the serial
+  // fill (indexed writes + min/max + integer sums are all order-invariant).
+  static const float kIdentO2W[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+  std::vector<lrt_instance> lrt_insts;
+  const size_t n_inst_src = instances.size();
+  // Expand curve placements: one TLAS instance per sub-BLAS of each curve
+  // instance's prototype (split prototypes have several), all at the instance's
+  // transform. (curve_inst.instances persists, so o2w pointers stay valid.)
+  std::vector<std::pair<uint32_t, const float *>> curve_placements;
+  for (const CurveInstanceRT &ci : curve_inst.instances)
+    for (uint32_t bid : curve_proto_blas[ci.curve_proto_idx])
+      curve_placements.push_back({bid, ci.o2w});
+  const size_t n_curve_src = curve_placements.size();
+  const size_t n_src = n_base_groups + n_inst_src + n_curve_src;
+  // Resolve a source index [0, n_src) to its (blas_id, o2w) without materializing
+  // a unified array: [0, G) = base groups (at identity), [G, G+nI) = native
+  // instances, the remainder = instanced curve sub-BLAS placements.
+  auto src_at = [&](size_t i, uint32_t *blas_id, const float **o2w) {
+    if (i < n_base_groups) {
+      *blas_id = base_blas_id(i);
+      *o2w = kIdentO2W;
+      return;
+    }
+    i -= n_base_groups;
+    if (i < n_inst_src) {
+      *blas_id = instances[i].blas_id;
+      *o2w = instances[i].o2w;
+      return;
+    }
+    i -= n_inst_src;
+    *blas_id = curve_placements[i].first;
+    *o2w = curve_placements[i].second;
+  };
+  auto blas_ok = [&](uint32_t blas_id) {
+    return blas_id < ctx.blas.size() && ctx.blas[blas_id].scene;
+  };
+  const unsigned ai_threads = std::min<unsigned>(
+      WorkerThreadCount(opt.threads), n_src ? unsigned(n_src) : 1u);
+  auto run_range = [&](const std::function<void(unsigned, size_t, size_t)> &fn) {
+    if (ai_threads <= 1) {
+      fn(0u, 0, n_src);
+      return;
+    }
+    std::vector<std::thread> pool;
+    pool.reserve(ai_threads);
+    for (unsigned t = 0; t < ai_threads; ++t) {
+      const size_t b = (n_src * t) / ai_threads;
+      const size_t e = (n_src * (t + 1)) / ai_threads;
+      pool.emplace_back([&, t, b, e]() { fn(t, b, e); });
+    }
+    for (std::thread &th : pool) th.join();
+  };
+
+  std::vector<uint8_t> valid(n_src);
+  run_range([&](unsigned, size_t b, size_t e) {
+    for (size_t i = b; i < e; ++i) {
+      uint32_t bid;
+      const float *o;
+      src_at(i, &bid, &o);
+      valid[i] = blas_ok(bid) ? 1u : 0u;
+    }
+  });
+  // Exclusive scan -> output slot per kept instance (cheap, ~tens of ms at 22M).
+  std::vector<uint32_t> slot(n_src);
+  uint32_t kept = 0;
+  for (size_t i = 0; i < n_src; ++i) {
+    slot[i] = kept;
+    kept += valid[i];
+  }
+  ctx.instances.resize(kept);
+  lrt_insts.resize(kept);
+
+  std::vector<Bounds> tls_bounds(ai_threads ? ai_threads : 1);
+  std::vector<uint64_t> tls_tris(ai_threads ? ai_threads : 1, 0);
+  run_range([&](unsigned tid, size_t b, size_t e) {
+    Bounds lb;
+    uint64_t lt = 0;
+    for (size_t i = b; i < e; ++i) {
+      if (!valid[i]) continue;
+      uint32_t bid;
+      const float *o;
+      src_at(i, &bid, &o);
+      const uint32_t id = slot[i];
+      InstanceRT &inst = ctx.instances[id];
+      inst.blas_id = bid;
+      std::memcpy(inst.o2w, o, sizeof(inst.o2w));
+      lrt_instance &li = lrt_insts[id];
+      std::memset(&li, 0, sizeof(li));
+      li.blas_id = bid;
+      std::memcpy(li.obj2world, o, sizeof(li.obj2world));
+      li.instance_id = id;
+      li.mask = 0xffffffffu;
+      ExpandBoundsByTransformedO2W(&lb, local_bounds[bid], o);
+      lt += uint64_t(ctx.blas[bid].tris.size());
+    }
+    tls_bounds[tid] = lb;
+    tls_tris[tid] = lt;
+  });
+  for (const Bounds &lb : tls_bounds) {
+    if (lb.valid) {
+      Expand(&ctx.bounds, lb.lo);
+      Expand(&ctx.bounds, lb.hi);
+    }
+  }
+  ctx.stats.triangles = 0;
+  for (uint64_t v : tls_tris) ctx.stats.triangles += v;
+  std::vector<uint8_t>().swap(valid);
+  std::vector<uint32_t>().swap(slot);
+  ctx.stats.curve_instances = curve_inst.instances.size();
+  // The collection-side instance lists are now fully copied into ctx.instances +
+  // lrt_insts; free them before lrt_tlas_build allocates the (peak) TLAS nodes.
+  std::vector<InstanceRT>().swap(instances);
+  std::vector<CurveInstanceRT>().swap(curve_inst.instances);
+
+  if (lrt_insts.empty()) {
+    std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
+    return false;
+  }
+  ctx.stats.meshes = base_jobs.size() + instances.size();
+
+  lrt_result terr = LRT_RESULT_OK;
+  ctx.tlas = lrt_tlas_build(blas_ptrs.data(), blas_ptrs.size(),
+                            lrt_insts.data(), lrt_insts.size(), &build_opts,
+                            &terr);
+  const auto bvh_t1 = std::chrono::steady_clock::now();
+  if (!ctx.tlas) {
+    std::cerr << "Failed to build LightRT TLAS (err=" << int(terr) << ").\n";
+    return false;
+  }
+  ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
+  ctx.stats.build_seconds = ctx.stream_seconds;
+  uint64_t blas_bytes = freed_soup_bytes.load();  // soup dropped post-build (above)
+  for (const Blas &b : ctx.blas) blas_bytes += uint64_t(b.vertices.size()) * sizeof(float);
+  ctx.stats.packed_triangle_bytes = blas_bytes;
+  return true;
+}
+
+// Collect finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) from the next
+// stage into the LightCache, mirroring the legacy CollectLights/AddFiniteLight.
+// DomeLights are handled separately as IBL (BuildNextIbl). Radiance is
+// color * intensity * 2^exposure; position/direction come from the world xform
+// (UsdLux lights emit along local -Z).
+void CollectLightsNext(const tinyusdz::next::Stage &stage,
+                       const tinyusdz::next::UsdPrim &prim,
+                       const matrix4d &parent_world, double time,
+                       LightCache *cache) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+
+  const std::string &t = prim.GetTypeName();
+  PreviewLight::Kind kind;
+  bool is_light = true;
+  if (t == "RectLight") kind = PreviewLight::Kind::Rect;
+  else if (t == "SphereLight") kind = PreviewLight::Kind::Sphere;
+  else if (t == "DiskLight") kind = PreviewLight::Kind::Disk;
+  else if (t == "CylinderLight") kind = PreviewLight::Kind::Cylinder;
+  else if (t == "DistantLight") kind = PreviewLight::Kind::Distant;
+  else is_light = false;
+
+  if (is_light) {
+    const float intensity = ReadCamFloatNext(prim, "inputs:intensity", 1.0f);
+    const float exposure = ReadCamFloatNext(prim, "inputs:exposure", 0.0f);
+    Vec3 color{1.0f, 1.0f, 1.0f};
+    if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
+      if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+    const float scale = intensity * std::pow(2.0f, exposure);
+    PreviewLight dst;
+    dst.kind = kind;
+    dst.position = Vec3{float(world.m[3][0]), float(world.m[3][1]),
+                        float(world.m[3][2])};
+    Vec3 dir = TransformVector(world, Vec3{0.0f, 0.0f, -1.0f});  // -Z forward
+    dst.direction = Length(dir) > 1.0e-6f ? Normalize(dir) : Vec3{0, -1, 0};
+    dst.normal = Mul(dst.direction, -1.0f);
+    dst.radiance = Mul(color, scale);
+    const float radius = ReadCamFloatNext(prim, "inputs:radius", 0.5f);
+    const float width = ReadCamFloatNext(prim, "inputs:width", 1.0f);
+    const float height = ReadCamFloatNext(prim, "inputs:height", 1.0f);
+    const float length = ReadCamFloatNext(prim, "inputs:length", 1.0f);
+    constexpr float kPi = 3.14159265358979323846f;
+    dst.radius = radius;
+    dst.width = width;
+    dst.height = height;
+    if (kind == PreviewLight::Kind::Rect) dst.area = width * height;
+    else if (kind == PreviewLight::Kind::Sphere) dst.area = 4 * kPi * radius * radius;
+    else if (kind == PreviewLight::Kind::Disk) dst.area = kPi * radius * radius;
+    else if (kind == PreviewLight::Kind::Cylinder) dst.area = 2 * kPi * radius * length;
+    dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
+    cache->finite.push_back(std::move(dst));
+  }
+  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren())
+    CollectLightsNext(stage, c, world, time, cache);
+}
+
+// Load the scene via next, then stream + build the BVH at the initial time.
+// First UsdLuxDomeLight in the composed stage (depth-first), or an invalid prim.
+// Accumulates the world transform along the way so the caller can read the dome's
+// world-space orientation (out_world is the found dome's local-to-world matrix).
+tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim,
+                                         const matrix4d &parent_world,
+                                         double time, matrix4d *out_world) {
+  double dmat[16];
+  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  const matrix4d local = Mat4FromArray(dmat);
+  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const matrix4d world = reset ? local : (local * parent_world);
+  if (prim.GetTypeName() == "DomeLight") {
+    if (out_world) *out_world = world;
+    return prim;
+  }
+  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren()) {
+    matrix4d cw;
+    tinyusdz::next::UsdPrim r = FindDomeLightRec(c, world, time, &cw);
+    if (r.IsValid()) {
+      if (out_world) *out_world = cw;
+      return r;
+    }
+  }
+  return tinyusdz::next::UsdPrim();
+}
+
+// Build the IBL cache from the --env override or a DomeLight; returns false (and
+// leaves ibl invalid) if there is no env, so the renderer falls back to the
+// headlight.
+bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
+                  const std::string &base_dir, double time, IblCache *ibl) {
+  std::string env_path = opt.env_file;
+  Vec3 scale{1.0f, 1.0f, 1.0f};
+  bool rotated = false;
+  Vec3 rx{1.0f, 0.0f, 0.0f}, ry{0.0f, 1.0f, 0.0f}, rz{0.0f, 0.0f, 1.0f};
+  if (env_path.empty()) {
+    for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+      matrix4d dome_world = matrix4d::identity();
+      tinyusdz::next::UsdPrim dome =
+          FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
+      if (!dome.IsValid()) continue;
+      if (const tinyusdz::next::Value *v =
+              dome.GetPropertyValue("inputs:texture:file")) {
+        const std::string *ap = v->as_asset_path();
+        if (!ap) ap = v->as_string();
+        if (ap) env_path = *ap;
+      }
+      float intensity = 1.0f;
+      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
+        if (const float *f = v->as_float()) intensity = *f;
+      Vec3 color{1.0f, 1.0f, 1.0f};
+      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:color"))
+        if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
+      scale = Vec3{color.x * intensity, color.y * intensity, color.z * intensity};
+      // Dome orientation: the dome's local axes in world space (rows of the world
+      // rotation, normalized to drop any scale). A world direction is mapped into
+      // the dome frame by projecting onto them. Only flagged when meaningfully
+      // non-identity, so untransformed domes stay byte-identical.
+      Vec3 ax{float(dome_world.m[0][0]), float(dome_world.m[0][1]),
+              float(dome_world.m[0][2])};
+      Vec3 ay{float(dome_world.m[1][0]), float(dome_world.m[1][1]),
+              float(dome_world.m[1][2])};
+      Vec3 az{float(dome_world.m[2][0]), float(dome_world.m[2][1]),
+              float(dome_world.m[2][2])};
+      float la = Length(ax), lb = Length(ay), lc = Length(az);
+      if (la > 1.0e-8f && lb > 1.0e-8f && lc > 1.0e-8f) {
+        ax = Mul(ax, 1.0f / la);
+        ay = Mul(ay, 1.0f / lb);
+        az = Mul(az, 1.0f / lc);
+        float dev = std::fabs(ax.x - 1.0f) + std::fabs(ax.y) + std::fabs(ax.z) +
+                    std::fabs(ay.x) + std::fabs(ay.y - 1.0f) + std::fabs(ay.z) +
+                    std::fabs(az.x) + std::fabs(az.y) + std::fabs(az.z - 1.0f);
+        if (dev > 1.0e-6f) {
+          rotated = true;
+          rx = ax;
+          ry = ay;
+          rz = az;
+        }
+      }
+      break;
+    }
+  }
+  if (env_path.empty()) return false;
+  std::string path = env_path;
+  if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
+  EnvImage env;
+  if (!LoadEnvImageFromFile(path, scale, &env)) return false;
+  if (!BuildIblFromEnv(std::move(env), ibl)) return false;
+  ibl->rotated = rotated;
+  ibl->rx = rx;
+  ibl->ry = ry;
+  ibl->rz = rz;
+  return true;
+}
+
+bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
+  ctx.opt = opt;
+  ctx.width = opt.width > 0 ? opt.width : 960;
+
+  const auto load_t0 = std::chrono::steady_clock::now();
+  std::string warn, err;
+  // LoadUSDComposed resolves references/payloads/sublayers in place (anchored to
+  // the input dir), so tusdrender consumes raw reference-composed scenes (e.g.
+  // Caldera prefab stubs) directly — no external usdcat --flatten step. Self-
+  // contained / pre-flattened inputs skip composition (identical to LoadUSD).
+  tinyusdz::next::pcp::CompositionOptions comp_opts;
+  if (!opt.variant_overrides.empty())
+    comp_opts.variant_overrides = opt.variant_overrides;
+  if (!tinyusdz::next::LoadUSDComposed(opt.input, &ctx.stage, &warn, &err,
+                                       &comp_opts)) {
+    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+    std::cerr << "Failed to load USD (next): " << err << "\n";
+    return false;
+  }
+  if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+  const auto load_t1 = std::chrono::steady_clock::now();
+  ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
+
+  // The composed stage is the memory baseline; everything our pool allocator
+  // tracks (triangle buffers) must fit in cap - base. Abort now if compose alone
+  // already blew the cap.
+  std::string why;
+  if (MemBudget::Get().WouldExceed(0, &why)) {
+    std::cerr << "Aborting after load: " << why
+              << ".\n  Raise -maxMem, restrict with -mask, or pre-flatten.\n";
+    return false;
+  }
+  MemBudget::Get().SnapshotBase();
+
+  ctx.up_axis = GetUpAxis(ctx.stage.GetUpAxis());
+
+  // Initial time: default value unless -timecode was given. -defaultTime forces
+  // the default (NaN) explicitly.
+  const double init_time = opt.default_time
+                               ? std::numeric_limits<double>::quiet_NaN()
+                               : opt.timecode;
+  if (!ExtractAndBuildBVH(ctx, init_time)) return false;
+
+  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
+  // each volume's world AABB BEFORE resolving the camera, so a volume-only scene
+  // (or one whose volume sits away from the origin, e.g. an explosion sim) is
+  // framed and rendered instead of leaving the auto-camera looking at an empty
+  // origin.
+  ctx.volumes.clear();
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
+                       DirName(opt.input), &ctx.volumes);
+  ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
+  if (opt.stats && !ctx.volumes.empty())
+    std::cerr << "rt volumes: " << ctx.volumes.size() << "\n";
+
+  ResolveCameraNext(ctx);
+
+  // Image-based lighting: an explicit --env override wins, else the first
+  // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
+  // BRDF (roughness/metallic) + env background; absent -> camera headlight.
+  BuildNextIbl(ctx.stage, opt, DirName(opt.input), init_time, &ctx.ibl);
+  if (opt.stats && ctx.ibl.valid) {
+    std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
+              << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
+  }
+  // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
+  // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
+  ctx.lights.finite.clear();
+  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+    CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
+                      &ctx.lights);
+  AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
+  if (opt.stats && !ctx.lights.finite.empty())
+    std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
+
+  return true;
+}
+
+// Render the current camera/parameters of `ctx` and write to `path`.
+// Reuses the persistent BVH (no rebuild). Returns the trace time in seconds
+// (or a negative value on write failure).
+double RenderFrameTo(RenderContext &ctx, const std::string &path) {
+  ctx.opt.width = ctx.width;
+  const auto t0 = std::chrono::steady_clock::now();
+  tinyusdz::Image img = RenderImage(
+      ctx.scene, &ctx.direct, ctx.tris, ctx.flat_mats, ctx.lights,
+      ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
+      ctx.textures.empty() ? nullptr : &ctx.textures,
+      ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
+      ctx.use_tlas ? ctx.tlas : nullptr,
+      ctx.use_tlas ? &ctx.blas : nullptr,
+      ctx.use_tlas ? &ctx.instances : nullptr,
+      ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors,
+      ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals,
+      ctx.volumes.empty() ? nullptr : &ctx.volumes);
+  const auto t1 = std::chrono::steady_clock::now();
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(path, img, wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return -1.0;
+  }
+  return std::chrono::duration<double>(t1 - t0).count();
+}
+
+void PrintRTStats(const RenderContext &ctx) {
+  std::cerr << "rt preview: 1\n";
+  std::cerr << "rt loader: next\n";
+  std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
+  std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
+  std::cerr << "rt purpose default triangles: "
+            << ctx.stats.purpose_default_triangles << "\n";
+  std::cerr << "rt purpose guide triangles: "
+            << ctx.stats.purpose_guide_triangles << "\n";
+  if (ctx.stats.curve_strands > 0)
+    std::cerr << "rt curve strands: " << ctx.stats.curve_strands << "\n";
+  if (ctx.stats.curve_instances > 0)
+    std::cerr << "rt curve instances: " << ctx.stats.curve_instances << "\n";
+  std::cerr << "load seconds: " << ctx.load_seconds << "\n";
+  std::cerr << "rt triangle stream seconds: " << ctx.stream_seconds << "\n";
+  std::cerr << "rt bvh build seconds: " << ctx.bvh_seconds << "\n";
+  std::cerr << "memory cap: " << MemBudget::GiB(MemBudget::Get().Cap()) << "\n";
+  std::cerr << "tracked buffer peak: "
+            << MemBudget::GiB(MemBudget::Get().PeakTracked()) << "\n";
+  std::cerr << "process RSS: " << MemBudget::GiB(MemBudget::ProcessRSS()) << "\n";
+  // ctx.stats.triangles is the (instance-expanded) renderable triangle count in
+  // both paths; ctx.tris is empty in the two-level (TLAS) path.
+  std::cerr << "triangles: " << ctx.stats.triangles << "\n";
+  if (ctx.use_tlas) {
+    size_t unique_tris = 0;
+    for (const Blas &b : ctx.blas) unique_tris += b.tris.size();
+    std::cerr << "rt instancing: tlas\n";
+    std::cerr << "rt blas count: " << ctx.blas.size() << "\n";
+    std::cerr << "rt instances: " << ctx.instances.size() << "\n";
+    std::cerr << "rt point instancers: " << ctx.stats.point_instancers << "\n";
+    std::cerr << "rt point instances: " << ctx.stats.point_instances << "\n";
+    std::cerr << "rt nested instances: " << ctx.stats.nested_instances << "\n";
+    std::cerr << "rt unique triangles: " << unique_tris << "\n";
+  } else {
+    lrt_tri_stats st;
+    std::memset(&st, 0, sizeof(st));
+    lrt_tri_scene_stats(ctx.scene, &st);
+    std::cerr << "lightrt: " << lrt_tri_kernel_name(ctx.scene) << "\n";
+    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
+              << ", memory: " << st.memory_bytes << " bytes\n";
+  }
+}
+
+// Parse an OpenUSD usdrecord FRAMESPEC list into time codes. Each comma-
+// separated spec is "t", "start:end", or "start:end x stride" (stride defaults
+// to 1, sign inferred from start/end). Examples: "1", "1:10", "1:10x2",
+// "10:1", "1:5,8,12:20x4".
+bool ParseFrameSpec(const std::string &spec, std::vector<double> *times) {
+  std::string s = spec;
+  for (char &c : s) {
+    if (c == ',') c = ' ';
+  }
+  std::istringstream iss(s);
+  std::string tok;
+  while (iss >> tok) {
+    double start = 0, end = 0, stride = 1;
+    const size_t colon = tok.find(':');
+    if (colon == std::string::npos) {
+      try {
+        start = end = std::stod(tok);
+      } catch (...) {
+        return false;
+      }
+    } else {
+      std::string a = tok.substr(0, colon);
+      std::string rest = tok.substr(colon + 1);
+      const size_t xpos = rest.find('x');
+      std::string b = (xpos == std::string::npos) ? rest : rest.substr(0, xpos);
+      try {
+        start = std::stod(a);
+        end = std::stod(b);
+        if (xpos != std::string::npos) stride = std::stod(rest.substr(xpos + 1));
+      } catch (...) {
+        return false;
+      }
+    }
+    if (stride == 0) stride = 1;
+    stride = std::fabs(stride);
+    if (start <= end) {
+      for (double t = start; t <= end + 1e-9; t += stride) times->push_back(t);
+    } else {
+      for (double t = start; t >= end - 1e-9; t -= stride) times->push_back(t);
+    }
+  }
+  return !times->empty();
+}
+
+// Substitute a frame number into an output path. Runs of '#' are replaced by the
+// zero-padded frame number (width = number of '#'). If there is no '#', the
+// frame number is inserted before the extension (.NNNN).
+std::string SubstituteFrame(const std::string &path, long frame) {
+  const size_t hpos = path.find('#');
+  if (hpos != std::string::npos) {
+    size_t hend = hpos;
+    while (hend < path.size() && path[hend] == '#') ++hend;
+    const int width = int(hend - hpos);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%0*ld", width, frame);
+    return path.substr(0, hpos) + buf + path.substr(hend);
+  }
+  const size_t dot = path.find_last_of('.');
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), ".%04ld", frame);
+  if (dot == std::string::npos) return path + buf;
+  return path.substr(0, dot) + buf + path.substr(dot);
+}
+
+int RunRTPreviewNext(const Options &opt) {
+  RenderContext ctx;
+  if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  if (opt.stats) PrintRTStats(ctx);
+
+  // Animation: -frames renders one image per time code, re-evaluating geometry,
+  // transforms and any animated camera at that time. The scene is parsed once;
+  // each frame re-streams + rebuilds the BVH (geometry may deform).
+  if (!opt.frames.empty()) {
+    std::vector<double> times;
+    if (!ParseFrameSpec(opt.frames, &times)) {
+      std::cerr << "Invalid -frames FRAMESPEC: " << opt.frames << "\n";
+      return EXIT_FAILURE;
+    }
+    if (opt.output.empty()) {
+      std::cerr << "-frames requires an output path (use # for the frame "
+                   "number, e.g. frame.####.png).\n";
+      return EXIT_FAILURE;
+    }
+    // If the rendered geometry is static across time (only the camera and/or
+    // nothing animates), the BVH built in BuildRenderContext is valid for every
+    // frame -- reuse it and only re-resolve the camera per frame. Otherwise
+    // re-stream + rebuild the BVH at each time.
+    const bool geom_animated = SceneGeometryAnimated(ctx.stage, opt.mask);
+    if (opt.stats) {
+      std::cerr << "rt frames: " << times.size()
+                << ", geometry animated: " << (geom_animated ? 1 : 0)
+                << " (BVH " << (geom_animated ? "rebuilt per frame" : "reused")
+                << ")\n";
+    }
+    for (double t : times) {
+      if (geom_animated) {
+        if (!ExtractAndBuildBVH(ctx, t)) return EXIT_FAILURE;
+      } else {
+        ctx.frame_time = t;  // static geometry: keep BVH, animate camera only
+      }
+      ResolveCameraNext(ctx);
+      const std::string out = SubstituteFrame(opt.output, std::lround(t));
+      const double secs = RenderFrameTo(ctx, out);
+      if (secs < 0.0) return EXIT_FAILURE;
+      std::cerr << "frame " << t << " -> " << out << "  (" << secs << "s)\n";
+    }
+    return EXIT_SUCCESS;
+  }
+
+  const double secs = RenderFrameTo(ctx, opt.output);
+  if (secs < 0.0) return EXIT_FAILURE;
+  if (opt.stats) std::cerr << "render seconds: " << secs << "\n";
+  return EXIT_SUCCESS;
+}
+
+}  // namespace tusdr

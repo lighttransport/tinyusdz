@@ -448,6 +448,15 @@ private:
   /// Extract Mesh-specific properties (points, normals, etc.)
   bool ExtractMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// UsdVol: extract Volume `field:*` relationships
+  bool ExtractVolumeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract FieldAsset attributes (filePath, fieldName, ...)
+  bool ExtractFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract OpenVDBAsset attributes
+  bool ExtractOpenVDBAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract Field3DAsset attributes
+  bool ExtractField3DAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Cube-specific properties (size, extent)
   bool ExtractCubeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -731,6 +740,10 @@ private:
   /// Pack a CrateValue into ValueRep
   /// Returns the ValueRep and may write out-of-line data to file
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
+
+  /// Pack a metadata dictionary value into a Crate ValueRep.
+  bool PackMetaVariable(const std::string& key, const MetaVariable& meta,
+                        crate::ValueRep* value_rep, std::string* err);
 
   /// Write a value to the value data section
   /// Returns the file offset where the value was written

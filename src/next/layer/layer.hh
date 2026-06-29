@@ -111,6 +111,10 @@ public:
   const PrimSpec* prim_at_path(const std::string& path) const;
   PrimSpec* prim_at_path_mutable(const std::string& path);
 
+  /// Index of the prim at `path`, or UINT32_MAX if absent (O(1), from the path
+  /// index). Lets a caller build a UsdPrim without re-scanning for the index.
+  uint32_t index_at_path(const std::string& path) const;
+
   /// Get prim by index (mutable)
   PrimSpec* prim_mutable(uint32_t index);
 
