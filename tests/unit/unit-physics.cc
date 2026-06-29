@@ -120,6 +120,18 @@ static bool has_api(const Prim *prim, APISchemas::APIName want) {
   return false;
 }
 
+static const nlohmann::json *find_json_joint(const nlohmann::json &root,
+                                             const std::string &path) {
+  if (!root.contains("joints") || !root["joints"].is_array()) return nullptr;
+  for (const auto &joint : root["joints"]) {
+    if (joint.contains("path") && joint["path"].is_string() &&
+        joint["path"].get<std::string>() == path) {
+      return &joint;
+    }
+  }
+  return nullptr;
+}
+
 }  // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -472,6 +484,56 @@ def PhysicsDistanceJoint "DistJoint"
   TEST_CHECK((*result)->is<PhysicsDistanceJoint>());
 }
 
+void physics_distance_joint_json_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsDistanceJoint "DistJoint"
+{
+    rel physics:body0 = </World/A>
+    rel physics:body1 = </World/B>
+    float physics:minDistance = 0.25
+    float physics:maxDistance = 2.75
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/DistJoint", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsDistanceJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  auto lo = joint->minDistance.get_value();
+  auto hi = joint->maxDistance.get_value();
+  TEST_CHECK(lo.has_value() && approx_eq(lo.value(), 0.25));
+  TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 2.75));
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  nlohmann::json root = parse_json_noexcept(json);
+  if (root.is_discarded()) {
+    TEST_MSG("JSON failed to parse:\n%s", json.c_str());
+  }
+  TEST_CHECK(!root.is_discarded());
+  if (root.is_discarded()) return;
+  const nlohmann::json *j = find_json_joint(root, "/DistJoint");
+  TEST_CHECK(j != nullptr);
+  if (!j) return;
+  TEST_CHECK((*j)["type"] == "PhysicsDistanceJoint");
+  TEST_CHECK(approx_eq((*j)["minDistance"].get<double>(), 0.25));
+  TEST_CHECK(approx_eq((*j)["maxDistance"].get<double>(), 2.75));
+}
+
 // ---------------------------------------------------------------------------
 // 6b. PhysicsSphericalJoint
 // ---------------------------------------------------------------------------
@@ -584,6 +646,106 @@ def PhysicsRevoluteJoint "MjcHinge" (
   TEST_CHECK(mjc.frictionloss.get_value() == 0.5);
   TEST_CHECK(mjc.ref.get_value() == 0.5);
   TEST_CHECK(mjc.group.get_value() == 2);
+}
+
+void physics_joint_mjc_full_json_usdc_roundtrip_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsRevoluteJoint "MjcFullHinge" (
+    prepend apiSchemas = ["MjcJointAPI"]
+)
+{
+    rel physics:body0 = </World/Body0>
+    rel physics:body1 = </World/Body1>
+    token physics:axis = "Z"
+    uniform int mjc:group = 4
+    uniform double mjc:stiffness = 120
+    uniform double mjc:damping = 8
+    uniform double mjc:armature = 0.02
+    uniform double mjc:frictionloss = 0.1
+    uniform double[] mjc:springdamper = [4, 0.5]
+    uniform double mjc:springref = 0.25
+    uniform double mjc:ref = -0.1
+    uniform double mjc:margin = 0.03
+    uniform double[] mjc:solreflimit = [0.03, 1.1]
+    uniform double[] mjc:solimplimit = [0.8, 0.9, 0.01, 0.5, 2]
+    uniform double[] mjc:solreffriction = [0.04, 1.2]
+    uniform double[] mjc:solimpfriction = [0.7, 0.8, 0.02, 0.4, 1.5]
+    uniform double mjc:actuatorfrcrange:min = -5
+    uniform double mjc:actuatorfrcrange:max = 6
+    uniform token mjc:actuatorfrclimited = "true"
+    uniform bool mjc:actuatorgravcomp = 1
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = usdc_roundtrip(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/MjcFullHinge", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->mjcJoint.has_value());
+  if (!joint->mjcJoint.has_value()) return;
+  const auto &m = joint->mjcJoint.value();
+  TEST_CHECK(m.group.authored() && m.group.get_value() == 4);
+  auto springdamper = m.springdamper.get_value();
+  TEST_CHECK(springdamper.has_value());
+  if (springdamper.has_value()) {
+    const auto &v = springdamper.value();
+    TEST_CHECK(v.size() == 2 && approx_eq(v[0], 4.0) && approx_eq(v[1], 0.5));
+  }
+  auto solreflimit = m.solreflimit.get_value();
+  TEST_CHECK(solreflimit.has_value());
+  if (solreflimit.has_value()) {
+    const auto &v = solreflimit.value();
+    TEST_CHECK(v.size() == 2 && approx_eq(v[0], 0.03) && approx_eq(v[1], 1.1));
+  }
+  TEST_CHECK(m.solimplimit.get_value().has_value());
+  TEST_CHECK(m.solreffriction.get_value().has_value());
+  TEST_CHECK(m.solimpfriction.get_value().has_value());
+  TEST_CHECK(m.actuatorfrclimited.authored() &&
+             m.actuatorfrclimited.get_value().str() == "true");
+  TEST_CHECK(m.actuatorgravcomp.authored() &&
+             m.actuatorgravcomp.get_value() == true);
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  nlohmann::json root = parse_json_noexcept(json);
+  if (root.is_discarded()) {
+    TEST_MSG("JSON failed to parse:\n%s", json.c_str());
+  }
+  TEST_CHECK(!root.is_discarded());
+  if (root.is_discarded()) return;
+  const nlohmann::json *j = find_json_joint(root, "/MjcFullHinge");
+  TEST_CHECK(j != nullptr);
+  if (!j) return;
+  TEST_CHECK(j->contains("mjc"));
+  if (!j->contains("mjc")) return;
+  const nlohmann::json &mjc = (*j)["mjc"];
+  TEST_CHECK(mjc["group"] == 4);
+  TEST_CHECK(mjc["actuatorfrclimited"] == "true");
+  TEST_CHECK(mjc["actuatorgravcomp"] == true);
+  TEST_CHECK(mjc.contains("solreflimit"));
+  TEST_CHECK(mjc["solreflimit"].is_array() && mjc["solreflimit"].size() == 2);
+  if (mjc["solreflimit"].is_array() && mjc["solreflimit"].size() == 2) {
+    TEST_CHECK(approx_eq(mjc["solreflimit"][0].get<double>(), 0.03));
+    TEST_CHECK(approx_eq(mjc["solreflimit"][1].get<double>(), 1.1));
+  }
+  TEST_CHECK(mjc.contains("solimplimit"));
+  TEST_CHECK(mjc.contains("solreffriction"));
+  TEST_CHECK(mjc.contains("solimpfriction"));
 }
 
 void physics_mjc_joint_authorship_usdc_roundtrip_test(void) {
@@ -1830,6 +1992,89 @@ def PhysicsRevoluteJoint "Joint" (
     TEST_CHECK(l.low.authored() && approx_eq(l.low.get_value(), -1.57));
     TEST_CHECK(l.high.authored() && approx_eq(l.high.get_value(), 1.57));
   }
+}
+
+void physics_drive_limit_multi_dof_parse_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def PhysicsJoint "D6" (
+    prepend apiSchemas = [
+        "PhysicsDriveAPI:transX",
+        "PhysicsDriveAPI:rotZ",
+        "PhysicsLimitAPI:transX",
+        "PhysicsLimitAPI:rotZ"
+    ]
+)
+{
+    rel physics:body0 = </Base>
+    rel physics:body1 = </Tool>
+
+    token physics:drive:transX:type = "acceleration"
+    float physics:drive:transX:maxForce = 10
+    float physics:drive:transX:targetVelocity = 0.5
+    float physics:drive:rotZ:stiffness = 25
+    float physics:drive:rotZ:damping = 3
+
+    float physics:limit:transX:low = -0.2
+    float physics:limit:transX:high = 0.4
+    float physics:limit:rotZ:low = -1
+    float physics:limit:rotZ:high = 1
+
+    custom float physics:drive:rotZ:maxForce:extra = 99
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/D6", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+
+  TEST_CHECK(joint->drives.count("transX") == 1);
+  TEST_CHECK(joint->drives.count("rotZ") == 1);
+  TEST_CHECK(joint->drives.count("rotZ:maxForce") == 0);
+  if (joint->drives.count("transX") == 1) {
+    const PhysicsDriveAPI &d = joint->drives.at("transX");
+    TEST_CHECK(d.dof == "transX");
+    TEST_CHECK(d.type.authored() && d.type.get_value().str() == "acceleration");
+    TEST_CHECK(d.maxForce.authored() && approx_eq(d.maxForce.get_value(), 10.0));
+    TEST_CHECK(d.targetVelocity.authored() &&
+               approx_eq(d.targetVelocity.get_value(), 0.5));
+  }
+  if (joint->drives.count("rotZ") == 1) {
+    const PhysicsDriveAPI &d = joint->drives.at("rotZ");
+    TEST_CHECK(d.dof == "rotZ");
+    TEST_CHECK(d.stiffness.authored() && approx_eq(d.stiffness.get_value(), 25.0));
+    TEST_CHECK(d.damping.authored() && approx_eq(d.damping.get_value(), 3.0));
+    TEST_CHECK(!d.maxForce.authored());
+  }
+
+  TEST_CHECK(joint->limits.count("transX") == 1);
+  TEST_CHECK(joint->limits.count("rotZ") == 1);
+  if (joint->limits.count("transX") == 1) {
+    const PhysicsLimitAPI &l = joint->limits.at("transX");
+    TEST_CHECK(l.dof == "transX");
+    TEST_CHECK(l.low.authored() && approx_eq(l.low.get_value(), -0.2));
+    TEST_CHECK(l.high.authored() && approx_eq(l.high.get_value(), 0.4));
+  }
+  if (joint->limits.count("rotZ") == 1) {
+    const PhysicsLimitAPI &l = joint->limits.at("rotZ");
+    TEST_CHECK(l.dof == "rotZ");
+    TEST_CHECK(l.low.authored() && approx_eq(l.low.get_value(), -1.0));
+    TEST_CHECK(l.high.authored() && approx_eq(l.high.get_value(), 1.0));
+  }
+
+  TEST_CHECK(joint->props.count("physics:drive:rotZ:maxForce:extra") == 1);
+  double v = 0.0;
+  TEST_CHECK(get_prop_num(joint->props, "physics:drive:rotZ:maxForce:extra", &v));
+  TEST_CHECK(approx_eq(v, 99.0));
 }
 
 // ---------------------------------------------------------------------------
