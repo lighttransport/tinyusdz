@@ -192,10 +192,13 @@
       }
       return a.size() < b.size();
     };
-    std::sort(sorted.begin(), sorted.end(),
-              [&](uint32_t a, uint32_t b) {
-                return preorder_less(paths_[a], paths_[b]);
-              });
+    // Parallel sort: the path pre-order sort is the single largest serial cost on
+    // big scenes (~21% of USDC write on Island). Identical result to std::sort
+    // (the comparator is a strict weak order and all paths are unique).
+    ParallelSortIndices(
+        sorted,
+        [&](uint32_t a, uint32_t b) { return preorder_less(paths_[a], paths_[b]); },
+        ResolveThreads());
 
     size_t num_paths = sorted.size();
     uint64_t num_encoded = static_cast<uint64_t>(num_paths);
