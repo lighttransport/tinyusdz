@@ -2799,6 +2799,23 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     }
   }
 
+  // Preserve dst's asset-resolution anchor. The result prim sits at dst's
+  // namespace location, so any relative reference/payload asset paths that dst
+  // authored (merged into `ps` by the update_from() above) must keep anchoring
+  // at dst's directory -- NOT the base class's. `ps = src` adopted src's working
+  // path, and update_from() restores only metadata, not the resolution state, so
+  // without this a prim that `inherits`/`specializes` an out-of-directory class
+  // (e.g. ALab components whose roots `specializes = </_root_type>`, where
+  // _root_type is defined up at the shot level) would re-anchor its OWN, possibly
+  // still-unresolved, references to the class's directory and silently lose all
+  // of its geometry. Only override when dst contributed arcs (so a prim that
+  // purely inherits a class's arcs still anchors them at the class's directory).
+  const std::string dst_cwp = dst.get_current_working_path();
+  if (!dst_cwp.empty() &&
+      (dst.metas().references.has_value() || dst.metas().payload.has_value())) {
+    ps.set_asset_resolution_state(dst_cwp, dst.get_asset_search_paths());
+  }
+
   DCOUT("move");
   dst = std::move(ps);
   DCOUT("move done");
