@@ -244,7 +244,7 @@ void App::updateRtLodCamera() {
   cam.frustumCull = true;
   cam.fullPx = rtLodFullPx_;
   cam.cullPx = rtLodCullPx_;
-  cam.bandFrac = 0.25f;
+  cam.bandFrac = rtLodBandFrac_;
   // GL-convention proj*view so light3d::Frustum extracts correct planes (incl. the
   // near plane, which culls behind-camera instances).
   const light3d::Mat4 vp = camera_.proj(/*zeroToOneDepth=*/false) * camera_.view();

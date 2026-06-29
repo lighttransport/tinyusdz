@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   bool rtLod = false;           // --rt-lod: view-dependent RT instance LOD
   float rtLodFullPx = 0.0f;     // 0 => keep App default
   float rtLodCullPx = -1.0f;    // <0 => keep App default
+  float rtLodBand = -1.0f;      // <0 => keep App default (stochastic band width)
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -109,6 +110,8 @@ int main(int argc, char** argv) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
       rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
+      rtLodBand = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -385,7 +388,7 @@ int main(int argc, char** argv) {
                          : 0,
       static_cast<std::size_t>(maxDrawMeshes < 0 ? 0 : maxDrawMeshes));
   app.setRobustFrame(robustFrame);
-  app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx);
+  app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx, rtLodBand);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();
