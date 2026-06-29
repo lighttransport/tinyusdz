@@ -66,6 +66,11 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
     if (!proto.protoAabbMin || !proto.protoAabbMax) continue;
     const float* mn = proto.protoAabbMin;
     const float* mx = proto.protoAabbMax;
+    // A degenerate (unset / zero-volume) prototype AABB carries no size info, so
+    // it cannot be projected -> always keep such instances Full (never cull). This
+    // covers non-instanced meshes, whose protoAabb the loader does not compute.
+    const bool degenerate =
+        !(mx[0] > mn[0] || mx[1] > mn[1] || mx[2] > mn[2]);
 
     const std::uint32_t ninst = proto.instanceCount;
     const std::uint32_t count = ninst ? ninst : 1u;
@@ -85,7 +90,7 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
       ProtoWorldBounds(o2w, mn, mx, center, &radius, wmn, wmx);
 
       RtLod level = RtLod::Full;
-      if (cam.lodEnabled) {
+      if (cam.lodEnabled && !degenerate) {
         if (cam.frustumCull &&
             frustum.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
                 light3d::CullResult::Outside) {
@@ -97,7 +102,9 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
           ++stats.culled;
           continue;
         }
-        if (px >= fullHi) {
+        if (!cam.proxyEnabled) {
+          level = RtLod::Full;  // P1: cull-only, distant-but-visible stays Full
+        } else if (px >= fullHi) {
           level = RtLod::Full;
         } else if (px <= fullLo) {
           level = RtLod::Proxy;

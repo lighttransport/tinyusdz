@@ -62,6 +62,7 @@ class VulkanRenderer final : public Renderer {
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
   void setRayTracing(bool enable) override;
+  void setLodCamera(const RtLodCamera& cam, bool reselect) override;
   void shutdown() override;
 
  private:
@@ -502,6 +503,10 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+
+  // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.
+  // Default (lodEnabled=false) reproduces the all-Full, no-cull TLAS exactly.
+  RtLodCamera lodCam_;
 
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};

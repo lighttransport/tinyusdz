@@ -37,6 +37,9 @@ int main(int argc, char** argv) {
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
   long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
   bool robustFrame = true;      // trim outlier meshes from fit-all auto-frame
+  bool rtLod = false;           // --rt-lod: view-dependent RT instance LOD
+  float rtLodFullPx = 0.0f;     // 0 => keep App default
+  float rtLodCullPx = -1.0f;    // <0 => keep App default
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -100,6 +103,12 @@ int main(int argc, char** argv) {
       maxDrawMeshes = std::atoll(argv[++i]);
     } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
       robustFrame = false;
+    } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
+      rtLod = true;
+    } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
+      rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
+      rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -376,6 +385,7 @@ int main(int argc, char** argv) {
                          : 0,
       static_cast<std::size_t>(maxDrawMeshes < 0 ? 0 : maxDrawMeshes));
   app.setRobustFrame(robustFrame);
+  app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();

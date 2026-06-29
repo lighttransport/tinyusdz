@@ -3233,6 +3233,10 @@ void VulkanRenderer::rebuildTlas() {
     for (int r = 0; r < 3; ++r)
       for (int c = 0; c < 4; ++c) inst.transform.matrix[r][c] = o2w[r * 4 + c];
   };
+  // Per-mesh descriptors (always built for every mesh; indexed by InstanceInfo
+  // meshId), plus the LOD view onto each prototype the selector reads.
+  std::vector<RtLodProto> protos;
+  protos.reserve(meshes_.size());
   for (uint32_t i = 0; i < meshes_.size(); ++i) {
     VkMeshGPU& m = meshes_[i];
     buildBlas(m);
@@ -3255,43 +3259,55 @@ void VulkanRenderer::rebuildTlas() {
       d.nrm2[k] = m.normalMat[2 * 3 + k];
     }
     if (m.blas == VK_NULL_HANDLE) continue;
+    RtLodProto p;
+    p.instanceCount = static_cast<uint32_t>(m.instanceXforms.size() / 12);
+    p.instanceXforms = p.instanceCount ? m.instanceXforms.data() : nullptr;
+    p.instanceColors = (m.instanceColors.size() == p.instanceCount * 3 && p.instanceCount)
+                           ? m.instanceColors.data() : nullptr;
+    p.world = m.world;
+    p.flatColor = m.flatColor;
+    p.protoAabbMin = m.protoAabbMin;
+    p.protoAabbMax = m.protoAabbMax;
+    p.meshId = i;
+    protos.push_back(p);
+  }
+
+  // Classify + emit. focalPx depends on this backend's viewport height + the
+  // y-scale of the projection (proj_[5] = cot(fovY/2)), so fill it here.
+  RtLodCamera cam = lodCam_;
+  cam.focalPx = 0.5f * static_cast<float>(vpH_) *
+                (proj_[5] != 0.0f ? proj_[5] : 1.0f);
+  std::vector<RtLodInstance> sel;
+  sel.reserve(protos.size());
+  // boxMeshId == meshes_.size() will reference the shared box desc once P2 adds it;
+  // in P1 no Proxy is emitted (cam.proxyEnabled defaults false), so it is unused.
+  const uint32_t boxMeshId = static_cast<uint32_t>(meshes_.size());
+  RtLodStats lstats = SelectInstanceLOD(protos.data(),
+                                        static_cast<uint32_t>(protos.size()), cam,
+                                        boxMeshId, &sel);
+  if (cam.lodEnabled) {
+    std::printf("[rt-lod] full=%u proxy=%u culled=%u (instances %zu)\n",
+                lstats.full, lstats.proxy, lstats.culled, sel.size());
+  }
+
+  insts.reserve(sel.size());
+  instInfos.reserve(sel.size());
+  for (const RtLodInstance& s : sel) {
     VkAccelerationStructureInstanceKHR inst{};
-    inst.instanceCustomIndex = i;  // 24-bit; informational (shader uses gl_InstanceID)
+    inst.instanceCustomIndex = s.meshId & 0xFFFFFFu;
     inst.mask = 0xFF;
     inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    inst.accelerationStructureReference = m.blasAddr;
-    const size_t ninst = m.instanceXforms.size() / 12;
-    if (ninst == 0) {
-      // Non-instanced: world transform baked into the TLAS instance.
-      float o2w[12];
-      for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 4; ++c) o2w[r * 4 + c] = m.world[c * 4 + r];
-      setRow3x4(inst, o2w);
-      insts.push_back(inst);
-      InstanceInfoGPU info{};
-      info.meshId = i;
-      info.useMaterial = 1u;  // material base + the mesh's normal matrix
-      instInfos.push_back(info);
-    } else {
-      const bool perInstColor = m.instanceColors.size() == ninst * 3;
-      for (size_t k = 0; k < ninst; ++k) {
-        setRow3x4(inst, &m.instanceXforms[k * 12]);
-        insts.push_back(inst);
-        InstanceInfoGPU info{};
-        info.meshId = i;
-        info.useMaterial = 0u;  // tint + the per-instance object->world for normals
-        if (perInstColor) {
-          info.tint[0] = m.instanceColors[k * 3 + 0];
-          info.tint[1] = m.instanceColors[k * 3 + 1];
-          info.tint[2] = m.instanceColors[k * 3 + 2];
-        } else {
-          info.tint[0] = m.flatColor[0];
-          info.tint[1] = m.flatColor[1];
-          info.tint[2] = m.flatColor[2];
-        }
-        instInfos.push_back(info);
-      }
-    }
+    // P1: only Full instances are emitted; Proxy references the box BLAS (P2).
+    inst.accelerationStructureReference = meshes_[s.meshId].blasAddr;
+    setRow3x4(inst, s.xform);
+    insts.push_back(inst);
+    InstanceInfoGPU info{};
+    info.meshId = s.meshId;
+    info.useMaterial = (s.level == RtLod::Full && !s.instanced) ? 1u : 0u;
+    info.tint[0] = s.tint[0];
+    info.tint[1] = s.tint[1];
+    info.tint[2] = s.tint[2];
+    instInfos.push_back(info);
   }
   if (insts.empty()) return;
 
@@ -3668,6 +3684,13 @@ void VulkanRenderer::setRayTracing(bool enable) {
   techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
   caps_.backend_name = techniqueLabel_.c_str();
   if (rtActive_) tlasDirty_ = true;  // build AS lazily before the next trace
+}
+
+void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
+  lodCam_ = cam;
+  // Reselect the instance LOD set for the new pose by forcing a TLAS rebuild
+  // (rebuildTlas reads lodCam_ and bumps rtAccumGen_, restarting accumulation).
+  if (reselect && rtActive_) tlasDirty_ = true;
 }
 
 void VulkanRenderer::destroyRt() {
