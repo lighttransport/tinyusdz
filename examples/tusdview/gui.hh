@@ -322,6 +322,7 @@ class Gui {
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
+  bool lastCullRasterLod_{false};
   const DrawScene* lastCullDraw_{nullptr};
   // One mesh's compacted visible instances, produced by the worker, applied on main.
   struct CullJobMesh {
@@ -336,9 +337,32 @@ class Gui {
   // `grid` is non-null (a coarse per-prototype instance grid), whole off-screen
   // cells are rejected and fully-inside cells accepted without per-instance tests
   // -- so cull cost scales with the visible cell set, not the total instance count.
+  // When lodCam.lodEnabled, instances are also size-classified: sub-pixel ones are
+  // dropped and (with proxyOut + lodCam.proxyEnabled) small ones become box proxies
+  // appended to proxyOut (accumulated across prototypes by the caller).
   static void compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
                                    bool cullEnabled, const RtLodGrid* grid,
-                                   CullJobMesh* out);
+                                   const RtLodCamera& lodCam, CullJobMesh* out,
+                                   CullJobMesh* proxyOut);
+  // Raster view-dependent LOD (optimization B): drop sub-pixel instances + collapse
+  // small ones to shared box proxies, cutting both the uploaded instance count and
+  // the rasterised geometry. Off by default (exact parity). proxyEnabled is gated on
+  // the renderer supporting the box-proxy draw (GL); else cull-only.
+  bool rasterLodEnabled_{false};
+  float rasterLodFullPx_{48.0f};
+  float rasterLodCullPx_{1.5f};
+  CullJobMesh proxyResult_;        // accumulated box proxies (sync path / applied)
+  RtLodCamera cullJobLodCam_;      // snapshot for the worker
+  CullJobMesh cullJobProxy_;       // worker-accumulated box proxies
+ public:
+  void setRasterLod(bool on, float fullPx, float cullPx) {
+    rasterLodEnabled_ = on;
+    if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+ private:
+  // Build the LOD camera (thresholds + projection focal length) for this cull.
+  RtLodCamera buildRasterLodCam() const;
   // Coarse instance grids (one per mesh; empty/invalid for non-instanced or small
   // prototypes), built once per scene for compactMeshInstances cell rejection.
   // Read-only after build, so the cull worker shares them via cullJobGrids_.

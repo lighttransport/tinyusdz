@@ -201,6 +201,14 @@ class Renderer {
   // mesh count; callers verify before per-index updates.
   virtual int meshCount() const { return 0; }
 
+  // Raster view-dependent LOD box proxies (optimization B). supportsProxyDraw()
+  // gates whether the cull emits proxies at all; updateProxyInstances uploads the
+  // shared per-frame set (`xforms`: 12 floats/proxy box-fit o2w; `tints`: 3
+  // floats/proxy) drawn in one instanced call. Default: unsupported / no-op.
+  virtual bool supportsProxyDraw() const { return false; }
+  virtual void updateProxyInstances(const float* /*xforms*/, const float* /*tints*/,
+                                    uint32_t /*count*/) {}
+
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
   bool uploadScene(const DrawScene& scene, std::string* /*err*/) {

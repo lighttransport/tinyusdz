@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "gl/gl_util.hh"
+#include "lod_math.hh"  // UnitCubeCorner, kBoxIndices (LOD box proxies)
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -459,7 +460,65 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                           (void*)0);
     glBindVertexArray(0);
   }
+  initBoxProxy();
   return true;
+}
+
+// Shared unit-cube proxy mesh drawn with the instanced program (raster LOD). Static
+// geometry (8 verts / 36 indices) + dynamic per-instance box-fit o2w (attribs 3-5)
+// and tint (attrib 9), filled each frame by updateProxyInstances.
+void GLRenderer::initBoxProxy() {
+  float verts[8 * 3];
+  for (int c = 0; c < 8; ++c) UnitCubeCorner(c, &verts[c * 3]);
+  glGenVertexArrays(1, &boxProxyVao_);
+  glBindVertexArray(boxProxyVao_);
+  glGenBuffers(1, &boxProxyVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyVbo_);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  glVertexAttribDivisor(0, 0);
+  glGenBuffers(1, &boxProxyEbo_);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boxProxyEbo_);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kBoxIndices), kBoxIndices,
+               GL_STATIC_DRAW);
+  // Per-instance box-fit o2w rows (3-5, divisor 1) -- dynamic.
+  glGenBuffers(1, &boxProxyInstVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyInstVbo_);
+  const GLsizei mstride = 12 * sizeof(float);
+  for (int r = 0; r < 3; ++r) {
+    const GLuint loc = 3 + r;
+    glEnableVertexAttribArray(loc);
+    glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, mstride,
+                          (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
+    glVertexAttribDivisor(loc, 1);
+  }
+  // Per-instance tint (9, divisor 1) -- dynamic.
+  glGenBuffers(1, &boxProxyColorVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyColorVbo_);
+  glEnableVertexAttribArray(9);
+  glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  glVertexAttribDivisor(9, 1);
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void GLRenderer::updateProxyInstances(const float* xforms, const float* tints,
+                                      uint32_t count) {
+  boxProxyCount_ = count;
+  if (count == 0) return;
+  const size_t xb = static_cast<size_t>(count) * 12 * sizeof(float);
+  const size_t cb = static_cast<size_t>(count) * 3 * sizeof(float);
+  const bool grow = static_cast<size_t>(count) > boxProxyInstCap_;
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyInstVbo_);
+  if (grow) glBufferData(GL_ARRAY_BUFFER, xb, xforms, GL_DYNAMIC_DRAW);
+  else glBufferSubData(GL_ARRAY_BUFFER, 0, xb, xforms);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyColorVbo_);
+  if (grow) glBufferData(GL_ARRAY_BUFFER, cb, tints, GL_DYNAMIC_DRAW);
+  else glBufferSubData(GL_ARRAY_BUFFER, 0, cb, tints);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  if (grow) boxProxyInstCap_ = count;
 }
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -1518,6 +1577,28 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
             (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)),
             mesh.drawInstanceCount);
       }
+    }
+    // LOD box proxies (optimization B): one instanced draw of the shared unit cube
+    // for every distant instance the cull collapsed. Flat geometric-normal shading;
+    // tint from the per-instance color (attrib 9), white per-vertex color.
+    if (boxProxyCount_ > 0) {
+      glUniform1i(iMeshId_, -1);
+      glUniform1i(iGeometricNormal_, 1);
+      glUniform1i(iDoubleSided_, 0);
+      glUniform1i(iPurpose_, 0);
+      glUniform1i(iKind_, 0);
+      glUniform1i(iHasMorph_, 0);
+      if (cullState != 1) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        cullState = 1;
+      }
+      glBindVertexArray(boxProxyVao_);
+      glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);    // constant normal (FS uses geometric)
+      glVertexAttribI2ui(8, 0u, 0u);            // no morph
+      glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);   // white per-vertex color (tint=attr 9)
+      glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr,
+                              static_cast<GLsizei>(boxProxyCount_));
     }
     glUseProgram(program_);  // restore for any caller that assumes program_
   }

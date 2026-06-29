@@ -12,6 +12,7 @@
 
 #include "core/prim.hh"
 #include "gizmo_build.hh"
+#include "lod_math.hh"  // BoxFitXform (raster LOD box proxies)
 #include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
 #include "gui_stringify.hh"
 #include "imgui.h"
@@ -2388,11 +2389,16 @@ void Gui::ensureInstanceGrids() {
 }
 
 // Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
-// color) to `out`. cullEnabled=false restores the full set. Static + snapshot-only,
-// so it is safe to run on the worker thread.
+// color) to `out`. cullEnabled=false restores the full set. When lodCam.lodEnabled,
+// also size-classify: sub-pixel (<cullPx) instances are dropped, and (when proxyOut
+// is non-null + lodCam.proxyEnabled) small (<fullPx) instances become shared box
+// proxies -- their box-fit o2w + tint are *appended* to proxyOut (never cleared
+// here; the caller accumulates proxies across all prototypes). Static +
+// snapshot-only, so it is safe to run on the worker thread.
 void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
                                bool cullEnabled, const RtLodGrid* grid,
-                               CullJobMesh* out) {
+                               const RtLodCamera& lodCam, CullJobMesh* out,
+                               CullJobMesh* proxyOut) {
   const size_t ninst = m.instanceCount();
   out->hasColors = m.instanceColors.size() == ninst * 3;
   out->xforms.clear();
@@ -2406,11 +2412,17 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   const float* lo = m.protoAabbMin;
   const float* hi = m.protoAabbMax;
   const bool hc = out->hasColors;
-  // Append instance k's o2w (+ color) to out, frustum-testing its world AABB unless
-  // `assumeInside` (its whole cell already tested Inside).
+  const bool lod = lodCam.lodEnabled;
+  // Degenerate (unset) prototype AABB carries no size -> never size-cull/proxy it.
+  const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
+  const bool doProxy = proxyOut && lodCam.proxyEnabled && !degenerate;
+  // Classify + append instance k. Frustum-tests its world AABB unless `assumeInside`
+  // (its whole cell already tested Inside); when LOD is on the AABB is always built
+  // (its projected size drives Full / Proxy / Cull).
   auto emit = [&](std::uint32_t k, bool assumeInside) {
     const float* o2w = &m.instanceXforms[k * 12];
-    if (!assumeInside) {
+    float center[3], radius = 0.0f;
+    if (!assumeInside || (lod && !degenerate)) {
       float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
       for (int c = 0; c < 8; ++c) {
         const float px = (c & 1) ? hi[0] : lo[0];
@@ -2423,9 +2435,25 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
           wmx[r] = std::max(wmx[r], w);
         }
       }
-      if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
-          light3d::CullResult::Outside)
+      if (!assumeInside &&
+          fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+              light3d::CullResult::Outside)
         return;
+      for (int r = 0; r < 3; ++r) center[r] = 0.5f * (wmn[r] + wmx[r]);
+      const float dx = wmx[0] - wmn[0], dy = wmx[1] - wmn[1], dz = wmx[2] - wmn[2];
+      radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    if (lod && !degenerate) {
+      const float px = ProjectedRadiusPx(center, radius, lodCam);
+      if (px < lodCam.cullPx) return;  // sub-pixel: drop entirely
+      if (doProxy && px < lodCam.fullPx) {
+        float bx[12];
+        BoxFitXform(o2w, lo, hi, bx);  // unit box -> this instance's world AABB
+        proxyOut->xforms.insert(proxyOut->xforms.end(), bx, bx + 12);
+        const float* tint = hc ? &m.instanceColors[k * 3] : m.flatColor;
+        proxyOut->colors.insert(proxyOut->colors.end(), tint, tint + 3);
+        return;
+      }
     }
     out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
     if (hc)
@@ -2461,6 +2489,34 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
     for (std::uint32_t k = 0; k < ninst; ++k) emit(k, /*assumeInside=*/false);
   }
   out->count = static_cast<uint32_t>(out->xforms.size() / 12);
+  if (proxyOut) {
+    proxyOut->hasColors = true;  // every box proxy carries a tint
+    proxyOut->count = static_cast<uint32_t>(proxyOut->xforms.size() / 12);
+  }
+}
+
+// Build the LOD camera (thresholds + focal length) for the raster instance cull.
+RtLodCamera Gui::buildRasterLodCam() const {
+  RtLodCamera c;
+  c.lodEnabled = rasterLodEnabled_;
+  c.proxyEnabled =
+      rasterLodEnabled_ && renderer_ && renderer_->supportsProxyDraw();
+  c.frustumCull = true;
+  c.fullPx = rasterLodFullPx_;
+  c.cullPx = rasterLodCullPx_;
+  c.bandFrac = 0.0f;  // hard switch -- no accumulation to resolve a dithered band
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  std::memcpy(c.viewProj.m, vp.m, sizeof(c.viewProj.m));
+  const light3d::Vec3 eye = cam_->eye();
+  c.eye = eye;
+  c.forward = light3d::normalize(cam_->target() - eye);
+  c.nearPlane = cam_->nearPlane();
+  // focalPx = (viewportH * 0.5) / tan(fovY/2) = 0.5 * H * proj[1][1]. Matches the
+  // RT path's vpH_ * proj_[5] derivation.
+  const light3d::Mat4 proj = cam_->proj(/*zeroToOneDepth=*/false);
+  c.focalPx = 0.5f * static_cast<float>(viewportH_) *
+              (proj.m[5] != 0.0f ? proj.m[5] : 1.0f);
+  return c;
 }
 
 // Worker thread: compact every visible instanced mesh into cullJobResult_ from the
@@ -2473,6 +2529,9 @@ void Gui::cullWorkerMain() {
   ensureInstanceGrids();
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
   cullJobResult_.clear();
+  cullJobProxy_.xforms.clear();
+  cullJobProxy_.colors.clear();
+  cullJobProxy_.count = 0;
   size_t visInstances = 0, instTris = 0;
   for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
     const DrawMeshCPU& m = d->meshes[mi];
@@ -2486,7 +2545,8 @@ void Gui::cullWorkerMain() {
     r.meshIndex = mi;
     const RtLodGrid* grid =
         (cullJobGrids_ && mi < cullJobGrids_->size()) ? &(*cullJobGrids_)[mi] : nullptr;
-    compactMeshInstances(m, fr, cullJobEnabled_, grid, &r);
+    compactMeshInstances(m, fr, cullJobEnabled_, grid, cullJobLodCam_, &r,
+                         &cullJobProxy_);
     visInstances += r.count;
     instTris += protoTris * r.count;
     cullJobResult_.push_back(std::move(r));
@@ -2501,7 +2561,7 @@ void Gui::cullWorkerMain() {
 void Gui::cullInstancesSync() {
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
@@ -2510,7 +2570,12 @@ void Gui::cullInstancesSync() {
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
   lastCullDraw_ = draw_;
+  lastCullRasterLod_ = rasterLodEnabled_;
   ensureInstanceGrids();
+  const RtLodCamera lodCam = buildRasterLodCam();
+  proxyResult_.xforms.clear();
+  proxyResult_.colors.clear();
+  proxyResult_.count = 0;
 
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
   size_t visInstances = 0, instTris = 0;
@@ -2523,7 +2588,7 @@ void Gui::cullInstancesSync() {
     size_t protoTris = 0;
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
     const RtLodGrid* grid = mi < instGrids_.size() ? &instGrids_[mi] : nullptr;
-    compactMeshInstances(m, fr, cullEnabled_, grid, &r);
+    compactMeshInstances(m, fr, cullEnabled_, grid, lodCam, &r, &proxyResult_);
     // Route the GPU upload to the render thread when threaded (else inline).
     uint32_t cnt = r.count;
     bool hc = r.hasColors;
@@ -2533,6 +2598,16 @@ void Gui::cullInstancesSync() {
     });
     visInstances += r.count;
     instTris += protoTris * r.count;
+  }
+  // Upload the accumulated box proxies (one shared instanced draw). Always called
+  // (count 0 when LOD off) so a previous frame's proxies are cleared.
+  {
+    uint32_t pc = proxyResult_.count;
+    std::vector<float> pxf = std::move(proxyResult_.xforms);
+    std::vector<float> pcol = std::move(proxyResult_.colors);
+    gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
+      renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
+    });
   }
   statVisibleInstances_ = visInstances;
   statInstTris_ = instTris;
@@ -2563,6 +2638,15 @@ void Gui::cullInstances() {
         renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
       });
     }
+    // Apply the accumulated box proxies (shared instanced draw).
+    {
+      uint32_t pc = cullJobProxy_.count;
+      std::vector<float> pxf = std::move(cullJobProxy_.xforms);
+      std::vector<float> pcol = std::move(cullJobProxy_.colors);
+      gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
+        renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
+      });
+    }
     statVisibleInstances_ = cullJobVisInstances_;
     statInstTris_ = cullJobInstTris_;
     cullDone_.store(false);
@@ -2573,11 +2657,12 @@ void Gui::cullInstances() {
   // worker runs the renderer keeps the previous visible set, so the UI never blocks.
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
   if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
+  lastCullRasterLod_ = rasterLodEnabled_;
   std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
@@ -2592,6 +2677,7 @@ void Gui::cullInstances() {
   cullJobEnabled_ = cullEnabled_;
   cullJobDraw_ = draw_;
   cullJobGrids_ = &instGrids_;
+  cullJobLodCam_ = buildRasterLodCam();  // camera read on main, used by the worker
   cullRunning_.store(true);
   cullDone_.store(false);
   cullThread_ = std::thread(&Gui::cullWorkerMain, this);
