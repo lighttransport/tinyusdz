@@ -2113,6 +2113,22 @@ if(TINYUSDZ_BUILD_TESTS)
     )
   endif()
 
+  # tusdrender GPU backends (-vk / -vkr / -hip): render a non-blank frame and
+  # assert byte-for-byte cross-backend agreement (they traverse the same LightRT
+  # BVH). SKIPs (return 77) when no GPU backend is available, so headless / non-
+  # GPU CI stays green.
+  if(TARGET tusdrender)
+    add_test(
+      NAME tool-tusdrender-gpu-render
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-gpu-render.sh
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}/models/suzanne-pbr.usda
+    )
+    set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
+      SKIP_RETURN_CODE 77)
+  endif()
+
   #
   # tusdview: instanced-prototype GPU-morph frustum-culling regression. Needs a
   # GL/VK context (runs under xvfb when headless); SKIPs (return 77) when no
