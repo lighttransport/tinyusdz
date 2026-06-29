@@ -38,10 +38,15 @@ bool FileExistsImpl(const std::string& path) {
   std::ifstream f(path);
   return f.good();
 #else
-  // Use lstat (not stat) to avoid following symlinks. Note: a TOCTOU
-  // window still exists between this check and any subsequent open().
+  // Use stat (follows symlinks) so a symlinked asset resolves to its target's
+  // type: production scenes routinely symlink assets into place (e.g. Animal
+  // Logic ALab merges techvar_assets/baked_procedurals as symlinks). lstat here
+  // would see S_ISLNK (not S_ISREG) and wrongly report the asset missing, so the
+  // resolver would fall back to the bare unanchored path. A symlink to a regular
+  // file yields S_ISREG; a dangling symlink fails stat (correctly "not found").
+  // (A TOCTOU window still exists between this check and any subsequent open().)
   struct stat st;
-  return lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 #endif
 }
 
