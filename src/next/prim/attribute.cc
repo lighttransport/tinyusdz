@@ -50,9 +50,12 @@ Value Attribute::value_at(double time) const {
     return lower->second;
   }
 
-  // For now, just return the lower sample (no interpolation)
-  // TODO: Add proper interpolation based on type
-  return lower->second;
+  // Linear interpolation between bracketing samples (USD default for numeric
+  // types). LerpValue falls back to held for non-interpolatable types.
+  const double t0 = lower->first;
+  const double t1 = upper->first;
+  const double frac = (t1 > t0) ? (time - t0) / (t1 - t0) : 0.0;
+  return LerpValue(lower->second, upper->second, frac);
 }
 
 std::vector<double> Attribute::sample_times() const {

@@ -7,8 +7,10 @@
 
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
+#include "../reader/usdz-reader.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 
@@ -19,19 +21,150 @@ namespace pcp {
 namespace {
 
 std::string ToLowerExt(const std::string &path) {
-  auto dot = path.find_last_of('.');
+  std::string p = path;
+  size_t bracket = p.find('[');
+  if (bracket != std::string::npos) p.resize(bracket);
+  auto dot = p.find_last_of('.');
   if (dot == std::string::npos) return "";
-  std::string ext = path.substr(dot + 1);
+  std::string ext = p.substr(dot + 1);
   std::transform(ext.begin(), ext.end(), ext.begin(),
                  [](unsigned char c) { return static_cast<char>(::tolower(c)); });
   return ext;
+}
+
+std::string NormalizeEntryName(std::string name) {
+  std::replace(name.begin(), name.end(), '\\', '/');
+  while (!name.empty() && name.front() == '/') {
+    name.erase(name.begin());
+  }
+  return name;
+}
+
+bool EndsWithNoCase(const std::string &s, const char *suffix) {
+  const size_t n = std::strlen(suffix);
+  if (s.size() < n) return false;
+  for (size_t i = 0; i < n; ++i) {
+    unsigned char a = static_cast<unsigned char>(s[s.size() - n + i]);
+    unsigned char b = static_cast<unsigned char>(suffix[i]);
+    if (std::tolower(a) != std::tolower(b)) return false;
+  }
+  return true;
+}
+
+std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
+                                         const std::string &label,
+                                         std::string *warn, std::string *err) {
+  if (!r.success) {
+    if (err) {
+      *err += "Failed to load USDA layer: " + label + " : " +
+              r.error_summary + "\n";
+    }
+    return nullptr;
+  }
+  for (const auto &w : r.warnings) {
+    if (warn) *warn += w + "\n";
+  }
+  return r.stage.ReleaseRootLayer();
+}
+
+std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
+                                         const std::string &label,
+                                         std::string *err) {
+  if (!r.success) {
+    if (err) {
+      *err += "Failed to load USDC layer: " + label + " : " +
+              r.error_summary + "\n";
+    }
+    return nullptr;
+  }
+  return r.stage.ReleaseRootLayer();
+}
+
+std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
+                                         const std::string &entry_name,
+                                         const LayerLoadOptions &options,
+                                         std::string *warn, std::string *err) {
+  USDZReadOptions zopts;
+  zopts.max_archive_size = options.max_memory;
+  zopts.max_entry_size = options.max_memory;
+
+  USDZReader reader;
+  if (!reader.OpenFile(package_file, zopts)) {
+    if (err) {
+      *err += "Failed to load USDZ package: " + package_file + " : " +
+              (reader.Error().empty() ? "open failed" : reader.Error()) + "\n";
+    }
+    return nullptr;
+  }
+
+  int idx = -1;
+  if (entry_name.empty()) {
+    idx = reader.FindUSDCFile();
+    if (idx < 0) idx = reader.FindUSDAFile();
+  } else {
+    const std::string want = NormalizeEntryName(entry_name);
+    for (size_t i = 0; i < reader.NumEntries(); ++i) {
+      if (NormalizeEntryName(reader.EntryName(i)) == want) {
+        idx = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (idx < 0) {
+    if (err) {
+      *err += "USDZ layer entry not found: " + package_file +
+              (entry_name.empty() ? std::string() : "[" + entry_name + "]") +
+              "\n";
+    }
+    return nullptr;
+  }
+
+  const uint8_t *data = reader.EntryData(static_cast<size_t>(idx));
+  const size_t size = reader.EntrySize(static_cast<size_t>(idx));
+  if (!data || size == 0) {
+    if (err) *err += "USDZ layer entry is empty\n";
+    return nullptr;
+  }
+
+  const std::string label = package_file + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
+  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
+  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
+  if (!is_usdc && !is_usda && size >= 8 &&
+      std::memcmp(data, "PXR-USDC", 8) == 0) {
+    is_usdc = true;
+  }
+  if (is_usdc) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
+  }
+  if (is_usda) {
+    LoadOptions lopts;
+    lopts.parse_options.num_threads = options.parse_num_threads;
+    lopts.parse_options.max_file_size = options.max_memory;
+    return ConvertLoadedUSDA(
+        LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
+        label, warn, err);
+  }
+
+  if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
+  return nullptr;
 }
 
 }  // namespace
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
-                                         int parse_num_threads) {
+                                         const LayerLoadOptions &options) {
+  if (AssetResolver::IsPackagePath(resolved_path)) {
+    std::string package_file;
+    std::string entry_name;
+    if (AssetResolver::ParsePackagePath(resolved_path, &package_file,
+                                        &entry_name)) {
+      return LoadLayerFromUSDZ(package_file, entry_name, options, warn, err);
+    }
+  }
+
   std::string ext = ToLowerExt(resolved_path);
 
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
@@ -49,42 +182,45 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usda") {
     LoadOptions lopts;
-    lopts.parse_options.num_threads = parse_num_threads;
-    LoadResult r = LoadUSDAFromFile(resolved_path, lopts);
-    if (!r.success) {
-      if (err) *err += "Failed to load USDA layer: " + resolved_path + " : " +
-                       r.error_summary + "\n";
-      return nullptr;
-    }
-    for (const auto &w : r.warnings) {
-      if (warn) *warn += w + "\n";
-    }
-    return r.stage.ReleaseRootLayer();
+    lopts.parse_options.num_threads = options.parse_num_threads;
+    lopts.parse_options.max_file_size = options.max_memory;
+    return ConvertLoadedUSDA(LoadUSDAFromFile(resolved_path, lopts),
+                             resolved_path, warn, err);
   }
 
   if (ext == "usdc") {
-    USDCLoadResult r = LoadUSDCFromFile(resolved_path);
-    if (!r.success) {
-      if (err) *err += "Failed to load USDC layer: " + resolved_path + " : " +
-                       r.error_summary + "\n";
-      return nullptr;
-    }
-    return r.stage.ReleaseRootLayer();
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
+                             resolved_path, err);
   }
 
-  // TODO(next-pcp): .usdz package layers.
+  if (ext == "usdz") {
+    return LoadLayerFromUSDZ(resolved_path, std::string(), options, warn, err);
+  }
+
   if (err) {
     *err += "Unsupported layer file format for: " + resolved_path + "\n";
   }
   return nullptr;
 }
 
+std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
+                                         std::string *warn, std::string *err,
+                                         int parse_num_threads) {
+  LayerLoadOptions options;
+  options.parse_num_threads = parse_num_threads;
+  return LoadLayerFromFile(resolved_path, warn, err, options);
+}
+
 std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 const std::string &asset_path,
                                                 const std::string &anchor,
                                                 std::string *warn,
-                                                std::string *err) {
-  const std::string resolved = resolver.ResolvePath(asset_path, anchor);
+                                                std::string *err,
+                                                const LayerLoadOptions &options) {
+  ResolvedAsset resolved_asset = resolver.Resolve(asset_path, anchor);
+  const std::string resolved = resolved_asset.resolved_path;
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
@@ -118,7 +254,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err);
+  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
+                                    options);
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -137,7 +274,8 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err);
+  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
+                                                   options);
   if (!layer) {
     return nullptr;
   }

@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -19,9 +20,50 @@
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/tinyusdz-next.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
+
+static const Value* DictFind(const Value& dv, const char* key) {
+  if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
+  return dv.as_dictionary()->find(key);
+}
+
+static const PrimSpec* MustPrim(const Layer* layer, const char* path) {
+  assert(layer);
+  const PrimSpec* prim = layer->prim_at_path(path);
+  assert(prim && "expected prim missing");
+  return prim;
+}
+
+static const Value* MustProp(const PrimSpec* prim, const char* name) {
+  assert(prim);
+  const Value* value = prim->property_value(name);
+  assert(value && "expected property missing");
+  return value;
+}
+
+static void CheckFloatArray(const Value* value, TypeId type,
+                            const std::vector<float>& expected) {
+  assert(value && value->is_array() && value->type_id() == type);
+  const std::vector<float>* arr = value->as_float_array();
+  assert(arr && *arr == expected);
+}
+
+static void CheckIntArray(const Value* value,
+                          const std::vector<int32_t>& expected) {
+  assert(value && value->is_array() && value->type_id() == TypeId::Int);
+  const std::vector<int32_t>* arr = value->as_int_array();
+  assert(arr && *arr == expected);
+}
+
+static void CheckInt64Array(const Value* value,
+                            const std::vector<int64_t>& expected) {
+  assert(value && value->is_array() && value->type_id() == TypeId::Int64);
+  const std::vector<int64_t>* arr = value->as_int64_array();
+  assert(arr && *arr == expected);
+}
 
 // ============================================================
 // Minimal binary USDC section parser (inline, no reader dependency)
@@ -648,6 +690,96 @@ void test_roundtrip_vec_matrix_arrays() {
   std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
 }
 
+void test_high_level_memory_caps() {
+  std::cout << "Testing high-level memory caps...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Xform");
+  b.add_property("v", Value(1.0));
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  const char* usdc_file = "/tmp/next_memcap_highlevel.usdc";
+  {
+    std::ofstream f(usdc_file, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(buf.data()),
+            static_cast<std::streamsize>(buf.size()));
+  }
+
+  LoadUSDOptions load_opts;
+  load_opts.max_memory = 1;
+  Stage limited_stage;
+  std::string warn, err;
+  bool ok = LoadUSD(usdc_file, &limited_stage, load_opts, &warn, &err);
+  assert(!ok && "LoadUSD max_memory must reject oversized USDC input");
+
+  USDCLoadOptions usdc_opts;
+  usdc_opts.crate_options.max_memory = 1;
+  warn.clear();
+  err.clear();
+  ok = LoadUSDC(usdc_file, &limited_stage, usdc_opts, &warn, &err);
+  assert(!ok && "LoadUSDC options must reject oversized USDC input");
+
+  const char* usda_file = "/tmp/next_memcap_highlevel.usda";
+  {
+    std::ofstream f(usda_file, std::ios::binary);
+    f << "#usda 1.0\n\ndef Xform \"World\" {}\n";
+  }
+  warn.clear();
+  err.clear();
+  ok = LoadUSD(usda_file, &limited_stage, load_opts, &warn, &err);
+  assert(!ok && "LoadUSD max_memory must reject oversized USDA input");
+
+  LoadOptions usda_opts;
+  usda_opts.parse_options.max_file_size = 1;
+  warn.clear();
+  err.clear();
+  ok = LoadUSDA(usda_file, &limited_stage, usda_opts, &warn, &err);
+  assert(!ok && "LoadUSDA options must reject oversized USDA input");
+
+  const char* asset_file = "/tmp/next_memcap_ext_asset.usda";
+  const char* root_file = "/tmp/next_memcap_ext_root.usda";
+  std::string root_text =
+      "#usda 1.0\n(\n  subLayers = [@./next_memcap_ext_asset.usda@]\n)\n"
+      "def Xform \"World\" {}\n";
+  std::string asset_text =
+      "#usda 1.0\n\ndef Xform \"Asset\" {\n  string note = \"";
+  asset_text.append(256, 'x');
+  asset_text += "\"\n}\n";
+  {
+    std::ofstream f(root_file, std::ios::binary);
+    f << root_text;
+  }
+  {
+    std::ofstream f(asset_file, std::ios::binary);
+    f << asset_text;
+  }
+
+  LoadUSDOptions composed_opts;
+  composed_opts.max_memory = root_text.size() + 8;
+  assert(root_text.size() <= composed_opts.max_memory);
+  assert(asset_text.size() > composed_opts.max_memory);
+  warn.clear();
+  err.clear();
+  pcp::CompositionOptions comp_opts;
+  comp_opts.error_when_asset_not_found = true;
+  ok = LoadUSDComposed(root_file, &limited_stage, composed_opts, &warn, &err,
+                       &comp_opts);
+  assert(!ok && "LoadUSDComposed must cap external composition layers");
+
+  std::remove(usdc_file);
+  std::remove(usda_file);
+  std::remove(asset_file);
+  std::remove(root_file);
+  std::cout << "  high-level memory caps passed!\n\n";
+}
+
 // HalfToFloat/FloatToHalf: every finite half bit pattern must survive
 // half -> float -> half byte-exact (NaN payloads excluded).
 void test_half_conversion() {
@@ -760,6 +892,66 @@ void test_roundtrip_arc_listops() {
   std::cout << "  arc list-op crate roundtrip passed!\n\n";
 }
 
+void test_roundtrip_arc_metadata_dicts() {
+  std::cout << "Testing arc metadata dictionary crate roundtrip...\n";
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("AssetRef", "Xform");
+  b.current()->meta().references.push_back("@asset.usda@</Model>");
+  b.current()->meta().payloads.push_back("@payload.usda@</Payload>");
+  {
+    Dict cd;
+    cd.set("source", Value("reference-fixture"));
+    cd.set("enabled", Value(true));
+    cd.set("revision", Value(int32_t(7)));
+    b.current()->meta().customData() = Value::MakeDictionary(std::move(cd));
+  }
+  {
+    Dict ai;
+    ai.set("identifier", Value::MakeAssetPath("asset.usda"));
+    ai.set("kind", Value::MakeToken("component"));
+    b.current()->meta().assetInfo() = Value::MakeDictionary(std::move(ai));
+  }
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "re-read of arc metadata dictionaries failed");
+  const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/AssetRef");
+  assert(p);
+
+  assert(p->meta().references.size() == 1);
+  assert(p->meta().references[0] == "@asset.usda@</Model>");
+  assert(p->meta().payloads.size() == 1);
+  assert(p->meta().payloads[0] == "@payload.usda@</Payload>");
+
+  const Value& cd = p->meta().customData();
+  assert(cd.is_dictionary());
+  const Value* source = DictFind(cd, "source");
+  assert(source && source->as_string() && *source->as_string() == "reference-fixture");
+  const Value* enabled = DictFind(cd, "enabled");
+  assert(enabled && enabled->as_bool() && *enabled->as_bool());
+  const Value* revision = DictFind(cd, "revision");
+  assert(revision && revision->as_int() && *revision->as_int() == 7);
+
+  const Value& ai = p->meta().assetInfo();
+  assert(ai.is_dictionary());
+  const Value* identifier = DictFind(ai, "identifier");
+  assert(identifier && identifier->as_asset_path() &&
+         *identifier->as_asset_path() == "asset.usda");
+  const Value* kind = DictFind(ai, "kind");
+  assert(kind && kind->as_token() && *kind->as_token() == "component");
+
+  std::cout << "  arc metadata dictionary crate roundtrip passed!\n\n";
+}
+
 void test_roundtrip_custom_qualifier() {
   std::cout << "Testing custom-qualifier crate roundtrip...\n";
   Layer layer;
@@ -820,18 +1012,274 @@ void test_roundtrip_api_schemas() {
   std::cout << "  apiSchemas crate roundtrip passed!\n\n";
 }
 
+void test_comprehensive_usdc_fixture() {
+  std::cout << "Testing comprehensive USDC fixture roundtrip...\n";
+
+  Layer layer;
+  layer.meta().defaultPrim = "World";
+  layer.meta().upAxis = "Z";
+  layer.meta().metersPerUnit = 1.0;
+  layer.meta().timeCodesPerSecond = 24.0;
+  layer.meta().framesPerSecond = 24.0;
+  layer.meta().framesPerSecond_set = true;
+  layer.meta().startTimeCode = 1.0;
+  layer.meta().endTimeCode = 48.0;
+  layer.meta().doc = "Dense generated USDC fixture";
+  {
+    Dict cld;
+    cld.set("fixture", Value("comprehensive-usdc"));
+    cld.set("revision", Value(int32_t(3)));
+    cld.set("enabled", Value(true));
+    layer.meta().customLayerData = Value::MakeDictionary(std::move(cld));
+  }
+
+  LayerBuilder b(layer);
+  b.begin_prim("World", "Xform");
+  {
+    PrimSpec* world = b.current();
+    assert(world);
+    world->meta().doc() = "fixture root";
+    world->meta().apiSchemas().push_back("MaterialBindingAPI");
+    world->meta().references.push_back("@asset.usda@</Asset>");
+    world->meta().payloads.push_back("@payload.usda@</Payload>");
+    world->meta().inherits.push_back("</_class_Model>");
+    world->meta().specializes.push_back("</_class_ModelSpecialization>");
+    Dict cd;
+    cd.set("role", Value::MakeToken("root"));
+    cd.set("lod", Value(int32_t(1)));
+    world->meta().customData() = Value::MakeDictionary(std::move(cd));
+    Dict ai;
+    ai.set("identifier", Value::MakeAssetPath("asset.usda"));
+    ai.set("kind", Value::MakeToken("component"));
+    world->meta().assetInfo() = Value::MakeDictionary(std::move(ai));
+  }
+  b.add_time_sample("xformOp:translate", 1.0,
+                    Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+  b.add_time_sample("xformOp:translate", 24.0,
+                    Value::MakeFloat3(1.0f, 2.0f, 3.0f));
+  b.end_prim();
+
+  const std::vector<float> points = {
+      0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f};
+  const std::vector<int32_t> fvc = {3, 3};
+  const std::vector<int32_t> fvi = {0, 1, 2, 0, 2, 3};
+  const std::vector<float> display_color = {
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f,
+      1.0f, 1.0f, 1.0f};
+  b.begin_prim("Mesh", "Mesh");
+  b.add_property("points", Value::MakeFloat3Array(points));
+  b.add_property("faceVertexCounts", Value::MakeIntArray(fvc));
+  b.add_property("faceVertexIndices", Value::MakeIntArray(fvi));
+  b.add_property("primvars:displayColor",
+                 Value::MakeFloat3Array(display_color));
+  b.add_relationship("material:binding", Path("/Material"));
+  {
+    PropMeta& pm = b.current()->ensure_property_meta("primvars:displayColor");
+    pm.interpolation = "vertex";
+    pm.authored |= PropMeta::kInterpolation;
+    pm.colorSpace = "sRGB";
+    pm.authored |= PropMeta::kColorSpace;
+    pm.elementSize = 1;
+    pm.authored |= PropMeta::kElementSize;
+    Dict pcd;
+    pcd.set("role", Value::MakeToken("albedo"));
+    pm.customData = Value::MakeDictionary(std::move(pcd));
+    pm.authored |= PropMeta::kCustomData;
+  }
+  b.end_prim();
+
+  b.begin_prim("Material", "Material");
+  {
+    PropNameId surface_id = GetPropNameTable().intern("outputs:surface");
+    b.current()->add_property_slot(surface_id, TypeId::Token,
+                                   PropSlot::kFlagConnection);
+    b.current()->set_property_type_name("outputs:surface", "token");
+  }
+  b.current()->add_connection("outputs:surface",
+                              Path("/Shader.outputs:surface"));
+  b.end_prim();
+
+  b.begin_prim("Shader", "Shader");
+  b.add_property("info:id", Value::MakeToken("UsdPreviewSurface"));
+  b.add_property("inputs:diffuseColor",
+                 Value::MakeFloat3(0.25f, 0.5f, 0.75f),
+                 PropSlot::kFlagConnection);
+  b.current()->set_property_type_name("inputs:diffuseColor", "color3f");
+  b.current()->add_connection("inputs:diffuseColor",
+                              Path("/Texture.outputs:rgb"));
+  b.end_prim();
+
+  b.begin_prim("Texture", "Shader");
+  b.add_property("info:id", Value::MakeToken("UsdUVTexture"));
+  b.add_property("inputs:file", Value::MakeAssetPath("albedo.png"));
+  b.end_prim();
+
+  const std::vector<int32_t> proto_indices = {0, 0, 0};
+  const std::vector<float> positions = {
+      0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f};
+  const std::vector<float> positions_t2 = {
+      0.0f, 0.0f, 0.0f,
+      2.0f, 0.0f, 0.0f,
+      0.0f, 2.0f, 0.0f};
+  const std::vector<float> orientations = {
+      1.0f, 0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f, 0.0f};
+  const std::vector<float> scales = {
+      1.0f, 1.0f, 1.0f,
+      2.0f, 2.0f, 2.0f,
+      0.5f, 0.5f, 0.5f};
+  const std::vector<int64_t> ids = {10, 11, 12};
+  const std::vector<int64_t> invisible_ids = {11};
+  b.begin_prim("Instancer", "PointInstancer");
+  b.add_relationship("prototypes", Path("/Mesh"));
+  b.add_property("protoIndices", Value::MakeIntArray(proto_indices));
+  b.add_property("positions", Value::MakeFloat3Array(positions));
+  b.add_property("orientations",
+                 Value::MakeFloatCompArray(std::vector<float>(orientations),
+                                           TypeId::Quatf, 4));
+  b.add_property("scales", Value::MakeFloat3Array(scales));
+  b.add_property("ids", Value::MakeInt64Array(ids));
+  b.add_property("invisibleIds", Value::MakeInt64Array(invisible_ids));
+  b.add_time_sample("positions", 1.0, Value::MakeFloat3Array(positions));
+  b.add_time_sample("positions", 2.0, Value::MakeFloat3Array(positions_t2));
+  b.end_prim();
+
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success && "failed to write comprehensive fixture");
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success && "failed to read comprehensive fixture");
+  const Layer* rl = rr.stage.GetRootLayer();
+  assert(rl);
+
+  assert(rl->meta().defaultPrim == "World");
+  assert(rl->meta().upAxis == "Z");
+  assert(rl->meta().framesPerSecond_set);
+  assert(rl->meta().framesPerSecond == 24.0);
+  assert(rl->meta().customLayerData.is_dictionary());
+  const Value* fixture = DictFind(rl->meta().customLayerData, "fixture");
+  assert(fixture && fixture->as_string() &&
+         *fixture->as_string() == "comprehensive-usdc");
+
+  const PrimSpec* world = MustPrim(rl, "/World");
+  assert(world->type_name() == "Xform");
+  assert(world->meta().apiSchemas().size() == 1);
+  assert(world->meta().apiSchemas()[0] == "MaterialBindingAPI");
+  assert(world->meta().references.size() == 1);
+  assert(world->meta().payloads.size() == 1);
+  assert(world->meta().inherits.size() == 1);
+  assert(world->meta().specializes.size() == 1);
+  assert(world->meta().customData().is_dictionary());
+  assert(world->meta().assetInfo().is_dictionary());
+  PropNameId xform_op = GetPropNameTable().find("xformOp:translate");
+  assert(xform_op.is_valid() && world->has_time_samples(xform_op));
+  const auto* xform_samples = world->time_samples(xform_op);
+  assert(xform_samples && xform_samples->size() == 2);
+
+  const PrimSpec* mesh = MustPrim(rl, "/Mesh");
+  CheckFloatArray(MustProp(mesh, "points"), TypeId::Float3, points);
+  CheckIntArray(MustProp(mesh, "faceVertexCounts"), fvc);
+  CheckIntArray(MustProp(mesh, "faceVertexIndices"), fvi);
+  CheckFloatArray(MustProp(mesh, "primvars:displayColor"), TypeId::Float3,
+                  display_color);
+  const PropMeta* color_meta = mesh->property_meta("primvars:displayColor");
+  assert(color_meta);
+  assert((color_meta->authored & PropMeta::kInterpolation) &&
+         color_meta->interpolation == "vertex");
+  assert((color_meta->authored & PropMeta::kColorSpace) &&
+         color_meta->colorSpace == "sRGB");
+  assert((color_meta->authored & PropMeta::kElementSize) &&
+         color_meta->elementSize == 1);
+  assert((color_meta->authored & PropMeta::kCustomData) &&
+         color_meta->customData.is_dictionary());
+  const std::vector<Path>* mat_targets = mesh->relationship("material:binding");
+  assert(mat_targets && mat_targets->size() == 1 &&
+         (*mat_targets)[0].str() == "/Material");
+
+  const PrimSpec* material = MustPrim(rl, "/Material");
+  const PropSlot* surface_slot = material->property("outputs:surface");
+  assert(surface_slot && surface_slot->is_connection());
+  const std::vector<Path>* surface =
+      material->connection("outputs:surface");
+  assert(surface && surface->size() == 1 &&
+         (*surface)[0].str() == "/Shader.outputs:surface");
+
+  const PrimSpec* shader = MustPrim(rl, "/Shader");
+  const Value* shader_id = MustProp(shader, "info:id");
+  assert(shader_id->as_token() &&
+         *shader_id->as_token() == "UsdPreviewSurface");
+  const PropSlot* diffuse_slot = shader->property("inputs:diffuseColor");
+  assert(diffuse_slot && diffuse_slot->is_connection());
+  const std::vector<Path>* diffuse_conn =
+      shader->connection("inputs:diffuseColor");
+  assert(diffuse_conn && diffuse_conn->size() == 1 &&
+         (*diffuse_conn)[0].str() == "/Texture.outputs:rgb");
+
+  const PrimSpec* texture = MustPrim(rl, "/Texture");
+  const Value* texture_file = MustProp(texture, "inputs:file");
+  assert(texture_file->as_asset_path() &&
+         *texture_file->as_asset_path() == "albedo.png");
+
+  const PrimSpec* instancer = MustPrim(rl, "/Instancer");
+  assert(instancer->type_name() == "PointInstancer");
+  const std::vector<Path>* prototypes =
+      instancer->relationship("prototypes");
+  assert(prototypes && prototypes->size() == 1 &&
+         (*prototypes)[0].str() == "/Mesh");
+  CheckIntArray(MustProp(instancer, "protoIndices"), proto_indices);
+  CheckFloatArray(MustProp(instancer, "positions"), TypeId::Float3,
+                  positions);
+  CheckFloatArray(MustProp(instancer, "orientations"), TypeId::Quatf,
+                  orientations);
+  CheckFloatArray(MustProp(instancer, "scales"), TypeId::Float3, scales);
+  CheckInt64Array(MustProp(instancer, "ids"), ids);
+  CheckInt64Array(MustProp(instancer, "invisibleIds"), invisible_ids);
+  PropNameId positions_id = GetPropNameTable().find("positions");
+  assert(positions_id.is_valid() && instancer->has_time_samples(positions_id));
+  const auto* position_samples = instancer->time_samples(positions_id);
+  assert(position_samples && position_samples->size() == 2);
+  bool found_t2 = false;
+  for (const auto& sample : *position_samples) {
+    if (std::abs(sample.first - 2.0) < 1e-9) {
+      const Value* value = instancer->time_sample_value(sample.second);
+      CheckFloatArray(value, TypeId::Float3, positions_t2);
+      found_t2 = true;
+    }
+  }
+  assert(found_t2 && "PointInstancer positions t=2 sample missing");
+
+  std::cout << "  comprehensive USDC fixture roundtrip passed! ("
+            << wr.bytes_written << " bytes)\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
   try {
     test_half_conversion();
     test_roundtrip_arc_listops();
+    test_roundtrip_arc_metadata_dicts();
     test_roundtrip_custom_qualifier();
     test_roundtrip_api_schemas();
+    test_comprehensive_usdc_fixture();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();
     test_roundtrip_time_samples();
     test_roundtrip_vec_matrix_arrays();
+    test_high_level_memory_caps();
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
 

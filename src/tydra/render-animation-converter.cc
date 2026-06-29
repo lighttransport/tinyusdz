@@ -76,6 +76,25 @@ static value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
   return result;
 }
 
+static bool KeyframeSamplerEqual(const KeyframeSampler &a,
+                                 const KeyframeSampler &b) {
+  return a.interpolation == b.interpolation && a.times == b.times &&
+         a.values == b.values;
+}
+
+static int32_t InternKeyframeSampler(AnimationClip *clip,
+                                     KeyframeSampler sampler) {
+  if (!clip) return -1;
+  for (size_t i = 0; i < clip->samplers.size(); ++i) {
+    if (KeyframeSamplerEqual(clip->samplers[i], sampler)) {
+      return static_cast<int32_t>(i);
+    }
+  }
+  const int32_t sampler_idx = static_cast<int32_t>(clip->samplers.size());
+  clip->samplers.push_back(std::move(sampler));
+  return sampler_idx;
+}
+
 }  // namespace
 
 bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
@@ -107,7 +126,6 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
   }
 
-  // TODO: inbetweens BlendShape
   std::vector<value::token> blendShapes;
   if (skelAnim.blendShapes.authored()) {
     std::string blendShapeErr;
@@ -253,10 +271,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       scale_samples.push_back(default_value);
     }
 
-    // Create glTF-style samplers and channels for each joint
-    // Note: This creates one sampler per joint per property (not optimal but simple)
-    // TODO: Optimize to share samplers when possible
-
+    // Create glTF-style channels for each joint. Identical sampler payloads
+    // are interned, which avoids duplicating common bind/rest or static tracks.
     for (size_t joint_idx = 0; joint_idx < joints.size(); joint_idx++) {
       // Translation sampler and channel
       if (!translation_times.empty()) {
@@ -273,8 +289,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
           trans_sampler.values.push_back(v[2]);
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(trans_sampler);
+        int32_t sampler_idx =
+            InternKeyframeSampler(anim_out, std::move(trans_sampler));
 
         AnimationChannel channel;
         channel.target_type = ChannelTargetType::SkeletonJoint;
@@ -301,8 +317,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
           rot_sampler.values.push_back(q[3]);
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(rot_sampler);
+        int32_t sampler_idx =
+            InternKeyframeSampler(anim_out, std::move(rot_sampler));
 
         AnimationChannel channel;
         channel.target_type = ChannelTargetType::SkeletonJoint;
@@ -328,8 +344,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
           scale_sampler.values.push_back(value::half_to_float(v[2]));
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(scale_sampler);
+        int32_t sampler_idx =
+            InternKeyframeSampler(anim_out, std::move(scale_sampler));
 
         AnimationChannel channel;
         channel.target_type = ChannelTargetType::SkeletonJoint;
@@ -384,13 +400,20 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
           }
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(weight_sampler);
+        int32_t sampler_idx =
+            InternKeyframeSampler(anim_out, std::move(weight_sampler));
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SceneNode;
         channel.path = AnimationPath::Weights;
         channel.target_node = -1;  // Weights target the mesh, not a specific node
+        channel.skeleton_id = skeleton_id;
         channel.sampler = sampler_idx;
+        channel.property_name = "blendShapeWeights";
+        channel.blendshape_target_names.reserve(blendShapes.size());
+        for (const value::token &tok : blendShapes) {
+          channel.blendshape_target_names.push_back(tok.str());
+        }
         anim_out->channels.push_back(channel);
       }
     }
@@ -734,6 +757,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
       channel.target_type = ChannelTargetType::SceneNode;
       channel.path = anim_path;
       channel.target_node = target_node_index;
+      channel.target_prim_path = abs_path.full_path_name();
       channel.sampler = sampler_idx;
       anim_out->channels.push_back(channel);
     }

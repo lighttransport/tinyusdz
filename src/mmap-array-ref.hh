@@ -38,6 +38,33 @@ class MMapArrayTable {
     return nullptr;
   }
 
+  const MMapArrayRef *find_compatible(const std::string &prim_path,
+                                      const std::string &attr_name) const {
+    if (const MMapArrayRef *ref = find(prim_path, attr_name)) return ref;
+    std::string no_slash = prim_path;
+    while (!no_slash.empty() && no_slash[0] == '/') {
+      no_slash.erase(no_slash.begin());
+    }
+    if (no_slash != prim_path) {
+      if (const MMapArrayRef *ref = find(no_slash, attr_name)) return ref;
+    }
+    std::string with_slash = prim_path;
+    if (!with_slash.empty() && with_slash[0] != '/') {
+      with_slash = "/" + with_slash;
+      if (const MMapArrayRef *ref = find(with_slash, attr_name)) return ref;
+    }
+    for (const auto &kv : _entries) {
+      const size_t sep = kv.first.find('\0');
+      if (sep == std::string::npos) continue;
+      const std::string p = kv.first.substr(0, sep);
+      const std::string a = kv.first.substr(sep + 1);
+      if (a == attr_name && (p == prim_path || p == no_slash || p == with_slash)) {
+        return &kv.second;
+      }
+    }
+    return nullptr;
+  }
+
   bool empty() const { return _entries.empty(); }
   size_t size() const { return _entries.size(); }
 

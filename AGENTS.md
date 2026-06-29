@@ -111,9 +111,8 @@ tests/                     C++ tests + roundtrip + Python harness
 
 examples/                  Standalone example apps (separate builds):
                            tusdcat, api_tutorial, asset_resolution,
-                           c_api_example, mcp_server, openglviewer,
-                           optixviewer, file_format, js-script,
-                           progressive_composition, etc.
+                           c_api_example, mcp_server, file_format,
+                           js-script, progressive_composition, etc.
 models/                    Test USD files for development
 doc/                       Documentation (testing-cpp.md,
                            how-to-implement-feature.md, ci.md —
@@ -171,7 +170,20 @@ cd python && python3 -m pytest tests/ -q
 - `TINYUSDZ_WITH_TYDRA=ON` - Tydra framework (default ON)
 - `TINYUSDZ_WITH_EXR=ON` - EXR/HDR texture support
 - `TINYUSDZ_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
-- `TINYUSDZ_WITH_OPENSUBDIV=ON` - Subdivision surfaces
+- `TINYUSDZ_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
+- `TINYUSDZ_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
+  - `TUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
+
+### GUI viewer (`tusdview`) + Vulkan debugging
+
+Build, headless-screenshot, and Vulkan-debugging notes for the `tusdview` example
+live in **[doc/tusdview.md](doc/tusdview.md)**. In particular, when debugging the
+Vulkan backend (raster / ray query / `--threaded`), build the Khronos
+**validation layers** from source (matching the installed loader version) and run
+tusdview under them — including **GPU-Assisted Validation** for shader
+descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
+The procedure is in that doc; the threaded VK-RT case study is in
+[examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
 
 ## Testing
 

@@ -52,7 +52,8 @@
   MULTI(kSkelBlendShapeTargets, blendShapeTargets)
 
 #define GEOM_MESH_UNIFORM_ENUMS(X) \
-  X("subdivisionScheme", GeomMesh::SubdivisionScheme, SubdivisionSchemeHandler, subdivisionScheme)
+  X("subdivisionScheme", GeomMesh::SubdivisionScheme, SubdivisionSchemeHandler, subdivisionScheme) \
+  X("triangleSubdivisionRule", GeomMesh::TriangleSubdivisionRule, TriangleSubdivisionRuleHandler, triangleSubdivisionRule)
 
 #define GEOM_MESH_TIMESAMPLED_ENUMS(X) \
   X("interpolateBoundary", GeomMesh::InterpolateBoundary, InterpolateBoundaryHandler, interpolateBoundary) \
@@ -141,6 +142,23 @@
 // ============================================================================
 #define GEOM_SPHERE_TYPED_ATTRS(X) \
   X("radius", radius)
+
+// ============================================================================
+// UsdVol field-asset Properties (FieldAsset / OpenVDBAsset / Field3DAsset)
+// ============================================================================
+#define FIELD_ASSET_TYPED_ATTRS(X) \
+  X("filePath", filePath) \
+  X("fieldName", fieldName) \
+  X("fieldDataType", fieldDataType) \
+  X("fieldIndex", fieldIndex)
+
+#define OPENVDB_ASSET_TYPED_ATTRS(X) \
+  FIELD_ASSET_TYPED_ATTRS(X) \
+  X("fieldClass", fieldClass)
+
+#define FIELD3D_ASSET_TYPED_ATTRS(X) \
+  FIELD_ASSET_TYPED_ATTRS(X) \
+  X("fieldPurpose", fieldPurpose)
 
 // ============================================================================
 // GeomCube Properties

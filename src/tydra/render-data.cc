@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -41,6 +40,7 @@
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
+#include "usdVol.hh"  // OpenVDB (.vdb) loader
 #include "usdShade.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
@@ -546,11 +546,272 @@ bool RenderSceneConverter::ConvertSphere(
                      material_subsets, blendshapes, dstMesh);
 }
 
+//
+// Convert GeomCylinder to RenderMesh
+//
+bool RenderSceneConverter::ConvertCylinder(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCylinder &cylinder, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 1.0;
+  cylinder.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  cylinder.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+  int heightSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCylinderMesh(radius, height, radialSegs, heightSegs,
+                       points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = cylinder.orientation;
+  temp_mesh.doubleSided = cylinder.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomCone to RenderMesh
+//
+bool RenderSceneConverter::ConvertCone(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCone &cone, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 1.0;
+  cone.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  cone.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateConeMesh(radius, height, radialSegs,
+                   points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = cone.orientation;
+  temp_mesh.doubleSided = cone.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomCapsule to RenderMesh
+//
+bool RenderSceneConverter::ConvertCapsule(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCapsule &capsule, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double radius = 0.5;
+  capsule.radius.get_value().get_scalar(&radius);
+  double height = 2.0;
+  capsule.height.get_value().get_scalar(&height);
+
+  int radialSegs = 24;
+  int heightSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCapsuleMesh(radius, height, radialSegs, heightSegs,
+                      points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = capsule.orientation;
+  temp_mesh.doubleSided = capsule.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomPlane to RenderMesh
+//
+bool RenderSceneConverter::ConvertPlane(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomPlane &plane, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  double width = 1.0;
+  plane.width.get_value().get_scalar(&width);
+  double length = 1.0;
+  plane.length.get_value().get_scalar(&length);
+
+  int widthSegs = 1;
+  int lengthSegs = 1;
+
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GeneratePlaneMesh(width, length, widthSegs, lengthSegs,
+                    points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  GeomMesh temp_mesh;
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+  temp_mesh.orientation = plane.orientation;
+  temp_mesh.doubleSided = plane.doubleSided;
+
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+  }
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
 // Helper to get NodeCategory from NodeType
 static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   switch (nodeType) {
     case NodeType::Xform:
       return NodeCategory::Group;
+    case NodeType::Volume:
+      return NodeCategory::Geom;
     case NodeType::Mesh:
       return NodeCategory::Geom;
     case NodeType::Camera:
@@ -568,6 +829,157 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
       return NodeCategory::Light;
   }
   return NodeCategory::Group;  // Default
+}
+
+// Extract the common FieldAsset attributes (filePath / fieldName) from a
+// field-asset prim (OpenVDBAsset / Field3DAsset / FieldAsset). Returns false if
+// the prim is not a field-asset type.
+static bool GetFieldAssetInfo(const tinyusdz::Prim &prim,
+                              value::AssetPath *filePath,
+                              std::string *fieldName) {
+  const FieldAsset *fa = nullptr;
+  if (const auto *p = prim.as<OpenVDBAsset>()) {
+    fa = p;
+  } else if (const auto *p = prim.as<Field3DAsset>()) {
+    fa = p;
+  } else if (const auto *p = prim.as<FieldAsset>()) {
+    fa = p;
+  }
+  if (!fa) return false;
+
+  if (auto fpv = fa->filePath.get_value()) {
+    fpv.value().get_scalar(filePath);
+  }
+  if (auto fnv = fa->fieldName.get_value()) {
+    value::token tk;
+    if (fnv.value().get_scalar(&tk)) {
+      *fieldName = tk.str();
+    }
+  }
+  return true;
+}
+
+bool RenderSceneConverter::ConvertVolume(
+    const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
+    const Volume &volume, RenderVolume *dst) {
+  if (!dst) return false;
+
+  dst->abs_path = volume_abs_path;
+
+  const AssetResolutionResolver &assetResolver = env.asset_resolver;
+
+  for (const auto &item : volume.fieldRelationships) {
+    const std::string &field_name = item.first;
+    const Relationship &rel = item.second;
+
+    // Resolve the field-asset prim path from the relationship target.
+    Path target_path;
+    if (!rel.targetPathVector.empty()) {
+      target_path = rel.targetPathVector[0];
+    } else {
+      target_path = rel.targetPath;
+    }
+    const std::string target_prim = target_path.prim_part();
+    if (target_prim.empty()) {
+      DCOUT("field:" << field_name << " relationship has no target; skip.");
+      continue;
+    }
+
+    const Prim *fieldPrim = nullptr;
+    {
+      auto pv = env.stage.GetPrimAtPath(Path(target_prim, /* prop */ ""));
+      if (pv) {
+        fieldPrim = pv.value();
+      }
+    }
+    if (!fieldPrim) {
+      DCOUT("field-asset prim not found: " << target_prim);
+      continue;
+    }
+
+    value::AssetPath filePath;
+    std::string vdb_field_name = field_name;  // default to the rel name
+    if (!GetFieldAssetInfo(*fieldPrim, &filePath, &vdb_field_name)) {
+      DCOUT("target prim is not a field-asset: " << target_prim);
+      continue;
+    }
+    if (filePath.GetAssetPath().empty()) {
+      DCOUT("field-asset has empty filePath: " << target_prim);
+      continue;
+    }
+
+    // Resolve + open the .vdb asset.
+    std::string sanitized = utils::SanitizeAssetPath(filePath.GetAssetPath());
+    if (sanitized.empty()) {
+      DCOUT("Unsafe vdb asset path: " << filePath.GetAssetPath());
+      continue;
+    }
+    std::string resolvedPath = assetResolver.resolve(sanitized);
+    if (resolvedPath.empty()) {
+      DCOUT("Failed to resolve vdb asset path: " << filePath.GetAssetPath());
+      continue;
+    }
+
+    Asset asset;
+    std::string aerr, awarn;
+    if (!assetResolver.open_asset(resolvedPath, sanitized, &asset, &awarn,
+                                  &aerr)) {
+      DCOUT("Failed to open vdb asset: " << resolvedPath << " : " << aerr);
+      continue;
+    }
+
+    // Decode the .vdb into dense float grids.
+    std::vector<usdVol::VDBGrid> grids;
+    std::string vwarn, verr;
+    if (!usdVol::ReadVDBFromMemory(asset.data(), asset.size(), resolvedPath,
+                                   &grids, &vwarn, &verr)) {
+      DCOUT("Failed to decode vdb: " << resolvedPath << " : " << verr);
+      continue;
+    }
+    if (grids.empty()) continue;
+
+    // Pick the grid whose name matches the requested field, else the first.
+    const usdVol::VDBGrid *g = nullptr;
+    for (const auto &gg : grids) {
+      if (gg.name == vdb_field_name) {
+        g = &gg;
+        break;
+      }
+    }
+    if (!g) g = &grids[0];
+    if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0) {
+      continue;
+    }
+
+    RenderVolumeField f;
+    f.field_name = field_name;
+    f.field_data_type = g->value_type;
+    f.background = g->background;
+    for (int a = 0; a < 3; a++) {
+      f.dim[a] = g->dim[a];
+      f.origin[a] = g->origin[a];
+      f.voxel_size[a] = float(g->voxel_size[a]);
+      f.world_translation[a] = float(g->world_translation[a]);
+      // Object-space AABB of the grid.
+      f.bounds_min[a] =
+          float(g->origin[a]) * f.voxel_size[a] + f.world_translation[a];
+      f.bounds_max[a] = float(g->origin[a] + g->dim[a]) * f.voxel_size[a] +
+                        f.world_translation[a];
+    }
+
+    // Store the dense float voxels in a BufferData.
+    BufferData buf;
+    buf.componentType = ComponentType::Float;
+    std::vector<uint8_t> bytes(g->data.size() * sizeof(float));
+    std::memcpy(bytes.data(), g->data.data(), bytes.size());
+    SetBufferDataBytes(buf, std::move(bytes));
+    f.buffer_id = int64_t(buffers.size());
+    buffers.push_back(std::move(buf));
+
+    dst->fields.push_back(std::move(f));
+  }
+
+  return true;
 }
 
 bool RenderSceneConverter::BuildSingleNode(
@@ -603,6 +1015,32 @@ bool RenderSceneConverter::BuildSingleNode(
 
       // Note: MeshLightAPI is now handled in ConvertMesh, which sets
       // mesh.is_area_light = true and stores light properties directly in RenderMesh
+    } else if (prim->type_id() == value::TYPE_ID_VOLUME) {
+      // UsdVol Volume: decode referenced .vdb field(s) into a RenderVolume.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Volume;
+
+      const Volume *vol = prim->as<Volume>();
+      if (vol) {
+        RenderVolume rvol;
+        rvol.prim_name = prim->element_name();
+        rvol.abs_path = primPath;
+        rvol.display_name = prim->metas().has_displayName()
+                                ? prim->metas().get_displayName()
+                                : "";
+        rvol.world_matrix = node.get_world_matrix();
+        // Best-effort: keep the node even if some/all fields fail to decode.
+        ConvertVolume(env, primPath, *vol, &rvol);
+
+        size_t vol_id = volumes.size();
+        volumeMap.add(primPath, vol_id);
+        volumes.push_back(std::move(rvol));
+        rnode.id = int32_t(vol_id);
+      } else {
+        rnode.id = -1;
+      }
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -664,8 +1102,10 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE) {
-      // GeomCube and GeomSphere are converted to meshes
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE ||
+               prim->type_id() == value::TYPE_ID_GEOM_CYLINDER || prim->type_id() == value::TYPE_ID_GEOM_CONE ||
+               prim->type_id() == value::TYPE_ID_GEOM_CAPSULE || prim->type_id() == value::TYPE_ID_GEOM_PLANE) {
+      // Parametric primitives are converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.nodeType = NodeType::Mesh;
@@ -954,6 +1394,117 @@ bool RenderSceneConverter::BuildNodeHierarchy(
   return true;
 }
 
+bool RenderSceneConverter::ResolveBlendShapeAnimationTargets() {
+  struct MeshNodeRef {
+    int32_t node_index{-1};
+    int32_t mesh_id{-1};
+    std::string abs_path;
+  };
+
+  std::vector<MeshNodeRef> mesh_nodes;
+  int32_t node_index = 0;
+  std::function<void(const Node &)> collectMeshNodes = [&](const Node &node) {
+    const int32_t current_index = node_index++;
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < meshes.size()) {
+      MeshNodeRef ref;
+      ref.node_index = current_index;
+      ref.mesh_id = node.id;
+      ref.abs_path = node.abs_path;
+      mesh_nodes.push_back(std::move(ref));
+    }
+    for (const Node &child : node.children) {
+      collectMeshNodes(child);
+    }
+  };
+
+  for (const Node &root : root_nodes) {
+    collectMeshNodes(root);
+  }
+
+  auto meshMatchesChannel = [&](const RenderMesh &mesh,
+                                const AnimationChannel &channel) {
+    if (mesh.skel_id != channel.skeleton_id) {
+      return false;
+    }
+    if (channel.blendshape_target_names.empty()) {
+      return !mesh.targets.empty();
+    }
+    for (const std::string &name : channel.blendshape_target_names) {
+      if (mesh.targets.find(name) == mesh.targets.end()) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  size_t resolved_count = 0;
+  for (AnimationClip &clip : animations) {
+    const size_t original_channel_count = clip.channels.size();
+    std::vector<AnimationChannel> extra_channels;
+
+    for (size_t ch_idx = 0; ch_idx < original_channel_count; ch_idx++) {
+      AnimationChannel &channel = clip.channels[ch_idx];
+      if (channel.path != AnimationPath::Weights ||
+          channel.target_type != ChannelTargetType::SceneNode ||
+          channel.target_node >= 0 || channel.skeleton_id < 0) {
+        continue;
+      }
+
+      std::vector<MeshNodeRef> matches;
+      for (const MeshNodeRef &ref : mesh_nodes) {
+        const RenderMesh &mesh = meshes[size_t(ref.mesh_id)];
+        if (meshMatchesChannel(mesh, channel)) {
+          matches.push_back(ref);
+        }
+      }
+
+      if (matches.empty()) {
+        PushWarn(fmt::format(
+            "Could not resolve blendShapeWeights target for animation {} "
+            "skeleton_id {}.",
+            clip.abs_path, channel.skeleton_id));
+        continue;
+      }
+
+      channel.target_node = matches[0].node_index;
+      channel.target_prim_path = matches[0].abs_path;
+      resolved_count++;
+
+      for (size_t i = 1; i < matches.size(); i++) {
+        AnimationChannel duplicate = channel;
+        duplicate.target_node = matches[i].node_index;
+        duplicate.target_prim_path = matches[i].abs_path;
+        extra_channels.push_back(std::move(duplicate));
+        resolved_count++;
+      }
+    }
+
+    if (!extra_channels.empty()) {
+      clip.channels.insert(clip.channels.end(), extra_channels.begin(),
+                           extra_channels.end());
+    }
+
+    std::set<int32_t> animated_nodes;
+    for (const AnimationChannel &channel : clip.channels) {
+      if (channel.target_type == ChannelTargetType::SceneNode &&
+          channel.target_node >= 0) {
+        animated_nodes.insert(channel.target_node);
+      }
+    }
+    if (!animated_nodes.empty()) {
+      clip.num_animated_nodes = int32_t(animated_nodes.size());
+    }
+  }
+
+  if (resolved_count > 0) {
+    PushInfo("Resolved " + std::to_string(resolved_count) +
+             " blendShapeWeights animation target(s).");
+  }
+
+  return true;
+}
+
 bool RenderSceneConverter::GetBoundMaterialCached(
     const Stage &stage, const Path &abs_path,
     const std::string &purpose, Path *materialPath,
@@ -999,8 +1550,33 @@ bool RenderSceneConverter::GetBoundMaterialCached(
   return found;
 }
 
+namespace {
+// Clears the converter's streaming-sink pointer on every exit path of
+// ConvertToRenderSceneImpl (works without exceptions). Declared at the top of
+// the function so all `return`s (incl. PUSH_ERROR_AND_RETURN) run the dtor.
+struct SinkScopeGuard {
+  const RenderSceneSink **slot;
+  ~SinkScopeGuard() { *slot = nullptr; }
+};
+}  // namespace
+
 bool RenderSceneConverter::ConvertToRenderScene(
     const RenderSceneConverterEnv &env, RenderScene *scene) {
+  return ConvertToRenderSceneImpl(env, scene, /* sink */ nullptr);
+}
+
+bool RenderSceneConverter::ConvertToRenderSceneStreaming(
+    const RenderSceneConverterEnv &env, const RenderSceneSink &sink,
+    RenderScene *scene) {
+  return ConvertToRenderSceneImpl(env, scene, &sink);
+}
+
+bool RenderSceneConverter::ConvertToRenderSceneImpl(
+    const RenderSceneConverterEnv &env, RenderScene *scene,
+    const RenderSceneSink *sink) {
+  _sink = sink;
+  SinkScopeGuard _sink_guard{&_sink};
+
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
@@ -1046,6 +1622,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   PathPrimMap<GeomMesh> meshPrimMap;
   PathPrimMap<GeomCube> cubePrimMap;
   PathPrimMap<GeomSphere> spherePrimMap;
+  PathPrimMap<GeomCylinder> cylinderPrimMap;
+  PathPrimMap<GeomCone> conePrimMap;
+  PathPrimMap<GeomCapsule> capsulePrimMap;
+  PathPrimMap<GeomPlane> planePrimMap;
   PathPrimMap<Material> materialPrimMap;
   PathPrimMap<Skeleton> allSkeletons;
   PathPrimMap<SkelRoot> allSkelRoots;
@@ -1075,6 +1655,18 @@ bool RenderSceneConverter::ConvertToRenderScene(
           break;
         case value::TYPE_ID_GEOM_SPHERE:
           if (const auto *p = prim.as<GeomSphere>()) spherePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CYLINDER:
+          if (const auto *p = prim.as<GeomCylinder>()) cylinderPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CONE:
+          if (const auto *p = prim.as<GeomCone>()) conePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CAPSULE:
+          if (const auto *p = prim.as<GeomCapsule>()) capsulePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_PLANE:
+          if (const auto *p = prim.as<GeomPlane>()) planePrimMap[path_buf] = p;
           break;
         case value::TYPE_ID_MATERIAL:
           if (const auto *p = prim.as<Material>()) materialPrimMap[path_buf] = p;
@@ -1147,12 +1739,17 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
   DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
 
-  // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
-  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
+  // Total meshes includes GeomMesh and all parametric primitives (all converted to meshes)
+  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size() +
+                              cylinderPrimMap.size() + conePrimMap.size() +
+                              capsulePrimMap.size() + planePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
   DCOUT("[Tydra] Found " << total_meshes << " meshes ("
         << meshPrimMap.size() << " mesh, " << cubePrimMap.size() << " cube, "
-        << spherePrimMap.size() << " sphere), " << total_materials << " materials");
+        << spherePrimMap.size() << " sphere, "
+        << cylinderPrimMap.size() << " cylinder, " << conePrimMap.size() << " cone, "
+        << capsulePrimMap.size() << " capsule, " << planePrimMap.size() << " plane), "
+        << total_materials << " materials");
 
   // Report counting complete via detailed progress
   _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;
@@ -1211,6 +1808,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.progress = 0.2f;
   _progress_info.message = "Converting meshes and materials";
   if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
+  if (!EmitPhase(StreamPhase::MaterialsAndMeshes)) {
     PushError("Conversion cancelled by user.\n");
     return false;
   }
@@ -1318,13 +1919,43 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PushError("Conversion cancelled by user.\n");
     return false;
   }
+  if (!EmitPhase(StreamPhase::Hierarchy)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   {
     const auto phase_start = TydraPerfClock::now();
     if (!BuildNodeHierarchy(env, xform_node)) {
       return false;
     }
+    if (!ResolveBlendShapeAnimationTargets()) {
+      return false;
+    }
     hierarchy_ms = ElapsedMs(phase_start);
+  }
+
+  // Stream cameras, lights and the node tree now that world matrices are known.
+  // (Skipped entirely without a streaming sink.)
+  if (_sink) {
+    for (size_t i = 0; i < cameras.size(); i++) {
+      if (!EmitCamera(i, cameras[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < lights.size(); i++) {
+      if (!EmitLight(i, lights[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < root_nodes.size(); i++) {
+      if (!EmitRootNode(i)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
   }
 
   // Report progress after node hierarchy building (85%)
@@ -1353,39 +1984,57 @@ bool RenderSceneConverter::ConvertToRenderScene(
       if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
       const int32_t node_index = next_node_index++;
 
-      // Check if this node has a prim with xformOps
-      if (node.prim && IsXformablePrim(*node.prim)) {
-        const Xformable *xformable = nullptr;
-        if (CastToXformable(*node.prim, &xformable) && xformable) {
-          AnimationClip anim;
-          bool converted = false;
+      if (node.prim) {
+        const Path &prim_path = node.absolute_path;
 
-          // node.absolute_path is already a Path object
-          const Path &prim_path = node.absolute_path;
+        // Check if this node has a prim with xformOps.
+        if (IsXformablePrim(*node.prim)) {
+          const Xformable *xformable = nullptr;
+          if (CastToXformable(*node.prim, &xformable) && xformable) {
+            AnimationClip anim;
+            bool converted = false;
 
-          // Prefer value clip animation baking when enabled.
-          if (env.scene_config.enable_value_clips &&
-              ConvertValueClipAnimation(env, *node.prim, prim_path,
-                                       node_index, &anim)) {
-            converted = true;
-          }
-
-          // Fallback to direct xformOp sampling when no clip animation exists.
-          if (!converted && xformable->has_timesamples()) {
-            if (ExtractXformOpAnimation(env, prim_path, node.element_name,
-                                       *xformable, node_index, &anim)) {
+            // Prefer value clip animation baking when enabled.
+            if (env.scene_config.enable_value_clips &&
+                ConvertValueClipAnimation(env, *node.prim, prim_path,
+                                          node_index, &anim)) {
               converted = true;
             }
-          }
 
-          if (converted) {
-            // Check if animation with this path already exists via O(1) lookup
-            const auto &anim_abs_path = anim.abs_path;
-            if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
-              DCOUT("Extracted animation from: " << anim_abs_path);
-              _animPathToIndex[anim_abs_path] = int32_t(animations.size());
-              animations.emplace_back(std::move(anim));
+            // Fallback to direct xformOp sampling when no clip animation exists.
+            if (!converted && xformable->has_timesamples()) {
+              if (ExtractXformOpAnimation(env, prim_path, node.element_name,
+                                          *xformable, node_index, &anim)) {
+                converted = true;
+              }
             }
+
+            if (converted) {
+              // Check if animation with this path already exists via O(1) lookup
+              const auto &anim_abs_path = anim.abs_path;
+              if (_animPathToIndex.find(anim_abs_path) ==
+                  _animPathToIndex.end()) {
+                DCOUT("Extracted animation from: " << anim_abs_path);
+                _animPathToIndex[anim_abs_path] =
+                    int32_t(animations.size());
+                animations.emplace_back(std::move(anim));
+              }
+            }
+          }
+        }
+
+        AnimationClip property_anim;
+        if (ExtractPrimPropertyAnimation(env, *node.prim, prim_path,
+                                         node_index, &property_anim)) {
+          const std::string property_anim_key =
+              property_anim.abs_path + "#properties";
+          if (_animPathToIndex.find(property_anim_key) ==
+              _animPathToIndex.end()) {
+            DCOUT("Extracted property animation from: "
+                  << property_anim.abs_path);
+            _animPathToIndex[property_anim_key] =
+                int32_t(animations.size());
+            animations.emplace_back(std::move(property_anim));
           }
         }
       }
@@ -1563,6 +2212,37 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // render_scene.imageMap = std::move(imageMap);
   // render_scene.bufferMap = std::move(bufferMap);
 
+  // Stream skeletons/animations then instances (fast tail phases) before the
+  // member arrays are moved into the RenderScene. Skipped without a sink.
+  if (_sink) {
+    if (!EmitPhase(StreamPhase::Animations)) {
+      PushError("Conversion cancelled by user.\n");
+      return false;
+    }
+    for (size_t i = 0; i < skeletons.size(); i++) {
+      if (!EmitSkeleton(i, skeletons[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    for (size_t i = 0; i < animations.size(); i++) {
+      if (!EmitAnimation(i, animations[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+    if (!EmitPhase(StreamPhase::Instances)) {
+      PushError("Conversion cancelled by user.\n");
+      return false;
+    }
+    for (size_t i = 0; i < instances.size(); i++) {
+      if (!EmitInstance(i, instances[i].abs_path)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+  }
+
   RenderScene render_scene;
   render_scene.usd_filename = env.usd_filename;
   render_scene.default_root_node = 0;
@@ -1586,6 +2266,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
   render_scene.instances = std::move(instances);
+  render_scene.volumes = std::move(volumes);
 
   // Populate scene metadata from Stage
   {
@@ -1686,6 +2367,15 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
   CallProgressCallback(1.0f);
 
+  if (!EmitPhase(StreamPhase::Complete)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
+  if (!EmitComplete(*scene)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
+
   DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "
         << scene->materials.size() << " materials, " << scene->textures.size() << " textures");
 
@@ -1755,7 +2445,6 @@ bool DefaultTextureImageLoaderFunction(
 
   DCOUT("Resolved asset path = " << resolvedPath);
 
-  // TODO: user-defined image loader handler.
   auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
@@ -1803,9 +2492,9 @@ bool DefaultTextureImageLoaderFunction(
       return false;
     }
   } else {
-    DCOUT("TODO: bpp = " << result.value().image.bpp);
+    DCOUT("Unsupported bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) += "TODO or unsupported bpp: " +
+      (*err) += "Unsupported bpp: " +
                std::to_string(result.value().image.bpp) + "\n";
     }
     return false;
@@ -2423,6 +3112,96 @@ bool RenderSceneConverter::ReportMeshProgress(size_t meshes_processed, size_t me
   _progress_info.progress = mesh_progress;
 
   return CallDetailedProgressCallback(_progress_info);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming emit helpers (no-ops unless a sink is set via
+// ConvertToRenderSceneStreaming). Each reads the just-appended element from the
+// converter's member array by index and returns false to request cancellation.
+// ---------------------------------------------------------------------------
+bool RenderSceneConverter::EmitPhase(StreamPhase phase) {
+  if (_sink && _sink->on_phase) {
+    return _sink->on_phase(phase, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitImage(size_t index) {
+  if (_sink && _sink->on_image) {
+    return _sink->on_image(images[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitBuffer(size_t index) {
+  if (_sink && _sink->on_buffer) {
+    return _sink->on_buffer(buffers[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitTexture(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_texture) {
+    return _sink->on_texture(textures[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitUdimTexture(size_t index) {
+  if (_sink && _sink->on_udim_texture) {
+    return _sink->on_udim_texture(udim_textures[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitMaterial(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_material) {
+    return _sink->on_material(materials[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitMesh(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_mesh) {
+    return _sink->on_mesh(meshes[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitLight(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_light) {
+    return _sink->on_light(lights[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitCamera(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_camera) {
+    return _sink->on_camera(cameras[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitRootNode(size_t index) {
+  if (_sink && _sink->on_root_node) {
+    return _sink->on_root_node(root_nodes[index], index, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitSkeleton(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_skeleton) {
+    return _sink->on_skeleton(skeletons[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitAnimation(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_animation) {
+    return _sink->on_animation(animations[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitInstance(size_t index, const std::string &abs_path) {
+  if (_sink && _sink->on_instance) {
+    return _sink->on_instance(instances[index], index, abs_path, _sink->userdata);
+  }
+  return true;
+}
+bool RenderSceneConverter::EmitComplete(const RenderScene &scene) {
+  if (_sink && _sink->on_complete) {
+    return _sink->on_complete(scene, _sink->userdata);
+  }
+  return true;
 }
 
 bool RenderSceneConverter::IsMeshMergeable(const RenderMesh &mesh) const {

@@ -1604,31 +1604,16 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
-#if 1
     ret = LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
-#else
-    if (err) {
-      (*err) += "TODO: Load USDC as Layer is not implemented yet.\n";
-    }
-    return false;
-#endif
   } else if (IsUSDA(addr, length)) {
     DCOUT("Detected as USDA.");
     ret = LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
   } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
-#if 1
-    // TODO: asset
     return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
-#else
-    if (err) {
-      (*err) += "TODO: Load USDZ as Layer is not implemented yet.\n";
-    }
-    return false;
-#endif
   } else {
     if (err) {
       (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";

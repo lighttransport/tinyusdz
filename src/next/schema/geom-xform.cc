@@ -16,16 +16,11 @@ std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
   std::vector<std::string> result;
   if (!IsValid()) return result;
 
-  // Note: Token arrays not yet fully supported in Value class
-  // For now, return empty if xformOpOrder exists but can't be parsed
-  // The transform ops can still be accessed directly by name
-
-  // Check if property exists
-  if (!prim_.HasProperty("xformOpOrder")) {
-    return result;
+  const Value* v = prim_.GetPropertyValue("xformOpOrder");
+  if (!v) return result;
+  if (const std::vector<std::string>* toks = v->as_token_array()) {
+    result = *toks;
   }
-
-  // TODO: Add token array support to Value class
   return result;
 }
 

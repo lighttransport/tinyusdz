@@ -302,7 +302,31 @@ bool USDCReader::Impl::ReadUSDC() {
     return false;
   }
 
-  // TODO(syoyo): Read unknown sections
+  // Read-only sanity check for unknown TOC sections. These sections are not
+  // required for the current reader implementation and are intentionally
+  // ignored, but we still surface them in diagnostics for forward-compatibility.
+  {
+    const auto &toc = crate_reader->GetTableOfContents();
+
+    std::vector<std::string> unknown_sections;
+    for (size_t i = 0; i < toc.sections.size(); i++) {
+      const std::string section_name = toc.sections[i].name;
+      if ((section_name == "TOKENS") || (section_name == "STRINGS") ||
+          (section_name == "FIELDS") || (section_name == "FIELDSETS") ||
+          (section_name == "SPECS") || (section_name == "PATHS")) {
+        continue;
+      }
+      unknown_sections.push_back(section_name + " @" + std::to_string(i));
+    }
+
+    if (!unknown_sections.empty()) {
+      std::string msg = "Unknown TOC section(s): " + unknown_sections[0];
+      for (size_t i = 1; i < unknown_sections.size(); i++) {
+        msg += ", " + unknown_sections[i];
+      }
+      PUSH_WARN(msg);
+    }
+  }
 
   if (_config.use_lazy_property_construction) {
     DCOUT("Skip BuildLiveFieldSets (lazy property construction enabled)");

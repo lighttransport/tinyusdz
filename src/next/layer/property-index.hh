@@ -12,6 +12,7 @@
 #include <deque>
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
 #include <shared_mutex>
 #endif
 
@@ -60,6 +61,18 @@ public:
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
 
+  /// Freeze the table for lock-free concurrent reads. After composition the set
+  /// of interned names is fixed; rendering does millions of find()/get() calls
+  /// across many threads, and the per-call shared_lock then contends purely on
+  /// the lock's own cache line (a measured ~14% of an Island render). Once
+  /// frozen, find()/get() skip the lock entirely (concurrent reads of the now
+  /// immutable map/deque are safe). A subsequent intern() unfreezes (re-enabling
+  /// locking) so a later load/compose is still correct -- callers must not intern
+  /// concurrently with frozen lock-free reads (the load and render phases are
+  /// disjoint). No-op when built without TINYUSDZ_ENABLE_THREAD.
+  void freeze();
+  void unfreeze();
+
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
   PropNameId id_normals;      // "normals"
@@ -90,6 +103,9 @@ private:
   // lookup takes a shared lock, the rare new-name insert an exclusive one.
   // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
   mutable std::shared_mutex mu_;
+  // When set, find()/get() bypass mu_ for lock-free concurrent reads (see
+  // freeze()). Acquire/release ordered against the populating writes.
+  std::atomic<bool> frozen_{false};
 #endif
 };
 

@@ -86,7 +86,7 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
 option(TINYUSDZ_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
-option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
+option(TINYUSDZ_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
 option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
 option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
@@ -96,6 +96,9 @@ option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
 option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
+option(TINYUSDZ_BUILD_GUI_VIEWER
+       "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
+       OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -139,12 +142,7 @@ option(TINYUSDZ_WITH_COROUTINE
        ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
 
 
-if(MSVC)
-  # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
-else()
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
-endif()
+set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
 
 # Enable /MP flags(multi processor build) for Visual Studio
 # Based on VTK's Cmake
@@ -167,8 +165,15 @@ if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 option(TINYUSDZ_CXX_EXCEPTIONS
-       "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
+       "Enable/Disable C++ exceptions (default: Off; tinyusdz uses no exceptions)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
+
+# tinyusdz (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
+# disable it by default. This both shrinks the binary and enforces that no RTTI
+# creeps in.
+option(TINYUSDZ_CXX_RTTI
+       "Enable/Disable C++ RTTI (default: Off; tinyusdz uses no RTTI)"
+       Off)
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
@@ -181,29 +186,14 @@ option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
         OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+option(TINYUSDZ_WITH_USDVOL
+       "Build with usdVol support(import OpenVDB .vdb via tinyvdb)" ON)
 
-set(TINYUSDZ_DEFAULT_WITH_OPENSUBDIV OFF)
-set(TINYUSDZ_DEFAULT_WITH_TINYSUBDIV ON)
-
-option(
-  TINYUSDZ_WITH_OPENSUBDIV
-  "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  ${TINYUSDZ_DEFAULT_WITH_OPENSUBDIV})
-# Use embedded version of OpenSubdiv code by default
-set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
-
-option(
-  TINYUSDZ_WITH_TINYSUBDIV
-  "Build with TinyUSDZ's own dependency-free subdivision surface library (Catmull-Clark, Loop, Bilinear)"
-  ${TINYUSDZ_DEFAULT_WITH_TINYSUBDIV})
-
-# Mutual exclusivity check
-if(TINYUSDZ_WITH_OPENSUBDIV AND TINYUSDZ_WITH_TINYSUBDIV)
-  message(FATAL_ERROR
-          "Cannot enable both TINYUSDZ_WITH_OPENSUBDIV and "
-          "TINYUSDZ_WITH_TINYSUBDIV. TinySubdiv is the default backend; "
-          "disable one subdivision backend before configuring.")
-endif()
+# Subdivision surfaces: tinysubdiv (src/tsd) is always built (dependency-free).
+# Optional verification of tsd against an OpenSubdiv source checkout:
+option(TINYUSDZ_TSD_VERIFY_WITH_OSD
+       "Build tsd vs OpenSubdiv verification test (requires OpenSubdiv_ROOT)" OFF)
+set(OpenSubdiv_ROOT "" CACHE PATH "Path to OpenSubdiv source checkout (no pre-build required)")
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
@@ -563,6 +553,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom2.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom3.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-vol.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-lightprim.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader2.cc
@@ -911,6 +902,10 @@ if(TINYUSDZ_WITH_USDVOX)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
 endif()
 
+if(TINYUSDZ_WITH_USDVOL)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
+endif()
+
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
 
@@ -1061,157 +1056,19 @@ if(TINYUSDZ_WITH_QJS)
   )
 endif(TINYUSDZ_WITH_QJS)
 
-if(TINYUSDZ_WITH_OPENSUBDIV)
-
-  # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
-  function(ADD_OSD_LIB)
-
-    #set(NO_TUTORIALS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_EXAMPLES
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_REGRESSION
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_DOC
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OMP
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_TBB
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_CUDA
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OPENCL
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_OPENGL
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_TESTS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_GLTESTS
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_GLFW
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-    #set(NO_PTEX
-    #    ON
-    #    CACHE INTERNAL "" FORCE)
-
-    # CMakeLists of OSD package is problematic, so provide our own one.
-    list(
-      APPEND
-      OSD_FAR_SOURCES
-      ${osd_DIR}/opensubdiv/far/bilinearPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/catmarkPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/error.cpp
-      ${osd_DIR}/opensubdiv/far/loopPatchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/patchBasis.cpp
-      ${osd_DIR}/opensubdiv/far/patchBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/patchDescriptor.cpp
-      ${osd_DIR}/opensubdiv/far/patchMap.cpp
-      ${osd_DIR}/opensubdiv/far/patchTable.cpp
-      ${osd_DIR}/opensubdiv/far/patchTableFactory.cpp
-      ${osd_DIR}/opensubdiv/far/ptexIndices.cpp
-      ${osd_DIR}/opensubdiv/far/stencilTable.cpp
-      ${osd_DIR}/opensubdiv/far/stencilTableFactory.cpp
-      ${osd_DIR}/opensubdiv/far/stencilBuilder.cpp
-      ${osd_DIR}/opensubdiv/far/topologyDescriptor.cpp
-      ${osd_DIR}/opensubdiv/far/topologyRefiner.cpp
-      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp)
-
-    # CPU only
-    list(
-      APPEND
-      OSD_OSD_SOURCES
-      ${osd_DIR}/opensubdiv/osd/cpuEvaluator.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuKernel.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuPatchTable.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp)
-
-    list(APPEND OSD_SDC_SOURCES ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
-         ${osd_DIR}/opensubdiv/sdc/crease.cpp)
-
-    list(
-      APPEND
-      OSD_VTR_SOURCES
-      ${osd_DIR}/opensubdiv/vtr/fvarLevel.cpp
-      ${osd_DIR}/opensubdiv/vtr/fvarRefinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/level.cpp
-      ${osd_DIR}/opensubdiv/vtr/quadRefinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/refinement.cpp
-      ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
-      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp)
-
-    #add_library(osd_cpu_static ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    #target_include_directories(osd_cpu_static PRIVATE ${osd_DIR})
-
-    #if (TINYUSDZ_BUILD_SHARED_LIBS)
-    #  add_library(osd_cpu_shared SHARED ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    #  target_include_directories(osd_cpu_shared PRIVATE ${osd_DIR})
-    #endif()
-
-    #if (MSVC)
-    #  if (TINYUSDZ_CXX_MP_FLAG)
-    #    target_compile_options(osd_cpu_static PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-    #    if (TINYUSDZ_BUILD_SHARED_LIBS)
-    #      target_compile_options(osd_cpu_shared PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-    #    endif()
-    #  endif()
-    #endif()
-
-    # Build as Object Library(non archival collections)
-    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-    target_include_directories(osd_cpu PRIVATE ${osd_DIR})
-    set_target_properties(osd_cpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    
-    # primarily for Visual Studio Solution Explorer.
-    set_target_properties(osd_cpu PROPERTIES FOLDER "osd")
-    
-
-    #set(TINYUSDZ_OSD_SOURCES ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
-
-  endfunction()
-
-  add_osd_lib()
-
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
-  # Archive the OpenSubdiv object files directly into tinyusdz_static
-  # so downstream targets (tusdcat, examples, tests) don't need a
-  # separate osd_cpu dependency.
-  list(APPEND TINYUSDZ_EXT_SOURCES $<TARGET_OBJECTS:osd_cpu>)
-
-endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-if(TINYUSDZ_WITH_TINYSUBDIV)
-  message(STATUS "Using TinyUSDZ's own subdivision surface library")
-
-  # Add our subdivision library sources
-  list(APPEND TINYUSDZ_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/subdivision.cc
-    ${PROJECT_SOURCE_DIR}/src/subdiv-tinyusdz.cc
-  )
-
-  # primvar-interpolation.hh is header-only, no .cc needed
-
-elseif(TINYUSDZ_WITH_OPENSUBDIV)
-  # Standalone TinySubdiv library for unit tests / comparison tools when
-  # the main library is built with the OpenSubdiv backend instead.
-  # No symbol conflict because tinyusdz_static omits subdivision.cc.
-  add_library(tinyusdz_subdiv STATIC
-    ${PROJECT_SOURCE_DIR}/sandbox/subdiv/subdivision.cc)
-  target_include_directories(tinyusdz_subdiv PUBLIC
-    ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
-  add_sanitizers(tinyusdz_subdiv)
-endif(TINYUSDZ_WITH_TINYSUBDIV)
+# tinysubdiv (tsd): dependency-free subdivision surface library, always built.
+list(APPEND TINYUSDZ_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-bilinear.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-catmark.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-loop.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-fvar.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-stream.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-limit.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-tinyusdz.cc
+)
 
 if(TINYUSDZ_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
@@ -1419,6 +1276,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   check_cxx_compiler_flag("-Wnrvo" TINYUSDZ_HAS_WNRVO)
   if (TINYUSDZ_HAS_WNRVO)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
+  endif()
+
+  # clang 21+ (e.g. llvm-mingw clang 22) also tightens
+  # -Wthread-safety-negative under -Weverything. Suppress it when supported
+  # rather than requiring negative-capability annotations throughout the code.
+  check_cxx_compiler_flag("-Wthread-safety-negative" TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
+  if (TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-thread-safety-negative")
   endif()
 
   if(TINYUSDZ_COMPILE_TIME_TRACE)
@@ -1642,20 +1507,6 @@ endif()
 #                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
 #endif(TINYUSDZ_WITH_ALAC_AUDIO)
 #
-#if(TINYUSDZ_WITH_OPENSUBDIV)
-#  target_include_directories(tinyusdz_object PRIVATE ${osd_DIR})
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-#endif(TINYUSDZ_WITH_OPENSUBDIV)
-#
-#if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-#  if(MSVC)
-#    target_compile_options(tinyusdz_object PUBLIC /EHs-c-)
-#  else()
-#    target_compile_options(tinyusdz_object PUBLIC -fno-exceptions)
-#  endif()
-#endif()
-#
 # TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
 #add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
 #add_sanitizers(${TINYUSDZ_TARGET_STATIC})
@@ -1825,6 +1676,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_USE_USDVOX")
   endif()
 
+  if(TINYUSDZ_WITH_USDVOL)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDVOL")
+  endif()
+
   if(TINYUSDZ_WITH_PCP)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_PCP")
@@ -1916,17 +1772,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_QJS")
   endif(TINYUSDZ_WITH_QJS)
 
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-  if(TINYUSDZ_WITH_TINYSUBDIV)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_TINYSUBDIV")
-  endif(TINYUSDZ_WITH_TINYSUBDIV)
-
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
@@ -1967,11 +1812,41 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_MESHOPT")
   endif(TINYUSDZ_WITH_MESHOPT)
 
+  if(TINYUSDZ_CXX_EXCEPTIONS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=1)
+  else()
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=0 JSON_NOEXCEPTION=1)
+  endif()
+
+  if(TINYUSDZ_CXX_RTTI)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_RTTI=1)
+  else()
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE TINYUSDZ_CXX_RTTI=0)
+  endif()
+
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
     else()
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+  endif()
+
+  if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+      # -fno-rtti is a C++-only flag; scope it so the vendored C sources
+      # (lz4.c / miniz.c / zstd.c) do not warn.
+      target_compile_options(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     endif()
   endif()
 
@@ -2104,6 +1979,10 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/variant-analyzer)
     add_subdirectory(examples/urdf-to-usd)
 
+    if (TINYUSDZ_BUILD_GUI_VIEWER)
+      add_subdirectory(examples/tusdview)
+    endif()
+
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
     endif()
@@ -2139,6 +2018,7 @@ if(TINYUSDZ_BUILD_TOOLS)
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
+    add_subdirectory(tools/tusdrender)
   endif()
 endif()
 
@@ -2157,16 +2037,6 @@ if(TINYUSDZ_BUILD_BENCHMARKS)
                                          ${PROJECT_SOURCE_DIR}/bencharks)
   target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET}
                         PRIVATE ${TINYUSDZ_TARGET_STATIC})
-
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
-                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-  if(TINYUSDZ_WITH_TINYSUBDIV)
-    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
-                               PRIVATE "TINYUSDZ_USE_TINYSUBDIV")
-  endif(TINYUSDZ_WITH_TINYSUBDIV)
 
 endif(TINYUSDZ_BUILD_BENCHMARKS)
 
@@ -2202,11 +2072,6 @@ if(TINYUSDZ_BUILD_TESTS)
   target_link_libraries(${TINYUSDZ_TEST_TARGET}
                         PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_TEST_TARGET}
-                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
-
   #
   # unit tester
   #
@@ -2232,6 +2097,17 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # TODO: Add feature to specify Python interpreter at ctest run
   #
+  find_program(TUSDR_PYTHON NAMES python3 python)
+  if(TARGET tusdrender AND TUSDR_PYTHON)
+    add_test(
+      NAME tool-tusdrender-smoke
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_tusdrender_smoke.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+  endif()
 
   #
   # USDA parser tester
@@ -2308,6 +2184,31 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${TINYUSDZ_NODE_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
         )
+    endif()
+  endif()
+
+  #
+  # tusdview CPU/GPU skinning screenshot parity. This is intentionally
+  # registered only for Linux GUI builds with xvfb-run available: OpenGL needs a
+  # window/context, and xvfb supplies a headless X server while preserving the
+  # normal hardware-rendered window path.
+  #
+  if(UNIX AND NOT APPLE AND TARGET tusdview)
+    find_program(TINYUSDZ_XVFB_RUN xvfb-run)
+    if(TINYUSDZ_XVFB_RUN)
+      add_test(
+        NAME tusdview-skinning-screenshot-diff
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
+                --app "$<TARGET_FILE:tusdview>"
+                --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                --out-dir "${CMAKE_BINARY_DIR}/Testing/tusdview-skinning"
+                --backend gl
+                --frames 4
+                --time 12
+                --xvfb-run "${TINYUSDZ_XVFB_RUN}"
+        )
+    else()
+      message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
   endif()
 
@@ -2663,18 +2564,52 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
-  # Subdivision comparison (TinySubdiv vs OpenSubdiv)
+  # tinysubdiv (tsd) feature tests
   #
-  if(TINYUSDZ_WITH_OPENSUBDIV)
-    add_executable(feat-subdiv-compare
-      tests/feat/subdiv-compare/subdiv-compare.cc)
-    add_sanitizers(feat-subdiv-compare)
-    target_link_libraries(feat-subdiv-compare PRIVATE
-      tinyusdz_subdiv ${TINYUSDZ_TARGET_STATIC})
-    target_include_directories(feat-subdiv-compare PRIVATE
+  add_executable(feat-subdiv tests/feat/subdiv/test-subdiv.cc)
+  add_sanitizers(feat-subdiv)
+  target_link_libraries(feat-subdiv PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_include_directories(feat-subdiv PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  add_test(NAME feat-subdiv COMMAND feat-subdiv
+           WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+  # Opt-in: verify tsd against an OpenSubdiv source checkout.
+  # The required sdc/vtr/far sources are compiled directly from
+  # ${OpenSubdiv_ROOT}; no pre-built OpenSubdiv needed.
+  if(TINYUSDZ_TSD_VERIFY_WITH_OSD)
+    if(NOT OpenSubdiv_ROOT)
+      message(FATAL_ERROR
+              "TINYUSDZ_TSD_VERIFY_WITH_OSD requires OpenSubdiv_ROOT to point "
+              "to an OpenSubdiv source checkout.")
+    endif()
+    add_library(tsd_osd_ref STATIC
+      ${OpenSubdiv_ROOT}/opensubdiv/sdc/typeTraits.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/sdc/crease.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/fvarLevel.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/fvarRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/level.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/quadRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/refinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/sparseSelector.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/vtr/triRefinement.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/error.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyDescriptor.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyRefiner.cpp
+      ${OpenSubdiv_ROOT}/opensubdiv/far/topologyRefinerFactory.cpp)
+    target_include_directories(tsd_osd_ref SYSTEM PUBLIC ${OpenSubdiv_ROOT})
+    target_compile_features(tsd_osd_ref PUBLIC cxx_std_14)
+    set_target_properties(tsd_osd_ref PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_sanitizers(tsd_osd_ref)
+
+    add_executable(feat-subdiv-verify tests/feat/subdiv/subdiv-verify-osd.cc)
+    add_sanitizers(feat-subdiv-verify)
+    target_link_libraries(feat-subdiv-verify PRIVATE
+      tsd_osd_ref ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-subdiv-verify PRIVATE
       ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-subdiv-compare COMMAND feat-subdiv-compare
+    add_test(NAME feat-subdiv-verify COMMAND feat-subdiv-verify
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(feat-subdiv-verify PROPERTIES LABELS "osd-verify")
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

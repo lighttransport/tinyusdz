@@ -1,0 +1,60 @@
+#version 460
+#extension GL_EXT_ray_query : require
+//
+// trace_ray_query.comp — hardware ray-tracing trace path (VK_KHR_ray_query).
+//
+// One invocation = one ray, traced against a TLAS built on the GPU from the
+// caller's triangles (a single BLAS, identity instance). All geometry is opaque,
+// so rayQueryProceedEXT generates no candidates and the committed intersection is
+// read directly. Writes the same lrt_hit layout (t,u,v,prim_id) as the software
+// trace shader: t is in units of |dir|, (u,v) are the hit barycentrics (which
+// coincide with Moller-Trumbore u,v), prim_id = triangle index (single geometry,
+// no index buffer => primitive index == build order == caller index).
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(std430, binding = 1) readonly  buffer Rays { uint rays[]; }; // 8 words / ray
+layout(std430, binding = 2) writeonly buffer Hits { uint hits[]; }; // 4 words / hit
+
+layout(push_constant) uniform PC {
+    uint ray_count;
+} pc;
+
+const uint NO_HIT = 0xFFFFFFFFu;
+
+float fu(uint i) { return uintBitsToFloat(i); }
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= pc.ray_count) return;
+
+    uint rb = gid * 8u;
+    vec3  org  = vec3(fu(rays[rb + 0u]), fu(rays[rb + 1u]), fu(rays[rb + 2u]));
+    float tmin = fu(rays[rb + 3u]);
+    vec3  dir  = vec3(fu(rays[rb + 4u]), fu(rays[rb + 5u]), fu(rays[rb + 6u]));
+    float tmax = fu(rays[rb + 7u]);
+
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, org, tmin, dir, tmax);
+    while (rayQueryProceedEXT(rq)) {}
+
+    uint hb = gid * 4u;
+    if (rayQueryGetIntersectionTypeEXT(rq, true) ==
+        gl_RayQueryCommittedIntersectionTriangleEXT) {
+        float t   = rayQueryGetIntersectionTEXT(rq, true);
+        vec2  bc  = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+        uint  pid = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        hits[hb + 0u] = floatBitsToUint(t);
+        hits[hb + 1u] = floatBitsToUint(bc.x);
+        hits[hb + 2u] = floatBitsToUint(bc.y);
+        hits[hb + 3u] = pid;
+    } else {
+        hits[hb + 0u] = floatBitsToUint(0.0);
+        hits[hb + 1u] = 0u;
+        hits[hb + 2u] = 0u;
+        hits[hb + 3u] = NO_HIT;
+    }
+}

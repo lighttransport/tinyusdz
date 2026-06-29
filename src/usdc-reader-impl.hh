@@ -22,7 +22,7 @@
 #include "tinyusdz.hh"
 #include "value-types.hh"
 
-#if !defined(__wasi__)
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -130,6 +130,60 @@ static inline bool IsUnregisteredValueType(const std::string &typeName)
   if (tyname == value::TypeTraits<value::uint4>::type_name()) {
     return true;
   }
+  if (tyname == value::TypeTraits<char>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::char4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uchar4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<int16_t>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::short4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<uint16_t>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::ushort4>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix2f>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix3f>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::matrix4f>::type_name()) {
+    return true;
+  }
 
   return false;
 }
@@ -155,15 +209,15 @@ class USDCReader::Impl {
   void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 
-#if defined(__wasi__)
-    _config.numThreads = 1;
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     if (_config.numThreads == -1) {
       _config.numThreads =
           (std::max)(1, int(std::thread::hardware_concurrency()));
     }
     // Limit to 1024 threads.
     _config.numThreads = (std::min)(1024, _config.numThreads);
+#else
+    _config.numThreads = 1;
 #endif
   }
 

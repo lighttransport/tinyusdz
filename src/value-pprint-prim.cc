@@ -47,6 +47,10 @@ namespace value {
   __FUNC(GeomHermiteCurves)     \
   __FUNC(GeomCamera)            \
   __FUNC(GeomPointInstancer)        \
+  __FUNC(Volume)                \
+  __FUNC(FieldAsset)            \
+  __FUNC(OpenVDBAsset)          \
+  __FUNC(Field3DAsset)          \
   __FUNC(SphereLight)           \
   __FUNC(DomeLight)             \
   __FUNC(DiskLight)             \
@@ -65,9 +69,6 @@ namespace value {
   __FUNC(Material)              \
   __FUNC(Shader)                \
   __FUNC(NodeGraph)             \
-  __FUNC(Volume)                \
-  __FUNC(OpenVDBAsset)          \
-  __FUNC(Field3DAsset)          \
   __FUNC(RenderSettings)        \
   __FUNC(RenderProduct)         \
   __FUNC(RenderVar)             \

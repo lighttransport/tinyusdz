@@ -5,6 +5,9 @@
 
 # App-specific
 .opencode/
+# Locally built glslang (examples/common/build-glslang.sh) — build artifacts.
+examples/common/glslang/
+examples/common/glslang-src/
 build/
 build_ninja/
 build-tinysubdiv/
@@ -13,6 +16,12 @@ build_*/
 large-scene-tasks.md
 tests/asset-parse-results/
 tests/asset-parse-results-flatten/
+ref/openusd/
+ref/openusd-build/
+ref/openusd-build*/
+ref/openusd-venv/
+ref/dist/
+ref/dist*/
 web/demo/dist/
 web/site/dist/
 web/build_ninja/
@@ -455,3 +464,5 @@ python/tinyusdz/_version.py
 
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
+resume.md
+gpu-task.md

@@ -1,0 +1,394 @@
+#version 460
+
+// Vulkan ray-query primary + shadow tracer. Writes a shaded image that mirrors
+// the rasterizer's look (same directional light + ambient as mesh.frag), plus
+// hard shadows from one shadow ray. Supports GPU instancing (one BLAS shared by
+// many TLAS instances), per-vertex + per-instance displayColor, and authored
+// (interpolated) vs geometric (face) normals.
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Vertex buffer = interleaved DrawVertex (8 floats: pos.xyz, nrm.xyz, uv.xy).
+layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
+layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
+// Optional per-vertex displayColor (vec3 packed as 3 floats / vertex).
+layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
+layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
+layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
+layout(buffer_reference, scalar) readonly buffer Faces { uint  fc[]; }; // face id per triangle
+layout(buffer_reference, scalar) readonly buffer Joints  { uint  j[]; }; // 4 joint ids per vertex
+layout(buffer_reference, scalar) readonly buffer Weights { float w[]; }; // 4 weights per vertex
+
+struct MeshDesc {
+  uint64_t vtxAddr;       // device address of the vertex buffer (DrawVertex[])
+  uint64_t idxAddr;       // device address of the index buffer (uint[])
+  uint64_t vtxColorAddr;  // per-vertex displayColor (vec3[]); 0 = none
+  uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
+  uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
+  uint64_t faceAddr;      // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t jointAddr;     // per-vertex 4 joint ids (uint[4]); 0 = unskinned
+  uint64_t weightAddr;    // per-vertex 4 skin weights (float[4]); 0 = unskinned
+  uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
+  uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
+                             // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
+  vec4     nrm0;          // normal matrix columns (xyz used)
+  vec4     nrm1;
+  vec4     nrm2;
+};
+
+// Per-TLAS-instance info, indexed by gl_InstanceID (full range).
+struct InstInfo {
+  uint meshId;       // index into meshes[]
+  uint useMaterial;  // 1 = non-instanced (material + normalMat); 0 = tint + o2w normal
+  uint pad0;
+  uint pad1;
+  vec4 tint;         // per-instance color or flatColor (xyz used)
+};
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
+layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
+// 3 vec4 per material: [0]=baseColor.rgb + alpha, [1]=(metallic,roughness,0,0),
+// [2]=emissive.rgb + 0. mat(id,k) indexes row k of material id.
+layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 matRows[]; };
+#define mat(id, k) matRows[(id) * 3u + (k)]
+layout(set = 0, binding = 4, scalar) readonly buffer Insts  { InstInfo insts[]; };
+
+layout(push_constant) uniform PC {
+  mat4 invViewProj;  // inverse(proj * view)
+  vec4 camPos;       // xyz = camera world position, w = RenderMode
+  vec4 lightDir;     // xyz = unit direction *towards* the light, w = depthScale
+  vec4 clearColor;   // rgb background for ray misses
+  vec4 sceneMin;     // position AOV bbox min
+  vec4 sceneExtent;  // position AOV bbox size
+} pc;
+
+vec3 fetchPos(Verts vb, uint vi) {
+  return vec3(vb.v[vi * 8u + 0u], vb.v[vi * 8u + 1u], vb.v[vi * 8u + 2u]);
+}
+vec3 fetchNrm(Verts vb, uint vi) {
+  return vec3(vb.v[vi * 8u + 3u], vb.v[vi * 8u + 4u], vb.v[vi * 8u + 5u]);
+}
+vec3 fetchCol(Cols cb, uint vi) {
+  return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
+}
+vec2 fetchUV(Verts vb, uint vi) {
+  return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
+}
+vec2 fetchUV1(UV1s ub, uint vi) { return vec2(ub.u[vi * 2u + 0u], ub.u[vi * 2u + 1u]); }
+float fetchInfl(Infls ib, uint vi) { return ib.f[vi]; }
+// Dominant skin joint (max weight of the 4) for a vertex; returns id, w = weight.
+int fetchDomJoint(Joints jb, Weights wb, uint vi, out float wOut) {
+  int dj = -1; float dw = 0.0;
+  for (uint k = 0u; k < 4u; ++k) {
+    float wk = wb.w[vi * 4u + k];
+    if (wk > dw) { dw = wk; dj = int(jb.j[vi * 4u + k]); }
+  }
+  wOut = dw;
+  return dj;
+}
+
+// Hash-based per-pixel RNG (PCG-ish) for the ambient-occlusion sampler.
+uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+float rnd(inout uint s) { s = s * 747796405u + 2891336453u; uint r = ((s >> ((s >> 28) + 4u)) ^ s) * 277803737u; return float((r >> 22) ^ r) / 4294967296.0; }
+// Cosine-weighted hemisphere direction around normal n.
+vec3 cosHemi(vec3 n, float u1, float u2) {
+  float r = sqrt(u1); float phi = 6.2831853 * u2;
+  vec3 t = normalize(abs(n.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
+  vec3 b = normalize(cross(n, t)); t = cross(b, n);
+  return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(0.0, 1.0 - u1)));
+}
+
+// Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
+vec3 idColor(uint id) {
+  if (id == 0xffffffffu) return vec3(0.45);
+  uint h = (id + 1u) * 2654435761u;
+  return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+void main() {
+  ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(outImg);
+  if (px.x >= size.x || px.y >= size.y) return;
+
+  // Pixel -> NDC -> world ray via the inverse view-projection. Flip Y so image
+  // row 0 maps to ndc.y=+1 (scene top), matching the raster path's negative-
+  // height viewport; otherwise the traced image is vertically inverted.
+  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
+  vec4 farH  = pc.invViewProj * vec4(ndc, 1.0, 1.0);
+  vec3 nearW = nearH.xyz / nearH.w;
+  vec3 farW  = farH.xyz / farH.w;
+  vec3 origin = nearW;
+  vec3 dir = normalize(farW - nearW);
+
+  vec3 outc = pc.clearColor.rgb;
+
+  rayQueryEXT rq;
+  rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
+  while (rayQueryProceedEXT(rq)) {}
+
+  if (rayQueryGetIntersectionTypeEXT(rq, true) ==
+      gl_RayQueryCommittedIntersectionTriangleEXT) {
+    uint iid = uint(rayQueryGetIntersectionInstanceIdEXT(rq, true));  // TLAS instance index
+    int prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+    vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+    float t = rayQueryGetIntersectionTEXT(rq, true);
+    vec3 hit = origin + dir * t;
+
+    InstInfo ii = insts[iid];
+    MeshDesc md = meshes[ii.meshId];
+    Verts vb = Verts(md.vtxAddr);
+    Idx ib = Idx(md.idxAddr);
+    uint i0 = ib.i[prim * 3u + 0u];
+    uint i1 = ib.i[prim * 3u + 1u];
+    uint i2 = ib.i[prim * 3u + 2u];
+    float w0 = 1.0 - bc.x - bc.y;
+
+    // Object->world for this instance (instance transform for instanced meshes,
+    // the mesh's world for non-instanced).
+    mat4x3 o2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
+
+    // Normal: geometric (face) when there are no authored normals, else the
+    // interpolated vertex normal transformed by the normal matrix (non-instanced)
+    // or the instance's object->world 3x3 (instanced).
+    vec3 N;
+    if ((md.geometricNormal & 1u) != 0u) {
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      N = normalize(cross(wp1 - wp0, wp2 - wp0));
+    } else {
+      vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x + fetchNrm(vb, i2) * bc.y;
+      mat3 nm = (ii.useMaterial != 0u)
+                    ? mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz)
+                    : mat3(o2w);
+      N = normalize(nm * nObj);
+    }
+    // Two-sided shading for the geometric-normal + instanced paths: face the normal
+    // toward the ray so inward-wound / back-facing triangles still light correctly
+    // (mirrors the raster's gl_FrontFacing flip). Non-instanced authored normals are
+    // left as-authored (matches the material shader, which does not flip them).
+    bool authoredNonInstanced = (ii.useMaterial != 0u) && ((md.geometricNormal & 1u) == 0u);
+    if (!authoredNonInstanced && dot(N, dir) > 0.0) N = -N;
+
+    // Base color: material (non-instanced) or per-instance tint (instanced), times
+    // the interpolated per-vertex displayColor when present.
+    vec3 base;
+    if (ii.useMaterial != 0u) {
+      base = (md.matId != 0xffffffffu) ? mat(md.matId, 0u).rgb : vec3(0.6);
+    } else {
+      base = ii.tint.rgb;  // per-instance color or the prototype's flatColor
+    }
+    if (md.vtxColorAddr != 0ul) {
+      Cols cb = Cols(md.vtxColorAddr);
+      base *= fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x + fetchCol(cb, i2) * bc.y;
+    }
+
+    vec3 L = normalize(pc.lightDir.xyz);
+    float diff = max(dot(N, L), 0.0);
+
+    // Shadow ray towards the light (hard shadows).
+    float shadow = 1.0;
+    if (diff > 0.0) {
+      rayQueryEXT sq;
+      rayQueryInitializeEXT(sq, TLAS,
+                            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                            0xFF, hit + N * 1e-3, 1e-3, L, 1e30);
+      while (rayQueryProceedEXT(sq)) {}
+      if (rayQueryGetIntersectionTypeEXT(sq, true) !=
+          gl_RayQueryCommittedIntersectionNoneEXT) {
+        shadow = 0.0;
+      }
+    }
+    outc = base * (0.25 + 0.85 * diff * shadow);
+
+    // Render mode (RenderMode in camPos.w): 1=wireframe (edges only), 2=shading
+    // normal, 3=material-id, 4=geometric normal, 5=uv set 0, 6=depth (t /
+    // depthScale in lightDir.w).
+    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 1) {
+      float e = min(w0, min(bc.x, bc.y));
+      if (e > 0.02) outc = pc.clearColor.rgb;
+    } else if (rmode == 2) {
+      outc = N * 0.5 + 0.5;
+    } else if (rmode == 3) {
+      outc = idColor(md.matId);
+    } else if (rmode == 4) {
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
+      if (dot(Ng, dir) > 0.0) Ng = -Ng;
+      outc = Ng * 0.5 + 0.5;
+    } else if (rmode == 5) {
+      vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
+      outc = vec3(fract(uvh), 0.0);
+    } else if (rmode == 6) {
+      float d = clamp(t / max(pc.lightDir.w, 1e-3), 0.0, 1.0);
+      outc = vec3(1.0 - d);
+    } else if (rmode == 7) {
+      outc = base;  // albedo (pre-lighting)
+    } else if (rmode == 8) {  // facing
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      outc = (dot(cross(wp1 - wp0, wp2 - wp0), dir) < 0.0) ? vec3(0.1, 0.7, 0.1)
+                                                          : vec3(0.7, 0.1, 0.1);
+    } else if (rmode == 9) {  // roughness
+      float r = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 1u).y : 0.5;
+      outc = vec3(r);
+    } else if (rmode == 10) {  // metallic
+      float m = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 1u).x : 0.0;
+      outc = vec3(m);
+    } else if (rmode == 11) {  // emissive
+      outc = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 2u).rgb : vec3(0.0);
+    } else if (rmode == 12) {  // opacity
+      float a = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 0u).a : 1.0;
+      outc = vec3(a);
+    } else if (rmode == 13) {  // world position
+      outc = clamp((hit - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0);
+    } else if (rmode == 23) {  // uv checker
+      vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
+      vec2 c = floor(fract(uvh) * 16.0);
+      outc = vec3(mix(0.25, 0.85, mod(c.x + c.y, 2.0)));
+    } else if (rmode == 30) {  // udim tile from UV set 0
+      vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
+      int tile = int(floor(uvh.x)) + 10 * int(floor(uvh.y));
+      outc = idColor(uint(max(tile, 0)));
+    } else if (rmode == 33) {  // texel density (per-triangle UV/world area ratio)
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec2 t0 = fetchUV(vb, i0), t1 = fetchUV(vb, i1), t2 = fetchUV(vb, i2);
+      float worldArea = length(cross(wp1 - wp0, wp2 - wp0));
+      vec2 d1 = t1 - t0, d2 = t2 - t0;
+      float uvArea = abs(d1.x * d2.y - d2.x * d1.y);
+      float td = sqrt(uvArea / max(worldArea, 1e-12));
+      float c = clamp(td * pc.lightDir.w * 0.5, 0.0, 1.0);
+      outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
+    } else if (rmode == 34) {  // source USD face id
+      outc = (md.faceAddr != 0ul) ? idColor(Faces(md.faceAddr).fc[uint(prim)])
+                                  : vec3(0.45);
+    } else if (rmode == 31) {  // uv set 1 (multi-UV)
+      if (md.uv1Addr != 0ul) {
+        UV1s ub = UV1s(md.uv1Addr);
+        vec2 t = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x + fetchUV1(ub, i2) * bc.y;
+        outc = vec3(fract(t), 0.0);
+      } else {
+        outc = vec3(0.0);
+      }
+    } else if (rmode == 32) {  // blendshape influence
+      float infl = 0.0;
+      if (md.inflAddr != 0ul) {
+        Infls fb = Infls(md.inflAddr);
+        infl = fetchInfl(fb, i0) * w0 + fetchInfl(fb, i1) * bc.x + fetchInfl(fb, i2) * bc.y;
+      }
+      float c = clamp(infl / max(pc.lightDir.w * 0.1, 1e-4), 0.0, 1.0);
+      outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
+    } else if (rmode == 22) {  // tangent (from triangle UV gradient)
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec2 uv0 = fetchUV(vb, i0), uv1 = fetchUV(vb, i1), uv2 = fetchUV(vb, i2);
+      vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+      vec2 d1 = uv1 - uv0, d2 = uv2 - uv0;
+      float r = d1.x * d2.y - d2.x * d1.y;
+      vec3 T = (abs(r) > 1e-8) ? (e1 * d2.y - e2 * d1.y) / r : e1;
+      outc = normalize(T) * 0.5 + 0.5;
+    } else if (rmode == 21) {  // skin weights: dominant joint tinted by its weight
+      outc = vec3(0.45);  // unskinned -> gray
+      if (md.jointAddr != 0ul && md.weightAddr != 0ul) {
+        Joints jb = Joints(md.jointAddr);
+        Weights wb = Weights(md.weightAddr);
+        float w0d, w1d, w2d;
+        int dj = fetchDomJoint(jb, wb, i0, w0d);  // provoking vertex joint (flat, matches raster)
+        fetchDomJoint(jb, wb, i1, w1d);
+        fetchDomJoint(jb, wb, i2, w2d);
+        float wt = w0d * w0 + w1d * bc.x + w2d * bc.y;  // interpolated dominant weight
+        outc = idColor(uint(dj)) * (0.3 + 0.7 * clamp(wt, 0.0, 1.0));
+      }
+    } else if (rmode == 25) {  // curvature (geometric: vertex-normal spread across the tri)
+      if ((md.geometricNormal & 1u) != 0u) {
+        outc = vec3(0.0, 1.0, 1.0);  // flat-shaded mesh -> zero curvature
+      } else {
+        vec3 n0 = normalize(fetchNrm(vb, i0));
+        vec3 n1 = normalize(fetchNrm(vb, i1));
+        vec3 n2 = normalize(fetchNrm(vb, i2));
+        float spread = (1.0 - dot(n0, n1)) + (1.0 - dot(n1, n2)) + (1.0 - dot(n2, n0));
+        float c = clamp(spread * 4.0, 0.0, 1.0);
+        outc = vec3(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c);
+      }
+    } else if (rmode == 27) {  // bvh-heatmap: hardware ray query can't count traversal
+      outc = vec3(0.45);       // steps -> CUDA-only; neutral gray placeholder here
+    } else if (rmode == 14) {  // barycentric
+      outc = vec3(w0, bc.x, bc.y);
+    } else if (rmode == 15) {  // prim id
+      outc = idColor(uint(prim));
+    } else if (rmode == 16) {  // mesh id
+      outc = idColor(ii.meshId);
+    } else if (rmode == 26) {  // instance id (TLAS instance index)
+      outc = idColor(iid);
+    } else if (rmode == 19) {  // missing normals
+      outc = ((md.geometricNormal & 1u) != 0u) ? vec3(0.95, 0.1, 0.85) : vec3(0.2);
+    } else if (rmode == 18) {  // purpose (bits 1-2 of geometricNormal)
+      uint p = (md.geometricNormal >> 1) & 3u;
+      outc = (p == 1u) ? vec3(0.2, 0.8, 0.3)
+           : (p == 2u) ? vec3(0.2, 0.45, 0.95)
+           : (p == 3u) ? vec3(0.95, 0.75, 0.1) : vec3(0.5);
+    } else if (rmode == 29) {  // kind (bits 3-5 of geometricNormal)
+      uint k = (md.geometricNormal >> 3) & 7u;
+      outc = (k == 1u) ? vec3(0.2, 0.8, 0.8)
+           : (k == 2u) ? vec3(0.85, 0.3, 0.85)
+           : (k == 3u) ? vec3(0.95, 0.6, 0.15)
+           : (k == 4u) ? vec3(0.5, 0.85, 0.4) : vec3(0.35);
+    } else if (rmode == 24) {  // ray-traced ambient occlusion
+      // Front-facing geometric normal for the hemisphere (independent of shading N).
+      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+      vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
+      if (dot(Ng, dir) > 0.0) Ng = -Ng;
+      float aoRadius = max(pc.lightDir.w, 1e-3) * 0.15;  // 15% of scene extent
+      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + 1u);
+      const int NS = 24;
+      float occ = 0.0;
+      for (int s = 0; s < NS; ++s) {
+        vec3 sd = cosHemi(Ng, rnd(seed), rnd(seed));
+        rayQueryEXT aq;
+        rayQueryInitializeEXT(aq, TLAS,
+                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              0xFF, hit + Ng * (aoRadius * 1e-2), 1e-4, sd, aoRadius);
+        while (rayQueryProceedEXT(aq)) {}
+        if (rayQueryGetIntersectionTypeEXT(aq, true) !=
+            gl_RayQueryCommittedIntersectionNoneEXT) occ += 1.0;
+      }
+      outc = vec3(1.0 - occ / float(NS));
+    } else if (rmode == 28) {  // soft shadow / sky visibility toward the light
+      vec3 Lc = normalize(pc.lightDir.xyz);
+      vec3 tt = normalize(abs(Lc.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
+      vec3 bb = normalize(cross(Lc, tt)); tt = cross(bb, Lc);
+      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + 7u);
+      const int NS = 16; float vis = 0.0; const float coneR = 0.08;
+      for (int s = 0; s < NS; ++s) {
+        float a = rnd(seed) * 6.2831853, rr = sqrt(rnd(seed)) * coneR;
+        vec3 sd = normalize(Lc + tt * (rr * cos(a)) + bb * (rr * sin(a)));
+        rayQueryEXT sq;
+        rayQueryInitializeEXT(sq, TLAS,
+                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              0xFF, hit + N * 1e-3, 1e-3, sd, 1e30);
+        while (rayQueryProceedEXT(sq)) {}
+        if (rayQueryGetIntersectionTypeEXT(sq, true) ==
+            gl_RayQueryCommittedIntersectionNoneEXT) vis += 1.0;
+      }
+      outc = vec3(vis / float(NS));
+    }
+  }
+
+  imageStore(outImg, px, vec4(outc, 1.0));
+}

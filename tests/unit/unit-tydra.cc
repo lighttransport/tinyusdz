@@ -918,6 +918,222 @@ void tydra_blendshape_resolution_test(void) {
   }
 }
 
+// In-between BlendShape offsets must be carried into RenderMesh::targets and,
+// crucially, splatted alongside the primary offsets when a facevarying mesh is
+// de-indexed (single-indexable build duplicates shared points). Regression for
+// the converter populating ShapeTarget::inbetweens + reordering them in
+// ReorderVertexVaryingAttributes.
+void tydra_blendshape_inbetween_test(void) {
+  // Two triangles share points 0 and 2, but their facevarying `st` differs at
+  // those corners, so the single-indexable build duplicates them: 4 -> 6
+  // points. The in-between (parallel to the 4 authored pointIndices) must be
+  // remapped to the same 6-entry space as the primary.
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+def Xform "Root"
+{
+    def Mesh "Mesh" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1),
+            (0.5, 0.5), (0.7, 0.7), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        uniform token[] skel:blendShapes = ["Key"]
+        rel skel:blendShapeTargets = </Root/Mesh/Key>
+
+        def BlendShape "Key"
+        {
+            uniform vector3f[] offsets = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+            uniform vector3f[] inbetweens:half = [(5, 0, 0), (5, 0, 0), (5, 0, 0), (5, 0, 0)] (
+                weight = 0.5
+            )
+        }
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "blendshape_inbetween.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.meshes.size() == 1);
+  if (scene.meshes.empty()) {
+    return;
+  }
+  const tydra::RenderMesh &mesh = scene.meshes[0];
+
+  // Facevarying `st` forced the shared points 0 and 2 to duplicate.
+  TEST_CHECK(mesh.points.size() == 6);
+  TEST_CHECK(mesh.targets.size() == 1);
+  if (mesh.targets.empty()) {
+    return;
+  }
+
+  const tydra::ShapeTarget &tgt = mesh.targets.begin()->second;
+  // Primary offsets were splatted to the duplicated points.
+  TEST_CHECK(tgt.pointIndices.size() == 6);
+  TEST_CHECK(tgt.pointOffsets.size() == 6);
+
+  // The in-between survived conversion and was splatted in lockstep with the
+  // primary (same count, same indexing).
+  TEST_CHECK(tgt.inbetweens.size() == 1);
+  if (tgt.inbetweens.empty()) {
+    return;
+  }
+  const tydra::InbetweenShapeTarget &ib = tgt.inbetweens.begin()->second;
+  TEST_CHECK(std::fabs(ib.weight - 0.5f) < 1e-6f);
+  TEST_CHECK(ib.pointOffsets.size() == tgt.pointIndices.size());
+  TEST_CHECK(ib.pointOffsets.size() == 6);
+  // Every authored in-between offset was (5,0,0); it must be preserved verbatim
+  // through the splat (no aliasing with the primary's (0,0,1)).
+  bool all_x5 = !ib.pointOffsets.empty();
+  for (size_t i = 0; i < ib.pointOffsets.size(); i++) {
+    all_x5 &= (std::fabs(ib.pointOffsets[i][0] - 5.0f) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][1]) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][2]) < 1e-6f);
+  }
+  TEST_CHECK(all_x5);
+}
+
+void tydra_blendshape_weight_animation_target_test(void) {
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+    startTimeCode = 1
+    endTimeCode = 3
+)
+def SkelRoot "Root"
+{
+    def Skeleton "Skeleton"
+    {
+        uniform token[] joints = ["Root"]
+        uniform matrix4d[] bindTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        uniform matrix4d[] restTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        rel skel:animationSource = </Root/Anim>
+    }
+
+    def SkelAnimation "Anim"
+    {
+        uniform token[] joints = ["Root"]
+        float3[] translations = [(0, 0, 0)]
+        quatf[] rotations = [(1, 0, 0, 0)]
+        half3[] scales = [(1, 1, 1)]
+        uniform token[] blendShapes = ["Smile"]
+        float[] blendShapeWeights.timeSamples = {
+            1: [0.0],
+            2: [1.0],
+            3: [0.25],
+        }
+    }
+
+    def Mesh "Face" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel skel:skeleton = </Root/Skeleton>
+        int[] primvars:skel:jointIndices = [0, 0, 0] (
+            interpolation = "vertex"
+            elementSize = 1
+        )
+        float[] primvars:skel:jointWeights = [1, 1, 1] (
+            interpolation = "vertex"
+            elementSize = 1
+        )
+        uniform token[] skel:blendShapes = ["Smile"]
+        rel skel:blendShapeTargets = </Root/Smile>
+    }
+
+    def BlendShape "Smile"
+    {
+        uniform vector3f[] offsets = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        uniform int[] pointIndices = [0, 1, 2]
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "blendshape_weight_animation.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  const tydra::AnimationChannel *weight_channel = nullptr;
+  const tydra::KeyframeSampler *weight_sampler = nullptr;
+  for (const tydra::AnimationClip &clip : scene.animations) {
+    for (const tydra::AnimationChannel &channel : clip.channels) {
+      if (channel.path != tydra::AnimationPath::Weights) {
+        continue;
+      }
+      if (channel.sampler < 0 ||
+          size_t(channel.sampler) >= clip.samplers.size()) {
+        continue;
+      }
+      weight_channel = &channel;
+      weight_sampler = &clip.samplers[size_t(channel.sampler)];
+      break;
+    }
+    if (weight_channel) {
+      break;
+    }
+  }
+
+  TEST_CHECK(weight_channel != nullptr);
+  TEST_CHECK(weight_sampler != nullptr);
+  if (!weight_channel || !weight_sampler) {
+    return;
+  }
+
+  TEST_CHECK(weight_channel->target_node >= 0);
+  TEST_CHECK(weight_channel->target_prim_path == "/Root/Face");
+  TEST_CHECK(weight_channel->property_name == "blendShapeWeights");
+  TEST_CHECK(weight_channel->blendshape_target_names.size() == 1);
+  if (!weight_channel->blendshape_target_names.empty()) {
+    TEST_CHECK(weight_channel->blendshape_target_names[0] == "Smile");
+  }
+  TEST_CHECK(weight_sampler->times.size() == 3);
+  TEST_CHECK(weight_sampler->values.size() == 3);
+  if (weight_sampler->values.size() == 3) {
+    TEST_CHECK(NearlyEqual(weight_sampler->values[0], 0.0f));
+    TEST_CHECK(NearlyEqual(weight_sampler->values[1], 1.0f));
+    TEST_CHECK(NearlyEqual(weight_sampler->values[2], 0.25f));
+  }
+}
+
 void tydra_material_binding_validation_test(void) {
   auto make_mesh = []() {
     GeomMesh mesh;
@@ -1331,6 +1547,30 @@ void tydra_material_binding_validation_test(void) {
   }
 }
 
+void tydra_material_colorspace_token_test(void) {
+  auto expect_colorspace = [](const char *token,
+                              tydra::ColorSpace expected) {
+    tydra::ColorSpace actual = tydra::ColorSpace::Unknown;
+    TEST_CHECK(tydra::InferColorSpace(value::token(token), &actual));
+    TEST_CHECK(actual == expected);
+  };
+
+  expect_colorspace("acescg", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("lin_ap1", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("ACES - ACEScg", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("aces2065-1", tydra::ColorSpace::ACES2065_1);
+  expect_colorspace("lin_rec2020", tydra::ColorSpace::Lin_Rec2020);
+  expect_colorspace("lin_displayp3", tydra::ColorSpace::Lin_DisplayP3);
+  expect_colorspace("srgb_displayp3", tydra::ColorSpace::sRGB_DisplayP3);
+  expect_colorspace("Input - Texture - sRGB - Display P3",
+                    tydra::ColorSpace::sRGB_DisplayP3);
+
+  tydra::ColorSpace actual = tydra::ColorSpace::Unknown;
+  TEST_CHECK(!tydra::InferColorSpace(value::token("not_a_colorspace"),
+                                     &actual));
+  TEST_CHECK(actual == tydra::ColorSpace::Unknown);
+}
+
 void tydra_progress_cancellation_test(void) {
   Stage stage;
 
@@ -1358,6 +1598,66 @@ void tydra_progress_cancellation_test(void) {
   TEST_CHECK(state.mesh_progress_calls == 1);
   TEST_CHECK(converter.GetError().find("Conversion cancelled by user") !=
              std::string::npos);
+}
+
+void tydra_default_material_assignment_test(void) {
+  auto make_stage = []() {
+    Stage stage;
+
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    return stage;
+  };
+
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id < 0);
+    }
+    TEST_CHECK(scene.materials.empty());
+  }
+
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.assign_default_material = true;
+    env.material_config.default_material_name = "FallbackPreview";
+    env.material_config.default_material_diffuse_color =
+        tydra::vec3{0.25f, 0.5f, 0.75f};
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.meshes.size() == 1 && scene.materials.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id == 0);
+      TEST_CHECK(scene.materials[0].name == "FallbackPreview");
+      TEST_CHECK(scene.materials[0].surfaceShader.has_value());
+      if (scene.materials[0].surfaceShader) {
+        const auto &color = scene.materials[0].surfaceShader->diffuseColor.value;
+        TEST_CHECK(color[0] == 0.25f);
+        TEST_CHECK(color[1] == 0.5f);
+        TEST_CHECK(color[2] == 0.75f);
+      }
+    }
+  }
 }
 
 void tydra_texture_loader_policy_test(void) {
@@ -2885,27 +3185,199 @@ void tydra_skel_animation_validation_test(void) {
   {
     Stage stage;
 
-    Skeleton invalid_skeleton;
-    invalid_skeleton.name = "BrokenSkeleton";
-    invalid_skeleton.joints = std::vector<value::token>{value::token("Root")};
-    invalid_skeleton.jointNames =
+    Skeleton fallback_skeleton;
+    fallback_skeleton.name = "FallbackSkeleton";
+    fallback_skeleton.joints = std::vector<value::token>{value::token("Root")};
+    fallback_skeleton.jointNames =
         std::vector<value::token>{value::token("Root")};
-    invalid_skeleton.bindTransforms =
-        std::vector<value::matrix4d>{};  // Authored but invalid size.
-    invalid_skeleton.restTransforms = std::vector<value::matrix4d>{
+    fallback_skeleton.bindTransforms =
+        std::vector<value::matrix4d>{};  // Authored empty; treat as missing.
+    fallback_skeleton.restTransforms = std::vector<value::matrix4d>{
         value::matrix4d::identity()};
 
-    TEST_CHECK(stage.add_root_prim(Prim("BrokenSkeleton", invalid_skeleton)));
+    TEST_CHECK(stage.add_root_prim(Prim("FallbackSkeleton", fallback_skeleton)));
 
     tydra::RenderSceneConverterEnv env(stage);
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find("Failed to convert standalone skeleton") !=
-               std::string::npos);
-    TEST_CHECK(converter.GetError().find("bindTransforms.size") !=
-               std::string::npos);
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.skeletons.size() == 1);
+    if (scene.skeletons.size() == 1) {
+      TEST_CHECK(scene.skeletons[0].bind_transforms.size() == 1);
+      TEST_CHECK(scene.skeletons[0].rest_transforms.size() == 1);
+      TEST_CHECK(scene.skeletons[0].bind_transforms[0] ==
+                 value::matrix4d::identity());
+    }
+  }
+}
+
+void tydra_prim_parameter_animation_test(void) {
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+def Xform "Root"
+{
+    def Camera "Cam"
+    {
+        float focalLength.timeSamples = {
+            1: 35,
+            2: 50,
+        }
+        custom quatf customOrientation.timeSamples = {
+            1: (1, 0, 0, 0),
+            2: (0.5, 0.5, 0.5, 0.5),
+        }
+        custom matrix4d customMatrix.timeSamples = {
+            1: ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+            2: ((2, 0, 0, 0), (0, 2, 0, 0), (0, 0, 2, 0), (1, 2, 3, 1)),
+        }
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity.timeSamples = {
+            1: 10,
+            2: 20,
+        }
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/PreviewSurface.outputs:surface>
+
+        def Shader "PreviewSurface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.timeSamples = {
+                1: (0.1, 0.2, 0.3),
+                2: (0.4, 0.5, 0.6),
+            }
+            token outputs:surface
+        }
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "prim_parameter_animation.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  auto find_custom_channel = [&](const std::string &target_path,
+                                 const std::string &property_name,
+                                 const tydra::KeyframeSampler **sampler_out) {
+    for (const tydra::AnimationClip &clip : scene.animations) {
+      for (const tydra::AnimationChannel &channel : clip.channels) {
+        if (channel.path != tydra::AnimationPath::CustomProperty ||
+            channel.target_prim_path != target_path ||
+            channel.property_name != property_name ||
+            channel.sampler < 0 ||
+            size_t(channel.sampler) >= clip.samplers.size()) {
+          continue;
+        }
+        *sampler_out = &clip.samplers[size_t(channel.sampler)];
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto count_custom_channels = [&](const std::string &target_path,
+                                   const std::string &property_name) {
+    size_t count = 0;
+    for (const tydra::AnimationClip &clip : scene.animations) {
+      for (const tydra::AnimationChannel &channel : clip.channels) {
+        if (channel.path == tydra::AnimationPath::CustomProperty &&
+            channel.target_prim_path == target_path &&
+            channel.property_name == property_name) {
+          count++;
+        }
+      }
+    }
+    return count;
+  };
+
+  const tydra::KeyframeSampler *camera_sampler = nullptr;
+  const tydra::KeyframeSampler *camera_quat_sampler = nullptr;
+  const tydra::KeyframeSampler *camera_matrix_sampler = nullptr;
+  const tydra::KeyframeSampler *light_sampler = nullptr;
+  const tydra::KeyframeSampler *shader_sampler = nullptr;
+  TEST_CHECK(find_custom_channel("/Root/Cam", "focalLength", &camera_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Cam", "customOrientation",
+                                 &camera_quat_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Cam", "customMatrix",
+                                 &camera_matrix_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Key", "inputs:intensity",
+                                 &light_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Mat/PreviewSurface",
+                                 "inputs:diffuseColor", &shader_sampler));
+  TEST_CHECK(count_custom_channels("/Root/Cam", "focalLength") == 1);
+  TEST_CHECK(count_custom_channels("/Root/Key", "inputs:intensity") == 1);
+
+  if (camera_sampler) {
+    TEST_CHECK(camera_sampler->times.size() == 2);
+    TEST_CHECK(camera_sampler->values.size() == 2);
+    if (camera_sampler->values.size() == 2) {
+      TEST_CHECK(NearlyEqual(camera_sampler->values[0], 35.0f));
+      TEST_CHECK(NearlyEqual(camera_sampler->values[1], 50.0f));
+    }
+  }
+  if (camera_quat_sampler) {
+    TEST_CHECK(camera_quat_sampler->times.size() == 2);
+    TEST_CHECK(camera_quat_sampler->values.size() == 8);
+    if (camera_quat_sampler->values.size() == 8) {
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[0], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[1], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[2], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[3], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[4], 0.5f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[7], 0.5f));
+    }
+  }
+  if (camera_matrix_sampler) {
+    TEST_CHECK(camera_matrix_sampler->times.size() == 2);
+    TEST_CHECK(camera_matrix_sampler->values.size() == 32);
+    if (camera_matrix_sampler->values.size() == 32) {
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[0], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[5], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[10], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[15], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[16], 2.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[31], 1.0f));
+    }
+  }
+  if (light_sampler) {
+    TEST_CHECK(light_sampler->times.size() == 2);
+    TEST_CHECK(light_sampler->values.size() == 2);
+    if (light_sampler->values.size() == 2) {
+      TEST_CHECK(NearlyEqual(light_sampler->values[0], 10.0f));
+      TEST_CHECK(NearlyEqual(light_sampler->values[1], 20.0f));
+    }
+  }
+  if (shader_sampler) {
+    TEST_CHECK(shader_sampler->times.size() == 2);
+    TEST_CHECK(shader_sampler->values.size() == 6);
+    if (shader_sampler->values.size() == 6) {
+      TEST_CHECK(NearlyEqual(shader_sampler->values[0], 0.1f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[1], 0.2f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[2], 0.3f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[3], 0.4f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[4], 0.5f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[5], 0.6f));
+    }
   }
 }
 

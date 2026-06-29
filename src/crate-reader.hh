@@ -30,9 +30,8 @@ namespace crate {
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
-// on: Use for-based PathIndex tree decoder to avoid potential buffer overflow(new implementation. its not well tested with fuzzer)
-// off: Use recursive function call to decode PathIndex tree(its been working for a years and tested with fuzzer)
-// TODO: After several battle-testing, make for-based PathIndex tree decoder default
+// Use the iterative PathIndex tree decoder. It avoids recursion depth risk on
+// attacker-controlled crate path tables.
 #define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
 
 ///
@@ -430,6 +429,9 @@ class CrateReader {
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
+  bool IsThreadSafeInlinedValueRep(const crate::ValueRep &rep) const;
+  bool DecodeFieldSetRange(uint32_t start_idx, uint32_t end_idx,
+                           FieldValuePairVector *pairs);
 
   /// Describe an uncompressed array ValueRep without reading data.
   /// Records offset/count in *ref, sets *value to empty typed array.
@@ -475,17 +477,6 @@ class CrateReader {
 
   // times(double[])
   bool UnpackTimeSampleTimes(const crate::ValueRep &rep, std::vector<double> &dst);
-
-  //
-  // Construct node hierarchy.
-  //
-  bool BuildNodeHierarchy(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps,
-      std::vector<bool> &visit_table,  // track visited pathIndex to prevent
-                                       // circular referencing
-      size_t curIndex, int64_t parentNodeIndex);
 
   // Build O(1) lookup table for fieldset start -> end(terminator) index.
   bool BuildFieldSetBoundaryIndex();
@@ -628,6 +619,9 @@ class CrateReader {
 
   // To prevent recursive Value unpack(The Value encodes itself)
   std::unordered_set<uint64_t> unpackRecursionGuard;
+
+  bool ReserveDecompressionBuffers(size_t comp_buffer_size,
+                                   size_t working_buffer_size) const;
 
   CrateReaderConfig _config;
 

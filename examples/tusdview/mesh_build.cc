@@ -1,0 +1,1181 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "mesh_build.hh"
+
+#include "displacement_bake.hh"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <unordered_map>
+
+#include "light3d/math.h"
+#include "skinning.hh"  // InbetweenSamples, CollectBlendShapeInbetweens
+#include "stage.hh"
+#include "usdGeom.hh"
+#include "tydra/render-data-converter.hh"
+#include "tydra/render-data-shader.hh"
+
+namespace tusdview {
+
+namespace tydra = tinyusdz::tydra;
+using tinyusdz::value::matrix4d;
+
+namespace {
+
+constexpr int kInfluenceTexWidth = 1024;
+
+const char* PurposeName(tinyusdz::Purpose purpose) {
+  switch (purpose) {
+    case tinyusdz::Purpose::Render: return "render";
+    case tinyusdz::Purpose::Proxy: return "proxy";
+    case tinyusdz::Purpose::Guide: return "guide";
+    case tinyusdz::Purpose::Default:
+    default: return "default";
+  }
+}
+
+bool AuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
+  if (const auto* mesh = prim.as<tinyusdz::GeomMesh>()) {
+    if (mesh->purpose.authored()) {
+      *out = PurposeName(mesh->purpose.get_value());
+      return true;
+    }
+  }
+  if (const auto* xform = prim.as<tinyusdz::Xform>()) {
+    if (xform->purpose.authored()) {
+      *out = PurposeName(xform->purpose.get_value());
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
+                                    const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim) {
+      std::string purpose;
+      if (AuthoredPurpose(*prim, &purpose)) return purpose;
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) {
+      path = "/";
+    } else {
+      path.resize(slash);
+    }
+  }
+  return "default";
+}
+
+// USD `kind` is authored on the model prim (component/group/assembly), usually an
+// ancestor of the mesh, so walk up to the nearest prim carrying a kind.
+int ResolveInheritedKind(const tinyusdz::Stage& stage, const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim) {
+      if (prim->metas().has_kind()) return KindId(prim->metas().get_kind_str());
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) {
+      path = "/";
+    } else {
+      path.resize(slash);
+    }
+  }
+  return 0;
+}
+
+// USD value::matrix4d is row-major (row-vector, pre-multiply: p' = p*M).
+// light3d::Mat4 is column-major (column-vector: p' = M*p). For the same
+// geometric transform M_gl = transpose(M_usd); combined with the storage-order
+// difference this reduces to an element-wise copy: out[i*4+j] = M.m[i][j].
+void MatToColMajor(const matrix4d& M, float out[16]) {
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      out[i * 4 + j] = static_cast<float>(M.m[i][j]);
+    }
+  }
+}
+
+// Read up to `n` floats of vertex item `item` from a float-typed VertexAttribute.
+// Missing/out-of-range components are zero.
+void ReadFloats(const tydra::VertexAttribute& a, size_t item, int n, float* out) {
+  for (int k = 0; k < n; ++k) out[k] = 0.0f;
+  if (a.empty()) return;
+  size_t comps = a.format_size() / sizeof(float);
+  if (comps == 0) return;
+  if (item >= a.vertex_count()) return;
+  const float* f = reinterpret_cast<const float*>(a.buffer());
+  if (!f) return;
+  for (int k = 0; k < n && static_cast<size_t>(k) < comps; ++k) {
+    out[k] = f[item * comps + static_cast<size_t>(k)];
+  }
+}
+
+bool AttrUsableAsVertex(const tydra::VertexAttribute& a, size_t vertexCount) {
+  return !a.empty() && a.is_vertex() && a.vertex_count() == vertexCount &&
+         (a.format_size() % sizeof(float)) == 0;
+}
+
+// Collect mesh_id -> world matrix from the node hierarchy (first occurrence).
+void CollectMeshTransforms(const tydra::Node& node,
+                           std::unordered_map<int, matrix4d>* out) {
+  if (node.nodeType == tydra::NodeType::Mesh && node.id >= 0) {
+    out->emplace(node.id, node.global_matrix);
+  }
+  for (const auto& c : node.children) {
+    CollectMeshTransforms(c, out);
+  }
+}
+
+int MapWrap(tydra::UVTexture::WrapMode w) {
+  switch (w) {
+    case tydra::UVTexture::WrapMode::REPEAT:
+      return static_cast<int>(WrapMode::Repeat);
+    case tydra::UVTexture::WrapMode::MIRROR:
+      return static_cast<int>(WrapMode::Mirror);
+    case tydra::UVTexture::WrapMode::CLAMP_TO_BORDER:
+      return static_cast<int>(WrapMode::ClampToBorder);
+    case tydra::UVTexture::WrapMode::CLAMP_TO_EDGE:
+    default:
+      return static_cast<int>(WrapMode::ClampToEdge);
+  }
+}
+
+bool IsSrgb(tydra::ColorSpace cs) {
+  return cs == tydra::ColorSpace::sRGB || cs == tydra::ColorSpace::sRGB_Texture ||
+         cs == tydra::ColorSpace::sRGB_DisplayP3;
+}
+
+bool MeshHasSkinData(const tydra::RenderMesh& mesh, size_t pointCount) {
+  const auto& jw = mesh.joint_and_weights;
+  if (mesh.skel_id < 0 || jw.elementSize < 1) return false;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  return jw.jointIndices.size() == pointCount * infl &&
+         jw.jointWeights.size() == pointCount * infl;
+}
+
+void SetIdentity4(float out[16]) {
+  matrix4d ident = matrix4d::identity();
+  MatToColMajor(ident, out);
+}
+
+void WriteSkinVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
+                     size_t dstVertex, DrawMeshCPU* dm) {
+  if (!dm || dm->jointIdx.empty() || dm->jointWt.empty()) return;
+  const auto& jw = mesh.joint_and_weights;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  if (srcPoint >= mesh.points.size()) return;
+  const size_t src = srcPoint * infl;
+  if (src + infl > jw.jointIndices.size() || src + infl > jw.jointWeights.size()) {
+    return;
+  }
+  std::array<std::pair<float, uint32_t>, 4> top{};
+  for (auto& v : top) v = {0.0f, 0u};
+  for (size_t k = 0; k < infl; ++k) {
+    const float w = jw.jointWeights[src + k];
+    const int ji = jw.jointIndices[src + k];
+    if (w <= 0.0f || ji < 0) continue;
+    const uint32_t j = static_cast<uint32_t>(ji);
+    for (size_t slot = 0; slot < top.size(); ++slot) {
+      if (w > top[slot].first) {
+        for (size_t m = top.size() - 1; m > slot; --m) top[m] = top[m - 1];
+        top[slot] = {w, j};
+        break;
+      }
+    }
+  }
+  float sum = 0.0f;
+  for (const auto& v : top) sum += v.first;
+  const size_t dst = dstVertex * 4;
+  for (size_t k = 0; k < 4; ++k) {
+    dm->jointIdx[dst + k] = top[k].second;
+    dm->jointWt[dst + k] = (sum > 0.0f) ? (top[k].first / sum) : 0.0f;
+  }
+}
+
+void WriteSkinInfluenceVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
+                              size_t dstVertex, DrawMeshCPU* dm) {
+  if (!dm || dm->influenceOffsetCount.empty()) return;
+  const auto& jw = mesh.joint_and_weights;
+  const size_t infl = static_cast<size_t>(jw.elementSize);
+  if (srcPoint >= mesh.points.size()) return;
+  const size_t src = srcPoint * infl;
+  if (src + infl > jw.jointIndices.size() || src + infl > jw.jointWeights.size()) {
+    return;
+  }
+
+  const uint32_t offset = static_cast<uint32_t>(dm->influenceTexels.size() / 4);
+  double sum = 0.0;
+  for (size_t k = 0; k < infl; ++k) {
+    const float w = jw.jointWeights[src + k];
+    const int ji = jw.jointIndices[src + k];
+    if (w <= 0.0f || ji < 0 || !std::isfinite(w)) continue;
+    dm->influenceTexels.push_back(static_cast<float>(ji));
+    dm->influenceTexels.push_back(w);
+    dm->influenceTexels.push_back(0.0f);
+    dm->influenceTexels.push_back(0.0f);
+    sum += static_cast<double>(w);
+  }
+
+  uint32_t count = static_cast<uint32_t>(dm->influenceTexels.size() / 4) - offset;
+  if (sum > 0.0) {
+    const float inv = static_cast<float>(1.0 / sum);
+    for (uint32_t i = 0; i < count; ++i) {
+      dm->influenceTexels[(static_cast<size_t>(offset + i) * 4) + 1] *= inv;
+    }
+  } else {
+    count = 0;
+  }
+
+  const size_t dst = dstVertex * 2;
+  dm->influenceOffsetCount[dst + 0] = offset;
+  dm->influenceOffsetCount[dst + 1] = count;
+  dm->maxInfluencesPerVertex = std::max(dm->maxInfluencesPerVertex,
+                                        static_cast<int>(count));
+}
+
+void FinalizeInfluenceTexture(DrawMeshCPU* dm) {
+  if (!dm || dm->influenceTexels.empty()) return;
+  const size_t texels = dm->influenceTexels.size() / 4;
+  dm->influenceTexWidth = kInfluenceTexWidth;
+  dm->influenceTexHeight =
+      static_cast<int>((texels + static_cast<size_t>(kInfluenceTexWidth) - 1) /
+                       static_cast<size_t>(kInfluenceTexWidth));
+  const size_t padded =
+      static_cast<size_t>(dm->influenceTexWidth) *
+      static_cast<size_t>(dm->influenceTexHeight) * 4;
+  dm->influenceTexels.resize(padded, 0.0f);
+}
+
+// Decode a TextureImage's buffer into an RGBA8 light3d::Image. Returns false if
+// the image cannot be decoded (caller skips it).
+bool DecodeToRGBA8(const tydra::RenderScene& rs, const tydra::TextureImage& img,
+                   light3d::Image* out) {
+  if (img.buffer_id < 0 ||
+      static_cast<size_t>(img.buffer_id) >= rs.buffers.size()) {
+    return false;
+  }
+  if (!img.decoded || img.width <= 0 || img.height <= 0 || img.channels <= 0) {
+    return false;
+  }
+  const tydra::BufferData& buf = rs.buffers[static_cast<size_t>(img.buffer_id)];
+  const size_t w = static_cast<size_t>(img.width);
+  const size_t h = static_cast<size_t>(img.height);
+  const size_t ch = static_cast<size_t>(img.channels);
+  const size_t npix = w * h;
+
+  out->width = img.width;
+  out->height = img.height;
+  out->channels = 4;
+  out->data.assign(npix * 4, 255);
+
+  auto store = [&](size_t pix, float r, float g, float b, float a) {
+    auto clamp8 = [](float v) -> uint8_t {
+      if (v < 0.0f) v = 0.0f;
+      if (v > 255.0f) v = 255.0f;
+      return static_cast<uint8_t>(v + 0.5f);
+    };
+    out->data[pix * 4 + 0] = clamp8(r);
+    out->data[pix * 4 + 1] = clamp8(g);
+    out->data[pix * 4 + 2] = clamp8(b);
+    out->data[pix * 4 + 3] = clamp8(a);
+  };
+
+  if (img.texelComponentType == tydra::ComponentType::UInt8) {
+    if (buf.data.size() < npix * ch) return false;
+    const uint8_t* p = buf.data.data();
+    for (size_t i = 0; i < npix; ++i) {
+      float c0 = p[i * ch + 0];
+      float c1 = ch > 1 ? p[i * ch + 1] : c0;
+      float c2 = ch > 2 ? p[i * ch + 2] : c0;
+      float c3 = ch > 3 ? p[i * ch + 3] : 255.0f;
+      if (ch == 1) { c1 = c0; c2 = c0; c3 = 255.0f; }
+      else if (ch == 2) { c2 = c0; c1 = c0; c3 = p[i * ch + 1]; }
+      store(i, c0, c1, c2, c3);
+    }
+    return true;
+  }
+  if (img.texelComponentType == tydra::ComponentType::Float) {
+    const size_t need = npix * ch * sizeof(float);
+    if (buf.data.size() < need) return false;
+    const float* p = reinterpret_cast<const float*>(buf.data.data());
+    for (size_t i = 0; i < npix; ++i) {
+      float c0 = p[i * ch + 0] * 255.0f;
+      float c1 = ch > 1 ? p[i * ch + 1] * 255.0f : c0;
+      float c2 = ch > 2 ? p[i * ch + 2] * 255.0f : c0;
+      float c3 = ch > 3 ? p[i * ch + 3] * 255.0f : 255.0f;
+      if (ch == 1) { c1 = c0; c2 = c0; c3 = 255.0f; }
+      else if (ch == 2) { c2 = c0; c1 = c0; c3 = p[i * ch + 1] * 255.0f; }
+      store(i, c0, c1, c2, c3);
+    }
+    return true;
+  }
+  return false;  // unsupported texel type
+}
+
+// --- Shared per-element builders (used by both BuildDrawScene and the
+// streaming path so the two produce identical output) ---------------------
+
+// Build the renderable textures (dedup by texture_image_id) and a mapping
+// drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
+void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
+                       std::vector<int>* drawTexMap) {
+  drawTexMap->assign(rs.textures.size(), -1);
+  std::unordered_map<int64_t, int> imgToDrawTex;
+  for (size_t uvIdx = 0; uvIdx < rs.textures.size(); ++uvIdx) {
+    const tydra::UVTexture& uv = rs.textures[uvIdx];
+    const int64_t imgId = uv.texture_image_id;
+    if (imgId < 0 || static_cast<size_t>(imgId) >= rs.images.size()) {
+      out->skipped.push_back("texture '" + uv.prim_name +
+                             "': no image (possibly UDIM/unresolved)");
+      continue;
+    }
+    auto found = imgToDrawTex.find(imgId);
+    if (found != imgToDrawTex.end()) {
+      (*drawTexMap)[uvIdx] = found->second;
+      continue;
+    }
+    const tydra::TextureImage& img = rs.images[static_cast<size_t>(imgId)];
+    DrawTextureCPU tex;
+    if (!DecodeToRGBA8(rs, img, &tex.image)) {
+      out->skipped.push_back("texture '" + uv.prim_name +
+                             "': undecoded/unsupported image");
+      continue;
+    }
+    tex.srgb = IsSrgb(img.colorSpace);
+    tex.wrapS = MapWrap(uv.wrapS);
+    tex.wrapT = MapWrap(uv.wrapT);
+    int drawIdx = static_cast<int>(out->textures.size());
+    out->textures.push_back(std::move(tex));
+    imgToDrawTex[imgId] = drawIdx;
+    (*drawTexMap)[uvIdx] = drawIdx;
+  }
+}
+
+// Build the renderable materials from the RenderScene, mapping UVTexture
+// indices to DrawScene texture slots via `drawTexMap`.
+void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
+                        const std::vector<int>& drawTexMap) {
+  auto mapTex = [&](int texId) -> int {
+    if (texId < 0 || static_cast<size_t>(texId) >= drawTexMap.size()) return -1;
+    return drawTexMap[static_cast<size_t>(texId)];
+  };
+
+  out->materials.reserve(rs.materials.size());
+  for (const auto& mat : rs.materials) {
+    DrawMaterialCPU dm;
+    dm.name = mat.name;
+    if (mat.surfaceShader.has_value()) {
+      const tydra::PreviewSurfaceShader& s = *mat.surfaceShader;
+      dm.baseColorTex = mapTex(s.diffuseColor.texture_id);
+      dm.emissiveTex = mapTex(s.emissiveColor.texture_id);
+      dm.normalTex = mapTex(s.normal.texture_id);
+      int mrTex = mapTex(s.metallic.texture_id);
+      if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
+      dm.metalRoughTex = mrTex;
+      dm.displacementTex = mapTex(s.displacement.texture_id);
+      dm.displacementConst = s.displacement.value;
+      // Displacement maps connect outputs:r (channel 0); honor that channel's
+      // UVTexture scale/bias so the viewer centers the height like tusdrender.
+      if (s.displacement.texture_id >= 0 &&
+          static_cast<size_t>(s.displacement.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& dt =
+            rs.textures[static_cast<size_t>(s.displacement.texture_id)];
+        dm.displacementTexScale = dt.scale[0];
+        dm.displacementTexBias = dt.bias[0];
+      }
+      // When a parameter is driven by a texture, the shader multiplies the
+      // texel by the factor below, so use a neutral factor (1) instead of the
+      // constant fallback (which would darken/override the texture).
+      dm.baseColor[0] = dm.baseColorTex >= 0 ? 1.0f : s.diffuseColor.value[0];
+      dm.baseColor[1] = dm.baseColorTex >= 0 ? 1.0f : s.diffuseColor.value[1];
+      dm.baseColor[2] = dm.baseColorTex >= 0 ? 1.0f : s.diffuseColor.value[2];
+      dm.metallic = (s.metallic.texture_id >= 0) ? 1.0f : s.metallic.value;
+      dm.roughness = (s.roughness.texture_id >= 0) ? 1.0f : s.roughness.value;
+      dm.emissive[0] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[0];
+      dm.emissive[1] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[1];
+      dm.emissive[2] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[2];
+      dm.alpha = s.opacity.value;
+      switch (mat.materialTag) {
+        case tydra::MaterialTag::Masked:
+          dm.alphaMode = static_cast<int>(AlphaMode::Mask);
+          dm.alphaCutoff = s.opacityThreshold.value;
+          break;
+        case tydra::MaterialTag::Translucent:
+          dm.alphaMode = static_cast<int>(AlphaMode::Blend);
+          break;
+        case tydra::MaterialTag::Opaque:
+        default:
+          dm.alphaMode = static_cast<int>(AlphaMode::Opaque);
+          break;
+      }
+    } else if (mat.openPBRShader.has_value()) {
+      const tydra::OpenPBRSurfaceShader& s = *mat.openPBRShader;
+      dm.baseColor[0] = s.base_color.value[0];
+      dm.baseColor[1] = s.base_color.value[1];
+      dm.baseColor[2] = s.base_color.value[2];
+      dm.metallic = s.base_metalness.value;
+      dm.roughness = s.base_roughness.value;
+      dm.emissive[0] = s.emission_color.value[0];
+      dm.emissive[1] = s.emission_color.value[1];
+      dm.emissive[2] = s.emission_color.value[2];
+      dm.alpha = s.opacity.value;
+      dm.baseColorTex = mapTex(s.base_color.texture_id);
+      dm.alphaMode = (mat.materialTag == tydra::MaterialTag::Translucent)
+                         ? static_cast<int>(AlphaMode::Blend)
+                         : static_cast<int>(AlphaMode::Opaque);
+    }
+    // else: leave default gray.
+    out->materials.push_back(std::move(dm));
+  }
+}
+
+// Build the geometry (interleaved vertices, indices, submeshes, normals) of one
+// RenderMesh into `dm`. World transform is left as identity; call PlaceDrawMesh
+// afterwards. Returns false if the mesh has no usable geometry.
+bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
+  const size_t nPoints = mesh.points.size();
+  const std::vector<uint32_t>& srcIndices = mesh.faceVertexIndices();
+  if (nPoints == 0 || srcIndices.empty()) {
+    return false;
+  }
+
+  DrawMeshCPU dm;
+  dm.name = mesh.prim_name;
+  dm.absPath = mesh.abs_path;
+  dm.doubleSided = mesh.doubleSided;
+  SetIdentity4(dm.skinGeomBind);
+  dm.skelId = mesh.skel_id;
+  if (MeshHasSkinData(mesh, nPoints)) {
+    dm.jointIdx.assign(nPoints * 4, 0u);
+    dm.jointWt.assign(nPoints * 4, 0.0f);
+    dm.influenceOffsetCount.assign(nPoints * 2, 0u);
+    MatToColMajor(mesh.joint_and_weights.geomBindTransform, dm.skinGeomBind);
+  }
+
+  // Primary texcoord slot (0 if present, else the first available).
+  const tydra::VertexAttribute* uvAttr = nullptr;
+  {
+    auto it = mesh.texcoords.find(0);
+    if (it != mesh.texcoords.end()) {
+      uvAttr = &it->second;
+    } else if (!mesh.texcoords.empty()) {
+      uvAttr = &mesh.texcoords.begin()->second;
+    }
+  }
+
+  // Optional 2nd texcoord set (multi-UV AOV). The converter already extracts all
+  // material-referenced UV slots into mesh.texcoords; slot 1 is the 2nd set.
+  const tydra::VertexAttribute* uv1Attr = nullptr;
+  {
+    auto it = mesh.texcoords.find(1);
+    if (it != mesh.texcoords.end()) uv1Attr = &it->second;
+  }
+
+  const bool normalsPerVertex = AttrUsableAsVertex(mesh.normals, nPoints);
+  const bool uvPerVertex = uvAttr && AttrUsableAsVertex(*uvAttr, nPoints);
+  const bool uv1PerVertex = uv1Attr && AttrUsableAsVertex(*uv1Attr, nPoints);
+  const bool uv1FV = uv1Attr && !uv1Attr->empty() && uv1Attr->is_facevarying();
+  bool gotNormals = false;
+
+  if (mesh.is_single_indexable) {
+    // Indexed path: one DrawVertex per point; indices reference points.
+    dm.vertices.resize(nPoints);
+    for (size_t i = 0; i < nPoints; ++i) {
+      DrawVertex& v = dm.vertices[i];
+      v.px = mesh.points[i][0];
+      v.py = mesh.points[i][1];
+      v.pz = mesh.points[i][2];
+      float nrm[3] = {0, 0, 0};
+      if (normalsPerVertex) ReadFloats(mesh.normals, i, 3, nrm);
+      v.nx = nrm[0]; v.ny = nrm[1]; v.nz = nrm[2];
+      float uv[2] = {0, 0};
+      if (uvPerVertex) ReadFloats(*uvAttr, i, 2, uv);
+      // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
+      // top-row-first and uploaded so v=0 samples the top, so invert here.
+      v.u = uv[0]; v.v = 1.0f - uv[1];
+      if (uv1Attr) {
+        float t[2] = {0, 0};
+        if (uv1PerVertex) ReadFloats(*uv1Attr, i, 2, t);
+        dm.uv1.push_back(t[0]);
+        dm.uv1.push_back(1.0f - t[1]);
+      }
+      WriteSkinVertex(mesh, i, i, &dm);
+      WriteSkinInfluenceVertex(mesh, i, i, &dm);
+    }
+    dm.indices.assign(srcIndices.begin(), srcIndices.end());
+    gotNormals = normalsPerVertex;
+  } else {
+    // Facevarying fallback: expand one vertex per face-vertex.
+    dm.vertices.resize(srcIndices.size());
+    if (MeshHasSkinData(mesh, nPoints)) {
+      dm.jointIdx.assign(srcIndices.size() * 4, 0u);
+      dm.jointWt.assign(srcIndices.size() * 4, 0.0f);
+      dm.influenceOffsetCount.assign(srcIndices.size() * 2, 0u);
+    }
+    dm.indices.resize(srcIndices.size());
+    const bool normalsFV = !mesh.normals.empty() && mesh.normals.is_facevarying();
+    const bool uvFV = uvAttr && !uvAttr->empty() && uvAttr->is_facevarying();
+    gotNormals = normalsFV || normalsPerVertex;
+    for (size_t k = 0; k < srcIndices.size(); ++k) {
+      const uint32_t pidx = srcIndices[k];
+      DrawVertex& v = dm.vertices[k];
+      if (pidx < nPoints) {
+        v.px = mesh.points[pidx][0];
+        v.py = mesh.points[pidx][1];
+        v.pz = mesh.points[pidx][2];
+      } else {
+        v.px = v.py = v.pz = 0.0f;
+      }
+      float nrm[3] = {0, 0, 0};
+      if (normalsFV) ReadFloats(mesh.normals, k, 3, nrm);
+      else if (normalsPerVertex && pidx < nPoints) ReadFloats(mesh.normals, pidx, 3, nrm);
+      v.nx = nrm[0]; v.ny = nrm[1]; v.nz = nrm[2];
+      float uv[2] = {0, 0};
+      if (uvFV) ReadFloats(*uvAttr, k, 2, uv);
+      else if (uvPerVertex && pidx < nPoints) ReadFloats(*uvAttr, pidx, 2, uv);
+      // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
+      // top-row-first and uploaded so v=0 samples the top, so invert here.
+      v.u = uv[0]; v.v = 1.0f - uv[1];
+      if (uv1Attr) {
+        float t[2] = {0, 0};
+        if (uv1FV) ReadFloats(*uv1Attr, k, 2, t);
+        else if (uv1PerVertex && pidx < nPoints) ReadFloats(*uv1Attr, pidx, 2, t);
+        dm.uv1.push_back(t[0]);
+        dm.uv1.push_back(1.0f - t[1]);
+      }
+      if (pidx < nPoints) WriteSkinVertex(mesh, pidx, k, &dm);
+      if (pidx < nPoints) WriteSkinInfluenceVertex(mesh, pidx, k, &dm);
+      dm.indices[k] = static_cast<uint32_t>(k);
+    }
+  }
+  FinalizeInfluenceTexture(&dm);
+
+  // Generate smooth normals if none were provided/usable.
+  if (!gotNormals) {
+    const float sign = mesh.is_rightHanded ? 1.0f : -1.0f;
+    for (auto& v : dm.vertices) { v.nx = v.ny = v.nz = 0.0f; }
+    for (size_t t = 0; t + 2 < dm.indices.size(); t += 3) {
+      uint32_t i0 = dm.indices[t], i1 = dm.indices[t + 1], i2 = dm.indices[t + 2];
+      if (i0 >= dm.vertices.size() || i1 >= dm.vertices.size() ||
+          i2 >= dm.vertices.size())
+        continue;
+      DrawVertex& a = dm.vertices[i0];
+      DrawVertex& b = dm.vertices[i1];
+      DrawVertex& c = dm.vertices[i2];
+      float e1[3] = {b.px - a.px, b.py - a.py, b.pz - a.pz};
+      float e2[3] = {c.px - a.px, c.py - a.py, c.pz - a.pz};
+      float nx = (e1[1] * e2[2] - e1[2] * e2[1]) * sign;
+      float ny = (e1[2] * e2[0] - e1[0] * e2[2]) * sign;
+      float nz = (e1[0] * e2[1] - e1[1] * e2[0]) * sign;
+      a.nx += nx; a.ny += ny; a.nz += nz;
+      b.nx += nx; b.ny += ny; b.nz += nz;
+      c.nx += nx; c.ny += ny; c.nz += nz;
+    }
+    for (auto& v : dm.vertices) {
+      float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+      if (len > 1e-8f) { v.nx /= len; v.ny /= len; v.nz /= len; }
+    }
+  }
+
+  // --- Blendshape targets, remapped to DrawVertex order (for GPU morph) ---
+  if (!mesh.targets.empty()) {
+    // point index -> the DrawVertices that came from it (single-index: 1:1;
+    // facevarying: one per face-vertex referencing the point).
+    std::vector<std::vector<uint32_t>> p2v(nPoints);
+    if (mesh.is_single_indexable) {
+      for (uint32_t i = 0; i < nPoints && i < dm.vertices.size(); ++i) {
+        p2v[i].push_back(i);
+      }
+    } else {
+      for (uint32_t k = 0; k < srcIndices.size(); ++k) {
+        const uint32_t pidx = srcIndices[k];
+        if (pidx < nPoints) p2v[pidx].push_back(k);
+      }
+    }
+    for (const auto& kv : mesh.targets) {
+      const tydra::ShapeTarget& tgt = kv.second;
+      const size_t no = tgt.pointOffsets.size();
+      MorphTargetCPU mt;
+      mt.name = kv.first;
+
+      // In-between shapes. tydra carries them in `tgt.inbetweens`, already
+      // reordered parallel to `pointIndices`/`pointOffsets` (so the same p2v
+      // expansion below applies, single-indexable and facevarying alike).
+      // Sort ascending by weight so usdWeights stays ascending; ibSrc stays
+      // index-parallel to ibOut so the expansion below is unambiguous.
+      std::vector<MorphInbetweenCPU> ibOut;
+      std::vector<const tydra::InbetweenShapeTarget*> ibSrc;
+      {
+        std::vector<const tydra::InbetweenShapeTarget*> sorted;
+        sorted.reserve(tgt.inbetweens.size());
+        for (const auto& ib : tgt.inbetweens) sorted.push_back(&ib.second);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const tydra::InbetweenShapeTarget* a,
+                     const tydra::InbetweenShapeTarget* b) {
+                    return a->weight < b->weight;
+                  });
+        for (const tydra::InbetweenShapeTarget* ib : sorted) {
+          if (ib->pointOffsets.size() != tgt.pointIndices.size()) continue;
+          MorphInbetweenCPU mi;
+          mi.weight = ib->weight;
+          ibOut.push_back(std::move(mi));
+          ibSrc.push_back(ib);
+        }
+      }
+
+      for (size_t e = 0; e < tgt.pointIndices.size() && e < no; ++e) {
+        const uint32_t pidx = tgt.pointIndices[e];
+        if (pidx >= nPoints) continue;
+        for (uint32_t dv : p2v[pidx]) {
+          mt.vtx.push_back(dv);
+          mt.dpos.push_back(tgt.pointOffsets[e][0]);
+          mt.dpos.push_back(tgt.pointOffsets[e][1]);
+          mt.dpos.push_back(tgt.pointOffsets[e][2]);
+          // Same expansion for each usable in-between sample.
+          for (size_t s = 0; s < ibOut.size(); ++s) {
+            const auto& src = ibSrc[s]->pointOffsets[e];
+            ibOut[s].dpos.push_back(src[0]);
+            ibOut[s].dpos.push_back(src[1]);
+            ibOut[s].dpos.push_back(src[2]);
+          }
+        }
+      }
+      if (!mt.vtx.empty()) {
+        mt.inbetweens = std::move(ibOut);
+        dm.morphs.push_back(std::move(mt));
+      }
+    }
+  }
+
+  // Per-vertex blendshape influence: the largest single-target displacement
+  // magnitude (world units) at each vertex. Drives the BlendInfluence AOV.
+  if (!dm.morphs.empty()) {
+    dm.morphInfluence.assign(dm.vertices.size(), 0.0f);
+    for (const MorphTargetCPU& mt : dm.morphs) {
+      for (size_t e = 0; e < mt.vtx.size(); ++e) {
+        const uint32_t v = mt.vtx[e];
+        if (v >= dm.morphInfluence.size()) continue;
+        const float dx = mt.dpos[e * 3 + 0], dy = mt.dpos[e * 3 + 1],
+                    dz = mt.dpos[e * 3 + 2];
+        const float mag = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (mag > dm.morphInfluence[v]) dm.morphInfluence[v] = mag;
+      }
+    }
+  }
+
+  // --- GPU-morph channels (raster path) ---
+  // Flatten each target's primary + in-between samples into mesh-local "channels",
+  // then invert the sparse target storage into a per-vertex CSR list of
+  // (channelId, dx, dy, dz). The vertex shader sums coeff[channelId] * delta; the
+  // CPU computes the tiny per-channel coefficients each frame. Channel order per
+  // target: in-betweens (ascending) then the primary, so usdWeights stays ascending.
+  //
+  // Built two-pass (count -> prefix-sum -> scatter) straight into the flat
+  // half-precision buffer, with NO per-vertex vector-of-vectors intermediate --
+  // at facial scale that temporary was the build-time peak (~16 B x targets x
+  // points plus a heap allocation per vertex).
+  if (!dm.morphs.empty()) {
+    // A channel = one sparse delta stream (a target's primary or an in-between).
+    struct Chan {
+      int id;
+      const std::vector<float>* dpos;
+      const std::vector<uint32_t>* vtx;
+    };
+    std::vector<Chan> chans;
+    int nextChannel = 0;
+    dm.morphTargetChannels.clear();
+    dm.morphTargetChannels.reserve(dm.morphs.size());
+    for (const MorphTargetCPU& mt : dm.morphs) {
+      MorphTargetChannelsCPU tc;
+      tc.name = mt.name;
+      for (const MorphInbetweenCPU& ib : mt.inbetweens) {
+        const int ch = nextChannel++;
+        tc.usdWeights.push_back(ib.weight);
+        tc.channelIds.push_back(ch);
+        chans.push_back({ch, &ib.dpos, &mt.vtx});
+      }
+      const int chPrimary = nextChannel++;
+      tc.usdWeights.push_back(1.0f);
+      tc.channelIds.push_back(chPrimary);
+      chans.push_back({chPrimary, &mt.dpos, &mt.vtx});
+      dm.morphTargetChannels.push_back(std::move(tc));
+    }
+    dm.morphChannelCount = nextChannel;
+
+    const size_t nv = dm.vertices.size();
+    // Same guard in both passes so the count matches the scatter exactly.
+    auto usable = [](const std::vector<float>& dp, size_t e, uint32_t v,
+                     size_t nverts) {
+      return v < nverts && e * 3 + 2 < dp.size();
+    };
+    // Pass 1: count entries per vertex.
+    std::vector<uint32_t> count(nv, 0u);
+    for (const Chan& c : chans) {
+      for (size_t e = 0; e < c.vtx->size(); ++e) {
+        const uint32_t v = (*c.vtx)[e];
+        if (usable(*c.dpos, e, v, nv)) count[v]++;
+      }
+    }
+    // Prefix-sum into morphOffsetCount (offset,count per vertex).
+    dm.morphOffsetCount.assign(nv * 2, 0u);
+    uint64_t total = 0;
+    for (size_t v = 0; v < nv; ++v) {
+      dm.morphOffsetCount[v * 2 + 0] = static_cast<uint32_t>(total);
+      dm.morphOffsetCount[v * 2 + 1] = count[v];
+      total += count[v];
+    }
+    // Pass 2: scatter [channelId, dx, dy, dz] halfs at a running per-vertex
+    // cursor, plus the parallel uint16 channelId side buffer (GL skip pre-check).
+    auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
+    dm.morphDeltaHalf.assign(total * 4, 0);
+    dm.morphChannelId.assign(total, 0);
+    std::vector<uint32_t> cursor(nv, 0u);
+    for (const Chan& c : chans) {
+      const std::vector<float>& dp = *c.dpos;
+      const std::vector<uint32_t>& vtx = *c.vtx;
+      const uint16_t chHalf = h(static_cast<float>(c.id));
+      const uint16_t chId = static_cast<uint16_t>(c.id);
+      for (size_t e = 0; e < vtx.size(); ++e) {
+        const uint32_t v = vtx[e];
+        if (!usable(dp, e, v, nv)) continue;
+        const uint64_t slot = dm.morphOffsetCount[v * 2 + 0] + cursor[v]++;
+        uint16_t* o = &dm.morphDeltaHalf[slot * 4];
+        o[0] = chHalf;  // legacy fallback; the skip reads channelId from morphChannelId
+        o[1] = h(dp[e * 3 + 0]);
+        o[2] = h(dp[e * 3 + 1]);
+        o[3] = h(dp[e * 3 + 2]);
+        dm.morphChannelId[slot] = chId;
+      }
+    }
+
+    // dm.morphs (the CPU sparse per-vertex deltas) is now redundant: the GPU
+    // raster path morphs from morphDeltaHalf, RT backends morph via the tydra
+    // targets (DeformSkinnedMeshes), the influence AOV is baked into
+    // morphInfluence above, and the blend editor reads names/weights from
+    // morphTargetChannels. Free it -- at facial scale (64+ targets, 64k+ pts)
+    // this is the dominant CPU copy (~16 B x targets x points). A manual-blend
+    // reconvert rebuilds the DrawScene from scratch if a CPU path ever needs it.
+    std::vector<MorphTargetCPU>().swap(dm.morphs);
+  }
+
+  // --- Submeshes (group triangles by material) ---
+  const size_t triCount = dm.indices.size() / 3;
+
+  // Per-triangle source USD face id (pre-grouping order): expand the converter's
+  // per-original-face triangle counts. Triangulation keeps face order, so the
+  // t-th triangle belongs to face triFacePre[t].
+  std::vector<uint32_t> triFacePre;
+  if (mesh.is_triangulated() && !mesh.triangulatedFaceCounts.empty()) {
+    triFacePre.reserve(triCount);
+    for (uint32_t f = 0; f < mesh.triangulatedFaceCounts.size(); ++f)
+      for (uint32_t k = 0; k < mesh.triangulatedFaceCounts[f]; ++k)
+        triFacePre.push_back(f);
+  }
+  if (triFacePre.size() != triCount) triFacePre.clear();  // mismatch -> disable
+
+  if (mesh.material_subsetMap.empty()) {
+    DrawSubmesh sub;
+    sub.indexOffset = 0;
+    sub.indexCount = static_cast<uint32_t>(dm.indices.size());
+    sub.materialId = mesh.material_id;
+    dm.submeshes.push_back(sub);
+    dm.sourceFaceId = std::move(triFacePre);  // no reorder
+  } else {
+    std::vector<int> triMat(triCount, mesh.material_id);
+    for (const auto& kv : mesh.material_subsetMap) {
+      const tydra::MaterialSubset& ss = kv.second;
+      for (int triIdx : ss.indices()) {
+        if (triIdx >= 0 && static_cast<size_t>(triIdx) < triCount) {
+          triMat[static_cast<size_t>(triIdx)] = ss.material_id;
+        }
+      }
+    }
+    // Bucket triangles by material id, preserving order within a material. Bucket
+    // the source-face id in lockstep so it stays parallel to the grouped tris.
+    std::map<int, std::vector<uint32_t>> buckets;
+    std::map<int, std::vector<uint32_t>> faceBuckets;
+    for (size_t t = 0; t < triCount; ++t) {
+      auto& bucket = buckets[triMat[t]];
+      bucket.push_back(dm.indices[t * 3 + 0]);
+      bucket.push_back(dm.indices[t * 3 + 1]);
+      bucket.push_back(dm.indices[t * 3 + 2]);
+      if (!triFacePre.empty()) faceBuckets[triMat[t]].push_back(triFacePre[t]);
+    }
+    std::vector<uint32_t> grouped;
+    std::vector<uint32_t> groupedFace;
+    grouped.reserve(dm.indices.size());
+    for (auto& kv : buckets) {
+      DrawSubmesh sub;
+      sub.indexOffset = static_cast<uint32_t>(grouped.size());
+      sub.indexCount = static_cast<uint32_t>(kv.second.size());
+      sub.materialId = kv.first;
+      grouped.insert(grouped.end(), kv.second.begin(), kv.second.end());
+      if (!triFacePre.empty()) {
+        const auto& fb = faceBuckets[kv.first];
+        groupedFace.insert(groupedFace.end(), fb.begin(), fb.end());
+      }
+      dm.submeshes.push_back(sub);
+    }
+    dm.indices.swap(grouped);
+    dm.sourceFaceId = std::move(groupedFace);
+  }
+
+  // World left as identity; PlaceDrawMesh applies the node transform.
+  light3d::Mat4 ident = light3d::Mat4::identity();
+  std::memcpy(dm.world, ident.m, sizeof(ident.m));
+
+  *dmOut = std::move(dm);
+  return true;
+}
+
+// Apply a world transform to a built DrawMeshCPU and compute its world-space
+// AABB from the (local) vertex positions.
+void PlaceDrawMesh(DrawMeshCPU* dm, const matrix4d& worldMat) {
+  light3d::Mat4 world = light3d::Mat4::identity();
+  MatToColMajor(worldMat, world.m);
+  std::memcpy(dm->world, world.m, sizeof(world.m));
+
+  float lmin[3] = {1e30f, 1e30f, 1e30f};
+  float lmax[3] = {-1e30f, -1e30f, -1e30f};
+  for (const auto& v : dm->vertices) {
+    const float p[3] = {v.px, v.py, v.pz};
+    for (int c = 0; c < 3; ++c) {
+      lmin[c] = std::min(lmin[c], p[c]);
+      lmax[c] = std::max(lmax[c], p[c]);
+    }
+  }
+  float wmin[3] = {1e30f, 1e30f, 1e30f};
+  float wmax[3] = {-1e30f, -1e30f, -1e30f};
+  for (int corner = 0; corner < 8; ++corner) {
+    light3d::Vec3 lp{(corner & 1) ? lmax[0] : lmin[0],
+                     (corner & 2) ? lmax[1] : lmin[1],
+                     (corner & 4) ? lmax[2] : lmin[2]};
+    light3d::Vec3 wp = light3d::transformPoint(world, lp);
+    float wparr[3] = {wp.x, wp.y, wp.z};
+    for (int c = 0; c < 3; ++c) {
+      wmin[c] = std::min(wmin[c], wparr[c]);
+      wmax[c] = std::max(wmax[c], wparr[c]);
+    }
+  }
+  for (int c = 0; c < 3; ++c) { dm->aabbMin[c] = wmin[c]; dm->aabbMax[c] = wmax[c]; }
+}
+
+// Union the world AABB of every built mesh into the scene bounds.
+void ComputeSceneBounds(DrawScene* out) {
+  bool first = true;
+  auto extend = [&](const float p[3]) {
+    if (first) {
+      for (int c = 0; c < 3; ++c) { out->aabbMin[c] = p[c]; out->aabbMax[c] = p[c]; }
+      first = false;
+    } else {
+      for (int c = 0; c < 3; ++c) {
+        out->aabbMin[c] = std::min(out->aabbMin[c], p[c]);
+        out->aabbMax[c] = std::max(out->aabbMax[c], p[c]);
+      }
+    }
+  };
+  for (const auto& dm : out->meshes) {
+    extend(dm.aabbMin);
+    extend(dm.aabbMax);
+  }
+  // Include UsdVol volumes: transform their object-space AABB corners to world
+  // (DrawVolumeCPU::world is column-major: p' = M*p).
+  for (const auto& dv : out->volumes) {
+    for (int corner = 0; corner < 8; ++corner) {
+      float o[3] = {(corner & 1) ? dv.aabbMax[0] : dv.aabbMin[0],
+                    (corner & 2) ? dv.aabbMax[1] : dv.aabbMin[1],
+                    (corner & 4) ? dv.aabbMax[2] : dv.aabbMin[2]};
+      const float* M = dv.world;
+      float w[3];
+      for (int i = 0; i < 3; ++i) {
+        w[i] = M[0 * 4 + i] * o[0] + M[1 * 4 + i] * o[1] +
+               M[2 * 4 + i] * o[2] + M[3 * 4 + i];
+      }
+      extend(w);
+    }
+  }
+  out->hasBounds = !first;
+}
+
+void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
+  if (!out) return;
+  int nextMatrix = 0;
+  for (DrawMeshCPU& dm : out->meshes) {
+    const bool hasAttribs =
+        !dm.jointIdx.empty() && !dm.jointWt.empty() &&
+        dm.jointIdx.size() == dm.vertices.size() * 4 &&
+        dm.jointWt.size() == dm.vertices.size() * 4;
+    if (!hasAttribs || dm.skelId < 0 ||
+        static_cast<size_t>(dm.skelId) >= rs.skeletons.size()) {
+      dm.jointIdx.clear();
+      dm.jointWt.clear();
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
+      dm.skelId = -1;
+      dm.skinMatrixBase = -1;
+      continue;
+    }
+    const size_t nj = rs.skeletons[static_cast<size_t>(dm.skelId)].num_joints();
+    if (nj == 0 || nj > static_cast<size_t>(std::numeric_limits<int>::max() - nextMatrix)) {
+      dm.jointIdx.clear();
+      dm.jointWt.clear();
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
+      dm.skelId = -1;
+      dm.skinMatrixBase = -1;
+      continue;
+    }
+    dm.skinMatrixBase = nextMatrix;
+    for (uint32_t& j : dm.jointIdx) {
+      if (j < nj) {
+        j += static_cast<uint32_t>(dm.skinMatrixBase);
+      } else {
+        j = static_cast<uint32_t>(dm.skinMatrixBase);
+      }
+    }
+    const bool hasFullInfluences =
+        dm.influenceOffsetCount.size() == dm.vertices.size() * 2 &&
+        !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
+    if (hasFullInfluences) {
+      const size_t texels = dm.influenceTexels.size() / 4;
+      for (size_t t = 0; t < texels; ++t) {
+        const size_t base = t * 4;
+        if (!(dm.influenceTexels[base + 1] > 0.0f)) continue;
+        const uint32_t localJoint =
+            static_cast<uint32_t>(std::max(0.0f, dm.influenceTexels[base] + 0.5f));
+        dm.influenceTexels[base] =
+            static_cast<float>(dm.skinMatrixBase +
+                               (localJoint < nj ? localJoint : uint32_t{0}));
+      }
+    } else {
+      dm.influenceOffsetCount.clear();
+      dm.influenceTexels.clear();
+      dm.influenceTexWidth = 0;
+      dm.influenceTexHeight = 0;
+      dm.maxInfluencesPerVertex = 0;
+    }
+    nextMatrix += static_cast<int>(nj);
+  }
+  out->boneMatrixCount = nextMatrix;
+}
+
+// Returns true if adding `dm` would exceed the triangle / vertex-byte budget.
+bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
+                const DrawMeshCPU& dm, const LoadControl& ctrl) {
+  const size_t thisTris = dm.indices.size() / 3;
+  const size_t estBytes =
+      dm.vertices.size() * sizeof(DrawVertex) +
+      dm.jointIdx.size() * sizeof(uint32_t) +
+      dm.jointWt.size() * sizeof(float) +
+      dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+      dm.influenceTexels.size() * sizeof(float) +
+      dm.indices.size() * sizeof(uint32_t);
+  return out.triangleCount + thisTris > ctrl.maxTriangles ||
+         cumulativeVertexBytes + estBytes > ctrl.maxVertexBytes;
+}
+
+}  // namespace
+
+void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
+  if (!draw) return;
+  for (DrawMeshCPU& mesh : draw->meshes) {
+    mesh.purpose = mesh.absPath.empty() ? "default"
+                                        : ResolveInheritedPurpose(stage, mesh.absPath);
+    mesh.kindId =
+        mesh.absPath.empty() ? 0 : ResolveInheritedKind(stage, mesh.absPath);
+  }
+}
+
+void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
+  for (const auto& v : rs.volumes) {
+    int fi = v.density_field_index();
+    if (fi < 0) continue;
+    const auto& f = v.fields[static_cast<size_t>(fi)];
+    if (f.buffer_id < 0 || static_cast<size_t>(f.buffer_id) >= rs.buffers.size())
+      continue;
+    const auto& buf = rs.buffers[static_cast<size_t>(f.buffer_id)];
+    const size_t n =
+        size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
+    if (n == 0 || buf.data.size() < n * sizeof(float)) continue;
+
+    DrawVolumeCPU dv;
+    dv.name = v.prim_name;
+    dv.dim[0] = f.dim[0];
+    dv.dim[1] = f.dim[1];
+    dv.dim[2] = f.dim[2];
+    dv.density.resize(n);
+    std::memcpy(dv.density.data(), buf.data.data(), n * sizeof(float));
+    MatToColMajor(v.world_matrix, dv.world);
+    for (int a = 0; a < 3; a++) {
+      dv.aabbMin[a] = f.bounds_min[a];
+      dv.aabbMax[a] = f.bounds_max[a];
+      dv.albedo[a] = v.albedo[a];
+      dv.emission[a] = v.emission_color[a] * v.emission_scale;
+    }
+    dv.densityScale = v.density_scale;
+    dv.background = f.background;
+    out->volumes.push_back(std::move(dv));
+  }
+}
+
+void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
+                    LoadControl* ctrl, const tinyusdz::Stage* stage) {
+  *out = DrawScene{};
+  (void)stage;  // in-betweens now carried by tydra (RenderMesh::targets)
+
+  // Mesh world transforms from the node hierarchy.
+  std::unordered_map<int, matrix4d> meshXform;
+  for (const auto& n : rs.nodes) {
+    CollectMeshTransforms(n, &meshXform);
+  }
+
+  std::vector<int> drawTexMap;
+  BuildDrawTextures(rs, out, &drawTexMap);
+  BuildDrawMaterials(rs, out, drawTexMap);
+
+  size_t cumulativeVertexBytes = 0;
+  for (size_t m = 0; m < rs.meshes.size(); ++m) {
+    const tydra::RenderMesh& mesh = rs.meshes[m];
+    DrawMeshCPU dm;
+    if (!MakeDrawMesh(mesh, &dm)) {
+      out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
+      continue;
+    }
+
+    // Cancellation + render budget (stops before adding an over-budget mesh so
+    // huge scenes neither freeze the per-frame loop nor thrash VRAM).
+    if (ctrl) {
+      if (ctrl->cancel.load()) {
+        out->truncated = true;
+        out->skipped.push_back("build cancelled at mesh " + std::to_string(m) + "/" +
+                               std::to_string(rs.meshes.size()));
+        break;
+      }
+      if (OverBudget(*out, cumulativeVertexBytes, dm, *ctrl)) {
+        out->truncated = true;
+        out->skipped.push_back(
+            "render budget reached: stopped at mesh " + std::to_string(m) + "/" +
+            std::to_string(rs.meshes.size()) + " (" +
+            std::to_string(out->triangleCount / 1000) + "K tris)");
+        break;
+      }
+    }
+
+    matrix4d world = matrix4d::identity();
+    auto xit = meshXform.find(static_cast<int>(m));
+    if (xit != meshXform.end()) world = xit->second;
+    PlaceDrawMesh(&dm, world);
+
+    cumulativeVertexBytes +=
+        dm.vertices.size() * sizeof(DrawVertex) +
+        dm.jointIdx.size() * sizeof(uint32_t) +
+        dm.jointWt.size() * sizeof(float) +
+        dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+        dm.influenceTexels.size() * sizeof(float) +
+        dm.indices.size() * sizeof(uint32_t);
+    out->triangleCount += dm.indices.size() / 3;
+    out->meshes.push_back(std::move(dm));
+  }
+
+  BuildDrawVolumes(rs, out);
+
+  FinalizeSkinningLayout(rs, out);
+  ComputeSceneBounds(out);
+  BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
+}
+
+bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
+                             const tydra::RenderSceneConverterEnv& env,
+                             tydra::RenderScene* render, DrawScene* out,
+                             LoadControl* ctrl) {
+  *out = DrawScene{};
+
+  // Streaming state (lives for the duration of the synchronous conversion).
+  std::vector<int> rsMeshToDraw;   // rs mesh index -> out->meshes index (-1 skipped)
+  std::vector<bool> placed;        // per out->meshes: world applied yet?
+  size_t cumulativeVertexBytes = 0;
+
+  tydra::RenderSceneSink sink;
+
+  // Build each mesh's geometry as it is converted (LOCAL space; placed later).
+  sink.on_mesh = [&](const tydra::RenderMesh& mesh, size_t index,
+                     const std::string&, void*) -> bool {
+    if (index >= rsMeshToDraw.size()) rsMeshToDraw.resize(index + 1, -1);
+    DrawMeshCPU dm;
+    if (!MakeDrawMesh(mesh, &dm)) {
+      out->skipped.push_back("mesh '" + mesh.prim_name + "': empty geometry");
+      return true;
+    }
+    // Render budget (draw-side cap): stop adding draw meshes but let the
+    // conversion finish so out->render stays complete for the GUI.
+    if (ctrl && !out->truncated && OverBudget(*out, cumulativeVertexBytes, dm, *ctrl)) {
+      out->truncated = true;
+      out->skipped.push_back("render budget reached at mesh " +
+                             std::to_string(index) + " (" +
+                             std::to_string(out->triangleCount / 1000) + "K tris)");
+    }
+    if (out->truncated) return true;  // skip building further draw meshes
+
+    cumulativeVertexBytes +=
+        dm.vertices.size() * sizeof(DrawVertex) +
+        dm.jointIdx.size() * sizeof(uint32_t) +
+        dm.jointWt.size() * sizeof(float) +
+        dm.influenceOffsetCount.size() * sizeof(uint32_t) +
+        dm.influenceTexels.size() * sizeof(float) +
+        dm.indices.size() * sizeof(uint32_t);
+    out->triangleCount += dm.indices.size() / 3;
+    rsMeshToDraw[index] = static_cast<int>(out->meshes.size());
+    out->meshes.push_back(std::move(dm));
+    placed.push_back(false);
+    return true;
+  };
+
+  // Place meshes once the node hierarchy (world matrices) is known.
+  sink.on_root_node = [&](const tydra::Node& root, size_t, void*) -> bool {
+    std::unordered_map<int, matrix4d> meshXform;
+    CollectMeshTransforms(root, &meshXform);
+    for (const auto& kv : meshXform) {
+      const int rsIdx = kv.first;
+      if (rsIdx < 0 || static_cast<size_t>(rsIdx) >= rsMeshToDraw.size()) continue;
+      const int drawIdx = rsMeshToDraw[static_cast<size_t>(rsIdx)];
+      if (drawIdx < 0 || static_cast<size_t>(drawIdx) >= out->meshes.size()) continue;
+      PlaceDrawMesh(&out->meshes[static_cast<size_t>(drawIdx)], kv.second);
+      placed[static_cast<size_t>(drawIdx)] = true;
+    }
+    return true;
+  };
+
+  // Build textures + materials from the finished scene, then finalize bounds.
+  sink.on_complete = [&](const tydra::RenderScene& scene, void*) -> bool {
+    std::vector<int> drawTexMap;
+    BuildDrawTextures(scene, out, &drawTexMap);
+    BuildDrawMaterials(scene, out, drawTexMap);
+    // Any mesh not referenced by a node keeps identity placement (matches
+    // BuildDrawScene, which uses identity when no transform is found).
+    const matrix4d ident = matrix4d::identity();
+    for (size_t i = 0; i < out->meshes.size(); ++i) {
+      if (!placed[i]) PlaceDrawMesh(&out->meshes[i], ident);
+    }
+    BuildDrawVolumes(scene, out);
+    FinalizeSkinningLayout(scene, out);
+    ComputeSceneBounds(out);
+    BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
+    return true;
+  };
+
+  return converter.ConvertToRenderSceneStreaming(env, sink, render);
+}
+
+}  // namespace tusdview

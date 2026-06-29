@@ -301,6 +301,7 @@ enum class NodeType {
   DiskLight,
   CylinderLight,
   GeometryLight,
+  Volume,  // UsdVol Volume (OpenVDB / Field3D)
 };
 
 // High-level categorization of USD Prim types
@@ -946,6 +947,11 @@ struct AnimationChannel {
   // For AnimationPath::CustomProperty channels.
   bool is_custom_property{false};    ///< true when `path == AnimationPath::CustomProperty`
   std::string property_name;         ///< The custom property name for this channel.
+  std::string target_prim_path;      ///< Optional unresolved/resolved target prim path.
+
+  // For AnimationPath::Weights channels sourced from UsdSkel blendShapeWeights.
+  // Values are stored in this target-name order.
+  std::vector<std::string> blendshape_target_names;
 
   /// Check if channel is valid based on its target type
   bool is_valid() const {
@@ -1673,6 +1679,61 @@ struct SceneMetadata
   // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas()
 };
 
+///
+/// One scalar field (e.g. "density") of a UsdVol Volume, decoded into a DENSE
+/// float voxel grid. The voxel data lives in RenderScene::buffers[buffer_id]
+/// (componentType Float, length dim[0]*dim[1]*dim[2], x-contiguous:
+/// index = x + dim[0]*(y + dim[1]*z)).
+///
+struct RenderVolumeField {
+  std::string field_name;        // "density", "temperature", ...
+  std::string field_data_type;   // logical type ("float")
+  int32_t dim[3] = {0, 0, 0};    // voxel dimensions (x, y, z)
+  int32_t origin[3] = {0, 0, 0}; // index-space origin (min voxel coord)
+  float voxel_size[3] = {1.0f, 1.0f, 1.0f};
+  float world_translation[3] = {0.0f, 0.0f, 0.0f};
+  float background = 0.0f;
+  int64_t buffer_id = -1;        // index into RenderScene::buffers (dense floats)
+  // Object-space (pre prim-xform) AABB derived from origin/dim/voxel_size +
+  // world_translation. The prim's world matrix (RenderVolume::world_matrix)
+  // maps this box into world space.
+  float bounds_min[3] = {0.0f, 0.0f, 0.0f};
+  float bounds_max[3] = {0.0f, 0.0f, 0.0f};
+};
+
+///
+/// A UsdVol Volume prim converted for rendering. Carries its own world matrix
+/// (renderers may iterate RenderScene::volumes directly) plus simple
+/// emission/absorption shading parameters. (Full volume-material shading is a
+/// TODO; "simple volume shading" per the initial scope.)
+///
+struct RenderVolume {
+  std::string prim_name;
+  std::string abs_path;
+  std::string display_name;
+
+  value::matrix4d world_matrix{value::matrix4d::identity()};
+
+  std::vector<RenderVolumeField> fields;  // density, temperature, ...
+
+  // Simple shading params.
+  float density_scale = 1.0f;
+  float albedo[3] = {0.5f, 0.5f, 0.5f};
+  float emission_color[3] = {0.0f, 0.0f, 0.0f};
+  float emission_scale = 0.0f;
+
+  int material_id = -1;  // optional volume material (unused for now)
+  uint64_t handle = 0;   // graphics API handle. 0 = invalid
+
+  // Convenience: index of the "density" field, or first field, or -1.
+  int density_field_index() const {
+    for (size_t i = 0; i < fields.size(); i++) {
+      if (fields[i].field_name == "density") return int(i);
+    }
+    return fields.empty() ? -1 : 0;
+  }
+};
+
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
@@ -1696,6 +1757,7 @@ class RenderScene {
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
@@ -1710,6 +1772,7 @@ class RenderScene {
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   ///
@@ -1749,6 +1812,83 @@ class RenderScene {
 ///         lightLink/shadowLink collection).
 ///
 size_t ResolveLightLinking(const Stage &stage, RenderScene *scene);
+
+/// Phase tag delivered alongside streamed elements during progressive
+/// (streaming) conversion, so a consumer knows what arrives when.
+/// See `RenderSceneSink` and `RenderSceneConverter::ConvertToRenderSceneStreaming`.
+///
+enum class StreamPhase {
+  MaterialsAndMeshes,  ///< images, buffers, textures, materials, meshes (meshes are LOCAL space)
+  Hierarchy,           ///< nodes (with world matrices), lights, cameras
+  Animations,          ///< skeletons, animation clips
+  Instances,           ///< render instances
+  Complete             ///< conversion finished; RenderScene fully populated
+};
+
+///
+/// Push "sink" for streaming/progressive scene conversion.
+///
+/// Set only the callbacks you care about; an unset slot is a no-op that means
+/// "continue". Every callback returns bool: `true` to continue, `false` to
+/// cancel conversion (matches the existing progress-callback convention).
+///
+/// `index` is the element's final index in the corresponding RenderScene array;
+/// `abs_path` is the USD absolute prim path (empty where not applicable).
+///
+/// The element passed to a callback is a `const&` still owned by the converter
+/// (it has not yet been moved into the RenderScene). COPY out what you need
+/// (e.g. enqueue a copy for GPU upload on another thread); do not move from it.
+///
+/// All callbacks fire synchronously on the converting thread. If conversion runs
+/// on a worker thread the sink must be thread-safe (enqueue-only); do no GPU work
+/// inside it.
+///
+/// Ordering: on_phase(MaterialsAndMeshes) then, per prim in traversal order, that
+/// prim's newly-produced images -> buffers -> textures -> udim_textures, then
+/// on_material, then on_mesh (re-used/cached materials are not re-emitted). A
+/// streamed mesh is in LOCAL space; its final world placement is only known once
+/// the Hierarchy phase delivers the node tree (on_root_node, with world
+/// matrices). Then Animations, then Instances, then on_phase(Complete) +
+/// on_complete (once).
+///
+struct RenderSceneSink {
+  // --- Phase: MaterialsAndMeshes ---
+  std::function<bool(const TextureImage &, size_t index, void *)> on_image;
+  std::function<bool(const BufferData &, size_t index, void *)> on_buffer;
+  std::function<bool(const UVTexture &, size_t index, const std::string &abs_path, void *)>
+      on_texture;
+  std::function<bool(const UDIMTexture &, size_t index, void *)> on_udim_texture;
+  std::function<bool(const RenderMaterial &, size_t index, const std::string &abs_path, void *)>
+      on_material;
+  /// Mesh is delivered in LOCAL space (no final world matrix). See on_root_node.
+  std::function<bool(const RenderMesh &, size_t index, const std::string &abs_path, void *)>
+      on_mesh;
+
+  // --- Phase: Hierarchy ---
+  std::function<bool(const RenderLight &, size_t index, const std::string &abs_path, void *)>
+      on_light;
+  std::function<bool(const RenderCamera &, size_t index, const std::string &abs_path, void *)>
+      on_camera;
+  /// Delivered after the node tree is built. Each Node carries local/world
+  /// matrices; node.id indexes meshes/lights/cameras per its type.
+  std::function<bool(const Node &root, size_t index, void *)> on_root_node;
+
+  // --- Phase: Animations ---
+  std::function<bool(const SkelHierarchy &, size_t index, const std::string &abs_path, void *)>
+      on_skeleton;
+  std::function<bool(const AnimationClip &, size_t index, const std::string &abs_path, void *)>
+      on_animation;
+
+  // --- Phase: Instances ---
+  std::function<bool(const RenderInstance &, size_t index, const std::string &abs_path, void *)>
+      on_instance;
+
+  // --- Phase boundaries / completion ---
+  std::function<bool(StreamPhase, void *)> on_phase;        ///< start of each phase
+  std::function<bool(const RenderScene &, void *)> on_complete;  ///< once, at the end
+
+  void *userdata{nullptr};
+};
 
 ///
 

@@ -66,6 +66,10 @@ InterpolateBoundary(const std::string &tok);
 nonstd::expected<GeomMesh::FaceVaryingLinearInterpolation, std::string>
 FaceVaryingLinearInterpolation(const std::string &tok);
 
+/// Handle GeomMesh::TriangleSubdivisionRule enum
+nonstd::expected<GeomMesh::TriangleSubdivisionRule, std::string>
+TriangleSubdivisionRule(const std::string &tok);
+
 //
 // GeomSubset enum handlers
 //

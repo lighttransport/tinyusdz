@@ -420,8 +420,17 @@ intended for refcounts / type tags / cache-coherency flags.
 ## refactor-next Phase-0 baselines (2026-06-10, HEAD 59801312)
 
 Baselines for the `src/next` optimization roadmap (`doc/refator-next.md`),
-captured with `build/next/bench_pcp_compose` (new) and `bench_lazy_mem`
-(Release, gcc, Linux x86-64). Re-measure after each phase and diff here.
+captured with `bench_pcp_compose` and `bench_lazy_mem` (Release, gcc,
+Linux x86-64). Re-measure after each phase and diff here. For the current
+standalone `next` smoke tests and benchmark entrypoint, run:
+
+```bash
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+```
+
+The script uses small `bench_lazy_mem` defaults for routine local checks. Set
+`BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32` to reproduce the historical
+large lazy/eager clone comparison below.
 
 ### Struct sizes (`bench_pcp_compose sizes`)
 

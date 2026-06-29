@@ -10,6 +10,30 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+std::string NormalizeAssetPathForRemap(std::string path) {
+  for (char& c : path) {
+    if (c == '\\') c = '/';
+  }
+  while (path.rfind("./", 0) == 0) path = path.substr(2);
+  while (!path.empty() && path[0] == '/') path = path.substr(1);
+  return path;
+}
+
+const std::string* FindAssetPathRemap(
+    const std::map<std::string, std::string>& remap,
+    const std::string& path) {
+  auto it = remap.find(path);
+  if (it != remap.end()) return &it->second;
+  const std::string norm = NormalizeAssetPathForRemap(path);
+  it = remap.find(norm);
+  if (it != remap.end()) return &it->second;
+  return nullptr;
+}
+
+}  // namespace
+
 // ============================================================
 // TypeNameTable
 // ============================================================
@@ -230,6 +254,21 @@ const std::vector<std::pair<double, uint32_t>>* TimeSampleStorage::get(PropNameI
 const Value* TimeSampleStorage::value(uint32_t offset) const {
   if (offset >= values_.size()) return nullptr;
   return &values_[offset];
+}
+
+size_t TimeSampleStorage::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (Value& value : values_) {
+    const std::string* path = value.as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    value = Value::MakeAssetPath(*mapped);
+    ++count;
+  }
+  return count;
 }
 
 bool TimeSampleStorage::has(PropNameId name_id) const {
@@ -463,6 +502,42 @@ bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
   return true;
 }
 
+bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot || slot->value_offset == UINT32_MAX) return false;
+  if (!values_) return false;
+  uint32_t offset = values_->store(std::move(value));
+  const Value* stored = values_->get(offset);
+  slot->value_offset = offset;
+  if (stored && stored->type_id() != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(stored->type_id());
+    if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
+    else slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagArray);
+  }
+  return true;
+}
+
+size_t PrimSpec::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (const PropSlot& slot : props_.slots()) {
+    const Value* value = property_value(slot.name_id);
+    if (!value) continue;
+    const std::string* path = value->as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    if (set_property_value(slot.name_id, Value::MakeAssetPath(*mapped))) {
+      ++count;
+    }
+  }
+  if (time_samples_) {
+    count += time_samples_->remap_asset_paths(remap);
+  }
+  return count;
+}
+
 void PrimSpec::reserve_properties(size_t count) {
   props_.reserve(count);
 }
@@ -528,6 +603,39 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
 
 void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
+}
+
+void PrimSpec::apply_relationship_list_op(const std::string& name,
+                                          const std::vector<Path>& targets,
+                                          RelationshipListOp op) {
+  if (targets.empty()) return;
+  std::vector<Path>& dst = relationships_[name];
+
+  switch (op) {
+    case RelationshipListOp::Prepend:
+      dst.insert(dst.begin(), targets.begin(), targets.end());
+      break;
+    case RelationshipListOp::Add:
+      for (const Path& t : targets) {
+        if (std::find(dst.begin(), dst.end(), t) == dst.end()) {
+          dst.push_back(t);
+        }
+      }
+      break;
+    case RelationshipListOp::Delete:
+      dst.erase(std::remove_if(dst.begin(), dst.end(),
+                               [&](const Path& p) {
+                                 return std::find(targets.begin(), targets.end(),
+                                                  p) != targets.end();
+                               }),
+                dst.end());
+      if (dst.empty()) relationships_.erase(name);
+      break;
+    case RelationshipListOp::Append:
+    default:
+      dst.insert(dst.end(), targets.begin(), targets.end());
+      break;
+  }
 }
 
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
