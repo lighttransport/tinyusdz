@@ -272,7 +272,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
-  float u=(px+0.5f)/W, vv=(py+0.5f)/H;
+  // Sub-pixel jitter for supersampled AA rides the spare sceneMin.w/sceneExtent.w
+  // lanes (0 for the 1-spp / center-sample case, so unchanged then).
+  float u=(px+0.5f+cam.sceneMin[3])/W, vv=(py+0.5f+cam.sceneExtent[3])/H;
   float ndcx=u*2.f-1.f, ndcy=1.f-vv*2.f;
   F3 nearW=unproject(cam.invVP,ndcx,ndcy,0.f);
   F3 farW =unproject(cam.invVP,ndcx,ndcy,1.f);

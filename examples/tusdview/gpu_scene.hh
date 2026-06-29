@@ -17,6 +17,20 @@
 
 namespace tusdview {
 
+// Halton(2,3) sub-pixel jitter offset in [-0.5, 0.5) for supersampled ray-traced
+// screenshots (the CUDA/HIP trace path). Sample 0 is the pixel center (0,0), so
+// spp==1 reproduces the un-jittered image exactly. Shared by both GPU tracers.
+inline void RtPixelJitter(int s, int spp, float* jx, float* jy) {
+  if (spp <= 1 || s == 0) { *jx = 0.0f; *jy = 0.0f; return; }
+  auto radical = [](int i, int base) {
+    float f = 1.0f, r = 0.0f;
+    while (i > 0) { f /= float(base); r += f * float(i % base); i /= base; }
+    return r;
+  };
+  *jx = radical(s, 2) - 0.5f;
+  *jy = radical(s, 3) - 0.5f;
+}
+
 // Interleaved vertex: matches the GL330 / VK450 shader attribute layout
 //   location 0: vec3 aPosition  (offset 0)
 //   location 1: vec3 aNormal    (offset 12)

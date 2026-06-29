@@ -131,6 +131,8 @@ class App
   void setCudaRt(bool on) { cudaRt_ = on; }
   // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
   void setHipRt(bool on) { hipRt_ = on; }
+  // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
+  void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
@@ -273,6 +275,7 @@ class App
   float robustBoundsMax_[3]{0, 0, 0};
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   HipRayTracer hipTracer_;
+  int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
 
   // Ray tracing: requested via --rt; rtPath_ is the effective state after the
   // renderer reports capability (drives the RT-friendly conversion config).

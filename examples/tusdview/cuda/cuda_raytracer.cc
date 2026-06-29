@@ -632,7 +632,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
-                          std::vector<uint8_t>* rgba, std::string* err) {
+                          std::vector<uint8_t>* rgba, std::string* err, int spp) {
   if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
@@ -667,13 +667,36 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
                   &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
-  CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
-                       nullptr, args, nullptr),
-        "cuLaunchKernel");
-  CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
+  const int samples = spp < 1 ? 1 : spp;
   rgba->resize(bytes);
-  CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
-        "cuMemcpyDtoH");
+  // 1 spp: launch once, read straight back. >1 spp: accumulate Halton-jittered
+  // samples on the host and average (anti-aliasing for the screenshot path).
+  std::vector<float> accum;
+  std::vector<uint8_t> frame;
+  if (samples > 1) { accum.assign(bytes, 0.0f); frame.resize(bytes); }
+  for (int s = 0; s < samples; ++s) {
+    float jx, jy;
+    RtPixelJitter(s, samples, &jx, &jy);
+    cam.sceneMin[3] = jx;
+    cam.sceneExtent[3] = jy;
+    CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
+                         nullptr, args, nullptr),
+          "cuLaunchKernel");
+    CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
+    if (samples == 1) {
+      CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
+            "cuMemcpyDtoH");
+    } else {
+      CU_OK(cuMemcpyDtoH(frame.data(), static_cast<CUdeviceptr>(dOut_), bytes),
+            "cuMemcpyDtoH");
+      for (size_t i = 0; i < bytes; ++i) accum[i] += float(frame[i]);
+    }
+  }
+  if (samples > 1) {
+    for (size_t i = 0; i < bytes; ++i)
+      (*rgba)[i] = uint8_t(accum[i] / float(samples) + 0.5f);
+    for (size_t i = 3; i < bytes; i += 4) (*rgba)[i] = 255;  // keep alpha opaque
+  }
   return true;
 }
 
