@@ -50,6 +50,12 @@ struct LoadOptions {
   // variantSet name -> variant name. Applied before composition so variant
   // arcs resolve with the user's choices instead of the layer defaults.
   std::map<std::string, std::map<std::string, std::string>> variantOverrides;
+  // Allow parent-directory ('..') segments in composition asset paths
+  // (--allow-parent-paths). Off by default (tinyusdz rejects '..' traversal as
+  // unsafe). Some production scenes (e.g. Animal Logic ALab's lighting overrides
+  // referenced as `../lightingrenderovers/...`) need it; resolution of the
+  // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
+  bool allowParentRelativePaths{false};
 };
 
 // A payload/reference arc that was skipped during composition.

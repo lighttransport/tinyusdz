@@ -70,6 +70,8 @@ int main(int argc, char** argv) {
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
+  bool allowParentPaths = false;          // --allow-parent-paths: permit '..' in
+                                          // composition asset paths (e.g. ALab)
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
@@ -147,6 +149,8 @@ int main(int argc, char** argv) {
       deferPayloads = false;
     } else if (std::strcmp(argv[i], "--defer-references") == 0) {
       deferReferences = true;
+    } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
+      allowParentPaths = true;
     } else if ((std::strcmp(argv[i], "--time") == 0 ||
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
@@ -294,6 +298,9 @@ int main(int argc, char** argv) {
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
+          "  --allow-parent-paths  Permit parent-directory ('..') segments in "
+          "composition asset paths (rejected by default as unsafe). Needed by some "
+          "production scenes, e.g. Animal Logic ALab's `../lightingrenderovers/`.\n"
           "  --time CODE   Evaluate the scene at this USD time code (animated "
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
@@ -387,6 +394,7 @@ int main(int argc, char** argv) {
     // Explicit opt-in only (no headless default flip): deferring references is
     // non-standard, so honor the flag verbatim even for --frames runs.
     lo.deferReferences = deferReferences;
+    lo.allowParentRelativePaths = allowParentPaths;
     if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }
