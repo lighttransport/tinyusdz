@@ -545,10 +545,45 @@
   // Emit the VALUE section data blocks into buffer_ (in-memory path), 8-byte
   // aligned. Must produce exactly ComputeValueLayoutAndPatch()'s byte count.
   void EmitValueBytesToBuffer() {
-    for (size_t i = 0; i < value_data_.size(); ++i) {
-      writer_.align(8);
-      writer_.write_bytes(value_data_[i].bytes(), value_data_[i].size());
+    // Place every value block at its precomputed 8-byte-aligned offset (from
+    // ComputeValueLayoutAndPatch) into a single pre-sized, zero-filled region.
+    // The blocks occupy disjoint sub-ranges, so the copies parallelize trivially.
+    // Byte-identical to the old align()+append loop (align() also zero-pads).
+    const size_t n = value_data_.size();
+    if (n == 0) return;
+    const size_t base = buffer_.size();  // == value_start_offset_ (post-bootstrap)
+    const size_t total = static_cast<size_t>(value_offsets_.back()) +
+                         value_data_.back().size();
+    buffer_.resize(base + total, 0);
+    uint8_t* const out = buffer_.data() + base;
+    auto copy_range = [&](size_t lo, size_t hi) {
+      for (size_t i = lo; i < hi; ++i) {
+        const size_t sz = value_data_[i].size();
+        if (sz) std::memcpy(out + value_offsets_[i], value_data_[i].bytes(), sz);
+      }
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    int P = (std::min)(ResolveThreads(), 16);
+    if (P > 1 && n >= 4096 && total >= (8u << 20)) {
+      // Byte-balanced index boundaries (offsets are ascending).
+      std::vector<size_t> ib(P + 1);
+      ib[0] = 0;
+      ib[P] = n;
+      for (int t = 1; t < P; ++t) {
+        const uint64_t target = static_cast<uint64_t>(total) * t / P;
+        ib[t] = static_cast<size_t>(
+            std::lower_bound(value_offsets_.begin(), value_offsets_.end(), target) -
+            value_offsets_.begin());
+      }
+      std::vector<std::thread> pool;
+      pool.reserve(P);
+      for (int t = 0; t < P; ++t)
+        pool.emplace_back([&copy_range, &ib, t] { copy_range(ib[t], ib[t + 1]); });
+      for (auto& th : pool) th.join();
+      return;
     }
+#endif
+    copy_range(0, n);
   }
 
   // Stream the VALUE section data blocks straight to `sink`, copying each block
