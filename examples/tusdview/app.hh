@@ -67,6 +67,16 @@ class App
   // (default on). --no-robust-frame disables it to frame the literal scene bbox.
   void setRobustFrame(bool on) { robustFrame_ = on; }
 
+  // View-dependent RT LOD (--rt-lod): classify instances by projected screen size
+  // when the camera settles; drop sub-pixel/off-screen instances from the TLAS
+  // (and, from P2, render distant ones as box proxies). fullPx/cullPx are the
+  // projected-radius thresholds in pixels.
+  void setRtLod(bool enabled, float fullPx, float cullPx) {
+    rtLodEnabled_ = enabled;
+    if (fullPx > 0.f) rtLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rtLodCullPx_ = cullPx;
+  }
+
   // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
   void setUiScale(float s) {
     if (s > 0.25f) {
@@ -280,6 +290,19 @@ class App
   bool robustBoundsValid_{false};     // robust bounds computed (pre-LOD) this load
   float robustBoundsMin_[3]{0, 0, 0};
   float robustBoundsMax_[3]{0, 0, 0};
+
+  // View-dependent RT LOD (--rt-lod): re-classify on camera settle (hysteresis +
+  // debounce), then push the camera snapshot to the renderer for a TLAS rebuild.
+  void updateRtLodCamera();
+  bool rtLodEnabled_{false};
+  float rtLodFullPx_{64.0f};
+  float rtLodCullPx_{2.0f};
+  bool lodHaveLast_{false};
+  bool lodArmedOnce_{false};
+  bool lodPendingReselect_{false};
+  int lodStillFrames_{0};
+  light3d::Vec3 lastLodEye_{0, 0, 0};
+  light3d::Vec3 lastLodFwd_{0, 0, -1};
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   // True when a headless --cuda/--hip run owns the screenshot: the rasterized
   // upload + per-frame draw are then skipped (the RT path writes the image, the

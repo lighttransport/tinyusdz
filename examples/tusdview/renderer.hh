@@ -13,6 +13,7 @@
 #include <string>
 
 #include "gpu_scene.hh"
+#include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -275,6 +276,13 @@ class Renderer {
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.
   virtual void setRayTracing(bool /*enable*/) {}
+
+  // View-dependent RT LOD: supply the camera snapshot used to classify instances
+  // as Full / Proxy / Cull when the TLAS is (re)built. `reselect` requests a TLAS
+  // rebuild now (call it when the camera has settled). focalPx is filled by the
+  // backend from its own viewport height; the caller leaves it 0. No-op unless
+  // the ray-tracing backend supports it.
+  virtual void setLodCamera(const RtLodCamera& /*cam*/, bool /*reselect*/) {}
 
   // Tear down ImGui backend + device resources.
   virtual void shutdown() = 0;
