@@ -715,4 +715,31 @@ inline void Compose3x4(const float outer[12], const float inner[12],
 // normal; `Nt` is the tangent-space normal already unpacked to [-1,1]. Returns
 // the perturbed world normal, or `N` if the UV parameterization is degenerate.
 
+// Van der Corput radical inverse in `base` — the building block of the Halton
+// low-discrepancy sequence. Deterministic in `i`, so multi-sample anti-aliasing
+// stays reproducible regardless of thread scheduling.
+inline float RadicalInverse(uint32_t i, uint32_t base) {
+  float inv = 1.0f / float(base), f = 1.0f, r = 0.0f;
+  while (i > 0u) {
+    f *= inv;
+    r += f * float(i % base);
+    i /= base;
+  }
+  return r;
+}
+
+// Sub-pixel sample offset in [0,1)^2 for anti-aliasing sample `s` of `spp`. A
+// single sample is pixel-centered (0.5,0.5) so -samples 1 is unchanged; multiple
+// samples follow the Halton(2,3) sequence for an even, grid-free distribution
+// that actually supersamples every requested sample.
+inline void PixelJitter(int s, int spp, float *jx, float *jy) {
+  if (spp <= 1) {
+    *jx = 0.5f;
+    *jy = 0.5f;
+  } else {
+    *jx = RadicalInverse(uint32_t(s) + 1u, 2u);
+    *jy = RadicalInverse(uint32_t(s) + 1u, 3u);
+  }
+}
+
 }  // namespace tusdr
