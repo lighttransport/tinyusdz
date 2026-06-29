@@ -240,7 +240,7 @@ void App::updateRtLodCamera() {
 
   RtLodCamera cam;
   cam.lodEnabled = true;
-  cam.proxyEnabled = false;  // P1: cull-only (distant-but-visible stays Full)
+  cam.proxyEnabled = true;  // distant prototypes render as shared box proxies
   cam.frustumCull = true;
   cam.fullPx = rtLodFullPx_;
   cam.cullPx = rtLodCullPx_;

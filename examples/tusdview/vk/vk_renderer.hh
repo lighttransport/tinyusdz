@@ -210,6 +210,7 @@ class VulkanRenderer final : public Renderer {
   bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
   void buildBlas(VkMeshGPU& m);
+  void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
   void createRtImage();                // storage image sized to the viewport
   void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
@@ -507,6 +508,10 @@ class VulkanRenderer final : public Renderer {
   // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.
   // Default (lodEnabled=false) reproduces the all-Full, no-cull TLAS exactly.
   RtLodCamera lodCam_;
+  // Shared 12-triangle unit-cube BLAS instanced (box-fit per prototype AABB) for
+  // every Proxy-LOD instance, so the long tail of distant prototypes needs no
+  // full BLAS. Built once (buildBoxBlas). boxMesh_ holds only vbo/ebo/blas.
+  VkMeshGPU boxMesh_;
 
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};
