@@ -25,6 +25,7 @@ thipDeviceGet hipDeviceGet;
 thipDeviceGetName hipDeviceGetName;
 thipMalloc hipMalloc;
 thipFree hipFree;
+thipMemGetInfo hipMemGetInfo;
 thipMemcpyHtoD hipMemcpyHtoD;
 thipMemcpyDtoH hipMemcpyDtoH;
 thipModuleLoadData hipModuleLoadData;
@@ -111,6 +112,7 @@ int hipewInit(unsigned int mask) {
     HIPEW_FIND(g_hip_lib, hipDeviceGetName, thipDeviceGetName, hipDeviceGetName);
     HIPEW_FIND(g_hip_lib, hipMalloc, thipMalloc, hipMalloc);
     HIPEW_FIND(g_hip_lib, hipFree, thipFree, hipFree);
+    HIPEW_FIND(g_hip_lib, hipMemGetInfo, thipMemGetInfo, hipMemGetInfo);
     HIPEW_FIND(g_hip_lib, hipMemcpyHtoD, thipMemcpyHtoD, hipMemcpyHtoD);
     HIPEW_FIND(g_hip_lib, hipMemcpyDtoH, thipMemcpyDtoH, hipMemcpyDtoH);
     HIPEW_FIND(g_hip_lib, hipModuleLoadData, thipModuleLoadData,

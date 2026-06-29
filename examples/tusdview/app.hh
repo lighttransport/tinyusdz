@@ -133,6 +133,11 @@ class App
   void setHipRt(bool on) { hipRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
+  // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
+  // the camera-nearest districts to districtLod=full under the memory budgets.
+  void setLodStream(bool on) { lodStream_ = on; }
+  void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
+  void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
   // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
@@ -276,6 +281,9 @@ class App
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
+  bool lodStream_{false}; // --lod-stream: view-dependent district LOD pre-pass
+  double lodMaxMemGiB_{0.0};   // --max-mem: host budget for --lod-stream (0=auto)
+  double lodMaxVramGiB_{0.0};  // --max-vram: GPU budget for --lod-stream (0=auto)
 
   // Ray tracing: requested via --rt; rtPath_ is the effective state after the
   // renderer reports capability (drives the RT-friendly conversion config).

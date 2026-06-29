@@ -68,7 +68,8 @@ set(TUSDVIEW_SOURCES
     gl/gl_util.cc
     gl/gl_renderer.cc
     cuda/cuda_raytracer.cc
-    hip/hip_raytracer.cc)
+    hip/hip_raytracer.cc
+    lod_stream.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/cuew/cuew.c
