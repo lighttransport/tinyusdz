@@ -426,7 +426,8 @@ bool ConvertPhysicsToJson(
 
       auto emitJoint = [&](const std::string &path, const std::string &type,
                            const PhysicsJointBase &base,
-                           const std::map<std::string, tinyusdz::Property> &props) {
+                           const std::map<std::string, tinyusdz::Property> &props,
+                           auto emitTypedFields) {
         if (!first) ss << ",\n";
         first = false;
         ss << Indent(2, sp) << "{\n";
@@ -436,6 +437,7 @@ bool ConvertPhysicsToJson(
         auto b1 = RelTargetStr(base.body1);
         if (!b0.empty()) EmitKV(ss, 3, sp, "body0", JsonStr(b0));
         if (!b1.empty()) EmitKV(ss, 3, sp, "body1", JsonStr(b1));
+        emitTypedFields();
         bool has_mjc = base.mjcJoint.has_value() && options.include_mjc;
         {
           if (base.jointEnabled.authored()) {
@@ -497,11 +499,47 @@ bool ConvertPhysicsToJson(
         ss << Indent(2, sp) << "}";
       };
 
-      for (const auto &[p, j] : data.revoluteJoints) emitJoint(p, "PhysicsRevoluteJoint", *j, j->props);
-      for (const auto &[p, j] : data.prismaticJoints) emitJoint(p, "PhysicsPrismaticJoint", *j, j->props);
-      for (const auto &[p, j] : data.sphericalJoints) emitJoint(p, "PhysicsSphericalJoint", *j, j->props);
-      for (const auto &[p, j] : data.fixedJoints) emitJoint(p, "PhysicsFixedJoint", *j, j->props);
-      for (const auto &[p, j] : data.distanceJoints) emitJoint(p, "PhysicsDistanceJoint", *j, j->props);
+      for (const auto &[p, j] : data.revoluteJoints) {
+        emitJoint(p, "PhysicsRevoluteJoint", *j, j->props, [&]() {
+          auto axis = j->axis.get_value();
+          if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
+          auto lo = j->lowerLimit.get_value();
+          if (lo.has_value()) EmitKV(ss, 3, sp, "lowerLimit", JsonNum(lo.value()));
+          auto hi = j->upperLimit.get_value();
+          if (hi.has_value()) EmitKV(ss, 3, sp, "upperLimit", JsonNum(hi.value()));
+        });
+      }
+      for (const auto &[p, j] : data.prismaticJoints) {
+        emitJoint(p, "PhysicsPrismaticJoint", *j, j->props, [&]() {
+          auto axis = j->axis.get_value();
+          if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
+          auto lo = j->lowerLimit.get_value();
+          if (lo.has_value()) EmitKV(ss, 3, sp, "lowerLimit", JsonNum(lo.value()));
+          auto hi = j->upperLimit.get_value();
+          if (hi.has_value()) EmitKV(ss, 3, sp, "upperLimit", JsonNum(hi.value()));
+        });
+      }
+      for (const auto &[p, j] : data.sphericalJoints) {
+        emitJoint(p, "PhysicsSphericalJoint", *j, j->props, [&]() {
+          auto axis = j->axis.get_value();
+          if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
+          auto c0 = j->coneAngle0Limit.get_value();
+          if (c0.has_value()) EmitKV(ss, 3, sp, "coneAngle0Limit", JsonNum(c0.value()));
+          auto c1 = j->coneAngle1Limit.get_value();
+          if (c1.has_value()) EmitKV(ss, 3, sp, "coneAngle1Limit", JsonNum(c1.value()));
+        });
+      }
+      for (const auto &[p, j] : data.fixedJoints) {
+        emitJoint(p, "PhysicsFixedJoint", *j, j->props, []() {});
+      }
+      for (const auto &[p, j] : data.distanceJoints) {
+        emitJoint(p, "PhysicsDistanceJoint", *j, j->props, [&]() {
+          auto lo = j->minDistance.get_value();
+          if (lo.has_value()) EmitKV(ss, 3, sp, "minDistance", JsonNum(lo.value()));
+          auto hi = j->maxDistance.get_value();
+          if (hi.has_value()) EmitKV(ss, 3, sp, "maxDistance", JsonNum(hi.value()));
+        });
+      }
 
       ss << "\n" << Indent(1, sp);
     }

@@ -1823,6 +1823,33 @@ bool AddFallbackAttr(json &props, const std::string &name,
   return true;
 }
 
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::point3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::vector3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::quatf> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = QuatJson(attr.get_value());
+  return true;
+}
+
 template <typename T>
 bool AddAnimatableFallbackAttr(
     json &props, const std::string &name,
@@ -1972,16 +1999,16 @@ void AddJointBaseJson(json &props, json &rels,
                       const tinyusdz::PhysicsJointBase &joint) {
   rels["physics:body0"] = RelationshipTargetsJson(joint.body0);
   rels["physics:body1"] = RelationshipTargetsJson(joint.body1);
-  AddTypedAttr(props, "physics:localPos0", joint.localPos0);
-  AddTypedAttr(props, "physics:localPos1", joint.localPos1);
-  AddTypedAttr(props, "physics:localRot0", joint.localRot0);
-  AddTypedAttr(props, "physics:localRot1", joint.localRot1);
-  AddTypedAttr(props, "physics:jointEnabled", joint.jointEnabled);
-  AddTypedAttr(props, "physics:collisionEnabled", joint.collisionEnabled);
-  AddTypedAttr(props, "physics:breakForce", joint.breakForce);
-  AddTypedAttr(props, "physics:breakTorque", joint.breakTorque);
-  AddTypedAttr(props, "physics:excludeFromArticulation",
-               joint.excludeFromArticulation);
+  AddFallbackAttr(props, "physics:localPos0", joint.localPos0);
+  AddFallbackAttr(props, "physics:localPos1", joint.localPos1);
+  AddFallbackAttr(props, "physics:localRot0", joint.localRot0);
+  AddFallbackAttr(props, "physics:localRot1", joint.localRot1);
+  AddFallbackAttr(props, "physics:jointEnabled", joint.jointEnabled);
+  AddFallbackAttr(props, "physics:collisionEnabled", joint.collisionEnabled);
+  AddFallbackAttr(props, "physics:breakForce", joint.breakForce);
+  AddFallbackAttr(props, "physics:breakTorque", joint.breakTorque);
+  AddFallbackAttr(props, "physics:excludeFromArticulation",
+                  joint.excludeFromArticulation);
   // mjc:* attributes are consumed by the reconstruct path into the typed
   // MjcJointAPI struct (see prim-reconstruct-physics.cc); they no longer
   // appear in joint.props, so re-emit them here from the struct.
@@ -2001,10 +2028,20 @@ void AddJointBaseJson(json &props, json &rels,
     AddFallbackAttr(props, "mjc:springref", joint.mjcJoint.value().springref);
     AddFallbackAttr(props, "mjc:ref", joint.mjcJoint.value().ref);
     AddFallbackAttr(props, "mjc:margin", joint.mjcJoint.value().margin);
+    AddTypedAttr(props, "mjc:solreflimit",
+                 joint.mjcJoint.value().solreflimit);
+    AddTypedAttr(props, "mjc:solimplimit",
+                 joint.mjcJoint.value().solimplimit);
+    AddTypedAttr(props, "mjc:solreffriction",
+                 joint.mjcJoint.value().solreffriction);
+    AddTypedAttr(props, "mjc:solimpfriction",
+                 joint.mjcJoint.value().solimpfriction);
     AddFallbackAttr(props, "mjc:actuatorfrcrange:min",
                     joint.mjcJoint.value().actuatorfrcrange_min);
     AddFallbackAttr(props, "mjc:actuatorfrcrange:max",
                     joint.mjcJoint.value().actuatorfrcrange_max);
+    AddFallbackAttr(props, "mjc:actuatorfrclimited",
+                    joint.mjcJoint.value().actuatorfrclimited);
     AddFallbackAttr(props, "mjc:actuatorgravcomp",
                     joint.mjcJoint.value().actuatorgravcomp);
   }
@@ -2024,10 +2061,11 @@ void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
   AddTypedAttr(props, "physics:gravityDirection", scene.gravityDirection);
   AddTypedAttr(props, "physics:gravityMagnitude", scene.gravityMagnitude);
   if (scene.mjcScene) {
-    AddFallbackAttr(props, "mjc:timestep", scene.mjcScene.value().timestep);
-    AddFallbackAttr(props, "mjc:iterations",
+    AddFallbackAttr(props, "mjc:option:timestep",
+                    scene.mjcScene.value().timestep);
+    AddFallbackAttr(props, "mjc:option:iterations",
                     scene.mjcScene.value().iterations);
-    AddFallbackAttr(props, "mjc:integrator",
+    AddFallbackAttr(props, "mjc:option:integrator",
                     scene.mjcScene.value().integrator);
   }
   if (scene.newtonScene) {
@@ -2226,6 +2264,11 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsFixedJoint>()) {
     AddJointBaseJson(props, rels, *joint);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsDistanceJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:minDistance", joint->minDistance);
+    AddTypedAttr(props, "physics:maxDistance", joint->maxDistance);
     AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsJoint>()) {
     AddJointBaseJson(props, rels, *joint);
@@ -6728,14 +6771,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
     std::string input;
-    try {
-      input.resize(size);
-    } catch (const std::bad_alloc &) {
-      emscripten::val result = emscripten::val::object();
-      result.set("success", false);
-      result.set("error", std::string("Input allocation failed"));
-      return result;
-    }
+    input.resize(size);
     if (size > 0) {
       // Pass length as a JS Number (double): under wasm64 size_t marshals to a
       // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
@@ -9465,15 +9501,7 @@ class RenderStream {
       return r;
     }
     std::string s;
-    try {
-      s.resize(size);
-    } catch (const std::bad_alloc &) {
-      emscripten::val r = emscripten::val::object();
-      error_ = "Input allocation failed";
-      r.set("success", false);
-      r.set("error", error_);
-      return r;
-    }
+    s.resize(size);
     if (size > 0) {
       emscripten::val view = emscripten::val::global("Uint8Array").new_(
           bytes["buffer"], bytes["byteOffset"],
