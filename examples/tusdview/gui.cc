@@ -2,7 +2,10 @@
 #include "gui.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <utility>
@@ -3071,8 +3074,17 @@ void Gui::renderViewportScene(FramePacket* packet) {
       p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
     }
   }
+  // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene
+  // spends its frame -- instance cull/upload (CPU + GPU upload) vs renderFrame
+  // (GPU draw submission). The GPU rasterisation itself lands largely in present()
+  // (timed in app.cc), since GL/VK only flush there.
+  static const bool timeFrame = std::getenv("TUSDVIEW_TIME_FRAME") != nullptr;
+  using Clock = std::chrono::steady_clock;
+  auto t0 = timeFrame ? Clock::now() : Clock::time_point{};
   buildViewVisibilityMask();
+  auto t1 = timeFrame ? Clock::now() : Clock::time_point{};
   cullInstances();  // per-instance frustum cull (updates renderer instance buffers)
+  auto t2 = timeFrame ? Clock::now() : Clock::time_point{};
   if (!viewVisible_.empty()) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
@@ -3085,6 +3097,17 @@ void Gui::renderViewportScene(FramePacket* packet) {
 
   if (!packet) {
     renderer_->renderFrame(p);  // single-threaded: render inline
+    if (timeFrame) {
+      auto t3 = Clock::now();
+      auto ms = [](auto a, auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+      };
+      std::fprintf(stderr,
+                   "[frame] viewmask=%.1fms cull+upload=%.1fms renderFrame=%.1fms "
+                   "(vis inst=%zu, inst tris=%zu)\n",
+                   ms(t0, t1), ms(t1, t2), ms(t2, t3), statVisibleInstances_,
+                   statInstTris_);
+    }
     return;
   }
   // Threaded: copy everything the render thread needs into the owned packet.
