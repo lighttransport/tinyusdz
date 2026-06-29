@@ -281,6 +281,10 @@ class App
   float robustBoundsMin_[3]{0, 0, 0};
   float robustBoundsMax_[3]{0, 0, 0};
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
+  // True when a headless --cuda/--hip run owns the screenshot: the rasterized
+  // upload + per-frame draw are then skipped (the RT path writes the image, the
+  // raster capture is never used) -- a big win on huge scenes (Moana Island).
+  bool rtOwnsScreenshot_{false};
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)

@@ -304,12 +304,16 @@ void App::applyLoaded(bool ok, bool progressive) {
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
     const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
-    postGpu([this, freeCpu] {
-      std::string uerr;
-      renderer_->uploadScene(draw_, &uerr);
-      if (freeCpu)
-        for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
-    });
+    // When the RT path owns the screenshot the rasterized scene is never drawn,
+    // so skip the (potentially huge) raster upload entirely.
+    if (!rtOwnsScreenshot_) {
+      postGpu([this, freeCpu] {
+        std::string uerr;
+        renderer_->uploadScene(draw_, &uerr);
+        if (freeCpu)
+          for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
+      });
+    }
     if (ok) {
       LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s", loaded_.filepath.c_str(),
            draw_.meshes.size(), draw_.triangleCount,
@@ -1053,6 +1057,10 @@ int App::run(const std::string& initialFile, int maxFrames,
   renderThreadActive_ = threaded_ && !headless_ &&
                         (backend_ == Backend::GL || backend_ == Backend::Vulkan);
 #endif
+  // A headless --cuda/--hip run writes its own screenshot from the RT trace and
+  // returns before the rasterized capture is used, so the raster scene upload +
+  // per-frame draw are pure waste (huge on heavily-instanced scenes). Skip them.
+  rtOwnsScreenshot_ = (cudaRt_ || hipRt_) && headless_ && !screenshot.empty();
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
@@ -1341,7 +1349,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     } else
 #endif
     {
-      gui_.renderViewportScene();
+      // Skip the raster scene draw (and its instance culling) when the RT path
+      // owns the screenshot -- only the cheap ImGui composite needs to run.
+      if (!rtOwnsScreenshot_) gui_.renderViewportScene();
 
       // Grab the composited window on the final frame (--window-shot).
       if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
