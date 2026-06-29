@@ -45,6 +45,12 @@ struct CrateWriteOptions {
   /// the (large) VALUE section is streamed block-by-block straight from the
   /// retained source buffer. Used by WriteLayerToSink(); see that method.
   bool streaming = false;
+
+  /// Worker count for parallel build/sort paths (1 = serial; <=0 = auto, capped).
+  /// Only effective in a TINYUSDZ_ENABLE_THREAD build. Output is a valid
+  /// round-trippable crate at any thread count and is byte-identical across thread
+  /// counts (the parallel build merges per-prim results in deterministic order).
+  int num_threads = 1;
 };
 
 /// Result of crate write operation

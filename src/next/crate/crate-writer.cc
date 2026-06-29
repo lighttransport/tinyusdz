@@ -19,6 +19,9 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 
 // LZ4 for compression
 #include "lz4/lz4.h"

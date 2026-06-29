@@ -250,6 +250,10 @@ int main(int argc, char **argv) {
   // a binary crate (benchmark vehicle for the next crate writer).
   if (flatten && out_path && IsUSDCPath(out_path)) {
     USDCWriteOptions copts;
+    copts.crate_options.num_threads = 0;  // auto; TINYUSDZ_NEXT_NUM_THREADS overrides
+    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+      copts.crate_options.num_threads = std::atoi(nt);
+    }
     const auto t_w0 = Clock::now();
     USDCWriteResult res = WriteUSDCToFile(out_path, stage, copts);
     const auto t_written = Clock::now();
