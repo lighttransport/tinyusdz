@@ -61,7 +61,7 @@ CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const 
   const Layer* root_layer = stage.GetRootLayer();
   if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
   CrateWriteResult result = impl_->Write(*root_layer);
-  if (result.success) buffer = impl_->buffer();
+  if (result.success) buffer = impl_->take_buffer();
   return result;
 }
 
@@ -79,7 +79,7 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
 
 CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer) {
   CrateWriteResult result = impl_->Write(layer);
-  if (result.success) buffer = impl_->buffer();
+  if (result.success) buffer = impl_->take_buffer();
   return result;
 }
 
