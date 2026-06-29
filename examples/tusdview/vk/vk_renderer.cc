@@ -3038,6 +3038,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
     NormalMatrix3(gm.world, gm.normalMat);
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    std::memcpy(gm.protoAabbMin, sm.protoAabbMin, sizeof(gm.protoAabbMin));
+    std::memcpy(gm.protoAabbMax, sm.protoAabbMax, sizeof(gm.protoAabbMax));
     gm.instanceXforms = sm.instanceXforms;
     gm.instanceColors = sm.instanceColors;
     // Per-vertex displayColor (packed vec3[]) as a device-address SSBO for the
