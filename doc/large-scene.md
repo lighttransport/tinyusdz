@@ -6,7 +6,10 @@ files. This document analyzes three publicly-available scenes — **Moana Island
 how TinyUSDZ loads them within a bounded RAM budget (target: **fit a parse into
 16 GB**, geometry deferred), plus the remaining implementation work.
 
-See also [instancing.md](instancing.md) for the Island instancing analysis.
+See also [instancing.md](instancing.md) for the Island instancing analysis, and
+[midscale-benchmark.md](midscale-benchmark.md) for middle-scale public scenes
+(Pixar Kitchen_set, Intel Moore Lane) that render interactively *without* the
+large-scene budgeting flags described here.
 
 ## Why it is hard
 
