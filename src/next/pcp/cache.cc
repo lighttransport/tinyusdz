@@ -1037,6 +1037,17 @@ struct Cache::Impl {
     std::vector<Src> spec;  // specialize-derived: globally weakest
     // Variant selections accumulated across the prim's sources (cross-source).
     std::map<std::string, std::string> sels;
+    // Apply variant overrides FIRST (stronger than any authored selection) so the
+    // caller can force a specific variant (e.g. --variant districtLod=full)
+    // without modifying the layer files. This must precede ExpandArcs: that pass
+    // selects and grafts the variant CONTENT (SelectVariants reads `sels`), and
+    // RecordSelections uses no-overwrite emplace (strong-first wins), so a
+    // pre-seeded override stays winning and the overridden variant's content is
+    // the one composed. (Applying it after the loop would only mutate the
+    // discarded `sels` and never change which variant was expanded.)
+    for (const auto &ov : options.variant_overrides) {
+      sels[ov.first] = ov.second;
+    }
     for (const Src &s : base) {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
@@ -1044,12 +1055,6 @@ struct Cache::Impl {
       std::vector<uint32_t> chain{s.stack_idx};
       const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
-    }
-    // Apply variant overrides (stronger than any authored selection) so the
-    // caller can force a specific variant (e.g. --variant districtLod=full)
-    // without modifying the layer files.
-    for (const auto &ov : options.variant_overrides) {
-      sels[ov.first] = ov.second;
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
