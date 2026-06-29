@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
+  int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -143,6 +144,9 @@ int main(int argc, char** argv) {
       wantCuda = true;
     } else if (std::strcmp(argv[i], "--hip") == 0) {
       wantHip = true;
+    } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
+      rtSamples = std::atoi(argv[++i]);
+      if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
@@ -224,6 +228,8 @@ int main(int argc, char** argv) {
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
+          "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
+          "(Halton sub-pixel jitter; default 1 = off).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
@@ -371,6 +377,7 @@ int main(int argc, char** argv) {
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
   app.setHipRt(wantHip);
+  app.setRtSamples(rtSamples);
   app.setCameraName(cameraName);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);

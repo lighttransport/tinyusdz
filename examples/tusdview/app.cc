@@ -1466,7 +1466,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
-                            sceneExtent, w, h, &rgba, &cerr)) {
+                            sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -1518,7 +1518,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (hipTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
-                           sceneExtent, w, h, &rgba, &cerr)) {
+                           sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
