@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
+  long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
   double lodMaxVram = 0.0;    // --max-vram GiB: GPU budget for --lod-stream (0=auto)
@@ -156,6 +157,9 @@ int main(int argc, char** argv) {
       lodMaxMem = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
       lodMaxVram = std::atof(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-instances") == 0 && i + 1 < argc) {
+      rtMaxInstances = std::atoll(argv[++i]);
+      if (rtMaxInstances < 0) rtMaxInstances = 0;
     } else if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
@@ -239,6 +243,9 @@ int main(int argc, char** argv) {
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
           "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
           "(Halton sub-pixel jitter; default 1 = off).\n"
+          "  --max-instances N  Cap the --cuda/--hip 2-level-BVH instance count "
+          "(default 16M; 0 = unlimited). Bounds the host BVH build for massively "
+          "instanced scenes (e.g. Moana Island).\n"
           "  --lod-stream  View-dependent district LOD (needs --next): promote "
           "the camera-nearest districts to full under memory budgets.\n"
           "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
@@ -391,6 +398,7 @@ int main(int argc, char** argv) {
   app.setCudaRt(wantCuda);
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
+  app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));
   app.setLodStream(lodStream);
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
