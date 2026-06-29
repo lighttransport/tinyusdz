@@ -41,6 +41,9 @@ int main(int argc, char** argv) {
   float rtLodFullPx = 0.0f;     // 0 => keep App default
   float rtLodCullPx = -1.0f;    // <0 => keep App default
   float rtLodBand = -1.0f;      // <0 => keep App default (stochastic band width)
+  bool rasterLod = false;       // --raster-lod: view-dependent raster instance LOD
+  float rasterLodFullPx = 0.0f; // 0 => keep App default
+  float rasterLodCullPx = -1.0f;// <0 => keep App default
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -112,6 +115,12 @@ int main(int argc, char** argv) {
       rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
       rtLodBand = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--raster-lod") == 0) {
+      rasterLod = true;
+    } else if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
+      rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
+      rasterLodCullPx = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -389,6 +398,7 @@ int main(int argc, char** argv) {
       static_cast<std::size_t>(maxDrawMeshes < 0 ? 0 : maxDrawMeshes));
   app.setRobustFrame(robustFrame);
   app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx, rtLodBand);
+  app.setRasterLod(rasterLod, rasterLodFullPx, rasterLodCullPx);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();

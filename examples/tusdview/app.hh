@@ -78,6 +78,15 @@ class App
     if (bandFrac >= 0.f) rtLodBandFrac_ = bandFrac;
   }
 
+  // Raster view-dependent LOD (optimization B): drop sub-pixel instances + render
+  // distant ones as box proxies, on the raster instanced path. Applied to gui_ each
+  // frame. fullPx/cullPx are projected-radius thresholds in pixels.
+  void setRasterLod(bool enabled, float fullPx, float cullPx) {
+    rasterLodEnabled_ = enabled;
+    if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+
   // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
   void setUiScale(float s) {
     if (s > 0.25f) {
@@ -299,6 +308,9 @@ class App
   float rtLodFullPx_{64.0f};
   float rtLodCullPx_{2.0f};
   float rtLodBandFrac_{0.25f};  // stochastic crossfade half-width (fraction of fullPx)
+  bool rasterLodEnabled_{false};       // --raster-lod (optimization B)
+  float rasterLodFullPx_{48.0f};
+  float rasterLodCullPx_{1.5f};
   bool lodHaveLast_{false};
   bool lodArmedOnce_{false};
   bool lodPendingReselect_{false};

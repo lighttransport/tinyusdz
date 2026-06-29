@@ -1319,6 +1319,11 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (!headless_) ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    // Raster view-dependent LOD (--raster-lod): drop sub-pixel instances + box
+    // proxies on the raster instanced path. Applied before gui_.frame() (which runs
+    // the instance cull). Idempotent; cheap.
+    gui_.setRasterLod(rasterLodEnabled_, rasterLodFullPx_, rasterLodCullPx_);
+
     gui_.frame(renderer_.get(), &camera_);
 
     // View-dependent RT LOD: re-classify the instance set when the camera settles.
