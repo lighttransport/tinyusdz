@@ -94,6 +94,15 @@ private:
   size_t arrays_passed_through_ = 0;
   size_t arrays_reencoded_ = 0;
 
+  // Parallel build: when these point at the main builder's COMPLETED token/string
+  // tables, InternToken/InternString do a read-only lookup (workers never mutate
+  // the shared tables, so blocks/fields they emit already carry GLOBAL indices).
+  // A miss means the serial pre-pass was incomplete; the worker sets `frozen_miss_`
+  // and the driver discards the parallel result and writes serially (safe).
+  const std::unordered_map<std::string, uint32_t>* frozen_tok_ = nullptr;
+  const std::unordered_map<std::string, uint32_t>* frozen_str_ = nullptr;
+  bool frozen_miss_ = false;
+
   // Cross-spec block dedup: content hash -> block indices with that hash.
   // Flattened composition duplicates referenced array payloads per instance;
   // content-addressing the VALUE blocks writes each distinct payload once.

@@ -4,176 +4,14 @@
 // TinyUSDZ Next - CrateWriter::Impl fieldset/spec construction.
 // Included inside CrateWriter::Impl private section.
 
-  void BuildFieldsAndSpecs(const Layer& layer) {
-    // 1. PseudoRoot spec (index 0)
-    {
-      std::vector<uint32_t> fieldset;
-
-      // defaultPrim
-      if (!layer.meta().defaultPrim.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("defaultPrim");
-        f.value_rep = ValueRep::Make(CrateTypeId::Token,
-                                     InternToken(layer.meta().defaultPrim),
-                                     false, true);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // upAxis
-      {
-        CrateField f;
-        f.token_index.value = InternToken("upAxis");
-        f.value_rep = ValueRep::Make(CrateTypeId::Token,
-                                     InternToken(layer.meta().upAxis),
-                                     false, true);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // metersPerUnit
-      {
-        CrateField f;
-        f.token_index.value = InternToken("metersPerUnit");
-        double v = layer.meta().metersPerUnit;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // timeCodesPerSecond
-      {
-        CrateField f;
-        f.token_index.value = InternToken("timeCodesPerSecond");
-        double v = layer.meta().timeCodesPerSecond;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // startTimeCode
-      {
-        CrateField f;
-        f.token_index.value = InternToken("startTimeCode");
-        double v = layer.meta().startTimeCode;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        // Store as Double (pxrUSD/legacy reader reject an uninlined TimeCode).
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // endTimeCode
-      {
-        CrateField f;
-        f.token_index.value = InternToken("endTimeCode");
-        double v = layer.meta().endTimeCode;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        // Store as Double (pxrUSD/legacy reader reject an uninlined TimeCode).
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // framesPerSecond / kilogramsPerUnit (only when authored).
-      if (layer.meta().framesPerSecond_set) {
-        CrateField f;
-        f.token_index.value = InternToken("framesPerSecond");
-        double v = layer.meta().framesPerSecond;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-      if (layer.meta().kilogramsPerUnit_set) {
-        CrateField f;
-        f.token_index.value = InternToken("kilogramsPerUnit");
-        double v = layer.meta().kilogramsPerUnit;
-        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
-        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // Dictionary-valued stage metadata (pxr binary VtDictionary).
-      auto add_layer_dict = [&](const char* name, const Value& v) {
-        if (!v.is_dictionary() || !v.as_dictionary() ||
-            v.as_dictionary()->empty()) {
-          return;
-        }
-        CrateField f;
-        f.token_index.value = InternToken(name);
-        f.value_rep = EncodeValue(v);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      };
-      add_layer_dict("customLayerData", layer.meta().customLayerData);
-      add_layer_dict("expressionVariables", layer.meta().expressionVariables);
-
-      // doc
-      if (!layer.meta().doc.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("doc");
-        uint32_t str_idx = InternString(layer.meta().doc);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // comment
-      if (!layer.meta().comment.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("comment");
-        uint32_t str_idx = InternString(layer.meta().comment);
-        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      // subLayers (token[] — all entries round-trip; the reader reads them back)
-      if (!layer.meta().subLayers.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("subLayers");
-        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      }
-
-      uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
-      fieldsets_.push_back(std::move(fieldset));
-
-      CrateSpec spec;
-      spec.path_index.value = InternPath("/");
-      spec.fieldset_index.value = fs_idx;
-      spec.spec_type = SpecType::PseudoRoot;
-      specs_.push_back(spec);
-    }
-
-    // Pre-scan variant holder prims ("/owning/{vset=var}") to recover, per
-    // owning prim, each variant set's variant names — needed to emit
-    // variantSetChildren (on the owning prim) and variantChildren (on each
-    // VariantSet spec) so pxrUSD can enumerate the variants of an unflattened
-    // layer (tinyusdz reconstructs them from the paths, but pxr needs these).
-    std::unordered_map<std::string,
-        std::map<std::string, std::vector<std::string>>> variant_names;
-    for (const auto& p : layer.prims()) {
-      const std::string& nm = p.name();
-      if (nm.size() < 3 || nm.front() != '{' || nm.back() != '}') continue;
-      size_t eq = nm.find('=');
-      if (eq == std::string::npos) continue;
-      std::string var = nm.substr(eq + 1, nm.size() - eq - 2);  // between = and }
-      if (var.empty()) continue;  // "{vset=}" is the VariantSet decl, not a variant
-      const std::string& path = p.path().str();
-      size_t lb = path.find("/{");
-      if (lb == std::string::npos) continue;
-      variant_names[path.substr(0, lb)][nm.substr(1, eq - 1)].push_back(var);
-    }
-
-    // 2. Prim specs
-    std::unordered_map<std::string, uint32_t> path_to_fs_idx;
-    for (size_t i = 0; i < layer.prims().size(); ++i) {
+  // One prim spec + its property specs. Operates on `this` Impl's tables, so a
+  // worker Impl can build a disjoint prim range in parallel. `variant_names` is
+  // a read-only prescan shared across workers; `path_to_fs_idx` is per-builder.
+  void BuildOnePrim(
+      const Layer& layer, size_t i,
+      const std::unordered_map<std::string,
+          std::map<std::string, std::vector<std::string>>>& variant_names,
+      std::unordered_map<std::string, uint32_t>& path_to_fs_idx) {
       const PrimSpec& prim = layer.prims()[i];
       // Variant-namespace prims ("/Prim/{vset=sel}/..."): emit them ONLY for an
       // unflattened layer (round-trip), detected by their owning prim still
@@ -184,7 +22,7 @@
         size_t lb = pp.find("/{");
         if (lb != std::string::npos) {
           const PrimSpec* owner = layer.prim_at_path(pp.substr(0, lb));
-          if (!owner || owner->meta().variantSets().empty()) continue;
+          if (!owner || owner->meta().variantSets().empty()) return;
         }
       }
       std::vector<uint32_t> fieldset;
@@ -476,6 +314,180 @@
         }
       }
       specs_.push_back(spec);
+  }
+
+  void BuildFieldsAndSpecs(const Layer& layer) {
+    // 1. PseudoRoot spec (index 0)
+    {
+      std::vector<uint32_t> fieldset;
+
+      // defaultPrim
+      if (!layer.meta().defaultPrim.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("defaultPrim");
+        f.value_rep = ValueRep::Make(CrateTypeId::Token,
+                                     InternToken(layer.meta().defaultPrim),
+                                     false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // upAxis
+      {
+        CrateField f;
+        f.token_index.value = InternToken("upAxis");
+        f.value_rep = ValueRep::Make(CrateTypeId::Token,
+                                     InternToken(layer.meta().upAxis),
+                                     false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // metersPerUnit
+      {
+        CrateField f;
+        f.token_index.value = InternToken("metersPerUnit");
+        double v = layer.meta().metersPerUnit;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // timeCodesPerSecond
+      {
+        CrateField f;
+        f.token_index.value = InternToken("timeCodesPerSecond");
+        double v = layer.meta().timeCodesPerSecond;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // startTimeCode
+      {
+        CrateField f;
+        f.token_index.value = InternToken("startTimeCode");
+        double v = layer.meta().startTimeCode;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        // Store as Double (pxrUSD/legacy reader reject an uninlined TimeCode).
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // endTimeCode
+      {
+        CrateField f;
+        f.token_index.value = InternToken("endTimeCode");
+        double v = layer.meta().endTimeCode;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        // Store as Double (pxrUSD/legacy reader reject an uninlined TimeCode).
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // framesPerSecond / kilogramsPerUnit (only when authored).
+      if (layer.meta().framesPerSecond_set) {
+        CrateField f;
+        f.token_index.value = InternToken("framesPerSecond");
+        double v = layer.meta().framesPerSecond;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (layer.meta().kilogramsPerUnit_set) {
+        CrateField f;
+        f.token_index.value = InternToken("kilogramsPerUnit");
+        double v = layer.meta().kilogramsPerUnit;
+        uint64_t data_idx = StoreValueData(&v, sizeof(v), TypeId::Double);
+        f.value_rep = ValueRep::Make(CrateTypeId::Double, data_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Dictionary-valued stage metadata (pxr binary VtDictionary).
+      auto add_layer_dict = [&](const char* name, const Value& v) {
+        if (!v.is_dictionary() || !v.as_dictionary() ||
+            v.as_dictionary()->empty()) {
+          return;
+        }
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = EncodeValue(v);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_layer_dict("customLayerData", layer.meta().customLayerData);
+      add_layer_dict("expressionVariables", layer.meta().expressionVariables);
+
+      // doc
+      if (!layer.meta().doc.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("doc");
+        uint32_t str_idx = InternString(layer.meta().doc);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // comment
+      if (!layer.meta().comment.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("comment");
+        uint32_t str_idx = InternString(layer.meta().comment);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // subLayers (token[] — all entries round-trip; the reader reads them back)
+      if (!layer.meta().subLayers.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("subLayers");
+        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
+      fieldsets_.push_back(std::move(fieldset));
+
+      CrateSpec spec;
+      spec.path_index.value = InternPath("/");
+      spec.fieldset_index.value = fs_idx;
+      spec.spec_type = SpecType::PseudoRoot;
+      specs_.push_back(spec);
+    }
+
+    // Pre-scan variant holder prims ("/owning/{vset=var}") to recover, per
+    // owning prim, each variant set's variant names — needed to emit
+    // variantSetChildren (on the owning prim) and variantChildren (on each
+    // VariantSet spec) so pxrUSD can enumerate the variants of an unflattened
+    // layer (tinyusdz reconstructs them from the paths, but pxr needs these).
+    std::unordered_map<std::string,
+        std::map<std::string, std::vector<std::string>>> variant_names;
+    for (const auto& p : layer.prims()) {
+      const std::string& nm = p.name();
+      if (nm.size() < 3 || nm.front() != '{' || nm.back() != '}') continue;
+      size_t eq = nm.find('=');
+      if (eq == std::string::npos) continue;
+      std::string var = nm.substr(eq + 1, nm.size() - eq - 2);  // between = and }
+      if (var.empty()) continue;  // "{vset=}" is the VariantSet decl, not a variant
+      const std::string& path = p.path().str();
+      size_t lb = path.find("/{");
+      if (lb == std::string::npos) continue;
+      variant_names[path.substr(0, lb)][nm.substr(1, eq - 1)].push_back(var);
+    }
+
+    // 2. Prim specs
+    std::unordered_map<std::string, uint32_t> path_to_fs_idx;
+    for (size_t i = 0; i < layer.prims().size(); ++i) {
+      BuildOnePrim(layer, i, variant_names, path_to_fs_idx);
+      if (!result_.error.empty()) return;
     }
 
     // Add primChildren to pseudo-root (fieldset 0) from root prims

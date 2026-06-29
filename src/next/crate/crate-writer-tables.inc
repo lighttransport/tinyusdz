@@ -9,6 +9,12 @@
   // ============================================================
 
   uint32_t InternToken(const std::string& s) {
+    if (frozen_tok_) {  // parallel worker: read-only lookup in the shared table
+      auto it = frozen_tok_->find(s);
+      if (it != frozen_tok_->end()) return it->second;
+      frozen_miss_ = true;  // pre-pass incomplete -> driver falls back to serial
+      return 0;
+    }
     auto it = token_to_index_.find(s);
     if (it != token_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(tokens_.size());
@@ -18,6 +24,12 @@
   }
 
   uint32_t InternString(const std::string& s) {
+    if (frozen_str_) {  // parallel worker: read-only lookup
+      auto it = frozen_str_->find(s);
+      if (it != frozen_str_->end()) return it->second;
+      frozen_miss_ = true;
+      return 0;
+    }
     auto it = string_to_index_.find(s);
     if (it != string_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(string_indices_.size());
