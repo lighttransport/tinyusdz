@@ -115,6 +115,9 @@ needed). Like `--cuda`, the HIP path owns the screenshot and supports all
 # headless, no window/X server needed:
 ./build/tusdview --headless --hip --frames 4 --screenshot out.ppm model.usda
 ./build/tusdview --headless --hip --mode normals --frames 4 --screenshot n.ppm model.usda
+# anti-aliased screenshot: N Halton sub-pixel samples averaged on the host
+# (works for --cuda too; default 1 = off):
+./build/tusdview --headless --hip --rt-samples 4 --frames 4 --screenshot aa.ppm model.usda
 ```
 
 The **`tusdview-hip-render`** ctest exercises this end-to-end; it SKIPs
