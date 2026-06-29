@@ -243,3 +243,7 @@
   }
 
   const std::vector<uint8_t>& buffer() const { return buffer_; }
+  // Move the finished output buffer out (avoids copying the whole crate -- the
+  // VALUE section alone is multi-GB on large scenes). The Impl is not reused after
+  // a Write() without a fresh clear(), so moving here is safe.
+  std::vector<uint8_t> take_buffer() { return std::move(buffer_); }
