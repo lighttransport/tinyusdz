@@ -1249,6 +1249,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
 
+  int cullState = -1;  // -1 unknown; dedup glEnable/glDisable(GL_CULL_FACE)
   for (size_t mi = 0; mi < meshes_.size(); ++mi) {
     if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
         !params.meshVisible[mi]) {
@@ -1308,11 +1309,11 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glActiveTexture(GL_TEXTURE0);
     }
 
-    if (mesh.doubleSided || wireframe) {
-      glDisable(GL_CULL_FACE);
-    } else {
-      glEnable(GL_CULL_FACE);
-      glCullFace(GL_BACK);
+    const int wantCull = (mesh.doubleSided || wireframe) ? 0 : 1;
+    if (wantCull != cullState) {
+      if (wantCull) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+      else glDisable(GL_CULL_FACE);
+      cullState = wantCull;
     }
 
     glBindVertexArray(mesh.vao);
@@ -1469,6 +1470,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1f(iDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(iSceneMin_, 1, params.sceneMin);
     glUniform3fv(iSceneExtent_, 1, params.sceneExtent);
+    cullState = -1;  // reset across the program switch; dedup within this pass
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
           !params.meshVisible[mi]) {
@@ -1481,11 +1483,14 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
       glUniform1i(iKind_, mesh.kindId);
-      if (mesh.doubleSided || wireframe) {
-        glDisable(GL_CULL_FACE);
-      } else {
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+      // Only touch cull state on a transition: across tens of thousands of
+      // prototypes the back-face cull flag almost never changes, so the per-draw
+      // glEnable/glDisable/glCullFace was pure redundant driver traffic.
+      const int wantCull = (mesh.doubleSided || wireframe) ? 0 : 1;
+      if (wantCull != cullState) {
+        if (wantCull) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+        else glDisable(GL_CULL_FACE);
+        cullState = wantCull;
       }
       glBindVertexArray(mesh.vao);
       // Constant per-draw color when there is no per-instance color array (the

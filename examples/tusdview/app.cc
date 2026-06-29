@@ -9,6 +9,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
@@ -1413,7 +1414,15 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
 
       ImGui::Render();
+      static const bool timeFrame = std::getenv("TUSDVIEW_TIME_FRAME") != nullptr;
+      const auto tp0 = std::chrono::steady_clock::now();
       renderer_->present();
+      if (timeFrame) {
+        const double pms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - tp0)
+                               .count();
+        std::fprintf(stderr, "[frame] present(GPU+readback)=%.1fms\n", pms);
+      }
     }
 
     // Deferred actions (after the frame, outside the ImGui frame state).
