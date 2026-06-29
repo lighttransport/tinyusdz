@@ -71,10 +71,11 @@ class App
   // when the camera settles; drop sub-pixel/off-screen instances from the TLAS
   // (and, from P2, render distant ones as box proxies). fullPx/cullPx are the
   // projected-radius thresholds in pixels.
-  void setRtLod(bool enabled, float fullPx, float cullPx) {
+  void setRtLod(bool enabled, float fullPx, float cullPx, float bandFrac = -1.f) {
     rtLodEnabled_ = enabled;
     if (fullPx > 0.f) rtLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rtLodCullPx_ = cullPx;
+    if (bandFrac >= 0.f) rtLodBandFrac_ = bandFrac;
   }
 
   // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
@@ -297,6 +298,7 @@ class App
   bool rtLodEnabled_{false};
   float rtLodFullPx_{64.0f};
   float rtLodCullPx_{2.0f};
+  float rtLodBandFrac_{0.25f};  // stochastic crossfade half-width (fraction of fullPx)
   bool lodHaveLast_{false};
   bool lodArmedOnce_{false};
   bool lodPendingReselect_{false};
