@@ -137,27 +137,38 @@
     // a not-yet-composed referenced file), so synthesize the missing ancestor
     // chain (tree-only nodes; no spec refers to them).
     {
-      std::unordered_set<std::string> have(paths_.begin(), paths_.end());
+      // Membership set keyed on string_view into the existing (stable) paths_ and
+      // into `synth` (a deque, so its strings keep stable addresses). This avoids
+      // copying all paths into the set — the dominant allocation on big scenes.
+      // Synthesized ancestors are appended to paths_ only after the scan.
+      std::unordered_set<std::string_view> have;
+      have.reserve(paths_.size() * 2);
+      for (const auto& p : paths_) have.insert(std::string_view(p));
+      std::deque<std::string> synth;
       const size_t orig = paths_.size();
+      auto add = [&](std::string_view v) -> bool {
+        if (have.find(v) != have.end()) return false;
+        synth.emplace_back(v);
+        have.insert(std::string_view(synth.back()));
+        return true;
+      };
+      constexpr size_t npos = std::string_view::npos;
       for (size_t i = 0; i < orig; i++) {
-        std::string p = paths_[i];
-        size_t dot = p.rfind('.');
-        size_t slash = p.rfind('/');
-        if (dot != std::string::npos &&
-            (slash == std::string::npos || dot > slash)) {
-          p = p.substr(0, dot);  // property path: start from its prim part
-          if (!p.empty() && p != "/" && have.insert(p).second) {
-            paths_.push_back(p);
-          }
+        std::string_view cur(paths_[i]);
+        const size_t dot = cur.rfind('.');
+        const size_t slash = cur.rfind('/');
+        if (dot != npos && (slash == npos || dot > slash)) {
+          cur = cur.substr(0, dot);  // property path: start from its prim part
+          if (!cur.empty() && cur != "/") add(cur);
         }
-        while (p.size() > 1) {
-          size_t sl = p.rfind('/');
-          if (sl == std::string::npos || sl == 0) break;
-          p = p.substr(0, sl);
-          if (!have.insert(p).second) break;  // rest of the chain exists
-          paths_.push_back(p);
+        while (cur.size() > 1) {
+          const size_t sl = cur.rfind('/');
+          if (sl == npos || sl == 0) break;
+          cur = cur.substr(0, sl);
+          if (!add(cur)) break;  // rest of the chain already exists
         }
       }
+      for (auto& s : synth) paths_.push_back(std::move(s));
     }
 
     // Sort path INDICES (not string copies): swaps move 4-byte ints instead of
