@@ -2360,11 +2360,39 @@ void Gui::joinCullWorker() {
   cullDone_.store(false);
 }
 
+namespace {
+// Below this instance count the flat per-instance cull is already cheap, so the
+// grid (build cost + memory) is not worth it. Matches the RT path's threshold.
+constexpr std::uint32_t kInstGridMinInstances = 4096;
+}  // namespace
+
+// (Re)build instGrids_ -- one coarse spatial grid per instanced prototype -- when
+// the scene changes. Read-only afterwards, so the cull worker can share them.
+void Gui::ensureInstanceGrids() {
+  if (instGridsFor_ == draw_) return;
+  instGrids_.clear();
+  instGridsFor_ = draw_;
+  if (!draw_) return;
+  instGrids_.resize(draw_->meshes.size());
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.instanceCount() < kInstGridMinInstances) continue;
+    RtLodProto p;
+    p.instanceXforms = m.instanceXforms.data();
+    p.instanceCount = static_cast<std::uint32_t>(m.instanceCount());
+    p.protoAabbMin = m.protoAabbMin;
+    p.protoAabbMax = m.protoAabbMax;
+    p.meshId = static_cast<std::uint32_t>(mi);
+    BuildRtLodGrid(p, kInstGridMinInstances, &instGrids_[mi]);
+  }
+}
+
 // Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
 // color) to `out`. cullEnabled=false restores the full set. Static + snapshot-only,
 // so it is safe to run on the worker thread.
 void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
-                               bool cullEnabled, CullJobMesh* out) {
+                               bool cullEnabled, const RtLodGrid* grid,
+                               CullJobMesh* out) {
   const size_t ninst = m.instanceCount();
   out->hasColors = m.instanceColors.size() == ninst * 3;
   out->xforms.clear();
@@ -2377,29 +2405,60 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   }
   const float* lo = m.protoAabbMin;
   const float* hi = m.protoAabbMax;
-  for (size_t k = 0; k < ninst; ++k) {
+  const bool hc = out->hasColors;
+  // Append instance k's o2w (+ color) to out, frustum-testing its world AABB unless
+  // `assumeInside` (its whole cell already tested Inside).
+  auto emit = [&](std::uint32_t k, bool assumeInside) {
     const float* o2w = &m.instanceXforms[k * 12];
-    // Transform the 8 prototype-local AABB corners to world; take min/max.
-    float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
-    for (int c = 0; c < 8; ++c) {
-      const float px = (c & 1) ? hi[0] : lo[0];
-      const float py = (c & 2) ? hi[1] : lo[1];
-      const float pz = (c & 4) ? hi[2] : lo[2];
-      for (int r = 0; r < 3; ++r) {
-        const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
-                        o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
-        wmn[r] = std::min(wmn[r], w);
-        wmx[r] = std::max(wmx[r], w);
+    if (!assumeInside) {
+      float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+      for (int c = 0; c < 8; ++c) {
+        const float px = (c & 1) ? hi[0] : lo[0];
+        const float py = (c & 2) ? hi[1] : lo[1];
+        const float pz = (c & 4) ? hi[2] : lo[2];
+        for (int r = 0; r < 3; ++r) {
+          const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                          o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+          wmn[r] = std::min(wmn[r], w);
+          wmx[r] = std::max(wmx[r], w);
+        }
       }
-    }
-    if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
-        light3d::CullResult::Outside) {
-      continue;
+      if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+          light3d::CullResult::Outside)
+        return;
     }
     out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
-    if (out->hasColors)
+    if (hc)
       out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
                          &m.instanceColors[k * 3] + 3);
+  };
+
+  if (grid && grid->valid) {
+    // Cell-rejection path: skip whole off-screen cells, accept whole inside cells
+    // without per-instance tests, and only per-instance test boundary cells. The
+    // emitted set is identical to the flat loop (order differs, irrelevant for
+    // instancing). Reserve from the non-rejected cells to avoid regrowth.
+    std::uint32_t upper = 0;
+    for (const RtLodGridCell& cell : grid->cells) {
+      if (fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
+          light3d::CullResult::Outside)
+        continue;
+      upper += cell.count;
+    }
+    out->xforms.reserve(static_cast<size_t>(upper) * 12);
+    if (hc) out->colors.reserve(static_cast<size_t>(upper) * 3);
+    for (const RtLodGridCell& cell : grid->cells) {
+      const light3d::CullResult cr =
+          fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]});
+      if (cr == light3d::CullResult::Outside) continue;
+      const bool inside = (cr == light3d::CullResult::Inside);
+      for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
+        emit(grid->order[i], inside);
+    }
+  } else {
+    for (std::uint32_t k = 0; k < ninst; ++k) emit(k, /*assumeInside=*/false);
   }
   out->count = static_cast<uint32_t>(out->xforms.size() / 12);
 }
@@ -2408,6 +2467,10 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
 // main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
 void Gui::cullWorkerMain() {
   const DrawScene* d = cullJobDraw_;
+  // Build the instance grids here (off the main thread) so the one-time build cost
+  // on a huge scene -- O(instances) over the mega-prototypes -- never freezes the
+  // UI; the first worker run is slower, later runs reap the cell-rejection speedup.
+  ensureInstanceGrids();
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
   cullJobResult_.clear();
   size_t visInstances = 0, instTris = 0;
@@ -2421,7 +2484,9 @@ void Gui::cullWorkerMain() {
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
     CullJobMesh r;
     r.meshIndex = mi;
-    compactMeshInstances(m, fr, cullJobEnabled_, &r);
+    const RtLodGrid* grid =
+        (cullJobGrids_ && mi < cullJobGrids_->size()) ? &(*cullJobGrids_)[mi] : nullptr;
+    compactMeshInstances(m, fr, cullJobEnabled_, grid, &r);
     visInstances += r.count;
     instTris += protoTris * r.count;
     cullJobResult_.push_back(std::move(r));
@@ -2445,6 +2510,7 @@ void Gui::cullInstancesSync() {
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
   lastCullDraw_ = draw_;
+  ensureInstanceGrids();
 
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
   size_t visInstances = 0, instTris = 0;
@@ -2456,7 +2522,8 @@ void Gui::cullInstancesSync() {
     if (!meshVisible) continue;
     size_t protoTris = 0;
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
-    compactMeshInstances(m, fr, cullEnabled_, &r);
+    const RtLodGrid* grid = mi < instGrids_.size() ? &instGrids_[mi] : nullptr;
+    compactMeshInstances(m, fr, cullEnabled_, grid, &r);
     // Route the GPU upload to the render thread when threaded (else inline).
     uint32_t cnt = r.count;
     bool hc = r.hasColors;
@@ -2517,10 +2584,14 @@ void Gui::cullInstances() {
   lastCullDraw_ = draw_;
   // Snapshot worker inputs: instanceXforms/protoAabb are static after load,
   // viewVisible_ is copied, so the worker races nothing the main thread mutates.
+  // instGrids_ is built by the worker (cullWorkerMain) on its first run and is
+  // read-only thereafter, so sharing it by pointer is race-free; building there
+  // keeps the one-time O(instances) cost off the main thread.
   cullJobVP_ = vp;
   cullJobViewVisible_ = viewVisible_;
   cullJobEnabled_ = cullEnabled_;
   cullJobDraw_ = draw_;
+  cullJobGrids_ = &instGrids_;
   cullRunning_.store(true);
   cullDone_.store(false);
   cullThread_ = std::thread(&Gui::cullWorkerMain, this);

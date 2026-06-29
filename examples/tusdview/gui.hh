@@ -332,9 +332,20 @@ class Gui {
     bool hasColors{false};
   };
   // Frustum-test + compact one instanced mesh's visible instances into `out`
-  // (shared by the sync + worker paths). cullEnabled=false -> the full set.
+  // (shared by the sync + worker paths). cullEnabled=false -> the full set. When
+  // `grid` is non-null (a coarse per-prototype instance grid), whole off-screen
+  // cells are rejected and fully-inside cells accepted without per-instance tests
+  // -- so cull cost scales with the visible cell set, not the total instance count.
   static void compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
-                                   bool cullEnabled, CullJobMesh* out);
+                                   bool cullEnabled, const RtLodGrid* grid,
+                                   CullJobMesh* out);
+  // Coarse instance grids (one per mesh; empty/invalid for non-instanced or small
+  // prototypes), built once per scene for compactMeshInstances cell rejection.
+  // Read-only after build, so the cull worker shares them via cullJobGrids_.
+  std::vector<RtLodGrid> instGrids_;
+  const DrawScene* instGridsFor_{nullptr};
+  void ensureInstanceGrids();  // (re)build instGrids_ when draw_ changes
+  const std::vector<RtLodGrid>* cullJobGrids_{nullptr};
   std::thread cullThread_;
   std::atomic<bool> cullRunning_{false};
   std::atomic<bool> cullDone_{false};
