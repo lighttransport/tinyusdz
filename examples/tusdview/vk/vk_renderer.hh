@@ -161,6 +161,11 @@ class VulkanRenderer final : public Renderer {
     // drawn (== instanceCount unless per-instance culling shrank it this frame).
     VkBuffer instVbo{VK_NULL_HANDLE};
     VkDeviceMemory instVboMem{VK_NULL_HANDLE};
+    // Persistent host mapping when instVbo/instColorBuf are pool-suballocated (their
+    // *Mem is VK_NULL_HANDLE then): per-instance culling writes the compacted subset
+    // through these instead of vkMapMemory. Null for the legacy per-buffer path.
+    void* instVboMapped{nullptr};
+    void* instColorMapped{nullptr};
     VkBuffer instColorBuf{VK_NULL_HANDLE};
     VkDeviceMemory instColorMem{VK_NULL_HANDLE};
     VkBuffer instVtxColorBuf{VK_NULL_HANDLE};
@@ -233,8 +238,34 @@ class VulkanRenderer final : public Renderer {
   void destroyScene();
 
   uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
+  // Create a host-visible buffer initialised with `data`. When `poolable` is true the
+  // backing memory is sub-allocated from a few large shared blocks (set *mem =
+  // VK_NULL_HANDLE) instead of its own vkAllocateMemory -- the big-assembled-scene win
+  // (the per-buffer alloc count, and thus the driver's O(n^2) allocation cost,
+  // collapses). Only pass poolable for write-once static buffers, or buffers re-written
+  // through `mappedOut` (a persistent host pointer to the sub-allocation); never for
+  // buffers whose *mem is later vkMapMemory'd/updated. Pool blocks are freed in
+  // destroyScene() after every per-buffer vkDestroyBuffer.
   bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
-                        VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false);
+                        VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false,
+                        bool poolable = false, void** mappedOut = nullptr);
+  // One large persistently-mapped host-visible block the above sub-allocates from.
+  struct HostMemBlock {
+    VkDeviceMemory mem{VK_NULL_HANDLE};
+    VkDeviceSize size{0};
+    VkDeviceSize used{0};
+    void* mapped{nullptr};
+    uint32_t memoryTypeIndex{0};
+    bool deviceAddress{false};
+  };
+  std::vector<HostMemBlock> hostBlocks_;
+  // Sub-allocate `size` (honouring `align`) from a block matching memoryTypeIndex +
+  // deviceAddress; grows a new block when none fits. Returns the block memory + offset
+  // + persistent mapped address. Returns false on allocation failure.
+  bool poolSubAlloc(VkDeviceSize size, VkDeviceSize align, uint32_t memoryTypeIndex,
+                    bool deviceAddress, VkDeviceMemory* outMem, VkDeviceSize* outOffset,
+                    void** outMapped);
+  void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
   bool createRgba32fTextureImage(int width, int height, const float* data,
