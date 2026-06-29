@@ -65,6 +65,7 @@ add_executable(tusdrender
   tusdr_next.cc
   tusdr_lod.cc
   tusdr_legacy.cc
+  tusdr_gpu_common.cc
   tusdr_vulkan.cc
   tusdr_d3d.cc
   tusdr_hip.cc
