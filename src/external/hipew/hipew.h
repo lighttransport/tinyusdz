@@ -65,6 +65,7 @@ typedef hipError_t (*thipDeviceGet)(hipDevice_t *device, int ordinal);
 typedef hipError_t (*thipDeviceGetName)(char *name, int len, hipDevice_t device);
 typedef hipError_t (*thipMalloc)(void **ptr, size_t size);
 typedef hipError_t (*thipFree)(void *ptr);
+typedef hipError_t (*thipMemGetInfo)(size_t *free, size_t *total);
 typedef hipError_t (*thipMemcpyHtoD)(hipDeviceptr_t dst, const void *src,
                                      size_t sizeBytes);
 typedef hipError_t (*thipMemcpyDtoH)(void *dst, hipDeviceptr_t src,
@@ -106,6 +107,7 @@ extern thipDeviceGet hipDeviceGet;
 extern thipDeviceGetName hipDeviceGetName;
 extern thipMalloc hipMalloc;
 extern thipFree hipFree;
+extern thipMemGetInfo hipMemGetInfo;
 extern thipMemcpyHtoD hipMemcpyHtoD;
 extern thipMemcpyDtoH hipMemcpyDtoH;
 extern thipModuleLoadData hipModuleLoadData;

@@ -14,6 +14,7 @@
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "gpu_budget_lod.hh"
+#include "lod_stream.hh"
 #include "gui_style.hh"
 #include "image-writer.hh"
 #include "imgui.h"
@@ -452,12 +453,26 @@ void App::loadFileBlocking(const std::string& path) {
   LoadedScene tmp;
   DrawScene drawTmp;
   LoadOptions opts = loadOpts_;
+  // View-dependent district LOD (--lod-stream): a proxy pre-pass promotes the
+  // camera-nearest districts to full and writes a wrapper layer we load instead.
+  // Only meaningful on the --next path (the only one that composes huge scenes
+  // like Caldera). The original `path` stays as the displayed filename.
+  std::string effPath = path;
+  if (lodStream_ && useNextLoader_) {
+    LodStreamOptions lo;
+    lo.camera = cameraName_;
+    lo.maxMemGiB = lodMaxMemGiB_;
+    lo.maxVramGiB = lodMaxVramGiB_;
+    lo.time = animTime_;
+    std::string wrapper = PrepareLodStream(path, lo);
+    if (!wrapper.empty()) effPath = wrapper;
+  }
   if (useNextLoader_) {
     // `next` flat-preview path: builds only the DrawScene (no Tydra
     // RenderScene/skinning); the hierarchy browser/inspector stay empty. Retain
     // the stage + surface its animation range so per-frame blendshape morph works.
     std::shared_ptr<tinyusdz::next::Stage> stage;
-    const bool ok = LoadUSDViaNext(path, opts, &drawTmp, &tmp.warn, &tmp.err,
+    const bool ok = LoadUSDViaNext(effPath, opts, &drawTmp, &tmp.warn, &tmp.err,
                                    &loadCtrl_, &stage);
     tmp.ok = ok;
     tmp.filepath = path;

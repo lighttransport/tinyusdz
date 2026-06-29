@@ -43,6 +43,9 @@ int main(int argc, char** argv) {
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
+  bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
+  double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
+  double lodMaxVram = 0.0;    // --max-vram GiB: GPU budget for --lod-stream (0=auto)
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -147,6 +150,12 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
       rtSamples = std::atoi(argv[++i]);
       if (rtSamples < 1) rtSamples = 1;
+    } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
+      lodStream = true;
+    } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
+      lodMaxMem = std::atof(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
+      lodMaxVram = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
@@ -230,6 +239,10 @@ int main(int argc, char** argv) {
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
           "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
           "(Halton sub-pixel jitter; default 1 = off).\n"
+          "  --lod-stream  View-dependent district LOD (needs --next): promote "
+          "the camera-nearest districts to full under memory budgets.\n"
+          "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
+          "(0 = auto, 50%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
@@ -378,6 +391,9 @@ int main(int argc, char** argv) {
   app.setCudaRt(wantCuda);
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
+  app.setLodStream(lodStream);
+  app.setLodMaxMemGiB(lodMaxMem);
+  app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
