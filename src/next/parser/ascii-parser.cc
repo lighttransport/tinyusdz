@@ -213,26 +213,31 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().upAxis = value;
+          layer_->meta().upAxis_set = true;
         }
       } else if (key == "metersPerUnit") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().metersPerUnit = *result.value.as_double();
+          layer_->meta().metersPerUnit_set = true;
         }
       } else if (key == "timeCodesPerSecond") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().timeCodesPerSecond = *result.value.as_double();
+          layer_->meta().timeCodesPerSecond_set = true;
         }
       } else if (key == "startTimeCode") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().startTimeCode = *result.value.as_double();
+          layer_->meta().startTimeCode_set = true;
         }
       } else if (key == "endTimeCode") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().endTimeCode = *result.value.as_double();
+          layer_->meta().endTimeCode_set = true;
         }
       } else if (key == "framesPerSecond") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);

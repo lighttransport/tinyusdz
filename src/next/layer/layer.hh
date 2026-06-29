@@ -24,6 +24,17 @@ struct LayerMeta {
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
 
+  // Authored-tracking flags for the value-defaulted fields above, so the writer
+  // re-emits an authored opinion even when it equals the schema fallback (e.g.
+  // `upAxis = "Y"`, `metersPerUnit = 0.01`) -- matching pxr usdcat, which prints
+  // authored stage metadata regardless of value. Without these the writer could
+  // only "omit if == default" and silently dropped authored defaults on flatten.
+  bool upAxis_set = false;
+  bool metersPerUnit_set = false;
+  bool timeCodesPerSecond_set = false;
+  bool startTimeCode_set = false;
+  bool endTimeCode_set = false;
+
   // Optional stage metadata (parity with the mature reader). The *_set flags
   // distinguish "authored" from "default" so the writer re-emits only authored
   // opinions.

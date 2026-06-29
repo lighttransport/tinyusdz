@@ -124,23 +124,27 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
   }
 
-  if (meta.metersPerUnit != 0.01) {
+  // Emit value-defaulted stage metadata when AUTHORED (`_set`) -- matching pxr
+  // usdcat, which prints an authored opinion even if it equals the schema
+  // fallback. The `|| value != default` keeps emitting for any code path that
+  // sets a non-default value without the flag (defensive).
+  if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
     lines.push_back(opts.indent + "metersPerUnit = " + format_g(meta.metersPerUnit, opts.double_precision));
   }
 
-  if (meta.startTimeCode != 0.0) {
+  if (meta.startTimeCode_set || meta.startTimeCode != 0.0) {
     lines.push_back(opts.indent + "startTimeCode = " + format_g(meta.startTimeCode, opts.double_precision));
   }
 
-  if (meta.endTimeCode != 0.0) {
+  if (meta.endTimeCode_set || meta.endTimeCode != 0.0) {
     lines.push_back(opts.indent + "endTimeCode = " + format_g(meta.endTimeCode, opts.double_precision));
   }
 
-  if (meta.timeCodesPerSecond != 24.0) {
+  if (meta.timeCodesPerSecond_set || meta.timeCodesPerSecond != 24.0) {
     lines.push_back(opts.indent + "timeCodesPerSecond = " + format_g(meta.timeCodesPerSecond, opts.double_precision));
   }
 
-  if (meta.upAxis != "Y") {
+  if (meta.upAxis_set || meta.upAxis != "Y") {
     lines.push_back(opts.indent + "upAxis = " + EscapeString(meta.upAxis));
   }
 
@@ -916,6 +920,11 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.timeCodesPerSecond = stage_meta.timeCodesPerSecond;
   meta.startTimeCode = stage_meta.startTimeCode;
   meta.endTimeCode = stage_meta.endTimeCode;
+  meta.upAxis_set = stage_meta.upAxis_set;
+  meta.metersPerUnit_set = stage_meta.metersPerUnit_set;
+  meta.timeCodesPerSecond_set = stage_meta.timeCodesPerSecond_set;
+  meta.startTimeCode_set = stage_meta.startTimeCode_set;
+  meta.endTimeCode_set = stage_meta.endTimeCode_set;
   meta.framesPerSecond = stage_meta.framesPerSecond;
   meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
   meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
