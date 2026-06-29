@@ -504,6 +504,60 @@ on the merged tail), and the full-mesh set is chosen by prototype size, not
 screen-space importance — a per-view promotion pass (à la `-lodStream`) is the
 follow-up.
 
+### 2.6.5 Ray-traced full island (tusdview `--hip`, AMD RX 9070 XT)
+
+§2.6.4 is a *rasterizer* preview: it merges the long tail into a flat box-proxy so
+the per-mesh draw path stays cheap. The **HIP ray tracer** (`--hip`) takes the
+opposite approach — it ignores the raster draw/buffer budget entirely and traces
+the **full** geometry: every prototype's real triangles, instanced by the real
+per-instance transforms, in one 2-level BVH (per-prototype BLAS + a TLAS over all
+instances). On a 16 GiB GPU the **whole Moana island fits** — all 42.9 M instances
+over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# Full island, HIP ray tracing, framed on the hero shot camera.
+# --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
+./build/tusdview --headless --next --hip \
+  --camera shotCam --max-instances 0 --rt-samples 2 \
+  --frames 4 --screenshot island.ppm $M
+```
+
+```
+next: 83798 draws, 42869753 instances, 30009608 unique tris (17508653596 effective), instXform VRAM ~2.06 GB, up=Y
+[rt_scene_build] 83798 meshes -> 30009608 tris / 42869754 instances: phaseA(geom) 28518 ms, phaseB(assemble+TLAS) 56137 ms
+HIP: traced 42869754 instances, 30009608 unique tris, 91138 colors -> island.ppm
+```
+
+Measured on the RX 9070 XT (gfx1201, 16 GiB): **2 m 03 s** wall-clock end-to-end,
+**~28.7 GiB host RSS** during the CPU scene build, and the device acceleration
+structure fits under 16 GiB VRAM (no OOM). The result is the iconic Motunui
+shoreline — mossy coral-rock boulders in the foreground, sandy beach, the line of
+bare ironwood trees.
+
+Notes and gotchas:
+
+- **`--next` is mandatory.** The standard Tydra loader rejects the island's
+  `..`-relative payloads (same "Unsafe asset path" as Caldera, §2.6.1); `--next`
+  composes them. `--hip` then traces whatever geometry the loader produced — it
+  does **not** apply the §2.6.4 raster box-proxy LOD.
+- **`--max-instances 0`.** The ray tracer defaults to a 16 M instance cap; the
+  island has 42.9 M, so the default **truncates by mesh build order** (not frustum
+  visibility) and drops most of the scene. Pass `0` for the full island.
+- **Named cameras.** `island.usda` authors `shotCam`, `birdseyeCam`, `beachCam`,
+  `dunesACam`, `grassCam`, `palmsCam`, `rootsCam`; select one with `--camera`
+  (a name that doesn't match silently falls back to whole-scene auto-fit, which
+  for the island is a speck — see §2.6.4's robust framing). `--rt-samples N` adds
+  Halton(2,3) sub-pixel AA.
+- **What makes it feasible.** Two earlier fixes: (1) the CPU scene build is
+  parallelized (`rt_scene_build.cc` — per-mesh geometry, per-instance transforms,
+  and TLAS all run multithreaded; byte-identical to the serial path); and (2) for
+  a headless `--hip` screenshot tusdview **skips the rasterizer's `uploadScene` /
+  per-frame `renderViewportScene`** (`rtOwnsScreenshot_`), which would otherwise
+  spend minutes culling 42.9 M instances for a frame that is immediately
+  discarded. Set `TUSDVIEW_RT_TIMING=1` to print the `[rt_scene_build]` phase
+  breakdown.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
