@@ -3238,7 +3238,10 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
 
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
-  vkDeviceWaitIdle(device_);
+  // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
+  // fence, so the previous frame -- the only consumer of the resources dropped
+  // below and of rtSet_ (one frame in flight) -- has completed. The per-mesh /
+  // TLAS builds below use their own one-shot queue submissions.
 
   // Drop the previous per-scene TLAS + scene buffers.
   if (tlas_) { pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
@@ -3994,13 +3997,18 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // thread needs no glfwGetFramebufferSize. 0 on the single-threaded path.
   if (fbW > 0 && fbH > 0) { winFbW_ = fbW; winFbH_ = fbH; }
 
-  // Build/refresh the acceleration structure before the frame (synchronous; uses
-  // its own one-shot submissions) so the trace below sees a ready TLAS.
   const bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
                        rtImage_ && !meshes_.empty();
-  if (rtFrame && tlasDirty_) rebuildTlas();
 
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+
+  // (Re)build the acceleration structure AFTER the in-flight fence so the previous
+  // frame (the only consumer of the old TLAS / descriptor set, with one frame in
+  // flight) is guaranteed complete -- this lets rebuildTlas drop the device-wide
+  // vkDeviceWaitIdle and stall only on that one frame. The build itself is still
+  // synchronous (its own one-shot submissions); fully overlapping it with the live
+  // TLAS would need a background AS-build thread (follow-on).
+  if (rtFrame && tlasDirty_) rebuildTlas();
 
   // Headless: no swapchain to acquire from — composite into our own image ring.
   uint32_t imageIndex = frame_;
