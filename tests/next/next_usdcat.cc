@@ -25,6 +25,7 @@
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
 
@@ -244,6 +245,35 @@ int main(int argc, char **argv) {
   // Composition errors are accumulated non-fatally; surface them as warnings
   // in flatten mode (the file still loaded).
   if (!err.empty()) emit_lines(err, "WARN : ");
+
+  // USDC output: when -o targets a .usdc/.usdz path, write the composed stage as
+  // a binary crate (benchmark vehicle for the next crate writer).
+  if (flatten && out_path && IsUSDCPath(out_path)) {
+    USDCWriteOptions copts;
+    const auto t_w0 = Clock::now();
+    USDCWriteResult res = WriteUSDCToFile(out_path, stage, copts);
+    const auto t_written = Clock::now();
+    if (!res.success) {
+      std::fprintf(stderr, "ERR : %s\n",
+                   res.error.empty() ? "usdc write failed" : res.error.c_str());
+      return 1;
+    }
+    if (timing) {
+      const double wms = ms(t_written - t_w0);
+      std::fprintf(stderr,
+                   "[next_usdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
+                   ms(t_loaded - t_start), wms, ms(t_written - t_start));
+      if (res.bytes_written > 0 && wms > 0.0) {
+        std::fprintf(stderr,
+                     "[next_usdcat] wrote %zu bytes = %.0f MB/s -> %s "
+                     "(tokens=%zu paths=%zu specs=%zu)\n",
+                     res.bytes_written,
+                     double(res.bytes_written) / 1048576.0 / (wms / 1000.0),
+                     out_path, res.token_count, res.path_count, res.spec_count);
+      }
+    }
+    return 0;
+  }
 
   if (flatten) {
     USDAWriteOptions wopts;

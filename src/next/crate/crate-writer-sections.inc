@@ -131,12 +131,6 @@
   }
 
   void WritePathsSection() {
-    // Build sorted path index pairs, matching pxrUSD's approach.
-    // Each path gets a sequential index.
-    struct PathEntry {
-      std::string full_path;
-      uint32_t index;
-    };
     // pxr's compressed path tree requires EVERY ancestor of every path to be
     // present as a node. Connection/relationship TARGET paths can reference
     // prims that have no spec in this layer (e.g. material shader outputs in
@@ -166,34 +160,41 @@
       }
     }
 
-    std::vector<PathEntry> sorted;
-    sorted.reserve(paths_.size());
+    // Sort path INDICES (not string copies): swaps move 4-byte ints instead of
+    // 36-byte {std::string, uint32} entries, and no path string is duplicated.
+    // `sorted[i]` is the index of the i-th path in pre-order; downstream reads
+    // `paths_[sorted[i]]`.
+    std::vector<uint32_t> sorted;
+    sorted.resize(paths_.size());
     for (size_t i = 0; i < paths_.size(); i++) {
-      sorted.push_back({paths_[i], static_cast<uint32_t>(i)});
+      sorted[i] = static_cast<uint32_t>(i);
     }
     // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
     // sibling name extends another with a character below '/' (e.g. prims
     // "SM_x" and "SM_x-y": '-' < '/' puts "/A/SM_x-y" BETWEEN "/A/SM_x" and
     // its children, splitting the subtree and corrupting the jump encoding).
     // Rank the structural separators below every name character instead:
-    // '/' < '.' < everything else.
-    auto char_rank = [](unsigned char c) -> unsigned int {
-      if (c == '/') return 0;
-      if (c == '.') return 1;
-      return 2u + c;
-    };
-    auto preorder_less = [&char_rank](const std::string& a, const std::string& b) {
+    // '/' < '.' < everything else. A precomputed 256-entry table avoids a branch
+    // per character in the inner comparison loop.
+    static const uint32_t* const kCharRank = []() -> const uint32_t* {
+      static uint32_t t[256];
+      for (int c = 0; c < 256; ++c) t[c] = 2u + static_cast<uint32_t>(c);
+      t[static_cast<unsigned char>('/')] = 0;
+      t[static_cast<unsigned char>('.')] = 1;
+      return t;
+    }();
+    auto preorder_less = [](const std::string& a, const std::string& b) {
       const size_t n = (std::min)(a.size(), b.size());
+      const unsigned char* pa = reinterpret_cast<const unsigned char*>(a.data());
+      const unsigned char* pb = reinterpret_cast<const unsigned char*>(b.data());
       for (size_t i = 0; i < n; ++i) {
-        unsigned int ra = char_rank(static_cast<unsigned char>(a[i]));
-        unsigned int rb = char_rank(static_cast<unsigned char>(b[i]));
-        if (ra != rb) return ra < rb;
+        if (pa[i] != pb[i]) return kCharRank[pa[i]] < kCharRank[pb[i]];
       }
       return a.size() < b.size();
     };
     std::sort(sorted.begin(), sorted.end(),
-              [&preorder_less](const PathEntry& a, const PathEntry& b) {
-                return preorder_less(a.full_path, b.full_path);
+              [&](uint32_t a, uint32_t b) {
+                return preorder_less(paths_[a], paths_[b]);
               });
 
     size_t num_paths = sorted.size();
@@ -266,9 +267,9 @@
       std::vector<uint32_t> stack;
       stack.reserve(64);
       for (uint32_t i = 0; i < num_paths; ++i) {
-        const std::string& cur = sorted[i].full_path;
+        const std::string& cur = paths_[sorted[i]];
         while (!stack.empty() &&
-               !is_ancestor(sorted[stack.back()].full_path, cur)) {
+               !is_ancestor(paths_[sorted[stack.back()]], cur)) {
           stack.pop_back();
         }
         parent[i] = stack.empty() ? kNoNode : stack.back();
@@ -291,8 +292,8 @@
 
     // Emit each node. has_child == "the next node in pre-order is our child".
     for (uint32_t i = 0; i < num_paths; ++i) {
-      path_indices[i] = sorted[i].index;
-      const std::string& p = sorted[i].full_path;
+      path_indices[i] = sorted[i];
+      const std::string& p = paths_[sorted[i]];
       const bool is_root = (p == "/");
       int32_t tok = static_cast<int32_t>(
           InternToken(is_root ? std::string() : element_name(p)));
