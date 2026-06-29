@@ -68,6 +68,7 @@ set(TUSDVIEW_SOURCES
     gl/gl_util.cc
     gl/gl_renderer.cc
     rt_bvh.cc
+    rt_scene_build.cc
     cuda/cuda_raytracer.cc
     hip/hip_raytracer.cc
     lod_stream.cc)
