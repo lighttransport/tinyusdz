@@ -5,8 +5,10 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "imgui.h"
@@ -2514,35 +2516,143 @@ bool VulkanRenderer::initVulkanImGuiBackend(std::string* err) {
   return true;
 }
 
+// Debug: per-stage timing of the per-mesh host-buffer allocation storm (gated by
+// TUSDVIEW_TIME_UPLOAD). Reset/printed by uploadScene's caller path.
+namespace {
+struct ChbStats { double create = 0, alloc = 0, map = 0, bind = 0; long n = 0; };
+ChbStats g_chb;
+inline double NowS() {
+  return std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+}  // namespace
+
+// Sub-allocate from a large shared host-visible block (one vkAllocateMemory per
+// ~64 MiB instead of per buffer). Default block size; oversized requests get a
+// dedicated exact-size block.
+static constexpr VkDeviceSize kHostBlockBytes = 64ull * 1024 * 1024;
+
+bool VulkanRenderer::poolSubAlloc(VkDeviceSize size, VkDeviceSize align,
+                                  uint32_t memoryTypeIndex, bool deviceAddress,
+                                  VkDeviceMemory* outMem, VkDeviceSize* outOffset,
+                                  void** outMapped) {
+  if (align == 0) align = 1;
+  for (HostMemBlock& b : hostBlocks_) {
+    if (b.memoryTypeIndex != memoryTypeIndex || b.deviceAddress != deviceAddress)
+      continue;
+    const VkDeviceSize off = (b.used + align - 1) & ~(align - 1);
+    if (off + size <= b.size) {
+      b.used = off + size;
+      *outMem = b.mem;
+      *outOffset = off;
+      *outMapped = static_cast<char*>(b.mapped) + off;
+      return true;
+    }
+  }
+  // No room: grow a new block (at least this request, rounded up to the block size).
+  HostMemBlock nb;
+  nb.memoryTypeIndex = memoryTypeIndex;
+  nb.deviceAddress = deviceAddress;
+  nb.size = std::max<VkDeviceSize>(kHostBlockBytes, (size + align - 1) & ~(align - 1));
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = nb.size;
+  ai.memoryTypeIndex = memoryTypeIndex;
+  VkMemoryAllocateFlagsInfo fi{};
+  fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+  fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+  if (deviceAddress) ai.pNext = &fi;
+  if (vkAllocateMemory(device_, &ai, nullptr, &nb.mem) != VK_SUCCESS) return false;
+  if (vkMapMemory(device_, nb.mem, 0, nb.size, 0, &nb.mapped) != VK_SUCCESS) {
+    vkFreeMemory(device_, nb.mem, nullptr);
+    return false;
+  }
+  nb.used = size;
+  *outMem = nb.mem;
+  *outOffset = 0;
+  *outMapped = nb.mapped;
+  hostBlocks_.push_back(nb);
+  return true;
+}
+
+void VulkanRenderer::freeHostPool() {
+  for (HostMemBlock& b : hostBlocks_) {
+    if (b.mapped) vkUnmapMemory(device_, b.mem);
+    if (b.mem) vkFreeMemory(device_, b.mem, nullptr);
+  }
+  hostBlocks_.clear();
+}
+
 bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                       const void* data, VkBuffer* buf,
-                                      VkDeviceMemory* mem, bool deviceAddress) {
+                                      VkDeviceMemory* mem, bool deviceAddress,
+                                      bool poolable, void** mappedOut) {
+  static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
+  double ta = timeit ? NowS() : 0;
   VkBufferCreateInfo bi{};
   bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bi.size = size;
   bi.usage = usage | (deviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
   bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   if (vkCreateBuffer(device_, &bi, nullptr, buf) != VK_SUCCESS) return false;
+  if (timeit) { g_chb.create += NowS() - ta; ta = NowS(); }
 
   VkMemoryRequirements req;
   vkGetBufferMemoryRequirements(device_, *buf, &req);
+  const uint32_t memType = findMemoryType(
+      req.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  if (poolable) {
+    // Sub-allocate from a shared block. *mem stays VK_NULL_HANDLE so the existing
+    // per-buffer vkFreeMemory(*mem) cleanup is a no-op; freeHostPool() releases the
+    // block. The block is host-coherent + persistently mapped, so we memcpy straight
+    // in (and hand back the address for buffers re-written later, e.g. instances).
+    VkDeviceMemory blockMem;
+    VkDeviceSize off;
+    void* mapped;
+    if (!poolSubAlloc(req.size, req.alignment, memType, deviceAddress, &blockMem, &off,
+                      &mapped)) {
+      vkDestroyBuffer(device_, *buf, nullptr);
+      *buf = VK_NULL_HANDLE;
+      return false;
+    }
+    if (timeit) { g_chb.alloc += NowS() - ta; ta = NowS(); }
+    vkBindBufferMemory(device_, *buf, blockMem, off);
+    if (timeit) { g_chb.bind += NowS() - ta; ta = NowS(); }
+    std::memcpy(mapped, data, static_cast<size_t>(size));
+    *mem = VK_NULL_HANDLE;
+    if (mappedOut) *mappedOut = mapped;
+    if (timeit) { g_chb.map += NowS() - ta; ++g_chb.n; }
+    return true;
+  }
+
   VkMemoryAllocateInfo ai{};
   ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   ai.allocationSize = req.size;
-  ai.memoryTypeIndex = findMemoryType(
-      req.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  ai.memoryTypeIndex = memType;
   VkMemoryAllocateFlagsInfo fi{};
   fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
   fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
   if (deviceAddress) ai.pNext = &fi;
   if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
+  if (timeit) { g_chb.alloc += NowS() - ta; ta = NowS(); }
   vkBindBufferMemory(device_, *buf, *mem, 0);
+  if (timeit) { g_chb.bind += NowS() - ta; ta = NowS(); }
 
   void* mapped = nullptr;
   vkMapMemory(device_, *mem, 0, size, 0, &mapped);
   std::memcpy(mapped, data, static_cast<size_t>(size));
   vkUnmapMemory(device_, *mem);
+  if (mappedOut) *mappedOut = nullptr;
+  if (timeit) {
+    g_chb.map += NowS() - ta;
+    if ((++g_chb.n % 10000) == 0)
+      std::fprintf(stderr,
+                   "[chb] n=%ld create=%.1fs alloc=%.1fs bind=%.1fs map=%.1fs\n",
+                   g_chb.n, g_chb.create, g_chb.alloc, g_chb.bind, g_chb.map);
+  }
   return true;
 }
 
@@ -2623,6 +2733,10 @@ void VulkanRenderer::destroyScene() {
     if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
   }
   meshes_.clear();
+  // All pooled per-mesh buffers were destroyed in the loop above; release the shared
+  // host-memory blocks they sub-allocated from (their per-buffer *Mem was NULL, so the
+  // vkFreeMemory calls above were no-ops).
+  freeHostPool();
   matColor_.clear();
   matBaseTex_.clear();
 
@@ -2829,6 +2943,14 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       !sm.influenceTexels.empty() && sm.influenceTexWidth > 0 &&
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
 
+  // Pool the static per-mesh buffers (collapses the per-buffer vkAllocateMemory
+  // storm that makes huge assembled scenes -- Moana island's 83801 prototypes --
+  // stall for minutes; see createHostBuffer). Only when the mesh is NOT dynamically
+  // re-mapped after upload: CPU skinning refills the vbo (updateMeshVertices) and
+  // GPU morph re-maps coeff/delta buffers, so dynamic meshes keep per-buffer memory.
+  const bool dyn = gm.skinned || sm.morphChannelCount > 0;
+  const bool pool = !dyn;
+
   // When RT is supported the vertex/index buffers double as BLAS build input and
   // SSBOs read by the ray-query shader (device addresses).
   VkBufferUsageFlags vboUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -2841,7 +2963,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     eboUsage |= rtExtra;
   }
   if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex), vboUsage,
-                        sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_)) {
+                        sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_, pool)) {
     return;
   }
   std::vector<uint32_t> zeroJoints;
@@ -2861,13 +2983,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
       (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t), skinUsage, joints,
-                        &gm.jointVbo, &gm.jointVboMem, rtSupported_)) {
+                        &gm.jointVbo, &gm.jointVboMem, rtSupported_, pool)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
-                        &gm.weightVbo, &gm.weightVboMem, rtSupported_)) {
+                        &gm.weightVbo, &gm.weightVboMem, rtSupported_, pool)) {
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
@@ -2882,7 +3004,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (!createHostBuffer(sm.vertices.size() * 2 * sizeof(uint32_t),
                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, influence,
-                        &gm.influenceVbo, &gm.influenceVboMem)) {
+                        &gm.influenceVbo, &gm.influenceVboMem, false, pool)) {
     vkDestroyBuffer(device_, gm.weightVbo, nullptr);
     vkFreeMemory(device_, gm.weightVboMem, nullptr);
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
@@ -2906,9 +3028,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
     createHostBuffer(uv1.size() * sizeof(float), auxUsage, uv1.data(),
-                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_);
+                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_, pool);
     createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
-                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_);
+                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_, pool);
   }
   // GPU blendshape morph: per-vertex (offset,count) vertex buffer (binding 6, always
   // created) + a static delta SSBO (set 7) + a per-frame coeff SSBO (set 8,
@@ -2918,7 +3040,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (oc.size() != sm.vertices.size() * 2) oc.assign(sm.vertices.size() * 2, 0u);
     createHostBuffer(oc.size() * sizeof(uint32_t),
                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, oc.data(),
-                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem);
+                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem, false, pool);
   }
   gm.morphDeltaDesc = dummyMorphDesc_;
   gm.morphCoeffDesc = dummyMorphDesc_;
@@ -2986,13 +3108,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (gm.influenceDesc == VK_NULL_HANDLE) {
     const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     if (createHostBuffer(sizeof(zero), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, zero,
-                         &gm.influenceDataBuf, &gm.influenceDataMem)) {
+                         &gm.influenceDataBuf, &gm.influenceDataMem, false, pool)) {
       gm.influenceDesc = allocInfluenceDescriptor(gm.influenceDataBuf,
                                                   sizeof(zero));
     }
   }
   if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t), eboUsage,
-                        sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_)) {
+                        sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_, pool)) {
     if (gm.influenceDataBuf) vkDestroyBuffer(device_, gm.influenceDataBuf, nullptr);
     if (gm.influenceDataMem) vkFreeMemory(device_, gm.influenceDataMem, nullptr);
     if (gm.influenceVbo) vkDestroyBuffer(device_, gm.influenceVbo, nullptr);
@@ -3014,7 +3136,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const VkBufferUsageFlags fu = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (createHostBuffer(sm.sourceFaceId.size() * sizeof(uint32_t), fu,
                          sm.sourceFaceId.data(), &gm.faceBuf, &gm.faceMem,
-                         rtSupported_)) {
+                         rtSupported_, pool)) {
       gm.faceDesc = allocFaceDescriptor(
           gm.faceBuf, sm.sourceFaceId.size() * sizeof(uint32_t));
     }
@@ -3030,7 +3152,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (sm.rtDisplacedVertices.size() == sm.vertices.size() &&
         createHostBuffer(sm.rtDisplacedVertices.size() * sizeof(DrawVertex),
                          vboUsage, sm.rtDisplacedVertices.data(), &gm.vboDisp,
-                         &gm.vboDispMem, /*deviceAddress=*/true)) {
+                         &gm.vboDispMem, /*deviceAddress=*/true, pool)) {
       gm.vboAddr = bufferDeviceAddress(gm.vboDisp);
     } else {
       gm.vboAddr = bufferDeviceAddress(gm.vbo);
@@ -3048,7 +3170,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
       if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
-                           &gm.vtxColorBuf, &gm.vtxColorMem, /*deviceAddress=*/true)) {
+                           &gm.vtxColorBuf, &gm.vtxColorMem, /*deviceAddress=*/true,
+                           pool)) {
         gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
       }
     }
@@ -3075,11 +3198,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const size_t ni = sm.instanceXforms.size() / 12;
     gm.instanceCount = static_cast<uint32_t>(ni);
     gm.drawInstanceCount = gm.instanceCount;
-    // Per-instance 3x4 o2w rows (host-visible so per-instance culling can re-map
-    // the visible subset in place).
+    // Per-instance 3x4 o2w rows. Pool-suballocated like everything else (so the
+    // 83801-prototype upload doesn't allocate per mesh); per-instance culling re-maps
+    // the visible subset through the persistent pool mapping (gm.instVboMapped).
     createHostBuffer(sm.instanceXforms.size() * sizeof(float),
                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.instanceXforms.data(),
-                     &gm.instVbo, &gm.instVboMem);
+                     &gm.instVbo, &gm.instVboMem, false, /*poolable=*/true,
+                     &gm.instVboMapped);
     // Per-instance color: authored instanceColors, else the prototype's flatColor
     // repeated (matches the GL aColor path).
     std::vector<float> icol;
@@ -3094,13 +3219,15 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       }
     }
     createHostBuffer(icol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     icol.data(), &gm.instColorBuf, &gm.instColorMem);
+                     icol.data(), &gm.instColorBuf, &gm.instColorMem, false,
+                     /*poolable=*/true, &gm.instColorMapped);
     // Per-vertex prototype color (binding 3; white when the prototype has none).
     std::vector<float> vcol = sm.vertexColors;
     if (vcol.size() != sm.vertices.size() * 3)
       vcol.assign(sm.vertices.size() * 3, 1.0f);
     createHostBuffer(vcol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem);
+                     vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem, false,
+                     /*poolable=*/true);
   }
   meshes_.push_back(gm);
 }
@@ -3113,21 +3240,31 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
   if (count > m.instanceCount) count = m.instanceCount;  // never grow past capacity
   m.drawInstanceCount = count;
   if (count == 0) return;
-  // Re-map the host-visible instance buffer(s) with the compacted visible subset.
-  if (m.instVbo && m.instVboMem && xforms) {
-    void* p = nullptr;
-    if (vkMapMemory(device_, m.instVboMem, 0, VkDeviceSize(count) * 12 * sizeof(float),
-                    0, &p) == VK_SUCCESS) {
-      std::memcpy(p, xforms, size_t(count) * 12 * sizeof(float));
-      vkUnmapMemory(device_, m.instVboMem);
+  // Write the compacted visible subset into the host-visible instance buffer(s).
+  // Pooled buffers (instVboMem == VK_NULL_HANDLE) are persistently mapped, so write
+  // straight through the stored pointer; legacy per-buffer ones get a transient map.
+  if (m.instVbo && xforms) {
+    const size_t bytes = size_t(count) * 12 * sizeof(float);
+    if (m.instVboMapped) {
+      std::memcpy(m.instVboMapped, xforms, bytes);
+    } else if (m.instVboMem) {
+      void* p = nullptr;
+      if (vkMapMemory(device_, m.instVboMem, 0, bytes, 0, &p) == VK_SUCCESS) {
+        std::memcpy(p, xforms, bytes);
+        vkUnmapMemory(device_, m.instVboMem);
+      }
     }
   }
-  if (m.instColorBuf && m.instColorMem && colors) {
-    void* p = nullptr;
-    if (vkMapMemory(device_, m.instColorMem, 0, VkDeviceSize(count) * 3 * sizeof(float),
-                    0, &p) == VK_SUCCESS) {
-      std::memcpy(p, colors, size_t(count) * 3 * sizeof(float));
-      vkUnmapMemory(device_, m.instColorMem);
+  if (m.instColorBuf && colors) {
+    const size_t bytes = size_t(count) * 3 * sizeof(float);
+    if (m.instColorMapped) {
+      std::memcpy(m.instColorMapped, colors, bytes);
+    } else if (m.instColorMem) {
+      void* p = nullptr;
+      if (vkMapMemory(device_, m.instColorMem, 0, bytes, 0, &p) == VK_SUCCESS) {
+        std::memcpy(p, colors, bytes);
+        vkUnmapMemory(device_, m.instColorMem);
+      }
     }
   }
 }

@@ -8,7 +8,10 @@
 // lives behind this interface so the app main-loop is backend-agnostic.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -205,7 +208,27 @@ class Renderer {
     for (size_t i = 0; i < scene.textures.size(); ++i) {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
-    for (const auto& m : scene.meshes) appendMesh(m);
+    static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
+    if (timeit) {
+      const auto t0 = std::chrono::steady_clock::now();
+      auto last = t0;
+      for (size_t i = 0; i < scene.meshes.size(); ++i) {
+        appendMesh(scene.meshes[i]);
+        if (((i + 1) % 5000) == 0 || i + 1 == scene.meshes.size()) {
+          const auto now = std::chrono::steady_clock::now();
+          const double tot =
+              std::chrono::duration<double>(now - t0).count();
+          const double dt =
+              std::chrono::duration<double>(now - last).count();
+          last = now;
+          std::fprintf(stderr,
+                       "[upload] meshes %zu/%zu  +%.2fs (total %.2fs)\n",
+                       i + 1, scene.meshes.size(), dt, tot);
+        }
+      }
+    } else {
+      for (const auto& m : scene.meshes) appendMesh(m);
+    }
     for (const auto& v : scene.volumes) appendVolume(v);
     return true;
   }
