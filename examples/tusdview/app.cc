@@ -1451,7 +1451,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     std::string cerr;
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
-    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, &cerr,
+    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                   gui_.displacementScale())) {
       LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
     } else {
@@ -1503,7 +1503,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     std::string cerr;
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
-    } else if (!hipTracer_.build(draw_, cudaMaxTris_, &cerr,
+    } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                  gui_.displacementScale())) {
       LOGW("HIP ray tracing build failed: %s", cerr.c_str());
     } else {

@@ -133,6 +133,8 @@ class App
   void setHipRt(bool on) { hipRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
+  // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
+  void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
   // the camera-nearest districts to districtLod=full under the memory budgets.
   void setLodStream(bool on) { lodStream_ = on; }
@@ -281,6 +283,7 @@ class App
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
+  size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream_{false}; // --lod-stream: view-dependent district LOD pre-pass
   double lodMaxMemGiB_{0.0};   // --max-mem: host budget for --lod-stream (0=auto)
   double lodMaxVramGiB_{0.0};  // --max-vram: GPU budget for --lod-stream (0=auto)

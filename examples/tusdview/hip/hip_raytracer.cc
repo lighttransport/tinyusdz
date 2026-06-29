@@ -7,22 +7,11 @@
 
 #include "hipew.h"
 #include "displacement_bake.hh"
+#include "rt_bvh.hh"  // Node, BuildBvh, BuildTlas (shared with the CUDA tracer)
 
 namespace tusdview {
 
 namespace {
-
-// Flattened BVH node (must match the `Node` struct in the kernel). count>0 -> leaf
-// (left = first triangle in the reordered arrays); count==0 -> interior (left/right
-// = child node indices -- stored explicitly since a recursive build does not place
-// the right child at left+1).
-struct Node {
-  float bmin[3];
-  float bmax[3];
-  int left;
-  int right;
-  int count;
-};
 
 // Camera/light block passed by value to the kernel (must match `Cam` there).
 struct Cam {
@@ -201,103 +190,15 @@ bool HipRayTracer::init(std::string* err) {
   return true;
 }
 
-namespace {
-// Recursive median-split BVH over triangle centroids. Reorders `idx` so leaves
-// reference contiguous ranges; appends nodes to `nodes`. Returns the node index.
-int BuildBvh(std::vector<Node>& nodes, std::vector<int>& idx, int first, int count,
-             const std::vector<float>& cent, const std::vector<float>& tris) {
-  int self = static_cast<int>(nodes.size());
-  nodes.push_back({});
-  Node nd{};
-  float bmin[3] = {1e30f, 1e30f, 1e30f}, bmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int i = 0; i < count; ++i) {
-    const float* tv = &tris[idx[first + i] * 9];
-    for (int v = 0; v < 3; ++v)
-      for (int k = 0; k < 3; ++k) {
-        bmin[k] = std::min(bmin[k], tv[v * 3 + k]);
-        bmax[k] = std::max(bmax[k], tv[v * 3 + k]);
-      }
-  }
-  for (int k = 0; k < 3; ++k) { nd.bmin[k] = bmin[k]; nd.bmax[k] = bmax[k]; }
-  if (count <= 4) {
-    nd.left = first;
-    nd.right = 0;
-    nd.count = count;
-    nodes[self] = nd;
-    return self;
-  }
-  // Split on the widest centroid axis at the median.
-  float cmin[3] = {1e30f, 1e30f, 1e30f}, cmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int i = 0; i < count; ++i)
-    for (int k = 0; k < 3; ++k) {
-      float c = cent[idx[first + i] * 3 + k];
-      cmin[k] = std::min(cmin[k], c);
-      cmax[k] = std::max(cmax[k], c);
-    }
-  int axis = 0;
-  if (cmax[1] - cmin[1] > cmax[axis] - cmin[axis]) axis = 1;
-  if (cmax[2] - cmin[2] > cmax[axis] - cmin[axis]) axis = 2;
-  int mid = first + count / 2;
-  std::nth_element(idx.begin() + first, idx.begin() + mid, idx.begin() + first + count,
-                   [&](int a, int b) { return cent[a * 3 + axis] < cent[b * 3 + axis]; });
-  int left = BuildBvh(nodes, idx, first, count / 2, cent, tris);
-  int right = BuildBvh(nodes, idx, mid, count - count / 2, cent, tris);
-  nd.left = left;
-  nd.right = right;
-  nd.count = 0;
-  nodes[self] = nd;
-  return self;
-}
 
-// Recursive median-split BVH over instance WORLD-AABB centroids (the TLAS).
-// `aabb` = 6 floats/instance (lo.xyz, hi.xyz). Leaves reference contiguous
-// instance ranges (count>0 -> `left` = first instance index, `count` instances).
-int BuildTlas(std::vector<Node>& nodes, std::vector<int>& idx, int first, int count,
-              const std::vector<float>& cent, const std::vector<float>& aabb) {
-  int self = static_cast<int>(nodes.size());
-  nodes.push_back({});
-  Node nd{};
-  float bmin[3] = {1e30f, 1e30f, 1e30f}, bmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int i = 0; i < count; ++i) {
-    const float* a = &aabb[idx[first + i] * 6];
-    for (int k = 0; k < 3; ++k) {
-      bmin[k] = std::min(bmin[k], a[k]);
-      bmax[k] = std::max(bmax[k], a[3 + k]);
-    }
-  }
-  for (int k = 0; k < 3; ++k) { nd.bmin[k] = bmin[k]; nd.bmax[k] = bmax[k]; }
-  if (count <= 4) {
-    nd.left = first; nd.right = 0; nd.count = count;
-    nodes[self] = nd;
-    return self;
-  }
-  float cmin[3] = {1e30f, 1e30f, 1e30f}, cmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int i = 0; i < count; ++i)
-    for (int k = 0; k < 3; ++k) {
-      float c = cent[idx[first + i] * 3 + k];
-      cmin[k] = std::min(cmin[k], c);
-      cmax[k] = std::max(cmax[k], c);
-    }
-  int axis = 0;
-  if (cmax[1] - cmin[1] > cmax[axis] - cmin[axis]) axis = 1;
-  if (cmax[2] - cmin[2] > cmax[axis] - cmin[axis]) axis = 2;
-  int mid = first + count / 2;
-  std::nth_element(idx.begin() + first, idx.begin() + mid, idx.begin() + first + count,
-                   [&](int a, int b) { return cent[a * 3 + axis] < cent[b * 3 + axis]; });
-  int left = BuildTlas(nodes, idx, first, count / 2, cent, aabb);
-  int right = BuildTlas(nodes, idx, mid, count - count / 2, cent, aabb);
-  nd.left = left; nd.right = right; nd.count = 0;
-  nodes[self] = nd;
-  return self;
-}
-}  // namespace
-
-bool HipRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* err,
-                          float displacementScale) {
+bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
+                         size_t maxInstances, std::string* err,
+                         float displacementScale) {
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   freeScene();
   truncated_ = false;
+  const size_t instCap = maxInstances ? maxInstances : ~size_t(0);
 
   // 2-level instancing: each DrawMeshCPU becomes one BLAS over its LOCAL-space
   // triangles (geometry stored ONCE per prototype). Instanced meshes add N
@@ -316,6 +217,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* er
   for (const DrawMeshCPU& m : scene.meshes) {
     if (m.vertices.empty() || m.indices.empty()) continue;
     if (gTris.size() / 9 >= cap) { truncated_ = true; break; }
+    if (instances.size() >= instCap) { truncated_ = true; break; }
     const bool instanced = m.instanceCount() > 0;
     const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
     const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
@@ -485,6 +387,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* er
 
     // --- Instances of this BLAS (geometry shared; placement-only). ---
     auto addInst = [&](const float o2w[12], const float tint[3]) {
+      if (instances.size() >= instCap) { truncated_ = true; return; }
       Inst I{};
       for (int k = 0; k < 12; ++k) I.o2w[k] = o2w[k];
       Affine3x4Inverse(o2w, I.w2o);  // identity fallback on a singular transform
@@ -527,9 +430,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris, std::string* er
       tcent[i * 3 + k] = 0.5f * (instAabb[i * 6 + k] + instAabb[i * 6 + 3 + k]);
   std::vector<int> tidx(instCount_);
   for (size_t i = 0; i < instCount_; ++i) tidx[i] = static_cast<int>(i);
-  std::vector<Node> tnodes;
-  tnodes.reserve(instCount_ * 2);
-  BuildTlas(tnodes, tidx, 0, static_cast<int>(instCount_), tcent, instAabb);
+  std::vector<Node> tnodes =
+      BuildTlas(tidx, static_cast<int>(instCount_), tcent, instAabb);
   tlasNodeCount_ = tnodes.size();
   nodeCount_ = blasNodeCount_ + tlasNodeCount_;
   std::vector<Inst> orderedInsts(instCount_);
