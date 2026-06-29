@@ -16,9 +16,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <deque>
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <string_view>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
 #endif
