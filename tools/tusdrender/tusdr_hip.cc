@@ -119,16 +119,22 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
+  // One ray per (pixel, sample); ray index = (y*w + x)*spp + s. Each sample gets
+  // a distinct Halton(2,3) sub-pixel offset so -samples actually supersamples for
+  // anti-aliasing (matching the -vk/-vkr path); without this every sample reused
+  // the pixel-center direction and -samples N traced N identical rays, no AA.
   const size_t nrays = size_t(w) * size_t(h) * size_t(spp);
   std::vector<lrt_ray> rays(nrays);
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
-      float fx = (float(x) + 0.5f) / float(w) * 2.0f - 1.0f;
-      float fy = (float(y) + 0.5f) / float(h) * 2.0f - 1.0f;
-      Vec3 dir = Add(Mul(right, fx * half_w), Add(Mul(camUp, fy * half_h), fwd));
-      dir = Normalize(dir);
       size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
       for (int s = 0; s < spp; ++s) {
+        float jx, jy;
+        PixelJitter(s, spp, &jx, &jy);
+        float fx = (float(x) + jx) / float(w) * 2.0f - 1.0f;
+        float fy = (float(y) + jy) / float(h) * 2.0f - 1.0f;
+        Vec3 dir = Add(Mul(right, fx * half_w), Add(Mul(camUp, fy * half_h), fwd));
+        dir = Normalize(dir);
         lrt_ray &ray = rays[base + size_t(s)];
         ray.org[0] = eye.x; ray.org[1] = eye.y; ray.org[2] = eye.z;
         ray.tmin = 0.001f;
