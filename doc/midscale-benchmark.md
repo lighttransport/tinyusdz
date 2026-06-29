@@ -26,11 +26,26 @@ fixtures and the island-scale scenes.
 | Scene | Source | License | On-disk | Up-axis |
 |-------|--------|---------|---------|---------|
 | **Kitchen_set** | Pixar USD sample (`graphics.pixar.com/usd/downloads`) | Pixar USD Kitchen Asset EULA — **non-commercial testing only**, no redistribution | 287 KB root `.usd` + 5.3 MB `assets/` | **Z** |
-| **Intel 4004 Moore Lane** (`v1.2.0`) | Intel / ASWF publicly released sample scene | Intel sample-scene terms (see bundled `Read_me.txt`) | 5.3 GB USD + 6.8 GB textures (~13 GB total) | Y |
+| **Intel 4004 Moore Lane** (`v1.2.0`) | ASWF Digital Production Example Library ([dpel.aswf.io/4004-moore-lane](https://dpel.aswf.io/4004-moore-lane/)) | **ASWF Digital Assets License v1.1**, © Intel Corp. 2023 ([terms](https://dpel.aswf.io/4004-moore-lane/moore-lane-license/)) | 5.3 GB USD + 6.8 GB textures (~13 GB total) | Y |
 
-Both are **local-only test assets** (`/mnt/disk1/data/usd/...`) — neither is
-redistributed with TinyUSDZ; the EULAs above forbid it. Paths below are the
-machine-local copies.
+Both are **local-only test assets** here (`/mnt/disk1/data/usd/...`), not bundled
+with TinyUSDZ. Note the two licenses differ materially:
+
+* **Kitchen_set** — Pixar's EULA permits only non-commercial testing and
+  **forbids redistribution**.
+* **Moore Lane** — the **ASWF Digital Assets License v1.1** (DPEL) explicitly
+  permits use for *"education, training, research, software and hardware
+  development, performance benchmarking (including publication of benchmark
+  results), or software and hardware product demonstrations,"* and allows
+  redistribution **with the copyright notice retained**. Per the license, the
+  asset is referred to here by its official name and the following notice applies
+  to the derived images in this document:
+
+  > 4004 Moore Lane USD scene © 2023 Intel Corp., used under the ASWF Digital
+  > Assets License v1.1. https://dpel.aswf.io/4004-moore-lane/
+
+So the benchmarking and the Moore Lane images below are within its terms; the
+Kitchen_set capture is reproduced for non-commercial testing only.
 
 ---
 
