@@ -3236,6 +3236,10 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
 }
 
+// Below this instance count the flat per-instance LOD loop is already cheap, so the
+// coarse grid (build cost + memory) is not worth it.
+static constexpr std::uint32_t kRtLodGridMinInstances = 4096;
+
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
@@ -3313,6 +3317,20 @@ void VulkanRenderer::rebuildTlas() {
     p.protoAabbMin = m.protoAabbMin;
     p.protoAabbMax = m.protoAabbMax;
     p.meshId = i;
+    // Coarse instance grid (P5): build once, lazily, only when LOD is active and the
+    // prototype has enough instances for cell rejection to pay off. Bounds reselect
+    // cost to the visible cell set on tens-of-millions-of-instances scenes.
+    if (lodCam_.lodEnabled && !m.lodGridTried) {
+      std::uint32_t gridMin = kRtLodGridMinInstances;
+      if (const char* e = std::getenv("TUSDVIEW_RT_LOD_GRID_MIN"))
+        gridMin = static_cast<std::uint32_t>(std::strtoul(e, nullptr, 10));
+      BuildRtLodGrid(p, gridMin, &m.lodGrid);
+      m.lodGridTried = true;
+      if (m.lodGrid.valid)
+        std::printf("[rt-lod] grid mesh %u: %u inst -> %zu cells\n", i,
+                    p.instanceCount, m.lodGrid.cells.size());
+    }
+    p.grid = m.lodGrid.valid ? &m.lodGrid : nullptr;
     protos.push_back(p);
   }
   // Box proxy descriptor (flat geometric-normal cube; tint comes from instInfo).
