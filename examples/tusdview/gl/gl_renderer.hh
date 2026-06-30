@@ -43,6 +43,7 @@ class GLRenderer final : public Renderer {
   bool initImGuiBackend(std::string* err) override;
 #endif
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
+  bool gpuMemoryMB(size_t* usedMB, size_t* totalMB) const override;
   void requestWindowCapture() override { wantWindowCapture_ = true; }
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;
   const RendererCaps& caps() const override { return caps_; }
@@ -77,6 +78,8 @@ class GLRenderer final : public Renderer {
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
     GLuint faceIdBuf{0};             // texture buffer: per-triangle source face id; 0 = none
     GLuint faceIdTex{0};             // GL_TEXTURE_BUFFER view (R32UI) of faceIdBuf
+    GLuint wireEbo{0};               // GL_LINES indices: original polygon edges; 0 = none
+    GLsizei wireCount{0};            // index count in wireEbo (2 per edge)
     // GPU blendshape morph (raster): per-vertex (offset,count) attribute (loc 8) +
     // a static delta texture-buffer (RGBA32F: channelId,dx,dy,dz) + a tiny per-frame
     // coefficient texture-buffer (R32F). hasMorph gates it on; 0 handles = none.
@@ -117,6 +120,11 @@ class GLRenderer final : public Renderer {
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
                   const float* overrideEmissive);
+  // Draw each mesh's original-polygon edge set (wireEbo) as GL_LINES, both the
+  // non-instanced and instanced prototypes, in a flat color with a small NDC depth
+  // bias so the lines sit just in front of the surface.
+  void buildWireProgram();
+  void drawWireframe(const RenderFrameParams& params, const float wireColor[3]);
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   void presentImpl(ImDrawData* drawData, int fbw, int fbh);
 #endif
@@ -171,6 +179,14 @@ class GLRenderer final : public Renderer {
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
+
+  // Flat wireframe programs (polygon-edge GL_LINES). Non-instanced takes a full
+  // MVP; instanced reuses the per-instance 3x4 rows (attribs 3/4/5) + a view-proj.
+  // Both share a flat color + an NDC depth bias to lift lines off the surface.
+  GLuint wireProgram_{0};
+  GLint wMVP_{-1}, wWireColor_{-1}, wDepthBias_{-1};
+  GLuint wireInstProgram_{0};
+  GLint wiViewProj_{-1}, wiWireColor_{-1}, wiDepthBias_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};

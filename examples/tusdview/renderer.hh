@@ -86,6 +86,13 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   RenderMode mode{RenderMode::Shaded};
+  // Wireframe overlay state, cycled with the 'w' key (GL backend):
+  //   0 = off (shaded fill only)
+  //   1 = wireframe only (hidden-line: depth-only fill, then polygon edges)
+  //   2 = wireframe + shading (shaded fill, then polygon edges on top)
+  // Edges are the ORIGINAL polygon edges of the base (pre-tessellation) mesh --
+  // triangulation diagonals are dropped via per-triangle source face ids.
+  int wireMode{0};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float depthScale{1.0f};  // Depth AOV: normalize camera distance by this (scene extent)
   float sceneMin[3]{0, 0, 0};     // Position AOV: scene bbox min
@@ -240,6 +247,27 @@ class Renderer {
   virtual bool initImGuiPlatform(GLFWwindow* /*window*/, std::string* /*err*/) { return true; }
   virtual bool initImGuiBackend(std::string* /*err*/) { return true; }
 #endif
+
+  // GPU video-memory usage in MB (used, total). Returns false if the backend
+  // can't report it. Used by the Stats panel.
+  virtual bool gpuMemoryMB(size_t* /*usedMB*/, size_t* /*totalMB*/) const {
+    return false;
+  }
+
+  // Current offscreen viewport (color target) size in pixels. Default no-op.
+  virtual void viewportSize(int* w, int* h) const {
+    if (w) *w = 0;
+    if (h) *h = 0;
+  }
+
+  // Upload an externally-traced RGBA8 image (R8G8B8A8_UNORM, w*h*4, top-down) into
+  // the offscreen color target for display this frame. Used by the interactive
+  // HIP/CUDA path, which traces on the GPU outside Vulkan: the next present()
+  // composites this image instead of running the raster/RT 3D pass. Returns false
+  // if unsupported. The flag is consumed by a single present().
+  virtual bool uploadViewportImage(const uint8_t* /*rgba*/, int /*w*/, int /*h*/) {
+    return false;
+  }
 
   // Read back the offscreen 3D viewport as top-down RGBA8 (headless QA).
   // Returns false if unsupported.

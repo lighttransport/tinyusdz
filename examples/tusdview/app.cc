@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
+#include "config.hh"
 #include "gpu_budget_lod.hh"
 #include "lod_stream.hh"
 #include "gui_style.hh"
@@ -65,7 +66,9 @@ std::string LowerExtension(const std::string& path) {
   });
   return ext;
 }
+}  // anonymous namespace
 
+// In namespace tusdview (declared in app.hh) so the MCP screenshot tool can reuse it.
 bool WriteScreenshotImage(const std::string& path,
                           const std::vector<uint8_t>& rgba, int w, int h,
                           std::string* err) {
@@ -98,7 +101,6 @@ bool WriteScreenshotImage(const std::string& path,
   WritePPM(path, rgba, w, h);
   return true;
 }
-}  // namespace
 
 void App::getRequestedWindowSize(int* width, int* height) const {
   if (hasWindowSizeOverride_) {
@@ -131,12 +133,32 @@ App::~App() {
   glfwTerminate();
 }
 
+void App::autoDetectUiScale() {
+  if (uiScaleExplicit_ || headless_) return;
+  GLFWmonitor* mon = glfwGetPrimaryMonitor();
+  if (!mon) return;
+  // OS-reported HiDPI content scale (e.g. 2.0 at 200% desktop scaling).
+  float xs = 1.0f, ys = 1.0f;
+  glfwGetMonitorContentScale(mon, &xs, &ys);
+  const GLFWvidmode* mode = glfwGetVideoMode(mon);
+  const int mw = mode ? mode->width : 0;
+  // Use 2x only on genuinely high-density / large panels: a HiDPI content scale,
+  // or a native width of at least 2K (2560). Standard 1080p/1920 stays at 1x, so
+  // the font/widgets are not oversized on a normal-DPI display.
+  const float scale = (xs >= 1.5f || mw >= 2560) ? 2.0f : 1.0f;
+  uiScale_ = scale;
+  windowScale_ = scale;
+  fontSizePx_ = 16.0f * scale;
+  LOGI("ui scale: %.0fx (monitor %dpx wide, content scale %.2f)", scale, mw, xs);
+}
+
 bool App::initWindow(std::string* err) {
   glfwSetErrorCallback(GlfwErrorCallback);
   if (!glfwInit()) {
     *err = "glfwInit failed";
     return false;
   }
+  autoDetectUiScale();  // before getRequestedWindowSize (windowScale_ feeds it)
 
   if (backend_ == Backend::GL) {
     // Request 4.1 core (the highest macOS supports) so the GPU-tessellation
@@ -244,6 +266,14 @@ void App::applyLoaded(bool ok, bool progressive) {
   nextVolume_ = 0;
 
   if (ok) {
+    // Capture the vertex total now, before the --next path frees per-mesh CPU
+    // geometry on upload (otherwise the Stats panel would show 0 vertices).
+    size_t vtot = 0;
+    for (const DrawMeshCPU& m : draw_.meshes) vtot += m.vertices.size();
+    draw_.vertexCount = vtot;
+    // Record in the recent-scenes list (interactive only -- headless screenshot
+    // runs must not mutate the user's config).
+    if (!headless_ && !loaded_.filepath.empty()) addRecentScene(loaded_.filepath);
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
     readAnimationRange();  // start/end/fps; resets playback to paused at start
     if (std::isfinite(loadOpts_.timecode)) {
@@ -290,7 +320,13 @@ void App::applyLoaded(bool ok, bool progressive) {
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
   }
 
-  if (ok && progressive) {
+  if (ok && hipInteractive_) {
+    // Windowed --hip: no raster upload (the HIP tracer renders the viewport from
+    // draw_ each frame); keep CPU geometry for the tracer build.
+    LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; HIP interactive (no raster upload)",
+         loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
+         draw_.truncated ? " [truncated]" : "");
+  } else if (ok && progressive) {
     // Reserve materials + texture slots now; stream meshes then textures over
     // the next frames (stepProgressiveUpload) so geometry pops in and the UI
     // stays at frame rate instead of stalling on one big upload.
@@ -385,17 +421,36 @@ void App::applyLoaded(bool ok, bool progressive) {
         LOGW("camera '%s' not found (need --next + a Camera prim); auto-fitting",
              cameraName_.c_str());
       }
-      // Robust framing: huge assembled scenes (Moana island's horizon-spanning
-      // osOcean plane) blow up the fit-all bbox so the real geometry frames to a
-      // speck. Trim the outlier mesh-AABB endpoints and fit the bulk instead.
-      const float* fitMin = draw_.aabbMin;
-      const float* fitMax = draw_.aabbMax;
+      // Frame on the visible geometry. Two inflators are excluded so pan/dolly
+      // sensitivity (scaled by the framing distance) and the initial fit stay
+      // sane: (1) guide breadcrumbs/endpoints, which span the whole map and are
+      // hidden, and (2) sparse far-flung outliers (robust mass-trim). The aabb
+      // metadata survives the --next CPU-geometry free, so this works post-load.
+      float ngMin[3] = {1e30f, 1e30f, 1e30f}, ngMax[3] = {-1e30f, -1e30f, -1e30f};
+      bool ngValid = false;
+      for (const DrawMeshCPU& m : draw_.meshes) {
+        if (m.purpose == "guide") continue;
+        bool good = true;
+        for (int a = 0; a < 3; ++a) {
+          if (!(m.aabbMax[a] >= m.aabbMin[a]) || !std::isfinite(m.aabbMin[a]) ||
+              !std::isfinite(m.aabbMax[a])) { good = false; break; }
+        }
+        if (!good) continue;
+        for (int a = 0; a < 3; ++a) {
+          ngMin[a] = std::min(ngMin[a], m.aabbMin[a]);
+          ngMax[a] = std::max(ngMax[a], m.aabbMax[a]);
+        }
+        ngValid = true;
+      }
+      const float* fitMin = ngValid ? ngMin : draw_.aabbMin;
+      const float* fitMax = ngValid ? ngMax : draw_.aabbMax;
       if (robustBoundsValid_) {
         fitMin = robustBoundsMin_;
         fitMax = robustBoundsMax_;
-        const float dx = robustBoundsMax_[0] - robustBoundsMin_[0],
-                    dy = robustBoundsMax_[1] - robustBoundsMin_[1],
-                    dz = robustBoundsMax_[2] - robustBoundsMin_[2];
+      }
+      {
+        const float dx = fitMax[0] - fitMin[0], dy = fitMax[1] - fitMin[1],
+                    dz = fitMax[2] - fitMin[2];
         camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
       }
       camera_.fitToScene(fitMin, fitMax);
@@ -531,6 +586,30 @@ void App::loadFileBlocking(const std::string& path) {
   loaded_ = std::move(tmp);
   draw_ = ok ? std::move(drawTmp) : DrawScene{};
   applyLoaded(ok, /*progressive=*/false);
+}
+
+void App::addRecentScene(const std::string& path) {
+  if (path.empty()) return;
+  // Normalize to an absolute path so the entry is stable regardless of cwd.
+  std::string key = path;
+  std::error_code ec;
+  std::filesystem::path abs = std::filesystem::absolute(path, ec);
+  if (!ec) key = abs.lexically_normal().string();
+
+  auto& v = recentScenes_;
+  v.erase(std::remove(v.begin(), v.end(), key), v.end());
+  v.insert(v.begin(), key);
+  constexpr size_t kMaxRecent = 12;
+  if (v.size() > kMaxRecent) v.resize(kMaxRecent);
+  gui_.setRecentScenes(v);
+
+  if (!configPath_.empty()) {
+    std::string err;
+    if (!SaveRecentScenes(configPath_, v, &err)) {
+      LOGW("could not save recent scenes to %s: %s", configPath_.string().c_str(),
+           err.c_str());
+    }
+  }
 }
 
 void App::startLoadAsync(const std::string& path) {
@@ -1043,6 +1122,83 @@ void App::renderThreadMain() {
 }
 #endif  // TUSDVIEW_ENABLE_GL_THREAD
 
+bool App::renderHipViewport() {
+  // The initial model loads on a worker thread; wait until it has been applied on
+  // the main thread (finishLoadIfReady -> applyLoaded) and draw_ holds geometry.
+  // Returning true (not false) here keeps hipInteractive_ enabled across the wait.
+  if (loadActive_ || draw_.meshes.empty() || draw_.triangleCount == 0) {
+    // Show a clear viewport while loading -- also keeps colorImg_ in a defined,
+    // ImGui-sampleable layout (nothing else writes it on the HIP path).
+    int vw = 0, vh = 0;
+    gui_.viewportPixelSize(&vw, &vh);
+    if (vw > 0 && vh > 0) {
+      std::vector<uint8_t> clearPx(static_cast<size_t>(vw) * vh * 4);
+      for (size_t i = 0; i + 3 < clearPx.size(); i += 4) {
+        clearPx[i] = 31; clearPx[i + 1] = 31; clearPx[i + 2] = 33; clearPx[i + 3] = 255;
+      }
+      renderer_->uploadViewportImage(clearPx.data(), vw, vh);
+    }
+    return true;
+  }
+
+  // Build the HIP scene once (lazily, on the first frame after load). This blocks
+  // for the build (~tens of seconds on the largest scenes); the window appears
+  // first, then frames flow once it completes.
+  if (!hipInteractiveBuilt_) {
+    std::string cerr;
+    if (!hipTracer_.init(&cerr)) {
+      LOGW("HIP ray tracing unavailable: %s; viewport stays blank.", cerr.c_str());
+      hipInteractive_ = false;  // give up; avoid retrying every frame
+      return false;
+    }
+    if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+                          gui_.displacementScale())) {
+      LOGW("HIP ray tracing build failed: %s", cerr.c_str());
+      hipInteractive_ = false;
+      return false;
+    }
+    hipInteractiveBuilt_ = true;
+    LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
+         hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
+  }
+
+  int w = 0, h = 0;
+  gui_.viewportPixelSize(&w, &h);
+  if (w < 1 || h < 1) return true;  // viewport not laid out yet this frame
+
+  camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+  const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+  const light3d::Mat4 inv = pv.inverse();
+  const light3d::Vec3 eye = camera_.eye();
+  const float camPos[3] = {eye.x, eye.y, eye.z};
+  const float lightDir[3] = {0.5f, 0.8f, 0.6f};
+  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const int rmode = static_cast<int>(gui_.renderMode());
+  float depthScale = 1.0f;
+  float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
+  if (draw_.hasBounds) {
+    const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+    const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+    const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+    depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      sceneMin[i] = draw_.aabbMin[i];
+      sceneExtent[i] = std::max(1e-4f, draw_.aabbMax[i] - draw_.aabbMin[i]);
+    }
+  }
+
+  std::vector<uint8_t> rgba;
+  std::string cerr;
+  // spp=1: single sample for interactive frame rate (no supersampled AA).
+  if (hipTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1)) {
+    renderer_->uploadViewportImage(rgba.data(), w, h);
+  } else {
+    LOGW("HIP ray trace failed: %s", cerr.c_str());
+  }
+  return true;
+}
+
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   std::string err;
@@ -1061,6 +1217,14 @@ int App::run(const std::string& initialFile, int maxFrames,
   // returns before the rasterized capture is used, so the raster scene upload +
   // per-frame draw are pure waste (huge on heavily-instanced scenes). Skip them.
   rtOwnsScreenshot_ = (cudaRt_ || hipRt_) && headless_ && !screenshot.empty();
+  // Windowed --hip: the HIP tracer drives the viewport per frame (build once,
+  // retrace on the orbit camera). Skip the raster scene upload (which would stall
+  // on huge instanced scenes like Moana Island) and render single-threaded so the
+  // HIP launch + the colorImg_ upload happen on one thread.
+  hipInteractive_ = hipRt_ && !headless_;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  if (hipInteractive_) renderThreadActive_ = false;
+#endif
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
@@ -1351,7 +1515,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     {
       // Skip the raster scene draw (and its instance culling) when the RT path
       // owns the screenshot -- only the cheap ImGui composite needs to run.
-      if (!rtOwnsScreenshot_) gui_.renderViewportScene();
+      // Windowed --hip traces the viewport with the HIP path instead of raster.
+      if (hipInteractive_) {
+        renderHipViewport();
+      } else if (!rtOwnsScreenshot_) {
+        gui_.renderViewportScene();
+      }
 
       // Grab the composited window on the final frame (--window-shot).
       if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
@@ -1369,6 +1538,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
+    if (gui_.wantOpenRecent() && !headless_) {
+      const std::string p = gui_.recentToOpen();
+      if (!p.empty()) startLoadAsync(p);
+    }
 
     // Lazy payload on-demand load: recompose with the requested payloads added.
     // Skipped while a load is in flight (loaded_ would be the outgoing scene).
@@ -1465,9 +1638,16 @@ int App::run(const std::string& initialFile, int maxFrames,
                                   gui_.displacementScale())) {
       LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
     } else {
-      std::vector<uint8_t> sizeProbe;
+      // Use the requested window size for the screenshot. The viewport probe is
+      // unreliable on the RT screenshot path: rtOwnsScreenshot_ skips the raster
+      // renderViewportScene(), so resizeViewport() never runs and captureViewport()
+      // would report the tiny default offscreen size (e.g. 64x20).
       int w = 0, h = 0;
-      renderer_->captureViewport(&sizeProbe, &w, &h);
+      getRequestedWindowSize(&w, &h);
+      if (w <= 0 || h <= 0) {
+        std::vector<uint8_t> sizeProbe;
+        renderer_->captureViewport(&sizeProbe, &w, &h);
+      }
       if (w <= 0 || h <= 0) { w = 1024; h = 768; }
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
@@ -1517,9 +1697,16 @@ int App::run(const std::string& initialFile, int maxFrames,
                                  gui_.displacementScale())) {
       LOGW("HIP ray tracing build failed: %s", cerr.c_str());
     } else {
-      std::vector<uint8_t> sizeProbe;
+      // Use the requested window size for the screenshot. The viewport probe is
+      // unreliable on the RT screenshot path: rtOwnsScreenshot_ skips the raster
+      // renderViewportScene(), so resizeViewport() never runs and captureViewport()
+      // would report the tiny default offscreen size (e.g. 64x20).
       int w = 0, h = 0;
-      renderer_->captureViewport(&sizeProbe, &w, &h);
+      getRequestedWindowSize(&w, &h);
+      if (w <= 0 || h <= 0) {
+        std::vector<uint8_t> sizeProbe;
+        renderer_->captureViewport(&sizeProbe, &w, &h);
+      }
       if (w <= 0 || h <= 0) { w = 1024; h = 768; }
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();

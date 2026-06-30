@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -15,6 +16,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "frame_packet.hh"
 
@@ -39,6 +41,12 @@ struct GLFWwindow;
 namespace tinyusdz { namespace next { class Stage; } }
 
 namespace tusdview {
+
+// Encode an RGBA8 (top-down) buffer to an image file; format chosen by extension
+// (.png/.ppm). Defined in app.cc. Declared here so the MCP screenshot tool can
+// reuse it.
+bool WriteScreenshotImage(const std::string& path, const std::vector<uint8_t>& rgba,
+                          int w, int h, std::string* err);
 
 class App
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -67,22 +75,26 @@ class App
   // (default on). --no-robust-frame disables it to frame the literal scene bbox.
   void setRobustFrame(bool on) { robustFrame_ = on; }
 
-  // HiDPI UI scale (font + widget sizes). Default 2.0 for 4K panels.
+  // HiDPI UI scale (font + widget sizes). Auto-detected from the monitor at
+  // startup (1.0 on standard-density displays, 2.0 on HiDPI / >=2K panels) unless
+  // explicitly set via --ui-scale / --font-size / --window-scale.
   void setUiScale(float s) {
     if (s > 0.25f) {
       uiScale_ = s;
       fontSizePx_ = 16.0f * s;
       windowScale_ = s;
+      uiScaleExplicit_ = true;
     }
   }
   void setFontSize(float px) {
     if (px > 4.0f) {
       fontSizePx_ = px;
       uiScale_ = px / 16.0f;
+      uiScaleExplicit_ = true;
     }
   }
   void setWindowScale(float s) {
-    if (s > 0.25f) windowScale_ = s;
+    if (s > 0.25f) { windowScale_ = s; uiScaleExplicit_ = true; }
   }
   void setWindowSize(int width, int height) {
     if (width > 0 && height > 0) {
@@ -143,6 +155,13 @@ class App
   // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
+  // Recently-opened scenes: the config file path to persist to, and the initial
+  // list loaded from it. setRecentScenes also seeds the File > Open Recent menu.
+  void setConfigPath(const std::filesystem::path& p) { configPath_ = p; }
+  void setRecentScenes(const std::vector<std::string>& v) {
+    recentScenes_ = v;
+    gui_.setRecentScenes(recentScenes_);
+  }
   // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
   void setBlendWeight(const std::string& name, float w) {
@@ -163,6 +182,8 @@ class App
   nlohmann::json mcpGetFocusedPrim(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSetFocus(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpScreenshot(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpInput(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
@@ -189,6 +210,9 @@ class App
   // deterministic) and the async path (keeps the UI responsive).
   void loadFileBlocking(const std::string& path);
   void startLoadAsync(const std::string& path);
+  // Record a successfully-opened scene at the front of the recent list (dedup,
+  // capped), refresh the menu, and persist to the config path.
+  void addRecentScene(const std::string& path);
   // Recompose the current scene with additional payloads loaded (lazy payload
   // on-demand load). `addPrimPaths` are deferred-payload prim paths to load on
   // top of those already loaded. No-op if the scene wasn't composed.
@@ -265,6 +289,10 @@ class App
   float uiScale_{2.0f};      // widget scale (defaults to font px / 16)
   float fontSizePx_{32.0f};  // font size in pixels
   float windowScale_{2.0f};  // default window size multiplier
+  bool uiScaleExplicit_{false};  // user set --ui-scale/--font-size/--window-scale
+  // Pick a default UI/window scale from the primary monitor (no-op once explicit
+  // or in headless): 1.0 on standard-density / sub-2K displays, 2.0 on HiDPI/>=2K.
+  void autoDetectUiScale();
   bool hasWindowSizeOverride_{false};
   int windowWidth_{0};
   int windowHeight_{0};
@@ -272,6 +300,8 @@ class App
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
+  std::filesystem::path configPath_;        // where to persist recent scenes
+  std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
   std::size_t gpuMemBudgetBytes_{0};  // --max-gpu-mem: raster full-mesh VRAM cap
@@ -285,6 +315,15 @@ class App
   // upload + per-frame draw are then skipped (the RT path writes the image, the
   // raster capture is never used) -- a big win on huge scenes (Moana Island).
   bool rtOwnsScreenshot_{false};
+  // True for a windowed --hip run: the HIP tracer drives the viewport per frame
+  // (build once, retrace on the orbit camera, upload into the offscreen color via
+  // renderer_->uploadViewportImage). The raster scene upload is skipped (CPU
+  // geometry is kept for the tracer), and rendering stays single-threaded.
+  bool hipInteractive_{false};
+  bool hipInteractiveBuilt_{false};  // HIP scene built lazily on the first frame
+  // Trace the HIP viewport for one interactive frame (builds the scene on first
+  // call). Returns false if HIP is unavailable / the build failed.
+  bool renderHipViewport();
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)

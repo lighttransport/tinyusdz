@@ -72,12 +72,23 @@ class Gui {
   // into the packet and routes GPU side-effects (resize, instance visibility)
   // through postGpu_ for the render thread (renderFrame is NOT called here).
   void renderViewportScene(FramePacket* packet = nullptr);
+  // Current viewport panel size in pixels (0 until the first frame lays it out).
+  // Used by the interactive HIP/CUDA path to size its GPU trace to the viewport.
+  void viewportPixelSize(int* w, int* h) const {
+    if (w) *w = viewportW_;
+    if (h) *h = viewportH_;
+  }
   // Route a GPU op to the render thread (threaded); runs inline if unset.
   void setPostGpu(std::function<void(std::function<void()>)> fn) {
     postGpu_ = std::move(fn);
   }
 
   bool wantOpen() const { return wantOpen_; }
+  // File > Open Recent: the menu populated from setRecentScenes(); when an entry
+  // is clicked wantOpenRecent() is set and recentToOpen() holds its path.
+  void setRecentScenes(const std::vector<std::string>& v) { recentScenes_ = v; }
+  bool wantOpenRecent() const { return wantOpenRecent_; }
+  const std::string& recentToOpen() const { return recentToOpen_; }
   bool wantReload() const { return wantReload_; }
   bool wantQuit() const { return wantQuit_; }
   bool wantCancelLoad() const { return wantCancelLoad_; }
@@ -127,6 +138,10 @@ class Gui {
   void setTransformMode(TransformMode m) { xformMode_ = m; }
   void setRenderMode(RenderMode m) { mode_ = m; }
   RenderMode renderMode() const { return mode_; }
+  // Advance the 'w'-key wireframe cycle (0 off / 1 wire / 2 wire+shade); returns
+  // the new state. Used by the MCP input tool.
+  int cycleWireframe() { wireCycle_ = (wireCycle_ + 1) % 3; return wireCycle_; }
+  int wireframeMode() const { return wireCycle_; }
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
@@ -135,6 +150,7 @@ class Gui {
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
+    wantOpenRecent_ = false;
     wantLoadAllPayloads_ = false;
     payloadLoadRequests_.clear();
     wantVariantSwitch_ = false;
@@ -265,6 +281,8 @@ class Gui {
   int selectionHistoryIndex_{-1};
 
   RenderMode mode_{RenderMode::Shaded};
+  // Wireframe overlay state cycled by the 'w' key: 0 off / 1 wire-only / 2 wire+shaded.
+  int wireCycle_{0};
   // Transform manipulator mode.
   TransformMode xformMode_{TransformMode::None};
   int gizmoAxis_{-1};         // -1 = none, 0=X, 1=Y, 2=Z
@@ -386,6 +404,9 @@ class Gui {
   ImVec2 regionEnd_{0.0f, 0.0f};
 
   bool wantOpen_{false};
+  bool wantOpenRecent_{false};
+  std::string recentToOpen_;
+  std::vector<std::string> recentScenes_;  // newest first (from App config)
   bool wantReload_{false};
   bool wantQuit_{false};
   bool wantCancelLoad_{false};

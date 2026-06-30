@@ -2,7 +2,10 @@
 #include "hip_raytracer.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "hipew.h"
@@ -220,15 +223,28 @@ bool HipRayTracer::trace(const float invViewProj[16], const float camPos[3],
   std::vector<float> accum;
   std::vector<uint8_t> frame;
   if (samples > 1) { accum.assign(bytes, 0.0f); frame.resize(bytes); }
+  // TUSDVIEW_RT_TIMING=1: report the isolated per-pass GPU trace time (launch +
+  // blocking sync, excluding the DtoH readback) -- the cost an interactive
+  // per-frame retrace would pay once the scene is already built/uploaded.
+  const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+  double traceMsTotal = 0.0;
   for (int s = 0; s < samples; ++s) {
     float jx, jy;
     RtPixelJitter(s, samples, &jx, &jy);
     cam.sceneMin[3] = jx;
     cam.sceneExtent[3] = jy;
+    auto t0 = std::chrono::steady_clock::now();
     CU_OK(hipModuleLaunchKernel(reinterpret_cast<hipFunction_t>(kernel_), gx, gy, 1,
                                 8, 8, 1, 0, nullptr, args, nullptr),
           "hipModuleLaunchKernel");
     CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
+    if (rtTiming) {
+      auto t1 = std::chrono::steady_clock::now();
+      double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+      traceMsTotal += ms;
+      std::fprintf(stderr, "[hip_raytracer] trace pass %d/%d: %.1f ms (%dx%d)\n",
+                   s + 1, samples, ms, w, h);
+    }
     if (samples == 1) {
       CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
             "hipMemcpyDtoH");
@@ -242,6 +258,11 @@ bool HipRayTracer::trace(const float invViewProj[16], const float camPos[3],
     for (size_t i = 0; i < bytes; ++i)
       (*rgba)[i] = uint8_t(accum[i] / float(samples) + 0.5f);
     for (size_t i = 3; i < bytes; i += 4) (*rgba)[i] = 255;  // keep alpha opaque
+  }
+  if (rtTiming) {
+    std::fprintf(stderr,
+                 "[hip_raytracer] %d pass(es): %.1f ms total, %.1f ms/pass (%dx%d)\n",
+                 samples, traceMsTotal, traceMsTotal / double(samples), w, h);
   }
   return true;
 }

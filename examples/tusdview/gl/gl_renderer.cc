@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #include "gl/gl_util.hh"
 #include "imgui.h"
@@ -274,12 +276,17 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       // a lit render.
       "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
       "  }\n"
+      // Soft camera-headlight: face the normal to the camera, combine N.V with a
+      // gentle half-Lambert key + ambient floor so no facet renders pure black.
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
-      "  vec3 L = normalize(vec3(1.0, 1.0, 1.0));\n"
-      "  float NdotL = max(dot(N, L), 0.0);\n"
+      "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
+      "  float facing = max(dot(Nf, V), 0.0);\n"
+      "  vec3 L = normalize(vec3(0.3, 0.5, 0.8));\n"
+      "  float key = dot(Nf, L) * 0.5 + 0.5;\n"
+      "  float shade = 0.25 + 0.75 * (0.6 * facing + 0.4 * key);\n"
       "  vec3 H = normalize(L + V);\n"
-      "  float NdotH = max(dot(N, H), 0.0);\n"
-      "  vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);\n"
+      "  float NdotH = max(dot(Nf, H), 0.0);\n"
+      "  vec3 col = vColor * shade + vec3(0.12) * pow(NdotH, 32.0) * facing;\n"
       "  FragColor = vec4(col + uEmissive, 1.0);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
@@ -305,6 +312,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
   glUseProgram(0);
+
+  buildWireProgram();  // flat polygon-edge wireframe (best-effort; non-fatal)
 
   // 1x1 white default texture (bound to unused sampler units).
   glGenTextures(1, &whiteTex_);
@@ -628,11 +637,16 @@ void GLRenderer::buildTessProgram() {
       // height detail actually shades, matching the coarse path's displaced look.
       "  vec3 N=normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos)));\n"
       "  if(!gl_FrontFacing) N=-N;\n"
+      // Soft camera-headlight (matches the coarse/material path): N.V + half-Lambert
+      // key + ambient floor so no facet renders pure black.
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
-      "  vec3 L=normalize(vec3(1.0,1.0,1.0));\n"
-      "  float NdotL=max(dot(N,L),0.0);\n"
-      "  vec3 H=normalize(L+V); float NdotH=max(dot(N,H),0.0);\n"
-      "  vec3 col=base*(0.05+NdotL)+vec3(0.15)*pow(NdotH,32.0);\n"
+      "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
+      "  float facing=max(dot(Nf,V),0.0);\n"
+      "  vec3 L=normalize(vec3(0.3,0.5,0.8));\n"
+      "  float key=dot(Nf,L)*0.5+0.5;\n"
+      "  float shade=0.25+0.75*(0.6*facing+0.4*key);\n"
+      "  vec3 H=normalize(L+V); float NdotH=max(dot(Nf,H),0.0);\n"
+      "  vec3 col=base*shade+vec3(0.12)*pow(NdotH,32.0)*facing;\n"
       "  FragColor=vec4(col,1.0);\n"
       "}\n";
   std::string terr;
@@ -695,6 +709,7 @@ void GLRenderer::destroyScene() {
     if (m.morphChanBuf) glDeleteBuffers(1, &m.morphChanBuf);
     if (m.faceIdTex) glDeleteTextures(1, &m.faceIdTex);
     if (m.faceIdBuf) glDeleteBuffers(1, &m.faceIdBuf);
+    if (m.wireEbo) glDeleteBuffers(1, &m.wireEbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
@@ -845,6 +860,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   if (gm.vao) glDeleteVertexArrays(1, &gm.vao);
   if (gm.vbo) glDeleteBuffers(1, &gm.vbo);
   if (gm.ebo) glDeleteBuffers(1, &gm.ebo);
+  if (gm.wireEbo) glDeleteBuffers(1, &gm.wireEbo);
   if (gm.jointVbo) glDeleteBuffers(1, &gm.jointVbo);
   if (gm.weightVbo) glDeleteBuffers(1, &gm.weightVbo);
   if (gm.influenceVbo) glDeleteBuffers(1, &gm.influenceVbo);
@@ -1185,6 +1201,64 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+  // Wireframe edges. Prefer the loader-provided original-polygon perimeter edges
+  // (sm.wireframeIndices: quads/ngons, correct for double-sided meshes). Fall
+  // back to deriving edges from triangles + source face ids (drop triangulation
+  // diagonals), and finally to every triangle edge. Always from the base (coarse)
+  // indices, so wireframe shows the pre-tessellation mesh.
+  if (!sm.wireframeIndices.empty()) {
+    glGenBuffers(1, &gm.wireEbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.wireframeIndices.size() * sizeof(uint32_t)),
+                 sm.wireframeIndices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    gm.wireCount = static_cast<GLsizei>(sm.wireframeIndices.size());
+  } else {
+    const size_t triCount = sm.indices.size() / 3;
+    const bool haveFaceIds =
+        sm.sourceFaceId.size() == triCount && !sm.sourceFaceId.empty();
+    // edge key -> (first face id seen, keep?)
+    std::unordered_map<uint64_t, std::pair<uint32_t, bool>> edges;
+    edges.reserve(triCount * 3);
+    auto key = [](uint32_t a, uint32_t b) -> uint64_t {
+      if (a > b) { uint32_t t = a; a = b; b = t; }
+      return (static_cast<uint64_t>(a) << 32) | b;
+    };
+    for (size_t t = 0; t < triCount; ++t) {
+      const uint32_t v[3] = {sm.indices[t * 3], sm.indices[t * 3 + 1],
+                             sm.indices[t * 3 + 2]};
+      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : static_cast<uint32_t>(t);
+      const uint32_t e[3][2] = {{v[0], v[1]}, {v[1], v[2]}, {v[2], v[0]}};
+      for (int k = 0; k < 3; ++k) {
+        const uint64_t ek = key(e[k][0], e[k][1]);
+        auto it = edges.find(ek);
+        if (it == edges.end()) {
+          edges.emplace(ek, std::make_pair(f, true));  // boundary until proven interior
+        } else {
+          it->second.second = (it->second.first != f);  // same face -> diagonal -> drop
+        }
+      }
+    }
+    std::vector<uint32_t> wire;
+    wire.reserve(edges.size() * 2);
+    for (const auto& kv : edges) {
+      if (!kv.second.second) continue;
+      wire.push_back(static_cast<uint32_t>(kv.first >> 32));
+      wire.push_back(static_cast<uint32_t>(kv.first & 0xffffffffu));
+    }
+    if (!wire.empty()) {
+      glGenBuffers(1, &gm.wireEbo);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);  // no VAO bound: not VAO state
+      glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(wire.size() * sizeof(uint32_t)),
+                   wire.data(), GL_STATIC_DRAW);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+      gm.wireCount = static_cast<GLsizei>(wire.size());
+    }
+  }
+
   meshes_.push_back(gm);
 }
 
@@ -1242,6 +1316,122 @@ void GLRenderer::ensureFbo(int w, int h) {
 void GLRenderer::resizeViewport(int width, int height) { ensureFbo(width, height); }
 
 void GLRenderer::newFrame() { ImGui_ImplOpenGL3_NewFrame(); }
+
+void GLRenderer::buildWireProgram() {
+  // Flat line shaders. A small NDC depth bias (uDepthBias subtracted from z) lifts
+  // the lines just in front of the surface so they are not z-fought by the fill.
+  static const char* kWireFS =
+      "#version 330 core\n"
+      "out vec4 FragColor;\n"
+      "uniform vec3 uWireColor;\n"
+      "void main(){ FragColor = vec4(uWireColor, 1.0); }\n";
+  static const char* kWireVS =
+      "#version 330 core\n"
+      "layout(location=0) in vec3 aPosition;\n"
+      "uniform mat4 uModelViewProj;\n"
+      "uniform float uDepthBias;\n"
+      "void main(){\n"
+      "  vec4 p = uModelViewProj * vec4(aPosition, 1.0);\n"
+      "  p.z -= uDepthBias * p.w;\n"
+      "  gl_Position = p;\n"
+      "}\n";
+  static const char* kWireInstVS =
+      "#version 330 core\n"
+      "layout(location=0) in vec3 aPosition;\n"
+      "layout(location=3) in vec4 aRow0;\n"
+      "layout(location=4) in vec4 aRow1;\n"
+      "layout(location=5) in vec4 aRow2;\n"
+      "uniform mat4 uViewProj;\n"
+      "uniform float uDepthBias;\n"
+      "void main(){\n"
+      "  vec4 lp = vec4(aPosition, 1.0);\n"
+      "  vec3 wp = vec3(dot(lp, aRow0), dot(lp, aRow1), dot(lp, aRow2));\n"
+      "  vec4 p = uViewProj * vec4(wp, 1.0);\n"
+      "  p.z -= uDepthBias * p.w;\n"
+      "  gl_Position = p;\n"
+      "}\n";
+  std::string werr;
+  wireProgram_ = glutil::CompileProgram(kWireVS, kWireFS, &werr);
+  if (wireProgram_) {
+    wMVP_ = glGetUniformLocation(wireProgram_, "uModelViewProj");
+    wWireColor_ = glGetUniformLocation(wireProgram_, "uWireColor");
+    wDepthBias_ = glGetUniformLocation(wireProgram_, "uDepthBias");
+  }
+  wireInstProgram_ = glutil::CompileProgram(kWireInstVS, kWireFS, &werr);
+  if (wireInstProgram_) {
+    wiViewProj_ = glGetUniformLocation(wireInstProgram_, "uViewProj");
+    wiWireColor_ = glGetUniformLocation(wireInstProgram_, "uWireColor");
+    wiDepthBias_ = glGetUniformLocation(wireInstProgram_, "uDepthBias");
+  }
+}
+
+void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
+  if (!wireProgram_ && !wireInstProgram_) return;
+  const float kBias = 0.0008f;  // NDC z bias: lines just in front of the surface
+  light3d::Mat4 P = ToMat4(params.proj);
+  light3d::Mat4 V = ToMat4(params.view);
+  glDisable(GL_CULL_FACE);
+  // Thin anti-aliased lines (usdview look): coverage-based line smoothing blended
+  // over the surface. Alpha blend so the smoothed edge coverage feathers; keep
+  // depth test (lines sit in front via the VS depth bias) but don't write depth
+  // so overlapping smoothed lines don't darken each other.
+  glEnable(GL_LINE_SMOOTH);
+  glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+  glLineWidth(1.0f);
+
+  // Non-instanced meshes: per-mesh MVP.
+  if (wireProgram_) {
+    glUseProgram(wireProgram_);
+    glUniform3fv(wWireColor_, 1, wireColor);
+    glUniform1f(wDepthBias_, kBias);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount > 0 || mesh.wireEbo == 0 || mesh.wireCount == 0) continue;
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) {
+        continue;
+      }
+      light3d::Mat4 MVP = P * V * ToMat4(mesh.world);
+      glUniformMatrix4fv(wMVP_, 1, GL_FALSE, MVP.m);
+      glBindVertexArray(mesh.vao);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.wireEbo);  // override the VAO's tri EBO
+      glDrawElements(GL_LINES, mesh.wireCount, GL_UNSIGNED_INT, nullptr);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);      // restore the VAO state
+    }
+  }
+
+  // Instanced prototypes: per-instance 3x4 rows (attribs 3/4/5) + view-proj.
+  if (wireInstProgram_) {
+    light3d::Mat4 VP = P * V;
+    glUseProgram(wireInstProgram_);
+    glUniformMatrix4fv(wiViewProj_, 1, GL_FALSE, VP.m);
+    glUniform3fv(wiWireColor_, 1, wireColor);
+    glUniform1f(wiDepthBias_, kBias);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      if (mesh.wireEbo == 0 || mesh.wireCount == 0) continue;
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) {
+        continue;
+      }
+      glBindVertexArray(mesh.vao);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.wireEbo);
+      glDrawElementsInstanced(GL_LINES, mesh.wireCount, GL_UNSIGNED_INT, nullptr,
+                              mesh.drawInstanceCount);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);
+    }
+  }
+  glBindVertexArray(0);
+  // Restore default state for the rest of the frame (ImGui / next passes).
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
+  glDisable(GL_LINE_SMOOTH);
+  glUseProgram(program_);  // restore for callers that assume program_ is bound
+}
 
 void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                             const float* overrideEmissive) {
@@ -1566,9 +1756,26 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   glUseProgram(program_);
   glUniform3fv(uCameraPos_, 1, params.cameraPos);
 
-  const bool wire = (params.mode == RenderMode::Wireframe);
-  glPolygonMode(GL_FRONT_AND_BACK, wire ? GL_LINE : GL_FILL);
-  drawMeshes(params, wire, nullptr);
+  // Resolve the wireframe state: explicit params.wireMode wins; the legacy
+  // RenderMode::Wireframe maps to "wireframe only".
+  int wireMode = params.wireMode;
+  if (wireMode == 0 && params.mode == RenderMode::Wireframe) wireMode = 1;
+  const bool haveWire = (wireProgram_ != 0 || wireInstProgram_ != 0);
+  const bool wire = (wireMode != 0);  // disables back-face cull in fill passes
+  const float wireCol[3] = {0.75f, 0.85f, 0.95f};  // cool light gray
+
+  if (wireMode == 1 && haveWire) {
+    // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so
+    // occluded edges are hidden, then draw the polygon edges over the background.
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    drawMeshes(params, /*wireframe=*/false, nullptr);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    drawWireframe(params, wireCol);
+  } else {
+    // Shaded fill, optionally with the polygon-edge wireframe overlaid on top.
+    drawMeshes(params, /*wireframe=*/false, nullptr);
+    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
+  }
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
   if (params.highlightMeshIndex >= 0 &&
@@ -1781,6 +1988,24 @@ void GLRenderer::present() {
 }
 #endif
 
+bool GLRenderer::gpuMemoryMB(size_t* usedMB, size_t* totalMB) const {
+  // GL_NVX_gpu_memory_info (NVIDIA, and exposed by Mesa for AMD/Intel): total
+  // dedicated VRAM + currently-available; used = total - available.
+  constexpr GLenum kDedicated = 0x9047;  // GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX
+  constexpr GLenum kAvailable = 0x9049;  // GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX
+  GLint totalKB = 0, availKB = 0;
+  while (glGetError() != GL_NO_ERROR) {}  // clear prior errors
+  glGetIntegerv(kDedicated, &totalKB);
+  glGetIntegerv(kAvailable, &availKB);
+  if (glGetError() != GL_NO_ERROR || totalKB <= 0) return false;
+  if (totalMB) *totalMB = static_cast<size_t>(totalKB) / 1024u;
+  if (usedMB) {
+    const GLint usedKB = totalKB > availKB ? (totalKB - availKB) : 0;
+    *usedMB = static_cast<size_t>(usedKB) / 1024u;
+  }
+  return true;
+}
+
 bool GLRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   if (!fbo_ || vpW_ < 1 || vpH_ < 1) return false;
   *w = vpW_;
@@ -1825,6 +2050,8 @@ void GLRenderer::shutdown() {
   if (program_) { glDeleteProgram(program_); program_ = 0; }
   if (tessProgram_) { glDeleteProgram(tessProgram_); tessProgram_ = 0; }
   if (instProgram_) { glDeleteProgram(instProgram_); instProgram_ = 0; }
+  if (wireProgram_) { glDeleteProgram(wireProgram_); wireProgram_ = 0; }
+  if (wireInstProgram_) { glDeleteProgram(wireInstProgram_); wireInstProgram_ = 0; }
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }

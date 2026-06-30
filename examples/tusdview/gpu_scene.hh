@@ -188,6 +188,11 @@ struct DrawMeshCPU {
   // triangulated from), parallel to the triangles of `indices` (grouped order).
   // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
   std::vector<uint32_t> sourceFaceId;
+  // Original-polygon wireframe edges as GL_LINES vertex-index pairs (perimeter of
+  // each USD face, deduped). Built from the pre-triangulation topology so the
+  // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)
+  // meshes where a per-triangle approach fails. Empty => fall back to tri edges.
+  std::vector<uint32_t> wireframeIndices;
   // Coarse displacement baked into geometry for the ray-tracing backends (which
   // intersect real triangles, so displacement can't be a vertex/tess-shader effect
   // like the raster path). Parallel to `vertices`; empty when the mesh has no
@@ -289,6 +294,10 @@ struct DrawScene {
   // Diagnostics surfaced in the GUI (skipped meshes/textures, UDIM, etc.)
   std::vector<std::string> skipped;
   size_t triangleCount{0};
+  // Total vertex count, captured at load time. Stored separately because the
+  // --next path frees per-mesh CPU geometry after GPU upload (so summing
+  // meshes[].vertices later would report 0).
+  size_t vertexCount{0};
 
   // True when a render budget (triangles / VRAM) was hit and the scene was only
   // partially built to avoid freezing / VRAM thrashing.

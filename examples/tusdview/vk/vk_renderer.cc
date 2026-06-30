@@ -5,8 +5,10 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "imgui.h"
@@ -3204,6 +3206,8 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
   vkDeviceWaitIdle(device_);
+  const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+  auto tlasT0 = std::chrono::steady_clock::now();
 
   // Drop the previous per-scene TLAS + scene buffers.
   if (tlas_) { pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
@@ -3292,6 +3296,16 @@ void VulkanRenderer::rebuildTlas() {
     }
   }
   if (insts.empty()) return;
+  if (rtTiming) {
+    auto tb = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+                 "[vk_rt] BLAS build + %zu TLAS instances: %.1f ms; instBuf %.2f GB, "
+                 "instInfo %.2f GB\n",
+                 insts.size(),
+                 std::chrono::duration<double, std::milli>(tb - tlasT0).count(),
+                 double(insts.size() * sizeof(VkAccelerationStructureInstanceKHR)) / 1e9,
+                 double(instInfos.size() * sizeof(InstanceInfoGPU)) / 1e9);
+  }
 
   // Instances buffer (AS build input, device address).
   createHostBuffer(insts.size() * sizeof(VkAccelerationStructureInstanceKHR),
@@ -3351,6 +3365,14 @@ void VulkanRenderer::rebuildTlas() {
   endOneShot(cb);
   vkDestroyBuffer(device_, scratch, nullptr);
   vkFreeMemory(device_, scratchMem, nullptr);
+  if (rtTiming) {
+    auto tt = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+                 "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, total build %.1f ms\n",
+                 double(sizes.accelerationStructureSize) / 1e9,
+                 double(sizes.buildScratchSize) / 1e9,
+                 std::chrono::duration<double, std::milli>(tt - tlasT0).count());
+  }
 
   // Per-mesh descriptor SSBO + materials SSBO.
   createHostBuffer(descs.size() * sizeof(MeshDescGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -3955,7 +3977,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   vkBeginCommandBuffer(cb, &bi);
 
   // ---- Offscreen 3D pass: ray query (compute) or rasterization ----
-  if (rtFrame && tlas_ != VK_NULL_HANDLE) {
+  if (externalColorValid_) {
+    // The interactive HIP/CUDA path already staged its traced frame into colorImg_
+    // (SHADER_READ_ONLY_OPTIMAL) via uploadViewportImage(); skip the 3D pass and let
+    // the ImGui composite below sample it. Consumed once.
+    externalColorValid_ = false;
+  } else if (rtFrame && tlas_ != VK_NULL_HANDLE) {
     traceRt(cb);
     // Overlay pass: ray query writes the offscreen color image via compute (no
     // render pass), so helpers/skeleton/selection-highlight would be missing.
@@ -4320,6 +4347,60 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   frame_ = (frame_ + 1) % kFramesInFlight;
 }
 
+bool VulkanRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
+  if (!device_ || !rgba || w < 1 || h < 1) return false;
+  // The offscreen color target (sampled by ImGui for the viewport) must match the
+  // uploaded image; resize it if the interactive viewport changed size.
+  if (!colorImg_ || w != vpW_ || h != vpH_) resizeViewport(w, h);
+  if (!colorImg_) return false;
+  vkDeviceWaitIdle(device_);
+
+  const VkDeviceSize size = static_cast<VkDeviceSize>(w) * h * 4;
+  // Recreate the host-visible staging buffer with this frame's pixels. (Per-frame
+  // create/destroy is cheap next to the multi-ms GPU trace that produced them.)
+  if (extStaging_) { vkDestroyBuffer(device_, extStaging_, nullptr); extStaging_ = VK_NULL_HANDLE; }
+  if (extStagingMem_) { vkFreeMemory(device_, extStagingMem_, nullptr); extStagingMem_ = VK_NULL_HANDLE; }
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba, &extStaging_,
+                        &extStagingMem_)) {
+    return false;
+  }
+  extStagingCap_ = size;
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = colorImg_;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1u};
+  vkCmdCopyBufferToImage(cb, extStaging_, colorImg_,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                       1, &toRead);
+  endOneShot(cb);
+
+  externalColorValid_ = true;  // presentImpl skips the 3D pass and consumes this
+  return true;
+}
+
 bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   if (!device_ || !colorImg_ || vpW_ < 1 || vpH_ < 1) return false;
   vkDeviceWaitIdle(device_);
@@ -4501,6 +4582,8 @@ void VulkanRenderer::shutdown() {
     if (!headless_) ImGui_ImplGlfw_Shutdown();
     imguiInited_ = false;
   }
+  if (extStaging_) { vkDestroyBuffer(device_, extStaging_, nullptr); extStaging_ = VK_NULL_HANDLE; }
+  if (extStagingMem_) { vkFreeMemory(device_, extStagingMem_, nullptr); extStagingMem_ = VK_NULL_HANDLE; }
   if (whiteView_) { vkDestroyImageView(device_, whiteView_, nullptr); whiteView_ = VK_NULL_HANDLE; }
   if (whiteImg_) { vkDestroyImage(device_, whiteImg_, nullptr); whiteImg_ = VK_NULL_HANDLE; }
   if (whiteMem_) { vkFreeMemory(device_, whiteMem_, nullptr); whiteMem_ = VK_NULL_HANDLE; }

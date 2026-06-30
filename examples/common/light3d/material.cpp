@@ -519,21 +519,25 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, uAlpha);
@@ -632,21 +636,25 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);
@@ -749,21 +757,25 @@ void main() {
 
     vec3 V = normalize(cameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);
