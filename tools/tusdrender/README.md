@@ -50,9 +50,12 @@ Common flags:
   (classify the world-space placements once, Cull→drop, Proxy→box, Full→keep, before
   building the flat BLAS). The GPU collector now expands both `PointInstancer` and
   scenegraph (`instanceable`) native instances in place (world-space placements),
-  so instanced geometry renders and LODs on `-vk`/`-vkr` too. GPU caveat: no
-  per-prototype BLAS sharing (full flatten) — a true two-level GPU TLAS remains a
-  follow-on (see `doc/tusdrender.md`).
+  so instanced geometry renders and LODs on `-vk`/`-vkr` too (flattened: a
+  prototype's geometry is duplicated per instance). For instanced scenes,
+  **`-vkInstanced`** (implies `-vkr`) builds a true two-level GPU TLAS — one BLAS
+  per prototype shared across all instances — storing instanced geometry once
+  (e.g. 800 tris vs 160 000 for a 200× scatter), pixel-identical to the flat path.
+  See `doc/tusdrender.md`.
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
   emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/

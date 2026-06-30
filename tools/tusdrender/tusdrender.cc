@@ -80,6 +80,9 @@ extern "C" {
 #include "tusdr_types.hh"
 #include "tusdr_context.hh"
 #include "tusdr_rt_lod.hh"
+#if defined(HAVE_VULKAN)
+#include "tusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
+#endif
 
 
 // The Vulkan backend and main() below live in the global namespace; pull in the
@@ -91,6 +94,209 @@ using namespace tusdr;
 // BVH traversal. Builds the scene with the existing CPU builder, uploads to
 // GPU, traces camera rays, then shades hits on the CPU.
 // ---------------------------------------------------------------------------
+
+#if defined(HAVE_VULKAN)
+// Resolve the GPU render camera exactly like the flat -vk/-vkr path (named
+// camera, else USD record camera for -autoframe, else auto-fit). *out_height
+// starts at opt.height (<=0 = derive).
+static CameraFrame ResolveGpuCameraInst(const tinyusdz::next::Stage &stage,
+                                        const Options &opt, const Bounds &bounds,
+                                        tinyusdz::Axis usdUp, int *out_height) {
+  const int cam_width = opt.width > 0 ? opt.width : 960;
+  CameraFrame camera;
+  Options auto_opt = opt;
+  auto_opt.camera.clear();
+  auto_opt.width = cam_width;
+  if (!opt.camera.empty()) {
+    float cam_aspect = 16.0f / 9.0f;
+    if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
+      if (*out_height <= 0)
+        *out_height = std::max(1, int(std::lround(float(cam_width) / cam_aspect)));
+    } else {
+      std::cerr << "WARN: camera not found: " << opt.camera
+                << ". Using auto-fit.\n";
+      if (*out_height <= 0) *out_height = 540;
+      camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+    }
+  } else if (opt.autoframe) {
+    camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, out_height);
+  } else {
+    if (*out_height <= 0) *out_height = 540;
+    camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+  }
+  return camera;
+}
+
+// Object-space normal matrix (row-major 3x3) = cofactor of o2w's upper 3x3 =
+// det * inverse-transpose. The det scale is dropped (the shaded normal is
+// renormalized), so this transforms an object-space normal to world correctly
+// even under non-uniform scale.
+static void NormalMatrixFromO2W(const float o2w[12], float n2w[9]) {
+  const float a = o2w[0], b = o2w[1], c = o2w[2];
+  const float d = o2w[4], e = o2w[5], f = o2w[6];
+  const float g = o2w[8], h = o2w[9], i = o2w[10];
+  n2w[0] = (e * i - f * h); n2w[1] = -(d * i - f * g); n2w[2] = (d * h - e * g);
+  n2w[3] = -(b * i - c * h); n2w[4] = (a * i - c * g); n2w[5] = -(a * h - b * g);
+  n2w[6] = (b * f - c * e); n2w[7] = -(a * f - c * d); n2w[8] = (a * e - b * d);
+}
+
+// Extract one prototype's geometry in PROTOTYPE-LOCAL (object) space from a Mesh
+// prim: positions, fan-triangulated indices, per-triangle flat + vertex normals,
+// and the constant displayColor. Mirrors the flat GPU extractor minus the world
+// transform and displacement (the instance transform is applied by the TLAS).
+static bool ExtractProtoGeo(const tinyusdz::next::UsdPrim &prim,
+                            GpuInstProto *out) {
+  const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
+  if (!val) return false;
+  const std::vector<float> *pts = val->as_float_array();
+  if (!pts || pts->empty()) return false;
+  const uint32_t nv = uint32_t(pts->size() / 3);
+  out->verts = *pts;
+
+  std::vector<Vec3> vn(nv, Vec3{0, 0, 0});
+  bool perVertexN = false;
+  val = prim.GetPropertyValue("normals");
+  if (val) {
+    const std::vector<float> *nrm = val->as_float_array();
+    if (nrm && nrm->size() == size_t(nv) * 3) {
+      perVertexN = true;
+      for (uint32_t j = 0; j < nv; ++j)
+        vn[j] = Vec3{(*nrm)[j * 3], (*nrm)[j * 3 + 1], (*nrm)[j * 3 + 2]};
+    }
+  }
+
+  val = prim.GetPropertyValue("faceVertexIndices");
+  const tinyusdz::next::Value *cval = prim.GetPropertyValue("faceVertexCounts");
+  if (!val) return false;
+  const std::vector<int> *idx = val->as_int_array();
+  const std::vector<int> *cnt = cval ? cval->as_int_array() : nullptr;
+  if (!idx || idx->empty()) return false;
+  if (cnt && !cnt->empty()) {
+    size_t off = 0;
+    for (int c : *cnt) {
+      if (c >= 3 && off + size_t(c) <= idx->size()) {
+        int v0 = (*idx)[off];
+        for (int k = 1; k + 1 < c; ++k) {
+          out->idx.push_back(uint32_t(v0));
+          out->idx.push_back(uint32_t((*idx)[off + size_t(k)]));
+          out->idx.push_back(uint32_t((*idx)[off + size_t(k) + 1]));
+        }
+      }
+      off += size_t(c < 0 ? 0 : c);
+    }
+  } else {
+    for (int v : *idx) out->idx.push_back(uint32_t(v));
+  }
+  // Drop any triangle that indexes a vertex out of range (the BLAS build sets
+  // maxVertex = nv-1; an OOB index would corrupt traversal).
+  for (size_t t = 0; t + 2 < out->idx.size(); t += 3)
+    if (out->idx[t] >= nv || out->idx[t + 1] >= nv || out->idx[t + 2] >= nv) {
+      out->idx.clear();
+      break;
+    }
+  out->ntris = uint32_t(out->idx.size() / 3);
+  if (out->ntris == 0) return false;
+
+  for (uint32_t t = 0; t < out->ntris; ++t) {
+    uint32_t i0 = out->idx[t * 3], i1 = out->idx[t * 3 + 1], i2 = out->idx[t * 3 + 2];
+    Vec3 p0{out->verts[i0 * 3], out->verts[i0 * 3 + 1], out->verts[i0 * 3 + 2]};
+    Vec3 p1{out->verts[i1 * 3], out->verts[i1 * 3 + 1], out->verts[i1 * 3 + 2]};
+    Vec3 p2{out->verts[i2 * 3], out->verts[i2 * 3 + 1], out->verts[i2 * 3 + 2]};
+    out->normals.push_back(Normalize(Cross(Sub(p1, p0), Sub(p2, p0))));
+    out->vn0.push_back(perVertexN ? vn[i0] : Vec3{0, 0, 0});
+    out->vn1.push_back(perVertexN ? vn[i1] : Vec3{0, 0, 0});
+    out->vn2.push_back(perVertexN ? vn[i2] : Vec3{0, 0, 0});
+  }
+
+  out->base_color = Vec3{0.5f, 0.5f, 0.5f};
+  if (const tinyusdz::next::Value *dcv =
+          prim.GetPropertyValue("primvars:displayColor")) {
+    const std::vector<float> *dc = dcv->as_float_array();
+    if (dc && dc->size() >= 3) out->base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
+  }
+  return true;
+}
+
+// -vkInstanced: decompose the expanded mesh jobs into shared prototypes (grouped
+// by source prim path) + per-placement instances, then render with the true
+// two-level GPU TLAS. Returns true if it produced an image; false to fall back to
+// the flat path. Geometry is stored ONCE per prototype regardless of instance
+// count (the memory-sharing win over the flat world-space soup).
+static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
+                              const std::vector<MeshJobNext> &mesh_jobs,
+                              const Options &opt) {
+  GpuInstancedScene scene;
+  std::unordered_map<std::string, uint32_t> proto_id;
+  std::vector<Bounds> proto_aabb;
+  for (const MeshJobNext &job : mesh_jobs) {
+    if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
+    const std::string key = job.prim.GetPath().str();
+    auto it = proto_id.find(key);
+    uint32_t pid;
+    if (it == proto_id.end()) {
+      GpuInstProto pr;
+      if (!ExtractProtoGeo(job.prim, &pr)) {
+        proto_id[key] = 0xFFFFFFFFu;  // remember the bad prim, skip its jobs
+        continue;
+      }
+      Bounds bb;
+      for (size_t j = 0; j < pr.verts.size() / 3; ++j) {
+        bb.lo.x = std::min(bb.lo.x, pr.verts[j * 3 + 0]);
+        bb.lo.y = std::min(bb.lo.y, pr.verts[j * 3 + 1]);
+        bb.lo.z = std::min(bb.lo.z, pr.verts[j * 3 + 2]);
+        bb.hi.x = std::max(bb.hi.x, pr.verts[j * 3 + 0]);
+        bb.hi.y = std::max(bb.hi.y, pr.verts[j * 3 + 1]);
+        bb.hi.z = std::max(bb.hi.z, pr.verts[j * 3 + 2]);
+      }
+      bb.valid = true;
+      pid = uint32_t(scene.protos.size());
+      proto_id[key] = pid;
+      scene.protos.push_back(std::move(pr));
+      proto_aabb.push_back(bb);
+    } else {
+      pid = it->second;
+      if (pid == 0xFFFFFFFFu) continue;
+    }
+    GpuInstPlacement pl;
+    Mat4ToObj2World(job.world, pl.o2w);
+    NormalMatrixFromO2W(pl.o2w, pl.n2w);
+    pl.proto = pid;
+    scene.insts.push_back(pl);
+  }
+  if (scene.protos.empty() || scene.insts.empty()) return false;
+
+  // World bounds = union of each instance's prototype AABB under its o2w.
+  Bounds bounds;
+  for (const GpuInstPlacement &pl : scene.insts) {
+    const Bounds &lb = proto_aabb[pl.proto];
+    for (int cI = 0; cI < 8; ++cI) {
+      Vec3 p{(cI & 1) ? lb.hi.x : lb.lo.x, (cI & 2) ? lb.hi.y : lb.lo.y,
+             (cI & 4) ? lb.hi.z : lb.lo.z};
+      Vec3 wp = TransformPointO2W(pl.o2w, p);
+      bounds.lo.x = std::min(bounds.lo.x, wp.x);
+      bounds.lo.y = std::min(bounds.lo.y, wp.y);
+      bounds.lo.z = std::min(bounds.lo.z, wp.z);
+      bounds.hi.x = std::max(bounds.hi.x, wp.x);
+      bounds.hi.y = std::max(bounds.hi.y, wp.y);
+      bounds.hi.z = std::max(bounds.hi.z, wp.z);
+    }
+  }
+  bounds.valid = true;
+
+  double up_axis = 1.0;
+  {
+    std::string up = stage.GetUpAxis();
+    if (up == "Z") up_axis = 2.0;
+    else if (up == "X") up_axis = 0.0;
+  }
+  tinyusdz::Axis usdUp = (up_axis == 2.0)   ? tinyusdz::Axis::Z
+                         : (up_axis == 0.0) ? tinyusdz::Axis::X
+                                            : tinyusdz::Axis::Y;
+  int out_height = opt.height;
+  CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
+  return RunVulkanLightRTInstanced(opt, scene, camera, out_height);
+}
+#endif  // HAVE_VULKAN
 
 int main(int argc, char **argv) {
 #if defined(__GLIBC__)
@@ -193,6 +399,22 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+
+#if defined(HAVE_VULKAN)
+    // -vkInstanced: true two-level GPU TLAS (per-prototype BLAS shared across
+    // instances). Collect the expanded jobs, group by source prim into shared
+    // prototypes + placements, and render. On any failure (no shares, ray query
+    // unavailable, encoding overflow) fall through to the flat GPU path below.
+    if (opt.vulkan_instanced && opt.vulkan_rt) {
+      std::vector<MeshJobNext> mjobs;
+      for (const auto &root : stage.GetRootPrims())
+        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+                                   tinyusdz::Purpose::Default, opt.timecode,
+                                   opt.mask, &mjobs, /*expand_instancers=*/true);
+      if (TryRunInstancedVk(stage, mjobs, opt)) return EXIT_SUCCESS;
+      std::cerr << "[vkInstanced] falling back to the flat GPU path.\n";
+    }
+#endif
 
     // Collect meshes and build geometry. Only base_colors + geos feed the GPU
     // backends (RunVulkanLightRT / RunD3D11LightRT).
