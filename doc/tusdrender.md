@@ -193,7 +193,24 @@ PointInstancer (BLAS stores 800 tris vs 160 000 flattened — 200× smaller), a
 4-instance orient/non-uniform-scale PointInstancer, and a 3-tree `instanceable`
 scene. Displacement is not applied on this path yet (a documented gap).
 
-Remaining follow-on: run the `tusdr_rt_lod` Full/Proxy/Cull selection at the
-two-level TLAS build (emit Cull instances as absent, Proxy as a shared box BLAS) so
-`-vkInstanced` also gets per-instance LOD; and chunk a single >8M-triangle
-prototype across BLAS while preserving the instance encoding.
+#### `-vkInstanced` + `-rtLod`: per-instance LOD on the two-level TLAS
+
+`-rtLod` composes with `-vkInstanced` and applies the `tusdr_rt_lod` Full/Proxy/Cull
+selection at the two-level build — the structure LOD is actually designed for (real
+per-instance TLAS selection, not the flatten-side approximation). After the camera
+resolves, `TryRunInstancedVk` classifies each placement from its prototype's local
+AABB + transform: **Cull** drops the instance (absent from the TLAS), **Proxy**
+points it at a shared unit-box prototype (built once, 12 tris) via a `BoxFitO2W`
+transform onto the prototype's local AABB (a near-zero AABB axis is padded so a
+planar/linear prototype still yields a box that traverses — a zero-thickness box
+collapses to degenerate triangles and a per-proxy BLAS, unlike a flat soup, then
+returns no hits), **Full** keeps the real prototype BLAS. Same knobs as the CPU /
+flatten paths (`-rtLodFullPx`/`CullPx`/`NoProxy`/`FrustumCull`); `-stats` logs
+`[rt-lod] two-level: full/proxy/culled`. The box BLAS is stored ONCE and shared by
+every proxy, so LOD keeps the memory win. Validated on a 200-instance scene: each of
+Full-only, Proxy-only (proxy box pixel-covers the mesh, IoU 1.000), Cull-only, and a
+Proxy+Cull mix; the 3D-cube proxy matches the Full silhouette exactly. If every
+instance culls, it falls back to the flat path.
+
+Remaining follow-on: chunk a single >8M-triangle prototype across BLAS while
+preserving the instance encoding; and apply displacement on the `-vkInstanced` path.
