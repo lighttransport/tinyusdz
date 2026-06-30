@@ -48,11 +48,11 @@ Common flags:
   approximations. Works on the CPU two-level TLAS path (`-rtPreview`) **and** the
   `-vk`/`-vkr`/`-d3d`/`-hip` GPU backends — the latter apply it *flatten-side*
   (classify the world-space placements once, Cull→drop, Proxy→box, Full→keep, before
-  building the flat BLAS). The GPU collector now expands `PointInstancer` in place
-  (world-space placements), so scatters render and LOD on `-vk`/`-vkr` too. GPU
-  caveats: no per-prototype BLAS sharing (full flatten), and scenegraph
-  (`instanceable`) native instances are still skipped. A true two-level GPU TLAS
-  (sharing + native instances) remains a follow-on (see `doc/tusdrender.md`).
+  building the flat BLAS). The GPU collector now expands both `PointInstancer` and
+  scenegraph (`instanceable`) native instances in place (world-space placements),
+  so instanced geometry renders and LODs on `-vk`/`-vkr` too. GPU caveat: no
+  per-prototype BLAS sharing (full flatten) — a true two-level GPU TLAS remains a
+  follow-on (see `doc/tusdrender.md`).
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
   emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/

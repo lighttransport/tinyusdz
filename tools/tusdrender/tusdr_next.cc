@@ -1139,13 +1139,26 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
 // meshes at/under those prim paths (usdrecord --mask); the full tree is still
 // walked so transform chains remain correct.
-// Forward decl: PointInstancer -> world-space MeshJobNext expansion for the GPU
-// flatten path (mutually recursive with CollectRTPreviewMeshesNext for nesting).
+// Forward decls: instance -> world-space MeshJobNext expansion for the GPU flatten
+// path (mutually recursive with CollectRTPreviewMeshesNext for nesting).
 static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs);
+// Native (scenegraph instanceable) instance: place the prototype's geometry at the
+// instance proxy's world transform.
+static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
+                                         const std::string &proto_path,
+                                         const matrix4d &world,
+                                         tinyusdz::Purpose purpose, double time,
+                                         std::vector<MeshJobNext> *jobs);
+// Collect a prototype's mesh jobs in prototype-LOCAL space (root at identity),
+// expanding any nested instancers. Shared by both expanders above.
+static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
+                                         const tinyusdz::next::UsdPrim &proto,
+                                         tinyusdz::Purpose purpose, double time,
+                                         std::vector<MeshJobNext> *out);
 
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
@@ -1190,7 +1203,14 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
   }
   {
     const tinyusdz::next::PrimSpec *ispec = prim.GetPrimSpec();
-    if (ispec && !ispec->meta().instance_prototype().empty()) return;
+    if (ispec && !ispec->meta().instance_prototype().empty()) {
+      // Scenegraph (instanceable) native instance proxy: its children come from
+      // the prototype. GPU flatten path expands it; two-level callers stop here.
+      if (expand_instancers && PathMatchesMask(prim.GetPath().str(), mask))
+        ExpandNativeInstanceJobsNext(stage, ispec->meta().instance_prototype(),
+                                     world, purpose, time, jobs);
+      return;
+    }
   }
   if (prim.GetTypeName() == "Mesh" &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
@@ -1231,8 +1251,7 @@ static void ExpandPointInstancerJobsNext(
 
   // Per-prototype local mesh jobs (root at identity), collected lazily on first
   // use and reused across instances. Nested instancers under a prototype expand
-  // recursively (expand_instancers=true), so the GPU path renders nested scatters.
-  static const std::vector<std::string> kNoMask;
+  // recursively, so the GPU path renders nested scatters.
   std::vector<std::vector<MeshJobNext>> proto_jobs(targets->size());
   std::vector<bool> proto_done(targets->size(), false);
   std::vector<tinyusdz::next::UsdPrim> proto_prim(targets->size());
@@ -1246,20 +1265,8 @@ static void ExpandPointInstancerJobsNext(
   auto get_proto_jobs = [&](size_t pi) -> std::vector<MeshJobNext> & {
     if (!proto_done[pi]) {
       proto_done[pi] = true;
-      const tinyusdz::next::UsdPrim &proto = proto_prim[pi];
-      if (proto.IsValid()) {
-        if (proto.GetTypeName() == "Mesh") {
-          MeshJobNext j;
-          j.prim = proto;
-          j.world = matrix4d::identity();
-          j.purpose = purpose;
-          proto_jobs[pi].push_back(std::move(j));
-        }
-        for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
-          CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose,
-                                     time, kNoMask, &proto_jobs[pi],
-                                     /*expand_instancers=*/true);
-      }
+      CollectExpandedProtoJobsNext(stage, proto_prim[pi], purpose, time,
+                                   &proto_jobs[pi]);
     }
     return proto_jobs[pi];
   };
@@ -1300,6 +1307,56 @@ static void ExpandPointInstancerJobsNext(
       job.purpose = pj.purpose;
       jobs->push_back(std::move(job));
     }
+  }
+}
+
+// Collect a prototype's mesh jobs in prototype-LOCAL space (the holder/prototype
+// root at identity; the instance transform is applied by the caller). Mirrors
+// CollectProtoJobs but expands nested instancers (expand_instancers=true) so the
+// flatten path renders instancers nested inside a prototype.
+static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
+                                         const tinyusdz::next::UsdPrim &proto,
+                                         tinyusdz::Purpose purpose, double time,
+                                         std::vector<MeshJobNext> *out) {
+  if (!proto.IsValid()) return;
+  static const std::vector<std::string> kNoMask;
+  // A prototype root may itself be a Mesh (a PointInstancer/native prototype can
+  // point straight at one); collect it at identity too.
+  if (proto.GetTypeName() == "Mesh") {
+    MeshJobNext j;
+    j.prim = proto;
+    j.world = matrix4d::identity();
+    j.purpose = purpose;
+    out->push_back(std::move(j));
+  }
+  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+    CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
+                               kNoMask, out, /*expand_instancers=*/true);
+}
+
+// Expand a scenegraph (instanceable) native instance into world-space MeshJobNext
+// placements: collect the prototype's geometry once (prototype-local) and bake it
+// at the instance proxy's world transform. The prototype path comes from the
+// instance proxy's instance_prototype meta; with the `next` loader it resolves to
+// a real placed prim (the prototype "holder"), whose own subtree is the geometry.
+// This mirrors the CPU two-level CollectSceneSplit native-instance branch (which
+// records an InstanceRT at `world` referencing the deduped prototype BLAS), but
+// flattens to world space instead.
+static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
+                                         const std::string &proto_path,
+                                         const matrix4d &world,
+                                         tinyusdz::Purpose purpose, double time,
+                                         std::vector<MeshJobNext> *jobs) {
+  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  if (!proto.IsValid()) return;
+  std::vector<MeshJobNext> proto_jobs;
+  CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
+  for (const MeshJobNext &pj : proto_jobs) {
+    MeshJobNext job;
+    job.prim = pj.prim;
+    job.world = pj.world * world;  // prototype-local then instance world
+    job.purpose = pj.purpose;
+    jobs->push_back(std::move(job));
   }
 }
 

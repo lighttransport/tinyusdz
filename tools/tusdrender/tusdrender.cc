@@ -207,10 +207,10 @@ int main(int argc, char **argv) {
       // single mesh at the origin (suzanne), but for any composed/production
       // scene (e.g. Caldera) it collapsed every transformed district to the
       // origin and pulled in the guide breadcrumb/endpoint Points, burying the
-      // camera. PointInstancers ARE expanded to world-space placements here
-      // (expand_instancers=true) so instanced scatters render on the GPU path;
-      // scenegraph (instanceable) native instances are still skipped -- see
-      // doc/large-scene.md / doc/tusdrender.md.
+      // camera. PointInstancers AND scenegraph (instanceable) native instances are
+      // expanded to world-space placements here (expand_instancers=true) so
+      // instanced geometry renders on the GPU path -- see doc/tusdrender.md
+      // (Instancing on the GPU backends). No per-prototype BLAS sharing yet.
       std::vector<MeshJobNext> mesh_jobs;
       for (const auto &root : stage.GetRootPrims()) {
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
