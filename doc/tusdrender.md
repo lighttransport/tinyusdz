@@ -132,17 +132,41 @@ proxy renders the same silhouette coverage as Full.
 - No per-prototype geometry/memory sharing — Full placements still cost their full
   triangle count in one flat BLAS (the win is *fewer/cheaper* placements, not
   shared BLAS memory).
-- It only sees what the GPU collector emits. `CollectRTPreviewMeshesNext`
-  **does not expand `PointInstancer`** (it returns at the PointInstancer prim — see
-  `tusdr_next.cc`), so PointInstancer instances are not rendered (or LOD'd) on the
-  GPU backends at all. Flatten-side LOD therefore benefits scenes with many
-  separate transformed `Mesh` prims (e.g. Caldera's 10k+ districts), not dense
-  PointInstancer scatters. Use the CPU `-rtPreview -rtLod` path for those.
+- It only sees what the GPU collector emits. `CollectRTPreviewMeshesNext` now
+  **expands `PointInstancer`** in place (`expand_instancers=true` on the GPU
+  flatten caller; see *PointInstancer on the GPU backends* below), so instanced
+  scatters render and LOD here — but **scenegraph (`instanceable`) native
+  instances are still skipped** (the `instance_prototype` early-return), so those
+  don't render on the GPU backends yet. Flatten LOD therefore covers many-separate-
+  `Mesh` scenes (Caldera's 10k+ districts) **and** PointInstancer scatters, but not
+  native-instanced subtrees.
+
+### PointInstancer on the GPU backends (flatten-side expansion)
+
+`CollectRTPreviewMeshesNext(..., expand_instancers=true)` — set by the GPU flatten
+caller in `tusdrender.cc` — expands each `UsdGeomPointInstancer` into world-space
+`MeshJobNext` placements instead of stopping at it. For every visible instance
+(`invisibleIds` skipped) it composes `prototype-local · InstanceTRS(pos,orient,
+scale) · instancer-world` and bakes the prototype's meshes at that transform;
+nested instancers under a prototype expand recursively. This mirrors the CPU
+two-level `CollectPointInstancer` math (`InstanceTRS`, same prototype resolution by
+child-name then stage path) but flattens to the single GPU BLAS rather than a TLAS
++ shared prototype BLAS. Validated: a 4-instance orient/scale scene renders the
+same silhouette (coverage, x-extent, centroid) on `-vkr` as the CPU `-rtPreview`
+two-level path, within the same CPU↔GPU raster framing tolerance a plain
+non-instanced mesh shows. `expand_instancers` defaults to **false**, so the
+two-level proto collectors (`CollectProtoJobs`) stay byte-identical.
+
+The cost is full flattening: a giant instancer (e.g. Moana's millions) expands into
+the flat soup with no per-prototype memory sharing. `-rtLod` mitigates this by
+culling/proxying the expanded placements; the true fix is the two-level GPU TLAS
+below.
 
 ### Follow-on: true two-level GPU TLAS
 
-A full GPU TLAS would add per-prototype BLAS sharing *and* render PointInstancers.
-It is a larger change tracked separately:
+A full GPU TLAS would add per-prototype BLAS sharing (and render scenegraph native
+instances) on top of what the flatten expansion already renders. It is a larger
+change tracked separately:
 
 1. Reuse the CPU collectors (`CollectSceneSplit` / `CollectPointInstancer`) to
    produce the prototype BLAS set + `InstanceRT` list instead of the flattened

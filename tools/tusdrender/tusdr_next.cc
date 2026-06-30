@@ -1139,12 +1139,21 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
 // meshes at/under those prim paths (usdrecord --mask); the full tree is still
 // walked so transform chains remain correct.
+// Forward decl: PointInstancer -> world-space MeshJobNext expansion for the GPU
+// flatten path (mutually recursive with CollectRTPreviewMeshesNext for nesting).
+static void ExpandPointInstancerJobsNext(
+    const tinyusdz::next::Stage &stage,
+    const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
+    tinyusdz::Purpose purpose, double time,
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs);
+
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs) {
+                                std::vector<MeshJobNext> *jobs,
+                                bool expand_instancers) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
@@ -1172,7 +1181,13 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
   // separately and the TLAS flattens them (one level, composed per outer
   // placement). So do not descend here (mirror CollectSceneSplit). No-op for the
   // common leaf prototype (plain meshes), so non-nested scenes are byte-identical.
-  if (prim.GetTypeName() == "PointInstancer") return;
+  if (prim.GetTypeName() == "PointInstancer") {
+    // GPU flatten path: expand the instancer into world-space placements (no GPU
+    // TLAS). Two-level callers leave expand_instancers=false and stop here.
+    if (expand_instancers)
+      ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs);
+    return;
+  }
   {
     const tinyusdz::next::PrimSpec *ispec = prim.GetPrimSpec();
     if (ispec && !ispec->meta().instance_prototype().empty()) return;
@@ -1186,7 +1201,105 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     jobs->push_back(std::move(job));
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs);
+    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs,
+                               expand_instancers);
+  }
+}
+
+// Expand a UsdGeomPointInstancer into world-space MeshJobNext placements for the
+// GPU flatten path. Mirrors CollectPointInstancer's instance iteration (same
+// prototype resolution by child name -> stage path, same InstanceTRS *
+// instancer_world transform, same invisibleIds skip), but instead of reserving a
+// shared BLAS + emitting an InstanceRT it bakes each prototype's mesh jobs to
+// world space per instance. Each prototype's local mesh jobs are collected once
+// (with nested instancers expanded recursively) and re-placed per instance.
+static void ExpandPointInstancerJobsNext(
+    const tinyusdz::next::Stage &stage,
+    const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
+    tinyusdz::Purpose purpose, double time,
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs) {
+  if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
+  const std::vector<tinyusdz::next::Path> *targets =
+      instancer.GetRelationship("prototypes");
+  if (!targets || targets->empty()) return;
+
+  // Resolve each prototype target to a live prim (leaf name among the instancer's
+  // children first, then an absolute stage lookup -- robust to re-rooting).
+  std::unordered_map<std::string, tinyusdz::next::UsdPrim> children_by_name;
+  for (const tinyusdz::next::UsdPrim &c : instancer.GetChildren())
+    children_by_name.emplace(c.GetName(), c);
+
+  // Per-prototype local mesh jobs (root at identity), collected lazily on first
+  // use and reused across instances. Nested instancers under a prototype expand
+  // recursively (expand_instancers=true), so the GPU path renders nested scatters.
+  static const std::vector<std::string> kNoMask;
+  std::vector<std::vector<MeshJobNext>> proto_jobs(targets->size());
+  std::vector<bool> proto_done(targets->size(), false);
+  std::vector<tinyusdz::next::UsdPrim> proto_prim(targets->size());
+  for (size_t pi = 0; pi < targets->size(); ++pi) {
+    const tinyusdz::next::Path &tp = (*targets)[pi];
+    auto cit = children_by_name.find(tp.name());
+    proto_prim[pi] = (cit != children_by_name.end())
+                         ? cit->second
+                         : stage.GetPrimAtPath(tp.str());
+  }
+  auto get_proto_jobs = [&](size_t pi) -> std::vector<MeshJobNext> & {
+    if (!proto_done[pi]) {
+      proto_done[pi] = true;
+      const tinyusdz::next::UsdPrim &proto = proto_prim[pi];
+      if (proto.IsValid()) {
+        if (proto.GetTypeName() == "Mesh") {
+          MeshJobNext j;
+          j.prim = proto;
+          j.world = matrix4d::identity();
+          j.purpose = purpose;
+          proto_jobs[pi].push_back(std::move(j));
+        }
+        for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+          CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose,
+                                     time, kNoMask, &proto_jobs[pi],
+                                     /*expand_instancers=*/true);
+      }
+    }
+    return proto_jobs[pi];
+  };
+
+  // Per-instance arrays (positions drives the count; the rest default).
+  const std::vector<float> positions =
+      ReadFloatArrayLazy(instancer, "positions", time);
+  if (positions.empty()) return;
+  const size_t n = positions.size() / 3;
+  const std::vector<int32_t> proto_indices =
+      ReadIntArrayLazy(instancer, "protoIndices", time);
+  const std::vector<float> orientations =
+      ReadFloatArrayLazy(instancer, "orientations", time);
+  const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
+  const std::vector<int64_t> invisible =
+      ReadInt64ArrayLazy(instancer, "invisibleIds", time);
+  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
+                                                  invisible.end());
+
+  static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
+  for (size_t i = 0; i < n; ++i) {
+    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
+    if (pidx < 0 || size_t(pidx) >= targets->size()) continue;
+    const std::vector<MeshJobNext> &pjobs = get_proto_jobs(size_t(pidx));
+    if (pjobs.empty()) continue;
+    const float *q = (orientations.size() >= (i + 1) * 4) ? &orientations[i * 4]
+                                                          : kIdentQuat;
+    const float *s =
+        (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+    const matrix4d inst_world =
+        InstanceTRS(&positions[i * 3], q, s) * instancer_world;
+    for (const MeshJobNext &pj : pjobs) {
+      MeshJobNext job;
+      job.prim = pj.prim;
+      job.world = pj.world * inst_world;  // prototype-local then instance world
+      job.purpose = pj.purpose;
+      jobs->push_back(std::move(job));
+    }
   }
 }
 
