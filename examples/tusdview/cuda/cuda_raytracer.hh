@@ -51,7 +51,8 @@ class CudaRayTracer {
   // image (row 0 = top) of size w*h*4 into *rgba. Returns false on launch failure.
   // renderMode mirrors RenderMode (0=shaded, 1=wireframe, 2=normals, 3=material-id,
   // 4=geom normal, 5=uv, 6=depth). depthScale normalizes the depth AOV.
-  bool trace(const float invViewProj[16], const float camPos[3],
+  bool trace(const float invViewProj[16], const float viewProj[16],
+             const float camPos[3],
              const float lightDir[3], const float clearColor[3], int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
@@ -73,6 +74,7 @@ class CudaRayTracer {
   uintptr_t dNrms_{0};       // float[9] vertex normals per tri
   uintptr_t dCols_{0};       // float[9] per-vertex color per tri (base*displayColor)
   uintptr_t dGeo_{0};        // uint8 geometricNormal flag per tri
+  uintptr_t dEmask_{0};      // uint8 wireframe edge mask per tri (orig-polygon edges)
   uintptr_t dMat_{0};        // int material id per tri (material-id viz)
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
   int numMats_{0};           // material count (matPbr index bound)

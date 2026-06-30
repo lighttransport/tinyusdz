@@ -1190,7 +1190,7 @@ bool App::renderHipViewport() {
   std::vector<uint8_t> rgba;
   std::string cerr;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
-  if (hipTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+  if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1)) {
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
@@ -1670,7 +1670,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
-      if (cudaTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+      if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
                             sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
@@ -1729,7 +1729,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
-      if (hipTracer_.trace(inv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+      if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
                            sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {

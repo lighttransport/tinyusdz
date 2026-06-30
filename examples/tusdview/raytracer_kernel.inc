@@ -6,7 +6,7 @@
 // Included inside an anonymous namespace by each backend .cc.
 const char* kKernelSrc = R"CUDA(
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
-struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; };
+struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; };
 // Per-instance placement for 2-level traversal. w2o transforms a world ray into
 // the prototype's object space (kept un-normalized so object t == world t). o2w
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
@@ -45,6 +45,28 @@ __device__ F3 unproject(const float* m, float nx, float ny, float z){
   float w3= m[2]*nx + m[6]*ny + m[10]*z + m[14];
   float w = m[3]*nx + m[7]*ny + m[11]*z + m[15];
   return mk(x/w, y/w, w3/w);
+}
+
+// Project a world point to pixel coords (column-major vp = proj*view). Returns
+// (pixelX, pixelY, clipW); clipW<=0 means behind the eye. Pixel origin top-left,
+// matching the primary-ray generation (ndcy -> (1-ndcy)/2 * H).
+__device__ F3 projPix(const float* m, F3 p, float W, float H){
+  float x = m[0]*p.x + m[4]*p.y + m[8]*p.z + m[12];
+  float y = m[1]*p.x + m[5]*p.y + m[9]*p.z + m[13];
+  float w = m[3]*p.x + m[7]*p.y + m[11]*p.z + m[15];
+  float iw = (w>1e-9f||w<-1e-9f)?1.f/w:0.f;
+  float sx = (x*iw*0.5f+0.5f)*W;
+  float sy = (1.f-(y*iw*0.5f+0.5f))*H;
+  return mk(sx, sy, w);
+}
+// 2D distance from point (px,py) to segment (a..b), in pixels.
+__device__ float pixDistSeg(float px,float py,float ax,float ay,float bx,float by){
+  float vx=bx-ax, vy=by-ay, wx=px-ax, wy=py-ay;
+  float vv=vx*vx+vy*vy;
+  float tt=vv>1e-9f?(wx*vx+wy*vy)/vv:0.f;
+  tt=tt<0.f?0.f:(tt>1.f?1.f:tt);
+  float dx=px-(ax+tt*vx), dy=py-(ay+tt*vy);
+  return sqrtf(dx*dx+dy*dy);
 }
 
 // row-major 3x4 (o2w/w2o) * point / direction.
@@ -268,7 +290,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const Node* blas, const Node* tlas, const Inst* insts,
                                  unsigned char* out, int W, int H, Cam cam,
                                  const float* volDens, const VolParam* volParams,
-                                 int numVols){
+                                 int numVols, const unsigned char* emask){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
@@ -326,8 +348,26 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).
     int rmode=(int)(cam.clear[3]+0.5f);
     if (rmode==1){
-      float e=fminf(w0,fminf(bu,bv));
-      if (e>0.02f) outc=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+      // Original-polygon wireframe with screen-space analytic AA (usdview look):
+      // project the triangle's world verts to pixels and measure the sample's
+      // pixel distance to each REAL polygon edge (emask drops triangulation
+      // diagonals), then feather. emask==7 (no polygon data) draws all 3 edges.
+      unsigned em = emask ? emask[ht] : 7u;
+      if (em==0u) em=7u;
+      float sampX=px+0.5f+cam.sceneMin[3], sampY=py+0.5f+cam.sceneExtent[3];
+      F3 P0=projPix(cam.vp,wp0,(float)W,(float)H);
+      F3 P1=projPix(cam.vp,wp1,(float)W,(float)H);
+      F3 P2=projPix(cam.vp,wp2,(float)W,(float)H);
+      float dmin=1e30f;
+      if ((em&1u)&&P1.z>0.f&&P2.z>0.f) dmin=fminf(dmin,pixDistSeg(sampX,sampY,P1.x,P1.y,P2.x,P2.y));
+      if ((em&2u)&&P2.z>0.f&&P0.z>0.f) dmin=fminf(dmin,pixDistSeg(sampX,sampY,P2.x,P2.y,P0.x,P0.y));
+      if ((em&4u)&&P0.z>0.f&&P1.z>0.f) dmin=fminf(dmin,pixDistSeg(sampX,sampY,P0.x,P0.y,P1.x,P1.y));
+      const float hw=1.3f;  // pixels: ~1px line + 1px AA edge (matches the GL path)
+      float cov=1.f-fminf(fmaxf((dmin-(hw-1.f))/1.f,0.f),1.f);  // smooth-ish feather
+      cov=cov*cov*(3.f-2.f*cov);  // smoothstep
+      F3 wireCol=mk(0.75f,0.85f,0.95f);
+      F3 bg=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+      outc=mk(bg.x+(wireCol.x-bg.x)*cov, bg.y+(wireCol.y-bg.y)*cov, bg.z+(wireCol.z-bg.z)*cov);
     } else if (rmode==2){
       outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
     } else if (rmode==3){
