@@ -2514,6 +2514,19 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-sublayer-ref-cwp COMMAND feat-sublayer-ref-cwp
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition (cwp anchoring, nested sub-assembly): when a payload/reference
+    # pulls in an asset that itself still has unresolved arcs, those arcs must
+    # stay anchored at the pulled-in asset's dir, not the consuming prim's. ALab
+    # sub-assembly definitions `add payload` leaf components whose subLayers
+    # reference `../../../fragment/geo/...`; the clobber dropped that geometry.
+    add_executable(feat-nested-payload-cwp
+                   tests/feat/nested-payload-cwp/test-nested-payload-cwp.cc)
+    add_sanitizers(feat-nested-payload-cwp)
+    target_link_libraries(feat-nested-payload-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-nested-payload-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-nested-payload-cwp COMMAND feat-nested-payload-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).

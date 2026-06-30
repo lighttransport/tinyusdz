@@ -361,6 +361,24 @@ PrimSpec PrepareComposedArcPrimSpec(const PrimSpec &src_ps,
   return prepared;
 }
 
+// After an `append`-style arc merge (OverridePrimSpec) of a referenced/payloaded
+// asset `src` onto `dst`, re-anchor `dst`'s working path to the asset's directory
+// IF the asset still carries unresolved reference/payload arcs of its own. Those
+// arcs were authored in the asset's layer and must resolve against the asset's
+// directory (core USD semantics), but OverridePrimSpec leaves `dst` carrying the
+// CONSUMING prim's working path -- which, in a nested assembly chain (a
+// sub-assembly definition payloads a leaf component whose subLayers reference
+// `../../../fragment/geo/...`), is the sub-assembly's `base/definition` dir, one
+// or more levels too high. The prepend path (InheritPrimSpecImpl) already keeps
+// src's anchor when src has arcs; this is its append-path counterpart.
+static void ReanchorArcsToSource(PrimSpec &dst, const PrimSpec &src) {
+  if ((src.metas().references.has_value() || src.metas().payload.has_value()) &&
+      !src.get_current_working_path().empty()) {
+    dst.set_asset_resolution_state(src.get_current_working_path(),
+                                   src.get_asset_search_paths());
+  }
+}
+
 // Copy assetresolver state to all PrimSpec in the tree.
 //
 // `only_if_unset`: when true, a PrimSpec that ALREADY carries a working path is
@@ -1503,6 +1521,10 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                                               reference.asset_path));
           }
 
+          // Keep the referenced asset's own unresolved arcs anchored at the
+          // asset's directory (see ReanchorArcsToSource).
+          ReanchorArcsToSource(primspec, prepared_src);
+
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
             if (prepared_src.typeName().empty() ||
@@ -1751,6 +1773,15 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
+
+          // A payloaded asset's OWN still-unresolved arcs must keep anchoring at
+          // the asset's directory (core USD semantics), not the consuming prim's.
+          // OverridePrimSpec leaves `primspec` carrying the consuming prim's
+          // working path; if the payload target brought in unresolved reference/
+          // payload arcs (e.g. a leaf component, payloaded by a sub-assembly
+          // definition, whose subLayers reference `../../../fragment/geo/...`),
+          // re-anchor to the target's directory so those nested arcs resolve.
+          ReanchorArcsToSource(primspec, prepared_src);
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
@@ -2854,8 +2885,21 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // still-unresolved, references to the class's directory and silently lose all
   // of its geometry. Only override when dst contributed arcs (so a prim that
   // purely inherits a class's arcs still anchors them at the class's directory).
+  //
+  // BUT: when `src` itself still carries UNRESOLVED reference/payload arcs, those
+  // arcs were authored in src's layer and must keep anchoring at SRC's directory
+  // (the payloaded/referenced asset's own location) -- core USD semantics. This
+  // happens for nested assembly chains: a sub-assembly definition `payload`s a
+  // leaf component whose subLayers in turn `reference` `../../../fragment/geo/...`.
+  // `ps = src` already holds src's anchor; overwriting it with dst's (the
+  // consuming prim's, e.g. the sub-assembly's `base/definition` dir) would
+  // re-anchor the leaf's geo reference one place too high -> "Asset not found".
+  // dst's OWN consuming arc is being removed by the caller, so prefer src's anchor
+  // whenever src has surviving arcs.
   const std::string dst_cwp = dst.get_current_working_path();
-  if (!dst_cwp.empty() &&
+  const bool src_has_arcs =
+      src.metas().references.has_value() || src.metas().payload.has_value();
+  if (!dst_cwp.empty() && !src_has_arcs &&
       (dst.metas().references.has_value() || dst.metas().payload.has_value())) {
     ps.set_asset_resolution_state(dst_cwp, dst.get_asset_search_paths());
   }
