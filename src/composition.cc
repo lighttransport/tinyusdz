@@ -568,7 +568,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     return true;
   }
 
-  DCOUT("Opened resolved assst: " << resolved_path
+  DCOUT("Opened resolved asset: " << resolved_path
                                   << ", asset_path: " << asset_path);
 
   if (!layer_from_cache) {
