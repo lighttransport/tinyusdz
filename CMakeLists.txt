@@ -125,6 +125,12 @@ option(TINYUSDZ_WITH_FPNGE
 # fpnge(upstream requires SSE4.1 minimum) and PNG encoding falls back to fpng.
 set(TINYUSDZ_FPNGE_SIMD "avx2" CACHE STRING "fpnge SIMD path: avx2, sse41, sse2 or scalar")
 set_property(CACHE TINYUSDZ_FPNGE_SIMD PROPERTY STRINGS avx2 sse41 sse2 scalar)
+option(TINYUSDZ_WITH_QOI
+       "Build with QOI image encoder (fast lossless; single header, no SIMD)."
+       ON)
+option(TINYUSDZ_WITH_TURBOJPEG
+       "Build with libjpeg-turbo (vendored) for fast JPEG encoding. Falls back to stb when OFF."
+       OFF)
 option(TINYUSDZ_WITH_QJS
        "Build with QuickJS(JavaScript) support."
        OFF)
@@ -849,6 +855,28 @@ if (TINYUSDZ_WITH_FPNGE)
   else()
     message(STATUS "fpnge: requested SIMD '${_fpnge_simd}' has no fpnge code path; PNG encoding falls back to fpng.")
   endif()
+endif()
+
+# libjpeg-turbo (vendored at src/external/libjpeg-turbo) -> fast JPEG encode.
+# Build only the static turbojpeg lib (EXCLUDE_FROM_ALL skips cjpeg/djpeg/etc.).
+# SIMD needs NASM/YASM; without it we build the portable C path (still fast).
+set(TINYUSDZ_TURBOJPEG_ENABLED OFF)
+if (TINYUSDZ_WITH_TURBOJPEG)
+  set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+  set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
+  set(WITH_TURBOJPEG ON CACHE BOOL "" FORCE)
+  find_program(_TJ_ASM NAMES nasm yasm)
+  if (_TJ_ASM)
+    set(WITH_SIMD ON CACHE BOOL "" FORCE)
+  else()
+    set(WITH_SIMD OFF CACHE BOOL "" FORCE)
+    message(STATUS "libjpeg-turbo: NASM/YASM not found -> building without SIMD")
+  endif()
+  set(TINYUSDZ_VENDORED_TURBOJPEG ON)  # bypass libjpeg-turbo's add_subdirectory guard
+  include(GNUInstallDirs)  # libjpeg-turbo's install() rules need CMAKE_INSTALL_*DIR set
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/libjpeg-turbo EXCLUDE_FROM_ALL)
+  set(TINYUSDZ_TURBOJPEG_ENABLED ON)
+  message(STATUS "libjpeg-turbo: enabled (turbojpeg-static)")
 endif()
 
 # Native SIMD for the image-processing row kernels (src/imageproc/simd.cc).
@@ -1788,6 +1816,22 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_HAVE_FPNG")
   endif(TINYUSDZ_FPNG_ENABLED)
+
+  if(TINYUSDZ_WITH_QOI)
+    # Header-only (QOI_IMPLEMENTATION lives in src/image-writer.cc).
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_HAVE_QOI")
+    target_include_directories(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE ${PROJECT_SOURCE_DIR}/src/external/qoi)
+  endif(TINYUSDZ_WITH_QOI)
+
+  if(TINYUSDZ_TURBOJPEG_ENABLED)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_HAVE_TURBOJPEG")
+    target_include_directories(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE ${PROJECT_SOURCE_DIR}/src/external/libjpeg-turbo)
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} turbojpeg-static)  # plain sig (matches this target)
+  endif(TINYUSDZ_TURBOJPEG_ENABLED)
 
   if(TINYUSDZ_WITH_QJS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
