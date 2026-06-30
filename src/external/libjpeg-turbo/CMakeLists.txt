@@ -829,7 +829,9 @@ endif()
 
 add_executable(strtest strtest.c)
 
-add_subdirectory(md5)
+# tinyusdz: md5/ (the md5cmp ctest helper) was removed in the vendored trim --
+# it is only used by libjpeg-turbo's own test suite, which we never build.
+# Was: add_subdirectory(md5)
 
 if(GENERATOR_IS_MULTI_CONFIG)
   set(OBJDIR "\${CTEST_CONFIGURATION_TYPE}/")
