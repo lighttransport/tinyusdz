@@ -15,6 +15,7 @@
     block.type = type;
     block.data.resize(size);
     std::memcpy(block.data.data(), data, size);
+    CacheBlockHash(&block);
     return InternBlock(std::move(block));
   }
 
@@ -32,20 +33,24 @@
   // are known. The block is patched in place, so it must NOT be deduped/shared
   // (push directly, do not InternBlock).
   ValueRep EncodeDictionary(const Dict& d) {
-    std::vector<uint8_t> blk;
-    auto put_u64 = [&](uint64_t v) {
-      for (int i = 0; i < 8; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
-    };
-    auto put_u32 = [&](uint32_t v) {
-      for (int i = 0; i < 4; ++i) blk.push_back(static_cast<uint8_t>(v >> (i * 8)));
-    };
-    put_u64(static_cast<uint64_t>(d.entries.size()));
-    for (const auto& kv : d.entries) {
+    size_t entry_count = d.entries.size();
+    size_t payload_size = 0;
+    if (!safe::add(size_t(8), entry_count * size_t(20), &payload_size)) {
+      result_.error = "Dictionary payload size overflow";
+      return ValueRep::Make(CrateTypeId::Dictionary, 0, false, false);
+    }
+    std::vector<uint8_t> blk(payload_size, 0);
+    std::memcpy(blk.data(), &entry_count, 8);
+    for (size_t i = 0; i < entry_count; ++i) {
+      const auto& kv = d.entries[i];
+      const size_t off = 8 + (i * size_t(20));
       uint32_t kidx = InternString(kv.first);
       ValueRep vr = EncodeValue(kv.second);  // recursive (nested dicts/arrays)
-      put_u32(kidx);
-      put_u64(static_cast<uint64_t>(static_cast<int64_t>(8)));  // recOffset = 8
-      put_u64(vr.raw());
+      std::memcpy(blk.data() + off, &kidx, 4);
+      int64_t rec_offset = 8;
+      std::memcpy(blk.data() + off + 4, &rec_offset, 8);
+      uint64_t vr_raw = vr.raw();
+      std::memcpy(blk.data() + off + 12, &vr_raw, 8);
     }
     uint64_t idx = value_data_.size();
     value_data_.push_back({TypeId::Dictionary, std::move(blk)});
@@ -53,6 +58,10 @@
   }
 
   ValueRep EncodeValue(const Value& val) {
+    if (val.is_block()) {
+      return ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
+    }
+
     if (val.is_dictionary()) {
       const Dict* d = val.as_dictionary();
       return d ? EncodeDictionary(*d)
@@ -64,6 +73,11 @@
     bool is_array = val.is_array();
 
     if (crate_type == CrateTypeId::Invalid) {
+      if (!val.is_empty() && !val.is_block()) {
+        const char* type_name = GetTypeName(type_id);
+        result_.error = std::string("unsupported value type: ") +
+                        (type_name ? type_name : "invalid");
+      }
       return ValueRep::Make(CrateTypeId::Invalid, 0, is_array, false);
     }
 
@@ -144,9 +158,10 @@
       }
     }
 
-    // Double (always stored in VALUE section, not inlined)
-    if (type_id == TypeId::Double) {
-      const double* v = val.as_double();
+    // Double / TimeCode (always stored in VALUE section, not inlined)
+    if (type_id == TypeId::Double || type_id == TypeId::TimeCode) {
+      const void* raw = val.raw_data();
+      const double* v = static_cast<const double*>(raw);
       if (v) {
         uint64_t data_idx = StoreValueData(v, sizeof(double), type_id);
         return ValueRep::Make(crate_type, data_idx, false, false);
@@ -159,70 +174,120 @@
       size_t elem_size = CrateValueSize(crate_type, false);
       if (elem_size > 0 && elem_size <= 128) {
         uint8_t tmp[128];
-        uint64_t data_idx = value_data_.size(); // placeholder
+        uint64_t data_idx = value_data_.size();  // placeholder
+        auto copy_scalar = [&](size_t size, const void* src) {
+          if (src) {
+            std::memcpy(tmp, src, size);
+            data_idx = StoreValueData(tmp, size, type_id);
+          }
+        };
         switch (type_id) {
+          case TypeId::Half:
+            copy_scalar(sizeof(uint16_t), val.raw_data());
+            break;
+          case TypeId::Half2:
+          case TypeId::Texcoord2h:
+            copy_scalar(2u * sizeof(uint16_t), val.raw_data());
+            break;
+          case TypeId::Half3:
+          case TypeId::Point3h:
+          case TypeId::Vector3h:
+          case TypeId::Normal3h:
+          case TypeId::Color3h:
+          case TypeId::Texcoord3h:
+            copy_scalar(3u * sizeof(uint16_t), val.raw_data());
+            break;
+          case TypeId::Half4:
+          case TypeId::Color4h:
+          case TypeId::Quath:
+            copy_scalar(4u * sizeof(uint16_t), val.raw_data());
+            break;
+          case TypeId::Float2:
+          case TypeId::Texcoord2f:
+            copy_scalar(2u * sizeof(float), val.raw_data());
+            break;
           case TypeId::Int64: {
             const int64_t* v = val.as_int64();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
+            copy_scalar(sizeof(*v), v);
             break;
           }
           case TypeId::UInt64: {
             const uint64_t* v = val.as_uint64();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
-            break;
-          }
-          case TypeId::Float2: {
-            const float* v = val.as_float2();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
+            copy_scalar(sizeof(*v), v);
             break;
           }
           case TypeId::Float3:
           case TypeId::Point3f:
           case TypeId::Vector3f:
           case TypeId::Normal3f:
-          case TypeId::Color3f: {
-            const float* v = val.as_float3();
-            if (v) { std::memcpy(tmp, v, 12); data_idx = StoreValueData(tmp, 12, type_id); }
+          case TypeId::Color3f:
+          case TypeId::Texcoord3f:
+            copy_scalar(3u * sizeof(float), val.raw_data());
             break;
-          }
           case TypeId::Float4:
           case TypeId::Color4f:
-          case TypeId::Quatf: {
-            const float* v = val.as_float4();
-            if (v) { std::memcpy(tmp, v, 16); data_idx = StoreValueData(tmp, 16, type_id); }
+          case TypeId::Quatf:
+            copy_scalar(4u * sizeof(float), val.raw_data());
             break;
-          }
-          case TypeId::Double2: {
-            const double* v = val.as_double2();
-            if (v) { std::memcpy(tmp, v, 16); data_idx = StoreValueData(tmp, 16, type_id); }
+          case TypeId::Double2:
+            copy_scalar(2u * sizeof(double), val.raw_data());
             break;
-          }
           case TypeId::Double3:
           case TypeId::Point3d:
           case TypeId::Vector3d:
-          case TypeId::Normal3d: {
-            const double* v = val.as_double3();
-            if (v) { std::memcpy(tmp, v, 24); data_idx = StoreValueData(tmp, 24, type_id); }
+          case TypeId::Normal3d:
+          case TypeId::Color3d:
+          case TypeId::Texcoord3d:
+            copy_scalar(3u * sizeof(double), val.raw_data());
             break;
-          }
           case TypeId::Double4:
-          case TypeId::Quatd: {
-            const double* v = val.as_double4();
-            if (v) { std::memcpy(tmp, v, 32); data_idx = StoreValueData(tmp, 32, type_id); }
+          case TypeId::Quatd:
+          case TypeId::Color4d:
+            copy_scalar(4u * sizeof(double), val.raw_data());
+            break;
+          case TypeId::Matrix2f: {
+            const void* p = val.raw_data();
+            if (p) {
+              const float* fp = static_cast<const float*>(p);
+              double d[4];
+              for (size_t i = 0; i < 4; ++i) d[i] = static_cast<double>(fp[i]);
+              std::memcpy(tmp, d, 4u * sizeof(double));
+              data_idx = StoreValueData(tmp, 4u * sizeof(double), type_id);
+            }
             break;
           }
-          case TypeId::Matrix4d: {
-            const double* v = val.as_matrix4d();
-            if (v) { std::memcpy(tmp, v, 128); data_idx = StoreValueData(tmp, 128, type_id); }
+          case TypeId::Matrix3f: {
+            const void* p = val.raw_data();
+            if (p) {
+              const float* fp = static_cast<const float*>(p);
+              double d[9];
+              for (size_t i = 0; i < 9; ++i) d[i] = static_cast<double>(fp[i]);
+              std::memcpy(tmp, d, 9u * sizeof(double));
+              data_idx = StoreValueData(tmp, 9u * sizeof(double), type_id);
+            }
             break;
           }
           case TypeId::Matrix4f: {
-            const float* v = val.as_matrix4f();
-            if (v) {
+            const void* p = val.raw_data();
+            if (p) {
+              const float* fp = static_cast<const float*>(p);
               double d[16];
-              for (size_t i = 0; i < 16; ++i) d[i] = static_cast<double>(v[i]);
-              std::memcpy(tmp, d, 128);
-              data_idx = StoreValueData(tmp, 128, type_id);
+              for (size_t i = 0; i < 16; ++i) d[i] = static_cast<double>(fp[i]);
+              std::memcpy(tmp, d, 16u * sizeof(double));
+              data_idx = StoreValueData(tmp, 16u * sizeof(double), type_id);
+            }
+            break;
+          }
+          case TypeId::Matrix2d:
+          case TypeId::Matrix3d:
+          case TypeId::Matrix4d: {
+            const void* p = val.raw_data();
+            if (p) {
+              const size_t size = (type_id == TypeId::Matrix2d)
+                                     ? 4u * sizeof(double)
+                                     : (type_id == TypeId::Matrix3d) ? 9u * sizeof(double)
+                                                                     : 16u * sizeof(double);
+              copy_scalar(size, p);
             }
             break;
           }
@@ -237,14 +302,13 @@
     // Array types: store count + elements in data section
     if (is_array) {
       uint64_t count = 0;
-      bool data_compressed = false; // whether the array data was compressed
+      bool data_compressed = false;  // whether the array data was compressed
       size_t elem_size = CrateValueSize(crate_type, false);
       (void)elem_size;
 
       // Collect array data
       std::vector<uint8_t> arr_data;
-      auto resize_counted_payload = [&](uint64_t item_count,
-                                        size_t item_size) -> bool {
+      auto resize_counted_payload = [&](uint64_t item_count, size_t item_size) -> bool {
         size_t bytes = 0;
         size_t total = 0;
         if (!safe::mul(item_count, item_size, &bytes) ||
@@ -257,7 +321,7 @@
         return true;
       };
       auto copy_counted_payload = [&](uint64_t item_count, const void* data,
-                                      size_t item_size) -> bool {
+                                    size_t item_size) -> bool {
         if (!resize_counted_payload(item_count, item_size)) {
           return false;
         }
@@ -309,8 +373,7 @@
                 data_compressed = true;
               } else {
                 // Fall back to uncompressed
-                if (!copy_counted_payload(count, arr->data(),
-                                          sizeof(int32_t))) {
+                if (!copy_counted_payload(count, arr->data(), sizeof(int32_t))) {
                   return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
                 }
               }
@@ -319,22 +382,6 @@
                 return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
               }
             }
-          }
-          break;
-        }
-        case TypeId::Float3:
-        case TypeId::Point3f:
-        case TypeId::Vector3f:
-        case TypeId::Normal3f:
-        case TypeId::Color3f: {
-          const std::vector<float>* arr = val.as_float_array();
-          if (arr && arr->size() % 3 == 0) {
-            count = arr->size() / 3;
-            if (!copy_counted_payload(count * uint64_t(3), arr->data(),
-                                      sizeof(float))) {
-              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
-            }
-            std::memcpy(arr_data.data(), &count, 8);
           }
           break;
         }
@@ -417,19 +464,52 @@
         // Vector / quat / matrix arrays: flat float or double buffer. comps =
         // scalars per element (Vec2f=2, Vec4f/Quatf=4, Matrix4d=16, ...).
         case TypeId::Float2:
+        case TypeId::Float3:
         case TypeId::Float4:
-        case TypeId::Color4f:
+        case TypeId::Point3f:
+        case TypeId::Vector3f:
+        case TypeId::Normal3f:
+        case TypeId::Color3f:
         case TypeId::Texcoord2f:
+        case TypeId::Texcoord3f:
+        case TypeId::Color4f:
         case TypeId::Quatf: {
           const std::vector<float>* arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            if (!copy_counted_payload(arr->size(), arr->data(),
-                                      sizeof(float))) {
+            if (!copy_counted_payload(arr->size(), arr->data(), sizeof(float))) {
               return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
             }
             std::memcpy(arr_data.data(), &count, 8);
+          }
+          break;
+        }
+        case TypeId::Half:
+        case TypeId::Half2:
+        case TypeId::Half3:
+        case TypeId::Half4:
+        case TypeId::Point3h:
+        case TypeId::Vector3h:
+        case TypeId::Normal3h:
+        case TypeId::Color3h:
+        case TypeId::Color4h:
+        case TypeId::Texcoord2h:
+        case TypeId::Texcoord3h:
+        case TypeId::Quath: {
+          const std::vector<float>* arr = val.as_float_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            if (!resize_counted_payload(arr->size(), sizeof(uint16_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+            for (size_t i = 0; i < arr->size(); ++i) {
+              uint16_t h = FloatToHalf((*arr)[i]);
+              std::memcpy(arr_data.data() + 8 + i * sizeof(uint16_t), &h,
+                          sizeof(uint16_t));
+            }
           }
           break;
         }
@@ -458,6 +538,8 @@
         case TypeId::Point3d:
         case TypeId::Vector3d:
         case TypeId::Normal3d:
+        case TypeId::Color3d:
+        case TypeId::Texcoord3d:
         case TypeId::Quatd:
         case TypeId::Matrix2d:
         case TypeId::Matrix3d:
@@ -466,35 +548,10 @@
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
             count = arr->size() / comps;
-            if (!copy_counted_payload(arr->size(), arr->data(),
-                                      sizeof(double))) {
+            if (!copy_counted_payload(arr->size(), arr->data(), sizeof(double))) {
               return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
             }
             std::memcpy(arr_data.data(), &count, 8);
-          }
-          break;
-        }
-        // Half arrays materialize as a float buffer; narrow back to uint16 half
-        // for the crate (only reached when the array is materialized, not on the
-        // lazy byte-passthrough path).
-        case TypeId::Half:
-        case TypeId::Half2:
-        case TypeId::Half3:
-        case TypeId::Half4:
-        case TypeId::Quath: {
-          const std::vector<float>* arr = val.as_float_array();
-          const uint32_t comps = ArrayComps(type_id);
-          if (arr && comps && arr->size() % comps == 0) {
-            count = arr->size() / comps;
-            if (!resize_counted_payload(arr->size(), sizeof(uint16_t))) {
-              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
-            }
-            std::memcpy(arr_data.data(), &count, 8);
-            for (size_t i = 0; i < arr->size(); ++i) {
-              uint16_t h = FloatToHalf((*arr)[i]);
-              std::memcpy(arr_data.data() + 8 + i * sizeof(uint16_t), &h,
-                          sizeof(uint16_t));
-            }
           }
           break;
         }
@@ -513,6 +570,7 @@
         DataBlock block;
         block.type = type_id;
         block.data = std::move(arr_data);
+        CacheBlockHash(&block);
         uint64_t idx = InternBlock(std::move(block));
         // Return non-inline value rep (index will be resolved to offset later)
         return ValueRep::Make(crate_type, idx, true, false, data_compressed);

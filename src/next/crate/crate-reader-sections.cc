@@ -10,9 +10,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tinyusdz {
@@ -656,7 +656,14 @@ bool CrateReader::Impl::ReadFieldsets() {
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
   // huge allocation from a malformed value (no dedicated max, reuse max_fields).
-  if (num_fieldsets > options_.max_fields) {
+  size_t max_fieldsets = options_.max_fields;
+  if (options_.max_fields >= (std::numeric_limits<size_t>::max)() -
+                                   options_.max_specs) {
+    max_fieldsets = std::numeric_limits<size_t>::max();
+  } else {
+    max_fieldsets = options_.max_fields + options_.max_specs;
+  }
+  if (num_fieldsets > max_fieldsets) {
     AddError("Too many fieldset indices");
     return false;
   }
@@ -702,6 +709,50 @@ bool CrateReader::Impl::ReadFieldsets() {
     }
     if (fieldset_index_bytes > 0) {
       std::memcpy(fieldset_indices_.data(), dr.data.data(), fieldset_index_bytes);
+    }
+  }
+
+  // Build compact span lookup (start/count) for each fieldset. This avoids
+  // rescanning fieldset_indices_ for every spec during stage-build.
+  fieldset_offsets_.clear();
+  fieldset_counts_.clear();
+  fieldset_offsets_.reserve(static_cast<size_t>(num_fieldsets));
+  fieldset_counts_.reserve(static_cast<size_t>(num_fieldsets));
+  size_t pos = 0;
+  while (pos < fieldset_indices_.size()) {
+    const size_t start = pos;
+    while (pos < fieldset_indices_.size() && fieldset_indices_[pos] != 0xFFFFFFFFu) {
+      ++pos;
+    }
+    if (pos >= fieldset_indices_.size()) {
+      AddError("Fieldset indices missing terminator");
+      return false;
+    }
+    const size_t span = pos - start;
+    if (span > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+      AddError("Fieldset length overflow");
+      return false;
+    }
+    fieldset_offsets_.push_back(static_cast<uint32_t>(start));
+    fieldset_counts_.push_back(static_cast<uint32_t>(span));
+    ++pos;
+  }
+
+  fieldset_index_to_id_.clear();
+  if (!fieldset_indices_.empty()) {
+    if (!CheckByteAllocation(fieldset_indices_.size() * sizeof(uint32_t),
+                             "Fieldset index lookup table")) {
+      return false;
+    }
+    fieldset_index_to_id_.assign(fieldset_indices_.size(),
+                                static_cast<uint32_t>(0xFFFFFFFFu));
+    for (uint32_t fi = 0; fi < fieldset_offsets_.size(); ++fi) {
+      const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
+      if (start >= fieldset_index_to_id_.size()) {
+        AddError("Fieldset offset out of range");
+        return false;
+      }
+      fieldset_index_to_id_[start] = fi;
     }
   }
 
@@ -1020,51 +1071,92 @@ bool CrateReader::Impl::ReadPaths() {
   // O(num_nodes) and correct.
   paths_.assign(static_cast<size_t>(num_paths), std::string());
 
-  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
+  auto element_for = [&](size_t i, bool& is_prop, std::string_view& elem) -> bool {
     int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     is_prop = elem_token < 0;
     // Promote to int64 before negating (-INT32_MIN is UB).
     uint32_t token_idx = is_prop
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    return tokens_.str(token_idx);
+    if (token_idx >= tokens_.size()) {
+      AddError("Path element token index out of range");
+      return false;
+    }
+    elem = tokens_.view(token_idx);
+    return true;
   };
 
-  // Recurse over a sibling chain that all share `parent` (the parent prim path,
-  // without any property '.' prefix). Depth is bounded by max_path_depth.
-  std::function<void(size_t, const std::string&, size_t)> build =
-      [&](size_t i, const std::string& parent, size_t depth) {
-        while (i < n) {
-          bool is_prop = false;
-          std::string elem = element_for(i, is_prop);
-          int32_t jump = static_cast<int32_t>(jump_raw[i]);
+  struct PathFrame {
+    size_t next_index = 0;
+    size_t parent_path_len = 0;
+    size_t depth = 0;
+  };
+  std::vector<PathFrame> stack;
+  stack.reserve(options_.max_path_depth + 1);
 
-          bool is_root = parent.empty() && (elem.empty() || elem == "/");
-          std::string prim_path;  // base path (no '.' prefix) for children
-          if (is_root) {
-            prim_path = "/";
-          } else if (parent.empty() || parent == "/") {
-            prim_path = "/" + elem;
-          } else {
-            prim_path = parent + "/" + elem;
-          }
+  size_t i = 0;
+  size_t depth = 0;
+  std::string parent_path;
+  while (i < n) {
+    bool is_prop = false;
+    std::string_view elem;
+    if (!element_for(i, is_prop, elem)) return false;
+    int32_t jump = static_cast<int32_t>(jump_raw[i]);
 
-          uint32_t store_idx = path_indices[i];
-          if (store_idx < num_paths) {
-            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
-          }
+    const bool is_root = parent_path.empty() && (elem.empty() || elem == "/");
+    const size_t parent_len = parent_path.size();
+    if (is_root) {
+      parent_path = "/";
+    } else if (parent_path.empty()) {
+      parent_path = "/";
+      parent_path.append(elem);
+    } else if (parent_path == "/") {
+      parent_path.append(elem);
+    } else {
+      parent_path.push_back('/');
+      parent_path.append(elem);
+    }
 
-          const bool has_child = (jump == -1 || jump > 0);
-          const bool has_sibling = (jump == 0 || jump > 0);
+    const uint32_t store_idx = path_indices[i];
+    if (store_idx < num_paths) {
+      std::string& out = paths_[store_idx];
+      if (is_prop) {
+        out.clear();
+        out.reserve(parent_path.size() + 1);
+        out.push_back('.');
+        out.append(parent_path);
+      } else {
+        out = parent_path;
+      }
+    }
 
-          if (has_child && depth < options_.max_path_depth) {
-            build(i + 1, prim_path, depth + 1);
-          }
-          if (!has_sibling) return;
-          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
-        }
-      };
-  build(0, std::string(), 0);
+    const bool has_child = (jump == -1 || jump > 0);
+    const bool has_sibling = (jump == 0 || jump > 0);
+    const bool descend = has_child && (depth < options_.max_path_depth);
+    if (descend) {
+      if (has_sibling) {
+        stack.push_back({jump > 0 ? static_cast<size_t>(i + jump) : i + 1,
+                         parent_len,
+                         depth});
+      }
+      i = i + 1;
+      ++depth;
+      continue;
+    }
+
+    if (!has_sibling) {
+      if (stack.empty()) break;
+      const PathFrame frame = stack.back();
+      stack.pop_back();
+      i = frame.next_index;
+      parent_path.resize(frame.parent_path_len);
+      depth = frame.depth;
+      continue;
+    }
+
+    parent_path.resize(parent_len);
+    i = jump > 0 ? static_cast<size_t>(i + jump) : i + 1;
+  }
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {

@@ -96,6 +96,13 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       return true;
     }
 
+    case CrateTypeId::PathListOp: {
+      std::vector<std::string> paths;
+      if (!DecodePathTargets(rep, paths)) return false;
+      out = Value::MakeTokenArray(std::move(paths));
+      return true;
+    }
+
     case CrateTypeId::Dictionary:
       return DecodeDictionary(rep, out, 0);
 

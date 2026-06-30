@@ -7,6 +7,8 @@
 
 #include "crate-data-source.hh"
 
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 
@@ -25,12 +27,28 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
 }
 
 CrateReadResult CrateReader::Impl::ParseFromSource() {
+  using Clock = std::chrono::steady_clock;
+  const bool timing = options_.enable_timing;
+  const auto t_parse_start = Clock::now();
+  auto elapsed_ms = [](Clock::duration d) {
+    return std::chrono::duration<double, std::milli>(d).count();
+  };
+  auto log_phase = [&](const char* name, Clock::time_point a,
+                       Clock::time_point b) {
+    if (!timing) return;
+    std::fprintf(stderr, "[next_crate_read] %s=%.1fms\n", name,
+                 elapsed_ms(b - a));
+  };
+
   result_ = CrateReadResult();
   result_.source_was_mmap = source_ && source_->is_mmapped();
   tokens_.clear();
   string_indices_.clear();
   fields_.clear();
   fieldset_indices_.clear();
+  fieldset_offsets_.clear();
+  fieldset_counts_.clear();
+  fieldset_index_to_id_.clear();
   specs_.clear();
   paths_.clear();
 
@@ -41,19 +59,57 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 
   reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
 
+  auto t0 = Clock::now();
   if (!ReadBootstrap()) return std::move(result_);
+  auto t1 = Clock::now();
+  log_phase("bootstrap", t0, t1);
   source_->set_version(version_);
+  t0 = Clock::now();
   if (!ReadTOC()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("toc", t0, t1);
+  t0 = Clock::now();
   if (!ReadTokens()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("tokens", t0, t1);
+  t0 = Clock::now();
   if (!ReadStrings()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("strings", t0, t1);
+  t0 = Clock::now();
   if (!ReadFields()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("fields", t0, t1);
+  t0 = Clock::now();
   if (!ReadFieldsets()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("fieldsets", t0, t1);
+  t0 = Clock::now();
   if (!ReadSpecs()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("specs", t0, t1);
+  t0 = Clock::now();
   if (!ReadPaths()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("paths", t0, t1);
+  t0 = Clock::now();
   if (!BuildStage()) return std::move(result_);
+  t1 = Clock::now();
+  log_phase("build_stage", t0, t1);
 
   result_.success = result_.errors.empty();
   result_.version = version_;
+  if (timing) {
+    const auto t_end = Clock::now();
+    std::fprintf(stderr,
+                 "[next_crate_read] total=%.1fms bytes=%zu tokens=%zu strings=%zu "
+                 "fields=%zu fieldsets=%zu specs=%zu paths=%zu mmap=%d finalize=%d\n",
+                 elapsed_ms(t_end - t_parse_start),
+                 source_ ? source_->size() : size_t{0}, tokens_.size(),
+                 string_indices_.size(), fields_.size(), fieldset_counts_.size(),
+                 specs_.size(), paths_.size(), result_.source_was_mmap ? 1 : 0,
+                 options_.finalize_stage ? 1 : 0);
+  }
   return std::move(result_);
 }
 
@@ -68,7 +124,24 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
     AddError("Input exceeds max_memory budget");
     return std::move(result_);
   }
-  return ReadFromString(std::string(reinterpret_cast<const char*>(data), size));
+  return ReadFromString(
+      std::string(reinterpret_cast<const char*>(data), size));
+}
+
+CrateReadResult CrateReader::Impl::ReadBorrowed(const uint8_t* data,
+                                                size_t size) {
+  if (!data) {
+    result_ = CrateReadResult();
+    AddError("Invalid input data");
+    return std::move(result_);
+  }
+  if (options_.max_memory && size > options_.max_memory) {
+    result_ = CrateReadResult();
+    AddError("Input exceeds max_memory budget");
+    return std::move(result_);
+  }
+  source_ = CrateDataSource::AdoptBorrowed(data, size, CrateVersion{});
+  return ParseFromSource();
 }
 
 CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
@@ -145,6 +218,9 @@ CrateReader& CrateReader::operator=(CrateReader&&) noexcept = default;
 
 CrateReadResult CrateReader::Read(const uint8_t* data, size_t size) {
   return impl_->Read(data, size);
+}
+CrateReadResult CrateReader::ReadBorrowed(const uint8_t* data, size_t size) {
+  return impl_->ReadBorrowed(data, size);
 }
 
 CrateReadResult CrateReader::ReadOwned(std::string&& owned) {

@@ -418,32 +418,22 @@ bool CrateWriter::Finalize(std::string* err) {
       crate::Field field;
       field.token_index = GetOrCreateToken(field_pair.first);
 
-      // Pack value
-      field.value_rep = PackValue(field_pair.second, err);
-      if (err && !err->empty()) {
-        return false;
-      }
-
       // USD metadata fields `primChildren` and `properties` store a list of
       // child/property names. On the wire, pxrusd expects these as the
-      // dedicated `TokenVector` type (CrateDataTypeId 41), not as a
-      // `Token[]` array (CrateDataTypeId 11 with IsArray). The serialized
-      // bytes are identical — uint64 count followed by uint32 token
-      // indices — so we just retag the ValueRep after PackValue emitted
-      // it as Token[]. Without this, pxrusd loads the layer but silently
-      // drops every prim because its primChildren field fails type
-      // validation, and we ship USDC that downstream DCCs can't read.
+      // dedicated uncompressed `TokenVector` type (CrateDataTypeId 41), not
+      // as a `Token[]` array. Large Token[] arrays may be integer-compressed,
+      // and retagging those bytes as TokenVector produces scalar ValueReps
+      // with the compressed bit set, which OpenUSD rejects.
       const std::string& fname = field_pair.first;
       if ((fname == "primChildren" || fname == "properties") &&
-          field_pair.second.as<std::vector<value::token>>() &&
-          field.value_rep.IsArray() &&
-          field.value_rep.GetType() ==
-              static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN)) {
-        uint64_t data = field.value_rep.GetData();
-        data &= ~crate::ValueRep::IsArrayBit_;
-        field.value_rep = crate::ValueRep(data);
-        field.value_rep.SetType(static_cast<int32_t>(
-            crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR));
+          field_pair.second.as<std::vector<value::token>>()) {
+        field.value_rep = PackTokenVectorValue(
+            *field_pair.second.as<std::vector<value::token>>(), err);
+      } else {
+        field.value_rep = PackValue(field_pair.second, err);
+      }
+      if (err && !err->empty()) {
+        return false;
       }
 
       // Get or create field index
