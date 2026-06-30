@@ -2473,6 +2473,19 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-payload-variant-content COMMAND feat-payload-variant-content
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition: a SELECTED variant block may author its OWN nested variantSet
+    # (ALab render_high -> geo_vis -> proxy mesh). Two bugs dropped that nested
+    # content: layer-mode load (ToPrimSpecRec) never copied a variant's nested
+    # variantSets, and VariantSelectPrimSpec cleared them on outer selection.
+    # Both fixed; this verifies the nested proxy geometry survives flatten.
+    add_executable(feat-nested-variantset
+                   tests/feat/nested-variantset/test-nested-variantset.cc)
+    add_sanitizers(feat-nested-variantset)
+    target_link_libraries(feat-nested-variantset PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-nested-variantset PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-nested-variantset COMMAND feat-nested-variantset
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
