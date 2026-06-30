@@ -283,6 +283,12 @@ int RunJSScriptMode(const Options &opt, const std::string &script_path);
 int RunMCPMode(const Options &opt);
 #endif
 
+#ifdef TUSDRENDER_WITH_STREAM
+// tusdr_stream.cc — WebSocket browser streaming server (orbit/pan/dolly from the
+// browser, frames pushed as JPEG/QOI/PNG). Blocks until stopped.
+int RunStreamServer(const Options &opt);
+#endif
+
 #ifdef HAVE_VULKAN
 bool RunVulkanLightRT(const Options &opt,
                               const std::vector<Vec3> &base_colors,
