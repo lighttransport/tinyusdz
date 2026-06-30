@@ -3924,6 +3924,29 @@ bool VulkanRenderer::recreateSwapchain() {
   return true;
 }
 
+// Resize the headless composite at runtime. The swap render pass, ImGui backend
+// and per-image sync stay valid (the headless image count is fixed at 2 and the
+// render pass is size-independent), so we only recreate the offscreen swap images
+// and their framebuffers. The 3D viewport (offscreen FBO) follows separately via
+// resizeViewport(), driven by ImGui's content region once DisplaySize updates.
+bool VulkanRenderer::resizeHeadless(int w, int h) {
+  if (!headless_ || !device_) return false;
+  if (w < 1) w = 1;
+  if (h < 1) h = 1;
+  if (w == static_cast<int>(swapExtent_.width) &&
+      h == static_cast<int>(swapExtent_.height))
+    return true;  // no-op
+  vkDeviceWaitIdle(device_);
+  headlessW_ = w;
+  headlessH_ = h;
+  destroySwapchain();  // frees swap framebuffers/views/images/mem; keeps render pass
+  std::string* err = nullptr;
+  if (!createHeadlessSwapchain(err)) return false;     // new images/views/mem + extent
+  if (!createSwapchainFramebuffers(err)) return false;  // new framebuffers at new extent
+  lastSwapIndex_ = 0;  // old index may be stale
+  return true;
+}
+
 void VulkanRenderer::present() { presentImpl(ImGui::GetDrawData(), 0, 0); }
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)

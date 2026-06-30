@@ -154,6 +154,11 @@ class Renderer {
   // before init() when `window` is null. No-op for backends that need a window.
   virtual void setHeadlessSize(int /*w*/, int /*h*/) {}
 
+  // Resize the headless composite at runtime (recreate the offscreen swap images
+  // + framebuffers). Returns false if unsupported / not headless. The caller must
+  // also update ImGui's DisplaySize. No-op for backends that need a window.
+  virtual bool resizeHeadless(int /*w*/, int /*h*/) { return false; }
+
   // Wire up the ImGui platform+renderer backends. Call after ImGui::CreateContext().
   virtual bool initImGui(std::string* err) = 0;
 

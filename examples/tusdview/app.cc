@@ -1403,10 +1403,15 @@ void App::applyNavCommand(const StreamNav& c) {
       }
       break;
     case StreamNav::Resize:
-      // Windowed: resize the real window (captureWindow then streams the new size).
-      // Headless: the composite size is fixed at launch; the browser canvas scales.
-      if (!headless_ && window_ && c.w > 0 && c.h > 0) {
-        glfwSetWindowSize(window_, c.w, c.h);
+      // Windowed: resize the real window. Headless: queue a composite resize,
+      // applied at the top of the next frame (updates winW/winH + the VK swap).
+      if (c.w > 0 && c.h > 0) {
+        if (!headless_ && window_) {
+          glfwSetWindowSize(window_, c.w, c.h);
+        } else if (headless_) {
+          streamResizeW_ = c.w;
+          streamResizeH_ = c.h;
+        }
       }
       break;
   }
@@ -1580,6 +1585,16 @@ int App::run(const std::string& initialFile, int maxFrames,
   int frameCount = 0;
   bool running = true;
   while (running) {
+    // Apply a browser-requested headless composite resize (queued last frame):
+    // recreate the VK swap at the new size and update the size ImGui draws at.
+    if (headless_ && streamResizeW_ > 0 && streamResizeH_ > 0) {
+      if (renderer_->resizeHeadless(streamResizeW_, streamResizeH_)) {
+        winW = streamResizeW_;
+        winH = streamResizeH_;
+        markStreamActivity();  // re-render at the new size
+      }
+      streamResizeW_ = streamResizeH_ = 0;
+    }
     if (headless_) {
       // No platform backend: drive ImGui's display size + timestep ourselves.
       ImGuiIO& hio = ImGui::GetIO();

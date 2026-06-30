@@ -32,6 +32,7 @@ class VulkanRenderer final : public Renderer {
     if (w > 0) headlessW_ = w;
     if (h > 0) headlessH_ = h;
   }
+  bool resizeHeadless(int w, int h) override;
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;

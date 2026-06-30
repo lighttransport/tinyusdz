@@ -473,6 +473,7 @@ class App
   int streamMotionMaxDim_{1280};            // long-edge cap for motion frames
   int streamMotionJpegQ_{45};               // motion JPEG quality
   int streamIdleMs_{350};                   // ms of no activity = stable
+  int streamResizeW_{0}, streamResizeH_{0}; // pending headless resize (0 = none)
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};

@@ -79,7 +79,12 @@ const cv=document.getElementById('c'),cx=cv.getContext('2d'),stat=document.getEl
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/stream');
 ws.binaryType='blob';
 let frames=0,last=performance.now();
-ws.onopen=()=>{stat.textContent='connected';};
+function send(o){ if(ws.readyState===1) ws.send(JSON.stringify(o)); }
+// Ask the server to render at the center pane's pixel size so the headless
+// composite matches the canvas (no letterbox bars, crisp text).
+function sendSize(){const r=document.getElementById('center').getBoundingClientRect();
+ send({t:'resize',w:Math.round(r.width),h:Math.round(r.height)});}
+ws.onopen=()=>{stat.textContent='connected';sendSize();};
 ws.onclose=()=>stat.textContent='disconnected';
 ws.onerror=()=>stat.textContent='error';
 ws.onmessage=ev=>{createImageBitmap(ev.data).then(b=>{
@@ -87,7 +92,7 @@ ws.onmessage=ev=>{createImageBitmap(ev.data).then(b=>{
   cx.drawImage(b,0,0); b.close(); frames++;
   const now=performance.now(); if(now-last>1000){stat.textContent=frames+' fps · '+cv.width+'×'+cv.height;frames=0;last=now;}
 });};
-function send(o){ if(ws.readyState===1) ws.send(JSON.stringify(o)); }
+let rsz; window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(sendSize,200);});
 
 // Map a DOM event to image-pixel coords inside the contain-fitted canvas.
 function coords(e){
