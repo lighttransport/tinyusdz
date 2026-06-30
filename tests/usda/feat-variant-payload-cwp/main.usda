@@ -1,0 +1,46 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+# Regression: a prim authored INSIDE a (nested) variant block carries its own
+# relative-path payload anchored at THIS layer's dir. Mirrors ALab's geo_vis
+# proxy GEO_PROXY whose `@display_high/mesh/...@` payload sits beside a sibling
+# `@render_high/mesh/...@`. The variant-nested prim must load with the correct
+# working path; otherwise its payload falls back to a stale resolver cwp (the
+# sibling payload's target dir) and is dropped.
+def Xform "root" (
+    variants = {
+        string geo = "hi"
+    }
+    prepend variantSets = "geo"
+)
+{
+    def Xform "GEO"
+    {
+    }
+    variantSet "geo" = {
+        "hi" (
+            variants = {
+                string geo_vis = "preview"
+            }
+            prepend variantSets = "geo_vis"
+        ) {
+            over "GEO" (
+                payload = @a/mesh_a.usda@
+            )
+            {
+            }
+            variantSet "geo_vis" = {
+                "preview" {
+                    def Xform "GEO_PROXY" (
+                        payload = @b/mesh_b.usda@
+                    )
+                    {
+                        uniform token purpose = "proxy"
+                    }
+                }
+            }
+        }
+    }
+}
