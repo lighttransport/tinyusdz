@@ -1592,7 +1592,25 @@ static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
     }
   }
 
-    return true;
+  // Also stamp prims authored INSIDE variant blocks (and their nested
+  // variantSets). Without this, a prim that only exists in a variant -- e.g.
+  // ALab's `geo_vis` proxy `GEO_PROXY` -- loads with an EMPTY working path; when
+  // that variant is later selected and its payload/reference composed, the empty
+  // cwp falls back to the resolver's stale global working path (the dir of
+  // whatever asset was loaded last, e.g. a sibling `render_high/mesh` payload),
+  // so its relative `@display_high/mesh/...@` payload resolves one dir wrong and
+  // is dropped. Variant content must carry the SAME anchor as the prim that owns
+  // the variantSet.
+  for (auto &variant_set_item : ps.variantSets()) {
+    for (auto &variant_item : variant_set_item.second.variantSet) {
+      if (!PropagateAssetResolverState(depth + 1, variant_item.second, cwp,
+                                       search_paths)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
