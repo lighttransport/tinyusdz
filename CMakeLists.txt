@@ -2500,6 +2500,20 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-payload-cwp COMMAND feat-variant-payload-cwp
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition (cwp anchoring, reference-chain): a reference/payload authored
+    # in a component's SUBLAYER must stay anchored to that subLayer's dir after
+    # the component is pulled in via an outer reference. LoadAsset's
+    # PropagateAssetResolverState used to re-stamp the whole referenced subtree
+    # with the component ROOT path, clobbering subLayer anchors (ALab surfacing
+    # `../../../fragment/...` refs -> Asset not found). Now gap-fills.
+    add_executable(feat-sublayer-ref-cwp
+                   tests/feat/sublayer-ref-cwp/test-sublayer-ref-cwp.cc)
+    add_sanitizers(feat-sublayer-ref-cwp)
+    target_link_libraries(feat-sublayer-ref-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-sublayer-ref-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-sublayer-ref-cwp COMMAND feat-sublayer-ref-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
