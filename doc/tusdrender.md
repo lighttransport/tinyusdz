@@ -184,10 +184,20 @@ instance, looks up the prototype-local triangle, and transforms the object-space
 normal by that instance's normal matrix (cofactor of the 3×4, so non-uniform scale
 is exact).
 
+A prototype larger than the per-BLAS chunk limit (8M triangles; overridable via
+`TUSDR_INST_CHUNK_TRIS` for testing) is **chunk-split** into sub-prototypes of ≤
+chunk triangles (vertices remapped per chunk, shading slices carried along), and a
+placement of it is emitted once per sub-proto. Each sub-proto is just a smaller
+prototype, so the `pid` encoding and hit decode are unchanged; this works around
+drivers (RADV) whose AS build-size query overflows for very large single-BLAS
+builds. Verified pixel-identical (MAD 0.000) to the unsplit render by forcing a
+small chunk on the demo prototype (1200 tris → 24 sub-protos, 7200 instances, still
+1200 unique tris stored).
+
 Opt-in (`-vkInstanced`), falls back to the flat path when ray query is unavailable,
-there are no shareable instances, or `ninsts*maxPrototypeTris` would overflow the
-32-bit `prim_id` encoding (each prototype builds as a single BLAS, so one prototype
-must fit the device's one-BLAS limit). Validated **pixel-identical** to the flat
+there are no shareable instances, or `ninsts*stride` would overflow the 32-bit
+`prim_id` encoding (`stride` = max sub-prototype triangle count, so a huge prototype
+chunked small still caps total instances). Validated **pixel-identical** to the flat
 `-vkr` path (luminance MAD 0.000/255, silhouette IoU 1.000) on a 200×(800-tri)
 PointInstancer (BLAS stores 800 tris vs 160 000 flattened — 200× smaller), a
 4-instance orient/non-uniform-scale PointInstancer, and a 3-tree `instanceable`
@@ -216,5 +226,7 @@ Full-only, Proxy-only (proxy box pixel-covers the mesh, IoU 1.000), Cull-only, a
 Proxy+Cull mix; the 3D-cube proxy matches the Full silhouette exactly. If every
 instance culls, it falls back to the flat path.
 
-Remaining follow-on: chunk a single >8M-triangle prototype across BLAS while
-preserving the instance encoding.
+The GPU-instancing path is now feature-complete: render PointInstancer + native
+instances, per-prototype BLAS sharing, per-instance LOD (flatten-side and
+two-level), displacement, and >8M-triangle prototype chunking — all reusing
+LightRT's existing ray-query shader (no SPIR-V change).
