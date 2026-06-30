@@ -1270,6 +1270,69 @@ bool App::renderHipViewport() {
   return true;
 }
 
+void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h) {
+  if (!streamServer_) return;
+  tinyusdz::Image img;
+  img.width = w;
+  img.height = h;
+  img.channels = 4;
+  img.bpp = 8;
+  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.data = std::move(rgba);
+
+  tinyusdz::image::WriteOption opt;
+  if (streamCodec_ == "qoi") {
+    opt.format = tinyusdz::image::WriteImageFormat::QOI;
+  } else if (streamCodec_ == "png") {
+    opt.format = tinyusdz::image::WriteImageFormat::PNG;
+  } else {  // default: JPEG (smallest / lowest-latency over the wire)
+    opt.format = tinyusdz::image::WriteImageFormat::JPEG;
+    opt.jpeg_quality = 80;
+  }
+  auto enc = tinyusdz::image::WriteImageToMemory(img, opt);
+  if (enc) streamServer_->pushFrame(enc.value().data(), enc.value().size());
+}
+
+// Apply one browser navigation command to the camera / render state. Runs on the
+// main thread (drained from the stream server's queue), mirroring the MCP
+// viewport/input tools so the two input paths behave identically.
+void App::applyNavCommand(const StreamNav& c) {
+  switch (c.type) {
+    case StreamNav::Orbit: camera_.orbit(c.dx, c.dy); break;
+    case StreamNav::Pan: camera_.pan(c.dx, c.dy); break;
+    case StreamNav::Dolly: camera_.dolly(c.amount); break;
+    case StreamNav::Key: {
+      const std::string& k = c.str;
+      if (k == "w") {
+        gui_.cycleWireframe();
+      } else if (k == "f" || k == "a") {
+        if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+      } else if (k == "0") {
+        camera_.setPreset(CameraViewPreset::Isometric);
+        if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+      } else if (k == "5") {
+        camera_.setPreset(CameraViewPreset::Isometric);
+      } else if (k == "1") {
+        camera_.setPreset(CameraViewPreset::Front);
+      } else if (k == "3") {
+        camera_.setPreset(CameraViewPreset::Right);
+      } else if (k == "7") {
+        camera_.setPreset(CameraViewPreset::Top);
+      }
+      break;
+    }
+    case StreamNav::Resize:
+      // Windowed: resize the real window (captureWindow then streams the new size).
+      // Headless: the composite size is fixed at launch; the browser canvas scales.
+      if (!headless_ && window_ && c.w > 0 && c.h > 0) {
+        glfwSetWindowSize(window_, c.w, c.h);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   std::string err;
@@ -1295,13 +1358,18 @@ int App::run(const std::string& initialFile, int maxFrames,
   hipInteractive_ = hipRt_ && !headless_;
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   if (hipInteractive_) renderThreadActive_ = false;
+  // Streaming captures the composited window + encodes inline each frame; run
+  // single-threaded so the capture/encode happen on the context-owning thread.
+  if (streamHttpPort_ > 0) renderThreadActive_ = false;
 #endif
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
       return 1;
     }
-    if (maxFrames < 0) maxFrames = 4;  // windowless runs are bounded by frame count
+    // A streaming server runs an open-ended loop (no one-shot screenshot bound).
+    if (maxFrames < 0 && streamHttpPort_ <= 0)
+      maxFrames = 4;  // windowless runs are bounded by frame count
     // GLFW is never initialized in the headless path (no window, no surface).
   } else if (!initWindow(&err)) {
     LOGE("%s", err.c_str());
@@ -1413,6 +1481,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     LOGW("MCP requested but not compiled in (build with -DTUSDVIEW_ENABLE_MCP=ON).");
   }
 #endif
+
+  // WebSocket image-streaming server (independent of MCP; own port).
+  if (streamHttpPort_ > 0) {
+    streamServer_ = std::make_unique<StreamServer>();
+    if (!streamServer_->start(streamHttpPort_)) streamServer_.reset();
+  }
 
   if (!initialFile.empty()) {
     // Headless (--frames) loads synchronously so screenshots are deterministic;
@@ -1635,15 +1709,31 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
         renderer_->requestWindowCapture();
       }
+      // Streaming: grab the full composited window (incl. ImGui) this frame.
+      const bool streamFrame =
+          streamServer_ && streamServer_->clientCount() > 0;
+      if (streamFrame) renderer_->requestWindowCapture();
 
       ImGui::Render();
       renderer_->present();
+
+      if (streamFrame) {
+        std::vector<uint8_t> rgba;
+        int cw = 0, ch = 0;
+        if (renderer_->captureWindow(&rgba, &cw, &ch) && cw > 0 && ch > 0) {
+          streamEncodeAndPush(std::move(rgba), cw, ch);
+        }
+      }
     }
 
     // Deferred actions (after the frame, outside the ImGui frame state).
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
 #endif
+    // Apply browser navigation from the stream server (main thread, like MCP).
+    if (streamServer_) {
+      for (const StreamNav& c : streamServer_->takeInput()) applyNavCommand(c);
+    }
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();

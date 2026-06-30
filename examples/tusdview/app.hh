@@ -30,6 +30,7 @@
 #include "parametric_tess.hh"
 #include "renderer.hh"
 #include "scene_loader.hh"
+#include "stream/stream_server.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
@@ -175,6 +176,11 @@ class App
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
   void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
+  void setStreamHttp(int port) { streamHttpPort_ = port; }  // 0 = off
+  // Stream image codec: "jpeg" (default), "qoi", or "png".
+  void setStreamCodec(const std::string& c) { streamCodec_ = c; }
+  // Apply one browser navigation command to the camera/render state (main thread).
+  void applyNavCommand(const StreamNav& cmd);
 
 #if defined(TUSDVIEW_HAVE_MCP)
   // McpHost tool handlers (defined in mcp/app_mcp.cc; run on the main thread).
@@ -336,6 +342,8 @@ class App
   // Trace the HIP viewport for one interactive frame (builds the scene on first
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();
+  // Encode an RGBA8 window grab with the configured stream codec and broadcast it.
+  void streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h);
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
@@ -429,6 +437,11 @@ class App
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};
   int mcpHttpPort_{0};
+
+  // WebSocket image-streaming server (browser remote view + navigation).
+  int streamHttpPort_{0};
+  std::string streamCodec_{"jpeg"};
+  std::unique_ptr<StreamServer> streamServer_;
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};

@@ -201,20 +201,38 @@ endif()
 # Dependencies (nlohmann/json + civetweb) are vendored in tinyusdz/src/external,
 # so this defaults ON (no system packages needed).
 # ---------------------------------------------------------------------------
+# civetweb HTTP/WebSocket server. Shared by the WebSocket image-stream server
+# (always built) and the optional MCP server. Built with websockets ENABLED.
+target_sources(${EXAMPLE_TARGET} PRIVATE
+    stream/stream_server.cc
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+    NO_SSL NO_CGI USE_WEBSOCKET=1)  # civetweb: no OpenSSL/CGI; websockets on
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+elseif(WIN32)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)  # civetweb Winsock
+  if(MINGW)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
+  endif()
+endif()
+# stream_server.cc uses nlohmann/json (needs exceptions when built -fno-exceptions).
+if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "-fexceptions")
+elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "/EHsc")
+endif()
+
 option(TUSDVIEW_ENABLE_MCP "Build the embedded MCP server (stdio + HTTP)" ON)
 if(TUSDVIEW_ENABLE_MCP)
   target_sources(${EXAMPLE_TARGET} PRIVATE
-      mcp/mcp_server.cc
-      mcp/mcp_http.cc
-      mcp/mcp_stdio.cc
-      mcp/app_mcp.cc
-      ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
-  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
-      TUSDVIEW_HAVE_MCP=1
-      NO_SSL NO_CGI USE_WEBSOCKET=0)  # civetweb: no OpenSSL / CGI / websockets
-  # The MCP server uses try/catch around JSON-RPC handling, so it needs C++
-  # exceptions even when the rest of tusdview is built -fno-exceptions. The
-  # per-source flag is appended after the target option and therefore wins.
+      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_HAVE_MCP=1)
+  # The MCP server uses try/catch around JSON-RPC; it needs C++ exceptions even
+  # when the rest of tusdview is built -fno-exceptions.
   if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
@@ -223,18 +241,6 @@ if(TUSDVIEW_ENABLE_MCP)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "/EHsc")
-  endif()
-  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
-  if(UNIX)
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
-  elseif(WIN32)
-    # civetweb's HTTP transport uses Winsock (socket/bind/listen/WSAStartup).
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)
-    # civetweb's clock_gettime() comes from winpthread under MinGW; MSVC has its
-    # own threading runtime and no winpthread.lib.
-    if(MINGW)
-      target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
-    endif()
   endif()
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()
