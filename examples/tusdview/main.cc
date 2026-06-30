@@ -54,6 +54,8 @@ int main(int argc, char** argv) {
   std::string wantSelect;  // --select <prim path>
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
+  int streamHttpPort = 0;     // WebSocket stream server port (0 = off)
+  std::string streamCodec = "jpeg";  // stream image codec: jpeg|qoi|png
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = false;             // --next: next loader + flat GL preview
@@ -222,6 +224,12 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--mcp") == 0) {
       mcpStdio = true;
       if (mcpHttpPort == 0) mcpHttpPort = 8080;
+    } else if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
+      const char* eq = std::strchr(argv[i], '=');
+      streamHttpPort = eq ? std::atoi(eq + 1) : 8090;
+      if (streamHttpPort <= 0) streamHttpPort = 8090;
+    } else if (std::strcmp(argv[i], "--stream-codec") == 0 && (i + 1) < argc) {
+      streamCodec = argv[++i];
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
@@ -397,6 +405,8 @@ int main(int argc, char** argv) {
   app.setSkinningMode(skinningMode);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
+  app.setStreamHttp(streamHttpPort);
+  app.setStreamCodec(streamCodec);
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
