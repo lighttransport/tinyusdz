@@ -16,6 +16,7 @@
 #include "tydra/attribute-eval.hh"
 #include "usdVol.hh"
 #include "tusdr_context.hh"
+#include "tusdr_rt_lod.hh"
 
 namespace tusdr {
 
@@ -3017,6 +3018,35 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
 
+  // Per-instance RT LOD (-rtLod): append a shared unit-cube [0,1]^3 box BLAS that
+  // Proxy instances reference (box-fit onto each prototype's object AABB). Built
+  // once; grey default material (TriMat defaults). Skipped unless -rtLod.
+  uint32_t rt_lod_box_blas = UINT32_MAX;
+  if (opt.rt_lod && opt.rt_lod_proxy) {
+    static const float kC[8][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
+                                   {0, 0, 1}, {1, 0, 1}, {0, 1, 1}, {1, 1, 1}};
+    static const int kI[36] = {0, 1, 3, 0, 3, 2, 4, 5, 7, 4, 7, 6,
+                               0, 1, 5, 0, 5, 4, 2, 3, 7, 2, 7, 6,
+                               0, 2, 6, 0, 6, 4, 1, 3, 7, 1, 7, 5};
+    Blas box;
+    box.vertices.reserve(36 * 3);
+    for (int i = 0; i < 36; ++i)
+      for (int k = 0; k < 3; ++k) box.vertices.push_back(kC[kI[i]][k]);
+    box.tris.resize(12);  // TriStore{mat_id=0}; geometry lives in the lrt scene
+    box.mat_table.resize(1);  // one default-grey TriMat
+    lrt_result be = LRT_RESULT_OK;
+    box.scene = lrt_tri_scene_build(box.vertices.data(), 12, &build_opts, &be);
+    if (box.scene) {
+      rt_lod_box_blas = uint32_t(ctx.blas.size());
+      ctx.blas.push_back(std::move(box));
+      Bounds bb; bb.lo = Vec3{0, 0, 0}; bb.hi = Vec3{1, 1, 1}; bb.valid = true;
+      local_bounds.push_back(bb);
+    } else {
+      std::cerr << "rtLod: failed to build proxy box BLAS (err=" << int(be)
+                << "); proxies disabled.\n";
+    }
+  }
+
   // LightRT tolerates NULL entries in the BLAS array (empty prototypes — e.g.
   // fully purpose-culled) as long as no instance references them, so the BLAS
   // index used by both the TLAS and shade-time ResolveTLASHit is just the
@@ -3097,6 +3127,58 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       valid[i] = blas_ok(bid) ? 1u : 0u;
     }
   });
+
+  // -rtLod: per-instance view-dependent LOD. Classify each mesh-instance placement
+  // (NOT the base non-instanced scene or curve placements) Full/Proxy/Cull from the
+  // resolved camera. Auto-fit needs the full-scene bounds BEFORE culling, so
+  // accumulate them here and resolve the camera mid-build (idempotent: the
+  // post-build ResolveCameraNext re-runs once volumes are folded in). Cull ->
+  // valid[i]=0 (drops it from the TLAS via the existing scan/scatter).
+  std::vector<uint8_t> rt_lod_level;  // empty unless -rtLod
+  if (opt.rt_lod) {
+    const size_t inst_lo = n_base_groups;
+    const size_t inst_hi = n_base_groups + n_inst_src;
+    std::vector<Bounds> pb(ai_threads ? ai_threads : 1);
+    run_range([&](unsigned tid, size_t b, size_t e) {
+      Bounds lb;
+      for (size_t i = b; i < e; ++i) {
+        if (!valid[i]) continue;
+        uint32_t bid; const float *o; src_at(i, &bid, &o);
+        ExpandBoundsByTransformedO2W(&lb, local_bounds[bid], o);
+      }
+      pb[tid] = lb;
+    });
+    for (const Bounds &lb : pb)
+      if (lb.valid) { Expand(&ctx.bounds, lb.lo); Expand(&ctx.bounds, lb.hi); }
+    ResolveCameraNext(ctx);  // fills ctx.camera + ctx.height from ctx.bounds/opt
+    const RtLodView view = MakeRtLodView(ctx.camera, ctx.height);
+    RtLodConfig cfg;
+    cfg.enabled = true;
+    cfg.proxy = opt.rt_lod_proxy && rt_lod_box_blas != UINT32_MAX;
+    cfg.frustum_cull = opt.rt_lod_frustum_cull;
+    cfg.full_px = opt.rt_lod_full_px;
+    cfg.cull_px = opt.rt_lod_cull_px;
+    rt_lod_level.assign(n_src, uint8_t(RtLod::Full));
+    std::atomic<uint32_t> n_full{0}, n_proxy{0}, n_cull{0};
+    run_range([&](unsigned, size_t b, size_t e) {
+      uint32_t lf = 0, lp = 0, lc = 0;
+      for (size_t i = b; i < e; ++i) {
+        if (!valid[i] || i < inst_lo || i >= inst_hi) continue;  // mesh instances only
+        uint32_t bid; const float *o; src_at(i, &bid, &o);
+        const RtLod lvl = ClassifyInstance(view, cfg, o, local_bounds[bid]);
+        rt_lod_level[i] = uint8_t(lvl);
+        if (lvl == RtLod::Cull) { valid[i] = 0; ++lc; }
+        else if (lvl == RtLod::Proxy) ++lp;
+        else ++lf;
+      }
+      n_full += lf; n_proxy += lp; n_cull += lc;
+    });
+    if (opt.stats)
+      std::cerr << "rt-lod: full=" << n_full.load() << " proxy=" << n_proxy.load()
+                << " culled=" << n_cull.load() << " (of " << n_inst_src
+                << " mesh instances)\n";
+  }
+
   // Exclusive scan -> output slot per kept instance (cheap, ~tens of ms at 22M).
   std::vector<uint32_t> slot(n_src);
   uint32_t kept = 0;
@@ -3117,6 +3199,15 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       uint32_t bid;
       const float *o;
       src_at(i, &bid, &o);
+      // -rtLod Proxy: trace the shared box BLAS box-fit onto the prototype's object
+      // AABB (its world AABB is identical, so bounds/stats are unaffected).
+      float proxy_o2w[12];
+      if (!rt_lod_level.empty() && rt_lod_level[i] == uint8_t(RtLod::Proxy) &&
+          rt_lod_box_blas != UINT32_MAX) {
+        BoxFitO2W(o, local_bounds[bid].lo, local_bounds[bid].hi, proxy_o2w);
+        o = proxy_o2w;
+        bid = rt_lod_box_blas;
+      }
       const uint32_t id = slot[i];
       InstanceRT &inst = ctx.instances[id];
       inst.blas_id = bid;

@@ -429,6 +429,16 @@ struct Options {
   // Namespace component whose immediate children are the LOD districts
   // (Caldera: .../mp_wz_island_geo/<district>). -lodContainer to override.
   std::string lod_container{"mp_wz_island_geo"};
+  // -rtLod: per-instance view-dependent LOD at TLAS build (parity with the
+  // interactive viewer's --rt-lod). Distant prototypes collapse to a shared box
+  // proxy; sub-pixel placements are dropped. OFF by default. Frustum cull is
+  // separately opt-in (-rtLodFrustumCull) because a path tracer needs off-screen
+  // geometry for shadows/reflections/GI. See tusdr_rt_lod.{hh,cc}.
+  bool rt_lod{false};
+  bool rt_lod_proxy{true};         // distant -> box proxy (false = Full-or-Cull)
+  bool rt_lod_frustum_cull{false}; // GI-unsafe; opt-in speed flag
+  float rt_lod_full_px{64.0f};     // -rtLodFullPx
+  float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend

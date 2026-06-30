@@ -106,3 +106,35 @@ VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
 
 Note the layer output (and tusdrender's own diagnostics) goes to stderr/stdout;
 capture both streams.
+
+## Follow-on: per-instance LOD on the `-vk` / `-vkr` GPU backends
+
+The CPU two-level TLAS path supports per-instance view-dependent LOD (`-rtLod`:
+distant prototypes → shared box proxy, sub-pixel → cull; see the tusdrender
+README and `tusdr_rt_lod.{hh,cc}`). The `-vk` / `-vkr` GPU backends do **not** yet,
+because they consume a different geometry representation:
+
+- `RunRTPreviewNext` (CPU) builds a **two-level** structure — one BLAS per
+  prototype placed by a LightRT TLAS over an `InstanceRT` list (`tusdr_next.cc`
+  `ExtractAndBuildBVH`). `-rtLod` hooks the TLAS instance-fill loop: it classifies
+  each placement, drops Culled ones (`valid[i]=0`), and rewrites Proxy ones to a
+  shared box BLAS via `BoxFitO2W`.
+- `RunVulkanLightRT` / the `-vk`/`-vkr` path build a **single, fully
+  world-space-flattened** indexed triangle BLAS (`CollectRTPreviewMeshesNext` in
+  `tusdrender.cc` bakes every prim to world space) and trace one flat scene. There
+  is no instance list / TLAS to attach per-instance LOD to.
+
+To bring `-rtLod` to `-vkr`, the GPU path must first become two-level:
+
+1. Reuse the CPU collectors (`CollectSceneSplit` / `CollectPointInstancer`) to
+   produce the prototype BLAS set + `InstanceRT` list instead of the flattened
+   soup, building per-prototype `lrt_vk` BLAS and a GPU TLAS
+   (`lrt_vk_rtx_*` / `lrt_tlas_*` GPU equivalents).
+2. Run the **same** `tusdr_rt_lod` selection (it is pure and Vulkan-free) at GPU
+   TLAS build, emitting the Full/Proxy/Cull instance set + the shared box BLAS.
+3. The shader hit path must resolve a two-level (instance → BLAS) hit, matching the
+   CPU `ResolveTLASHit`, instead of the current flat-BLAS hit.
+
+This is a larger change (a GPU two-level build + shader hit-resolution rework),
+tracked separately from the CPU `-rtLod` landing. The selection logic itself is
+already shared-ready (`tusdr_rt_lod` has no GPU/Vulkan dependency).
