@@ -184,6 +184,14 @@ class App
     streamCodec_ = c;
     if (c == "png" || c == "qoi") streamIdleCodec_ = c;
   }
+  // Motion-frame tuning: long-edge resolution cap (px) and JPEG quality (1-100)
+  // used while the view is changing (the stable refine is always full-res lossless).
+  void setStreamMotionRes(int px) {
+    if (px > 0) streamMotionMaxDim_ = px;
+  }
+  void setStreamMotionQuality(int q) {
+    if (q >= 1 && q <= 100) streamMotionJpegQ_ = q;
+  }
   // Apply one browser navigation command to the camera/render state (main thread).
   void applyNavCommand(const StreamNav& cmd);
 
