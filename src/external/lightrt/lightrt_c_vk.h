@@ -173,10 +173,12 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_indexed(lrt_vk_engine *e,
  * the prototype-local triangle, transforming object-space attributes by that
  * instance's transform.
  *
- * Each prototype builds as a SINGLE BLAS (no >8M-triangle chunk splitting), so a
- * single prototype must fit the device's one-BLAS build limit. Fails (returns
- * NULL, LRT_RESULT_INVALID_ARGUMENT) if ninsts*maxPrototypeTris would overflow
- * the 32-bit prim_id encoding — the caller should fall back to the flat builder. */
+ * Each prototype builds as a SINGLE BLAS (this API does no chunk splitting), so a
+ * prototype larger than the device's one-BLAS build limit must be pre-split by the
+ * caller into several smaller prototypes (each a triangle slice) sharing the same
+ * per-instance transform — the encoding is unaffected. Fails (returns NULL,
+ * LRT_RESULT_INVALID_ARGUMENT) if ninsts*maxPrototypeTris would overflow the 32-bit
+ * prim_id encoding — the caller should fall back to the flat builder. */
 typedef struct lrt_vk_proto {
     const float *vertices;   /* 3*nverts floats of unique positions             */
     uint32_t nverts;

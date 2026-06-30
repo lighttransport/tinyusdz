@@ -283,6 +283,49 @@ static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
   return true;
 }
 
+// Split a prototype whose triangle count exceeds `chunk` into sub-prototypes of
+// <= chunk triangles each (vertices remapped/compacted per chunk, shading slices
+// carried along). Each sub-proto is just a smaller prototype -- one BLAS, its own
+// triangle range -- so the instance encoding (pid = instance*stride + localTri)
+// and hit decode are unchanged; a placement of the original prototype is simply
+// emitted once per sub-proto. Works around drivers (RADV) whose AS build-size
+// query overflows for very large single-BLAS builds and then GPU-faults.
+static void ChunkProto(const GpuInstProto &src, uint32_t chunk,
+                       std::vector<GpuInstProto> *out) {
+  const uint32_t nch = (src.ntris + chunk - 1u) / chunk;
+  for (uint32_t c = 0; c < nch; ++c) {
+    const uint32_t t0 = c * chunk;
+    const uint32_t t1 = std::min((c + 1u) * chunk, src.ntris);
+    GpuInstProto sub;
+    sub.base_color = src.base_color;
+    sub.ntris = t1 - t0;
+    sub.idx.reserve(size_t(t1 - t0) * 3);
+    std::unordered_map<uint32_t, uint32_t> remap;
+    for (uint32_t t = t0; t < t1; ++t) {
+      for (int k = 0; k < 3; ++k) {
+        const uint32_t ov = src.idx[t * 3 + k];
+        auto r = remap.find(ov);
+        uint32_t nvid;
+        if (r == remap.end()) {
+          nvid = uint32_t(sub.verts.size() / 3);
+          remap.emplace(ov, nvid);
+          sub.verts.push_back(src.verts[ov * 3 + 0]);
+          sub.verts.push_back(src.verts[ov * 3 + 1]);
+          sub.verts.push_back(src.verts[ov * 3 + 2]);
+        } else {
+          nvid = r->second;
+        }
+        sub.idx.push_back(nvid);
+      }
+      sub.normals.push_back(src.normals[t]);
+      sub.vn0.push_back(src.vn0[t]);
+      sub.vn1.push_back(src.vn1[t]);
+      sub.vn2.push_back(src.vn2[t]);
+    }
+    out->push_back(std::move(sub));
+  }
+}
+
 // -vkInstanced: decompose the expanded mesh jobs into shared prototypes (grouped
 // by source prim path) + per-placement instances, then render with the true
 // two-level GPU TLAS. Returns true if it produced an image; false to fall back to
@@ -292,8 +335,17 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
                               const std::vector<MeshJobNext> &mesh_jobs,
                               const Options &opt) {
   GpuInstancedScene scene;
-  std::unordered_map<std::string, uint32_t> proto_id;
+  // Each source prim maps to one OR MORE sub-prototype indices (a huge prototype
+  // is chunk-split; an empty vector marks a prim that failed extraction).
+  std::unordered_map<std::string, std::vector<uint32_t>> proto_id;
   std::vector<Bounds> proto_aabb;
+  // Max triangles per prototype BLAS (8M; overridable via TUSDR_INST_CHUNK_TRIS
+  // for testing the split path on small meshes). A larger prototype is chunked.
+  uint32_t chunk = 8u * 1024u * 1024u;
+  if (const char *e = std::getenv("TUSDR_INST_CHUNK_TRIS")) {
+    long v = std::atol(e);
+    if (v > 0) chunk = uint32_t(v);
+  }
   // Displacement textures for prototype extraction (loaded relative to the input;
   // shared/cached across prototypes). Same setup as the flat GPU path.
   std::vector<tusdr::Texture> disp_textures;
@@ -301,40 +353,55 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   tc.textures = &disp_textures;
   tc.base_dir = DirName(opt.input);
   tc.usdz = nullptr;
+  // Append a prototype + its object-space AABB; returns its index.
+  auto push_proto = [&](GpuInstProto &&pr) -> uint32_t {
+    Bounds bb;
+    for (size_t j = 0; j < pr.verts.size() / 3; ++j) {
+      bb.lo.x = std::min(bb.lo.x, pr.verts[j * 3 + 0]);
+      bb.lo.y = std::min(bb.lo.y, pr.verts[j * 3 + 1]);
+      bb.lo.z = std::min(bb.lo.z, pr.verts[j * 3 + 2]);
+      bb.hi.x = std::max(bb.hi.x, pr.verts[j * 3 + 0]);
+      bb.hi.y = std::max(bb.hi.y, pr.verts[j * 3 + 1]);
+      bb.hi.z = std::max(bb.hi.z, pr.verts[j * 3 + 2]);
+    }
+    bb.valid = true;
+    const uint32_t idx = uint32_t(scene.protos.size());
+    scene.protos.push_back(std::move(pr));
+    proto_aabb.push_back(bb);
+    return idx;
+  };
+
   for (const MeshJobNext &job : mesh_jobs) {
     if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
     const std::string key = job.prim.GetPath().str();
     auto it = proto_id.find(key);
-    uint32_t pid;
+    const std::vector<uint32_t> *subs = nullptr;
     if (it == proto_id.end()) {
       GpuInstProto pr;
       if (!ExtractProtoGeo(stage, opt, tc, job.prim, &pr)) {
-        proto_id[key] = 0xFFFFFFFFu;  // remember the bad prim, skip its jobs
+        proto_id.emplace(key, std::vector<uint32_t>{});  // empty = bad prim
         continue;
       }
-      Bounds bb;
-      for (size_t j = 0; j < pr.verts.size() / 3; ++j) {
-        bb.lo.x = std::min(bb.lo.x, pr.verts[j * 3 + 0]);
-        bb.lo.y = std::min(bb.lo.y, pr.verts[j * 3 + 1]);
-        bb.lo.z = std::min(bb.lo.z, pr.verts[j * 3 + 2]);
-        bb.hi.x = std::max(bb.hi.x, pr.verts[j * 3 + 0]);
-        bb.hi.y = std::max(bb.hi.y, pr.verts[j * 3 + 1]);
-        bb.hi.z = std::max(bb.hi.z, pr.verts[j * 3 + 2]);
+      std::vector<uint32_t> indices;
+      if (pr.ntris <= chunk) {
+        indices.push_back(push_proto(std::move(pr)));
+      } else {
+        std::vector<GpuInstProto> chunks;
+        ChunkProto(pr, chunk, &chunks);
+        for (auto &sub : chunks) indices.push_back(push_proto(std::move(sub)));
       }
-      bb.valid = true;
-      pid = uint32_t(scene.protos.size());
-      proto_id[key] = pid;
-      scene.protos.push_back(std::move(pr));
-      proto_aabb.push_back(bb);
+      subs = &proto_id.emplace(key, std::move(indices)).first->second;
     } else {
-      pid = it->second;
-      if (pid == 0xFFFFFFFFu) continue;
+      if (it->second.empty()) continue;  // known-bad prim
+      subs = &it->second;
     }
     GpuInstPlacement pl;
     Mat4ToObj2World(job.world, pl.o2w);
     NormalMatrixFromO2W(pl.o2w, pl.n2w);
-    pl.proto = pid;
-    scene.insts.push_back(pl);
+    for (uint32_t sp : *subs) {
+      pl.proto = sp;
+      scene.insts.push_back(pl);
+    }
   }
   if (scene.protos.empty() || scene.insts.empty()) return false;
 
