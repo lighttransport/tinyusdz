@@ -397,6 +397,8 @@ struct Options {
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
+  int stream_http{0};     // -streamHttp <port>: WebSocket browser stream server
+  std::string stream_codec{"jpeg"};  // -streamCodec jpeg|qoi|png (stream wire codec)
   std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time

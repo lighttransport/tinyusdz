@@ -143,6 +143,17 @@ int main(int argc, char **argv) {
 #endif
   }
 
+  // -streamHttp: WebSocket browser streaming server. Keeps the scene + BVH
+  // resident and re-renders the camera on demand as the browser navigates.
+  if (opt.stream_http > 0) {
+#ifdef TUSDRENDER_WITH_STREAM
+    return RunStreamServer(opt);
+#else
+    std::cerr << "-streamHttp requires building with TUSDRENDER_WITH_STREAM.\n";
+    return EXIT_FAILURE;
+#endif
+  }
+
   // View-dependent district LOD (-lodStream): compose the scene in proxy LOD,
   // promote the districts nearest the camera to `full` under the host/VRAM
   // budget, and rewrite opt.input to a generated wrapper layer. Then fall

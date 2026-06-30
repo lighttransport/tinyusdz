@@ -137,6 +137,10 @@ void PrintUsage(const char *prog) {
       << "                         resident scene (tools: eval,set_camera,orbit,\n"
       << "                         set_resolution,render,bounds,stats).\n"
 #endif
+      << "  -streamHttp <port>     Serve a WebSocket browser viewer that streams\n"
+      << "                         rendered frames; orbit/pan/dolly from the browser\n"
+      << "                         re-render on the resident scene (no output needed).\n"
+      << "  -streamCodec <c>       Stream wire codec: jpeg (default), qoi, or png.\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
@@ -450,6 +454,22 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->mcp = true;
       opt->rt_preview = true;
       opt->direct_prims = false;
+    } else if (a == "-streamHttp" || a == "--streamHttp") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_http) ||
+          opt->stream_http <= 0 || opt->stream_http > 65535) {
+        std::cerr << "-streamHttp requires a port (1-65535).\n";
+        return false;
+      }
+      opt->rt_preview = true;
+      opt->direct_prims = false;
+    } else if (a == "-streamCodec" || a == "--streamCodec") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "-streamCodec requires jpeg|qoi|png.\n";
+        return false;
+      }
+      opt->stream_codec = v;
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
     } else if (a == "-stats" || a == "--stats") {
@@ -465,7 +485,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   }
   // -js / -mcp drive output paths from the script / MCP calls, so only the
   // input is required there; an output positional is optional.
-  const bool output_optional = opt->mcp || !opt->js_script.empty();
+  const bool output_optional =
+      opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
   if (positional.empty() || positional.size() > 2 ||
       (!output_optional && positional.size() != 2)) {
     PrintUsage(argv[0]);

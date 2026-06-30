@@ -62,6 +62,7 @@ add_executable(tusdrender
   tusdr_geom.cc
   tusdr_integrator.cc
   tusdr_scripting.cc
+  tusdr_stream.cc
   tusdr_next.cc
   tusdr_lod.cc
   tusdr_legacy.cc
@@ -113,6 +114,30 @@ target_include_directories(tusdrender PRIVATE
 # for the tool. The JS engine + MCP plumbing come from tinyusdz_static.
 if(TINYUSDZ_WITH_QJS)
   target_compile_definitions(tusdrender PRIVATE TINYUSDZ_WITH_QJS)
+endif()
+
+# --- WebSocket browser streaming server (-streamHttp) -----------------------
+# Compile the vendored civetweb (websockets enabled) into tusdrender and enable
+# tusdr_stream.cc. Frames are encoded via the shared image writer (JPEG/QOI/PNG).
+option(TUSDRENDER_WITH_STREAM "Build the WebSocket browser streaming server" ON)
+if(TUSDRENDER_WITH_STREAM)
+  target_sources(tusdrender PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+  target_include_directories(tusdrender PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb
+    ${PROJECT_SOURCE_DIR}/src/external/jsonhpp)
+  target_compile_definitions(tusdrender PRIVATE
+    TUSDRENDER_WITH_STREAM USE_WEBSOCKET=1 NO_SSL NO_CGI)
+  # nlohmann/json (used to parse browser input) needs exceptions enabled.
+  set_source_files_properties(tusdr_stream.cc PROPERTIES COMPILE_OPTIONS
+    "-fexceptions")
+  if(Threads_FOUND)
+    target_link_libraries(tusdrender Threads::Threads)
+  endif()
+  target_link_libraries(tusdrender ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(tusdrender ws2_32)
+  endif()
 endif()
 
 # --- LightRT Vulkan backend (optional, runtime-loaded via vkew) -------------
