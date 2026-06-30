@@ -211,7 +211,7 @@ bool FlattenUSDCToUSDC(const uint8_t* data, size_t size, std::vector<uint8_t>& o
   }
   const auto read_begin = Clock::now();
   CrateReader reader(opts.read);
-  CrateReadResult rr = reader.Read(data, size);
+  CrateReadResult rr = reader.ReadBorrowed(data, size);
   const auto read_end = Clock::now();
   bool ok = FlattenLoaded(std::move(rr), size, &out, nullptr, opts, stats, err);
   if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
@@ -229,7 +229,7 @@ bool FlattenUSDCToUSDCToSink(const uint8_t* data, size_t size,
   }
   const auto read_begin = Clock::now();
   CrateReader reader(opts.read);
-  CrateReadResult rr = reader.Read(data, size);
+  CrateReadResult rr = reader.ReadBorrowed(data, size);
   const auto read_end = Clock::now();
   bool ok = FlattenLoaded(std::move(rr), size, nullptr, &sink, opts, stats, err);
   if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);

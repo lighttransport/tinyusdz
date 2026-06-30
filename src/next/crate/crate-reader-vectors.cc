@@ -26,20 +26,24 @@ bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
   if (!reader_->has_elements(static_cast<size_t>(n), sizeof(uint32_t))) {
     return false;
   }
-  std::vector<uint32_t> idxs(static_cast<size_t>(n));
-  size_t bytes;
-  if (!safe::mul(static_cast<size_t>(n), sizeof(uint32_t), &bytes)) return false;
-  if (n && !reader_->read(idxs.data(), bytes)) return false;
-  std::vector<std::string> data(static_cast<size_t>(n));
-  for (size_t i = 0; i < n; i++) {
-    std::string s;
+  size_t count = static_cast<size_t>(n);
+
+  std::vector<std::string> data;
+  auto& idxs = array_scratch_.u32_indices;
+  data.reserve(count);
+  idxs.resize(count);
+  if (!reader_->read_u32_array(idxs, count)) return false;
+
+  for (size_t i = 0; i < count; i++) {
+    const uint32_t idx = idxs[i];
     if (type_id == CrateTypeId::TokenVector) {
-      if (idxs[i] >= tokens_.size()) return false;
-      s = tokens_.str(idxs[i]);
+      if (idx >= tokens_.size()) return false;
+      data.emplace_back(tokens_.view(idx));
     } else {
-      GetString(idxs[i], s);
+      std::string_view s;
+      if (!GetString(idx, &s)) return false;
+      data.emplace_back(s);
     }
-    data[i] = std::move(s);
   }
   out = Value::MakeTokenArray(std::move(data));
   return true;

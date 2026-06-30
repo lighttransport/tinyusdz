@@ -28,6 +28,9 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Int2: return CrateTypeId::Vec2i;
     case TypeId::Int3: return CrateTypeId::Vec3i;
     case TypeId::Int4: return CrateTypeId::Vec4i;
+    case TypeId::UInt2: return CrateTypeId::Vec2i;
+    case TypeId::UInt3: return CrateTypeId::Vec3i;
+    case TypeId::UInt4: return CrateTypeId::Vec4i;
     case TypeId::Float2: return CrateTypeId::Vec2f;
     case TypeId::Float3:
     case TypeId::Point3f:
@@ -38,15 +41,36 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Float4:
     case TypeId::Color4f:
       return CrateTypeId::Vec4f;
+    case TypeId::Color4d:
+      return CrateTypeId::Vec4d;
+    case TypeId::Texcoord2f:
+      return CrateTypeId::Vec2f;
+    case TypeId::Texcoord2h:
+      return CrateTypeId::Vec2h;
+    case TypeId::Texcoord3f:
+      return CrateTypeId::Vec3f;
+    case TypeId::Texcoord3d:
+      return CrateTypeId::Vec3d;
+    case TypeId::Texcoord2d:
+      return CrateTypeId::Vec2d;
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+      return CrateTypeId::Vec3h;
+    case TypeId::Color4h:
+      return CrateTypeId::Vec4h;
     case TypeId::Double2: return CrateTypeId::Vec2d;
     case TypeId::Double3:
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Color3d:
       return CrateTypeId::Vec3d;
     case TypeId::Double4: return CrateTypeId::Vec4d;
     case TypeId::Quatf: return CrateTypeId::Quatf;
     case TypeId::Quatd: return CrateTypeId::Quatd;
+    case TypeId::TimeCode: return CrateTypeId::TimeCode;
     case TypeId::Matrix2d: return CrateTypeId::Matrix2d;
     case TypeId::Matrix3d: return CrateTypeId::Matrix3d;
     case TypeId::Matrix4d: return CrateTypeId::Matrix4d;
@@ -61,13 +85,26 @@ uint32_t ArrayComps(TypeId type_id) {
   switch (type_id) {
     case TypeId::Half:
       return 1;
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4:
+      return 0;
     case TypeId::Float2:
     case TypeId::Double2:
     case TypeId::Texcoord2f:
     case TypeId::Half2:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord2d:
       return 2;
     case TypeId::Float3:
     case TypeId::Double3:
+    case TypeId::Texcoord3f:
+    case TypeId::Texcoord3d:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Texcoord3h:
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
@@ -76,6 +113,8 @@ uint32_t ArrayComps(TypeId type_id) {
     case TypeId::Float4:
     case TypeId::Double4:
     case TypeId::Color4f:
+    case TypeId::Color4h:
+    case TypeId::Color4d:
     case TypeId::Quatf:
     case TypeId::Quatd:
     case TypeId::Matrix2f:

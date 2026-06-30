@@ -308,9 +308,7 @@ void Compositor::CopyLocalOpinions(
   // Copy properties (source overrides target for time-sampled props).
   // Preserves valueless slots (connection-only / declared-only attributes),
   // their declared type names, and connection targets for USDC fidelity.
-  PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
-    const std::string& pname = name_table.get(slot.name_id);
     const PropSlot* tgt_slot = target.property(slot.name_id);
     if (tgt_slot) {
       // Field-level fill-absent: pxr composes a property's default VALUE and its
@@ -323,10 +321,10 @@ void Compositor::CopyLocalOpinions(
           target.fill_property_value_if_absent(slot.name_id, *sv);
         }
       }
-      const std::vector<Path>* tconns = target.connection(pname);
+      const std::vector<Path>* tconns = target.connection(slot.name_id);
       if (!tconns || tconns->empty()) {
-        if (const std::vector<Path>* sconns = source.connection(pname)) {
-          for (const auto& c : *sconns) target.add_connection(pname, map_target(c));
+        if (const std::vector<Path>* sconns = source.connection(slot.name_id)) {
+          for (const auto& c : *sconns) target.add_connection(slot.name_id, map_target(c));
         }
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
@@ -340,14 +338,14 @@ void Compositor::CopyLocalOpinions(
       target.add_property_slot(slot.name_id,
                                static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = source.property_type_name(pname)) {
-      target.set_property_type_name(pname, *tn);
+    if (const std::string* tn = source.property_type_name(slot.name_id)) {
+      target.set_property_type_name(slot.name_id, *tn);
     }
-    if (const std::vector<Path>* conns = source.connection(pname)) {
-      for (const auto& c : *conns) target.add_connection(pname, map_target(c));
+    if (const std::vector<Path>* conns = source.connection(slot.name_id)) {
+      for (const auto& c : *conns) target.add_connection(slot.name_id, map_target(c));
     }
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
-      target.ensure_property_meta(pname) = *pm;
+      target.ensure_property_meta(slot.name_id) = *pm;
     }
   }
 

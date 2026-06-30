@@ -2185,6 +2185,41 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   return value_offset;
 }
 
+crate::ValueRep CrateWriter::PackTokenVectorValue(
+    const std::vector<value::token>& tokens, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for TokenVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(tokens.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write TokenVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& tok : tokens) {
+    const uint32_t token_index = GetOrCreateToken(tok.str()).value;
+    if (!Write(token_index)) {
+      if (err) *err = "Failed to write TokenVector token index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing TokenVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
 } // namespace experimental
 } // namespace tinyusdz
 

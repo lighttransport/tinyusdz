@@ -310,9 +310,9 @@ Separate attribute/connection/relationship specs and Variant/VariantSet authorin
 
 Specific to `src/next/crate/`. Profiled on the public large scenes via
 `TINYUSDZ_NEXT_TIMING=1 build-next-release/next_usdcat -f -o out.usdc <root>`
-(write to a **seekable file**, not `/dev/null` — the crate writer seek-patches
-headers). `CrateWriteOptions::num_threads` (auto-capped at 16, gated on
-`TINYUSDZ_ENABLE_THREAD`; `next_usdcat` honors `TINYUSDZ_NEXT_NUM_THREADS`)
+(`--write-threads N` or default auto), write to a **seekable file**, not `/dev/null`
+— the crate writer seek-patches headers). `CrateWriteOptions::num_threads`
+(auto-capped in the library; `next_usdcat` now takes thread count from CLI `--write-threads`)
 controls the parallel paths; output is byte-identical across thread counts.
 
 ## What the write phase is bound by
