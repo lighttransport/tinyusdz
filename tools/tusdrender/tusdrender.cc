@@ -294,6 +294,94 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
                                             : tinyusdz::Axis::Y;
   int out_height = opt.height;
   CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
+
+  // -rtLod on the two-level path: classify each placement from the resolved
+  // camera (this is the structure LOD is meant for -- real per-instance TLAS
+  // selection, not the flatten-side approximation). Cull -> drop the instance;
+  // Proxy -> point the instance at a shared unit-box prototype via a box-fit
+  // transform onto the prototype's local AABB (distant prototypes become gray
+  // boxes, the box BLAS stored ONCE); Full -> keep. Same knobs/semantics as the
+  // CPU -rtPreview -rtLod path.
+  if (opt.rt_lod) {
+    tusdr::RtLodConfig cfg;
+    cfg.enabled = true;
+    cfg.proxy = opt.rt_lod_proxy;
+    cfg.frustum_cull = opt.rt_lod_frustum_cull;
+    cfg.full_px = opt.rt_lod_full_px;
+    cfg.cull_px = opt.rt_lod_cull_px;
+    const tusdr::RtLodView view = tusdr::MakeRtLodView(camera, out_height);
+    static const float kC[8][3] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+                                   {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}};
+    static const uint32_t kI[36] = {0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7,
+                                    0, 1, 5, 0, 5, 4, 3, 6, 2, 3, 7, 6,
+                                    0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5};
+    uint32_t box_proto = 0xFFFFFFFFu;  // appended lazily on the first Proxy
+    tusdr::RtLodStats st;
+    std::vector<GpuInstPlacement> kept;
+    kept.reserve(scene.insts.size());
+    for (const GpuInstPlacement &pl : scene.insts) {
+      const tusdr::RtLod lod =
+          tusdr::ClassifyInstance(view, cfg, pl.o2w, proto_aabb[pl.proto]);
+      if (lod == tusdr::RtLod::Cull) {
+        st.culled++;
+        continue;
+      }
+      if (lod == tusdr::RtLod::Proxy) {
+        st.proxy++;
+        if (box_proto == 0xFFFFFFFFu) {
+          GpuInstProto bp;
+          bp.verts.assign(&kC[0][0], &kC[0][0] + 24);
+          bp.idx.assign(kI, kI + 36);
+          bp.ntris = 12;
+          for (uint32_t t = 0; t < 12; ++t) {
+            uint32_t i0 = kI[t * 3], i1 = kI[t * 3 + 1], i2 = kI[t * 3 + 2];
+            Vec3 p0{kC[i0][0], kC[i0][1], kC[i0][2]};
+            Vec3 p1{kC[i1][0], kC[i1][1], kC[i1][2]};
+            Vec3 p2{kC[i2][0], kC[i2][1], kC[i2][2]};
+            bp.normals.push_back(Normalize(Cross(Sub(p1, p0), Sub(p2, p0))));
+            bp.vn0.push_back(Vec3{0, 0, 0});
+            bp.vn1.push_back(Vec3{0, 0, 0});
+            bp.vn2.push_back(Vec3{0, 0, 0});
+          }
+          bp.base_color = Vec3{0.5f, 0.5f, 0.5f};  // gray box proxy
+          box_proto = uint32_t(scene.protos.size());
+          scene.protos.push_back(std::move(bp));
+          proto_aabb.push_back(Bounds{});  // unused after classify
+        }
+        // Pad any near-zero AABB axis so a planar/linear prototype still yields a
+        // box with volume — a zero-thickness box collapses to mostly-degenerate
+        // triangles whose tiny standalone BLAS traverses to no hits (a flat soup
+        // hides this, a per-proxy BLAS does not).
+        Bounds lb = proto_aabb[pl.proto];
+        const float ex = lb.hi.x - lb.lo.x, ey = lb.hi.y - lb.lo.y,
+                    ez = lb.hi.z - lb.lo.z;
+        const float eps =
+            std::max({ex, ey, ez, 0.0f}) * 1.0e-3f + 1.0e-6f;
+        if (ex < eps) { lb.lo.x -= 0.5f * eps; lb.hi.x += 0.5f * eps; }
+        if (ey < eps) { lb.lo.y -= 0.5f * eps; lb.hi.y += 0.5f * eps; }
+        if (ez < eps) { lb.lo.z -= 0.5f * eps; lb.hi.z += 0.5f * eps; }
+        GpuInstPlacement bpl;
+        tusdr::BoxFitO2W(pl.o2w, lb.lo, lb.hi, bpl.o2w);
+        NormalMatrixFromO2W(bpl.o2w, bpl.n2w);
+        bpl.proto = box_proto;
+        kept.push_back(bpl);
+        continue;
+      }
+      st.full++;
+      kept.push_back(pl);
+    }
+    scene.insts.swap(kept);
+    if (opt.stats)
+      std::cerr << "[rt-lod] two-level: full=" << st.full << " proxy=" << st.proxy
+                << " culled=" << st.culled << " (instances=" << scene.insts.size()
+                << ", prototypes=" << scene.protos.size() << ")\n";
+    if (scene.insts.empty()) {
+      std::cerr << "All instances culled by -rtLod (try a smaller -rtLodCullPx); "
+                   "falling back.\n";
+      return false;
+    }
+  }
+
   return RunVulkanLightRTInstanced(opt, scene, camera, out_height);
 }
 #endif  // HAVE_VULKAN
