@@ -2503,6 +2503,86 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition: composing a `payload` onto a prim that already carries
+    # variantSet CONTENT must not drop that content. Regression for Animal Logic
+    # ALab (eager path): a component's /root gets a surfacing look-binding payload
+    # composed beside the modelling reference's geo variant; InheritPrimSpecImpl
+    # carried over dst children but not dst variantSet content, so the variant's
+    # `over "GEO"` geometry vanished and every component composed to zero meshes.
+    add_executable(feat-payload-variant-content
+                   tests/feat/payload-variant-content/test-payload-variant-content.cc)
+    add_sanitizers(feat-payload-variant-content)
+    target_link_libraries(feat-payload-variant-content PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-payload-variant-content PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-payload-variant-content COMMAND feat-payload-variant-content
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition: a SELECTED variant block may author its OWN nested variantSet
+    # (ALab render_high -> geo_vis -> proxy mesh). Two bugs dropped that nested
+    # content: layer-mode load (ToPrimSpecRec) never copied a variant's nested
+    # variantSets, and VariantSelectPrimSpec cleared them on outer selection.
+    # Both fixed; this verifies the nested proxy geometry survives flatten.
+    add_executable(feat-nested-variantset
+                   tests/feat/nested-variantset/test-nested-variantset.cc)
+    add_sanitizers(feat-nested-variantset)
+    target_link_libraries(feat-nested-variantset PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-nested-variantset PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-nested-variantset COMMAND feat-nested-variantset
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition (cwp anchoring): a prim authored inside a variant block must
+    # load with the same working path as the prim owning the variantSet, so its
+    # own relative payload resolves correctly. The initial PropagateAssetResolver
+    # State recursed only into children, not variantSets, so variant-nested prims
+    # (ALab geo_vis GEO_PROXY) loaded with empty cwp and fell back to the stale
+    # resolver path (a sibling payload's dir) -> dropped geometry.
+    add_executable(feat-variant-payload-cwp
+                   tests/feat/variant-payload-cwp/test-variant-payload-cwp.cc)
+    add_sanitizers(feat-variant-payload-cwp)
+    target_link_libraries(feat-variant-payload-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-payload-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-payload-cwp COMMAND feat-variant-payload-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition (cwp anchoring, reference-chain): a reference/payload authored
+    # in a component's SUBLAYER must stay anchored to that subLayer's dir after
+    # the component is pulled in via an outer reference. LoadAsset's
+    # PropagateAssetResolverState used to re-stamp the whole referenced subtree
+    # with the component ROOT path, clobbering subLayer anchors (ALab surfacing
+    # `../../../fragment/...` refs -> Asset not found). Now gap-fills.
+    add_executable(feat-sublayer-ref-cwp
+                   tests/feat/sublayer-ref-cwp/test-sublayer-ref-cwp.cc)
+    add_sanitizers(feat-sublayer-ref-cwp)
+    target_link_libraries(feat-sublayer-ref-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-sublayer-ref-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-sublayer-ref-cwp COMMAND feat-sublayer-ref-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition (cwp anchoring, nested sub-assembly): when a payload/reference
+    # pulls in an asset that itself still has unresolved arcs, those arcs must
+    # stay anchored at the pulled-in asset's dir, not the consuming prim's. ALab
+    # sub-assembly definitions `add payload` leaf components whose subLayers
+    # reference `../../../fragment/geo/...`; the clobber dropped that geometry.
+    add_executable(feat-nested-payload-cwp
+                   tests/feat/nested-payload-cwp/test-nested-payload-cwp.cc)
+    add_sanitizers(feat-nested-payload-cwp)
+    target_link_libraries(feat-nested-payload-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-nested-payload-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-nested-payload-cwp COMMAND feat-nested-payload-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # Composition: the `</__class__/...>` override-hook idiom. Inheriting /
+    # specializing a class that is undefined in the composed layer (every ALab
+    # entity root) is a USD-legal no-op and must emit NO warning (was 550+ noise
+    # warnings on one workbench).
+    add_executable(feat-class-override-hook
+                   tests/feat/class-override-hook/test-class-override-hook.cc)
+    add_sanitizers(feat-class-override-hook)
+    target_link_libraries(feat-class-override-hook PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-class-override-hook PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-class-override-hook COMMAND feat-class-override-hook
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).

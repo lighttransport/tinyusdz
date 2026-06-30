@@ -1,5 +1,6 @@
 ﻿#include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +14,7 @@
 #endif
 
 #include "tinyusdz.hh"
+#include "security-policy.hh"
 #include "layer.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
@@ -408,6 +410,9 @@ void print_help() {
   std::cout << "                      for float[]/double[] arrays in USDC output\n";
   std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
+  std::cout << "  --max-asset-bytes=N Override per-asset composition read cap\n";
+  std::cout << "                      (default 512M). Accepts K/M/G suffix,\n";
+  std::cout << "                      e.g. --max-asset-bytes=2G for large scenes\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
   std::cout << "  --no-asset-path-fallback Disable suffix-fallback rebasing of "
                "unresolvable composition asset paths\n";
@@ -587,6 +592,27 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (tinyusdz::startsWith(arg, "--max-asset-bytes=")) {
+      // Override the per-asset composition/resolver read cap (default 512MB).
+      // Accepts a byte count with an optional K/M/G suffix, e.g. 2G, 1536M.
+      std::string v = tinyusdz::removePrefix(arg, "--max-asset-bytes=");
+      size_t mul = 1;
+      if (!v.empty()) {
+        char s = v.back();
+        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
+        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
+      }
+      errno = 0;
+      char *endp = nullptr;
+      unsigned long long n = std::strtoull(v.c_str(), &endp, 10);
+      if (v.empty() || errno != 0 || endp == v.c_str() || *endp != '\0') {
+        std::cerr << "--max-asset-bytes requires a number with optional K/M/G "
+                     "suffix, e.g. --max-asset-bytes=2G\n";
+        return EXIT_FAILURE;
+      }
+      tinyusdz::security_policy::SetMaxAssetReadBytes(
+          static_cast<size_t>(n) * mul);
     } else if (arg.compare("--no-asset-path-fallback") == 0) {
       asset_path_fallback = false;
     } else if (arg.compare("--error-detail") == 0) {

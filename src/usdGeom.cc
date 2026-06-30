@@ -248,6 +248,14 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
     return false;
   }
 
+  // A primvar authored as a ValueBlock (`= None`, e.g. ALab GEO_PROXY meshes'
+  // `float[] primvars:displayOpacity = None`) declares the type but carries no
+  // usable data. Treat it as "no data": return false with NO error message so
+  // the caller skips the primvar rather than failing the whole mesh conversion.
+  if (_attr.is_blocked()) {
+    return false;
+  }
+
   if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
     if (err) {
       (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",

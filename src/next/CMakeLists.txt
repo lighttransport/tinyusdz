@@ -370,6 +370,17 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
 
+    # Regression: the asset resolver must FOLLOW symlinked assets (lstat+S_ISREG
+    # wrongly reported a symlink "missing", dropping symlinked payloads/refs -- a
+    # production case in Animal Logic ALab). Uses the checked-in fixture
+    # tests/usda/feat-symlink-payload/ (real on-disk symlink) plus a runtime one.
+    add_executable(test_resolver_symlink
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_resolver_symlink.cc
+    )
+    target_link_libraries(test_resolver_symlink PRIVATE tinyusdz_next)
+    target_compile_definitions(test_resolver_symlink PRIVATE
+        SYMLINK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/feat-symlink-payload")
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -521,6 +532,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_resolver_symlink COMMAND test_resolver_symlink
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

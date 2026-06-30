@@ -1,0 +1,13 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+# The payload target `mesh_link.usda` (anchored to THIS directory) is a symlink
+# to `mesh_real.usda`. Resolving it requires following the symlink to a regular
+# file.
+def Xform "root" (
+    prepend payload = @mesh_link.usda@
+)
+{
+}

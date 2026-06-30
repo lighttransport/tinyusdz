@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+# `../sibling/geo.usda` resolves correctly ONLY from this file's dir (leaf/).
+def "root" (
+    prepend references = @../sibling/geo.usda@
+)
+{
+}

@@ -29,6 +29,9 @@ class GLRenderer final : public Renderer {
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, uint32_t count) override;
+  bool supportsProxyDraw() const override { return true; }
+  void updateProxyInstances(const float* xforms, const float* tints,
+                            uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
   void replaceMesh(int meshIndex, const DrawMeshCPU& mesh) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
@@ -201,6 +204,16 @@ class GLRenderer final : public Renderer {
   GLuint lineVao_{0}, lineVbo_{0};
   size_t lineVboCap_{0};
   GLuint highlightEbo_{0};  // dynamic index buffer for GeomSubset highlight
+
+  // Raster LOD box proxies (optimization B): one shared unit-cube mesh drawn with
+  // the instanced program, fed a per-frame buffer of box-fit o2w + tints for the
+  // distant instances the cull collapsed. boxProxyInstCap_ tracks the VBO capacity
+  // so updateProxyInstances only reallocates when the proxy count grows.
+  GLuint boxProxyVao_{0}, boxProxyVbo_{0}, boxProxyEbo_{0};
+  GLuint boxProxyInstVbo_{0}, boxProxyColorVbo_{0};
+  uint32_t boxProxyCount_{0};
+  size_t boxProxyInstCap_{0};
+  void initBoxProxy();
 
   // UsdVol volume raymarch pass.
   GLuint volumeProgram_{0};

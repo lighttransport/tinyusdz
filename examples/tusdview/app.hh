@@ -77,6 +77,26 @@ class App
   // (default on). --no-robust-frame disables it to frame the literal scene bbox.
   void setRobustFrame(bool on) { robustFrame_ = on; }
 
+  // View-dependent RT LOD (--rt-lod): classify instances by projected screen size
+  // when the camera settles; drop sub-pixel/off-screen instances from the TLAS
+  // (and, from P2, render distant ones as box proxies). fullPx/cullPx are the
+  // projected-radius thresholds in pixels.
+  void setRtLod(bool enabled, float fullPx, float cullPx, float bandFrac = -1.f) {
+    rtLodEnabled_ = enabled;
+    if (fullPx > 0.f) rtLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rtLodCullPx_ = cullPx;
+    if (bandFrac >= 0.f) rtLodBandFrac_ = bandFrac;
+  }
+
+  // Raster view-dependent LOD (optimization B): drop sub-pixel instances + render
+  // distant ones as box proxies, on the raster instanced path. Applied to gui_ each
+  // frame. fullPx/cullPx are projected-radius thresholds in pixels.
+  void setRasterLod(bool enabled, float fullPx, float cullPx) {
+    rasterLodEnabled_ = enabled;
+    if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+
   // HiDPI UI scale (font + widget sizes). Auto-detected from the monitor at
   // startup (1.0 on standard-density displays, 2.0 on HiDPI / >=2K panels) unless
   // explicitly set via --ui-scale / --font-size / --window-scale.
@@ -330,6 +350,23 @@ class App
   bool robustBoundsValid_{false};     // robust bounds computed (pre-LOD) this load
   float robustBoundsMin_[3]{0, 0, 0};
   float robustBoundsMax_[3]{0, 0, 0};
+
+  // View-dependent RT LOD (--rt-lod): re-classify on camera settle (hysteresis +
+  // debounce), then push the camera snapshot to the renderer for a TLAS rebuild.
+  void updateRtLodCamera();
+  bool rtLodEnabled_{false};
+  float rtLodFullPx_{64.0f};
+  float rtLodCullPx_{2.0f};
+  float rtLodBandFrac_{0.25f};  // stochastic crossfade half-width (fraction of fullPx)
+  bool rasterLodEnabled_{false};       // --raster-lod (optimization B)
+  float rasterLodFullPx_{48.0f};
+  float rasterLodCullPx_{1.5f};
+  bool lodHaveLast_{false};
+  bool lodArmedOnce_{false};
+  bool lodPendingReselect_{false};
+  int lodStillFrames_{0};
+  light3d::Vec3 lastLodEye_{0, 0, 0};
+  light3d::Vec3 lastLodFwd_{0, 0, -1};
   bool hipRt_{false};     // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   // True when a headless --cuda/--hip run owns the screenshot: the rasterized
   // upload + per-frame draw are then skipped (the RT path writes the image, the

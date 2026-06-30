@@ -62,6 +62,7 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
                                                        : nullptr;
 
   tinyusdz::PayloadCompositionOptions pl_opts;
+  pl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.payloadPolicy != PayloadPolicy::LoadAll) {
     pl_opts.load_policy = [whitelist, deferred](
                               const tinyusdz::Path& prim_path,
@@ -76,6 +77,7 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
   }
 
   tinyusdz::ReferencesCompositionOptions ref_opts;
+  ref_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.deferReferences) {
     ref_opts.load_policy = [whitelist, deferred](
                                const tinyusdz::Path& prim_path,
@@ -130,12 +132,23 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
     }
 
     if (work.check_unresolved_variant()) {
-      has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) {
-        return false;
+      has_unresolved = true;  // not done yet either way
+      // Defer variant resolution until references & payloads have settled
+      // (AOUSD Core Spec 10.3.2.5). A variant's CONTENT often arrives through a
+      // reference/payload (e.g. ALab: a component references a geo fragment
+      // whose variant gates the mesh payload); resolving the variant before
+      // those arcs compose selects an empty/stale option and the geometry is
+      // lost. Mirrors the tusdcat / feat-variant-payload-chain flatten driver.
+      const bool arcs_settled = !work.check_unresolved_references() &&
+                                !work.check_unresolved_payload();
+      if (arcs_settled) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) {
+          return false;
+        }
+        work = std::move(tmp);
       }
-      work = std::move(tmp);
+      // else: loop again to settle refs/payloads first.
     }
 
     if (work.check_unresolved_specializes()) {
@@ -269,9 +282,11 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
   // this layer (CompositePayload strips payload metadata even for deferred
   // arcs, so the composed result alone cannot load payloads later).
   if (!root.metas().subLayers.empty()) {
+    tinyusdz::SublayersCompositionOptions sl_opts;
+    sl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
     tinyusdz::Layer tmp;
     if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, &out->warn,
-                                      &out->err)) {
+                                      &out->err, sl_opts)) {
       return false;
     }
     root = std::move(tmp);
