@@ -778,6 +778,12 @@ set(CDJPEG_COMPILE_FLAGS
 # TESTS
 ###############################################################################
 
+# tinyusdz: libjpeg-turbo's own test suite is disabled in the vendored build.
+# The trim removed its CLI test programs (cjpeg/djpeg/jpegtran/tjbench/tjunittest
+# /example + md5cmp), so registering their ctest entries would only produce
+# spurious failures in the parent project's `ctest`. Wrapped in if(FALSE).
+if(FALSE)
+
 if(WITH_FUZZ)
   add_subdirectory(fuzz)
 endif()
@@ -1673,6 +1679,8 @@ if(WITH_TURBOJPEG)
       ${CMAKE_CURRENT_BINARY_DIR}/tjexampletest)
 endif()
 
+
+endif()  # tinyusdz: end of disabled libjpeg-turbo TESTS section
 
 ###############################################################################
 # INSTALLATION
