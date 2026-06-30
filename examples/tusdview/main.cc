@@ -56,6 +56,8 @@ int main(int argc, char** argv) {
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   int streamHttpPort = 0;     // WebSocket stream server port (0 = off)
   std::string streamCodec = "jpeg";  // stream image codec: jpeg|qoi|png
+  int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
+  int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = false;             // --next: next loader + flat GL preview
@@ -230,6 +232,11 @@ int main(int argc, char** argv) {
       if (streamHttpPort <= 0) streamHttpPort = 8090;
     } else if (std::strcmp(argv[i], "--stream-codec") == 0 && (i + 1) < argc) {
       streamCodec = argv[++i];
+    } else if (std::strcmp(argv[i], "--stream-motion-res") == 0 && (i + 1) < argc) {
+      streamMotionRes = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--stream-motion-quality") == 0 &&
+               (i + 1) < argc) {
+      streamMotionQuality = std::atoi(argv[++i]);
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
@@ -287,7 +294,15 @@ int main(int argc, char** argv) {
           "  --skinning MODE  Skinning path: auto (default), cpu, or gpu.\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
-          "  --mcp         Both transports.\n");
+          "  --mcp         Both transports.\n"
+          "  --stream-http[=PORT]  WebSocket browser viewer streaming the window "
+          "(incl. ImGui); default port 8090. Navigate/click from the browser.\n"
+          "  --stream-codec png|qoi  Idle-refinement codec sent when the view is "
+          "stable (default png; lossless).\n"
+          "  --stream-motion-res PX  Long-edge cap for the low-quality JPEG sent "
+          "while moving (default 1280).\n"
+          "  --stream-motion-quality N  JPEG quality (1-100) for motion frames "
+          "(default 45).\n");
       return 0;
     } else if (argv[i][0] != '-') {
       file = argv[i];
@@ -407,6 +422,8 @@ int main(int argc, char** argv) {
   app.setMcpHttp(mcpHttpPort);
   app.setStreamHttp(streamHttpPort);
   app.setStreamCodec(streamCodec);
+  app.setStreamMotionRes(streamMotionRes);
+  app.setStreamMotionQuality(streamMotionQuality);
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
