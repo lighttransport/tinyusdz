@@ -1293,16 +1293,60 @@ void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h) {
   if (enc) streamServer_->pushFrame(enc.value().data(), enc.value().size());
 }
 
-// Apply one browser navigation command to the camera / render state. Runs on the
-// main thread (drained from the stream server's queue), mirroring the MCP
-// viewport/input tools so the two input paths behave identically.
+// Apply one browser input event. Runs on the main thread BEFORE ImGui::NewFrame()
+// (drained from the stream server's queue): raw mouse/keyboard events are injected
+// into ImGui so its widgets are clickable, and when ImGui isn't capturing the
+// mouse the same drags drive the camera (orbit/pan/dolly) -- like the desktop app.
 void App::applyNavCommand(const StreamNav& c) {
+  ImGuiIO& io = ImGui::GetIO();
   switch (c.type) {
-    case StreamNav::Orbit: camera_.orbit(c.dx, c.dy); break;
-    case StreamNav::Pan: camera_.pan(c.dx, c.dy); break;
-    case StreamNav::Dolly: camera_.dolly(c.amount); break;
+    case StreamNav::MouseMove: {
+      io.AddMousePosEvent(c.x, c.y);
+      if (streamCamDrag_) {
+        const float dx = c.x - streamLastX_, dy = c.y - streamLastY_;
+        if (streamDragButton_ == 1 || (streamDragButton_ == 0 && streamDragShift_))
+          camera_.pan(dx, dy);                       // middle / shift+left = pan
+        else if (streamDragButton_ == 2)
+          camera_.dolly((dx - dy) * 0.05f);          // right = dolly
+        else
+          camera_.orbit(dx, dy);                     // left = orbit
+      }
+      streamLastX_ = c.x;
+      streamLastY_ = c.y;
+      break;
+    }
+    case StreamNav::MouseButton: {
+      io.AddMousePosEvent(c.x, c.y);
+      // DOM button (0=L,1=M,2=R) -> ImGui button (0=L,1=R,2=M).
+      const int imguiBtn = (c.button == 1) ? 2 : (c.button == 2) ? 1 : 0;
+      io.AddMouseButtonEvent(imguiBtn, c.down);
+      if (c.down) {
+        // Latch at press: drive the camera only when the press is over the 3D
+        // viewport (not an ImGui panel/widget). The viewport is itself an ImGui
+        // window, so WantCaptureMouse is always true there -- use the viewport
+        // hover signal instead, mirroring the desktop navigation gate.
+        streamCamDrag_ = gui_.viewportHovered();
+        streamDragButton_ = c.button;
+        streamDragShift_ = c.shift;
+      } else {
+        streamCamDrag_ = false;
+      }
+      streamLastX_ = c.x;
+      streamLastY_ = c.y;
+      break;
+    }
+    case StreamNav::Wheel:
+      io.AddMousePosEvent(c.x, c.y);
+      io.AddMouseWheelEvent(0.0f, c.wheel);
+      if (gui_.viewportHovered()) camera_.dolly(c.wheel);
+      break;
     case StreamNav::Key: {
       const std::string& k = c.str;
+      // Route printable keys into focused ImGui text fields; otherwise hotkeys.
+      if (io.WantTextInput) {
+        if (k.size() == 1) io.AddInputCharacter(static_cast<unsigned>(k[0]));
+        break;
+      }
       if (k == "w") {
         gui_.cycleWireframe();
       } else if (k == "f" || k == "a") {
@@ -1321,14 +1365,19 @@ void App::applyNavCommand(const StreamNav& c) {
       }
       break;
     }
+    case StreamNav::Load:
+      if (!c.str.empty()) startLoadAsync(c.str);
+      break;
+    case StreamNav::Codec:
+      if (c.str == "jpeg" || c.str == "qoi" || c.str == "png")
+        streamCodec_ = c.str;
+      break;
     case StreamNav::Resize:
       // Windowed: resize the real window (captureWindow then streams the new size).
       // Headless: the composite size is fixed at launch; the browser canvas scales.
       if (!headless_ && window_ && c.w > 0 && c.h > 0) {
         glfwSetWindowSize(window_, c.w, c.h);
       }
-      break;
-    default:
       break;
   }
 }
@@ -1608,6 +1657,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     us.note = rtBuildNote_;
     gui_.setUploadStatus(us);
 
+    // Apply browser input BEFORE NewFrame so injected mouse/keyboard events reach
+    // ImGui this frame (widgets become clickable); camera drags are applied here
+    // too. Runs on the main thread, like the MCP drain.
+    if (streamServer_) {
+      for (const StreamNav& c : streamServer_->takeInput()) applyNavCommand(c);
+    }
+
     // In threaded GL, newFrame() is a GL op that runs on the render thread (just
     // before it draws the packet); the main thread only builds ImGui + the packet.
     if (!renderThreadActive_) renderer_->newFrame();
@@ -1730,10 +1786,6 @@ int App::run(const std::string& initialFile, int maxFrames,
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
 #endif
-    // Apply browser navigation from the stream server (main thread, like MCP).
-    if (streamServer_) {
-      for (const StreamNav& c : streamServer_->takeInput()) applyNavCommand(c);
-    }
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();

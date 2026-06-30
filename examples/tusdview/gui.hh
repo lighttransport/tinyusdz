@@ -101,6 +101,10 @@ class Gui {
   bool wantOpenRecent() const { return wantOpenRecent_; }
   const std::string& recentToOpen() const { return recentToOpen_; }
   bool wantReload() const { return wantReload_; }
+  // True if the 3D viewport image was hovered last frame (used by the WebSocket
+  // stream server to decide whether a browser drag navigates the camera or is an
+  // ImGui widget interaction).
+  bool viewportHovered() const { return vpHovered_; }
   bool wantQuit() const { return wantQuit_; }
   bool wantCancelLoad() const { return wantCancelLoad_; }
   bool wantLoadAllPayloads() const { return wantLoadAllPayloads_; }
