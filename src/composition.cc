@@ -2799,6 +2799,35 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     }
   }
 
+  // Carry over dst's variantSet CONTENT (the `variantSet "x" = { ... }` blocks).
+  // `ps` started as `src` (weaker) and the loops above merged dst's stronger
+  // metadata / properties / children, but variant content lives in variantSets()
+  // -- NOT in metas() or children() -- so `dst = std::move(ps)` would drop it.
+  // This mirrors CombinePrimSpecRec's variantSet merge. Without it, applying a
+  // payload (or inherit/specialize) onto a prim that already carries variant
+  // content silently loses that content: e.g. ALab components whose `/root`
+  // gets a `payload` (the surfacing look-binding) composed beside the modelling
+  // reference's geo variant -- the variant's `over "GEO"` geometry vanished and
+  // the whole component composed to zero meshes. dst is the stronger opinion.
+  for (const auto &dst_vs : dst.variantSets()) {
+    auto pit = ps.variantSets().find(dst_vs.first);
+    if (pit == ps.variantSets().end()) {
+      ps.variantSets()[dst_vs.first] = dst_vs.second;  // dst-only: add whole set
+    } else {
+      VariantSetSpec &ps_vs = pit->second;
+      for (const auto &v : dst_vs.second.variantSet) {
+        auto vit = ps_vs.variantSet.find(v.first);
+        if (vit == ps_vs.variantSet.end()) {
+          ps_vs.variantSet[v.first] = v.second;  // dst-only variant
+        } else if (!OverridePrimSpecRec(1, vit->second, v.second, warn, err)) {
+          // both authored this variant: dst (stronger) overrides ps (weaker),
+          // matching the dst-children override above.
+          return false;
+        }
+      }
+    }
+  }
+
   // Preserve dst's asset-resolution anchor. The result prim sits at dst's
   // namespace location, so any relative reference/payload asset paths that dst
   // authored (merged into `ps` by the update_from() above) must keep anchoring

@@ -2459,6 +2459,20 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition: composing a `payload` onto a prim that already carries
+    # variantSet CONTENT must not drop that content. Regression for Animal Logic
+    # ALab (eager path): a component's /root gets a surfacing look-binding payload
+    # composed beside the modelling reference's geo variant; InheritPrimSpecImpl
+    # carried over dst children but not dst variantSet content, so the variant's
+    # `over "GEO"` geometry vanished and every component composed to zero meshes.
+    add_executable(feat-payload-variant-content
+                   tests/feat/payload-variant-content/test-payload-variant-content.cc)
+    add_sanitizers(feat-payload-variant-content)
+    target_link_libraries(feat-payload-variant-content PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-payload-variant-content PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-payload-variant-content COMMAND feat-payload-variant-content
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
