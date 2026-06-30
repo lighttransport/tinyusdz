@@ -1318,13 +1318,52 @@ void GLRenderer::resizeViewport(int width, int height) { ensureFbo(width, height
 void GLRenderer::newFrame() { ImGui_ImplOpenGL3_NewFrame(); }
 
 void GLRenderer::buildWireProgram() {
-  // Flat line shaders. A small NDC depth bias (uDepthBias subtracted from z) lifts
-  // the lines just in front of the surface so they are not z-fought by the fill.
+  // Anti-aliased thin wireframe: the VS transforms an edge endpoint to clip space
+  // (with a small NDC depth bias to lift it off the surface); the GS expands each
+  // edge into a screen-space quad uHalfWidth pixels to each side; the FS applies an
+  // analytic distance-to-center falloff for a crisp ~1 px AA line (usdview look,
+  // resolution-independent -- the same edge-distance idea the RT path can use).
   static const char* kWireFS =
       "#version 330 core\n"
+      "in float vDist;\n"            // signed pixel distance from the line center
       "out vec4 FragColor;\n"
       "uniform vec3 uWireColor;\n"
-      "void main(){ FragColor = vec4(uWireColor, 1.0); }\n";
+      "uniform float uHalfWidth;\n"  // pixels: half the expanded quad width
+      "void main(){\n"
+      "  float d = abs(vDist);\n"
+      // 1 px-wide analytic AA: opaque core, feather to 0 over the last pixel.
+      "  float a = 1.0 - smoothstep(uHalfWidth - 1.0, uHalfWidth, d);\n"
+      "  if (a <= 0.0) discard;\n"
+      "  FragColor = vec4(uWireColor, a);\n"
+      "}\n";
+  // Geometry shader (shared): line -> screen-space quad. Endpoints come in clip
+  // space; convert to pixels, offset along the screen-space normal by uHalfWidth,
+  // convert back to clip (scaling by w for perspective). vDist feathers the edge.
+  static const char* kWireGS =
+      "#version 330 core\n"
+      "layout(lines) in;\n"
+      "layout(triangle_strip, max_vertices=4) out;\n"
+      "uniform vec2 uViewport;\n"     // pixels
+      "uniform float uHalfWidth;\n"   // pixels
+      "out float vDist;\n"
+      "void main(){\n"
+      "  vec4 c0 = gl_in[0].gl_Position;\n"
+      "  vec4 c1 = gl_in[1].gl_Position;\n"
+      "  if (c0.w <= 0.0 || c1.w <= 0.0) return;\n"  // skip edges behind the eye
+      "  vec2 s0 = (c0.xy / c0.w) * 0.5 * uViewport;\n"
+      "  vec2 s1 = (c1.xy / c1.w) * 0.5 * uViewport;\n"
+      "  vec2 dir = s1 - s0;\n"
+      "  float len = length(dir);\n"
+      "  dir = len > 1e-5 ? dir / len : vec2(1.0, 0.0);\n"
+      "  vec2 nrm = vec2(-dir.y, dir.x);\n"
+      "  vec2 off = nrm / (0.5 * uViewport) * uHalfWidth;\n"  // pixels -> NDC
+      "  vec4 e0 = c0; vec4 e1 = c1;\n"
+      "  gl_Position = vec4(e0.xy + off * e0.w, e0.zw); vDist =  uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e0.xy - off * e0.w, e0.zw); vDist = -uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e1.xy + off * e1.w, e1.zw); vDist =  uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e1.xy - off * e1.w, e1.zw); vDist = -uHalfWidth; EmitVertex();\n"
+      "  EndPrimitive();\n"
+      "}\n";
   static const char* kWireVS =
       "#version 330 core\n"
       "layout(location=0) in vec3 aPosition;\n"
@@ -1351,17 +1390,26 @@ void GLRenderer::buildWireProgram() {
       "  gl_Position = p;\n"
       "}\n";
   std::string werr;
-  wireProgram_ = glutil::CompileProgram(kWireVS, kWireFS, &werr);
+  wireProgram_ = glutil::CompileProgramGeom(kWireVS, kWireGS, kWireFS, &werr);
   if (wireProgram_) {
     wMVP_ = glGetUniformLocation(wireProgram_, "uModelViewProj");
     wWireColor_ = glGetUniformLocation(wireProgram_, "uWireColor");
     wDepthBias_ = glGetUniformLocation(wireProgram_, "uDepthBias");
+    wViewport_ = glGetUniformLocation(wireProgram_, "uViewport");
+    wHalfWidth_ = glGetUniformLocation(wireProgram_, "uHalfWidth");
+  } else if (!werr.empty()) {
+    fprintf(stderr, "[tusdview] wire program: %s\n", werr.c_str());
   }
-  wireInstProgram_ = glutil::CompileProgram(kWireInstVS, kWireFS, &werr);
+  werr.clear();
+  wireInstProgram_ = glutil::CompileProgramGeom(kWireInstVS, kWireGS, kWireFS, &werr);
   if (wireInstProgram_) {
     wiViewProj_ = glGetUniformLocation(wireInstProgram_, "uViewProj");
     wiWireColor_ = glGetUniformLocation(wireInstProgram_, "uWireColor");
     wiDepthBias_ = glGetUniformLocation(wireInstProgram_, "uDepthBias");
+    wiViewport_ = glGetUniformLocation(wireInstProgram_, "uViewport");
+    wiHalfWidth_ = glGetUniformLocation(wireInstProgram_, "uHalfWidth");
+  } else if (!werr.empty()) {
+    fprintf(stderr, "[tusdview] wire inst program: %s\n", werr.c_str());
   }
 }
 
@@ -1371,21 +1419,24 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
-  // Crisp 1 px lines, like usdview's pure-wireframe path (which uses plain GL
-  // lines, no GL_LINE_SMOOTH). GL_LINE_SMOOTH on RADV clamps width to 1.0 and its
-  // AA footprint spreads the line to ~2 px (fuzzy/thick); a plain 1 px line is a
-  // true single pixel -> visibly thinner. Depth test keeps lines in front (VS
-  // bias) with depth writes off so overlapping edges don't fight.
+  // The GS expands each edge into a thin screen-space quad and the FS feathers it
+  // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
+  // blend for the feathered edge; depth test on (VS bias keeps lines in front),
+  // depth writes off so overlapping edges don't fight.
   glDisable(GL_LINE_SMOOTH);
-  glDisable(GL_BLEND);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDepthMask(GL_FALSE);
-  glLineWidth(1.0f);
+  const float vpx = static_cast<float>(vpW_), vpy = static_cast<float>(vpH_);
+  const float kHalfWidth = 1.3f;  // pixels: ~1 px visible line with a 1 px AA edge
 
   // Non-instanced meshes: per-mesh MVP.
   if (wireProgram_) {
     glUseProgram(wireProgram_);
     glUniform3fv(wWireColor_, 1, wireColor);
     glUniform1f(wDepthBias_, kBias);
+    glUniform2f(wViewport_, vpx, vpy);
+    glUniform1f(wHalfWidth_, kHalfWidth);
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       const GLMesh& mesh = meshes_[mi];
       if (mesh.instanceCount > 0 || mesh.wireEbo == 0 || mesh.wireCount == 0) continue;
@@ -1409,6 +1460,8 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
     glUniformMatrix4fv(wiViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(wiWireColor_, 1, wireColor);
     glUniform1f(wiDepthBias_, kBias);
+    glUniform2f(wiViewport_, vpx, vpy);
+    glUniform1f(wiHalfWidth_, kHalfWidth);
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       const GLMesh& mesh = meshes_[mi];
       if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;

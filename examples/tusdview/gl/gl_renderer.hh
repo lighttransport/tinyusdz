@@ -180,13 +180,14 @@ class GLRenderer final : public Renderer {
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
 
-  // Flat wireframe programs (polygon-edge GL_LINES). Non-instanced takes a full
-  // MVP; instanced reuses the per-instance 3x4 rows (attribs 3/4/5) + a view-proj.
-  // Both share a flat color + an NDC depth bias to lift lines off the surface.
+  // Wireframe programs: a geometry shader expands each polygon edge (GL_LINES from
+  // wireEbo) into a thin screen-space quad with analytic edge-distance AA, giving
+  // crisp sub-pixel-thin anti-aliased lines (usdview look). Non-instanced takes a
+  // full MVP; instanced reuses the per-instance 3x4 rows (attribs 3/4/5) + view-proj.
   GLuint wireProgram_{0};
-  GLint wMVP_{-1}, wWireColor_{-1}, wDepthBias_{-1};
+  GLint wMVP_{-1}, wWireColor_{-1}, wDepthBias_{-1}, wViewport_{-1}, wHalfWidth_{-1};
   GLuint wireInstProgram_{0};
-  GLint wiViewProj_{-1}, wiWireColor_{-1}, wiDepthBias_{-1};
+  GLint wiViewProj_{-1}, wiWireColor_{-1}, wiDepthBias_{-1}, wiViewport_{-1}, wiHalfWidth_{-1};
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
