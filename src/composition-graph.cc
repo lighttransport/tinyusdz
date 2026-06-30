@@ -400,11 +400,11 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
     Asset asset;
     if (ctx->_resolver->open_asset(resolved_path, asset_path, &asset, warn,
                                    err)) {
-      if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+      if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
         if (err) {
           *err = fmt::format("Resolved asset exceeds max bytes ({} > {}).",
                              asset.size(),
-                             security_policy::kResolverMaxAssetReadBytes);
+                             security_policy::GetMaxAssetReadBytes());
         }
       } else {
         Layer layer;
@@ -2008,11 +2008,11 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
     return nonstd::make_unexpected("Failed to open payload asset: " + load_err);
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
     return nonstd::make_unexpected(
         fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                    asset.size(), security_policy::GetMaxAssetReadBytes()));
   }
 
   if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,

@@ -218,6 +218,13 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     return false;
   }
 
+  // A ValueBlock (`= None`) declares the type but carries no usable data. Return
+  // false with NO error so callers treat it as "no data" and skip (rather than
+  // emitting a misleading "type requested, but Attribute is type" failure).
+  if (_attr.is_blocked()) {
+    return false;
+  }
+
   if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
     if (err) {
       (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",

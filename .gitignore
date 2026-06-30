@@ -387,6 +387,16 @@ CMakeUserPresets.json
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+# Symlinked-asset resolver regression fixture (subdir + a symlink payload
+# target; consumed by next_test_resolver_symlink and the usdcat --flatten
+# comparison). The symlink mesh_link.usda is itself a *.usda name.
+!tests/usda/feat-symlink-payload/*.usda
+!tests/usda/feat-symlink-payload/geo/*.usda
+# cwp-anchoring regression fixtures (variant-nested payloads + subLayer-anchored
+# references through an outer reference). Both use subdirectories.
+!tests/usda/feat-variant-payload-cwp/**/*.usda
+!tests/usda/feat-sublayer-ref-cwp/**/*.usda
+!tests/usda/feat-nested-payload-cwp/**/*.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)

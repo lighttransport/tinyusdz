@@ -2163,20 +2163,34 @@ bool CrateReader::Impl::BuildStage() {
         if (const std::string* s = field.second.as_token())
           layer.meta().defaultPrim = *s;
       } else if (field.first == "upAxis") {
-        if (const std::string* s = field.second.as_token())
+        if (const std::string* s = field.second.as_token()) {
           layer.meta().upAxis = *s;
+          layer.meta().upAxis_set = true;
+        }
       } else if (field.first == "metersPerUnit") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().metersPerUnit = *d;
+        if (d) {
+          layer.meta().metersPerUnit = *d;
+          layer.meta().metersPerUnit_set = true;
+        }
       } else if (field.first == "timeCodesPerSecond") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().timeCodesPerSecond = *d;
+        if (d) {
+          layer.meta().timeCodesPerSecond = *d;
+          layer.meta().timeCodesPerSecond_set = true;
+        }
       } else if (field.first == "startTimeCode") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().startTimeCode = *d;
+        if (d) {
+          layer.meta().startTimeCode = *d;
+          layer.meta().startTimeCode_set = true;
+        }
       } else if (field.first == "endTimeCode") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().endTimeCode = *d;
+        if (d) {
+          layer.meta().endTimeCode = *d;
+          layer.meta().endTimeCode_set = true;
+        }
       } else if (field.first == "framesPerSecond") {
         const double* d = field.second.as_double();
         if (d) {

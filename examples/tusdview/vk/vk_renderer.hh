@@ -45,6 +45,11 @@ class VulkanRenderer final : public Renderer {
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, uint32_t count) override;
+  // Raster LOD box proxies (optimization B): the VK raster path collapses distant
+  // instances to a shared unit cube (box-fit per instance) instead of dropping them.
+  bool supportsProxyDraw() const override { return true; }
+  void updateProxyInstances(const float* xforms, const float* tints,
+                            uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
@@ -68,6 +73,7 @@ class VulkanRenderer final : public Renderer {
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
   void setRayTracing(bool enable) override;
+  void setLodCamera(const RtLodCamera& cam, bool reselect) override;
   void shutdown() override;
 
  private:
@@ -150,6 +156,10 @@ class VulkanRenderer final : public Renderer {
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                          // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     float flatColor[3]{0.8f, 0.8f, 0.8f};   // per-draw constant tint (instanced path)
+    // Prototype object-space AABB (for RT view-dependent LOD: per-instance
+    // projected size + the box-fit proxy transform). Captured from DrawMeshCPU.
+    float protoAabbMin[3]{0, 0, 0};
+    float protoAabbMax[3]{0, 0, 0};
     // GPU instancing: one TLAS instance per 3x4 o2w in instanceXforms (12 floats
     // each); instanceColors is 3 floats/instance (empty -> use flatColor). Held on
     // the CPU and consumed in rebuildTlas (the TLAS instance array is the GPU copy).
@@ -162,12 +172,21 @@ class VulkanRenderer final : public Renderer {
     // drawn (== instanceCount unless per-instance culling shrank it this frame).
     VkBuffer instVbo{VK_NULL_HANDLE};
     VkDeviceMemory instVboMem{VK_NULL_HANDLE};
+    // Persistent host mapping when instVbo/instColorBuf are pool-suballocated (their
+    // *Mem is VK_NULL_HANDLE then): per-instance culling writes the compacted subset
+    // through these instead of vkMapMemory. Null for the legacy per-buffer path.
+    void* instVboMapped{nullptr};
+    void* instColorMapped{nullptr};
     VkBuffer instColorBuf{VK_NULL_HANDLE};
     VkDeviceMemory instColorMem{VK_NULL_HANDLE};
     VkBuffer instVtxColorBuf{VK_NULL_HANDLE};
     VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
     uint32_t instanceCount{0};
     uint32_t drawInstanceCount{0};
+    // Coarse per-prototype instance grid for RT LOD cell rejection (P5). Built
+    // lazily on the first LOD-enabled rebuild; instance transforms are static.
+    RtLodGrid lodGrid;
+    bool lodGridTried{false};
   };
 
   // setup helpers
@@ -211,6 +230,9 @@ class VulkanRenderer final : public Renderer {
   bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
   void buildBlas(VkMeshGPU& m);
+  void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
+  void initBoxProxyRaster();            // static box geometry for raster LOD proxies
+  void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
   void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
   void createRtImage();                // storage image sized to the viewport
   void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
@@ -229,8 +251,34 @@ class VulkanRenderer final : public Renderer {
   void destroyScene();
 
   uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
+  // Create a host-visible buffer initialised with `data`. When `poolable` is true the
+  // backing memory is sub-allocated from a few large shared blocks (set *mem =
+  // VK_NULL_HANDLE) instead of its own vkAllocateMemory -- the big-assembled-scene win
+  // (the per-buffer alloc count, and thus the driver's O(n^2) allocation cost,
+  // collapses). Only pass poolable for write-once static buffers, or buffers re-written
+  // through `mappedOut` (a persistent host pointer to the sub-allocation); never for
+  // buffers whose *mem is later vkMapMemory'd/updated. Pool blocks are freed in
+  // destroyScene() after every per-buffer vkDestroyBuffer.
   bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
-                        VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false);
+                        VkBuffer* buf, VkDeviceMemory* mem, bool deviceAddress = false,
+                        bool poolable = false, void** mappedOut = nullptr);
+  // One large persistently-mapped host-visible block the above sub-allocates from.
+  struct HostMemBlock {
+    VkDeviceMemory mem{VK_NULL_HANDLE};
+    VkDeviceSize size{0};
+    VkDeviceSize used{0};
+    void* mapped{nullptr};
+    uint32_t memoryTypeIndex{0};
+    bool deviceAddress{false};
+  };
+  std::vector<HostMemBlock> hostBlocks_;
+  // Sub-allocate `size` (honouring `align`) from a block matching memoryTypeIndex +
+  // deviceAddress; grows a new block when none fits. Returns the block memory + offset
+  // + persistent mapped address. Returns false on allocation failure.
+  bool poolSubAlloc(VkDeviceSize size, VkDeviceSize align, uint32_t memoryTypeIndex,
+                    bool deviceAddress, VkDeviceMemory* outMem, VkDeviceSize* outOffset,
+                    void** outMapped);
+  void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
   bool createRgba32fTextureImage(int width, int height, const float* data,
@@ -512,6 +560,37 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+
+  // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.
+  // Default (lodEnabled=false) reproduces the all-Full, no-cull TLAS exactly.
+  RtLodCamera lodCam_;
+  // Shared 12-triangle unit-cube BLAS instanced (box-fit per prototype AABB) for
+  // every Proxy-LOD instance, so the long tail of distant prototypes needs no
+  // full BLAS. Built once (buildBoxBlas). boxMesh_ holds only vbo/ebo/blas.
+  VkMeshGPU boxMesh_;
+
+  // Raster LOD box proxies (optimization B, VK raster path). Static unit-cube
+  // geometry drawn with instPipeline_; per-instance box-fit o2w (binding 1) + tint
+  // (binding 2) are uploaded each frame from boxProxyXforms_/boxProxyTints_ (filled
+  // by updateProxyInstances on the cull/upload path). bindings 3/4 carry constant
+  // white per-vertex color + zero morph so the box reuses the prototype pipeline.
+  VkBuffer boxRasterVbo_{VK_NULL_HANDLE};        // 8x DrawVertex (binding 0)
+  VkDeviceMemory boxRasterVboMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterEbo_{VK_NULL_HANDLE};        // 36 indices
+  VkDeviceMemory boxRasterEboMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterVtxColBuf_{VK_NULL_HANDLE};  // 8x vec3(1,1,1) (binding 3)
+  VkDeviceMemory boxRasterVtxColMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterMorphBuf_{VK_NULL_HANDLE};   // 8x uvec2(0,0) (binding 4)
+  VkDeviceMemory boxRasterMorphMem_{VK_NULL_HANDLE};
+  VkBuffer boxRasterInstBuf_{VK_NULL_HANDLE};    // per-instance o2w (binding 1)
+  VkDeviceMemory boxRasterInstMem_{VK_NULL_HANDLE};
+  VkDeviceSize boxRasterInstCap_{0};             // allocated bytes
+  VkBuffer boxRasterTintBuf_{VK_NULL_HANDLE};    // per-instance tint (binding 2)
+  VkDeviceMemory boxRasterTintMem_{VK_NULL_HANDLE};
+  VkDeviceSize boxRasterTintCap_{0};             // allocated bytes
+  uint32_t boxRasterCount_{0};                   // proxies to draw this frame
+  std::vector<float> boxProxyXforms_;            // 12 floats/proxy (CPU staging)
+  std::vector<float> boxProxyTints_;             // 3 floats/proxy (CPU staging)
 
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};

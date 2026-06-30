@@ -16,6 +16,8 @@
 #include <optional>
 #include <string>
 
+#include "security-policy.hh"
+
 #include "app.hh"
 #include "config.hh"
 #include "log.hh"
@@ -37,6 +39,13 @@ int main(int argc, char** argv) {
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
   long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
   bool robustFrame = true;      // trim outlier meshes from fit-all auto-frame
+  bool rtLod = false;           // --rt-lod: view-dependent RT instance LOD
+  float rtLodFullPx = 0.0f;     // 0 => keep App default
+  float rtLodCullPx = -1.0f;    // <0 => keep App default
+  float rtLodBand = -1.0f;      // <0 => keep App default (stochastic band width)
+  bool rasterLod = false;       // --raster-lod: view-dependent raster instance LOD
+  float rasterLodFullPx = 0.0f; // 0 => keep App default
+  float rasterLodCullPx = -1.0f;// <0 => keep App default
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -67,6 +76,8 @@ int main(int argc, char** argv) {
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
+  bool allowParentPaths = false;          // --allow-parent-paths: permit '..' in
+                                          // composition asset paths (e.g. ALab)
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
@@ -98,12 +109,39 @@ int main(int argc, char** argv) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
+      // Override per-asset composition/resolver read cap (default 512MB).
+      // Accepts a byte count with optional K/M/G suffix, e.g. 2G.
+      std::string v = argv[++i];
+      size_t mul = 1;
+      if (!v.empty()) {
+        char s = v.back();
+        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
+        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
+      }
+      tinyusdz::security_policy::SetMaxAssetReadBytes(
+          static_cast<size_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul);
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
     } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
       robustFrame = false;
+    } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
+      rtLod = true;
+    } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
+      rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
+      rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
+      rtLodBand = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--raster-lod") == 0) {
+      rasterLod = true;
+    } else if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
+      rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
+    } else if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
+      rasterLodCullPx = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -130,6 +168,8 @@ int main(int argc, char** argv) {
       deferPayloads = false;
     } else if (std::strcmp(argv[i], "--defer-references") == 0) {
       deferReferences = true;
+    } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
+      allowParentPaths = true;
     } else if ((std::strcmp(argv[i], "--time") == 0 ||
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
@@ -267,6 +307,9 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --max-asset-bytes N  Override the per-asset composition read cap "
+          "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
+          "single crates (e.g. Moore Lane's 896MB subLayer).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
@@ -288,6 +331,9 @@ int main(int argc, char** argv) {
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
+          "  --allow-parent-paths  Permit parent-directory ('..') segments in "
+          "composition asset paths (rejected by default as unsafe). Needed by some "
+          "production scenes, e.g. Animal Logic ALab's `../lightingrenderovers/`.\n"
           "  --time CODE   Evaluate the scene at this USD time code (animated "
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
@@ -393,6 +439,7 @@ int main(int argc, char** argv) {
     // Explicit opt-in only (no headless default flip): deferring references is
     // non-standard, so honor the flag verbatim even for --frames runs.
     lo.deferReferences = deferReferences;
+    lo.allowParentRelativePaths = allowParentPaths;
     if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }
@@ -403,6 +450,8 @@ int main(int argc, char** argv) {
                          : 0,
       static_cast<std::size_t>(maxDrawMeshes < 0 ? 0 : maxDrawMeshes));
   app.setRobustFrame(robustFrame);
+  app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx, rtLodBand);
+  app.setRasterLod(rasterLod, rasterLodFullPx, rasterLodCullPx);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();

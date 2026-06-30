@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "lod_math.hh"  // World3x4, BoxFitXform, UnitCubeCorner, kBoxIndices
 
 namespace tusdview {
 namespace {
@@ -32,30 +33,6 @@ float ProtoDiag(const DrawMeshCPU& m) {
   const float dy = m.protoAabbMax[1] - m.protoAabbMin[1];
   const float dz = m.protoAabbMax[2] - m.protoAabbMin[2];
   return std::sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-// 3x4 row-major object->world from a column-major Mat4 world[16].
-void World3x4(const float w[16], float o[12]) {
-  for (int r = 0; r < 3; ++r) {
-    o[r * 4 + 0] = w[0 * 4 + r];
-    o[r * 4 + 1] = w[1 * 4 + r];
-    o[r * 4 + 2] = w[2 * 4 + r];
-    o[r * 4 + 3] = w[3 * 4 + r];
-  }
-}
-
-// Compose a 3x4 o2w with the box-fit that maps the unit cube [0,1]^3 onto the
-// prototype AABB [mn,mx]: world = o2w * (mn + unit * (mx - mn)).
-void BoxFitXform(const float o2w[12], const float mn[3], const float mx[3],
-                 float out[12]) {
-  const float s[3] = {mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]};
-  for (int r = 0; r < 3; ++r) {
-    out[r * 4 + 0] = o2w[r * 4 + 0] * s[0];
-    out[r * 4 + 1] = o2w[r * 4 + 1] * s[1];
-    out[r * 4 + 2] = o2w[r * 4 + 2] * s[2];
-    out[r * 4 + 3] = o2w[r * 4 + 0] * mn[0] + o2w[r * 4 + 1] * mn[1] +
-                     o2w[r * 4 + 2] * mn[2] + o2w[r * 4 + 3];
-  }
 }
 
 }  // namespace
@@ -114,26 +91,18 @@ void ApplyGpuBudgetLOD(DrawScene* draw, std::size_t vramBudgetBytes,
   proxy.purpose = "default";
   proxy.geometricNormal = true;  // boxes shade by screen-derivative normal
   proxy.doubleSided = true;      // winding-agnostic
-  // 8 corners of [0,1]^3, indexed by (x + 2y + 4z).
+  // Unit cube [0,1]^3 corners (shared with the RT box proxy via lod_math.hh).
   proxy.vertices.resize(8);
   for (int c = 0; c < 8; ++c) {
     DrawVertex& v = proxy.vertices[c];
-    v.px = (c & 1) ? 1.f : 0.f;
-    v.py = (c & 2) ? 1.f : 0.f;
-    v.pz = (c & 4) ? 1.f : 0.f;
+    float p[3];
+    UnitCubeCorner(c, p);
+    v.px = p[0]; v.py = p[1]; v.pz = p[2];
     v.nx = 0.f; v.ny = 1.f; v.nz = 0.f;  // ignored (geometricNormal)
     v.u = 0.f; v.v = 0.f;
   }
   // 12 triangles (6 quad faces). Winding irrelevant (doubleSided).
-  static const std::uint32_t kBox[36] = {
-      0, 1, 3, 0, 3, 2,  // z=0
-      4, 5, 7, 4, 7, 6,  // z=1
-      0, 1, 5, 0, 5, 4,  // y=0
-      2, 3, 7, 2, 7, 6,  // y=1
-      0, 2, 6, 0, 6, 4,  // x=0
-      1, 3, 7, 1, 7, 5,  // x=1
-  };
-  proxy.indices.assign(kBox, kBox + 36);
+  proxy.indices.assign(kBoxIndices, kBoxIndices + 36);
   proxy.submeshes.push_back(DrawSubmesh{0, 36, -1});
   proxy.instanceXforms.reserve(proxyInst * 12);
   proxy.instanceColors.reserve(proxyInst * 3);

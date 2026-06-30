@@ -19,6 +19,7 @@
 #include <string>
 
 #include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
+#include "security-policy.hh"
 #include "next/pcp/cache.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -97,6 +98,18 @@ int main(int argc, char **argv) {
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
       compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
       if (compose_threads < 1) compose_threads = 1;
+    } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && i + 1 < argc) {
+      // Override per-asset composition read cap (default 512MB). K/M/G suffix.
+      std::string v = argv[++i];
+      size_t mul = 1;
+      if (!v.empty()) {
+        char s = v.back();
+        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
+        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
+      }
+      tinyusdz::security_policy::SetMaxAssetReadBytes(
+          static_cast<size_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul);
     } else {
       filename = argv[i];
     }

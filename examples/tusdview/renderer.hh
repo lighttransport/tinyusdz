@@ -8,11 +8,15 @@
 // lives behind this interface so the app main-loop is backend-agnostic.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
 #include "gpu_scene.hh"
+#include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -209,6 +213,14 @@ class Renderer {
   // mesh count; callers verify before per-index updates.
   virtual int meshCount() const { return 0; }
 
+  // Raster view-dependent LOD box proxies (optimization B). supportsProxyDraw()
+  // gates whether the cull emits proxies at all; updateProxyInstances uploads the
+  // shared per-frame set (`xforms`: 12 floats/proxy box-fit o2w; `tints`: 3
+  // floats/proxy) drawn in one instanced call. Default: unsupported / no-op.
+  virtual bool supportsProxyDraw() const { return false; }
+  virtual void updateProxyInstances(const float* /*xforms*/, const float* /*tints*/,
+                                    uint32_t /*count*/) {}
+
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
   bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
@@ -216,7 +228,27 @@ class Renderer {
     for (size_t i = 0; i < scene.textures.size(); ++i) {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
-    for (const auto& m : scene.meshes) appendMesh(m);
+    static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
+    if (timeit) {
+      const auto t0 = std::chrono::steady_clock::now();
+      auto last = t0;
+      for (size_t i = 0; i < scene.meshes.size(); ++i) {
+        appendMesh(scene.meshes[i]);
+        if (((i + 1) % 5000) == 0 || i + 1 == scene.meshes.size()) {
+          const auto now = std::chrono::steady_clock::now();
+          const double tot =
+              std::chrono::duration<double>(now - t0).count();
+          const double dt =
+              std::chrono::duration<double>(now - last).count();
+          last = now;
+          std::fprintf(stderr,
+                       "[upload] meshes %zu/%zu  +%.2fs (total %.2fs)\n",
+                       i + 1, scene.meshes.size(), dt, tot);
+        }
+      }
+    } else {
+      for (const auto& m : scene.meshes) appendMesh(m);
+    }
     for (const auto& v : scene.volumes) appendVolume(v);
     return true;
   }
@@ -308,6 +340,13 @@ class Renderer {
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.
   virtual void setRayTracing(bool /*enable*/) {}
+
+  // View-dependent RT LOD: supply the camera snapshot used to classify instances
+  // as Full / Proxy / Cull when the TLAS is (re)built. `reselect` requests a TLAS
+  // rebuild now (call it when the camera has settled). focalPx is filled by the
+  // backend from its own viewport height; the caller leaves it 0. No-op unless
+  // the ray-tracing backend supports it.
+  virtual void setLodCamera(const RtLodCamera& /*cam*/, bool /*reselect*/) {}
 
   // Tear down ImGui backend + device resources.
   virtual void shutdown() = 0;

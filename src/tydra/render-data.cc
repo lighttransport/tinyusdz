@@ -2304,10 +2304,10 @@ bool DefaultTextureImageLoaderFunction(
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
+                            asset.size(), security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
@@ -2467,11 +2467,11 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).\n",
                             asset.size(),
-                            security_policy::kResolverMaxAssetReadBytes);
+                            security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
