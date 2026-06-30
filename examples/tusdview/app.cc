@@ -327,8 +327,18 @@ void App::updateRtLodCamera() {
   } else if (lodStillFrames_ < kLodSettleFrames) {
     ++lodStillFrames_;
   }
+  // The pixel-size threshold needs a laid-out viewport: on the first windowed
+  // frame the dock split is not computed yet and resizeViewport() reports a
+  // transient tiny height (e.g. 20px), which would make focalPx so small that
+  // every instance reads as sub-pixel and gets culled (a one-frame all-Proxy/Cull
+  // blip). Require a sane viewport height before the first arm; the headless path
+  // reports its full render height from frame 0, so it still arms immediately.
+  int vpw = 0, vph = 0;
+  renderer_->viewportSize(&vpw, &vph);
+  const bool vpReady = vph >= 64;
+
   bool reselect = false;
-  if (!lodArmedOnce_) {  // first frame after enable: build the LOD TLAS now
+  if (!lodArmedOnce_ && vpReady) {  // first laid-out frame: build the LOD TLAS now
     reselect = true;
     lodArmedOnce_ = true;
   } else if (lodPendingReselect_ && lodStillFrames_ >= kLodSettleFrames) {
