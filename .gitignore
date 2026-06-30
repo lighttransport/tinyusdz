@@ -475,3 +475,8 @@ gpu-task.md
 
 # Local reference checkouts (e.g. ref/SaschaWillems-Vulkan), not part of the repo.
 /ref/
+
+# Node tooling for the optional browser keyboard test (examples/tusdview/tests)
+/node_modules/
+/package.json
+/package-lock.json
