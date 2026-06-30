@@ -177,8 +177,13 @@ class App
   void setMcpStdio(bool on) { mcpStdio_ = on; }
   void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
   void setStreamHttp(int port) { streamHttpPort_ = port; }  // 0 = off
-  // Stream image codec: "jpeg" (default), "qoi", or "png".
-  void setStreamCodec(const std::string& c) { streamCodec_ = c; }
+  // Idle-refinement codec for the stream: "png" (default) or "qoi". While the
+  // view is moving, frames are sent as small low-quality JPEG; once the view is
+  // stable a single full-resolution lossless frame is sent in this codec.
+  void setStreamCodec(const std::string& c) {
+    streamCodec_ = c;
+    if (c == "png" || c == "qoi") streamIdleCodec_ = c;
+  }
   // Apply one browser navigation command to the camera/render state (main thread).
   void applyNavCommand(const StreamNav& cmd);
 
@@ -342,8 +347,12 @@ class App
   // Trace the HIP viewport for one interactive frame (builds the scene on first
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();
-  // Encode an RGBA8 window grab with the configured stream codec and broadcast it.
-  void streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h);
+  // Encode an RGBA8 window grab and broadcast it. `motion`=true sends a small
+  // low-quality JPEG (fast, for interaction); false sends a full-resolution
+  // lossless frame in streamIdleCodec_ (the stable-state refinement).
+  void streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h, bool motion);
+  // Mark the streamed view as changed (resets the idle refinement timer).
+  void markStreamActivity();
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
@@ -447,6 +456,15 @@ class App
   int streamDragButton_{0};     // DOM button latched at press
   bool streamDragShift_{false}; // shift held at press (orbit->pan)
   float streamLastX_{0.f}, streamLastY_{0.f};  // last cursor (image space)
+  // Adaptive quality: low-res low-q JPEG while moving, one full-res lossless
+  // refine (PNG/QOI) once stable.
+  std::string streamIdleCodec_{"png"};      // refinement codec (png/qoi)
+  std::chrono::steady_clock::time_point streamLastActivity_{};
+  bool streamHiQSent_{false};               // refine frame already sent for this idle
+  int streamPrevClientCount_{0};
+  int streamMotionMaxDim_{1280};            // long-edge cap for motion frames
+  int streamMotionJpegQ_{45};               // motion JPEG quality
+  int streamIdleMs_{350};                   // ms of no activity = stable
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};

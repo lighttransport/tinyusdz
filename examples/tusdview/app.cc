@@ -20,6 +20,7 @@
 #include "lod_stream.hh"
 #include "gui_style.hh"
 #include "image-writer.hh"
+#include "external/stb_image_resize2.h"  // stbir_resize (impl lives in the lib)
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
@@ -1270,24 +1271,47 @@ bool App::renderHipViewport() {
   return true;
 }
 
-void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h) {
-  if (!streamServer_) return;
+void App::markStreamActivity() {
+  streamLastActivity_ = std::chrono::steady_clock::now();
+  streamHiQSent_ = false;
+}
+
+void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h,
+                              bool motion) {
+  if (!streamServer_ || w <= 0 || h <= 0) return;
+
+  int tw = w, th = h;
+  std::vector<uint8_t> scaled;
+  if (motion && std::max(w, h) > streamMotionMaxDim_) {
+    // Downscale (sRGB-correct) to a small frame for fast interaction.
+    const double s = double(streamMotionMaxDim_) / double(std::max(w, h));
+    tw = std::max(1, int(w * s));
+    th = std::max(1, int(h * s));
+    scaled.resize(size_t(tw) * size_t(th) * 4);
+    if (stbir_resize_uint8_srgb(rgba.data(), w, h, 0, scaled.data(), tw, th, 0,
+                                STBIR_RGBA)) {
+      rgba = std::move(scaled);
+    } else {
+      tw = w; th = h;  // resize failed: fall back to full size
+    }
+  }
+
   tinyusdz::Image img;
-  img.width = w;
-  img.height = h;
+  img.width = tw;
+  img.height = th;
   img.channels = 4;
   img.bpp = 8;
   img.format = tinyusdz::Image::PixelFormat::UInt;
   img.data = std::move(rgba);
 
   tinyusdz::image::WriteOption opt;
-  if (streamCodec_ == "qoi") {
-    opt.format = tinyusdz::image::WriteImageFormat::QOI;
-  } else if (streamCodec_ == "png") {
-    opt.format = tinyusdz::image::WriteImageFormat::PNG;
-  } else {  // default: JPEG (smallest / lowest-latency over the wire)
+  if (motion) {
     opt.format = tinyusdz::image::WriteImageFormat::JPEG;
-    opt.jpeg_quality = 80;
+    opt.jpeg_quality = streamMotionJpegQ_;
+  } else if (streamIdleCodec_ == "qoi") {
+    opt.format = tinyusdz::image::WriteImageFormat::QOI;
+  } else {  // default refinement: PNG (lossless)
+    opt.format = tinyusdz::image::WriteImageFormat::PNG;
   }
   auto enc = tinyusdz::image::WriteImageToMemory(img, opt);
   if (enc) streamServer_->pushFrame(enc.value().data(), enc.value().size());
@@ -1299,6 +1323,9 @@ void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h) {
 // mouse the same drags drive the camera (orbit/pan/dolly) -- like the desktop app.
 void App::applyNavCommand(const StreamNav& c) {
   ImGuiIO& io = ImGui::GetIO();
+  // Any browser input keeps the stream in interactive (low-latency) mode and
+  // defers the next lossless refinement.
+  markStreamActivity();
   switch (c.type) {
     case StreamNav::MouseMove: {
       io.AddMousePosEvent(c.x, c.y);
@@ -1369,8 +1396,11 @@ void App::applyNavCommand(const StreamNav& c) {
       if (!c.str.empty()) startLoadAsync(c.str);
       break;
     case StreamNav::Codec:
-      if (c.str == "jpeg" || c.str == "qoi" || c.str == "png")
-        streamCodec_ = c.str;
+      // Selects the idle-refinement codec; re-send a refined frame in it.
+      if (c.str == "png" || c.str == "qoi") {
+        streamIdleCodec_ = c.str;
+        streamHiQSent_ = false;
+      }
       break;
     case StreamNav::Resize:
       // Windowed: resize the real window (captureWindow then streams the new size).
@@ -1765,19 +1795,35 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (!windowShot_.empty() && maxFrames >= 0 && frameCount == maxFrames - 1) {
         renderer_->requestWindowCapture();
       }
-      // Streaming: grab the full composited window (incl. ImGui) this frame.
-      const bool streamFrame =
-          streamServer_ && streamServer_->clientCount() > 0;
-      if (streamFrame) renderer_->requestWindowCapture();
+      // Streaming: send a small low-quality JPEG while the view is moving, then a
+      // single full-resolution lossless (PNG/QOI) frame once it goes stable. Skip
+      // sending entirely once the refined frame is out and nothing has changed.
+      bool streamSend = false, streamMotion = false;
+      if (streamServer_) {
+        const int cc = streamServer_->clientCount();
+        if (cc > 0) {
+          if (cc > streamPrevClientCount_) markStreamActivity();  // greet new client
+          const auto now = std::chrono::steady_clock::now();
+          const long idleMs =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now - streamLastActivity_).count();
+          streamMotion = progressiveActive_ || animPlaying_ ||
+                         idleMs < streamIdleMs_;
+          streamSend = streamMotion || !streamHiQSent_;
+        }
+        streamPrevClientCount_ = cc;
+      }
+      if (streamSend) renderer_->requestWindowCapture();
 
       ImGui::Render();
       renderer_->present();
 
-      if (streamFrame) {
+      if (streamSend) {
         std::vector<uint8_t> rgba;
         int cw = 0, ch = 0;
         if (renderer_->captureWindow(&rgba, &cw, &ch) && cw > 0 && ch > 0) {
-          streamEncodeAndPush(std::move(rgba), cw, ch);
+          streamEncodeAndPush(std::move(rgba), cw, ch, streamMotion);
+          if (!streamMotion) streamHiQSent_ = true;  // refined this idle period
         }
       }
     }

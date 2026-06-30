@@ -55,9 +55,10 @@ small{color:#6b7280}
  <div id="drop">Drop .usd/.usdz here<br><small>or click to upload</small>
   <input id="file" type="file" accept=".usd,.usda,.usdc,.usdz" style="display:none"></div>
  <h3>Render</h3>
- <label><small>Stream codec</small></label>
- <select id="codec"><option value="jpeg">JPEG (fast)</option>
-  <option value="png">PNG (lossless)</option><option value="qoi">QOI</option></select>
+ <label><small>Idle refinement</small></label>
+ <select id="codec"><option value="png">PNG (lossless)</option>
+  <option value="qoi">QOI (lossless)</option></select>
+ <small>Moving: fast low-res JPEG. Stable: one crisp lossless frame.</small>
 </div>
 
 <div id="center"><canvas id="c"></canvas></div>
