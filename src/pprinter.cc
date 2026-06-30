@@ -316,6 +316,11 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
     stack.pop_back();
 
     if (item.phase == EXIT) {
+      // Emit variantSets AFTER the prim's children, matching OpenUSD/usdcat
+      // serialization order (children first, then variantSets).
+      if (item.prim->variantSets().size()) {
+        ss << print_variantSetStmt(item.prim->variantSets(), item.indent + 1);
+      }
       ss << pprint::Indent(item.indent) << "}\n";
       continue;
     }
@@ -335,16 +340,9 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
     }
     ss << s;
 
-    // print variant
-    if (item.prim->variantSets().size()) {
-      if (require_newline) {
-        ss << "\n";
-      }
-      ss << print_variantSetStmt(item.prim->variantSets(), item.indent + 1);
-      require_newline = true;
-    }
+    // variantSets are emitted at EXIT (after children) to match OpenUSD ordering.
 
-    // Push EXIT for closing brace (will be processed after all children)
+    // Push EXIT for closing brace + variantSets (processed after all children)
     stack.push_back({item.prim, item.indent, EXIT, false});
 
     // Collect children in the order they should be printed
@@ -397,6 +395,9 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
           ordered_children.push_back(&item.prim->children()[i]);
         }
       }
+    } else if (item.prim->variantSets().size() && require_newline) {
+      // No children, but variantSets follow at EXIT: break the line after `{`.
+      ss << "\n";
     }
 
     // Push children in reverse order (so first child is processed first)
