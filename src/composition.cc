@@ -546,7 +546,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
         fmt::format("Failed to open asset `{}`.", resolved_path));
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     // An over-cap asset (e.g. Moana island's 683 MB xgGroundCover.usd vs the
     // 512 MB cap) must not abort the WHOLE composition -- a single oversized
     // sub-asset would otherwise drop the entire scene. Treat it like an
@@ -555,13 +555,13 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     if (error_when_asset_not_found) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                      asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                      asset.size(), security_policy::GetMaxAssetReadBytes()));
     }
     warn_once(resolved_path,
               fmt::format("Asset `{}` exceeds the max composition read size "
                           "({} > {} bytes); skipping this arc.",
                           asset_path, asset.size(),
-                          security_policy::kResolverMaxAssetReadBytes));
+                          security_policy::GetMaxAssetReadBytes()));
     if (dst_primspec_root) {
       (*dst_primspec_root) = nullptr;
     }

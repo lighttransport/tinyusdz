@@ -350,10 +350,10 @@ bool RenderSceneConverter::ConvertDomeLight(
               resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
           if (asset_opened) {
-            if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+            if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
               PushWarn(fmt::format(
                   "Envmap asset exceeds max bytes ({} > {}).",
-                  asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                  asset.size(), security_policy::GetMaxAssetReadBytes()));
               continue;
             }
             TextureImage fallbackTexImage;
@@ -397,10 +397,10 @@ bool RenderSceneConverter::ConvertDomeLight(
             resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
         if (asset_opened) {
-          if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+          if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
             PushWarn(fmt::format(
                 "Envmap asset exceeds max bytes ({} > {}).",
-                asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                asset.size(), security_policy::GetMaxAssetReadBytes()));
             continue;
           }
           TextureImage texImage;
