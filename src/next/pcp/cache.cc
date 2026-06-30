@@ -402,8 +402,11 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
 bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           Stage *out_stage, const CompositionOptions &options,
                           std::string *warn, std::string *err) {
+  LayerLoadOptions lopts;
+  lopts.max_memory = options.max_layer_memory;
+  lopts.enable_usdc_timing = options.enable_timing;
   std::shared_ptr<Layer> root = LoadLayerFromFile(
-      filename, warn, err, LayerLoadOptions{options.max_layer_memory, 0});
+      filename, warn, err, lopts);
   if (!root) return false;
   return ComposeStageFromLayer(std::move(root), resolver, out_stage, filename,
                                options, warn, err);

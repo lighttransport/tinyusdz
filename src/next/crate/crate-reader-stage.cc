@@ -658,8 +658,10 @@ bool CrateReader::Impl::BuildStage() {
     // Extracts a token-list metadata field (written as a token array, with
     // single-token / string fallbacks for older encodings). Warns rather than
     // silently dropping a known arc field that fails to decode.
-    auto append_token_list = [&](const ValueRep& rep, std::vector<std::string>& dst,
-                                 const char* field_name) {
+    auto append_token_list = [&](const ValueRep& rep,
+                                 std::vector<std::string>& dst,
+                                 const char* field_name,
+                                 bool wrap_bare_paths = false) {
       Value v;
       if (!UnpackValue(rep, v)) {
         AddWarning(std::string("Composition arc field '") + field_name +
@@ -667,11 +669,40 @@ bool CrateReader::Impl::BuildStage() {
         return;
       }
       if (const std::vector<std::string>* arr = v.as_token_array()) {
-        for (const auto& s : *arr) dst.push_back(s);
+        for (const auto& s : *arr) {
+          if (wrap_bare_paths && !s.empty() && s[0] == '/') {
+            std::string arc;
+            arc.reserve(s.size() + 2);
+            arc.push_back('<');
+            arc.append(s);
+            arc.push_back('>');
+            dst.push_back(std::move(arc));
+          } else {
+            dst.push_back(s);
+          }
+        }
       } else if (const std::string* s = v.as_token()) {
-        dst.push_back(*s);
+        if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
+          std::string arc;
+          arc.reserve(s->size() + 2);
+          arc.push_back('<');
+          arc.append(*s);
+          arc.push_back('>');
+          dst.push_back(std::move(arc));
+        } else {
+          dst.push_back(*s);
+        }
       } else if (const std::string* s = v.as_string()) {
-        dst.push_back(*s);
+        if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
+          std::string arc;
+          arc.reserve(s->size() + 2);
+          arc.push_back('<');
+          arc.append(*s);
+          arc.push_back('>');
+          dst.push_back(std::move(arc));
+        } else {
+          dst.push_back(*s);
+        }
       } else {
         AddWarning(std::string("Composition arc field '") + field_name +
                    "' has unexpected encoding; dropped");
@@ -748,11 +779,12 @@ bool CrateReader::Impl::BuildStage() {
           return true;
         }
         if (field_name == "inherits") {
-          append_token_list(field_value, ps->meta().inherits, "inherits");
+          append_token_list(field_value, ps->meta().inherits, "inherits", true);
           return true;
         }
         if (field_name == "specializes") {
-          append_token_list(field_value, ps->meta().specializes, "specializes");
+          append_token_list(field_value, ps->meta().specializes,
+                            "specializes", true);
           return true;
         }
         if (field_name == "references_listOp") {
