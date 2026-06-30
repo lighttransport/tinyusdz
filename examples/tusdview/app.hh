@@ -442,6 +442,11 @@ class App
   int streamHttpPort_{0};
   std::string streamCodec_{"jpeg"};
   std::unique_ptr<StreamServer> streamServer_;
+  // Browser input state (raw mouse/keyboard forwarded into ImGui + camera).
+  bool streamCamDrag_{false};   // current drag drives the camera (not ImGui)
+  int streamDragButton_{0};     // DOM button latched at press
+  bool streamDragShift_{false}; // shift held at press (orbit->pan)
+  float streamLastX_{0.f}, streamLastY_{0.f};  // last cursor (image space)
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};
