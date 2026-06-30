@@ -12,6 +12,8 @@
 #include <string>
 #include <thread>
 
+#include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
+
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "config.hh"
 #include "gpu_budget_lod.hh"
@@ -248,11 +250,38 @@ static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<uint32_t>().swap(m.indices);
   std::vector<float>().swap(m.vertexColors);
+  // Upload-only auxiliary arrays (consumed in appendMesh / the RT build, never
+  // re-read after): free them too. GPU morph/skin re-pose uploads only the
+  // per-frame coefficients, not these source arrays, so dropping them is safe.
+  std::vector<uint32_t>().swap(m.wireframeIndices);
+  std::vector<uint32_t>().swap(m.sourceFaceId);
+  std::vector<uint32_t>().swap(m.morphOffsetCount);
+  std::vector<uint16_t>().swap(m.morphDeltaHalf);
+  std::vector<uint16_t>().swap(m.morphChannelId);
+  std::vector<uint32_t>().swap(m.jointIdx);
+  std::vector<float>().swap(m.jointWt);
+  std::vector<uint32_t>().swap(m.influenceOffsetCount);
+  std::vector<float>().swap(m.influenceTexels);
   // instanceXforms / instanceColors are RETAINED: per-instance frustum culling
   // (gui) re-tests each instance's protoAabb against the frustum and re-uploads
   // the visible subset every frame, so it needs the CPU transforms. This is the
   // CPU-culling memory cost (one CPU + one GPU copy); GPU compute culling would
   // drop the CPU copy -- a documented follow-up.
+}
+
+// Aggressive free for the HIP/CUDA RT path: after the build everything lives in
+// the GPU BVH and trace() never reads draw_ geometry again, so drop ALL per-mesh
+// CPU arrays (including instance transforms, which the RT path -- unlike raster
+// culling -- does not need). Keeps only metadata (name/purpose/world/aabb).
+static void FreeMeshGeometryCPUForRT(DrawMeshCPU& m) {
+  FreeMeshGeometryCPU(m);
+  std::vector<float>().swap(m.uv1);
+  std::vector<float>().swap(m.morphInfluence);
+  std::vector<MorphTargetCPU>().swap(m.morphs);
+  std::vector<MorphTargetChannelsCPU>().swap(m.morphTargetChannels);
+  std::vector<float>().swap(m.skinnedHelperPoints);
+  std::vector<float>().swap(m.instanceXforms);
+  std::vector<float>().swap(m.instanceColors);
 }
 
 void App::applyLoaded(bool ok, bool progressive) {
@@ -1185,6 +1214,21 @@ bool App::renderHipViewport() {
     hipInteractiveBuilt_ = true;
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
+    // The scene now lives entirely in the GPU BVH; reclaim the (large) CPU
+    // geometry -- the interactive trace never reads draw_ geometry again.
+    auto rssMB = [] {
+      FILE* f = std::fopen("/proc/self/statm", "r");
+      if (!f) return size_t(0);
+      long pages = 0, res = 0;
+      if (std::fscanf(f, "%ld %ld", &pages, &res) != 2) res = 0;
+      std::fclose(f);
+      return size_t((static_cast<long long>(res) * sysconf(_SC_PAGESIZE)) / (1024 * 1024));
+    };
+    const size_t before = rssMB();
+    for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPUForRT(m);
+    const size_t after = rssMB();
+    if (before > after)
+      LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
   }
 
   int w = 0, h = 0;
