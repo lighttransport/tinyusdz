@@ -268,8 +268,17 @@ int main(int argc, char** argv) {
       mcpStdio = true;
       if (mcpHttpPort == 0) mcpHttpPort = 8080;
     } else if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
+      // Optional value: `--stream-http=PORT`, `--stream-http PORT`, or bare
+      // `--stream-http` (defaults to 8090). The space form consumes the next
+      // argument only when it starts with a digit (else it's a positional/flag).
       const char* eq = std::strchr(argv[i], '=');
-      streamHttpPort = eq ? std::atoi(eq + 1) : 8090;
+      if (eq) {
+        streamHttpPort = std::atoi(eq + 1);
+      } else if ((i + 1) < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+        streamHttpPort = std::atoi(argv[++i]);
+      } else {
+        streamHttpPort = 8090;
+      }
       if (streamHttpPort <= 0) streamHttpPort = 8090;
     } else if (std::strcmp(argv[i], "--stream-codec") == 0 && (i + 1) < argc) {
       streamCodec = argv[++i];
