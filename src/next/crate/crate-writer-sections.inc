@@ -109,17 +109,19 @@
     // Build flat array: for each fieldset, write its field indices then a
     // 0xFFFFFFFF sentinel (matching pxrUSD and the old tinyusdz writer).
     std::vector<uint32_t> flat;
-    for (const auto& fieldset : fieldsets_) {
-      for (uint32_t field_idx : fieldset) {
+    flat.reserve(fields_.size() + FieldsetCount());
+    for (uint32_t fs_idx = 0; fs_idx < FieldsetCount(); ++fs_idx) {
+      ForEachFieldsetItem(fs_idx, [&](uint32_t field_idx) {
         flat.push_back(field_idx);
-      }
+      });
       flat.push_back(0xFFFFFFFF);  // sentinel
     }
 
     uint64_t flat_count = flat.size();
     writer_.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    std::vector<uint8_t> delta_encoded = EncodeDeltaU32(flat.data(), static_cast<size_t>(flat_count));
+    std::vector<uint8_t> delta_encoded =
+        EncodeDeltaU32WithCommon(flat.data(), static_cast<size_t>(flat_count), 1);
     CompressResult cr = CompressCrateBlob(delta_encoded.data(), delta_encoded.size());
     if (cr.success) {
       writer_.write_u64(cr.data.size());
@@ -131,30 +133,31 @@
   }
 
   void WritePathsSection() {
+    auto path_phase_t0 = Clock::now();
     // pxr's compressed path tree requires EVERY ancestor of every path to be
-    // present as a node. Connection/relationship TARGET paths can reference
-    // prims that have no spec in this layer (e.g. material shader outputs in
-    // a not-yet-composed referenced file), so synthesize the missing ancestor
-    // chain (tree-only nodes; no spec refers to them).
+    // present as a node. Flattened/streamed layers can contain specs for prims
+    // whose intermediate namespace parents have no authored spec; if those
+    // ancestors are omitted from PATHS, OpenUSD can load the layer but builds a
+    // corrupted root child table and may crash when exporting the raw SdfLayer.
     {
-      // Membership set keyed on string_view into the existing (stable) paths_ and
-      // into `synth` (a deque, so its strings keep stable addresses). This avoids
-      // copying all paths into the set — the dominant allocation on big scenes.
-      // Synthesized ancestors are appended to paths_ only after the scan.
-      std::unordered_set<std::string_view> have;
-      have.reserve(paths_.size() * 2);
-      for (const auto& p : paths_) have.insert(std::string_view(p));
+      // Probe existing paths through path_to_index_ and keep a small synthesized
+      // set instead of building a multi-M entry membership table for every scene.
+      FlatStringViewU32Map synth_have;
+      synth_have.reserve(1024);
       std::deque<std::string> synth;
       const size_t orig = paths_.size();
       auto add = [&](std::string_view v) -> bool {
-        if (have.find(v) != have.end()) return false;
+        if (path_to_index_.find(v) != path_to_index_.end()) {
+          return false;
+        }
+        if (synth_have.find(v) != synth_have.end()) return false;
         synth.emplace_back(v);
-        have.insert(std::string_view(synth.back()));
+        synth_have.set(std::string_view(synth.back()), 0);
         return true;
       };
       constexpr size_t npos = std::string_view::npos;
-      for (size_t i = 0; i < orig; i++) {
-        std::string_view cur(paths_[i]);
+
+      auto scan_one = [&](std::string_view cur) {
         const size_t dot = cur.rfind('.');
         const size_t slash = cur.rfind('/');
         if (dot != npos && (slash == npos || dot > slash)) {
@@ -165,28 +168,32 @@
           const size_t sl = cur.rfind('/');
           if (sl == npos || sl == 0) break;
           cur = cur.substr(0, sl);
-          if (!add(cur)) break;  // rest of the chain already exists
+          add(cur);
         }
-      }
-      for (auto& s : synth) paths_.push_back(std::move(s));
-    }
+      };
 
-    // Sort path INDICES (not string copies): swaps move 4-byte ints instead of
-    // 36-byte {std::string, uint32} entries, and no path string is duplicated.
-    // `sorted[i]` is the index of the i-th path in pre-order; downstream reads
-    // `paths_[sorted[i]]`.
-    std::vector<uint32_t> sorted;
-    sorted.resize(paths_.size());
-    for (size_t i = 0; i < paths_.size(); i++) {
-      sorted[i] = static_cast<uint32_t>(i);
+      for (size_t i = 0; i < orig; ++i) {
+        scan_one(std::string_view(paths_[i]));
+      }
+
+      std::vector<uint32_t> scan = ancestor_scan_path_indices_;
+      std::sort(scan.begin(), scan.end());
+      scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+      for (uint32_t path_idx : scan) {
+        if (path_idx >= orig) continue;
+        scan_one(std::string_view(paths_[path_idx]));
+      }
+      for (auto& s : synth) {
+        uint32_t idx = static_cast<uint32_t>(paths_.size());
+        paths_.push_back(std::move(s));
+        path_to_index_.set(std::string_view(paths_.back()), idx);
+      }
     }
-    // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
-    // sibling name extends another with a character below '/' (e.g. prims
-    // "SM_x" and "SM_x-y": '-' < '/' puts "/A/SM_x-y" BETWEEN "/A/SM_x" and
-    // its children, splitting the subtree and corrupting the jump encoding).
-    // Rank the structural separators below every name character instead:
-    // '/' < '.' < everything else. A precomputed 256-entry table avoids a branch
-    // per character in the inner comparison loop.
+    timing_.paths_synth_ms = MsSince(path_phase_t0);
+
+    // Build parent/child topology first, then emit pre-order from sorted child
+    // lists. This avoids sorting all paths (O(N log N) over full path bytes) while
+    // preserving deterministic USD tree order.
     static const uint32_t* const kCharRank = []() -> const uint32_t* {
       static uint32_t t[256];
       for (int c = 0; c < 256; ++c) t[c] = 2u + static_cast<uint32_t>(c);
@@ -194,24 +201,139 @@
       t[static_cast<unsigned char>('.')] = 1;
       return t;
     }();
-    auto preorder_less = [](const std::string& a, const std::string& b) {
-      const size_t n = (std::min)(a.size(), b.size());
-      const unsigned char* pa = reinterpret_cast<const unsigned char*>(a.data());
-      const unsigned char* pb = reinterpret_cast<const unsigned char*>(b.data());
+    const size_t path_count = paths_.size();
+    // parent + local element span
+    constexpr uint32_t kNoNode = 0xFFFFFFFF;
+    std::vector<uint32_t> parent(path_count, kNoNode);
+    std::vector<uint32_t> local_name_pos(path_count, 0);
+    std::vector<uint32_t> local_name_len(path_count, 0);
+
+    path_phase_t0 = Clock::now();
+    for (uint32_t i = 0; i < static_cast<uint32_t>(path_count); ++i) {
+      const std::string& p = paths_[i];
+      if (p.empty() || p == "/") {
+        local_name_pos[i] = 0;
+        local_name_len[i] = 0;
+        continue;
+      }
+
+      const size_t slash = p.rfind('/');
+      const size_t dot = p.rfind('.');
+      size_t parent_end;
+      if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+        parent_end = dot;
+      } else {
+        parent_end = slash;
+      }
+
+      const size_t name_pos = (parent_end == std::string::npos) ? 0u : parent_end + 1u;
+      local_name_pos[i] = static_cast<uint32_t>(name_pos);
+      local_name_len[i] = static_cast<uint32_t>(p.size() - name_pos);
+      if (parent_end == std::string::npos) continue;
+
+      std::string_view parent_path = (parent_end == 0u)
+                                        ? std::string_view("/")
+                                        : std::string_view(p.data(), parent_end);
+      const uint32_t* parent_idx = path_to_index_.find(parent_path);
+      if (parent_idx) {
+        parent[i] = *parent_idx;
+      }
+    }
+    timing_.paths_parent_ms = MsSince(path_phase_t0);
+
+    // Count children for each parent plus a synthetic no-parent bucket.
+    std::vector<uint32_t> child_counts(path_count + 1, 0);
+    for (uint32_t i = 0; i < static_cast<uint32_t>(path_count); ++i) {
+      const uint32_t key = (parent[i] == kNoNode) ? static_cast<uint32_t>(path_count) : parent[i];
+      ++child_counts[key];
+    }
+
+    std::vector<uint32_t> child_offsets(path_count + 2, 0);
+    for (uint32_t i = 0; i < child_counts.size(); ++i) {
+      child_offsets[i + 1] = child_offsets[i] + child_counts[i];
+    }
+
+    auto local_name_less = [&](uint32_t a, uint32_t b) -> bool {
+      const std::string_view a_name(
+          paths_[a].data() + local_name_pos[a],
+          local_name_len[a] ? local_name_len[a] : 0u);
+      const std::string_view b_name(
+          paths_[b].data() + local_name_pos[b],
+          local_name_len[b] ? local_name_len[b] : 0u);
+
+      const size_t n = (std::min)(a_name.size(), b_name.size());
+      const unsigned char* pa = reinterpret_cast<const unsigned char*>(a_name.data());
+      const unsigned char* pb = reinterpret_cast<const unsigned char*>(b_name.data());
       for (size_t i = 0; i < n; ++i) {
         if (pa[i] != pb[i]) return kCharRank[pa[i]] < kCharRank[pb[i]];
       }
-      return a.size() < b.size();
+      return a_name.size() < b_name.size();
     };
-    // Parallel sort: the path pre-order sort is the single largest serial cost on
-    // big scenes (~21% of USDC write on Island). Identical result to std::sort
-    // (the comparator is a strict weak order and all paths are unique).
-    ParallelSortIndices(
-        sorted,
-        [&](uint32_t a, uint32_t b) { return preorder_less(paths_[a], paths_[b]); },
-        ResolveThreads());
 
-    size_t num_paths = sorted.size();
+    std::vector<uint32_t> children(path_count);
+    path_phase_t0 = Clock::now();
+    {
+      std::vector<uint32_t> child_write = child_offsets;
+      for (uint32_t i = 0; i < static_cast<uint32_t>(path_count); ++i) {
+        const uint32_t key = (parent[i] == kNoNode) ? static_cast<uint32_t>(path_count) : parent[i];
+        children[child_write[key]++] = i;
+      }
+
+      for (uint32_t p = 0; p <= static_cast<uint32_t>(path_count); ++p) {
+        const uint32_t b = child_offsets[p];
+        const uint32_t e = child_offsets[p + 1];
+        if (e - b <= 1) continue;
+        std::sort(children.data() + b, children.data() + e,
+                  local_name_less);
+      }
+    }
+    timing_.paths_sort_ms = MsSince(path_phase_t0);
+
+    // Next-sibling links keyed by node id (used only for pre-order jump encoding).
+    std::vector<uint32_t> next_sibling(path_count, kNoNode);
+    {
+      path_phase_t0 = Clock::now();
+      for (uint32_t p = 0; p <= static_cast<uint32_t>(path_count); ++p) {
+        const uint32_t b = child_offsets[p];
+        const uint32_t e = child_offsets[p + 1];
+        for (uint32_t i = b; i + 1 < e; ++i) {
+          next_sibling[children[i]] = children[i + 1];
+        }
+      }
+      timing_.paths_sibling_ms = MsSince(path_phase_t0);
+    }
+
+    // Emit nodes in pre-order using an explicit stack (root-level bucket is synthetic
+    // parent key path_count, which includes "/" when present as expected).
+    std::vector<uint32_t> sorted;
+    sorted.reserve(path_count);
+    struct Frame {
+      uint32_t node;
+      uint32_t child;
+      uint32_t end;
+    };
+    std::vector<Frame> stack;
+    stack.reserve(64);
+    path_phase_t0 = Clock::now();
+    stack.push_back({static_cast<uint32_t>(path_count), child_offsets[path_count],
+                     child_offsets[path_count + 1]});
+    while (!stack.empty()) {
+      Frame& frame = stack.back();
+      if (frame.child >= frame.end) {
+        stack.pop_back();
+        continue;
+      }
+      const uint32_t n = children[frame.child++];
+      sorted.push_back(n);
+      const uint32_t c_b = child_offsets[n];
+      const uint32_t c_e = child_offsets[n + 1];
+      if (c_b < c_e) {
+        stack.push_back({n, c_b, c_e});
+      }
+    }
+    timing_.paths_emit_ms = MsSince(path_phase_t0);
+
+    const size_t num_paths = sorted.size();
     uint64_t num_encoded = static_cast<uint64_t>(num_paths);
     // Write total paths count AND encoded tree nodes count
     uint64_t total_paths = static_cast<uint64_t>(paths_.size());
@@ -232,93 +354,62 @@
     }
 
     // Build 3 arrays: path indices, element token indices, jump indices.
-    //
-    // node index == sorted index. A lexicographic sort of the path strings is
-    // exactly the compressed-tree pre-order: every structural separator ('/'
-    // for child prims, '.' for properties) is a lower byte (0x2F / 0x2E) than
-    // any path-element start character, so a node's descendants are always
-    // contiguous immediately after it and before any sibling. We exploit that
-    // to build the tree in O(n) instead of the previous O(n^2) recursive scan
-    // (the old get_next_subtree did a linear sweep per node — quadratic on
-    // high-prim-count / property-heavy scenes).
     std::vector<uint32_t> path_indices(num_paths);     // path index for each node
     std::vector<int32_t> element_tokens(num_paths);    // token index (negated for property)
     std::vector<int32_t> jump_indices(num_paths, -2);  // -2 = leaf (no child, no sibling)
-    for (auto& idx : path_indices) idx = 0xFFFFFFFF;
 
-    // A path is a property if it has a '.' after its last '/'. Property paths
-    // are encoded as "<primpath>.<propname>" and are always tree leaves.
-    auto is_property = [](const std::string& p) -> bool {
-      size_t slash = p.rfind('/');
-      size_t dot = p.rfind('.');
-      return dot != std::string::npos &&
-             (slash == std::string::npos || dot > slash);
-    };
-    // Last path element name ("" for root): part after '.' for a property,
-    // part after the last '/' for a prim.
-    auto element_name = [&](const std::string& p) -> std::string {
-      if (p.empty() || p == "/") return std::string();
-      if (is_property(p)) return p.substr(p.rfind('.') + 1);
-      size_t pos = p.rfind('/');
-      return (pos == std::string::npos) ? p : p.substr(pos + 1);
-    };
-    // Is `a` a proper ancestor of `b` (prefix terminated by a separator)?
-    auto is_ancestor = [](const std::string& a, const std::string& b) -> bool {
-      if (a.empty()) return false;
-      if (a == "/") return b.size() > 1 && b[0] == '/';
-      if (b.size() <= a.size()) return false;
-      if (b.compare(0, a.size(), a) != 0) return false;
-      char c = b[a.size()];
-      return c == '/' || c == '.';
-    };
-
-    // Direct parent of each node via a monotonic ancestor stack. Each node is
-    // pushed and popped at most once => O(n) amortized. The deepest ancestor
-    // remaining on the stack after popping non-ancestors is the direct parent.
-    constexpr uint32_t kNoNode = 0xFFFFFFFF;
-    std::vector<uint32_t> parent(num_paths, kNoNode);
-    {
-      std::vector<uint32_t> stack;
-      stack.reserve(64);
-      for (uint32_t i = 0; i < num_paths; ++i) {
-        const std::string& cur = paths_[sorted[i]];
-        while (!stack.empty() &&
-               !is_ancestor(paths_[sorted[stack.back()]], cur)) {
-          stack.pop_back();
-        }
-        parent[i] = stack.empty() ? kNoNode : stack.back();
-        stack.push_back(i);
-      }
+    FlatStringViewU32Map token_view_to_index;
+    token_view_to_index.reserve(tokens_.size() * 2 + 1);
+    for (uint32_t i = 0; i < tokens_.size(); ++i) {
+      token_view_to_index.set(tokens_[i], i);
     }
 
-    // Next-sibling links: chain each parent's children in sorted order.
-    std::vector<uint32_t> next_sibling(num_paths, kNoNode);
-    {
-      std::unordered_map<uint32_t, uint32_t> last_child;
-      last_child.reserve(num_paths * 2);
-      for (uint32_t i = 0; i < num_paths; ++i) {
-        uint32_t par = parent[i];
-        auto it = last_child.find(par);
-        if (it != last_child.end()) next_sibling[it->second] = i;
-        last_child[par] = i;
+    // Last path element name ("" for root) and property marker in one scan.
+    auto element_info = [](const std::string& p, bool* is_prop) -> std::string_view {
+      *is_prop = false;
+      if (p.empty() || p == "/") return std::string_view();
+      const size_t slash = p.rfind('/');
+      const size_t dot = p.rfind('.');
+      if (dot != std::string::npos &&
+          (slash == std::string::npos || dot > slash)) {
+        *is_prop = true;
+        return std::string_view(p.data() + dot + 1, p.size() - dot - 1);
       }
-    }
-
+      const size_t pos = (slash == std::string::npos) ? 0 : slash + 1;
+      return std::string_view(p.data() + pos, p.size() - pos);
+    };
+    auto token_for_path_element = [&](std::string_view name) -> uint32_t {
+      auto it = token_view_to_index.find(name);
+      if (it != token_view_to_index.end()) return *it;
+      return InternToken(name);
+    };
     // Emit each node. has_child == "the next node in pre-order is our child".
+    std::vector<uint32_t> sorted_pos(path_count, 0xFFFFFFFFu);
     for (uint32_t i = 0; i < num_paths; ++i) {
-      path_indices[i] = sorted[i];
-      const std::string& p = paths_[sorted[i]];
+      sorted_pos[sorted[i]] = i;
+    }
+
+    path_phase_t0 = Clock::now();
+    for (uint32_t i = 0; i < num_paths; ++i) {
+      const uint32_t node = sorted[i];
+      path_indices[i] = node;
+      const std::string& p = paths_[node];
       const bool is_root = (p == "/");
+      bool is_prop = false;
+      std::string_view elem = is_root ? std::string_view()
+                                      : element_info(p, &is_prop);
       int32_t tok = static_cast<int32_t>(
-          InternToken(is_root ? std::string() : element_name(p)));
+          token_for_path_element(elem));
       // Property element tokens are negated (pxr's is_property marker).
-      if (!is_root && is_property(p)) tok = -tok;
+      if (is_prop) tok = -tok;
       element_tokens[i] = tok;
 
-      const bool has_child = (i + 1 < num_paths) && (parent[i + 1] == i);
-      const bool has_sibling = (next_sibling[i] != kNoNode);
+      const bool has_child = (i + 1 < num_paths) && (parent[sorted[i + 1]] == node);
+      const uint32_t nxt = next_sibling[node];
+      const bool has_sibling = (nxt != kNoNode);
       if (has_sibling && has_child) {
-        jump_indices[i] = static_cast<int32_t>(next_sibling[i] - i);
+        jump_indices[i] =
+            static_cast<int32_t>(static_cast<int32_t>(sorted_pos[nxt]) - static_cast<int32_t>(i));
       } else if (has_sibling) {
         jump_indices[i] = 0;
       } else if (has_child) {
@@ -327,10 +418,15 @@
         jump_indices[i] = -2;
       }
     }
+    timing_.paths_emit_ms = MsSince(path_phase_t0);
 
     // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4)
-    auto write_comp_u32 = [&](const uint32_t* vals, size_t count) {
-      std::vector<uint8_t> delta = EncodeDeltaU32(vals, count);
+    path_phase_t0 = Clock::now();
+    auto write_comp_u32 = [&](const uint32_t* vals, size_t count,
+                              bool force_common_one = false) {
+      std::vector<uint8_t> delta = force_common_one
+          ? EncodeDeltaU32WithCommon(vals, count, 1)
+          : EncodeDeltaU32(vals, count);
       CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
       if (cr.success) {
         writer_.write_u64(cr.data.size());
@@ -341,12 +437,15 @@
       }
     };
 
-    auto write_comp_i32 = [&](const int32_t* vals, size_t count) {
+    auto write_comp_i32 = [&](const int32_t* vals, size_t count,
+                              bool force_common_zero = false) {
       std::vector<uint32_t> tmp(count);
       for (size_t i = 0; i < count; i++) {
         tmp[i] = static_cast<uint32_t>(static_cast<int32_t>(vals[i]));
       }
-      std::vector<uint8_t> delta = EncodeDeltaU32(tmp.data(), count);
+      std::vector<uint8_t> delta = force_common_zero
+          ? EncodeDeltaU32WithCommon(tmp.data(), count, 0)
+          : EncodeDeltaU32(tmp.data(), count);
       CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
       if (cr.success) {
         writer_.write_u64(cr.data.size());
@@ -357,9 +456,10 @@
       }
     };
 
-    write_comp_u32(path_indices.data(), num_paths);
-    write_comp_i32(element_tokens.data(), num_paths);
-    write_comp_i32(jump_indices.data(), num_paths);
+    write_comp_u32(path_indices.data(), num_paths, true);
+    write_comp_i32(element_tokens.data(), num_paths, true);
+    write_comp_i32(jump_indices.data(), num_paths, true);
+    timing_.paths_compress_ms = MsSince(path_phase_t0);
   }
 
   void WriteSpecsSection() {
@@ -371,10 +471,11 @@
     // is the sum of all prior fieldsets' sizes (including sentinels).
     std::vector<uint32_t> fieldset_number_to_offset;
     {
+      fieldset_number_to_offset.reserve(FieldsetCount());
       uint32_t current_offset = 0;
-      for (const auto& fs : fieldsets_) {
+      for (uint32_t fs_idx = 0; fs_idx < FieldsetCount(); ++fs_idx) {
         fieldset_number_to_offset.push_back(current_offset);
-        current_offset += static_cast<uint32_t>(fs.size() + 1); // +1 for sentinel
+        current_offset += FieldsetSize(fs_idx) + 1; // +1 for sentinel
       }
     }
 
@@ -392,8 +493,11 @@
       spec_types[i] = static_cast<uint32_t>(specs_[i].spec_type);
     }
 
-    auto write_comp = [&](const uint32_t* vals, size_t count) {
-      std::vector<uint8_t> delta = EncodeDeltaU32(vals, count);
+    auto write_comp = [&](const uint32_t* vals, size_t count,
+                          bool force_common_zero = false) {
+      std::vector<uint8_t> delta = force_common_zero
+          ? EncodeDeltaU32WithCommon(vals, count, 0)
+          : EncodeDeltaU32(vals, count);
       CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
       if (cr.success) {
         writer_.write_u64(cr.data.size());
@@ -406,7 +510,7 @@
 
     write_comp(path_indices.data(), num_specs);
     write_comp(fieldset_indices.data(), num_specs);
-    write_comp(spec_types.data(), num_specs);
+    write_comp(spec_types.data(), num_specs, true);
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {
@@ -450,6 +554,7 @@
 
       uint64_t payload = vrep.payload();
       if (payload != 0 && payload < value_offsets_.size()) {
+        uint64_t raw_before = vrep_raw;
         uint64_t abs_offset = value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
         vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
                                    vrep.is_array(), false,
@@ -563,7 +668,7 @@
       }
     };
 #if defined(TINYUSDZ_ENABLE_THREAD)
-    int P = (std::min)(ResolveThreads(), 16);
+    int P = (std::min)(ResolveThreads(), 32);
     if (P > 1 && n >= 4096 && total >= (8u << 20)) {
       // Byte-balanced index boundaries (offsets are ascending).
       std::vector<size_t> ib(P + 1);

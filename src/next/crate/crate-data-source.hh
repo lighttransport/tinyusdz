@@ -32,6 +32,12 @@ class CrateDataSource {
       std::string&& bytes, CrateVersion version, std::vector<std::string>&& tokens,
       std::vector<uint32_t>&& string_indices);
 
+  /// Adopt a borrowed crate buffer (no copy). The caller must keep `bytes`
+  /// alive until all lazy arrays/materialized values derived from this source are
+  /// destroyed (typically stage lifetime).
+  static std::shared_ptr<CrateDataSource> AdoptBorrowed(
+      const uint8_t* bytes, size_t size, CrateVersion version);
+
   /// Adopt just the byte buffer (tables empty). Useful for callers that only
   /// need verbatim block access (e.g. write-time pass-through).
   static std::shared_ptr<CrateDataSource> Adopt(std::string&& bytes,
@@ -52,10 +58,14 @@ class CrateDataSource {
   bool is_mmapped() const { return mmap_base_ != nullptr; }
 
   const uint8_t* base() const {
-    return mmap_base_ ? mmap_base_
-                      : reinterpret_cast<const uint8_t*>(bytes_.data());
+    if (mmap_base_) return mmap_base_;
+    if (borrowed_base_) return borrowed_base_;
+    return reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  size_t size() const {
+    if (mmap_base_) return mmap_size_;
+    return borrowed_base_ ? borrowed_size_ : bytes_.size();
+  }
   CrateVersion version() const { return version_; }
 
   /// Set the crate version once it has been parsed from the bootstrap header.
@@ -82,13 +92,17 @@ class CrateDataSource {
   CrateDataSource(const CrateDataSource&) = delete;
   CrateDataSource& operator=(const CrateDataSource&) = delete;
 
-  // Backing is exactly one of: an owned byte string (mmap_base_ == nullptr) or
-  // a read-only memory mapping (mmap_base_ != nullptr). base()/size() abstract
-  // over both so every reader stays backing-agnostic.
+  // Backing is one of:
+  //   - owned byte string (bytes_)
+  //   - mmap-backed read-only mapping (mmap_base_)
+  //   - borrowed, non-owning buffer (borrowed_base_)
+  // base()/size() abstract over all three so every reader stays backing-agnostic.
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
   void* mmap_addr_ = nullptr;           // region to munmap in the destructor
+  const uint8_t* borrowed_base_ = nullptr;  // borrowed mode: non-owning base
+  size_t borrowed_size_ = 0;  // borrowed mode: borrowed buffer length
 
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;

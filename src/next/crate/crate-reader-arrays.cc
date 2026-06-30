@@ -124,13 +124,17 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
-    std::vector<uint8_t> blob;
-    if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;  // overflow-safe
-    std::vector<uint8_t> with_prefix(8 + blob.size());
-    std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    const size_t comp_bytes = static_cast<size_t>(comp_size);
+    if (comp_bytes != comp_size) {
+      AddWarning("Compressed integer array size exceeds addressable memory");
+      return false;
+    }
+    array_scratch_.compressed_data.resize(8 + comp_bytes);
+    std::memcpy(array_scratch_.compressed_data.data(), &comp_size, 8);
+    if (!reader_->read(array_scratch_.compressed_data.data() + 8, comp_bytes)) return false;
     DecompressResult dr = DecompressCompressedU32(
-        with_prefix.data(), with_prefix.size(), dst, n);
+        array_scratch_.compressed_data.data(),
+        array_scratch_.compressed_data.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress integer array: " + dr.error);
       return false;
@@ -144,13 +148,17 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
-    std::vector<uint8_t> blob;
-    if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;
-    std::vector<uint8_t> with_prefix(8 + blob.size());
-    std::memcpy(with_prefix.data(), &comp_size, 8);
-    if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
+    const size_t comp_bytes = static_cast<size_t>(comp_size);
+    if (comp_bytes != comp_size) {
+      AddWarning("Compressed integer array size exceeds addressable memory");
+      return false;
+    }
+    array_scratch_.compressed_data.resize(8 + comp_bytes);
+    std::memcpy(array_scratch_.compressed_data.data(), &comp_size, 8);
+    if (!reader_->read(array_scratch_.compressed_data.data() + 8, comp_bytes)) return false;
     DecompressResult dr = DecompressCompressedU64(
-        with_prefix.data(), with_prefix.size(), dst, n);
+        array_scratch_.compressed_data.data(),
+        array_scratch_.compressed_data.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress 64-bit integer array: " + dr.error);
       return false;
@@ -176,7 +184,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     int8_t code = 0;
     if (!reader_->read_i8(code)) return false;
     if (code == 'i') {
-      std::vector<uint32_t> ints(n);
+      auto& ints = array_scratch_.u32_indices;
+      ints.resize(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
@@ -191,15 +200,25 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       // count against the remaining file before allocating to avoid a
       // malformed-count huge allocation ahead of the read below.
       if (!reader_->has_elements(size_t(lut_size), sizeof(T))) return false;
-      std::vector<T> lut(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
-      if (!reader_->read(lut.data(), lut_bytes)) return false;
-      std::vector<uint32_t> idxs(n);
+      if constexpr (std::is_same_v<T, float>) {
+        array_scratch_.float_values.resize(lut_size);
+        if (!reader_->read(array_scratch_.float_values.data(), lut_bytes)) return false;
+      } else {
+        array_scratch_.double_values.resize(lut_size);
+        if (!reader_->read(array_scratch_.double_values.data(), lut_bytes)) return false;
+      }
+      auto& idxs = array_scratch_.u32_indices;
+      idxs.resize(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
-        dst[i] = lut[idxs[i]];
+        if constexpr (std::is_same_v<T, float>) {
+          dst[i] = array_scratch_.float_values[idxs[i]];
+        } else {
+          dst[i] = array_scratch_.double_values[idxs[i]];
+        }
       }
       return true;
     }
@@ -217,7 +236,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     int8_t code = 0;
     if (!reader_->read_i8(code)) return false;
     if (code == 'i') {
-      std::vector<uint32_t> ints(n);
+      auto& ints = array_scratch_.u32_indices;
+      ints.resize(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         dst[i] = FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i])));
@@ -229,11 +249,13 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       if (!reader_->read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
       if (!reader_->has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
-      std::vector<uint16_t> lut(lut_size);
+      auto& lut = array_scratch_.half_values;
+      lut.resize(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
       if (!reader_->read(lut.data(), lut_bytes)) return false;
-      std::vector<uint32_t> idxs(n);
+      auto& idxs = array_scratch_.u32_indices;
+      idxs.resize(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
@@ -335,24 +357,27 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Bool: {
       if (compressed) { AddWarning("Compressed bool arrays not supported"); return false; }
-      std::vector<uint8_t> bytes(static_cast<size_t>(count));
+      auto& bytes = array_scratch_.u8_values;
+      bytes.resize(static_cast<size_t>(count));
       if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
-      std::vector<bool> out_bool(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
-      out = Value::MakeBoolArray(out_bool);
+      out = Value::MakeBoolArrayFromBytes(std::move(bytes));
       return true;
     }
     case CrateTypeId::Token: {
-      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      const size_t count_value = static_cast<size_t>(count);
+      auto& idxs = array_scratch_.u32_indices;
+      idxs.resize(count_value);
       if (compressed && count >= kMinCompressedArraySize) {
         if (!read_compressed_u32(idxs.data())) return false;
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
       }
-      std::vector<std::string> data(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) {
+      std::vector<std::string> data;
+      data.reserve(count_value);
+      for (size_t i = 0; i < count_value; i++) {
         if (idxs[i] >= tokens_.size()) return false;
-        data[i] = tokens_.str(idxs[i]);
+        const auto tok = tokens_.view(idxs[i]);
+        data.emplace_back(tok);
       }
       out = Value::MakeTokenArray(std::move(data));
       return true;
@@ -405,7 +430,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
-      std::vector<uint16_t> halfs(scalars);
+      auto& halfs = array_scratch_.half_values;
+      halfs.resize(scalars);
       if (compressed && count >= kMinCompressedArraySize) {
         if (!read_compressed_half_n(halfs.data(), scalars)) return false;
       } else if (!read_raw(halfs.data(), comps * 2)) {

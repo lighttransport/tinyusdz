@@ -7,7 +7,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <string>
 #include <vector>
 
 namespace tinyusdz {
@@ -151,6 +150,7 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
 bool CrateReader::Impl::DecodeTimeSamples(
     ValueRep rep, std::vector<std::pair<double, Value>>* out) {
   out->clear();
+
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
 
   // pxr crate TimeSamples are DOUBLY recursive (crateFile.cpp RecursiveRead):
@@ -171,56 +171,96 @@ bool CrateReader::Impl::DecodeTimeSamples(
   const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
 
   Value times_val;
-  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) {
+    return false;
+  }
   const std::vector<double>* times = times_val.as_double_array();
-  if (!times) return false;
+  if (!times) {
+    return false;
+  }
 
-  // Values block: follow the second recursive offset.
+  // Values block: follow the second recursive offset. Read each ValueRep and decode
+  // only the number of pairs that are actually needed; if the file carries
+  // extra sample entries (or fewer times), still consume all sample records.
   if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
-  if (!reader_->read(&off_v, 8)) return false;
+  if (!reader_->read(&off_v, 8)) {
+    AddWarning("TimeSamples: failed reading value block offset");
+    return false;
+  }
   const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
   if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read_u64(n)) return false;
+  if (!reader_->read_u64(n)) {
+    AddWarning("TimeSamples: failed reading sample count");
+    return false;
+  }
   if (n > options_.max_array_elements || n > 100000000ull) return false;
 
-  // Read all sample ValueReps before decoding (decoding seeks elsewhere).
-  std::vector<ValueRep> sample_reps(static_cast<size_t>(n));
-  for (uint64_t i = 0; i < n; ++i) {
-    uint64_t raw = 0;
-    if (!reader_->read_u64(raw)) return false;
-    sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
+  const size_t sample_count = static_cast<size_t>(n);
+  const size_t pair_count = std::min<size_t>(times->size(), sample_count);
+  if (sample_count != pair_count) {
+    AddWarning("TimeSamples sample count mismatch");
+  }
+  out->reserve(pair_count);
+
+  const size_t values_list_end = static_cast<size_t>(vals_pos) + 8 + sample_count * 8;
+  if (values_list_end < static_cast<size_t>(vals_pos)) {
+    AddWarning("TimeSamples: sample list offset overflow");
+    return false;
+  }
+  if (values_list_end > reader_->size()) {
+    return false;
   }
 
-  const size_t count = std::min<size_t>(times->size(), sample_reps.size());
-  out->reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    Value v;  // a ValueBlock sample (no authored value at this time) stays empty
-    UnpackValue(sample_reps[i], v);
+  auto& sample_raws = array_scratch_.u64_values;
+  sample_raws.clear();
+  if (sample_raws.capacity() < pair_count) {
+    sample_raws.reserve(pair_count);
+  }
+
+  // Read all sample ValueReps we'll decode first, so unpacking those values cannot
+  // disturb the shared stream cursor.
+  for (size_t i = 0; i < pair_count; ++i) {
+    uint64_t raw = 0;
+    if (!reader_->read_u64(raw)) return false;
+    sample_raws.push_back(raw);
+  }
+
+  if (sample_count > pair_count) {
+    if (!reader_->skip((sample_count - pair_count) * 8)) return false;
+  }
+
+  for (size_t i = 0; i < pair_count; ++i) {
+    Value v;
+    const uint64_t raw = sample_raws[i];
+    if (!UnpackValue(ValueRep(raw), v)) {
+      return false;
+    }
     out->emplace_back((*times)[i], std::move(v));
   }
+  if (!reader_->seek(values_list_end)) return false;
   return true;
 }
 
 bool CrateReader::Impl::UnpackToken(ValueRep rep, Value& out) {
-  std::string s;
-  if (!GetToken(static_cast<uint32_t>(rep.payload()), s)) return false;
-  out = Value::MakeToken(std::move(s));
+  std::string_view s;
+  if (!GetToken(static_cast<uint32_t>(rep.payload()), &s)) return false;
+  out = Value::MakeToken(s);
   return true;
 }
 
 bool CrateReader::Impl::UnpackString(ValueRep rep, Value& out) {
-  std::string s;
-  if (!GetString(static_cast<uint32_t>(rep.payload()), s)) return false;
-  out = Value(std::move(s));
+  std::string_view s;
+  if (!GetString(static_cast<uint32_t>(rep.payload()), &s)) return false;
+  out = Value(s);
   return true;
 }
 
 bool CrateReader::Impl::UnpackAssetPath(ValueRep rep, Value& out) {
-  std::string s;
-  if (!GetToken(static_cast<uint32_t>(rep.payload()), s)) return false;
-  out = Value::MakeAssetPath(std::move(s));
+  std::string_view s;
+  if (!GetToken(static_cast<uint32_t>(rep.payload()), &s)) return false;
+  out = Value::MakeAssetPath(s);
   return true;
 }
 
@@ -421,16 +461,16 @@ bool CrateReader::Impl::UnpackSpecifier(ValueRep rep, Value& out) {
   uint32_t spec = static_cast<uint32_t>(rep.payload());
   const char* names[] = {"def", "over", "class"};
   if (spec < 3) {
-    out = Value::MakeToken(names[spec]);
+    out = Value::MakeToken(std::string_view(names[spec]));
   } else {
-    out = Value::MakeToken("def");
+    out = Value::MakeToken(std::string_view("def"));
   }
   return true;
 }
 
 bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
   uint32_t var = static_cast<uint32_t>(rep.payload());
-  out = Value::MakeToken(var == 0 ? "varying" : "uniform");
+  out = Value::MakeToken(std::string_view(var == 0 ? "varying" : "uniform"));
   return true;
 }
 

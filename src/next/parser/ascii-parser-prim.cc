@@ -199,9 +199,18 @@ bool AsciiParser::Impl::ParseAttribute() {
     return false;
   }
 
-  if (PrimSpec* p = builder_->current()) {
-    p->set_property_type_name(attr_name,
-                              is_array ? type_name + "[]" : type_name);
+  PrimSpec* cur = builder_->current();
+  const PropNameId attr_name_id = GetPropNameTable().intern(attr_name);
+  if (cur && attr_name_id.is_valid()) {
+    if (is_array) {
+      TypeNameId type_id = GetTypeNameTable().intern_array(type_name);
+      if (type_id.is_valid()) {
+        const std::string& tn = GetTypeNameTable().get(type_id);
+        cur->set_property_type_name(attr_name_id, tn);
+      }
+    } else {
+      cur->set_property_type_name(attr_name_id, type_name);
+    }
   }
 
   ParsePropertyMetadata(attr_name);
@@ -267,10 +276,8 @@ bool AsciiParser::Impl::ParseAttribute() {
       }
       flags |= PropSlot::kFlagConnection;
       if (is_array) flags |= PropSlot::kFlagArray;
-      PrimSpec* cur = builder_->current();
-      const PropNameId nid = GetPropNameTable().intern(attr_name);
-      if (cur && !cur->property(nid)) {
-        cur->add_property_slot(nid, type_id, flags);
+      if (cur && attr_name_id.is_valid() && !cur->property(attr_name_id)) {
+        cur->add_property_slot(attr_name_id, type_id, flags);
       }
       if (Check(TokenType::None)) {
         lexer_->next();
@@ -279,7 +286,11 @@ bool AsciiParser::Impl::ParseAttribute() {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
           if (lexer_->expect(TokenType::PathRef, p) && cur) {
-            cur->add_connection(attr_name, Path(p));
+            if (attr_name_id.is_valid()) {
+              cur->add_connection(attr_name_id, Path(p));
+            } else {
+              cur->add_connection(attr_name, Path(p));
+            }
           }
           Match(TokenType::Comma);
         }
@@ -290,7 +301,12 @@ bool AsciiParser::Impl::ParseAttribute() {
           AddError("Expected path for connection");
           return false;
         }
-        if (cur) cur->add_connection(attr_name, Path(path));
+        if (cur) {
+          if (attr_name_id.is_valid())
+            cur->add_connection(attr_name_id, Path(path));
+          else
+            cur->add_connection(attr_name, Path(path));
+        }
       }
       ParsePropertyMetadata(attr_name);
     } else {

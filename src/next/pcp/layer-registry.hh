@@ -29,8 +29,26 @@ struct LayerLoadOptions {
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
 
+  /// Whether USDC layers should run stage finalization after crate reconstruction.
+  /// Keep false for parse/benchmark workloads that only need low-level validity.
+  bool finalize_usdc_stage = true;
+
+  /// Emit USDC crate-reader timing diagnostics for layers loaded through the
+  /// registry. This is opt-in and intended for benchmark CLIs.
+  bool enable_usdc_timing = false;
+
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
+
+  /// USDC crate-reader limits (for nested crate input and self-contained `.usdc`
+  /// stages). Shared with `--parse-usdc-*` benching where very large scenes
+  /// can exceed default hard caps.
+  size_t max_tokens = 1024 * 1024;
+  size_t max_strings = 1024 * 1024;
+  size_t max_fields = 10 * 1024 * 1024;
+  size_t max_specs = 10 * 1024 * 1024;
+  size_t max_paths = 10 * 1024 * 1024;
+  size_t max_array_elements = 1024 * 1024 * 1024;
 };
 
 class LayerRegistry {

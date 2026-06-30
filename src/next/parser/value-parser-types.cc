@@ -5,8 +5,8 @@
 
 #include "value-parser.hh"
 
-#include <string>
 #include <unordered_map>
+#include <string_view>
 
 namespace tinyusdz {
 namespace next {
@@ -104,10 +104,27 @@ const TypeNameEntry kTypeNames[] = {
   {"rel", TypeId::Relationship},
 };
 
-const std::unordered_map<std::string, TypeId>& GetTypeNameMap() {
-  static std::unordered_map<std::string, TypeId> map;
+struct TypeNameViewHash {
+  using is_transparent = void;
+  size_t operator()(std::string_view s) const noexcept {
+    return std::hash<std::string_view>{}(s);
+  }
+};
+
+struct TypeNameViewEq {
+  using is_transparent = void;
+  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+};
+
+const std::unordered_map<std::string_view, TypeId, TypeNameViewHash,
+                         TypeNameViewEq>& GetTypeNameMap() {
+  static std::unordered_map<std::string_view, TypeId, TypeNameViewHash,
+                            TypeNameViewEq> map;
   static bool initialized = false;
   if (!initialized) {
+    map.reserve(sizeof(kTypeNames) / sizeof(kTypeNames[0]));
     for (const auto& entry : kTypeNames) {
       map[entry.name] = entry.id;
     }
@@ -121,17 +138,20 @@ const std::unordered_map<std::string, TypeId>& GetTypeNameMap() {
 }  // namespace
 
 TypeId ParseTypeName(const std::string& type_name, bool& is_array) {
-  std::string base_name = type_name;
   is_array = false;
+  std::string_view name_view(type_name);
 
   // Check for array suffix
-  if (type_name.size() > 2 && type_name.substr(type_name.size() - 2) == "[]") {
-    base_name = type_name.substr(0, type_name.size() - 2);
+  if (type_name.size() > 2 &&
+      type_name[type_name.size() - 1] == ']' &&
+      type_name[type_name.size() - 2] == '[') {
+    name_view = std::string_view(type_name.data(),
+                                 type_name.size() - 2);
     is_array = true;
   }
 
   const auto& map = GetTypeNameMap();
-  auto it = map.find(base_name);
+  auto it = map.find(name_view);
   if (it != map.end()) {
     return it->second;
   }
