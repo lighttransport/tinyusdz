@@ -36,6 +36,19 @@ Common flags:
 * **Two-level (instanced) BVH** — native instances are placed by a LightRT TLAS
   with each prototype's geometry built once (BLAS), so a scene with millions of
   *visible* triangles only stores the *unique* prototype geometry.
+* **Per-instance view-dependent LOD (`-rtLod`)** — at TLAS build time each mesh
+  placement is classified from the resolved camera: distant prototypes collapse to
+  a shared unit-box BLAS (box-fit onto the prototype AABB), sub-pixel placements are
+  dropped, near ones keep the real BLAS. Parity with the interactive viewer's
+  `--rt-lod` (`tusdr_rt_lod.{hh,cc}`). Tunables: `-rtLodFullPx` (promote-to-full
+  radius, def 64), `-rtLodCullPx` (drop radius, def 2), `-rtLodNoProxy` (Full-or-Cull
+  only). Off by default. **Offline caveat:** a path tracer needs off-screen geometry
+  for shadows/reflections/GI, so frustum culling is a separate opt-in
+  (`-rtLodFrustumCull`, faster but changes lighting); proxy/sub-pixel are softer
+  approximations. Applies to the CPU two-level TLAS path (`-rtPreview`). The
+  `-vk`/`-vkr` GPU backends flatten the scene to a single world-space BLAS (no
+  instance list), so per-instance LOD there needs a two-level GPU build first — a
+  documented follow-on (see `doc/tusdrender.md`).
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
   emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/

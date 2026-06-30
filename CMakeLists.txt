@@ -2583,6 +2583,22 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-class-override-hook COMMAND feat-class-override-hook
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # tusdrender per-instance RT LOD selection (Full/Proxy/Cull + box-fit). Pure
+    # math over tusdr's Vec3/CameraFrame/Bounds; no tinyusdz runtime needed beyond
+    # the inline headers, so it links the static lib only for those header symbols.
+    add_executable(feat-tusdr-rt-lod
+                   tools/tusdrender/tests/test_rt_lod.cc
+                   tools/tusdrender/tusdr_rt_lod.cc)
+    add_sanitizers(feat-tusdr-rt-lod)
+    target_link_libraries(feat-tusdr-rt-lod PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-tusdr-rt-lod PRIVATE
+                               ${PROJECT_SOURCE_DIR}/src
+                               ${PROJECT_SOURCE_DIR}
+                               ${PROJECT_SOURCE_DIR}/tools/tusdrender
+                               ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+    add_test(NAME feat-tusdr-rt-lod COMMAND feat-tusdr-rt-lod
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).

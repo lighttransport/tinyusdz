@@ -111,6 +111,15 @@ void PrintUsage(const char *prog) {
       << "  -mask <PATH[,PATH...]> Restrict rendering to these prim subtrees.\n"
       << "  -variant <SET=SEL>     Override variant selection (e.g.\n"
       << "                         --variant districtLod=full). Repeatable.\n"
+      << "  -rtLod                 Per-instance view-dependent LOD at TLAS build:\n"
+      << "                         distant prototypes -> shared box proxy, sub-pixel\n"
+      << "                         placements dropped (parity with viewer --rt-lod).\n"
+      << "  -rtLodFullPx <px>      Promote to full mesh at/above this projected\n"
+      << "                         radius (default 64).\n"
+      << "  -rtLodCullPx <px>      Drop placements below this projected radius (def 2).\n"
+      << "  -rtLodNoProxy          Full-or-Cull only (no box proxies).\n"
+      << "  -rtLodFrustumCull      Also drop off-screen instances (FASTER but changes\n"
+      << "                         shadows/reflections/GI; off by default).\n"
       << "  -lodStream             View-dependent district LOD: a proxy pass picks\n"
       << "                         the nearest districts to the camera and promotes\n"
       << "                         them to districtLod=full under a memory budget\n"
@@ -320,6 +329,30 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_vram_gib = g;
+    } else if (a == "-rtLod" || a == "--rtLod") {
+      opt->rt_lod = true;
+    } else if (a == "-rtLodNoProxy" || a == "--rtLodNoProxy") {
+      opt->rt_lod_proxy = false;
+    } else if (a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
+      opt->rt_lod_frustum_cull = true;
+    } else if (a == "-rtLodFullPx" || a == "--rtLodFullPx") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -rtLodFullPx (expected pixels > 0).\n";
+        return false;
+      }
+      opt->rt_lod_full_px = float(g);
+    } else if (a == "-rtLodCullPx" || a == "--rtLodCullPx") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -rtLodCullPx (expected pixels >= 0).\n";
+        return false;
+      }
+      opt->rt_lod_cull_px = float(g);
     } else if (a == "-lodDistrictMem" || a == "--lodDistrictMem") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
