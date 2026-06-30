@@ -250,6 +250,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawTimeline();
   drawAboutModal();
   drawLoadingModal();
+  drawProgressOverlay();
 }
 
 void Gui::drawAboutModal() {
@@ -336,6 +337,42 @@ void Gui::drawLoadingModal() {
     }
     ImGui::EndPopup();
   }
+}
+
+void Gui::drawProgressOverlay() {
+  // Non-modal: the partial scene stays visible/interactive while geometry streams
+  // to the GPU (raster) or the ray-tracing acceleration structure builds.
+  const bool show = upload_.active || !upload_.note.empty();
+  if (!show) return;
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                 vp->WorkPos.y + 12.0f),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.85f);
+  const ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
+  if (ImGui::Begin("##progress_overlay", nullptr, flags)) {
+    auto bar = [](const char* label, size_t done, size_t total) {
+      if (total == 0) return;
+      const float frac = static_cast<float>(done) / static_cast<float>(total);
+      char ov[64];
+      std::snprintf(ov, sizeof(ov), "%s %zu / %zu", label, done, total);
+      ImGui::ProgressBar(frac, ImVec2(260, 0), ov);
+    };
+    if (upload_.active) {
+      ImGui::TextUnformatted("Streaming scene to GPU\xE2\x80\xA6");
+      bar("meshes", upload_.meshesDone, upload_.meshesTotal);
+      if (upload_.meshesDone >= upload_.meshesTotal && upload_.texTotal > 0)
+        bar("textures", upload_.texDone, upload_.texTotal);
+      if (upload_.volTotal > 0) bar("volumes", upload_.volDone, upload_.volTotal);
+    }
+    if (!upload_.note.empty()) {
+      ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.2f, 1.0f), "%s", upload_.note.c_str());
+    }
+  }
+  ImGui::End();
 }
 
 void Gui::buildDefaultLayout(unsigned int dockId) {

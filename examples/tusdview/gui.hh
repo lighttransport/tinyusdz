@@ -43,6 +43,16 @@ class Gui {
     float elapsed{0.0f};
   };
 
+  // GPU-side progress shown as a non-modal viewport overlay: raster geometry/
+  // texture streaming (progressive upload) and the ray-tracing scene build.
+  struct UploadStatus {
+    bool active{false};                 // progressive raster upload in flight
+    size_t meshesDone{0}, meshesTotal{0};
+    size_t texDone{0}, texTotal{0};
+    size_t volDone{0}, volTotal{0};
+    std::string note;                   // e.g. "Building ray-tracing scene…"
+  };
+
   struct TimelineInfo {
     bool hasAnimation{false};
     double start{0.0};
@@ -62,6 +72,7 @@ class Gui {
 
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
+  void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
@@ -216,6 +227,7 @@ class Gui {
   void drawViewport();
   void drawAboutModal();
   void drawLoadingModal();
+  void drawProgressOverlay();  // non-modal GPU upload / RT-build progress
   void drawStageMeta();
   void drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
   void drawSelectionBreadcrumbs(const char* idSuffix);
@@ -430,6 +442,7 @@ class Gui {
   float clearColor_[4]{0.12f, 0.12f, 0.13f, 1.0f};
 
   LoadStatus loadStatus_;
+  UploadStatus upload_;
   LoadControl* budget_{nullptr};
 };
 

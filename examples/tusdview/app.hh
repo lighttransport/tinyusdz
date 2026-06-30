@@ -321,6 +321,8 @@ class App
   // geometry is kept for the tracer), and rendering stays single-threaded.
   bool hipInteractive_{false};
   bool hipInteractiveBuilt_{false};  // HIP scene built lazily on the first frame
+  int hipBuildAnnounceFrames_{0};    // frames rendered with the "building" overlay before the blocking build
+  std::string rtBuildNote_;          // RT build status for the progress overlay
   // Trace the HIP viewport for one interactive frame (builds the scene on first
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();

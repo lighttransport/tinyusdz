@@ -1141,9 +1141,15 @@ bool App::renderHipViewport() {
     return true;
   }
 
-  // Build the HIP scene once (lazily, on the first frame after load). This blocks
-  // for the build (~tens of seconds on the largest scenes); the window appears
-  // first, then frames flow once it completes.
+  // Build the HIP scene once (lazily, on the first frame after load). The build
+  // blocks the main thread (~tens of seconds on the largest scenes). Present one
+  // frame first (the loop already set the "building" overlay note before ImGui was
+  // built), THEN build on the next frame -- so the note is on screen (frozen)
+  // during the blocking build instead of appearing only after it.
+  if (!hipInteractiveBuilt_ && hipBuildAnnounceFrames_ < 2) {
+    ++hipBuildAnnounceFrames_;  // present a couple of frames (modal closes, note shows) first
+    return true;
+  }
   if (!hipInteractiveBuilt_) {
     std::string cerr;
     if (!hipTracer_.init(&cerr)) {
@@ -1424,6 +1430,25 @@ int App::run(const std::string& initialFile, int maxFrames,
                                    .count()
                              : 0.0f;
     gui_.setLoadStatus(ls);
+
+    // GPU-side progress overlay: raster geometry/texture streaming + RT build.
+    // Set the RT-build note BEFORE gui_.frame() builds the overlay, so the
+    // announce frame (rendered just before the blocking build) carries it.
+    rtBuildNote_.clear();
+    if (hipInteractive_ && !hipInteractiveBuilt_ && !loadActive_ &&
+        !draw_.meshes.empty() && draw_.triangleCount > 0) {
+      rtBuildNote_ = "Building ray-tracing scene\xE2\x80\xA6 (one-time, may take a while)";
+    }
+    Gui::UploadStatus us;
+    us.active = progressiveActive_;
+    us.meshesDone = nextMesh_;
+    us.meshesTotal = draw_.meshes.size();
+    us.texDone = nextTex_;
+    us.texTotal = draw_.textures.size();
+    us.volDone = nextVolume_;
+    us.volTotal = draw_.volumes.size();
+    us.note = rtBuildNote_;
+    gui_.setUploadStatus(us);
 
     // In threaded GL, newFrame() is a GL op that runs on the render thread (just
     // before it draws the packet); the main thread only builds ImGui + the packet.
