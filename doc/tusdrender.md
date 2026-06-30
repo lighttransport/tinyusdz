@@ -191,7 +191,11 @@ must fit the device's one-BLAS limit). Validated **pixel-identical** to the flat
 `-vkr` path (luminance MAD 0.000/255, silhouette IoU 1.000) on a 200×(800-tri)
 PointInstancer (BLAS stores 800 tris vs 160 000 flattened — 200× smaller), a
 4-instance orient/non-uniform-scale PointInstancer, and a 3-tree `instanceable`
-scene. Displacement is not applied on this path yet (a documented gap).
+scene. `UsdPreviewSurface inputs:displacement` IS applied (per prototype, in object
+space — `ExtractProtoGeo` resolves the bound material's constant + scalar texture
+and offsets along the area-weighted smooth normal, like the flat extractor);
+verified pixel-identical to the flat path with displacement on, and the displaced
+silhouette grows as expected.
 
 #### `-vkInstanced` + `-rtLod`: per-instance LOD on the two-level TLAS
 
@@ -213,4 +217,4 @@ Proxy+Cull mix; the 3D-cube proxy matches the Full silhouette exactly. If every
 instance culls, it falls back to the flat path.
 
 Remaining follow-on: chunk a single >8M-triangle prototype across BLAS while
-preserving the instance encoding; and apply displacement on the `-vkInstanced` path.
+preserving the instance encoding.

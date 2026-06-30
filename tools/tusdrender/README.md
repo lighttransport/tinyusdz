@@ -67,7 +67,8 @@ Common flags:
 * **Displacement** — `UsdPreviewSurface inputs:displacement` (constant or a
   height texture, honoring the `UsdUVTexture` `scale`/`bias`) offsets each vertex
   along its normal before the BVH build — coarse (no extra geometry), so it works
-  on the CPU path tracer and the `-vk`/`-vkr` backends. `-displaceScale <f>` tunes
+  on the CPU path tracer and the `-vk`/`-vkr`/`-vkInstanced` backends (the latter
+  displaces once per prototype in object space). `-displaceScale <f>` tunes
   the amount; `-noDisplace` turns it off (byte-identical to before).
 * **Lighting** — UsdLux finite lights (Rect/Sphere/Disk/Cylinder/Distant) are
   collected from the composed stage and shaded with soft area falloff; DomeLight

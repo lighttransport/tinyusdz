@@ -143,8 +143,12 @@ static void NormalMatrixFromO2W(const float o2w[12], float n2w[9]) {
 // Extract one prototype's geometry in PROTOTYPE-LOCAL (object) space from a Mesh
 // prim: positions, fan-triangulated indices, per-triangle flat + vertex normals,
 // and the constant displayColor. Mirrors the flat GPU extractor minus the world
-// transform and displacement (the instance transform is applied by the TLAS).
-static bool ExtractProtoGeo(const tinyusdz::next::UsdPrim &prim,
+// transform (the instance transform is applied by the TLAS). Displacement IS
+// applied here (once per prototype, in object space — the instance transform
+// scales it, like any other prototype-local geometry).
+static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
+                            const Options &opt, TextureCache &tc,
+                            const tinyusdz::next::UsdPrim &prim,
                             GpuInstProto *out) {
   const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
   if (!val) return false;
@@ -197,6 +201,68 @@ static bool ExtractProtoGeo(const tinyusdz::next::UsdPrim &prim,
   out->ntris = uint32_t(out->idx.size() / 3);
   if (out->ntris == 0) return false;
 
+  // Coarse displacement (object space, applied to out->verts BEFORE the flat
+  // normals are recomputed). Mirrors the flat GPU extractor: resolve the bound
+  // material's inputs:displacement (constant + scalar texture sampled with
+  // primvars:st) and offset each vertex along its area-weighted smooth normal.
+  if (opt.displace && opt.displace_scale != 0.0f) {
+    std::vector<float> uvs;
+    if (const tinyusdz::next::Value *uv = prim.GetPropertyValue("primvars:st")) {
+      const std::vector<float> *u = uv->as_float_array();
+      if (u && !u->empty()) uvs = *u;
+    }
+    float disp_const = 0.0f;
+    ScalarTex disp_tex;
+    const std::vector<tinyusdz::next::Path> *bind =
+        prim.GetRelationship("material:binding");
+    if (bind && !bind->empty()) {
+      tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+      if (mat.IsValid()) {
+        tinyusdz::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
+        if (!surf.IsValid())
+          surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+        if (surf.IsValid()) {
+          if (const tinyusdz::next::Value *d =
+                  surf.GetPropertyValue("inputs:displacement"))
+            if (const float *f = d->as_float()) disp_const = *f;
+          ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc, &disp_tex);
+        }
+      }
+    }
+    if (disp_tex.id >= 0 || disp_const != 0.0f) {
+      std::vector<Vec3> sn(nv, Vec3{0, 0, 0});  // area-weighted smooth normals
+      for (size_t t = 0; t + 2 < out->idx.size(); t += 3) {
+        uint32_t a = out->idx[t], b = out->idx[t + 1], c = out->idx[t + 2];
+        Vec3 pa{out->verts[a * 3], out->verts[a * 3 + 1], out->verts[a * 3 + 2]};
+        Vec3 pb{out->verts[b * 3], out->verts[b * 3 + 1], out->verts[b * 3 + 2]};
+        Vec3 pc{out->verts[c * 3], out->verts[c * 3 + 1], out->verts[c * 3 + 2]};
+        Vec3 fn = Cross(Sub(pb, pa), Sub(pc, pa));
+        sn[a] = Add(sn[a], fn); sn[b] = Add(sn[b], fn); sn[c] = Add(sn[c], fn);
+      }
+      const tusdr::Texture *dtex =
+          (disp_tex.id >= 0 && tc.textures &&
+           size_t(disp_tex.id) < tc.textures->size())
+              ? &(*tc.textures)[size_t(disp_tex.id)]
+              : nullptr;
+      const bool per_vertex_uv = uvs.size() >= size_t(nv) * 2;
+      for (uint32_t v = 0; v < nv; ++v) {
+        if (Length(sn[v]) < 1.0e-12f) continue;
+        Vec3 n = Normalize(sn[v]);
+        float hh = disp_const;
+        if (dtex) {
+          float u = per_vertex_uv ? uvs[v * 2] : 0.0f;
+          float vv = per_vertex_uv ? uvs[v * 2 + 1] : 0.0f;
+          hh = dtex->sample_channel(u, vv, 0.0f, disp_tex.ch) * disp_tex.scale +
+               disp_tex.bias;
+        }
+        hh *= opt.displace_scale;
+        out->verts[v * 3 + 0] += n.x * hh;
+        out->verts[v * 3 + 1] += n.y * hh;
+        out->verts[v * 3 + 2] += n.z * hh;
+      }
+    }
+  }
+
   for (uint32_t t = 0; t < out->ntris; ++t) {
     uint32_t i0 = out->idx[t * 3], i1 = out->idx[t * 3 + 1], i2 = out->idx[t * 3 + 2];
     Vec3 p0{out->verts[i0 * 3], out->verts[i0 * 3 + 1], out->verts[i0 * 3 + 2]};
@@ -228,6 +294,13 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   GpuInstancedScene scene;
   std::unordered_map<std::string, uint32_t> proto_id;
   std::vector<Bounds> proto_aabb;
+  // Displacement textures for prototype extraction (loaded relative to the input;
+  // shared/cached across prototypes). Same setup as the flat GPU path.
+  std::vector<tusdr::Texture> disp_textures;
+  TextureCache tc;
+  tc.textures = &disp_textures;
+  tc.base_dir = DirName(opt.input);
+  tc.usdz = nullptr;
   for (const MeshJobNext &job : mesh_jobs) {
     if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
     const std::string key = job.prim.GetPath().str();
@@ -235,7 +308,7 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     uint32_t pid;
     if (it == proto_id.end()) {
       GpuInstProto pr;
-      if (!ExtractProtoGeo(job.prim, &pr)) {
+      if (!ExtractProtoGeo(stage, opt, tc, job.prim, &pr)) {
         proto_id[key] = 0xFFFFFFFFu;  // remember the bad prim, skip its jobs
         continue;
       }
