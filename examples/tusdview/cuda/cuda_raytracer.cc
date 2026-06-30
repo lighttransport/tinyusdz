@@ -21,6 +21,7 @@ struct Cam {
   float clear[4];      // rgb clear, w RenderMode
   float sceneMin[4];   // position AOV bbox
   float sceneExtent[4];
+  float vp[16];        // world->clip (wireframe edge projection)
 };
 
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
@@ -51,7 +52,7 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
@@ -157,6 +158,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.nrms.data(), hs.nrms.size() * sizeof(float), &dNrms_)) return false;
   if (!up(hs.cols.data(), hs.cols.size() * sizeof(float), &dCols_)) return false;
   if (!up(hs.geo.data(), hs.geo.size(), &dGeo_)) return false;
+  if (!up(hs.emask.data(), hs.emask.size(), &dEmask_)) return false;
   if (!up(hs.mat.data(), hs.mat.size() * sizeof(int), &dMat_)) return false;
   if (!up(hs.face.data(), hs.face.size() * sizeof(int), &dFace_)) return false;
   if (!up(hs.uv.data(), hs.uv.size() * sizeof(float), &dUV_)) return false;
@@ -176,7 +178,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   return true;
 }
 
-bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
+bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
+                          const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
@@ -193,6 +196,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
   }
   Cam cam{};
   std::memcpy(cam.invVP, invViewProj, 16 * sizeof(float));
+  std::memcpy(cam.vp, viewProj, 16 * sizeof(float));  // world->clip (wireframe projection)
   for (int i = 0; i < 3; ++i) {
     cam.camPos[i] = camPos[i];
     cam.lightDir[i] = lightDir[i];
@@ -205,15 +209,15 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float camPos[3],
               dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
               dI = dInstances_, dO = dOut_;
-  CUdeviceptr dVD = dVolDens_, dVP = dVolParams_;
+  CUdeviceptr dVD = dVolDens_, dVP = dVolParams_, dEm = dEmask_;
   int numMats = numMats_;
   int numVols = numVols_;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
   // uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
-  // volDens,volParams,numVols.
+  // volDens,volParams,numVols,emask.
   void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dU, &dU1, &dIn,
                   &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
-                  &dVD, &dVP, &numVols};
+                  &dVD, &dVP, &numVols, &dEm};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   const int samples = spp < 1 ? 1 : spp;
   rgba->resize(bytes);

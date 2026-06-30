@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <unordered_set>
 
 #include "displacement_bake.hh"  // SampleTextureRed
 
@@ -83,7 +84,7 @@ void ParallelFor(size_t n, F f) {
 struct MeshBuild {
   bool valid = false;
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
-  std::vector<uint8_t> geo;
+  std::vector<uint8_t> geo, emask;
   std::vector<int> mat, face, domj;
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
   float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
@@ -121,8 +122,22 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     return -1;
   };
 
+  // Original-polygon edge set (for the wireframe edge mask). Keys are the same
+  // vertex-index pairs used by m.indices, so triangle edges can be tested directly.
+  const bool hasWire = !m.wireframeIndices.empty();
+  std::unordered_set<uint64_t> wireSet;
+  auto edgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
+    if (a > b) { uint32_t s = a; a = b; b = s; }
+    return (static_cast<uint64_t>(a) << 32) | b;
+  };
+  if (hasWire) {
+    wireSet.reserve(m.wireframeIndices.size());
+    for (size_t e = 0; e + 1 < m.wireframeIndices.size(); e += 2)
+      wireSet.insert(edgeKey(m.wireframeIndices[e], m.wireframeIndices[e + 1]));
+  }
+
   std::vector<float> lt, ln, lc, luv, luv1, linfl, ldomw;
-  std::vector<uint8_t> lg;
+  std::vector<uint8_t> lg, le;
   std::vector<int> lm, lf, ldomj;
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
     float wp[9], wn[9], wc[9], wuv[6], wuv1[6], winfl[3], wdomw[3];
@@ -201,6 +216,18 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     lg.push_back(g);
     lm.push_back(submeshMatId(static_cast<uint32_t>(t)));
     lf.push_back(hasFace ? static_cast<int>(m.sourceFaceId[t / 3]) : -1);
+    // Wireframe edge mask: bit0 edge(v1,v2), bit1 edge(v2,v0), bit2 edge(v0,v1).
+    // 7 (all edges) when the mesh has no original-polygon data.
+    if (hasWire) {
+      const uint32_t a = m.indices[t], b = m.indices[t + 1], c = m.indices[t + 2];
+      uint8_t em = 0;
+      if (wireSet.count(edgeKey(b, c))) em |= 1u;
+      if (wireSet.count(edgeKey(c, a))) em |= 2u;
+      if (wireSet.count(edgeKey(a, b))) em |= 4u;
+      le.push_back(em);
+    } else {
+      le.push_back(7u);
+    }
   }
   const size_t ltc = lt.size() / 9;
   if (ltc == 0) return mb;
@@ -227,7 +254,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 9);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
-  mb.face.reserve(ltc); mb.domj.reserve(ltc);
+  mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
   for (size_t i = 0; i < ltc; ++i) {
     int s = bidx[i];
     mb.tris.insert(mb.tris.end(), &lt[s * 9], &lt[s * 9] + 9);
@@ -238,6 +265,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.infl.insert(mb.infl.end(), &linfl[s * 3], &linfl[s * 3] + 3);
     mb.domw.insert(mb.domw.end(), &ldomw[s * 3], &ldomw[s * 3] + 3);
     mb.geo.push_back(lg[s]);
+    mb.emask.push_back(le[s]);
     mb.mat.push_back(lm[s]);
     mb.face.push_back(lf[s]);
     mb.domj.push_back(ldomj[s]);
@@ -313,6 +341,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->infl.insert(out->infl.end(), mb.infl.begin(), mb.infl.end());
     out->domw.insert(out->domw.end(), mb.domw.begin(), mb.domw.end());
     out->geo.insert(out->geo.end(), mb.geo.begin(), mb.geo.end());
+    out->emask.insert(out->emask.end(), mb.emask.begin(), mb.emask.end());
     out->mat.insert(out->mat.end(), mb.mat.begin(), mb.mat.end());
     out->face.insert(out->face.end(), mb.face.begin(), mb.face.end());
     out->domj.insert(out->domj.end(), mb.domj.begin(), mb.domj.end());

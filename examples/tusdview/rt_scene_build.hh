@@ -39,6 +39,10 @@ struct HostVolParam {
 struct HostScene {
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
   std::vector<uint8_t> geo;
+  // Per-triangle wireframe edge mask (bit0: edge v1v2, bit1: edge v2v0, bit2: edge
+  // v0v1 is an original polygon edge). Lets the RT wireframe draw quad/ngon edges
+  // and skip triangulation diagonals.
+  std::vector<uint8_t> emask;
   std::vector<int> mat, face, domj;
   std::vector<Node> blas;       // BLAS nodes, rebased to the global arrays
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
