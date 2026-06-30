@@ -140,7 +140,11 @@ void PrintUsage(const char *prog) {
       << "  -streamHttp <port>     Serve a WebSocket browser viewer that streams\n"
       << "                         rendered frames; orbit/pan/dolly from the browser\n"
       << "                         re-render on the resident scene (no output needed).\n"
-      << "  -streamCodec <c>       Stream wire codec: jpeg (default), qoi, or png.\n"
+      << "  -streamCodec <c>       Idle-refine codec when the view is stable: png\n"
+      << "                         (default) or qoi (lossless).\n"
+      << "  -streamMotionRes <px>  Long-edge cap for low-quality frames while moving\n"
+      << "                         (default 1280; rendered small for speed).\n"
+      << "  -streamMotionQuality <n>  Motion JPEG quality 1-100 (default 45).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
@@ -466,10 +470,24 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     } else if (a == "-streamCodec" || a == "--streamCodec") {
       const char *v = need_value(a.c_str());
       if (!v) {
-        std::cerr << "-streamCodec requires jpeg|qoi|png.\n";
+        std::cerr << "-streamCodec requires png|qoi.\n";
         return false;
       }
       opt->stream_codec = v;
+    } else if (a == "-streamMotionRes" || a == "--streamMotionRes") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_motion_res) ||
+          opt->stream_motion_res <= 0) {
+        std::cerr << "-streamMotionRes requires a positive pixel size.\n";
+        return false;
+      }
+    } else if (a == "-streamMotionQuality" || a == "--streamMotionQuality") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_motion_quality) ||
+          opt->stream_motion_quality < 1 || opt->stream_motion_quality > 100) {
+        std::cerr << "-streamMotionQuality requires 1-100.\n";
+        return false;
+      }
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
     } else if (a == "-stats" || a == "--stats") {

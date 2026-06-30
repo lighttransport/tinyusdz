@@ -398,7 +398,9 @@ struct Options {
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
   int stream_http{0};     // -streamHttp <port>: WebSocket browser stream server
-  std::string stream_codec{"jpeg"};  // -streamCodec jpeg|qoi|png (stream wire codec)
+  std::string stream_codec{"jpeg"};  // -streamCodec: idle-refine codec (png|qoi)
+  int stream_motion_res{1280};       // -streamMotionRes: motion-frame long-edge cap
+  int stream_motion_quality{45};     // -streamMotionQuality: motion JPEG quality
   std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time
