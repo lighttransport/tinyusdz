@@ -757,15 +757,8 @@ if(WITH_TURBOJPEG)
       set_target_properties(turbojpeg-static PROPERTIES OUTPUT_NAME turbojpeg)
     endif()
 
-    add_executable(tjunittest-static tjunittest.c tjutil.c md5/md5.c
-      md5/md5hl.c)
-    target_link_libraries(tjunittest-static turbojpeg-static)
-
-    add_executable(tjbench-static tjbench.c tjutil.c)
-    target_link_libraries(tjbench-static turbojpeg-static)
-    if(UNIX)
-      target_link_libraries(tjbench-static m)
-    endif()
+    # tinyusdz: tjunittest-static / tjbench-static (tests + benchmark) removed in
+    # the vendored trim -- only the turbojpeg/jpeg libraries are built.
   endif()
 endif()
 
@@ -775,48 +768,10 @@ endif()
 set(CDJPEG_COMPILE_FLAGS
   "-DBMP_SUPPORTED -DGIF_SUPPORTED -DPPM_SUPPORTED -DTARGA_SUPPORTED ${USE_SETMODE}")
 
-if(ENABLE_STATIC)
-  # Compile a separate version of these source files with 12-bit and 16-bit
-  # data precision.
-  add_library(cjpeg12-static OBJECT rdgif.c rdppm.c)
-  set_property(TARGET cjpeg12-static PROPERTY COMPILE_FLAGS
-    "-DBITS_IN_JSAMPLE=12 -DGIF_SUPPORTED -DPPM_SUPPORTED")
-  add_library(cjpeg16-static OBJECT rdgif.c rdppm.c)
-  set_property(TARGET cjpeg16-static PROPERTY COMPILE_FLAGS
-    "-DBITS_IN_JSAMPLE=16 -DGIF_SUPPORTED -DPPM_SUPPORTED")
-  add_executable(cjpeg-static cjpeg.c cdjpeg.c rdbmp.c rdgif.c rdppm.c
-    rdswitch.c rdtarga.c $<TARGET_OBJECTS:cjpeg12-static>
-    $<TARGET_OBJECTS:cjpeg16-static>)
-  set_property(TARGET cjpeg-static PROPERTY COMPILE_FLAGS
-    ${CDJPEG_COMPILE_FLAGS})
-  target_link_libraries(cjpeg-static jpeg-static)
-
-  # Compile a separate version of these source files with 12-bit and 16-bit
-  # data precision.
-  add_library(djpeg12-static OBJECT rdcolmap.c wrgif.c wrppm.c)
-  set_property(TARGET djpeg12-static PROPERTY COMPILE_FLAGS
-    "-DBITS_IN_JSAMPLE=12 -DGIF_SUPPORTED -DPPM_SUPPORTED")
-  add_library(djpeg16-static OBJECT wrppm.c)
-  set_property(TARGET djpeg16-static PROPERTY COMPILE_FLAGS
-    "-DBITS_IN_JSAMPLE=16 -DPPM_SUPPORTED")
-  add_executable(djpeg-static djpeg.c cdjpeg.c rdcolmap.c rdswitch.c wrbmp.c
-    wrgif.c wrppm.c wrtarga.c $<TARGET_OBJECTS:djpeg12-static>
-    $<TARGET_OBJECTS:djpeg16-static>)
-  set_property(TARGET djpeg-static PROPERTY COMPILE_FLAGS
-    ${CDJPEG_COMPILE_FLAGS})
-  target_link_libraries(djpeg-static jpeg-static)
-
-  add_executable(jpegtran-static jpegtran.c cdjpeg.c rdswitch.c transupp.c)
-  target_link_libraries(jpegtran-static jpeg-static)
-  set_property(TARGET jpegtran-static PROPERTY COMPILE_FLAGS "${USE_SETMODE}")
-
-  add_executable(example-static example.c)
-  target_link_libraries(example-static jpeg-static)
-endif()
-
-add_executable(rdjpgcom rdjpgcom.c)
-
-add_executable(wrjpgcom wrjpgcom.c)
+# tinyusdz: the cjpeg / djpeg / jpegtran / example CLI programs (and the
+# rdjpgcom / wrjpgcom utilities) were removed in the vendored trim -- only the
+# turbojpeg + jpeg libraries are needed. Their sources and the per-precision
+# object libs are gone, so the target definitions are dropped here.
 
 
 ###############################################################################
@@ -1777,15 +1732,12 @@ if(ENABLE_STATIC)
   endif()
 endif()
 
-install(TARGETS rdjpgcom wrjpgcom
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT bin)
+# tinyusdz: rdjpgcom/wrjpgcom removed in the trim -- no install.
 
+# tinyusdz: only the license/readme remain installable; the manuals + example
+# sources were removed in the trim.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.ijg
-  ${CMAKE_CURRENT_SOURCE_DIR}/README.md ${CMAKE_CURRENT_SOURCE_DIR}/example.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/tjexample.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg.txt
-  ${CMAKE_CURRENT_SOURCE_DIR}/structure.txt
-  ${CMAKE_CURRENT_SOURCE_DIR}/usage.txt ${CMAKE_CURRENT_SOURCE_DIR}/wizard.txt
+  ${CMAKE_CURRENT_SOURCE_DIR}/README.md
   ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md DESTINATION ${CMAKE_INSTALL_DOCDIR}
   COMPONENT doc)
 if(WITH_JAVA)
