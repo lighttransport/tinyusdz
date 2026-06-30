@@ -207,13 +207,16 @@ int main(int argc, char **argv) {
       // single mesh at the origin (suzanne), but for any composed/production
       // scene (e.g. Caldera) it collapsed every transformed district to the
       // origin and pulled in the guide breadcrumb/endpoint Points, burying the
-      // camera. (Native instances stay in their own proto/TLAS pool and are not
-      // emitted here yet -- negligible for Caldera; see doc/large-scene.md.)
+      // camera. PointInstancers ARE expanded to world-space placements here
+      // (expand_instancers=true) so instanced scatters render on the GPU path;
+      // scenegraph (instanceable) native instances are still skipped -- see
+      // doc/large-scene.md / doc/tusdrender.md.
       std::vector<MeshJobNext> mesh_jobs;
       for (const auto &root : stage.GetRootPrims()) {
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
                                    tinyusdz::Purpose::Default, opt.timecode,
-                                   opt.mask, &mesh_jobs);
+                                   opt.mask, &mesh_jobs,
+                                   /*expand_instancers=*/true);
       }
 
       // Displacement textures for the -vk/-vkr preview (loaded from disk relative

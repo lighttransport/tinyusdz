@@ -389,12 +389,20 @@ bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
 bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
                            const std::vector<std::string> &mask);
 
+// When `expand_instancers` is true, UsdGeomPointInstancer prims are EXPANDED in
+// place: every visible instance's prototype meshes are emitted as world-space
+// MeshJobNext (transform = prototype-local * instance TRS * instancer world),
+// recursively (nested instancers expand too). This is the GPU flatten path's
+// only way to render instanced geometry (no GPU TLAS). Default false keeps the
+// two-level proto-collection callers byte-identical (they stop at instancers and
+// place prototype BLAS via the TLAS instead).
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs);
+                                std::vector<MeshJobNext> *jobs,
+                                bool expand_instancers = false);
 
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
