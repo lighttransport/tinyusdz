@@ -1,0 +1,182 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set global environment variables
+        run: |
+          echo "BRANCH=${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}" >$GITHUB_ENV
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          mkdir -p $HOME/src/ljt.nightly
+          docker pull dcommander/buildljt:$BRANCH
+          git clone --depth=1 https://github.com/libjpeg-turbo/buildscripts.git -b $BRANCH $HOME/src/buildscripts
+          mkdir $HOME/rpmkeys
+          wget --no-check-certificate "https://libjpeg-turbo.org/key/LJTPR-GPG-KEY" -O $HOME/rpmkeys/LJTPR-GPG-KEY
+      - name: Configure GPG signing
+        if: ${{github.event_name != 'pull_request'}}
+        run: |
+          sudo apt install -y gnupg1
+          printf "${{secrets.GPG_KEY}}" | base64 --decode | gpg1 --batch --import -
+          chmod 600 $HOME/.gnupg/gpg.conf
+          echo "GPG_KEY_NAME=\"${{secrets.GPG_KEY_NAME}}\"" >$HOME/src/buildscripts/gpgsign
+          echo "GPG_KEY_ID=${{secrets.GPG_KEY_ID}}" >>$HOME/src/buildscripts/gpgsign
+          echo "GPG_KEY_PASS=${{secrets.GPG_KEY_PASS}}" >>$HOME/src/buildscripts/gpgsign
+      - name: Build
+        run: |
+          docker run -v $HOME/src/ljt.nightly:/root/src/ljt.nightly -v $HOME/src/buildscripts:/root/src/buildscripts -v $GITHUB_WORKSPACE:/root/src/libjpeg-turbo -v $HOME/.gnupg:/root/.gnupg -v $HOME/rpmkeys:/rpmkeys -t dcommander/buildljt:$BRANCH bash -c "rpm --import /rpmkeys/LJTPR-GPG-KEY && ~/src/buildscripts/buildljt -d /root/src/libjpeg-turbo -v"
+          sudo chown -R runner:runner $HOME/src/ljt.nightly
+          mv $HOME/src/ljt.nightly/latest/log-${{github.job}}.txt $HOME/src/ljt.nightly/latest/files/
+      - name: Configure AWS
+        if: ${{github.event_name != 'pull_request'}}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{secrets.AWS_REGION}}
+      - name: Deploy
+        if: ${{github.event_name != 'pull_request'}}
+        run: |
+          aws s3 sync --acl public-read --delete $HOME/src/ljt.nightly/latest/files/ s3://libjpeg-turbo-pr/${{env.BRANCH}}/${{github.job}}/
+  macos:
+    runs-on: macos-12
+    steps:
+      - name: Set global environment variables
+        run: |
+          echo "BRANCH=${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}" >$GITHUB_ENV
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          brew install yasm md5sha1sum
+          sudo xcode-select -s /Applications/Xcode_13.2.1.app
+          mkdir -p $HOME/src/ljt.nightly
+          git clone --depth=1 https://github.com/libjpeg-turbo/buildscripts.git -b $BRANCH $HOME/src/buildscripts
+      - name: Configure GPG signing
+        if: ${{github.event_name != 'pull_request'}}
+        run: |
+          printf "${{secrets.GPG_KEY}}" | base64 --decode | gpg --batch --import -
+          echo "GPG_KEY_NAME=\"${{secrets.GPG_KEY_NAME}}\"" >$HOME/src/buildscripts/gpgsign
+          echo "GPG_KEY_ID=${{secrets.GPG_KEY_ID}}" >>$HOME/src/buildscripts/gpgsign
+          echo "GPG_KEY_PASS=${{secrets.GPG_KEY_PASS}}" >>$HOME/src/buildscripts/gpgsign
+      - name: Build
+        run: |
+          $HOME/src/buildscripts/buildljt -d $GITHUB_WORKSPACE -v
+          mv $HOME/src/ljt.nightly/latest/log-${{github.job}}.txt $HOME/src/ljt.nightly/latest/files/
+      - name: Configure AWS
+        if: ${{github.event_name != 'pull_request'}}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{secrets.AWS_REGION}}
+      - name: Deploy
+        if: ${{github.event_name != 'pull_request'}}
+        run: |
+          aws s3 sync --acl public-read --delete $HOME/src/ljt.nightly/latest/files/ s3://libjpeg-turbo-pr/${{env.BRANCH}}/${{github.job}}/
+  linux-asan-ubsan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          sudo apt install -y nasm
+          sudo sysctl vm.mmap_rnd_bits=28
+      - name: Build
+        env:
+          ASAN_OPTIONS: "detect_leaks=1 symbolize=1"
+          CTEST_OUTPUT_ON_FAILURE: 1
+        run: |
+          mkdir build
+          pushd build
+          cmake -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" -DENABLE_SHARED=0 ..
+          export NUMCPUS=`grep -c '^processor' /proc/cpuinfo`
+          make -j$NUMCPUS --load-average=$NUMCPUS
+          ctest -j$NUMCPUS
+          JSIMD_FORCESSE2=1 ctest -j$NUMCPUS
+          cmake -DFLOATTEST8=no-fp-contract ..
+          JSIMD_FORCENONE=1 ctest -j$NUMCPUS
+          popd
+  linux-jpeg7-x32:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          sudo apt update
+          sudo apt -y --install-recommends install libc6-dev-x32 nasm
+      - name: Build
+        env:
+          CTEST_OUTPUT_ON_FAILURE: 1
+        run: |
+          mkdir build
+          pushd build
+          cmake -G"Unix Makefiles" -DWITH_JPEG7=1 \
+            -DCMAKE_C_FLAGS='-mx32 --std=gnu90 -Wall -Werror -Wextra -Wpedantic -pedantic-errors -Wdouble-promotion -Wformat-overflow=2 -Wformat-security -Wformat-signedness -Wformat-truncation=2 -Wformat-y2k -Wmissing-include-dirs -Wshift-overflow=2 -Wswitch-bool -Wno-unused-parameter -Wuninitialized -Wstrict-overflow=2 -Wstringop-overflow=4 -Wstringop-truncation -Wduplicated-branches -Wduplicated-cond -Wdeclaration-after-statement -Wshadow -Wunsafe-loop-optimizations -Wundef -Wcast-align -Wno-clobbered -Wjump-misses-init -Wno-sign-compare -Wlogical-op -Waggregate-return -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wmissing-declarations -Wpacked -Wredundant-decls -Wnested-externs -Winline -Wno-long-long -Wdisabled-optimization -Wno-overlength-strings' \
+            ..
+          export NUMCPUS=`grep -c '^processor' /proc/cpuinfo`
+          make -j$NUMCPUS --load-average=$NUMCPUS
+          ctest -j$NUMCPUS
+          JSIMD_FORCESSE2=1 ctest -j$NUMCPUS
+          cmake -DFLOATTEST8=no-fp-contract ..
+          JSIMD_FORCENONE=1 ctest -j$NUMCPUS
+          popd
+  linux-jpeg8:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          sudo apt -y install nasm
+      - name: Build
+        env:
+          CTEST_OUTPUT_ON_FAILURE: 1
+        run: |
+          mkdir build
+          pushd build
+          cmake -G"Unix Makefiles" -DWITH_JPEG8=1 \
+            -DCMAKE_C_FLAGS='--std=gnu90 -Wall -Werror -Wextra -Wmost -Wnon-gcc -Wpedantic -pedantic-errors -Walloca -Wanon-enum-enum-conversion -Warray-bounds-pointer-arithmetic -Wbitfield-enum-conversion -Wc99-extensions -Wc2x-extensions -Wcast-function-type -Wcompound-token-split -Wdate-time -Wdeclaration-after-statement -Wdeprecated -Wdocumentation -Wdocumentation-pedantic -Wdouble-promotion -Wduplicate-decl-specifier -Wduplicate-enum -Wempty-init-stmt -Wexpansion-to-defined -Wextra-semi -Wformat=2 -Wformat-non-iso -Wno-format-nonliteral -Wformat-pedantic -Wformat-type-confusion -Wfour-char-constants -Wgcc-compat -Wgnu -Wheader-hygiene -Widiomatic-parentheses -Wignored-qualifiers -Wimplicit-fallthrough -Wno-implicit-int-conversion -Wincompatible-function-pointer-types -Wno-long-long -Wloop-analysis -Wmain -Wmax-tokens -Wmisleading-indentation -Wmissing-field-initializers -Wmissing-prototypes -Wmissing-variable-declarations -Wnewline-eof -Wnonportable-system-include-path -Wnullable-to-nonnull-conversion -Wold-style-cast -Wover-aligned -Wparentheses -Wpointer-arith -Wpragmas -Wpre-c2x-compat -Wredundant-parens -Wself-assign -Wshadow-all -Wshift-sign-overflow -Wno-shorten-64-to-32 -Wno-sign-conversion -Wsometimes-uninitialized -Wstatic-in-inline -Wstrict-prototypes -Wswitch-default -Wtautological-constant-in-range-compare -Wthread-safety -Wthread-safety-verbose -Wunaligned-access -Wundef -Wundef-prefix -Wundefined-func-template -Wuninitialized -Wunneeded-internal-declaration -Wunreachable-code-fallthrough -Wno-unused-command-line-argument -Wunused-member-function -Wno-unused-parameter -Wvariadic-macros -Wzero-as-null-pointer-constant -Wzero-length-array -fcf-protection' \
+            -DCMAKE_C_COMPILER=clang-14 \
+            ..
+          export NUMCPUS=`grep -c '^processor' /proc/cpuinfo`
+          make -j$NUMCPUS --load-average=$NUMCPUS
+          ctest -j$NUMCPUS
+          JSIMD_FORCESSE2=1 ctest -j$NUMCPUS
+          cmake -DFLOATTEST8=no-fp-contract ..
+          JSIMD_FORCENONE=1 ctest -j$NUMCPUS
+          popd
+  linux-msan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up build
+        run: |
+          sudo apt install -y nasm
+          sudo sysctl vm.mmap_rnd_bits=28
+      - name: Build
+        env:
+          CTEST_OUTPUT_ON_FAILURE: 1
+        run: |
+          mkdir build
+          pushd build
+          cmake -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O0 -g -fsanitize=memory -fsanitize-memory-param-retval -fno-sanitize-recover=all -fPIE -DZERO_BUFFERS=1" -DREQUIRE_SIMD=1 ..
+          export NUMCPUS=`grep -c '^processor' /proc/cpuinfo`
+          make -j$NUMCPUS --load-average=$NUMCPUS
+          ctest -j$NUMCPUS
+          popd

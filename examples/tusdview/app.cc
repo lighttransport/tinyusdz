@@ -80,27 +80,29 @@ bool WriteScreenshotImage(const std::string& path,
     return false;
   }
 
-  if (LowerExtension(path) == "png") {
-    tinyusdz::Image img;
-    img.uri = path;
-    img.width = w;
-    img.height = h;
-    img.channels = 4;
-    img.bpp = 8;
-    img.format = tinyusdz::Image::PixelFormat::UInt;
-    img.data = rgba;
-
-    tinyusdz::image::WriteOption opt;
-    opt.format = tinyusdz::image::WriteImageFormat::PNG;
-    auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
-    if (!ret) {
-      if (err) *err = ret.error();
-      return false;
-    }
+  // .ppm: keep the dependency-free fast path. Everything else goes through the
+  // shared encoder, which autodetects png/jpg/jpeg/qoi/bmp/exr from the extension
+  // (fpnge/fpng PNG, libjpeg-turbo JPEG, QOI -- whatever the build enabled).
+  if (LowerExtension(path) == "ppm") {
+    WritePPM(path, rgba, w, h);
     return true;
   }
 
-  WritePPM(path, rgba, w, h);
+  tinyusdz::Image img;
+  img.uri = path;
+  img.width = w;
+  img.height = h;
+  img.channels = 4;
+  img.bpp = 8;
+  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.data = rgba;
+
+  tinyusdz::image::WriteOption opt;  // Autodetect by extension
+  auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
+  if (!ret) {
+    if (err) *err = ret.error();
+    return false;
+  }
   return true;
 }
 
