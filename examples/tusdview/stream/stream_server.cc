@@ -112,11 +112,17 @@ cv.addEventListener('mousemove',e=>{const p=coords(e);pendMove={t:'m',x:p.x,y:p.
 cv.addEventListener('mousedown',e=>{const p=coords(e);send({t:'d',b:e.button,x:p.x,y:p.y,...mods(e)});});
 window.addEventListener('mouseup',e=>{const p=coords(e);send({t:'u',b:e.button,x:p.x,y:p.y});});
 cv.addEventListener('wheel',e=>{e.preventDefault();const p=coords(e);send({t:'w',wheel:(e.deltaY>0?-1:1),x:p.x,y:p.y});},{passive:false});
-window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT')return;
-  if(e.key.length===1||['Delete','Backspace','Escape'].includes(e.key)) send({t:'k',k:e.key}); });
+// Forward keyboard (press + release, with modifiers) so ImGui widgets/text and
+// the viewport hotkeys work. Skip when typing in the page's own input fields.
+const navKeys=['Tab','Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown',' '];
+function keyEv(e,down){ if(e.target.tagName==='INPUT')return;
+  send({t:'k',k:e.key,down:down,shift:e.shiftKey,ctrl:e.ctrlKey,alt:e.altKey});
+  if(navKeys.includes(e.key)) e.preventDefault(); }  // stop page scroll/back-nav
+window.addEventListener('keydown',e=>keyEv(e,true));
+window.addEventListener('keyup',e=>keyEv(e,false));
 
-// Controls.
-document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>send({t:'k',k:b.dataset.k}));
+// Controls (buttons synthesize a key press).
+document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>send({t:'k',k:b.dataset.k,down:true}));
 document.getElementById('codec').onchange=e=>send({t:'codec',v:e.target.value});
 const path=document.getElementById('path');
 function openPath(){ if(path.value.trim()) send({t:'load',path:path.value.trim()}); }
@@ -198,7 +204,9 @@ int StreamServer::wsData(mg_connection*, int bits, char* data, size_t len,
     cmd.type = StreamNav::Wheel; cmd.wheel = num("wheel");
     cmd.x = num("x"); cmd.y = num("y");
   } else if (t == "k") {
-    cmd.type = StreamNav::Key; cmd.str = str("k"); cmd.down = true;
+    cmd.type = StreamNav::Key; cmd.str = str("k");
+    cmd.down = !j.contains("down") || (j["down"].is_boolean() && j["down"].get<bool>());
+    cmd.shift = boolean("shift"); cmd.ctrl = boolean("ctrl"); cmd.alt = boolean("alt");
   } else if (t == "load") {
     cmd.type = StreamNav::Load; cmd.str = str("path");
     if (cmd.str.empty()) return 1;

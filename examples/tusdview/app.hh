@@ -212,6 +212,10 @@ class App
   void setStreamMotionQuality(int q) {
     if (q >= 1 && q <= 100) streamMotionJpegQ_ = q;
   }
+  // Milliseconds of input quiet before the stream sends the lossless refine frame.
+  void setStreamIdleMs(int ms) {
+    if (ms >= 0) streamIdleMs_ = ms;
+  }
   // Apply one browser navigation command to the camera/render state (main thread).
   void applyNavCommand(const StreamNav& cmd);
 
