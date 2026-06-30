@@ -1379,6 +1379,32 @@ void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h,
   if (enc) streamServer_->pushFrame(enc.value().data(), enc.value().size());
 }
 
+// Map a browser KeyboardEvent.key string to an ImGuiKey so ImGui text fields and
+// keyboard navigation (arrows, backspace, enter, tab, ...) work over the stream.
+static ImGuiKey StreamKeyToImGui(const std::string& k) {
+  if (k.size() == 1) {
+    const char c = k[0];
+    if (c >= 'a' && c <= 'z') return ImGuiKey(ImGuiKey_A + (c - 'a'));
+    if (c >= 'A' && c <= 'Z') return ImGuiKey(ImGuiKey_A + (c - 'A'));
+    if (c >= '0' && c <= '9') return ImGuiKey(ImGuiKey_0 + (c - '0'));
+    if (c == ' ') return ImGuiKey_Space;
+  }
+  if (k == "Enter") return ImGuiKey_Enter;
+  if (k == "Backspace") return ImGuiKey_Backspace;
+  if (k == "Delete") return ImGuiKey_Delete;
+  if (k == "Tab") return ImGuiKey_Tab;
+  if (k == "Escape") return ImGuiKey_Escape;
+  if (k == "ArrowLeft") return ImGuiKey_LeftArrow;
+  if (k == "ArrowRight") return ImGuiKey_RightArrow;
+  if (k == "ArrowUp") return ImGuiKey_UpArrow;
+  if (k == "ArrowDown") return ImGuiKey_DownArrow;
+  if (k == "Home") return ImGuiKey_Home;
+  if (k == "End") return ImGuiKey_End;
+  if (k == "PageUp") return ImGuiKey_PageUp;
+  if (k == "PageDown") return ImGuiKey_PageDown;
+  return ImGuiKey_None;
+}
+
 // Apply one browser input event. Runs on the main thread BEFORE ImGui::NewFrame()
 // (drained from the stream server's queue): raw mouse/keyboard events are injected
 // into ImGui so its widgets are clickable, and when ImGui isn't capturing the
@@ -1431,9 +1457,19 @@ void App::applyNavCommand(const StreamNav& c) {
       break;
     case StreamNav::Key: {
       const std::string& k = c.str;
-      // Route printable keys into focused ImGui text fields; otherwise hotkeys.
+      // Keep ImGui's modifier state in sync, then feed the key event (press AND
+      // release) so editing/navigation keys work in ImGui widgets.
+      io.AddKeyEvent(ImGuiMod_Shift, c.shift);
+      io.AddKeyEvent(ImGuiMod_Ctrl, c.ctrl);
+      io.AddKeyEvent(ImGuiMod_Alt, c.alt);
+      const ImGuiKey ik = StreamKeyToImGui(k);
+      if (ik != ImGuiKey_None) io.AddKeyEvent(ik, c.down);
+      if (!c.down) break;  // the rest reacts to presses only
+      // Printable char into a focused ImGui text field; don't fire hotkeys while
+      // editing text.
       if (io.WantTextInput) {
-        if (k.size() == 1) io.AddInputCharacter(static_cast<unsigned>(k[0]));
+        if (k.size() == 1 && static_cast<unsigned char>(k[0]) >= 0x20)
+          io.AddInputCharacter(static_cast<unsigned>(k[0]));
         break;
       }
       if (k == "w") {

@@ -401,6 +401,7 @@ struct Options {
   std::string stream_codec{"jpeg"};  // -streamCodec: idle-refine codec (png|qoi)
   int stream_motion_res{1280};       // -streamMotionRes: motion-frame long-edge cap
   int stream_motion_quality{45};     // -streamMotionQuality: motion JPEG quality
+  int stream_idle_ms{320};           // -streamIdleMs: quiet time before lossless refine
   std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time

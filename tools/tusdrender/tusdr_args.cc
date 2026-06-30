@@ -154,6 +154,8 @@ void PrintUsage(const char *prog) {
       << "  -streamMotionRes <px>  Long-edge cap for low-quality frames while moving\n"
       << "                         (default 1280; rendered small for speed).\n"
       << "  -streamMotionQuality <n>  Motion JPEG quality 1-100 (default 45).\n"
+      << "  -streamIdleMs <ms>     Input-quiet time before the lossless refine\n"
+      << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
@@ -519,6 +521,13 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       if (!v || !ParseIntStrict(v, &opt->stream_motion_quality) ||
           opt->stream_motion_quality < 1 || opt->stream_motion_quality > 100) {
         std::cerr << "-streamMotionQuality requires 1-100.\n";
+        return false;
+      }
+    } else if (a == "-streamIdleMs" || a == "--streamIdleMs") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_idle_ms) ||
+          opt->stream_idle_ms < 0) {
+        std::cerr << "-streamIdleMs requires a non-negative millisecond value.\n";
         return false;
       }
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {

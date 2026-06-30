@@ -161,7 +161,8 @@ class StreamRenderServer {
       : opt_(opt),
         idle_codec_(opt.stream_codec == "qoi" ? "qoi" : "png"),
         motion_max_(std::max(16, opt.stream_motion_res)),
-        motion_q_(std::min(100, std::max(1, opt.stream_motion_quality))) {}
+        motion_q_(std::min(100, std::max(1, opt.stream_motion_quality))),
+        idle_ms_(std::max(0, opt.stream_idle_ms)) {}
 
   // Build (or rebuild) the resident scene/BVH from `path`. Returns false on
   // failure (the previous scene, if any, is kept).
@@ -235,7 +236,7 @@ class StreamRenderServer {
         renderAndPush(/*motion=*/true);
       } else if (need_refine_ && !conns_.empty() &&
                  std::chrono::duration_cast<std::chrono::milliseconds>(
-                     now - last_activity_).count() >= kIdleMs) {
+                     now - last_activity_).count() >= idle_ms_) {
         need_refine_ = false;
         renderAndPush(/*motion=*/false);  // full-res lossless refine
       } else if (resend) {
@@ -512,12 +513,11 @@ class StreamRenderServer {
   }
 
   static constexpr int kResendN = 4;   // ticks to re-send the crisp/connect frame
-  static constexpr int kIdleMs = 320;  // ms of quiet before the lossless refine
 
   Options opt_;
   std::unique_ptr<RenderContext> rc_;
   std::string idle_codec_;
-  int motion_max_, motion_q_;
+  int motion_max_, motion_q_, idle_ms_;
   int full_w_ = 960, full_h_ = 540;
 
   mg_context *ctx_web_ = nullptr;

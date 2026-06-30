@@ -64,9 +64,10 @@ int main(int argc, char** argv) {
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   int streamHttpPort = 0;     // WebSocket stream server port (0 = off)
-  std::string streamCodec = "jpeg";  // stream image codec: jpeg|qoi|png
+  std::string streamCodec = "png";   // idle-refinement codec: png|qoi
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
+  int streamIdleMs = 350;            // ms of input quiet before the lossless refine
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = false;             // --next: next loader + flat GL preview
@@ -274,6 +275,8 @@ int main(int argc, char** argv) {
       streamCodec = argv[++i];
     } else if (std::strcmp(argv[i], "--stream-motion-res") == 0 && (i + 1) < argc) {
       streamMotionRes = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--stream-idle-ms") == 0 && (i + 1) < argc) {
+      streamIdleMs = std::atoi(argv[++i]);
     } else if (std::strcmp(argv[i], "--stream-motion-quality") == 0 &&
                (i + 1) < argc) {
       streamMotionQuality = std::atoi(argv[++i]);
@@ -348,7 +351,9 @@ int main(int argc, char** argv) {
           "  --stream-motion-res PX  Long-edge cap for the low-quality JPEG sent "
           "while moving (default 1280).\n"
           "  --stream-motion-quality N  JPEG quality (1-100) for motion frames "
-          "(default 45).\n");
+          "(default 45).\n"
+          "  --stream-idle-ms MS  Input-quiet time before the lossless refine "
+          "frame is sent (default 350).\n");
       return 0;
     } else if (argv[i][0] != '-') {
       file = argv[i];
@@ -473,6 +478,7 @@ int main(int argc, char** argv) {
   app.setStreamCodec(streamCodec);
   app.setStreamMotionRes(streamMotionRes);
   app.setStreamMotionQuality(streamMotionQuality);
+  app.setStreamIdleMs(streamIdleMs);
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
