@@ -79,6 +79,7 @@ extern "C" {
 #include "tusdr_math.hh"
 #include "tusdr_types.hh"
 #include "tusdr_context.hh"
+#include "tusdr_rt_lod.hh"
 
 
 // The Vulkan backend and main() below live in the global namespace; pull in the
@@ -447,6 +448,102 @@ int main(int argc, char **argv) {
     } else {
       if (out_height <= 0) out_height = 540;
       camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+    }
+
+    // Flatten-side view-dependent LOD for the GPU backends (-vk/-vkr/-d3d/-hip).
+    // LightRT's Vulkan/D3D paths build a single flat world-space BLAS (no GPU
+    // TLAS / per-prototype instancing), so there is no two-level structure to do
+    // per-instance Full/Proxy/Cull on the GPU. Instead we apply the SAME
+    // tusdr_rt_lod classifier here, once, on the already-world-space `geos`:
+    //   Cull  -> drop the placement from the flat soup (fewer triangles to trace)
+    //   Proxy -> replace its triangles with an axis-aligned box on its world AABB
+    //   Full  -> keep the real triangles
+    // Each `geos[i]` is one world-space mesh placement, so its world AABB is the
+    // classifier input (identity o2w + the world AABB as the "prototype" bounds).
+    // Opt-in via -rtLod; byte-identical to before when off. Frustum cull stays
+    // OFF by default (a path tracer needs off-screen geo for shadows/GI).
+    if (opt.rt_lod && !geos.empty()) {
+      tusdr::RtLodConfig cfg;
+      cfg.enabled = true;
+      cfg.proxy = opt.rt_lod_proxy;
+      cfg.frustum_cull = opt.rt_lod_frustum_cull;
+      cfg.full_px = opt.rt_lod_full_px;
+      cfg.cull_px = opt.rt_lod_cull_px;
+      const tusdr::RtLodView view = tusdr::MakeRtLodView(camera, out_height);
+      const float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+      // Unit-cube corners + 12 triangles (36 indices), CCW outward.
+      static const float kC[8][3] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+                                     {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}};
+      static const uint32_t kI[36] = {
+          0, 2, 1, 0, 3, 2,  // -Z
+          4, 5, 6, 4, 6, 7,  // +Z
+          0, 1, 5, 0, 5, 4,  // -Y
+          3, 6, 2, 3, 7, 6,  // +Y
+          0, 4, 7, 0, 7, 3,  // -X
+          1, 2, 6, 1, 6, 5}; // +X
+      tusdr::RtLodStats lod_stats;
+      std::vector<RTPreviewStats::MeshGeometry> kept_geos;
+      std::vector<Vec3> kept_colors;
+      kept_geos.reserve(geos.size());
+      kept_colors.reserve(geos.size());
+      for (size_t i = 0; i < geos.size(); ++i) {
+        RTPreviewStats::MeshGeometry &g = geos[i];
+        const size_t nv = g.positions.size() / 3;
+        if (nv == 0) continue;
+        // World AABB of this placement (positions are already world-space).
+        tusdr::Bounds wb;
+        for (size_t j = 0; j < nv; ++j) {
+          const float x = g.positions[j * 3 + 0], y = g.positions[j * 3 + 1],
+                      z = g.positions[j * 3 + 2];
+          wb.lo.x = std::min(wb.lo.x, x); wb.lo.y = std::min(wb.lo.y, y); wb.lo.z = std::min(wb.lo.z, z);
+          wb.hi.x = std::max(wb.hi.x, x); wb.hi.y = std::max(wb.hi.y, y); wb.hi.z = std::max(wb.hi.z, z);
+        }
+        wb.valid = true;
+        const tusdr::RtLod lod =
+            tusdr::ClassifyInstance(view, cfg, kIdentity, wb);
+        if (lod == tusdr::RtLod::Cull) {
+          lod_stats.culled++;
+          continue;
+        }
+        if (lod == tusdr::RtLod::Proxy) {
+          lod_stats.proxy++;
+          // Rebuild this placement as an axis-aligned box on its world AABB.
+          float fit[12];
+          tusdr::BoxFitO2W(kIdentity, wb.lo, wb.hi, fit);
+          RTPreviewStats::MeshGeometry box;
+          box.positions.resize(8 * 3);
+          box.normals.resize(8 * 3, 0.0f);  // geometric normals recomputed downstream
+          box.uvs.resize(8 * 2, 0.0f);
+          for (int c = 0; c < 8; ++c) {
+            const Vec3 p = tusdr::TransformPointO2W(
+                fit, Vec3{kC[c][0], kC[c][1], kC[c][2]});
+            box.positions[c * 3 + 0] = p.x;
+            box.positions[c * 3 + 1] = p.y;
+            box.positions[c * 3 + 2] = p.z;
+          }
+          box.indices.assign(kI, kI + 36);
+          kept_geos.push_back(std::move(box));
+          kept_colors.push_back(base_colors[i]);
+          continue;
+        }
+        lod_stats.full++;
+        kept_geos.push_back(std::move(g));
+        kept_colors.push_back(base_colors[i]);
+      }
+      geos.swap(kept_geos);
+      base_colors.swap(kept_colors);
+      if (opt.stats) {
+        std::cerr << "[rt-lod] flatten-side: full=" << lod_stats.full
+                  << " proxy=" << lod_stats.proxy
+                  << " culled=" << lod_stats.culled
+                  << " (placements=" << kept_geos.size() << "->" << geos.size()
+                  << ")\n";
+      }
+      if (geos.empty()) {
+        std::cerr << "No renderable geometry after -rtLod culling "
+                     "(try a smaller -rtLodCullPx).\n";
+        return EXIT_FAILURE;
+      }
     }
 
 #ifdef HAVE_D3D11
