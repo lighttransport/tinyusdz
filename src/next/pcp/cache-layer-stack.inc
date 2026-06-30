@@ -14,6 +14,13 @@
   static constexpr uint32_t kInvalidStack =
       (std::numeric_limits<uint32_t>::max)();
 
+  LayerLoadOptions MakeLayerLoadOptions() const {
+    LayerLoadOptions out;
+    out.max_memory = options.max_layer_memory;
+    out.enable_usdc_timing = options.enable_timing;
+    return out;
+  }
+
   uint32_t InternLayerStack(std::shared_ptr<Layer> layer,
                             const std::string &identifier, std::string *warn,
                             std::string *err) {
@@ -67,7 +74,7 @@
       }
       std::shared_ptr<Layer> sl =
           reg_->GetOrLoad(*resolver, sub, anchor, warn, err,
-                          LayerLoadOptions{options.max_layer_memory, 0});
+                          MakeLayerLoadOptions());
       if (sl) {
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,

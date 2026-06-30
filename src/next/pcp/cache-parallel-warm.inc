@@ -500,7 +500,7 @@
             if (i >= assets.size()) break;
             std::string w, e;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
-                            &e, LayerLoadOptions{options.max_layer_memory, 0});
+                            &e, MakeLayerLoadOptions());
           }
         };
         ts.reserve(static_cast<size_t>(pf));

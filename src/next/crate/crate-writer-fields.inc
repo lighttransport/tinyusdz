@@ -216,7 +216,12 @@
 
         size_t cursor = 9;
         for (const auto& s : values) {
-          uint32_t path_idx = s.empty() ? 0u : InternPath(s);
+          std::string path;
+          if (!s.empty()) {
+            CompositionArc arc = Compositor::ParseReference(s);
+            path = arc.prim_path.empty() ? s : arc.prim_path;
+          }
+          uint32_t path_idx = path.empty() ? 0u : InternPath(path);
           std::memcpy(raw.data() + cursor, &path_idx, 4);
           cursor += 4;
         }
