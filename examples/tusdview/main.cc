@@ -16,6 +16,8 @@
 #include <optional>
 #include <string>
 
+#include "security-policy.hh"
+
 #include "app.hh"
 #include "config.hh"
 #include "log.hh"
@@ -103,6 +105,19 @@ int main(int argc, char** argv) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
+      // Override per-asset composition/resolver read cap (default 512MB).
+      // Accepts a byte count with optional K/M/G suffix, e.g. 2G.
+      std::string v = argv[++i];
+      size_t mul = 1;
+      if (!v.empty()) {
+        char s = v.back();
+        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
+        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
+      }
+      tinyusdz::security_policy::SetMaxAssetReadBytes(
+          static_cast<size_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul);
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
@@ -277,6 +292,9 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --max-asset-bytes N  Override the per-asset composition read cap "
+          "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
+          "single crates (e.g. Moore Lane's 896MB subLayer).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "

@@ -55,7 +55,7 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 
   std::vector<uint8_t> buf;
   if (!io::ReadWholeFile(&buf, err, filepath,
-                         security_policy::kResolverMaxAssetReadBytes,
+                         security_policy::GetMaxAssetReadBytes(),
                          /* user_ptr */ nullptr)) {
     return false;
   }
