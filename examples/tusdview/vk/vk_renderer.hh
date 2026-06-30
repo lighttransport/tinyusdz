@@ -31,6 +31,12 @@ class VulkanRenderer final : public Renderer {
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
     if (h > 0) headlessH_ = h;
+    // Headless never calls resizeViewport(), so seed the viewport extent here too:
+    // the offscreen target IS the headless size, and consumers like the RT-LOD
+    // focalPx (0.5 * vpH_ * proj_[5]) would otherwise see vpH_ == 0 -> focalPx 0
+    // -> every instance projects to 0px and is size-culled.
+    if (w > 0) vpW_ = w;
+    if (h > 0) vpH_ = h;
   }
   bool resizeHeadless(int w, int h) override;
   bool initImGui(std::string* err) override;

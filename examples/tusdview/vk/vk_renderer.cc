@@ -3586,10 +3586,13 @@ void VulkanRenderer::rebuildTlas() {
   descs[boxMeshId].geometricNormal = 1u;
 
   // Classify. focalPx depends on this backend's viewport height + the y-scale of
-  // the projection (proj_[5] = cot(fovY/2)), so fill it here.
+  // the projection (proj_[5] = cot(fovY/2)), so fill it here. Fall back to the
+  // headless render height when vpH_ is unset (headless never resizeViewport()s)
+  // so focalPx is never 0 -> would size-cull the whole scene.
+  const float vpHeight =
+      (vpH_ > 0) ? static_cast<float>(vpH_) : static_cast<float>(headlessH_);
   RtLodCamera cam = lodCam_;
-  cam.focalPx = 0.5f * static_cast<float>(vpH_) *
-                (proj_[5] != 0.0f ? proj_[5] : 1.0f);
+  cam.focalPx = 0.5f * vpHeight * (proj_[5] != 0.0f ? proj_[5] : 1.0f);
   if (boxMesh_.blas == VK_NULL_HANDLE) cam.proxyEnabled = false;
   std::vector<RtLodInstance> sel;
   sel.reserve(protos.size());
@@ -4280,6 +4283,10 @@ bool VulkanRenderer::resizeHeadless(int w, int h) {
   vkDeviceWaitIdle(device_);
   headlessW_ = w;
   headlessH_ = h;
+  // Keep the viewport extent in sync (headless never calls resizeViewport()), so
+  // vpH_-derived state such as the RT-LOD focalPx tracks a streaming resize.
+  vpW_ = w;
+  vpH_ = h;
   destroySwapchain();  // frees swap framebuffers/views/images/mem; keeps render pass
   std::string* err = nullptr;
   if (!createHeadlessSwapchain(err)) return false;     // new images/views/mem + extent
