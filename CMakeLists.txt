@@ -2486,6 +2486,20 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-nested-variantset COMMAND feat-nested-variantset
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition (cwp anchoring): a prim authored inside a variant block must
+    # load with the same working path as the prim owning the variantSet, so its
+    # own relative payload resolves correctly. The initial PropagateAssetResolver
+    # State recursed only into children, not variantSets, so variant-nested prims
+    # (ALab geo_vis GEO_PROXY) loaded with empty cwp and fell back to the stale
+    # resolver path (a sibling payload's dir) -> dropped geometry.
+    add_executable(feat-variant-payload-cwp
+                   tests/feat/variant-payload-cwp/test-variant-payload-cwp.cc)
+    add_sanitizers(feat-variant-payload-cwp)
+    target_link_libraries(feat-variant-payload-cwp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-variant-payload-cwp PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-variant-payload-cwp COMMAND feat-variant-payload-cwp
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).
