@@ -442,6 +442,12 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  // -vkInstanced: on -vkr, build a TRUE two-level GPU TLAS (one BLAS per
+  // prototype, one instance per placement) instead of flattening instances into
+  // one world-space BLAS. Stores instanced geometry ONCE on the device (memory
+  // sharing). Requires ray query; falls back to the flat path when unavailable or
+  // when the scene has no shareable instances. OFF by default.
+  bool vulkan_instanced{false};
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
   bool hip{false};                 // -hip: use the HIP/ROCm compute backend
   std::string env_file;            // --env <hdr>: IBL environment map override

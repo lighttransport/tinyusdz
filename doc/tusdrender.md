@@ -156,32 +156,44 @@ placements instead of stopping at it:
   Mirrors the CPU `CollectSceneSplit` native-instance branch.
 
 Both share `CollectExpandedProtoJobsNext` (prototype-local collection with nested
-instancers expanded recursively) and flatten to the single GPU BLAS rather than a
-TLAS + shared prototype BLAS. Validated: a 4-instance orient/scale PointInstancer
-and a 3-tree `instanceable` scene each render the same silhouette (coverage,
-x-extent, centroid) on `-vkr` as the CPU `-rtPreview` two-level path, within the
-same CPU↔GPU raster framing tolerance a plain non-instanced mesh shows.
-`expand_instancers` defaults to **false**, so the two-level proto collectors
-(`CollectProtoJobs`) stay byte-identical.
+instancers expanded recursively). By default these expansions **flatten** to the
+single GPU BLAS (`expand_instancers` defaults to **false**, so the two-level proto
+collectors `CollectProtoJobs` stay byte-identical), which duplicates a prototype's
+geometry per instance. For instanced scenes the `-vkInstanced` two-level path below
+shares that geometry instead.
 
-The cost is full flattening: a giant instancer (e.g. Moana's millions) expands into
-the flat soup with no per-prototype memory sharing. `-rtLod` mitigates this by
-culling/proxying the expanded placements; the true fix is the two-level GPU TLAS
-below.
+### `-vkInstanced`: true two-level GPU TLAS (per-prototype BLAS sharing)
 
-### Follow-on: true two-level GPU TLAS
+`-vkInstanced` (implies `-vkr`) builds a genuine two-level acceleration structure:
+**one BLAS per prototype** (geometry stored on the device ONCE) and **one TLAS
+instance per placement** (the same prototype BLAS referenced under a per-instance
+transform). Instanced geometry costs one BLAS, not one-per-instance — the memory
+the flat path could not save.
 
-A full GPU TLAS would add per-prototype BLAS *sharing* (so instanced geometry costs
-memory once, not once-per-instance) on top of what the flatten expansion already
-renders. It is a larger change tracked separately:
+How it reuses the existing trace **with no shader/SPIR-V change**: LightRT's
+ray-query backend already builds a TOP_LEVEL TLAS over BLAS and the shader already
+recovers the hit id as `instanceId*tri_chunk + primitiveIndex`. The new C API
+`lrt_vk_rtx_scene_build_instanced` (`src/external/lightrt/lightrt_c_vk.{h,c}`) sets
+`tri_chunk` to the max prototype triangle count and builds one BLAS per prototype +
+a TLAS instance per placement (real transforms). The returned `prim_id` then
+decodes as `instance = prim_id / stride`, `prototypeLocalTri = prim_id % stride`.
+tusdrender groups the expanded `mesh_jobs` by source prim path into shared
+prototypes + placements (`TryRunInstancedVk` in `tusdrender.cc`), and the CPU hit
+resolver (`ShadeAndWriteImageInstanced` in `tusdr_gpu_common.cc`) decodes the
+instance, looks up the prototype-local triangle, and transforms the object-space
+normal by that instance's normal matrix (cofactor of the 3×4, so non-uniform scale
+is exact).
 
-1. Reuse the CPU collectors (`CollectSceneSplit` / `CollectPointInstancer`) to
-   produce the prototype BLAS set + `InstanceRT` list instead of the flattened
-   soup, building per-prototype `lrt_vk` BLAS and a GPU TLAS
-   (`lrt_vk_rtx_*` / `lrt_tlas_*` GPU equivalents).
-2. Run the **same** `tusdr_rt_lod` selection (already pure and Vulkan-free) at GPU
-   TLAS build, emitting the Full/Proxy/Cull instance set + the shared box BLAS.
-3. The shader hit path must resolve a two-level (instance → BLAS) hit, matching the
-   CPU `ResolveTLASHit`, instead of the current flat-BLAS hit (LightRT's Vulkan API
-   currently exposes only a single flat BLAS, so this needs new instanced-TLAS C
-   API + a `trace_ray_query.comp` rework + SPIR-V recompile).
+Opt-in (`-vkInstanced`), falls back to the flat path when ray query is unavailable,
+there are no shareable instances, or `ninsts*maxPrototypeTris` would overflow the
+32-bit `prim_id` encoding (each prototype builds as a single BLAS, so one prototype
+must fit the device's one-BLAS limit). Validated **pixel-identical** to the flat
+`-vkr` path (luminance MAD 0.000/255, silhouette IoU 1.000) on a 200×(800-tri)
+PointInstancer (BLAS stores 800 tris vs 160 000 flattened — 200× smaller), a
+4-instance orient/non-uniform-scale PointInstancer, and a 3-tree `instanceable`
+scene. Displacement is not applied on this path yet (a documented gap).
+
+Remaining follow-on: run the `tusdr_rt_lod` Full/Proxy/Cull selection at the
+two-level TLAS build (emit Cull instances as absent, Proxy as a shared box BLAS) so
+`-vkInstanced` also gets per-instance LOD; and chunk a single >8M-triangle
+prototype across BLAS while preserving the instance encoding.

@@ -81,6 +81,79 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   return true;
 }
 
+bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
+                                 const std::vector<lrt_ray> &rays,
+                                 const std::vector<lrt_hit> &hits, int w, int h,
+                                 int spp) {
+  const float ambient = opt.ambient;
+  const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
+
+  tinyusdz::Image img;
+  img.width = w;
+  img.height = h;
+  img.channels = 4;
+  img.bpp = 8;
+  img.data.resize(size_t(w) * size_t(h) * 4, 0);
+
+  // Apply a row-major 3x3 (normal matrix) to an object-space normal.
+  auto xform_n = [](const float m[9], const Vec3 &n) -> Vec3 {
+    return Vec3{m[0] * n.x + m[1] * n.y + m[2] * n.z,
+                m[3] * n.x + m[4] * n.y + m[5] * n.z,
+                m[6] * n.x + m[7] * n.y + m[8] * n.z};
+  };
+
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+      Vec3 color{0, 0, 0};
+      for (int sp = 0; sp < spp; ++sp) {
+        const lrt_hit &hit = hits[base + size_t(sp)];
+        if (hit.prim_id == 0xFFFFFFFFu || s.stride == 0) continue;
+        const uint32_t inst = hit.prim_id / s.stride;
+        const uint32_t local = hit.prim_id % s.stride;
+        if (inst >= s.insts.size()) continue;
+        const GpuInstPlacement &pl = s.insts[inst];
+        if (pl.proto >= s.protos.size()) continue;
+        const GpuInstProto &pr = s.protos[pl.proto];
+        if (local >= pr.ntris) continue;
+
+        Vec3 bc = pr.base_color;
+        // Smooth normal in prototype space, then transform to world.
+        Vec3 Nobj = pr.normals[local];
+        const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
+        Vec3 sn = Add(Add(Mul(pr.vn0[local], w0), Mul(pr.vn1[local], w1)),
+                      Mul(pr.vn2[local], w2));
+        if (Length(sn) > 1.0e-8f) Nobj = sn;
+        Vec3 N = xform_n(pl.n2w, Nobj);
+        if (Length(N) > 1.0e-8f) N = Normalize(N);
+        Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
+                      -rays[base + size_t(sp)].dir[1],
+                      -rays[base + size_t(sp)].dir[2]};
+        if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
+        float key = std::max(0.0f, Dot(N, light));
+        float head = std::max(0.0f, Dot(N, V));
+        float lit = ambient + 0.8f * key + 0.35f * head;
+        color = Add(color, Mul(bc, lit));
+      }
+      color = Mul(color, 1.0f / float(spp));
+      size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
+      img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
+      img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
+      img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
+      img.data[pi + 3] = 255;
+    }
+  }
+
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return false;
+  }
+  return true;
+}
+
 void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
                         std::vector<lrt_ray> *rays) {
   Vec3 eye = camera.origin;

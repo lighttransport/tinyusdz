@@ -1931,6 +1931,203 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_indexed(lrt_vk_engine *e,
     return rtx_scene_build_core(e, vertices, nverts, indices, ntris, err);
 }
 
+/* Build ONE BLAS from a single indexed prototype mesh (prototype-local space),
+ * staging the vertex/index inputs into device-local memory and freeing them once
+ * the build completes (the AS is self-contained). No chunk splitting — one BLAS
+ * per prototype keeps the instance->triangle id encoding (instanceId*stride+prim)
+ * intact. */
+static int build_proto_blas(lrt_vk_engine *e, const float *verts, uint32_t nverts,
+                            const uint32_t *indices, uint32_t ntris,
+                            vk_accel *out) {
+    vk_buffer vstage = {0}, vbuf = {0}, istage = {0}, idxbuf = {0};
+    int ok = 0;
+    do {
+        VkDeviceSize vbytes = (VkDeviceSize)nverts * 3u * sizeof(float);
+        VkDeviceSize ibytes = (VkDeviceSize)ntris * 3u * sizeof(uint32_t);
+        if (!vk_buffer_create_ex(e, vbytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, 0,
+                                 &vstage))
+            break;
+        if (!vk_buffer_write(e, &vstage, verts, (size_t)vbytes)) break;
+        if (!vk_buffer_create_ex(
+                e, vbytes,
+                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                0, 1, &vbuf))
+            break;
+        if (!vk_buffer_create_ex(e, ibytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, 0,
+                                 &istage))
+            break;
+        if (!vk_buffer_write(e, &istage, indices, (size_t)ibytes)) break;
+        if (!vk_buffer_create_ex(
+                e, ibytes,
+                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                0, 1, &idxbuf))
+            break;
+        VkCommandBuffer cb = vk_cmd_begin(e);
+        if (!cb) break;
+        VkBufferCopy vcopy = {0, 0, vbytes};
+        vkCmdCopyBuffer(cb, vstage.buf, vbuf.buf, 1, &vcopy);
+        VkBufferCopy icopy = {0, 0, ibytes};
+        vkCmdCopyBuffer(cb, istage.buf, idxbuf.buf, 1, &icopy);
+        if (!vk_cmd_end_submit(e, cb)) break;
+        uint64_t vaddr = vk_device_address(e, &vbuf);
+        uint64_t iaddr = vk_device_address(e, &idxbuf);
+
+        VkAccelerationStructureGeometryKHR g;
+        memset(&g, 0, sizeof(g));
+        g.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+        g.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        g.geometry.triangles.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+        g.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+        g.geometry.triangles.vertexData.deviceAddress = vaddr;
+        g.geometry.triangles.vertexStride = 3u * sizeof(float);
+        g.geometry.triangles.maxVertex = nverts - 1u;
+        g.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+        g.geometry.triangles.indexData.deviceAddress = iaddr;
+        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, &g,
+                            ntris, 0u, 0u, out))
+            break;
+        ok = 1;
+    } while (0);
+    vk_buffer_destroy(e, &vstage);
+    vk_buffer_destroy(e, &istage);
+    vk_buffer_destroy(e, &vbuf);
+    vk_buffer_destroy(e, &idxbuf);
+    return ok;
+}
+
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
+    lrt_result *err) {
+    if (!e || !protos || nprotos == 0 || !insts || ninsts == 0) {
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return NULL;
+    }
+    if (!(e->caps & LRT_VK_CAP_RAY_QUERY) || !vkCreateAccelerationStructureKHR) {
+        vk_set_err(e, "ray_query unavailable (create the engine with "
+                      "want_ray_tracing=1 on an RT-capable device)");
+        if (err) *err = LRT_RESULT_NOT_BUILT;
+        return NULL;
+    }
+    if (!rtx_get_pipeline(e)) {
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return NULL;
+    }
+    /* prim_id = instanceId*stride + prim must fit 32 bits and never collide with
+     * LRT_TRI_NO_HIT (0xFFFFFFFF). stride = max prototype triangle count. */
+    uint32_t stride = 1u;
+    for (uint32_t p = 0; p < nprotos; p++) {
+        if (!protos[p].vertices || !protos[p].indices || protos[p].ntris == 0 ||
+            protos[p].nverts == 0) {
+            if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+            return NULL;
+        }
+        if (protos[p].ntris > stride) stride = protos[p].ntris;
+    }
+    if ((uint64_t)ninsts * (uint64_t)stride >= (uint64_t)LRT_TRI_NO_HIT) {
+        vk_set_err(e, "instanced scene exceeds 32-bit prim_id encoding "
+                      "(ninsts*maxPrototypeTris too large; use the flat builder)");
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return NULL;
+    }
+
+    lrt_vk_rtx_scene *s = (lrt_vk_rtx_scene *)calloc(1, sizeof(*s));
+    if (!s) {
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return NULL;
+    }
+    s->blas = (vk_accel *)calloc(nprotos, sizeof(vk_accel));
+    if (!s->blas) {
+        free(s);
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return NULL;
+    }
+    s->nblas = nprotos;
+    s->tri_chunk = stride;
+
+    vk_buffer instbuf = {0};
+    int ok = 0;
+    do {
+        int blas_ok = 1;
+        for (uint32_t p = 0; p < nprotos; p++) {
+            if (!build_proto_blas(e, protos[p].vertices, protos[p].nverts,
+                                  protos[p].indices, protos[p].ntris,
+                                  &s->blas[p])) {
+                blas_ok = 0;
+                break;
+            }
+        }
+        if (!blas_ok) break;
+
+        /* One TLAS instance per placement, in caller order, so the hit's
+         * instanceId (build order) is the placement index. */
+        VkAccelerationStructureInstanceKHR *vi =
+            (VkAccelerationStructureInstanceKHR *)calloc(
+                ninsts, sizeof(VkAccelerationStructureInstanceKHR));
+        if (!vi) break;
+        int inst_ok = 1;
+        for (uint32_t i = 0; i < ninsts; i++) {
+            if (insts[i].proto >= nprotos) {
+                inst_ok = 0;
+                break;
+            }
+            /* transform[12] is row-major 3x4 (world = M*[p;1]), matching
+             * VkTransformMatrixKHR.matrix[3][4] exactly. */
+            memcpy(vi[i].transform.matrix, insts[i].transform,
+                   12u * sizeof(float));
+            vi[i].mask = 0xFFu;
+            vi[i].instanceCustomIndex = i;
+            vi[i].accelerationStructureReference = s->blas[insts[i].proto].address;
+        }
+        if (!inst_ok) {
+            free(vi);
+            break;
+        }
+        VkDeviceSize inst_bytes =
+            (VkDeviceSize)ninsts * sizeof(VkAccelerationStructureInstanceKHR);
+        int ibuilt =
+            vk_buffer_create_ex(
+                e, inst_bytes,
+                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                1, 1, &instbuf) &&
+            vk_buffer_write(e, &instbuf, vi, (size_t)inst_bytes);
+        free(vi);
+        if (!ibuilt) break;
+        uint64_t iaddr = vk_device_address(e, &instbuf);
+
+        VkAccelerationStructureGeometryKHR igeom;
+        memset(&igeom, 0, sizeof(igeom));
+        igeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        igeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+        igeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        igeom.geometry.instances.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+        igeom.geometry.instances.arrayOfPointers = VK_FALSE;
+        igeom.geometry.instances.data.deviceAddress = iaddr;
+        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, &igeom,
+                            ninsts, 0u, 0u, &s->tlas))
+            break;
+        ok = 1;
+    } while (0);
+
+    vk_buffer_destroy(e, &instbuf);
+    if (!ok) {
+        vk_accel_destroy(e, &s->tlas);
+        for (uint32_t p = 0; p < s->nblas; p++) vk_accel_destroy(e, &s->blas[p]);
+        free(s->blas);
+        free(s);
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return NULL;
+    }
+    if (out_tri_stride) *out_tri_stride = stride;
+    if (err) *err = LRT_RESULT_OK;
+    return s;
+}
+
 /* Grow the device-local + staging trace buffers to hold at least n rays. */
 static int rtx_scene_ensure(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t n) {
     if (s->rays_dev.buf && n <= s->cap) return 1;

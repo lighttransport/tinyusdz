@@ -159,6 +159,9 @@ void PrintUsage(const char *prog) {
       << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
+      << "                        prototype, shared across instances; saves VRAM on\n"
+      << "                        instanced scenes). Falls back to flat if no shares.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
       << "  -noDirectPrims         Tessellate USD shapes/curves/NURBS instead of\n"
@@ -477,6 +480,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     } else if (a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
+    } else if (a == "-vkInstanced" || a == "--vkInstanced") {
+      opt->vulkan = true;
+      opt->vulkan_rt = true;
+      opt->vulkan_instanced = true;
     } else if (a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
       opt->use_d3d = true;
     } else if (a == "-hip" || a == "--hip") {

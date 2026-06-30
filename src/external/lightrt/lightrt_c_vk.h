@@ -157,6 +157,43 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_indexed(lrt_vk_engine *e,
                                                  const uint32_t *indices,
                                                  uint32_t ntris, lrt_result *err);
 
+/* --- True two-level (instanced) scene -------------------------------------
+ *
+ * Build a genuine two-level acceleration structure: one BLAS per PROTOTYPE
+ * (geometry stored on the device ONCE) and one TLAS instance per PLACEMENT (the
+ * same prototype BLAS referenced under a per-instance transform). This is the
+ * memory-sharing path the flat builders above cannot express — N copies of a
+ * prototype cost one BLAS, not N. It reuses the SAME trace pipeline/shader as
+ * the flat builders (no shader change): the shader already recovers the hit id
+ * as instanceId*tri_chunk + primitiveIndex, so here tri_chunk is set to the max
+ * prototype triangle count and the returned lrt_hit.prim_id decodes as:
+ *     instance       = prim_id / (*out_tri_stride)
+ *     prototypeLocalTri = prim_id % (*out_tri_stride)
+ * The caller maps `instance` -> prototype (via its own instance list) and shades
+ * the prototype-local triangle, transforming object-space attributes by that
+ * instance's transform.
+ *
+ * Each prototype builds as a SINGLE BLAS (no >8M-triangle chunk splitting), so a
+ * single prototype must fit the device's one-BLAS build limit. Fails (returns
+ * NULL, LRT_RESULT_INVALID_ARGUMENT) if ninsts*maxPrototypeTris would overflow
+ * the 32-bit prim_id encoding — the caller should fall back to the flat builder. */
+typedef struct lrt_vk_proto {
+    const float *vertices;   /* 3*nverts floats of unique positions             */
+    uint32_t nverts;
+    const uint32_t *indices; /* 3*ntris vertex ids (uint32), prototype-local    */
+    uint32_t ntris;
+} lrt_vk_proto;
+
+typedef struct lrt_vk_instance {
+    float transform[12]; /* object->world 3x4 row-major (world = M*[p;1])        */
+    uint32_t proto;      /* index into the protos[] array                        */
+} lrt_vk_instance;
+
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
+    lrt_result *err);
+
 /* Trace n rays against the resident AS. Returns #rays that hit, or -1 on error.
  * Trace buffers are reused/grown across calls. */
 int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,

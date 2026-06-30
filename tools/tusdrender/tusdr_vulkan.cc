@@ -86,5 +86,89 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   return ok;
 }
 
+bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
+                               const CameraFrame &camera, int height) {
+  if (scene.protos.empty() || scene.insts.empty()) return false;
+
+  lrt_vk_engine_options vopts;
+  std::memset(&vopts, 0, sizeof(vopts));
+  vopts.device_index = -1;
+  vopts.prefer_discrete = 1;
+  vopts.want_ray_tracing = 1;
+  lrt_result vkerr = LRT_RESULT_OK;
+  lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
+  if (!vk) {
+    std::cerr << "Failed to create LightRT Vulkan engine.\n";
+    return false;
+  }
+  uint32_t vk_caps = lrt_vk_engine_caps(vk);
+  if (!(vk_caps & LRT_VK_CAP_RAY_QUERY)) {
+    std::cerr << "-vkInstanced needs ray query; falling back to the flat path.\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << "\n";
+
+  // Marshal the prototype + instance lists for the C API (views into `scene`).
+  std::vector<lrt_vk_proto> cprotos(scene.protos.size());
+  uint64_t unique_tris = 0;
+  for (size_t p = 0; p < scene.protos.size(); ++p) {
+    const GpuInstProto &pr = scene.protos[p];
+    cprotos[p].vertices = pr.verts.data();
+    cprotos[p].nverts = uint32_t(pr.verts.size() / 3u);
+    cprotos[p].indices = pr.idx.data();
+    cprotos[p].ntris = pr.ntris;
+    unique_tris += pr.ntris;
+  }
+  std::vector<lrt_vk_instance> cinsts(scene.insts.size());
+  uint64_t placed_tris = 0;
+  for (size_t i = 0; i < scene.insts.size(); ++i) {
+    std::memcpy(cinsts[i].transform, scene.insts[i].o2w, 12u * sizeof(float));
+    cinsts[i].proto = scene.insts[i].proto;
+    placed_tris += scene.protos[scene.insts[i].proto].ntris;
+  }
+
+  uint32_t stride = 0;
+  lrt_result builderr = LRT_RESULT_OK;
+  lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced(
+      vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
+      uint32_t(cinsts.size()), &stride, &builderr);
+  if (!rtx) {
+    std::cerr << "-vkInstanced build failed (rc=" << builderr
+              << "); falling back to the flat path.\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  scene.stride = stride;
+
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height;
+  const int spp = std::max(1, opt.samples);
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<lrt_hit> hits(rays.size());
+  lrt_result trerr = LRT_RESULT_OK;
+  int traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(),
+                                      uint32_t(rays.size()), hits.data(), &trerr);
+  lrt_vk_rtx_scene_free(vk, rtx);
+  if (traced < 0) {
+    std::cerr << "Vulkan instanced trace failed (rc=" << trerr << ").\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+
+  bool ok = ShadeAndWriteImageInstanced(opt, scene, rays, hits, w, h, spp);
+  if (ok) {
+    std::cerr << "backend: LightRT VK (ray_query, two-level TLAS)\n";
+    std::cerr << "instanced: " << scene.protos.size() << " prototypes ("
+              << unique_tris << " unique tris) x " << scene.insts.size()
+              << " instances = " << placed_tris << " placed tris; BLAS memory "
+              << "stores " << unique_tris << " (vs " << placed_tris
+              << " flattened)\n";
+  }
+  lrt_vk_engine_destroy(vk);
+  return ok;
+}
+
 }  // namespace tusdr
 #endif  // HAVE_VULKAN
