@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdrender — WebSocket browser streaming server. Keeps the scene + BVH
-// resident, renders the current camera to memory on demand (reusing
-// RenderImage), encodes via the shared image writer (JPEG/QOI/PNG) and pushes
-// the frame to connected browsers over a WebSocket. Browser mouse/keyboard map
-// to orbit / pan / dolly / resize, mirroring tusdview's stream viewer. Compiles
-// to nothing unless TUSDRENDER_WITH_STREAM is defined.
+// resident, renders the camera to memory on demand (reusing RenderImage),
+// encodes via the shared image writer and pushes frames to browsers over a
+// WebSocket. The viewer has header/left/right control panes around a canvas;
+// the mouse orbits/pans/dollies the camera and the browser can open a
+// server-side path or upload a USD file. Adaptive quality: a small low-quality
+// JPEG is rendered while the view moves, then one full-resolution lossless frame
+// (PNG/QOI) once it goes stable. Compiles to nothing unless TUSDRENDER_WITH_STREAM.
 #ifdef TUSDRENDER_WITH_STREAM
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -30,25 +35,74 @@ namespace {
 using json = nlohmann::json;
 constexpr double kPi = 3.14159265358979323846;
 
-// Same minimal canvas viewer as tusdview's stream server: draws streamed binary
-// frames and sends navigation back as JSON over the same WebSocket.
+// Browser viewer: header bar + left (Scene) / right (View) HTML control panes
+// around a center canvas. The canvas draws streamed frames preserving aspect and
+// orbits/pans/dollies the camera; the panes open files and pick the idle codec.
 const char *kViewerHtml = R"HTML(<!doctype html><html><head><meta charset="utf-8">
 <title>tusdrender stream</title>
-<style>html,body{margin:0;height:100%;background:#111;overflow:hidden}
-#c{display:block;width:100vw;height:100vh;cursor:grab;image-rendering:auto}
-#s{position:fixed;left:8px;top:6px;color:#9cf;font:12px monospace;opacity:.8}</style>
-</head><body><canvas id="c"></canvas><div id="s">connecting…</div>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#15171c;color:#cdd3df;font:13px system-ui,sans-serif}
+body{display:grid;grid-template-rows:42px 1fr;grid-template-columns:210px 1fr 210px;
+ grid-template-areas:"head head head" "left center right";height:100vh}
+#head{grid-area:head;display:flex;align-items:center;gap:10px;padding:0 12px;background:#1d2026;border-bottom:1px solid #2c313b}
+#head b{color:#7fb0ff;font-size:14px}
+#head input{flex:0 1 360px;background:#0f1115;border:1px solid #2c313b;color:#cdd3df;padding:4px 6px;border-radius:4px}
+#stat{margin-left:auto;color:#7d8595;font:12px monospace}
+.pane{background:#1a1d23;overflow:auto;padding:10px}
+#left{grid-area:left;border-right:1px solid #2c313b}
+#right{grid-area:right;border-left:1px solid #2c313b}
+.pane h3{margin:4px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#7d8595}
+button,select{width:100%;margin:3px 0;background:#262b34;border:1px solid #353c48;color:#cdd3df;padding:6px;border-radius:4px;cursor:pointer}
+button:hover{background:#2f3540}
+.row{display:flex;gap:6px}.row button{width:auto;flex:1}
+#drop{border:1px dashed #3a4150;border-radius:6px;padding:14px;text-align:center;color:#7d8595;margin:6px 0}
+#drop.hot{border-color:#7fb0ff;color:#7fb0ff}
+#center{grid-area:center;position:relative;background:#0c0d10;overflow:hidden}
+#c{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;cursor:grab;background:#0c0d10}
+small{color:#6b7280}
+</style></head><body>
+<div id="head"><b>tusdrender</b>
+ <input id="path" placeholder="server-side USD path, then Enter">
+ <span id="stat">connecting…</span></div>
+
+<div id="left" class="pane">
+ <h3>Scene</h3>
+ <button id="openbtn">Open path</button>
+ <div id="drop">Drop .usd/.usdz here<br><small>or click to upload</small>
+  <input id="file" type="file" accept=".usd,.usda,.usdc,.usdz" style="display:none"></div>
+ <h3>Render</h3>
+ <label><small>Idle refinement</small></label>
+ <select id="codec"><option value="png">PNG (lossless)</option>
+  <option value="qoi">QOI (lossless)</option></select>
+ <small>Moving: fast low-res JPEG. Stable: one crisp lossless frame.</small>
+</div>
+
+<div id="center"><canvas id="c"></canvas></div>
+
+<div id="right" class="pane">
+ <h3>View</h3>
+ <button data-k="f">Reset / fit (F)</button>
+ <h3>Presets</h3>
+ <div class="row"><button data-k="1">Front</button><button data-k="3">Right</button></div>
+ <div class="row"><button data-k="7">Top</button><button data-k="0">Iso</button></div>
+ <h3>Help</h3>
+ <small>Left-drag orbit · Shift+drag or middle-drag pan · right-drag / wheel dolly.</small>
+</div>
+
 <script>
-const cv=document.getElementById('c'),cx=cv.getContext('2d'),st=document.getElementById('s');
+const cv=document.getElementById('c'),cx=cv.getContext('2d'),stat=document.getElementById('s')||document.getElementById('stat');
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/stream');
 ws.binaryType='blob';
 let frames=0,last=performance.now();
-ws.onopen=()=>{st.textContent='connected'; send({t:'resize',w:innerWidth,h:innerHeight});};
-ws.onclose=()=>st.textContent='disconnected';
+function sendSize(){const r=document.getElementById('center').getBoundingClientRect();
+ send({t:'resize',w:Math.round(r.width),h:Math.round(r.height)});}
+ws.onopen=()=>{stat.textContent='connected';sendSize();};
+ws.onclose=()=>stat.textContent='disconnected';
 ws.onmessage=ev=>{createImageBitmap(ev.data).then(b=>{
   if(cv.width!==b.width||cv.height!==b.height){cv.width=b.width;cv.height=b.height;}
   cx.drawImage(b,0,0); b.close(); frames++;
-  const now=performance.now(); if(now-last>1000){st.textContent=frames+' fps  '+cv.width+'x'+cv.height;frames=0;last=now;}
+  const now=performance.now(); if(now-last>1000){stat.textContent=frames+' fps · '+cv.width+'×'+cv.height;frames=0;last=now;}
 });};
 function send(o){ if(ws.readyState===1) ws.send(JSON.stringify(o)); }
 let drag=false,btn=0,px=0,py=0;
@@ -60,18 +114,41 @@ window.addEventListener('mousemove',e=>{ if(!drag)return; const dx=e.clientX-px,
   else if(btn===2) send({t:'dolly',amount:(dx-dy)*0.05});
   else send({t:'orbit',dx:dx,dy:dy}); });
 cv.addEventListener('wheel',e=>{e.preventDefault(); send({t:'dolly',amount:(e.deltaY>0?-1:1)});},{passive:false});
-window.addEventListener('keydown',e=>{ if('f'.includes(e.key)) send({t:'key',k:e.key}); });
-let rt; window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>send({t:'resize',w:innerWidth,h:innerHeight}),150);});
+window.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT')return;
+  if('f01357'.includes(e.key)) send({t:'key',k:e.key}); });
+document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>send({t:'key',k:b.dataset.k}));
+document.getElementById('codec').onchange=e=>send({t:'codec',v:e.target.value});
+const path=document.getElementById('path');
+function openPath(){ if(path.value.trim()) send({t:'load',path:path.value.trim()}); }
+document.getElementById('openbtn').onclick=openPath;
+path.addEventListener('keydown',e=>{ if(e.key==='Enter') openPath(); });
+const drop=document.getElementById('drop'),file=document.getElementById('file');
+drop.onclick=()=>file.click();
+file.onchange=()=>{ if(file.files[0]) upload(file.files[0]); };
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>{ if(e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+async function upload(f){ stat.textContent='uploading '+f.name+'…';
+  try{ const r=await fetch('/upload?name='+encodeURIComponent(f.name),{method:'POST',body:f});
+       const j=await r.json(); stat.textContent=j.ok?('loaded '+j.path):('upload failed: '+(j.error||'')); }
+  catch(err){ stat.textContent='upload error'; } }
+let rt; window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(sendSize,200);});
 </script></body></html>)HTML";
 
-// A browser navigation command parsed from a WebSocket text frame.
+// A browser command parsed from a WebSocket text frame.
 struct Nav {
-  enum Type { Orbit, Pan, Dolly, Key, Resize } type;
+  enum Type { Orbit, Pan, Dolly, Key, Resize, Load, Codec } type;
   float dx = 0, dy = 0, amount = 0;
-  std::string str;
+  std::string str;  // key / load path / codec name
   int w = 0, h = 0;
 };
 
+std::string SafeBasename(const std::string &name) {
+  size_t slash = name.find_last_of("/\\");
+  std::string base = (slash == std::string::npos) ? name : name.substr(slash + 1);
+  if (base.empty() || base == "." || base == "..") base = "upload.usdz";
+  return base;
+}
 }  // namespace
 
 // Orbit-camera streaming server: one civetweb context, a /stream WebSocket and
@@ -80,15 +157,34 @@ struct Nav {
 // enqueue input and register/unregister live connections.
 class StreamRenderServer {
  public:
-  explicit StreamRenderServer(RenderContext &ctx) : ctx_(ctx) {
-    // Seed the orbit state from the scene bounds so the first frame is framed.
-    const Vec3 ext = Sub(ctx_.bounds.hi, ctx_.bounds.lo);
-    radius_ = std::max(1.0e-3f, Length(ext) * 0.5f);
-    center_ = Mul(Add(ctx_.bounds.lo, ctx_.bounds.hi), 0.5f);
-    az_ = 30.0;
-    el_ = 20.0;
-    dist_scale_ = 2.5;
+  explicit StreamRenderServer(const Options &opt)
+      : opt_(opt),
+        idle_codec_(opt.stream_codec == "qoi" ? "qoi" : "png"),
+        motion_max_(std::max(16, opt.stream_motion_res)),
+        motion_q_(std::min(100, std::max(1, opt.stream_motion_quality))) {}
+
+  // Build (or rebuild) the resident scene/BVH from `path`. Returns false on
+  // failure (the previous scene, if any, is kept).
+  bool load(const std::string &path) {
+    Options o = opt_;
+    o.input = path;
+    auto nrc = std::make_unique<RenderContext>();
+    if (!BuildRenderContext(o, *nrc)) {
+      std::cerr << "stream: failed to load " << path << "\n";
+      return false;
+    }
+    const bool first = !rc_;
+    rc_ = std::move(nrc);
+    opt_.input = path;
+    // Keep the browser's requested resolution across reloads; only adopt the
+    // scene default on the very first load (before any resize arrives).
+    if (first) {
+      full_w_ = rc_->width;
+      full_h_ = rc_->height;
+    }
+    seedOrbitFromBounds();
     applyCamera();
+    return true;
   }
 
   bool start(int port) {
@@ -103,38 +199,45 @@ class StreamRenderServer {
     }
     mg_set_websocket_handler(ctx_web_, "/stream", wsConnect, wsReady, wsData,
                              wsClose, this);
+    mg_set_request_handler(ctx_web_, "/upload", uploadHandler, this);
     mg_set_request_handler(ctx_web_, "/", httpHandler, this);
     std::cerr << "tusdrender stream server listening on http://localhost:"
               << port << "/ (WebSocket /stream)\n";
     return true;
   }
 
-  // Block on the render loop: render whenever the camera/resolution is dirty and
-  // at least one client is connected. Returns when the server is stopped.
-  //
-  // civetweb starts a connection's read loop slightly after its ready handler
-  // fires, so a frame written immediately on connect can race that startup and
-  // be dropped. We therefore cache the last encoded frame and re-send it for a
-  // short window after every render / new connection (resend_) — cheap (network
-  // only, no re-trace) and robust for new/reconnecting clients.
+  // Block on the render loop until stopped. Renders a small low-quality JPEG when
+  // the view changes (motion), then one full-resolution lossless frame once
+  // stable. The latest encoded frame is cached and re-sent for a short window
+  // after each render / new connection (beats civetweb's connect/read race).
   void runLoop() {
+    using clock = std::chrono::steady_clock;
     for (;;) {
       std::vector<Nav> batch;
-      bool render = false, resend = false;
+      bool motion = false, resend = false;
       {
         std::unique_lock<std::mutex> lk(mu_);
-        cv_.wait_for(lk, std::chrono::milliseconds(150), [&] {
+        cv_.wait_for(lk, std::chrono::milliseconds(120), [&] {
           return stop_ || (!conns_.empty() && (dirty_ || resend_ > 0));
         });
         if (stop_) return;
         batch.swap(input_);
-        render = dirty_ && !conns_.empty();
-        if (render) dirty_ = false;
-        resend = !render && resend_ > 0 && !conns_.empty();
+        motion = dirty_ && !conns_.empty();
+        if (motion) dirty_ = false;
+        resend = !motion && resend_ > 0 && !conns_.empty();
       }
       for (const Nav &n : batch) applyNav(n);
-      if (render) {
-        renderAndPush();
+
+      const auto now = clock::now();
+      if (motion) {
+        last_activity_ = now;
+        need_refine_ = true;
+        renderAndPush(/*motion=*/true);
+      } else if (need_refine_ && !conns_.empty() &&
+                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                     now - last_activity_).count() >= kIdleMs) {
+        need_refine_ = false;
+        renderAndPush(/*motion=*/false);  // full-res lossless refine
       } else if (resend) {
         pushLast();
         std::lock_guard<std::mutex> lk(mu_);
@@ -155,23 +258,20 @@ class StreamRenderServer {
     }
   }
 
-  void setCodec(const std::string &c) { codec_ = c; }
-
  private:
-  // ---- civetweb callbacks (run on worker threads) ----
   static StreamRenderServer *self(void *u) {
     return static_cast<StreamRenderServer *>(u);
   }
 
+  // ---- civetweb callbacks (run on worker threads) ----
   static int wsConnect(const mg_connection *, void *) { return 0; }
 
   static void wsReady(mg_connection *c, void *u) {
     StreamRenderServer *s = self(u);
     std::lock_guard<std::mutex> lk(s->mu_);
     s->conns_.push_back(c);
-    if (s->last_frame_.empty())
-      s->dirty_ = true;       // first client: render the initial frame
-    s->resend_ = kResendN;    // (re)send the latest frame so the new client gets it
+    if (s->last_frame_.empty()) s->dirty_ = true;  // first client: initial frame
+    s->resend_ = kResendN;
     s->cv_.notify_all();
   }
 
@@ -183,8 +283,7 @@ class StreamRenderServer {
                     s->conns_.end());
   }
 
-  static int wsData(mg_connection *, int bits, char *data, size_t len,
-                    void *u) {
+  static int wsData(mg_connection *, int bits, char *data, size_t len, void *u) {
     const int opcode = bits & 0xf;
     if (opcode == MG_WEBSOCKET_OPCODE_CONNECTION_CLOSE) return 0;
     if (opcode != MG_WEBSOCKET_OPCODE_TEXT || !data || len == 0) return 1;
@@ -194,6 +293,9 @@ class StreamRenderServer {
     auto num = [&](const char *k) -> float {
       return (j.contains(k) && j[k].is_number()) ? j[k].get<float>() : 0.f;
     };
+    auto str = [&](const char *k) -> std::string {
+      return (j.contains(k) && j[k].is_string()) ? j[k].get<std::string>() : "";
+    };
     Nav n;
     if (t == "orbit") {
       n.type = Nav::Orbit; n.dx = num("dx"); n.dy = num("dy");
@@ -202,19 +304,18 @@ class StreamRenderServer {
     } else if (t == "dolly") {
       n.type = Nav::Dolly; n.amount = num("amount");
     } else if (t == "key") {
-      n.type = Nav::Key;
-      if (j.contains("k") && j["k"].is_string())
-        n.str = j["k"].get<std::string>();
+      n.type = Nav::Key; n.str = str("k");
     } else if (t == "resize") {
       n.type = Nav::Resize; n.w = int(num("w")); n.h = int(num("h"));
+    } else if (t == "load") {
+      n.type = Nav::Load; n.str = str("path");
+      if (n.str.empty()) return 1;
+    } else if (t == "codec") {
+      n.type = Nav::Codec; n.str = str("v");
     } else {
       return 1;
     }
-    StreamRenderServer *s = self(u);
-    std::lock_guard<std::mutex> lk(s->mu_);
-    if (s->input_.size() < 4096) s->input_.push_back(std::move(n));
-    s->dirty_ = true;
-    s->cv_.notify_all();
+    self(u)->enqueue(std::move(n));
     return 1;
   }
 
@@ -226,14 +327,72 @@ class StreamRenderServer {
     return 200;
   }
 
+  // POST /upload?name=foo.usdz — body is the raw file. Saves under the system
+  // temp dir and queues a Load.
+  static int uploadHandler(mg_connection *conn, void *u) {
+    StreamRenderServer *s = self(u);
+    const mg_request_info *ri = mg_get_request_info(conn);
+    auto reply = [&](bool ok, const std::string &msg) {
+      json r = ok ? json{{"ok", true}, {"path", msg}}
+                  : json{{"ok", false}, {"error", msg}};
+      const std::string body = r.dump();
+      mg_printf(conn,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\n\r\n%s",
+                int(body.size()), body.c_str());
+      return 200;
+    };
+    if (!ri || std::strcmp(ri->request_method, "POST") != 0)
+      return reply(false, "POST required");
+    char nameBuf[512] = "upload.usdz";
+    if (ri->query_string)
+      mg_get_var(ri->query_string, std::strlen(ri->query_string), "name",
+                 nameBuf, sizeof(nameBuf));
+    std::error_code ec;
+    std::filesystem::path dir =
+        std::filesystem::temp_directory_path(ec) / "tusdrender_uploads";
+    std::filesystem::create_directories(dir, ec);
+    std::filesystem::path out = dir / SafeBasename(nameBuf);
+    std::ofstream ofs(out, std::ios::binary | std::ios::trunc);
+    if (!ofs) return reply(false, "cannot write temp file");
+    char buf[65536];
+    int rd;
+    long long total = 0;
+    while ((rd = mg_read(conn, buf, sizeof(buf))) > 0) {
+      ofs.write(buf, rd);
+      total += rd;
+    }
+    ofs.close();
+    if (total <= 0) return reply(false, "empty upload");
+    Nav n;
+    n.type = Nav::Load;
+    n.str = out.string();
+    s->enqueue(std::move(n));
+    return reply(true, out.string());
+  }
+
+  void enqueue(Nav n) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (input_.size() < 4096) input_.push_back(std::move(n));
+    dirty_ = true;
+    cv_.notify_all();
+  }
+
   // ---- camera / render (run on the loop thread) ----
-  // Position the camera on the orbit sphere around center_ (+ pan offset),
-  // mirroring the JS `tusdrender.orbit` math.
+  void seedOrbitFromBounds() {
+    const Vec3 ext = Sub(rc_->bounds.hi, rc_->bounds.lo);
+    radius_ = std::max(1.0e-3f, Length(ext) * 0.5f);
+    center_ = Mul(Add(rc_->bounds.lo, rc_->bounds.hi), 0.5f);
+    az_ = 30.0; el_ = 20.0; dist_scale_ = 2.5; pan_ = Vec3{0, 0, 0};
+  }
+
+  // Position the camera on the orbit sphere around center_ (+ pan offset).
   void applyCamera() {
+    if (!rc_) return;
     const double az = az_ * kPi / 180.0;
     const double el = std::max(-89.0, std::min(89.0, el_)) * kPi / 180.0;
     const double dist = double(radius_) * dist_scale_;
-    const Vec3 up = AxisVec(ctx_.up_axis);
+    const Vec3 up = AxisVec(rc_->up_axis);
     const Vec3 ref = (std::fabs(up.y) < 0.9f) ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
     const Vec3 e0 = Normalize(Cross(up, ref));
     const Vec3 e1 = Normalize(Cross(up, e0));
@@ -243,7 +402,7 @@ class StreamRenderServer {
     const Vec3 dir = Add(horiz, Mul(up, se));
     const Vec3 target = Add(center_, pan_);
     const Vec3 eye = Add(target, Mul(dir, float(dist)));
-    CameraFrame &c = ctx_.camera;
+    CameraFrame &c = rc_->camera;
     c.origin = eye;
     c.forward = Normalize(Sub(target, eye));
     c.right = Normalize(Cross(c.forward, up));
@@ -263,8 +422,8 @@ class StreamRenderServer {
         break;
       case Nav::Pan: {
         const float s = radius_ * 0.0025f;
-        pan_ = Add(pan_, Add(Mul(ctx_.camera.right, -n.dx * s),
-                             Mul(ctx_.camera.up, n.dy * s)));
+        pan_ = Add(pan_, Add(Mul(rc_->camera.right, -n.dx * s),
+                             Mul(rc_->camera.up, n.dy * s)));
         applyCamera();
         break;
       }
@@ -273,43 +432,57 @@ class StreamRenderServer {
         dist_scale_ = std::max(1.0e-3, std::min(1.0e4, dist_scale_));
         applyCamera();
         break;
-      case Nav::Key:
-        if (n.str == "f") {  // reset framing
-          az_ = 30.0; el_ = 20.0; dist_scale_ = 2.5; pan_ = Vec3{0, 0, 0};
-          applyCamera();
-        }
+      case Nav::Key: {
+        const std::string &k = n.str;
+        if (k == "f") { seedOrbitFromBounds(); }
+        else if (k == "1") { az_ = 0;  el_ = 0; }     // Front
+        else if (k == "3") { az_ = 90; el_ = 0; }     // Right
+        else if (k == "7") { el_ = 89; }              // Top
+        else if (k == "0") { az_ = 45; el_ = 30; }    // Iso
+        applyCamera();
         break;
+      }
       case Nav::Resize:
-        if (n.w > 0 && n.h > 0) {
-          ctx_.width = std::max(1, n.w);
-          ctx_.height = std::max(1, n.h);
-        }
+        if (n.w > 0 && n.h > 0) { full_w_ = n.w; full_h_ = n.h; }
+        break;
+      case Nav::Load:
+        load(n.str);  // keeps old scene on failure
+        break;
+      case Nav::Codec:
+        if (n.str == "png" || n.str == "qoi") idle_codec_ = n.str;
         break;
     }
   }
 
-  void renderAndPush() {
-    ctx_.opt.width = ctx_.width;
+  void renderAndPush(bool motion) {
+    if (!rc_) return;
+    int w = full_w_, h = full_h_;
+    if (motion && std::max(w, h) > motion_max_) {
+      const double s = double(motion_max_) / double(std::max(w, h));
+      w = std::max(1, int(w * s));
+      h = std::max(1, int(h * s));
+    }
+    rc_->opt.width = w;
     tinyusdz::Image img = RenderImage(
-        ctx_.scene, &ctx_.direct, ctx_.tris, ctx_.flat_mats, ctx_.lights,
-        ctx_.ibl.valid ? &ctx_.ibl : nullptr, ctx_.camera, ctx_.opt,
-        ctx_.height, ctx_.textures.empty() ? nullptr : &ctx_.textures,
-        ctx_.tri_uvs.empty() ? nullptr : &ctx_.tri_uvs,
-        ctx_.use_tlas ? ctx_.tlas : nullptr,
-        ctx_.use_tlas ? &ctx_.blas : nullptr,
-        ctx_.use_tlas ? &ctx_.instances : nullptr,
-        ctx_.tri_colors.empty() ? nullptr : &ctx_.tri_colors,
-        ctx_.tri_normals.empty() ? nullptr : &ctx_.tri_normals,
-        ctx_.volumes.empty() ? nullptr : &ctx_.volumes);
+        rc_->scene, &rc_->direct, rc_->tris, rc_->flat_mats, rc_->lights,
+        rc_->ibl.valid ? &rc_->ibl : nullptr, rc_->camera, rc_->opt, h,
+        rc_->textures.empty() ? nullptr : &rc_->textures,
+        rc_->tri_uvs.empty() ? nullptr : &rc_->tri_uvs,
+        rc_->use_tlas ? rc_->tlas : nullptr,
+        rc_->use_tlas ? &rc_->blas : nullptr,
+        rc_->use_tlas ? &rc_->instances : nullptr,
+        rc_->tri_colors.empty() ? nullptr : &rc_->tri_colors,
+        rc_->tri_normals.empty() ? nullptr : &rc_->tri_normals,
+        rc_->volumes.empty() ? nullptr : &rc_->volumes);
 
     tinyusdz::image::WriteOption wopt;
-    if (codec_ == "qoi") {
-      wopt.format = tinyusdz::image::WriteImageFormat::QOI;
-    } else if (codec_ == "png") {
-      wopt.format = tinyusdz::image::WriteImageFormat::PNG;
-    } else {
+    if (motion) {
       wopt.format = tinyusdz::image::WriteImageFormat::JPEG;
-      wopt.jpeg_quality = 80;
+      wopt.jpeg_quality = motion_q_;
+    } else if (idle_codec_ == "qoi") {
+      wopt.format = tinyusdz::image::WriteImageFormat::QOI;
+    } else {
+      wopt.format = tinyusdz::image::WriteImageFormat::PNG;
     }
     auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
     if (!enc) {
@@ -319,13 +492,13 @@ class StreamRenderServer {
     {
       std::lock_guard<std::mutex> lk(mu_);
       last_frame_ = std::move(enc.value());
-      resend_ = kResendN;  // re-send for a short window (beats the connect race)
+      // Motion frames are superseded by the next one, so a dropped frame self-heals;
+      // the crisp idle refine must land, so re-send it for a short window.
+      if (!motion) resend_ = kResendN;
     }
     pushLast();
   }
 
-  // Write the cached frame to every live connection. Cross-thread writes must be
-  // bracketed with mg_lock_connection/mg_unlock_connection.
   void pushLast() {
     std::lock_guard<std::mutex> lk(mu_);
     if (last_frame_.empty()) return;
@@ -338,20 +511,26 @@ class StreamRenderServer {
     }
   }
 
-  RenderContext &ctx_;
+  static constexpr int kResendN = 4;   // ticks to re-send the crisp/connect frame
+  static constexpr int kIdleMs = 320;  // ms of quiet before the lossless refine
+
+  Options opt_;
+  std::unique_ptr<RenderContext> rc_;
+  std::string idle_codec_;
+  int motion_max_, motion_q_;
+  int full_w_ = 960, full_h_ = 540;
+
   mg_context *ctx_web_ = nullptr;
-  std::string codec_ = "jpeg";
-
-  static constexpr int kResendN = 6;  // ticks to re-send a frame after a change
-
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<mg_connection *> conns_;
   std::vector<Nav> input_;
-  std::vector<uint8_t> last_frame_;  // latest encoded frame (cached for resend)
-  int resend_ = 0;                   // remaining re-send ticks
+  std::vector<uint8_t> last_frame_;
+  int resend_ = 0;
   bool dirty_ = true;
   bool stop_ = false;
+  bool need_refine_ = false;
+  std::chrono::steady_clock::time_point last_activity_{};
 
   // Orbit state.
   Vec3 center_{0, 0, 0};
@@ -361,12 +540,12 @@ class StreamRenderServer {
 };
 
 int RunStreamServer(const Options &opt) {
-  RenderContext ctx;
-  if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
-  if (opt.stats) PrintRTStats(ctx);
-
-  StreamRenderServer server(ctx);
-  server.setCodec(opt.stream_codec);
+  StreamRenderServer server(opt);
+  if (!server.load(opt.input)) return EXIT_FAILURE;
+  if (opt.stats) {
+    // PrintRTStats needs the context; load() built it internally, so skip the
+    // one-shot stats dump here (the per-frame path stays quiet).
+  }
   if (!server.start(opt.stream_http)) return EXIT_FAILURE;
   std::cerr << "Press Ctrl-C to stop.\n";
   server.runLoop();
