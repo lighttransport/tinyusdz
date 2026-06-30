@@ -24,6 +24,7 @@
 #include "cuda/cuda_raytracer.hh"
 #include "gpu_scene.hh"
 #include "hip/hip_raytracer.hh"
+#include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "gui.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
@@ -321,8 +322,17 @@ class App
   // geometry is kept for the tracer), and rendering stays single-threaded.
   bool hipInteractive_{false};
   bool hipInteractiveBuilt_{false};  // HIP scene built lazily on the first frame
-  int hipBuildAnnounceFrames_{0};    // frames rendered with the "building" overlay before the blocking build
+  int hipBuildAnnounceFrames_{0};    // frames rendered with the "building" overlay before kicking off the build
   std::string rtBuildNote_;          // RT build status for the progress overlay
+  // Background HIP scene build: the build runs on a worker thread so the UI stays
+  // responsive and shows live progress instead of freezing on the multi-second build.
+  std::thread hipBuildThread_;
+  bool hipBuildStarted_{false};
+  std::atomic<bool> hipBuildDone_{false};
+  std::atomic<bool> hipBuildOk_{false};
+  std::string hipBuildErr_;          // written by the worker, read after join
+  BuildProgress hipBuildProgress_;   // atomics polled by the overlay
+  std::chrono::steady_clock::time_point hipBuildStart_;
   // Trace the HIP viewport for one interactive frame (builds the scene on first
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();

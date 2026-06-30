@@ -123,14 +123,15 @@ bool HipRayTracer::init(std::string* err) {
 
 bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                          size_t maxInstances, std::string* err,
-                         float displacementScale) {
+                         float displacementScale, BuildProgress* progress) {
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
-  CU_OK(hipSetDevice(device_), "hipSetDevice");
+  CU_OK(hipSetDevice(device_), "hipSetDevice");  // also sets the device on a worker thread
   freeScene();
 
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with CUDA.
   HostScene hs;
-  if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err)) {
+  if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
+                      progress)) {
     if (err) *err = "HIP: " + *err;
     return false;
   }
@@ -143,6 +144,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   numMats_ = hs.numMats;
   numVols_ = hs.numVols;
 
+  if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
     void* p = nullptr;
@@ -172,6 +174,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (progress) progress->phase = 4;  // done
   return true;
 }
 

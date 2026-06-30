@@ -120,6 +120,7 @@ App::~App() {
   if (mcp_) mcp_->stop();
 #endif
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
+  if (hipBuildThread_.joinable()) hipBuildThread_.join();  // finish any in-flight RT build
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   if (renderThreadActive_) {
     joinRenderThread();  // the render thread runs renderer_->shutdown() on its context
@@ -1141,25 +1142,43 @@ bool App::renderHipViewport() {
     return true;
   }
 
-  // Build the HIP scene once (lazily, on the first frame after load). The build
-  // blocks the main thread (~tens of seconds on the largest scenes). Present one
-  // frame first (the loop already set the "building" overlay note before ImGui was
-  // built), THEN build on the next frame -- so the note is on screen (frozen)
-  // during the blocking build instead of appearing only after it.
-  if (!hipInteractiveBuilt_ && hipBuildAnnounceFrames_ < 2) {
-    ++hipBuildAnnounceFrames_;  // present a couple of frames (modal closes, note shows) first
-    return true;
-  }
+  // Build the HIP scene once. It runs on a BACKGROUND THREAD so the UI stays
+  // responsive and the progress overlay updates live (the build is multi-second on
+  // big scenes). Present a couple of frames first so the loading modal has closed
+  // and the overlay is visible before the worker starts.
   if (!hipInteractiveBuilt_) {
-    std::string cerr;
-    if (!hipTracer_.init(&cerr)) {
-      LOGW("HIP ray tracing unavailable: %s; viewport stays blank.", cerr.c_str());
-      hipInteractive_ = false;  // give up; avoid retrying every frame
-      return false;
+    if (hipBuildAnnounceFrames_ < 2) {
+      ++hipBuildAnnounceFrames_;
+      return true;
     }
-    if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                          gui_.displacementScale())) {
-      LOGW("HIP ray tracing build failed: %s", cerr.c_str());
+    if (!hipBuildStarted_) {
+      std::string cerr;
+      if (!hipTracer_.init(&cerr)) {
+        LOGW("HIP ray tracing unavailable: %s; viewport stays blank.", cerr.c_str());
+        hipInteractive_ = false;  // give up; avoid retrying every frame
+        return false;
+      }
+      hipBuildStarted_ = true;
+      hipBuildStart_ = std::chrono::steady_clock::now();
+      const float dispScale = gui_.displacementScale();  // read on the main thread
+      // The worker reads draw_ (stable while building: no reload/anim on the HIP
+      // path) and builds + uploads on the device (hipSetDevice runs in build()).
+      hipBuildThread_ = std::thread([this, dispScale] {
+        std::string e;
+        const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                         dispScale, &hipBuildProgress_);
+        hipBuildErr_ = e;
+        hipBuildOk_.store(ok, std::memory_order_release);
+        hipBuildDone_.store(true, std::memory_order_release);
+      });
+      return true;
+    }
+    if (!hipBuildDone_.load(std::memory_order_acquire)) {
+      return true;  // still building -> overlay shows live progress
+    }
+    if (hipBuildThread_.joinable()) hipBuildThread_.join();
+    if (!hipBuildOk_.load(std::memory_order_acquire)) {
+      LOGW("HIP ray tracing build failed: %s", hipBuildErr_.c_str());
       hipInteractive_ = false;
       return false;
     }
@@ -1437,7 +1456,26 @@ int App::run(const std::string& initialFile, int maxFrames,
     rtBuildNote_.clear();
     if (hipInteractive_ && !hipInteractiveBuilt_ && !loadActive_ &&
         !draw_.meshes.empty() && draw_.triangleCount > 0) {
-      rtBuildNote_ = "Building ray-tracing scene\xE2\x80\xA6 (one-time, may take a while)";
+      if (hipBuildStarted_) {
+        const int ph = hipBuildProgress_.phase.load(std::memory_order_relaxed);
+        const size_t d = hipBuildProgress_.done.load(std::memory_order_relaxed);
+        const size_t t = hipBuildProgress_.total.load(std::memory_order_relaxed);
+        const float el = std::chrono::duration<float>(
+                             std::chrono::steady_clock::now() - hipBuildStart_)
+                             .count();
+        char buf[192];
+        if (t > 0)
+          std::snprintf(buf, sizeof(buf),
+                        "Building ray-tracing scene \xE2\x80\x94 %s %zu/%zu  (%.0fs)",
+                        BuildProgress::phaseName(ph), d, t, el);
+        else
+          std::snprintf(buf, sizeof(buf),
+                        "Building ray-tracing scene \xE2\x80\x94 %s  (%.0fs)",
+                        BuildProgress::phaseName(ph), el);
+        rtBuildNote_ = buf;
+      } else {
+        rtBuildNote_ = "Building ray-tracing scene\xE2\x80\xA6";
+      }
     }
     Gui::UploadStatus us;
     us.active = progressiveActive_;

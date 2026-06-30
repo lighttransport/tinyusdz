@@ -7,6 +7,7 @@
 // then just upload the arrays (the only per-backend difference).
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -15,6 +16,23 @@
 #include "rt_bvh.hh"     // Node
 
 namespace tusdview {
+
+// Live progress for a (possibly background-threaded) scene build. Polled by the
+// UI to show a responsive progress overlay during the multi-second build.
+struct BuildProgress {
+  std::atomic<int> phase{0};        // 0 geometry, 1 assemble, 2 TLAS, 3 upload, 4 done
+  std::atomic<size_t> done{0};      // items completed in the current phase
+  std::atomic<size_t> total{0};     // items in the current phase (0 = indeterminate)
+  static const char* phaseName(int p) {
+    switch (p) {
+      case 0: return "building geometry";
+      case 1: return "assembling scene";
+      case 2: return "building TLAS";
+      case 3: return "uploading to GPU";
+      default: return "finalizing";
+    }
+  }
+};
 
 // Per-instance record (must match `Inst` in the trace kernel: all 4-byte fields).
 struct Inst {
@@ -61,6 +79,7 @@ struct HostScene {
 // UsdPreviewSurface displacement into the traced geometry (0 = none). Returns
 // false (with *err) only when the scene has no triangles/instances.
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
-                    float displacementScale, HostScene* out, std::string* err);
+                    float displacementScale, HostScene* out, std::string* err,
+                    BuildProgress* progress = nullptr);
 
 }  // namespace tusdview

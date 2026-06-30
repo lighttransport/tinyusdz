@@ -19,6 +19,8 @@
 
 namespace tusdview {
 
+struct BuildProgress;  // rt_scene_build.hh (background-build progress)
+
 class CudaRayTracer {
  public:
   CudaRayTracer() = default;
@@ -41,7 +43,8 @@ class CudaRayTracer {
   // traced geometry (ray tracers intersect real triangles, so displacement can't
   // be a shader effect here). 0 = no displacement.
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
-             std::string* err, float displacementScale = 0.0f);
+             std::string* err, float displacementScale = 0.0f,
+             BuildProgress* progress = nullptr);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 

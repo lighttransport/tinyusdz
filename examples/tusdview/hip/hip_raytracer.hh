@@ -19,6 +19,8 @@
 
 namespace tusdview {
 
+struct BuildProgress;  // rt_scene_build.hh (background-build progress)
+
 class HipRayTracer {
  public:
   HipRayTracer() = default;
@@ -36,7 +38,8 @@ class HipRayTracer {
   // Flatten `scene` into world-space triangles, build a BVH, and upload to the
   // device. See CudaRayTracer::build for the full contract.
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
-             std::string* err, float displacementScale = 0.0f);
+             std::string* err, float displacementScale = 0.0f,
+             BuildProgress* progress = nullptr);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 
