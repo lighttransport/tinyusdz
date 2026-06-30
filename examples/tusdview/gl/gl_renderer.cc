@@ -1371,14 +1371,13 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
-  // Thin anti-aliased lines (usdview look): coverage-based line smoothing blended
-  // over the surface. Alpha blend so the smoothed edge coverage feathers; keep
-  // depth test (lines sit in front via the VS depth bias) but don't write depth
-  // so overlapping smoothed lines don't darken each other.
-  glEnable(GL_LINE_SMOOTH);
-  glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // Crisp 1 px lines, like usdview's pure-wireframe path (which uses plain GL
+  // lines, no GL_LINE_SMOOTH). GL_LINE_SMOOTH on RADV clamps width to 1.0 and its
+  // AA footprint spreads the line to ~2 px (fuzzy/thick); a plain 1 px line is a
+  // true single pixel -> visibly thinner. Depth test keeps lines in front (VS
+  // bias) with depth writes off so overlapping edges don't fight.
+  glDisable(GL_LINE_SMOOTH);
+  glDisable(GL_BLEND);
   glDepthMask(GL_FALSE);
   glLineWidth(1.0f);
 
