@@ -126,14 +126,15 @@ bool CudaRayTracer::init(std::string* err) {
 
 bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
                           size_t maxInstances, std::string* err,
-                          float displacementScale) {
+                          float displacementScale, BuildProgress* progress) {
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   freeScene();
 
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with HIP.
   HostScene hs;
-  if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err)) {
+  if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
+                      progress)) {
     if (err) *err = "CUDA: " + *err;
     return false;
   }
@@ -146,6 +147,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   numMats_ = hs.numMats;
   numVols_ = hs.numVols;
 
+  if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
     CUdeviceptr p;
@@ -175,6 +177,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (progress) progress->phase = 4;  // done
   return true;
 }
 

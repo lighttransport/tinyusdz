@@ -296,9 +296,14 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
 }  // namespace
 
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
-                    float displacementScale, HostScene* out, std::string* err) {
+                    float displacementScale, HostScene* out, std::string* err,
+                    BuildProgress* progress) {
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
   const size_t instCap = maxInstances ? maxInstances : ~size_t(0);
+  auto setPhase = [&](int p, size_t total) {
+    if (progress) { progress->phase = p; progress->done = 0; progress->total = total; }
+  };
+  auto tick = [&]() { if (progress) progress->done.fetch_add(1, std::memory_order_relaxed); };
 
   using Clock = std::chrono::steady_clock;
   auto t0 = Clock::now();
@@ -309,8 +314,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // Phase A: build every mesh's geometry in parallel (the dominant cost on
   // heavily-prototyped scenes). Each writes its own results slot.
   std::vector<MeshBuild> mbs(scene.meshes.size());
+  setPhase(0, scene.meshes.size());  // geometry
   ParallelFor(scene.meshes.size(), [&](size_t i) {
     mbs[i] = BuildOneMesh(scene, scene.meshes[i], displacementScale);
+    tick();
   });
   auto tA = Clock::now();
 
@@ -326,7 +333,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   };
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
+  setPhase(1, mbs.size());  // assemble
   for (MeshBuild& mb : mbs) {
+    tick();
     if (!mb.valid) continue;
     if (out->tris.size() / 9 >= cap) { out->truncated = true; break; }
     if (isrc.size() >= instCap) { out->truncated = true; break; }
@@ -396,6 +405,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   }
   out->blasNodeCount = out->blas.size();
 
+  setPhase(2, out->instCount);  // TLAS
   // TLAS over instance world AABBs (reorders the instance table to leaf order).
   std::vector<float> tcent(out->instCount * 3);
   for (size_t i = 0; i < out->instCount; ++i)
