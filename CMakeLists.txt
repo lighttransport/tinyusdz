@@ -2527,6 +2527,18 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-nested-payload-cwp COMMAND feat-nested-payload-cwp
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    # Composition: the `</__class__/...>` override-hook idiom. Inheriting /
+    # specializing a class that is undefined in the composed layer (every ALab
+    # entity root) is a USD-legal no-op and must emit NO warning (was 550+ noise
+    # warnings on one workbench).
+    add_executable(feat-class-override-hook
+                   tests/feat/class-override-hook/test-class-override-hook.cc)
+    add_sanitizers(feat-class-override-hook)
+    target_link_libraries(feat-class-override-hook PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(feat-class-override-hook PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME feat-class-override-hook COMMAND feat-class-override-hook
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
     # promoted to `def` on flatten (Pixar Kitchen_set pCylinder over-in-variant).

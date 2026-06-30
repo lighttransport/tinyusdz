@@ -1995,11 +1995,14 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
       // poison the shared `err`.
       std::string find_err;
       if (!layer.find_primspec_at(inheritPath, &src_ps, &find_err) || !src_ps) {
-        if (warn) {
-          (*warn) += "Inherit target <" + inheritPath.prim_part() +
-                     "> not found in this layer; no opinions to inherit "
-                     "(skipped).\n";
-        }
+        // Not a warning: inheriting a class that is undefined in the composed
+        // layer is a standard, intentional USD idiom -- the `</__class__/...>`
+        // override hook (e.g. every Animal Logic ALab entity root `prepend
+        // inherits = </__class__/<name>>`, where `__class__` is never populated
+        // here). OpenUSD/usdcat emit nothing; a warning per such arc just floods
+        // the log (550+ on one ALab workbench). Debug-only.
+        DCOUT("Inherit target <" << inheritPath.prim_part()
+              << "> not found in this layer; no opinions to inherit (skipped).");
         visited.erase(key);
         continue;
       }
@@ -2527,11 +2530,12 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
       // benign miss does not poison the shared `err`.
       std::string find_err;
       if (!layer.find_primspec_at(specializePath, &src_ps, &find_err) || !src_ps) {
-        if (warn) {
-          (*warn) += "Specialize target <" + specializePath.prim_part() +
-                     "> not found in this layer; no opinions to specialize "
-                     "(skipped).\n";
-        }
+        // Not a warning (see the inherits counterpart above): specializing an
+        // undefined class is a standard USD idiom -- every ALab entity root
+        // `prepend specializes = </_root_type>`, and `_root_type`/`__class__` are
+        // intentionally unpopulated here. OpenUSD/usdcat emit nothing. Debug-only.
+        DCOUT("Specialize target <" << specializePath.prim_part()
+              << "> not found in this layer; no opinions to specialize (skipped).");
         visited.erase(key);
         continue;
       }
