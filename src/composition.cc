@@ -362,9 +362,21 @@ PrimSpec PrepareComposedArcPrimSpec(const PrimSpec &src_ps,
 }
 
 // Copy assetresolver state to all PrimSpec in the tree.
+//
+// `only_if_unset`: when true, a PrimSpec that ALREADY carries a working path is
+// left untouched (gap-fill). Used right after subLayer composition, where each
+// prim has already been anchored to the directory of the layer that authored its
+// arcs (component root for main-layer opinions, a subLayer's dir for opinions a
+// subLayer contributed via CombinePrimSpecRec's cross-directory anchoring).
+// Blindly re-stamping the whole subtree with the reference target's ROOT dir
+// would clobber those subLayer anchors, so a `../../../` reference authored in
+// e.g. `<comp>/surfacing/` would resolve from `<comp>/` -- one dir too high.
+// Prims that genuinely lack an anchor (custom file-format readers that build a
+// PrimSpec directly) still get stamped.
 bool PropagateAssetResolverState(PrimSpec &ps,
                                  const std::string &cwp,
-                                 const std::vector<std::string> &search_paths) {
+                                 const std::vector<std::string> &search_paths,
+                                 bool only_if_unset = false) {
   constexpr size_t kMaxIter = 1024 * 1024 * 512;
 
   DCOUT("current_working_path: " << cwp);
@@ -382,7 +394,9 @@ bool PropagateAssetResolverState(PrimSpec &ps,
     PrimSpec *current = stack.back();
     stack.pop_back();
 
-    current->set_asset_resolution_state(cwp, search_paths);
+    if (!only_if_unset || current->get_current_working_path().empty()) {
+      current->set_asset_resolution_state(cwp, search_paths);
+    }
 
     PushChildAndVariantPrimSpecs(*current, &stack);
   }
@@ -714,7 +728,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
     if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
                                      resolver.current_working_path(),
-                                     resolver.search_paths())) {
+                                     resolver.search_paths(),
+                                     /* only_if_unset */ true)) {
       PUSH_ERROR_AND_RETURN(
           "Store AssetResolver state to each PrimSpec failed.\n");
     }
