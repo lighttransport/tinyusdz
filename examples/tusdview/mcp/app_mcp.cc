@@ -264,6 +264,68 @@ json App::mcpViewport(const json& args, std::string& err) {
               {"eye", vec3json(camera_.eye())}};
 }
 
+json App::mcpScreenshot(const json& args, std::string& err) {
+  const std::string path = args.value("path", std::string());
+  if (path.empty()) {
+    err = "screenshot: 'path' is required";
+    return json::object();
+  }
+  if (!renderer_) {
+    err = "screenshot: no renderer";
+    return json::object();
+  }
+  // Capture the offscreen viewport (the last rendered frame). Camera ops issued
+  // via the 'viewport' tool take effect on the next frame, so a typical debug
+  // loop is: viewport(orbit ...) -> screenshot (separate calls = separate frames).
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!renderer_->captureViewport(&rgba, &w, &h)) {
+    err = "screenshot: viewport capture failed (no rendered frame yet?)";
+    return json::object();
+  }
+  std::string werr;
+  if (!WriteScreenshotImage(path, rgba, w, h, &werr)) {
+    err = "screenshot: write failed: " + werr;
+    return json::object();
+  }
+  return json{{"written", true}, {"path", path}, {"width", w}, {"height", h}};
+}
+
+json App::mcpInput(const json& args, std::string& err) {
+  const std::string key = args.value("key", std::string());
+  if (key.empty()) {
+    err = "input: 'key' is required (e.g. w|f|a|0|1|3|5|7)";
+    return json::object();
+  }
+  std::string action;
+  if (key == "w") {
+    action = "wireframe=" + std::to_string(gui_.cycleWireframe());
+  } else if (key == "f" || key == "a") {
+    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    action = "frame_all";
+  } else if (key == "0") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    action = "home";
+  } else if (key == "5") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+    action = "isometric";
+  } else if (key == "1") {
+    camera_.setPreset(CameraViewPreset::Front);
+    action = "front";
+  } else if (key == "3") {
+    camera_.setPreset(CameraViewPreset::Right);
+    action = "right";
+  } else if (key == "7") {
+    camera_.setPreset(CameraViewPreset::Top);
+    action = "top";
+  } else {
+    err = "input: unhandled key '" + key + "' (w|f|a|0|1|3|5|7)";
+    return json::object();
+  }
+  return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};
+}
+
 json App::mcpListPrims(const json& args, std::string&) {
   size_t cap = 1000;
   if (args.contains("max") && args["max"].is_number_integer()) {

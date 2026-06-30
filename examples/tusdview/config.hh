@@ -22,6 +22,8 @@ struct StartupConfig {
   // ("defer" = lazy load on demand, "load" = eager).
   std::optional<bool> composition;
   std::optional<std::string> payloadPolicy;  // "defer" | "load"
+  // Most-recently-opened scene paths (newest first), persisted across sessions.
+  std::vector<std::string> recentScenes;
 };
 
 enum class ConfigLoadStatus {
@@ -40,5 +42,11 @@ struct ConfigLoadResult {
 };
 
 ConfigLoadResult LoadStartupConfig(const std::optional<std::string>& explicitPath);
+
+// Persist the recently-opened scene list into the config file at `path`, merging
+// into any existing JSON (other keys preserved). Creates parent dirs as needed.
+// Returns false (with *err set) on failure.
+bool SaveRecentScenes(const std::filesystem::path& path,
+                      const std::vector<std::string>& recent, std::string* err);
 
 }  // namespace tusdview

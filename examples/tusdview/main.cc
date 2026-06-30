@@ -345,7 +345,11 @@ int main(int argc, char** argv) {
     if (config.config.invertDolly) {
       app.setInvertDolly(*config.config.invertDolly);
     }
+    app.setRecentScenes(config.config.recentScenes);
   }
+  // Persist the recent-scenes list back to the resolved config path (the default
+  // platform path when none was given), so File > Open Recent survives restarts.
+  if (!config.path.empty()) app.setConfigPath(config.path);
   // USD composition options: CLI > config > defaults. Payloads default to
   // lazy (deferred) interactively; headless/--frames runs load them eagerly so
   // screenshots are complete.

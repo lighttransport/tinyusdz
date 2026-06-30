@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -223,6 +224,37 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
   dm->indices = std::move(idx);
   dm->submeshes.push_back(
       DrawSubmesh{0, static_cast<uint32_t>(dm->indices.size()), 0});
+
+  // Original-polygon wireframe edges: the perimeter of each USD face, from the
+  // pre-triangulation topology. This shows quads/ngons (not triangulation
+  // diagonals) and is correct even for double-sided meshes (whose triangulation
+  // doubles the tri count, defeating any per-triangle scheme). Indices match the
+  // vertex buffer because FillFlatGeometry keeps vertex i == point i.
+  {
+    const std::vector<uint32_t> fvc = m.face_vertex_counts.flatten();
+    const std::vector<uint32_t> fvi = m.face_vertex_indices.flatten();
+    if (!fvc.empty() && !fvi.empty()) {
+      std::unordered_set<uint64_t> seen;
+      seen.reserve(fvi.size());
+      std::vector<uint32_t>& wire = dm->wireframeIndices;
+      wire.reserve(fvi.size() * 2);
+      size_t off = 0;
+      bool ok = true;
+      for (uint32_t c : fvc) {
+        if (off + c > fvi.size()) { ok = false; break; }
+        for (uint32_t k = 0; k < c; ++k) {
+          const uint32_t a = fvi[off + k];
+          const uint32_t b = fvi[off + (k + 1u) % c];
+          if (a == b || a >= np || b >= np) continue;
+          const uint64_t key =
+              a < b ? (uint64_t(a) << 32 | b) : (uint64_t(b) << 32 | a);
+          if (seen.insert(key).second) { wire.push_back(a); wire.push_back(b); }
+        }
+        off += c;
+      }
+      if (!ok) wire.clear();
+    }
+  }
   return true;
 }
 
@@ -1296,6 +1328,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
     for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+    // Carry the original-polygon wireframe edges into the batch (offset to the
+    // batch's vertex range). Indices from different source meshes occupy disjoint
+    // ranges, so no cross-mesh dedup is needed.
+    for (uint32_t widx : loc.wireframeIndices)
+      b.dm.wireframeIndices.push_back(vbase + widx);
 
     // World-space AABB from the 8 local-bbox corners (scene bounds for framing).
     const tydn::Float3& lo = m.bbox_min;

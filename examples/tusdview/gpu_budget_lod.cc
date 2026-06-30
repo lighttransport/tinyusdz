@@ -228,6 +228,9 @@ bool ComputeRobustSceneBounds(const DrawScene* draw, float trimFrac,
   double totalW = 0.0;
   std::size_t valid = 0;
   for (const DrawMeshCPU& m : draw->meshes) {
+    // Guide geometry (breadcrumbs / endpoints) spans the whole map and is hidden
+    // by default -- never let it drive framing.
+    if (m.purpose == "guide") continue;
     bool ok = true;
     for (int a = 0; a < 3; ++a) {
       const float mn = m.aabbMin[a], mx = m.aabbMax[a];

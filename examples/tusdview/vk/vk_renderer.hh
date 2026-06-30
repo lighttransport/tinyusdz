@@ -56,6 +56,11 @@ class VulkanRenderer final : public Renderer {
   bool initImGuiPlatform(GLFWwindow* window, std::string* err) override;
   bool initImGuiBackend(std::string* err) override;
 #endif
+  void viewportSize(int* w, int* h) const override {
+    if (w) *w = vpW_;
+    if (h) *h = vpH_;
+  }
+  bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
   const RendererCaps& caps() const override { return caps_; }
@@ -484,6 +489,14 @@ class VulkanRenderer final : public Renderer {
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};
   VkImageView rtImageView_{VK_NULL_HANDLE};
+
+  // Interactive HIP/CUDA path: an externally-traced image staged into colorImg_ by
+  // uploadViewportImage(). When externalColorValid_ is set, the next presentImpl()
+  // skips the raster/RT 3D pass (colorImg_ already holds the frame) and clears it.
+  VkBuffer extStaging_{VK_NULL_HANDLE};
+  VkDeviceMemory extStagingMem_{VK_NULL_HANDLE};
+  VkDeviceSize extStagingCap_{0};
+  bool externalColorValid_{false};
 
   // Progressive accumulation: an rgba32f radiance buffer the trace adds into each
   // frame while the view is static (sub-pixel jittered -> anti-aliased, and the

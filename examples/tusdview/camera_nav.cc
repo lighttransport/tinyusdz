@@ -77,20 +77,39 @@ void OrbitCamera::orbit(float dxPix, float dyPix) {
   pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitch_));
 }
 
+// Reference distance for pan/dolly speed. Pan is proportional to distance so a
+// drag moves a consistent screen fraction -- but on a large scene the framed
+// distance is huge (pan feels hyper-fast), and after dollying in close it goes
+// near zero (pan appears frozen). Clamp the reference into a band around the
+// scene radius so the speed stays usable at both ends of the zoom range.
+float OrbitCamera::moveRefDistance() const {
+  if (!(sceneRadius_ > 1e-4f)) return distance_;
+  // Pan/dolly are distance-proportional so a drag pans a consistent screen
+  // fraction at any zoom. Clamp only the extremes relative to the scene: a tiny
+  // floor avoids freezing at extreme zoom-in, and a ceiling near one scene
+  // diameter keeps a framed (zoomed-way-out) drag from flinging across a huge,
+  // far-from-origin scene like the Caldera districts.
+  const float lo = sceneRadius_ * 0.001f;
+  const float hi = sceneRadius_ * 1.5f;
+  return std::max(lo, std::min(distance_, hi));
+}
+
 void OrbitCamera::pan(float dxPix, float dyPix) {
-  // Camera basis (relative to the world up axis).
+  // Camera basis (relative to the world up axis). Near the pole the forward axis
+  // approaches worldUp; pitch is clamped to <90 so the cross stays well-defined.
   light3d::Vec3 fwd = light3d::normalize(target_ - eye());
   light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, worldUp()));
   light3d::Vec3 up = light3d::cross(right, fwd);
-  const float scale = distance_ * 0.0015f * panSensitivity_;
+  const float scale = moveRefDistance() * 0.0015f * panSensitivity_;
   target_ = target_ - right * (dxPix * scale) + up * (dyPix * scale);
 }
 
 void OrbitCamera::dolly(float amount) {
-  // Exponential zoom keeps the feel consistent at any distance.
+  // Exponential zoom: distance scales by a constant factor per notch, so the
+  // feel is consistent at any distance (and it never reaches 0).
   const float signedAmount = invertDolly_ ? -amount : amount;
   distance_ *= std::exp(-signedAmount * 0.12f * dollySensitivity_);
-  distance_ = std::max(distance_, 1e-3f);
+  distance_ = std::max(distance_, 1e-4f);
 }
 
 void OrbitCamera::setPreset(CameraViewPreset preset) {

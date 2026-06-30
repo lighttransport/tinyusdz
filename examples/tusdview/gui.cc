@@ -3,9 +3,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <utility>
+
+#include <unistd.h>  // sysconf (RSS page size)
 
 #include "core/prim.hh"
 #include "gizmo_build.hh"
@@ -389,6 +393,19 @@ void Gui::drawDockspaceAndMenu() {
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open...", "Ctrl+O")) wantOpen_ = true;
+      if (ImGui::BeginMenu("Open Recent", !recentScenes_.empty())) {
+        for (const std::string& p : recentScenes_) {
+          // Label with the file name; full path in a tooltip (paths are long).
+          std::string label = std::filesystem::path(p).filename().string();
+          if (label.empty()) label = p;
+          if (ImGui::MenuItem(label.c_str())) {
+            recentToOpen_ = p;
+            wantOpenRecent_ = true;
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
+        }
+        ImGui::EndMenu();
+      }
       if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
       {
         const bool haveDeferred = loaded_ && !loaded_->comp.deferred.empty();
@@ -591,8 +608,9 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::Separator();
       ImGui::TextDisabled("Viewport");
       ImGui::TextUnformatted("Alt+LMB  Orbit");
-      ImGui::TextUnformatted("Alt+MMB  Pan");
+      ImGui::TextUnformatted("Alt+MMB / Shift+Alt+LMB  Pan");
       ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
+      ImGui::TextUnformatted("W  Cycle wireframe (off / wire / wire+shade)");
       ImGui::Separator();
       ImGui::TextDisabled("Selection");
       ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
@@ -2083,11 +2101,64 @@ void Gui::drawTimeline() {
   ImGui::End();
 }
 
+// Process resident set size (RSS) in MB, from /proc (Linux). 0 if unavailable.
+static size_t ReadProcessRssMB() {
+  FILE* f = std::fopen("/proc/self/statm", "r");
+  if (!f) return 0;
+  long pages = 0, resident = 0;
+  if (std::fscanf(f, "%ld %ld", &pages, &resident) != 2) resident = 0;
+  std::fclose(f);
+  const long pageSz = sysconf(_SC_PAGESIZE);
+  return static_cast<size_t>((static_cast<long long>(resident) * pageSz) / (1024 * 1024));
+}
+
+// amdgpu VRAM (used,total) in MB via sysfs; fallback when the renderer can't
+// report GPU memory (e.g. the Vulkan backend). 0 if unavailable.
+static bool ReadAmdgpuVramMB(size_t* usedMB, size_t* totalMB) {
+  const char* cards[] = {"/sys/class/drm/card0/device/mem_info_vram_",
+                         "/sys/class/drm/card1/device/mem_info_vram_"};
+  for (const char* base : cards) {
+    auto readVal = [](const std::string& path) -> long long {
+      FILE* f = std::fopen(path.c_str(), "r");
+      if (!f) return -1;
+      long long v = -1;
+      if (std::fscanf(f, "%lld", &v) != 1) v = -1;
+      std::fclose(f);
+      return v;
+    };
+    const long long tot = readVal(std::string(base) + "total");
+    const long long use = readVal(std::string(base) + "used");
+    if (tot > 0 && use >= 0) {
+      if (totalMB) *totalMB = static_cast<size_t>(tot / (1024 * 1024));
+      if (usedMB) *usedMB = static_cast<size_t>(use / (1024 * 1024));
+      return true;
+    }
+  }
+  return false;
+}
+
 void Gui::drawStats() {
   ImGui::Begin("Stats");
   ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
               1000.0f / ImGui::GetIO().Framerate);
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
+  // CPU RSS + GPU VRAM, refreshed a few times a second (the queries touch /proc
+  // and the driver, so they are throttled rather than run every frame).
+  static size_t cpuMB = 0, vramUsedMB = 0, vramTotalMB = 0;
+  static bool haveVram = false;
+  static double lastPoll = -1.0;
+  const double now = ImGui::GetTime();
+  if (lastPoll < 0.0 || now - lastPoll > 0.5) {
+    lastPoll = now;
+    cpuMB = ReadProcessRssMB();
+    haveVram = renderer_ && renderer_->gpuMemoryMB(&vramUsedMB, &vramTotalMB);
+    if (!haveVram) haveVram = ReadAmdgpuVramMB(&vramUsedMB, &vramTotalMB);
+  }
+  if (cpuMB > 0) ImGui::Text("CPU mem (RSS): %zu MB", cpuMB);
+  if (haveVram) {
+    ImGui::Text("GPU VRAM: %zu / %zu MB (%.0f%%)", vramUsedMB, vramTotalMB,
+                vramTotalMB ? 100.0 * double(vramUsedMB) / double(vramTotalMB) : 0.0);
+  }
   ImGui::Text("Skinning: %s requested, %s effective",
               SkinningModeLabel(skinning_.requested),
               SkinningModeLabel(skinning_.effective));
@@ -2095,11 +2166,9 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
-    {
-      size_t totalVerts = 0;
-      for (const auto& m : draw_->meshes) totalVerts += m.vertices.size();
-      ImGui::Text("Vertices: %zu", totalVerts);
-    }
+    // draw_->vertexCount is captured at load (CPU geometry may be freed after
+    // upload on the --next path, so summing meshes[].vertices would read 0).
+    ImGui::Text("Vertices: %zu", draw_->vertexCount);
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
     // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
     // culling; with culling disabled these equal the totals.
@@ -2179,7 +2248,10 @@ void Gui::handleNavigation() {
   }
 
   if (navMode_ == 0 && vpHovered_ && alt) {
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = 1;
+    // Shift+Alt+LMB pans (an alternative to Alt+MMB for trackpads / keypads with
+    // no middle button); plain Alt+LMB orbits. navMode_ latches until release, so
+    // the modifier state at press time selects the mode for the whole drag.
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = io.KeyShift ? 2 : 1;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) navMode_ = 2;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) navMode_ = 3;
   }
@@ -2198,6 +2270,10 @@ void Gui::handleNavigation() {
 
   // Maya-style hotkeys (viewport hovered, no text field focused).
   if (vpHovered_ && !io.WantTextInput) {
+    // 'w' cycles wireframe: shaded -> wireframe only -> wireframe + shading -> ...
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W)) {
+      wireCycle_ = (wireCycle_ + 1) % 3;
+    }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) goSelectionBack();
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) goSelectionForward();
     if (ImGui::IsKeyPressed(ImGuiKey_0)) homeView();
@@ -2529,7 +2605,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* title = "Viewport navigation";
   const std::string modeLine = std::string("Mode: ") + NavModeLabel(navMode_);
   const char* lineOrbit = "Alt+LMB Orbit";
-  const char* linePan = "Alt+MMB Pan";
+  const char* linePan = "Alt+MMB / Shift+Alt+LMB Pan";
   const char* lineDolly = "Alt+RMB / Wheel Dolly";
   const char* lineSelect = "[ / ] Prev/Next selection";
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
@@ -3038,6 +3114,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.mode = mode_;
+  p.wireMode = wireCycle_;  // 'w' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;
