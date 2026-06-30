@@ -2250,6 +2250,35 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    #
+    # tusdview: browser keyboard E2E test (OPTIONAL). Drives a real browser via
+    # Playwright against the WebSocket stream viewer and verifies key forwarding
+    # (printable/special keys + modifiers) plus the wireframe round-trip. Needs
+    # Node + Playwright + a Chrome, none of which are standard build deps, so it
+    # is OFF by default. Enable with -DTUSDVIEW_ENABLE_STREAM_KB_TEST=ON (after
+    # `npm i playwright`). SKIPs (return 77) when a dep / browser / GPU is missing.
+    #
+    option(TUSDVIEW_ENABLE_STREAM_KB_TEST
+           "Register the Playwright browser keyboard E2E test for tusdview streaming" OFF)
+    if(TUSDVIEW_ENABLE_STREAM_KB_TEST)
+      find_program(NODE_EXECUTABLE NAMES node nodejs)
+      if(NODE_EXECUTABLE)
+        add_test(
+          NAME tusdview-stream-keyboard
+          COMMAND ${NODE_EXECUTABLE}
+                  ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/stream-keyboard-test.js
+                  --port 18090
+          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+        set_tests_properties(tusdview-stream-keyboard PROPERTIES
+          ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+          SKIP_RETURN_CODE 77
+          LABELS "viewer")
+      else()
+        message(STATUS "tusdview: TUSDVIEW_ENABLE_STREAM_KB_TEST=ON but Node not "
+                       "found; keyboard test not registered")
+      endif()
+    endif()
   endif()
 
   #

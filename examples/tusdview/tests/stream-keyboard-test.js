@@ -13,7 +13,8 @@
 //   npm i playwright        # the Node module
 //   # plus a browser: either a system Google Chrome (default, --channel chrome)
 //   # or `npx playwright install chromium` and pass --channel "".
-// If Playwright isn't installed the test prints SKIP and exits 0.
+// When the optional deps are missing (Playwright / a browser) or the server/GPU
+// is unavailable, the test prints SKIP and exits 77 (ctest's SKIP_RETURN_CODE).
 //
 // Usage:
 //   node stream-keyboard-test.js [--tusdview ./build/tusdview]
@@ -22,11 +23,12 @@
 //   node stream-keyboard-test.js --url http://host:8090/   # use a running server
 
 'use strict';
+const SKIP = 77;  // ctest SKIP_RETURN_CODE: missing optional deps -> "Skipped"
 let chromium;
 try { ({ chromium } = require('playwright')); }
 catch (e) {
   console.log('SKIP: Playwright not installed (run `npm i playwright`).');
-  process.exit(0);
+  process.exit(SKIP);
 }
 const { spawn } = require('child_process');
 const crypto = require('crypto');
@@ -40,7 +42,8 @@ function arg(name, def) {
 }
 
 const opt = {
-  tusdview: arg('tusdview', './build/tusdview'),
+  // ctest passes the built binary path via the TUSDVIEW env var.
+  tusdview: process.env.TUSDVIEW || arg('tusdview', './build/tusdview'),
   model: arg('model', 'models/suzanne-pbr.usda'),
   port: parseInt(arg('port', '8090'), 10),
   channel: arg('channel', 'chrome'),  // '' -> Playwright's bundled Chromium
@@ -80,9 +83,18 @@ async function launchBrowser() {
   const checks = [];
   const check = (name, ok) => { checks.push({ name, ok }); console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${name}`); };
 
-  if (!opt.url) server = await startServer();
+  if (!opt.url) {
+    try { server = await startServer(); }
+    catch (e) { console.log('SKIP: tusdview stream server did not start (' + e.message + ').'); process.exit(SKIP); }
+  }
   const url = opt.url || `http://127.0.0.1:${opt.port}/`;
-  const browser = await launchBrowser();
+  let browser;
+  try { browser = await launchBrowser(); }
+  catch (e) {
+    console.log('SKIP: could not launch a browser (' + e.message + '). Install Chrome or run `npx playwright install chromium`.');
+    if (server) server.kill('SIGKILL');
+    process.exit(SKIP);
+  }
   try {
     const page = await browser.newPage({ viewport: { width: 1100, height: 720 } });
     const sent = [], recv = [];
