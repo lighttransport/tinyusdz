@@ -54,7 +54,7 @@
               : layer_stacks[src.stack_idx].identifier);
       std::shared_ptr<Layer> arc_layer =
           reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err,
-                          LayerLoadOptions{options.max_layer_memory, 0});
+                          MakeLayerLoadOptions());
       if (!arc_layer) {
         if (options.error_when_asset_not_found) {
           AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,

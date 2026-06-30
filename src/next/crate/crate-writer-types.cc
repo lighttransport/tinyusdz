@@ -98,6 +98,10 @@ uint32_t ArrayComps(TypeId type_id) {
       return 2;
     case TypeId::Float3:
     case TypeId::Double3:
+    case TypeId::Point3f:
+    case TypeId::Vector3f:
+    case TypeId::Normal3f:
+    case TypeId::Color3f:
     case TypeId::Texcoord3f:
     case TypeId::Texcoord3d:
     case TypeId::Point3h:
@@ -108,6 +112,7 @@ uint32_t ArrayComps(TypeId type_id) {
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Color3d:
     case TypeId::Half3:
       return 3;
     case TypeId::Float4:
