@@ -107,34 +107,50 @@ VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
 Note the layer output (and tusdrender's own diagnostics) goes to stderr/stdout;
 capture both streams.
 
-## Follow-on: per-instance LOD on the `-vk` / `-vkr` GPU backends
+## Per-instance LOD on the `-vk` / `-vkr` GPU backends (flatten-side)
 
-The CPU two-level TLAS path supports per-instance view-dependent LOD (`-rtLod`:
-distant prototypes → shared box proxy, sub-pixel → cull; see the tusdrender
-README and `tusdr_rt_lod.{hh,cc}`). The `-vk` / `-vkr` GPU backends do **not** yet,
-because they consume a different geometry representation:
+`-rtLod` works on the `-vk` / `-vkr` / `-d3d` / `-hip` GPU backends too, applied
+**flatten-side**: the same `tusdr_rt_lod` classifier runs once over the already
+world-space-flattened `geos` (in `tusdrender.cc`, right after the camera resolves,
+before the GPU dispatch). Each `geos[i]` is one world-space mesh placement, so its
+world AABB is the classifier input (identity `o2w` + the world AABB as the
+prototype bounds):
 
-- `RunRTPreviewNext` (CPU) builds a **two-level** structure — one BLAS per
-  prototype placed by a LightRT TLAS over an `InstanceRT` list (`tusdr_next.cc`
-  `ExtractAndBuildBVH`). `-rtLod` hooks the TLAS instance-fill loop: it classifies
-  each placement, drops Culled ones (`valid[i]=0`), and rewrites Proxy ones to a
-  shared box BLAS via `BoxFitO2W`.
-- `RunVulkanLightRT` / the `-vk`/`-vkr` path build a **single, fully
-  world-space-flattened** indexed triangle BLAS (`CollectRTPreviewMeshesNext` in
-  `tusdrender.cc` bakes every prim to world space) and trace one flat scene. There
-  is no instance list / TLAS to attach per-instance LOD to.
+- **Cull** → drop the placement from the flat soup (fewer triangles to trace).
+- **Proxy** → replace its triangles with an axis-aligned box on its world AABB
+  (`BoxFitO2W`, a 12-triangle cube) — collapses a dense distant mesh to 12 tris.
+- **Full** → keep the real triangles.
 
-To bring `-rtLod` to `-vkr`, the GPU path must first become two-level:
+Opt-in via `-rtLod` (byte-identical when off); same tunables as the CPU path
+(`-rtLodFullPx` / `-rtLodCullPx` / `-rtLodNoProxy` / `-rtLodFrustumCull`). With
+`-stats` it logs `[rt-lod] flatten-side: full=… proxy=… culled=…`. Verified on a
+120×(10×10-grid) receding scene: 24000 tris → 1440 (all-Proxy) → 624 (Proxy+Cull);
+proxy renders the same silhouette coverage as Full.
+
+**Limitation vs the CPU two-level path.** This is flatten-side, not a GPU TLAS, so:
+
+- No per-prototype geometry/memory sharing — Full placements still cost their full
+  triangle count in one flat BLAS (the win is *fewer/cheaper* placements, not
+  shared BLAS memory).
+- It only sees what the GPU collector emits. `CollectRTPreviewMeshesNext`
+  **does not expand `PointInstancer`** (it returns at the PointInstancer prim — see
+  `tusdr_next.cc`), so PointInstancer instances are not rendered (or LOD'd) on the
+  GPU backends at all. Flatten-side LOD therefore benefits scenes with many
+  separate transformed `Mesh` prims (e.g. Caldera's 10k+ districts), not dense
+  PointInstancer scatters. Use the CPU `-rtPreview -rtLod` path for those.
+
+### Follow-on: true two-level GPU TLAS
+
+A full GPU TLAS would add per-prototype BLAS sharing *and* render PointInstancers.
+It is a larger change tracked separately:
 
 1. Reuse the CPU collectors (`CollectSceneSplit` / `CollectPointInstancer`) to
    produce the prototype BLAS set + `InstanceRT` list instead of the flattened
    soup, building per-prototype `lrt_vk` BLAS and a GPU TLAS
    (`lrt_vk_rtx_*` / `lrt_tlas_*` GPU equivalents).
-2. Run the **same** `tusdr_rt_lod` selection (it is pure and Vulkan-free) at GPU
+2. Run the **same** `tusdr_rt_lod` selection (already pure and Vulkan-free) at GPU
    TLAS build, emitting the Full/Proxy/Cull instance set + the shared box BLAS.
 3. The shader hit path must resolve a two-level (instance → BLAS) hit, matching the
-   CPU `ResolveTLASHit`, instead of the current flat-BLAS hit.
-
-This is a larger change (a GPU two-level build + shader hit-resolution rework),
-tracked separately from the CPU `-rtLod` landing. The selection logic itself is
-already shared-ready (`tusdr_rt_lod` has no GPU/Vulkan dependency).
+   CPU `ResolveTLASHit`, instead of the current flat-BLAS hit (LightRT's Vulkan API
+   currently exposes only a single flat BLAS, so this needs new instanced-TLAS C
+   API + a `trace_ray_query.comp` rework + SPIR-V recompile).

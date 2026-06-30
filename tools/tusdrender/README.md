@@ -45,10 +45,13 @@ Common flags:
   only). Off by default. **Offline caveat:** a path tracer needs off-screen geometry
   for shadows/reflections/GI, so frustum culling is a separate opt-in
   (`-rtLodFrustumCull`, faster but changes lighting); proxy/sub-pixel are softer
-  approximations. Applies to the CPU two-level TLAS path (`-rtPreview`). The
-  `-vk`/`-vkr` GPU backends flatten the scene to a single world-space BLAS (no
-  instance list), so per-instance LOD there needs a two-level GPU build first — a
-  documented follow-on (see `doc/tusdrender.md`).
+  approximations. Works on the CPU two-level TLAS path (`-rtPreview`) **and** the
+  `-vk`/`-vkr`/`-d3d`/`-hip` GPU backends — the latter apply it *flatten-side*
+  (classify the world-space placements once, Cull→drop, Proxy→box, Full→keep, before
+  building the flat BLAS). GPU caveat: no per-prototype BLAS sharing, and the GPU
+  collector does not expand `PointInstancer`, so flatten-side LOD helps many-separate-
+  `Mesh` scenes (e.g. Caldera), not PointInstancer scatters. A true two-level GPU TLAS
+  (sharing + PointInstancer) remains a follow-on (see `doc/tusdrender.md`).
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
   emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/
