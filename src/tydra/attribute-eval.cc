@@ -11,6 +11,7 @@
 #include "tinyusdz.hh"
 #include "value-clip-utils.hh"
 #include "value-pprint.hh"
+#include "spline-eval.hh"
 
 #include <memory>
 #include <mutex>
@@ -25,6 +26,132 @@ namespace tydra {
   }
 
 namespace {
+
+namespace {
+
+// Build a typed Spline<T> from the type-erased SplineData and evaluate at `t`.
+template <typename T>
+bool BuildAndEvalSpline(const primvar::PrimVar::SplineData &sd, double t,
+                        T *out) {
+  Spline<T> s;
+  s.curveType =
+      (sd.curveType == 1) ? SplineCurveType::Hermite : SplineCurveType::Bezier;
+  s.preExtrapolation =
+      static_cast<SplineExtrapolationMode>(sd.preExtrapolation);
+  s.postExtrapolation =
+      static_cast<SplineExtrapolationMode>(sd.postExtrapolation);
+  s.preExtrapolationSlope = sd.preExtrapolationSlope;
+  s.postExtrapolationSlope = sd.postExtrapolationSlope;
+  if (sd.hasLoop) {
+    s.loopParams.protoStart = sd.loopProtoStart;
+    s.loopParams.protoEnd = sd.loopProtoEnd;
+    s.loopParams.numPreLoops = sd.loopNumPreLoops;
+    s.loopParams.numPostLoops = sd.loopNumPostLoops;
+    s.loopParams.valueOffset = sd.loopValueOffset;
+  }
+  s.knots.reserve(sd.knots.size());
+
+  for (const auto &kd : sd.knots) {
+    SplineKnot<T> k;
+    k.time = kd.time;
+    auto v = kd.val.get_value<T>();
+    if (!v) {
+      return false;  // knot value type does not match T
+    }
+    k.value = v.value();
+    if (kd.hasDualValue) {
+      auto pv = kd.preValue.get_value<T>();
+      k.preValue = pv ? pv.value() : k.value;
+      k.hasDualValue = true;
+    } else {
+      k.preValue = k.value;
+    }
+    k.preTangentSlope = kd.preTangentSlope;
+    k.preTangentWidth = kd.preTangentWidth;
+    k.postTangentSlope = kd.postTangentSlope;
+    k.postTangentWidth = kd.postTangentWidth;
+    k.nextInterpolationMode =
+        static_cast<SplineInterpolationMode>(kd.interpolationMode);
+    s.knots.push_back(k);
+  }
+
+  return EvaluateSpline<T>(s, t, out);
+}
+
+// Evaluate a type-erased spline at `t`, dispatching on the knot value type.
+// USD spline value types are scalar double / float / half.
+bool EvalSplineData(const primvar::PrimVar::SplineData &sd, double t,
+                    value::Value *out) {
+  if (sd.knots.empty()) {
+    return false;
+  }
+  const uint32_t tid = sd.knots[0].val.type_id();
+  if (tid == value::TypeTraits<double>::type_id()) {
+    double r;
+    if (BuildAndEvalSpline<double>(sd, t, &r)) {
+      *out = value::Value(r);
+      return true;
+    }
+  } else if (tid == value::TypeTraits<float>::type_id()) {
+    float r;
+    if (BuildAndEvalSpline<float>(sd, t, &r)) {
+      *out = value::Value(r);
+      return true;
+    }
+  } else if (tid == value::TypeTraits<value::half>::type_id()) {
+    // half has no direct double cast in the evaluator; evaluate in float and
+    // convert back.
+    Spline<float> s;
+    s.curveType = (sd.curveType == 1) ? SplineCurveType::Hermite
+                                      : SplineCurveType::Bezier;
+    s.preExtrapolation =
+        static_cast<SplineExtrapolationMode>(sd.preExtrapolation);
+    s.postExtrapolation =
+        static_cast<SplineExtrapolationMode>(sd.postExtrapolation);
+    s.preExtrapolationSlope = sd.preExtrapolationSlope;
+    s.postExtrapolationSlope = sd.postExtrapolationSlope;
+    if (sd.hasLoop) {
+      s.loopParams.protoStart = sd.loopProtoStart;
+      s.loopParams.protoEnd = sd.loopProtoEnd;
+      s.loopParams.numPreLoops = sd.loopNumPreLoops;
+      s.loopParams.numPostLoops = sd.loopNumPostLoops;
+      s.loopParams.valueOffset = sd.loopValueOffset;
+    }
+    bool ok = true;
+    for (const auto &kd : sd.knots) {
+      auto v = kd.val.get_value<value::half>();
+      if (!v) {
+        ok = false;
+        break;
+      }
+      SplineKnot<float> k;
+      k.time = kd.time;
+      k.value = value::half_to_float(v.value());
+      if (kd.hasDualValue) {
+        auto pv = kd.preValue.get_value<value::half>();
+        k.preValue = pv ? value::half_to_float(pv.value()) : k.value;
+        k.hasDualValue = true;
+      } else {
+        k.preValue = k.value;
+      }
+      k.preTangentSlope = kd.preTangentSlope;
+      k.preTangentWidth = kd.preTangentWidth;
+      k.postTangentSlope = kd.postTangentSlope;
+      k.postTangentWidth = kd.postTangentWidth;
+      k.nextInterpolationMode =
+          static_cast<SplineInterpolationMode>(kd.interpolationMode);
+      s.knots.push_back(k);
+    }
+    float r;
+    if (ok && EvaluateSpline<float>(s, t, &r)) {
+      *out = value::Value(value::float_to_half_full(r));
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 bool ToTerminalAttributeValue(
     const Attribute &attr, TerminalAttributeValue *value, std::string *err,
@@ -48,7 +175,7 @@ bool ToTerminalAttributeValue(
   DCOUT("var is_blocked " << var.is_blocked());
   DCOUT("var has_value||has_ts " << (var.has_value() || var.has_timesamples()));
 
-  if (!var.has_value() && !var.has_timesamples()) {
+  if (!var.has_value() && !var.has_timesamples() && !var.has_spline()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
   }
 
@@ -90,13 +217,16 @@ bool ToTerminalAttributeValue(
       }
       value->set_value(v);
     } else if (var.has_spline()) {
-      // AOUSD Core Spec 12.3: Spline is second priority after timeSamples.
-      // Use the spline evaluator for interpolation at time t.
-      // For now, find the nearest knot and return its value (held behavior).
-      // Full cubic evaluation requires typed dispatch through SplineKnot<T>.
+      // AOUSD Core Spec 12.3 / 7.4.2.4: Spline is second priority after
+      // timeSamples. Evaluate the cubic (Bezier/Hermite) spline at time `t`
+      // via typed dispatch into EvaluateSpline<T> (spline-eval.hh).
       const auto &spline = var.spline_data();
-      if (!spline.knots.empty()) {
-        // Find the knot segment containing time t
+      value::Value sv;
+      if (EvalSplineData(spline, t, &sv)) {
+        value->set_value(sv);
+      } else if (!spline.knots.empty()) {
+        // Value-block segment or unsupported value type: fall back to the
+        // nearest authored knot value (held behaviour).
         size_t idx = 0;
         for (size_t i = 0; i < spline.knots.size(); i++) {
           if (spline.knots[i].time <= t) {
@@ -105,14 +235,8 @@ bool ToTerminalAttributeValue(
             break;
           }
         }
-
-        // Held interpolation: return nearest knot value
-        // (Full cubic evaluation is type-dependent and uses spline-eval.hh
-        // EvaluateSpline<T> which requires typed dispatch)
         const auto &knot = spline.knots[idx];
-        if (knot.hasDualValue && t >= knot.time) {
-          value->set_value(knot.val);
-        } else if (knot.hasDualValue) {
+        if (knot.hasDualValue && t < knot.time) {
           value->set_value(knot.preValue);
         } else {
           value->set_value(knot.val);
@@ -302,6 +426,17 @@ static bool QueryClipAttribute(
   return false;
 }
 
+// Forward declaration: resolve one attribute from a single clip set (defined
+// after EvaluateAttributeFromClipsImpl, which iterates over all clip sets).
+static bool ResolveAttrFromClipSet(
+    const Prim &prim,
+    const ClipSetMetadata &clipMeta,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp);
+
 bool EvaluateAttributeFromClipsImpl(
     const Prim &prim,
     const std::string &attr_name,
@@ -319,15 +454,39 @@ bool EvaluateAttributeFromClipsImpl(
     return false;
   }
 
-  // Parse full clip set metadata
-  ClipSetMetadata clipMeta;
-  if (!ParseClipSetMetadataFull(clips_dict, &clipMeta, err)) {
+  // AOUSD Core Spec 12.3.4.1.1: a prim may author multiple named clip sets.
+  // Parse every set, then consult them in order; the first set that resolves a
+  // value for this attribute at time `t` wins. This lets different sets supply
+  // different attributes (or cover different time ranges).
+  std::vector<ClipSetMetadata> clipSets;
+  if (!ParseAllClipSetMetadata(clips_dict, &clipSets, err)) {
     return false;
   }
 
-  if (clipMeta.assetPaths.empty()) {
-    return false;
+  for (const ClipSetMetadata &clipMeta : clipSets) {
+    if (clipMeta.assetPaths.empty()) {
+      continue;
+    }
+    if (ResolveAttrFromClipSet(prim, clipMeta, attr_name, value, err, t,
+                               tinterp)) {
+      return true;
+    }
   }
+
+  return false;
+}
+
+// Resolve `attr_name` at stage time `t` from a single clip set. Returns true if
+// a value was produced. Factored out of EvaluateAttributeFromClipsImpl so that
+// multiple clip sets can be tried in order.
+static bool ResolveAttrFromClipSet(
+    const Prim &prim,
+    const ClipSetMetadata &clipMeta,
+    const std::string &attr_name,
+    TerminalAttributeValue *value,
+    std::string *err,
+    const double t,
+    const value::TimeSampleInterpolationType tinterp) {
 
   // AOUSD Core Spec 12.3.4.2: Manifest-based attribute discovery.
   // If a manifest is provided, verify the attribute exists before loading clips.

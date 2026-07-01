@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    doc = "SdfPathExpression attributes and pattern-based / relationship collections."
+)
+
+def Xform "World"
+{
+    uniform pathExpression primvars:expr = "/World/Geom//C*"
+
+    def Scope "Geom"
+    {
+        def Mesh "Cube" {}
+        def Mesh "Cone" {}
+        def Mesh "Box" {}
+    }
+
+    def Scope "Sets" (
+        prepend apiSchemas = ["CollectionAPI:render", "CollectionAPI:rel"]
+    )
+    {
+        uniform pathExpression collection:render:membershipExpression = "/World/Geom//C*"
+        uniform token collection:rel:expansionRule = "expandPrims"
+        rel collection:rel:includes = [</World/Geom>]
+        rel collection:rel:excludes = [</World/Geom/Box>]
+    }
+}

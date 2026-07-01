@@ -35,9 +35,12 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 #include "tiny-format.hh"
 #include "str-util.hh"
 #include "safe-arithmetic.hh"
+#include "primvar.hh"
+#include "spline-binary.hh"
 
 //
 #ifdef __clang__
@@ -253,6 +256,17 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
         return true;
       } else {
         PUSH_ERROR("Invalid Index for StringToken.");
+        return false;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION: {
+      // SdfPathExpression inlines like a string (StringIndex), since it is
+      // serialized via Write(GetText()).
+      if (auto v = GetStringToken(crate::Index(d))) {
+        value->Set(value::PathExpression(v.value().str()));
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for inlined PathExpression.");
         return false;
       }
     }
@@ -648,6 +662,13 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(block);
       return true;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK: {
+      // SdfAnimationBlock is an inline type tag with no payload (like
+      // ValueBlock). It blocks animation while letting the default resolve.
+      value::AnimationBlock block;
+      value->Set(block);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
@@ -667,6 +688,9 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    // SdfRelocates is a list of path pairs stored on the heap; it is never
+    // inlined.
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Data type `{}` cannot be inlined.",
           crate::GetCrateDataTypeName(dty.dtype_id)));
@@ -674,7 +698,10 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
+    // Spline is stored heap (non-inlined) in Crate, so an inlined
+    // representation is not expected.
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
           "Inlined value: " +
@@ -865,11 +892,80 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
   return true;
 }
 
+bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
+                                     crate::CrateValue *value) {
+  // VtArrayEdit (crate >= 0.14.0). Layout at payload offset:
+  //   ValueRep valuesRep   (8 bytes)  -- packed VtArray<T> of literals
+  //   ValueRep indexesRep  (8 bytes)  -- packed VtInt64Array (op stream)
+  //   bool     isDense     (1 byte)   -- legacy, discarded
+  // payload == 0 is the identity (empty) edit.
+  value::ArrayEdit ae;
+  ae.element_type_id = rep.GetType();
+
+  if (rep.GetPayload() == 0) {
+    value->Set(ae);  // identity edit
+    return true;
+  }
+
+  if (!_sr->seek_set(rep.GetPayload())) {
+    PUSH_ERROR("Invalid offset for array edit value.");
+    return false;
+  }
+
+  crate::ValueRep valuesRep, indexesRep;
+  if (!ReadValueRep(&valuesRep)) {
+    PUSH_ERROR("Failed to read array edit valuesRep.");
+    return false;
+  }
+  if (!ReadValueRep(&indexesRep)) {
+    PUSH_ERROR("Failed to read array edit indexesRep.");
+    return false;
+  }
+  uint8_t isDense{0};
+  if (!_sr->read1(&isDense)) {
+    PUSH_ERROR("Failed to read array edit isDense flag.");
+    return false;
+  }
+  (void)isDense;  // legacy field, not retained
+
+  // Literals: a typed array value (std::vector<T>). Stored verbatim.
+  crate::CrateValue litVal;
+  if (!UnpackValueRep(valuesRep, &litVal)) {
+    PUSH_ERROR("Failed to unpack array edit literals.");
+    return false;
+  }
+  ae.literals = litVal.get_raw();
+
+  // Op instruction stream: a VtInt64Array.
+  crate::CrateValue idxVal;
+  if (!UnpackValueRep(indexesRep, &idxVal)) {
+    PUSH_ERROR("Failed to unpack array edit op stream.");
+    return false;
+  }
+  if (auto pv = idxVal.get_value<std::vector<int64_t>>()) {
+    ae.ops = pv.value();
+  } else {
+    // An empty op stream may decode as an empty array of another flavor; treat
+    // a non-int64 stream as empty rather than failing.
+    PUSH_WARN("Array edit op stream was not int64[]; treating as identity.");
+  }
+
+  value->Set(ae);
+  return true;
+}
+
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
 
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
+  }
+
+  // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set. The
+  // type byte holds the array element type; the payload references the
+  // (valuesRep, indexesRep, isDense) tuple (payload 0 == identity edit).
+  if (rep.IsArrayEdit()) {
+    return UnpackArrayEditRep(rep, value);
   }
 
   // mmap zero-copy V2: for eligible large arrays, store only the 24-byte
@@ -3089,6 +3185,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           "ValueBlock must be defined in Inlined ValueRep.");
       return false;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK: {
+      PUSH_ERROR(
+          "AnimationBlock must be defined in Inlined ValueRep.");
+      return false;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE: {
 
       crate::ValueRep local_rep{0};
@@ -3219,6 +3320,179 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN(fmt::format("UNREGISTERD_VALUE type must be string or dictionary, but got other data type: {}(id {}).", GetCrateDataTypeName(local_dty.dtype_id), local_rep.GetType()));
       }
 
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // SdfPathExpression is serialized as its canonical text string
+      // (`SdfPathExpression::GetText()`), interned as a StringIndex -- same
+      // encoding as AssetPath. crate >= 0.10.0.
+
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {  // empty array
+          value->Set(std::vector<value::PathExpression>());
+          return true;
+        }
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;  // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+            return false;
+          }
+        }
+
+        if (n > _config.maxAssetPathElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of PathExpressions too large. TinyUSDZ limits it up to {}", _config.maxAssetPathElements));
+        }
+
+        size_t crate_Index_size;
+        if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
+        }
+        CHECK_MEMORY_USAGE(crate_Index_size);
+
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                       size_t(n) * sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read StringIndex array.");
+          return false;
+        }
+
+        std::vector<value::PathExpression> exprs(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto tokv = GetStringToken(v[i])) {
+            exprs[i] = value::PathExpression(tokv.value().str());
+          } else {
+            return false;
+          }
+        }
+
+        value->Set(std::move(exprs));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(crate::Index));
+
+        crate::Index v;
+        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read StringIndex for PathExpression.");
+          return false;
+        }
+
+        if (auto tokv = GetStringToken(v)) {
+          value->Set(value::PathExpression(tokv.value().str()));
+        } else {
+          PUSH_ERROR_AND_RETURN("Invalid StringToken found for PathExpression.");
+          return false;
+        }
+
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // Crate type 58 (SdfRelocates, crate >= 0.11.0):
+      //   Write<uint64_t>             : number of (source, target) pairs
+      //   for each pair: Write<SdfPath> source, Write<SdfPath> target
+      // SdfPath is stored as a PathIndex into the crate's path table. A target
+      // of `<>` (the empty path) marks a deletion relocate.
+      uint64_t n{0};
+      if (!_sr->read8(&n)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of relocates.");
+      }
+
+      if (n > _config.maxArrayElements) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of relocates too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+      }
+
+      std::vector<std::pair<Path, Path>> relocates;
+      relocates.reserve(static_cast<size_t>(n));
+      for (uint64_t i = 0; i < n; i++) {
+        crate::Index src_idx;
+        if (!ReadIndex(&src_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read relocate source PathIndex.");
+        }
+        crate::Index tgt_idx;
+        if (!ReadIndex(&tgt_idx)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read relocate target PathIndex.");
+        }
+
+        auto src = GetPath(src_idx);
+        if (!src) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid relocate source PathIndex.");
+        }
+        // The target may be the empty path (relocate-to-delete); GetPath
+        // returns a valid (empty) Path for path index 0.
+        auto tgt = GetPath(tgt_idx);
+        if (!tgt) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid relocate target PathIndex.");
+        }
+
+        relocates.emplace_back(src.value(), tgt.value());
+      }
+
+      DCOUT("Relocates: " << relocates.size() << " pair(s)");
+
+      value->Set(std::move(relocates));
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // Crate type 59 (TsSpline, crate >= 0.12.0):
+      //   Read<vector<uint8_t>>  : ts-binary blob (uint64 count + bytes)
+      //   ReadMap<map<double, VtDictionary>> : per-knot customData
+      uint64_t blobSize{0};
+      if (!_sr->read8(&blobSize)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob size.");
+      }
+      if (blobSize > _sr->size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid spline blob size.");
+      }
+      CHECK_MEMORY_USAGE(blobSize);
+
+      std::vector<uint8_t> blob(static_cast<size_t>(blobSize));
+      if (blobSize > 0) {
+        if (!_sr->read(static_cast<size_t>(blobSize),
+                       static_cast<size_t>(blobSize), blob.data())) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob.");
+        }
+      }
+
+      primvar::PrimVar::SplineData sd;
+      std::string serr;
+      if (!DecodeSplineFromBinary(blob.data(), blob.size(), &sd, &serr)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to decode spline: " + serr);
+      }
+
+      // Per-knot customData map (count + entries). tinyusdz does not retain
+      // per-knot customData; only consume the count. The entries are not read
+      // back here -- this value lives at its own offset, so leaving them
+      // unconsumed does not affect other value reads.
+      uint64_t cdCount{0};
+      if (!_sr->read8(&cdCount)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline customData count.");
+      }
+      if (cdCount > 0) {
+        PUSH_WARN("Per-knot spline customData is not retained by TinyUSDZ.");
+      }
+
+      value->Set(std::move(sd));
+      return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {

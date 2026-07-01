@@ -19,12 +19,23 @@
 #include "core/prim.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
+#include "io-util.hh"
 #include "tydra/physics-to-json.hh"
 #include "tydra/urdf-to-usd.hh"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+#include "external/jsonhpp/nlohmann/json.hpp"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -43,6 +54,12 @@ static bool parse_usda(const char *usda, Stage *stage, std::string *warn,
       stage, warn, err);
 }
 
+static std::string UsdaFixturePath(const std::string &filename) {
+  std::string base_dir = io::GetBaseDir(std::string(__FILE__));
+  std::string usda_dir = io::JoinPath(base_dir, "../usda");
+  return io::JoinPath(usda_dir, filename);
+}
+
 // Author -> USDC bytes -> reload. Exercises sconv-physics.cc + the crate
 // writer's generic property-bag pass for physx*:* / state:* attributes.
 static bool usdc_roundtrip(const char *usda, Stage *out, std::string *warn,
@@ -55,6 +72,14 @@ static bool usdc_roundtrip(const char *usda, Stage *out, std::string *warn,
                             out, warn, err);
 }
 
+static bool usdc_roundtrip_stage(const Stage &stage, Stage *out,
+                                 std::string *warn, std::string *err) {
+  std::vector<uint8_t> bytes;
+  if (!usdc::SaveAsUSDCToMemory(stage, &bytes, warn, err)) return false;
+  return LoadUSDCFromMemory(bytes.data(), bytes.size(), "test.usdc",
+                            out, warn, err);
+}
+
 // Tolerant float comparison — values authored as `custom float` in USDA
 // land in tests as `static_cast<double>(float)`, which is NOT equal to
 // the same numeric literal typed in C++ as double (0.01f promoted is
@@ -62,6 +87,10 @@ static bool usdc_roundtrip(const char *usda, Stage *out, std::string *warn,
 static bool approx_eq(double a, double b) {
   const double tol = 1e-5 * (1.0 + std::abs(b));
   return std::abs(a - b) <= tol;
+}
+
+static nlohmann::json parse_json_noexcept(const std::string &json) {
+  return nlohmann::json::parse(json, nullptr, false);
 }
 
 // Pull a numeric value out of a generic property bag (post-parse). Returns
@@ -555,6 +584,42 @@ def PhysicsRevoluteJoint "MjcHinge" (
   TEST_CHECK(mjc.frictionloss.get_value() == 0.5);
   TEST_CHECK(mjc.ref.get_value() == 0.5);
   TEST_CHECK(mjc.group.get_value() == 2);
+}
+
+void physics_mjc_joint_authorship_usdc_roundtrip_test(void) {
+  Stage src;
+  std::string warn, err;
+  const std::string path =
+      UsdaFixturePath("physics-mjc-joint-authorship-001.usda");
+  bool ok = LoadUSDFromFile(path, &src, &warn, &err);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  Stage stage;
+  ok = usdc_roundtrip_stage(src, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/World/Hinge", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *joint = (*result)->as<PhysicsRevoluteJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->mjcJoint.has_value());
+  if (!joint->mjcJoint.has_value()) return;
+
+  const auto &mjc = joint->mjcJoint.value();
+  TEST_CHECK(mjc.damping.authored());
+  TEST_CHECK(approx_eq(mjc.damping.get_value(), 0.75));
+  TEST_CHECK(!mjc.group.authored());
+  TEST_CHECK(!mjc.stiffness.authored());
+  TEST_CHECK(!mjc.armature.authored());
+  TEST_CHECK(!mjc.frictionloss.authored());
+  TEST_CHECK(!mjc.ref.authored());
+  TEST_CHECK(!mjc.actuatorfrclimited.authored());
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,6 +1206,65 @@ def MjcTendon "SpatialTendon"
   TEST_CHECK(tendon->range_max.get_value() == 0.5);
 }
 
+void physics_mjc_tendon_full_usdc_roundtrip_test(void) {
+  Stage src;
+  std::string warn, err;
+  const std::string path = UsdaFixturePath("physics-mjc-tendon-full-001.usda");
+  bool ok = LoadUSDFromFile(path, &src, &warn, &err);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  Stage stage;
+  ok = usdc_roundtrip_stage(src, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("USDC roundtrip failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto result = stage.GetPrimAtPath(Path("/World/FullTendon", ""));
+  TEST_CHECK(bool(result));
+  if (!result) return;
+  const auto *t = (*result)->as<MjcTendon>();
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+
+  TEST_CHECK(t->type.authored() && t->type.get_value().str() == "spatial");
+  TEST_CHECK(t->path.authored());
+  TEST_CHECK(t->path.get_targetPaths().size() == 2);
+  TEST_CHECK(t->sideSites.authored());
+  TEST_CHECK(t->sideSites.get_targetPaths().size() == 1);
+  auto coef = t->path_coef.get_value();
+  TEST_CHECK(coef.has_value() && coef.value().size() == 2);
+  if (coef.has_value() && coef.value().size() == 2) {
+    TEST_CHECK(approx_eq(coef.value()[0], 1.0));
+    TEST_CHECK(approx_eq(coef.value()[1], -0.5));
+  }
+  auto divisors = t->path_divisors.get_value();
+  TEST_CHECK(divisors.has_value() && divisors.value().size() == 2);
+  TEST_CHECK(t->limited.authored() && t->limited.get_value().str() == "true");
+  TEST_CHECK(t->actuatorfrclimited.authored() &&
+             t->actuatorfrclimited.get_value().str() == "false");
+  TEST_CHECK(t->range_min.authored() && approx_eq(t->range_min.get_value(), 0.1));
+  TEST_CHECK(t->range_max.authored() && approx_eq(t->range_max.get_value(), 0.9));
+  TEST_CHECK(t->actuatorfrcrange_min.authored() &&
+             approx_eq(t->actuatorfrcrange_min.get_value(), -3.0));
+  TEST_CHECK(t->actuatorfrcrange_max.authored() &&
+             approx_eq(t->actuatorfrcrange_max.get_value(), 4.0));
+  TEST_CHECK(t->solreflimit.get_value().has_value());
+  TEST_CHECK(t->solimplimit.get_value().has_value());
+  TEST_CHECK(t->solreffriction.get_value().has_value());
+  TEST_CHECK(t->solimpfriction.get_value().has_value());
+  TEST_CHECK(t->margin.authored() && approx_eq(t->margin.get_value(), 0.02));
+  TEST_CHECK(t->frictionloss.authored() &&
+             approx_eq(t->frictionloss.get_value(), 0.3));
+  TEST_CHECK(t->springlength.get_value().has_value());
+  TEST_CHECK(t->stiffness.authored() && approx_eq(t->stiffness.get_value(), 120.0));
+  TEST_CHECK(t->damping.authored() && approx_eq(t->damping.get_value(), 3.0));
+  TEST_CHECK(t->armature.authored() && approx_eq(t->armature.get_value(), 0.02));
+  TEST_CHECK(t->width.authored() && approx_eq(t->width.get_value(), 0.006));
+  TEST_CHECK(t->rgba.authored());
+}
+
 // ---------------------------------------------------------------------------
 // 10. MjcKeyframe
 // ---------------------------------------------------------------------------
@@ -1339,6 +1463,110 @@ def MjcKeyframe "Key0"
     TEST_CHECK(json.find("\"timestep\"") != std::string::npos);
     TEST_CHECK(json.find("\"euler\"") != std::string::npos);
   }
+}
+
+void physics_to_json_include_defaults_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def "World"
+{
+    def MjcActuator "act"
+    {
+        rel mjc:target = </World/Joint>
+    }
+
+    def MjcSensor "sensor"
+    {
+        uniform token mjc:type = "framepos"
+        uniform token mjc:objname = "body, }"
+    }
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  bool ok = parse_usda(usda, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("parse failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::string compact_json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  opts.include_defaults = false;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &compact_json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  TEST_CHECK(compact_json.find("\"target\": \"/World/Joint\"") !=
+             std::string::npos);
+  TEST_CHECK(compact_json.find("\"group\"") == std::string::npos);
+  TEST_CHECK(compact_json.find("\"dynType\"") == std::string::npos);
+  TEST_CHECK(compact_json.find("\"ctrlLimited\"") == std::string::npos);
+  nlohmann::json compact = parse_json_noexcept(compact_json);
+  if (compact.is_discarded()) {
+    TEST_MSG("compact JSON failed to parse:\n%s", compact_json.c_str());
+  }
+  TEST_CHECK(!compact.is_discarded());
+  if (!compact.is_discarded()) {
+    TEST_CHECK(compact["sensors"][0]["objname"] == "body, }");
+  }
+
+  std::string defaults_json;
+  opts.include_defaults = true;
+  json_ok = tydra::ConvertPhysicsToJson(stage, &defaults_json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+  TEST_CHECK(defaults_json.find("\"group\": 0") != std::string::npos);
+  TEST_CHECK(defaults_json.find("\"dynType\": \"none\"") != std::string::npos);
+  TEST_CHECK(defaults_json.find("\"ctrlLimited\": \"auto\"") !=
+             std::string::npos);
+  nlohmann::json defaults = parse_json_noexcept(defaults_json);
+  if (defaults.is_discarded()) {
+    TEST_MSG("defaults JSON failed to parse:\n%s", defaults_json.c_str());
+  }
+  TEST_CHECK(!defaults.is_discarded());
+  if (!defaults.is_discarded()) {
+    TEST_CHECK(defaults["sensors"][0]["objname"] == "body, }");
+  }
+}
+
+void physics_mjc_tendon_full_to_json_test(void) {
+  Stage stage;
+  std::string warn, err;
+  const std::string path = UsdaFixturePath("physics-mjc-tendon-full-001.usda");
+  bool ok = LoadUSDFromFile(path, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (!json_ok) return;
+
+  TEST_CHECK(json.find("\"tendons\"") != std::string::npos);
+  TEST_CHECK(json.find("\"route\": [\"/World/Sites/p0\", \"/World/Sites/p1\"]") !=
+             std::string::npos);
+  TEST_CHECK(json.find("\"sideSites\": [\"/World/Sites/p1\"]") !=
+             std::string::npos);
+  TEST_CHECK(json.find("\"routeIndices\": [0, 1]") != std::string::npos);
+  TEST_CHECK(json.find("\"sideSiteIndices\": [1]") != std::string::npos);
+  TEST_CHECK(json.find("\"routeSegments\": [0, 1]") != std::string::npos);
+  TEST_CHECK(json.find("\"routeDivisors\": [1, 2]") != std::string::npos);
+  TEST_CHECK(json.find("\"routeCoef\": [1, -0.5]") != std::string::npos);
+  TEST_CHECK(json.find("\"actuatorfrclimited\": \"false\"") != std::string::npos);
+  TEST_CHECK(json.find("\"actuatorfrcrange_min\": -3") != std::string::npos);
+  TEST_CHECK(json.find("\"actuatorfrcrange_max\": 4") != std::string::npos);
+  TEST_CHECK(json.find("\"springlength\": [0.2, 0.8]") != std::string::npos);
+  TEST_CHECK(json.find("\"width\": 0.006") != std::string::npos);
+  TEST_CHECK(json.find("\"rgba\": [0.2, 0.3, 0.4, 0.5]") !=
+             std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -1589,24 +1817,93 @@ def PhysicsRevoluteJoint "Joint" (
     const PhysicsDriveAPI &d = joint->drives.at("rotX");
     TEST_CHECK(d.dof == "rotX");
     TEST_CHECK(d.type.get_value().str() == "force");
-    auto mf = d.maxForce.get_value();
-    auto tp = d.targetPosition.get_value();
-    auto st = d.stiffness.get_value();
-    auto dp = d.damping.get_value();
-    TEST_CHECK(mf.has_value() && approx_eq(mf.value(), 100.0));
-    TEST_CHECK(tp.has_value() && approx_eq(tp.value(), 1.57));
-    TEST_CHECK(st.has_value() && approx_eq(st.value(), 50.0));
-    TEST_CHECK(dp.has_value() && approx_eq(dp.value(), 10.0));
+    TEST_CHECK(d.maxForce.authored() && approx_eq(d.maxForce.get_value(), 100.0));
+    TEST_CHECK(d.targetPosition.authored() &&
+               approx_eq(d.targetPosition.get_value(), 1.57));
+    TEST_CHECK(d.stiffness.authored() && approx_eq(d.stiffness.get_value(), 50.0));
+    TEST_CHECK(d.damping.authored() && approx_eq(d.damping.get_value(), 10.0));
   }
   TEST_CHECK(joint->limits.count("rotX") == 1);
   if (joint->limits.count("rotX") == 1) {
     const PhysicsLimitAPI &l = joint->limits.at("rotX");
     TEST_CHECK(l.dof == "rotX");
-    auto lo = l.low.get_value();
-    auto hi = l.high.get_value();
-    TEST_CHECK(lo.has_value() && approx_eq(lo.value(), -1.57));
-    TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 1.57));
+    TEST_CHECK(l.low.authored() && approx_eq(l.low.get_value(), -1.57));
+    TEST_CHECK(l.high.authored() && approx_eq(l.high.get_value(), 1.57));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 15b. UsdPhysics schema defaults and missing RigidBodyAPI fields.
+// ---------------------------------------------------------------------------
+void physics_schema_defaults_and_owner_test(void) {
+  Stage stage;
+  std::string warn, err;
+  const std::string path = UsdaFixturePath("physics-schema-defaults-001.usda");
+  bool ok = LoadUSDFromFile(path, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto body_r = stage.GetPrimAtPath(Path("/World/Body", ""));
+  TEST_CHECK(bool(body_r));
+  if (!body_r) return;
+
+  PhysicsRigidBodyAPI rb;
+  TEST_CHECK(GetPhysicsRigidBodyAPI(**body_r, &rb));
+  TEST_CHECK(rb.rigidBodyEnabled.get_value() == true);
+  TEST_CHECK(rb.kinematicEnabled.get_value() == true);
+  TEST_CHECK(rb.simulationOwner.authored());
+  TEST_CHECK(rb.simulationOwner.get_targetPaths().size() == 1);
+  if (rb.simulationOwner.get_targetPaths().size() == 1) {
+    TEST_CHECK(rb.simulationOwner.get_targetPaths()[0].full_path_name() ==
+               "/World/Scene");
+  }
+
+  PhysicsMassAPI mass;
+  TEST_CHECK(GetPhysicsMassAPI(**body_r, &mass));
+  value::point3f com = mass.centerOfMass.get_value();
+  TEST_CHECK(std::isinf(com[0]) && com[0] < 0.0f);
+  TEST_CHECK(std::isinf(com[1]) && com[1] < 0.0f);
+  TEST_CHECK(std::isinf(com[2]) && com[2] < 0.0f);
+  value::quatf pa = mass.principalAxes.get_value();
+  TEST_CHECK(pa[0] == 0.0f && pa[1] == 0.0f && pa[2] == 0.0f &&
+             pa[3] == 0.0f);
+
+  auto joint_r = stage.GetPrimAtPath(Path("/World/Joint", ""));
+  TEST_CHECK(bool(joint_r));
+  if (!joint_r) return;
+  const auto *joint = (*joint_r)->as<PhysicsJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->jointEnabled.get_value() == true);
+  TEST_CHECK(joint->collisionEnabled.get_value() == false);
+  TEST_CHECK(std::isinf(joint->breakForce.get_value()) &&
+             joint->breakForce.get_value() > 0.0f);
+  TEST_CHECK(std::isinf(joint->breakTorque.get_value()) &&
+             joint->breakTorque.get_value() > 0.0f);
+  TEST_CHECK(joint->excludeFromArticulation.get_value() == false);
+}
+
+void physics_spherical_schema_names_fixture_test(void) {
+  Stage stage;
+  std::string warn, err;
+  const std::string path =
+      UsdaFixturePath("physics-spherical-schema-names-001.usda");
+  bool ok = LoadUSDFromFile(path, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("load failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto joint_r = stage.GetPrimAtPath(Path("/World/Ball", ""));
+  TEST_CHECK(bool(joint_r));
+  if (!joint_r) return;
+  const auto *joint = (*joint_r)->as<PhysicsSphericalJoint>();
+  TEST_CHECK(joint != nullptr);
+  if (!joint) return;
+  TEST_CHECK(joint->coneAngle0Limit.authored());
+  TEST_CHECK(joint->coneAngle1Limit.authored());
+  TEST_CHECK(approx_eq(joint->coneAngle0Limit.get_value().value(), 30.0));
+  TEST_CHECK(approx_eq(joint->coneAngle1Limit.get_value().value(), 45.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -2592,20 +2889,20 @@ def PhysicsRevoluteJoint "Joint" (
     TEST_CHECK(it != joint->drives.end());
     if (it != joint->drives.end()) {
       TEST_CHECK(it->second.dof == "rotX");
-      auto mf = it->second.maxForce.get_value();
-      TEST_CHECK(mf.has_value() && approx_eq(mf.value(), 100.0));
-      auto tp = it->second.targetPosition.get_value();
-      TEST_CHECK(tp.has_value() && approx_eq(tp.value(), 1.57));
+      TEST_CHECK(it->second.maxForce.authored() &&
+                 approx_eq(it->second.maxForce.get_value(), 100.0));
+      TEST_CHECK(it->second.targetPosition.authored() &&
+                 approx_eq(it->second.targetPosition.get_value(), 1.57));
     }
   }
   if (!joint->limits.empty()) {
     auto it = joint->limits.find("rotX");
     TEST_CHECK(it != joint->limits.end());
     if (it != joint->limits.end()) {
-      auto lo = it->second.low.get_value();
-      auto hi = it->second.high.get_value();
-      TEST_CHECK(lo.has_value() && approx_eq(lo.value(), -1.57));
-      TEST_CHECK(hi.has_value() && approx_eq(hi.value(), 1.57));
+      TEST_CHECK(it->second.low.authored() &&
+                 approx_eq(it->second.low.get_value(), -1.57));
+      TEST_CHECK(it->second.high.authored() &&
+                 approx_eq(it->second.high.get_value(), 1.57));
     }
   }
 }
@@ -2663,19 +2960,19 @@ def PhysicsDistanceJoint "Dist"
       const auto *rj = (*rr)->as<PhysicsRevoluteJoint>();
       TEST_CHECK(dj && rj);
       if (dj && rj) {
-        auto p = rj->localPos0.get_value();
-        TEST_CHECK(p.has_value());
-        if (p.has_value()) {
-          TEST_CHECK(approx_eq(p.value()[0], 1.0));
-          TEST_CHECK(approx_eq(p.value()[1], 2.0));
-          TEST_CHECK(approx_eq(p.value()[2], 3.0));
+        TEST_CHECK(rj->localPos0.authored());
+        if (rj->localPos0.authored()) {
+          value::point3f p = rj->localPos0.get_value();
+          TEST_CHECK(approx_eq(p[0], 1.0));
+          TEST_CHECK(approx_eq(p[1], 2.0));
+          TEST_CHECK(approx_eq(p[2], 3.0));
         }
-        auto qd = dj->localRot0.get_value();
-        auto qr = rj->localRot0.get_value();
-        TEST_CHECK(qd.has_value() && qr.has_value());
-        if (qd.has_value() && qr.has_value()) {
+        TEST_CHECK(dj->localRot0.authored() && rj->localRot0.authored());
+        if (dj->localRot0.authored() && rj->localRot0.authored()) {
+          value::quatf qd = dj->localRot0.get_value();
+          value::quatf qr = rj->localRot0.get_value();
           for (size_t i = 0; i < 4; i++) {
-            TEST_CHECK(approx_eq(qr.value()[i], qd.value()[i]));
+            TEST_CHECK(approx_eq(qr[i], qd[i]));
           }
         }
         TEST_CHECK(rj->body0.authored() && rj->body1.authored());
@@ -2693,12 +2990,12 @@ def PhysicsDistanceJoint "Dist"
       const auto *dj = (*dr)->as<PhysicsPrismaticJoint>();
       const auto *rj = (*rr)->as<PhysicsPrismaticJoint>();
       if (dj && rj) {
-        auto qd = dj->localRot0.get_value();
-        auto qr = rj->localRot0.get_value();
-        TEST_CHECK(qd.has_value() && qr.has_value());
-        if (qd.has_value() && qr.has_value()) {
+        TEST_CHECK(dj->localRot0.authored() && rj->localRot0.authored());
+        if (dj->localRot0.authored() && rj->localRot0.authored()) {
+          value::quatf qd = dj->localRot0.get_value();
+          value::quatf qr = rj->localRot0.get_value();
           for (size_t i = 0; i < 4; i++) {
-            TEST_CHECK(approx_eq(qr.value()[i], qd.value()[i]));
+            TEST_CHECK(approx_eq(qr[i], qd[i]));
           }
         }
       }
@@ -3009,6 +3306,259 @@ void urdf_json_mjcf_tendon_export_test(void) {
       TEST_CHECK(approx_eq(coef.value()[1], -1.0));
     }
   }
+}
+
+void urdf_json_mjcf_tendon_full_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "TendonFullBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sites": [
+    { "name": "p0", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
+    { "name": "p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0,0,1] }
+  ],
+  "tendons": [
+    { "name": "full", "type": "spatial",
+      "route": ["/World/Sites/p0", "/World/Sites/p1"],
+      "sideSites": ["/World/Sites/p1"],
+      "routeIndices": [0, 1],
+      "sideSiteIndices": [1],
+      "routeSegments": [0, 1],
+      "routeDivisors": [1, 2],
+      "routeCoef": [1, -0.5],
+      "group": 2,
+      "limited": "true",
+      "actuatorfrclimited": "false",
+      "range_min": 0.1,
+      "range_max": 0.9,
+      "actuatorfrcrange_min": -3,
+      "actuatorfrcrange_max": 4,
+      "solreflimit": [0.03, 1.1],
+      "solimplimit": [0.8, 0.9, 0.01, 0.5, 2],
+      "solreffriction": [0.04, 1.2],
+      "solimpfriction": [0.7, 0.8, 0.02, 0.4, 1.5],
+      "margin": 0.02,
+      "frictionloss": 0.3,
+      "springlength": [0.2, 0.8],
+      "stiffness": 120,
+      "damping": 3,
+      "armature": 0.02,
+      "width": 0.006,
+      "rgba": [0.2, 0.3, 0.4, 0.5] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Tendons/full", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *t = (*r)->as<MjcTendon>();
+  TEST_CHECK(t != nullptr);
+  if (!t) return;
+
+  TEST_CHECK(t->type.get_value().str() == "spatial");
+  TEST_CHECK(t->path.authored());
+  TEST_CHECK(t->path.get_targetPaths().size() == 2);
+  TEST_CHECK(t->sideSites.authored());
+  TEST_CHECK(t->sideSites.get_targetPaths().size() == 1);
+  auto indices = t->path_indices.get_value();
+  TEST_CHECK(indices.has_value() && indices.value().size() == 2);
+  auto side_indices = t->sideSites_indices.get_value();
+  TEST_CHECK(side_indices.has_value() && side_indices.value().size() == 1);
+  auto segments = t->path_segments.get_value();
+  TEST_CHECK(segments.has_value() && segments.value().size() == 2);
+  auto divisors = t->path_divisors.get_value();
+  TEST_CHECK(divisors.has_value() && divisors.value().size() == 2);
+  auto coef = t->path_coef.get_value();
+  TEST_CHECK(coef.has_value() && coef.value().size() == 2);
+  if (coef.has_value() && coef.value().size() == 2) {
+    TEST_CHECK(approx_eq(coef.value()[1], -0.5));
+  }
+  TEST_CHECK(t->group.authored() && t->group.get_value() == 2);
+  TEST_CHECK(t->limited.authored() && t->limited.get_value().str() == "true");
+  TEST_CHECK(t->actuatorfrclimited.authored() &&
+             t->actuatorfrclimited.get_value().str() == "false");
+  TEST_CHECK(t->range_min.authored() && approx_eq(t->range_min.get_value(), 0.1));
+  TEST_CHECK(t->range_max.authored() && approx_eq(t->range_max.get_value(), 0.9));
+  TEST_CHECK(t->actuatorfrcrange_min.authored() &&
+             approx_eq(t->actuatorfrcrange_min.get_value(), -3.0));
+  TEST_CHECK(t->actuatorfrcrange_max.authored() &&
+             approx_eq(t->actuatorfrcrange_max.get_value(), 4.0));
+  TEST_CHECK(t->solreflimit.get_value().has_value());
+  TEST_CHECK(t->solimplimit.get_value().has_value());
+  TEST_CHECK(t->solreffriction.get_value().has_value());
+  TEST_CHECK(t->solimpfriction.get_value().has_value());
+  TEST_CHECK(t->springlength.get_value().has_value());
+  TEST_CHECK(t->width.authored() && approx_eq(t->width.get_value(), 0.006));
+  TEST_CHECK(t->rgba.authored());
+}
+
+void urdf_json_mjcf_tendon_alias_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "TendonAliasBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sites": [
+    { "name": "p0", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
+    { "name": "p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0,0,1] }
+  ],
+  "tendons": [
+    { "name": "object_route", "type": "spatial",
+      "route": [ {"site": "p0"}, {"target": "/World/Sites/p1"} ],
+      "sideSites": [ {"site": "p0"} ],
+      "routeCoef": [1, -1] },
+    { "name": "partial_route", "type": "spatial",
+      "route": ["/World/Sites/p0"] }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/Tendons/object_route", ""));
+  TEST_CHECK(bool(r));
+  if (r) {
+    const auto *t = (*r)->as<MjcTendon>();
+    TEST_CHECK(t != nullptr);
+    if (t) {
+      TEST_CHECK(t->path.authored());
+      auto targets = t->path.get_targetPaths();
+      TEST_CHECK(targets.size() == 2);
+      if (targets.size() == 2) {
+        TEST_CHECK(targets[0].prim_part() == "/World/Sites/p0");
+        TEST_CHECK(targets[1].prim_part() == "/World/Sites/p1");
+      }
+      TEST_CHECK(t->sideSites.authored());
+      TEST_CHECK(t->sideSites.get_targetPaths().size() == 1);
+      auto coef = t->path_coef.get_value();
+      TEST_CHECK(coef.has_value() && coef.value().size() == 2);
+    }
+  }
+
+  auto partial = stage.GetPrimAtPath(Path("/World/Tendons/partial_route", ""));
+  TEST_CHECK(bool(partial));
+  if (partial) {
+    const auto *t = (*partial)->as<MjcTendon>();
+    TEST_CHECK(t != nullptr);
+    if (t) {
+      TEST_CHECK(t->path.authored());
+      TEST_CHECK(t->path.get_targetPaths().size() == 1);
+    }
+  }
+}
+
+void urdf_json_mjc_actuator_full_export_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "ActuatorFullBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sites": [
+    { "name": "p0", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
+    { "name": "p1", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0,0,1] }
+  ],
+  "mjcActuators": [
+    { "name": "full",
+      "target": "/World/Links/base",
+      "group": 3,
+      "ctrlLimited": "true",
+      "forceLimited": "false",
+      "actLimited": "auto",
+      "ctrlRange_min": -1,
+      "ctrlRange_max": 1,
+      "forceRange_min": -200,
+      "forceRange_max": 200,
+      "actRange": [0, 2],
+      "lengthRange_min": 0.18,
+      "lengthRange_max": 0.29,
+      "gear": [1, 0, 0, 0, 0, 0],
+      "crankLength": 0.1,
+      "jointInParent": true,
+      "refSite": "p0",
+      "sliderSite": "p1",
+      "actDim": 2,
+      "dynType": "filter",
+      "gainType": "affine",
+      "biasType": "affine",
+      "dynPrm": [0.01, 0.02],
+      "gainPrm": [350, 0, 0],
+      "biasPrm": [0, -350, -10],
+      "actEarly": true,
+      "inheritRange": 0.5,
+      "plugin": "pid0",
+      "instance": "inst0" }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto r = stage.GetPrimAtPath(Path("/World/MjcActuators/full", ""));
+  TEST_CHECK(bool(r));
+  if (!r) return;
+  const auto *a = (*r)->as<MjcActuator>();
+  TEST_CHECK(a != nullptr);
+  if (!a) return;
+
+  TEST_CHECK(a->target.authored());
+  auto targets = a->target.get_targetPaths();
+  TEST_CHECK(targets.size() == 1);
+  if (targets.size() == 1) {
+    TEST_CHECK(targets[0].prim_part() == "/World/Links/base");
+  }
+  TEST_CHECK(a->group.authored() && a->group.get_value() == 3);
+  TEST_CHECK(a->ctrlLimited.get_value().str() == "true");
+  TEST_CHECK(a->forceLimited.get_value().str() == "false");
+  TEST_CHECK(a->actLimited.get_value().str() == "auto");
+  TEST_CHECK(approx_eq(a->ctrlRange_min.get_value(), -1.0));
+  TEST_CHECK(approx_eq(a->ctrlRange_max.get_value(), 1.0));
+  TEST_CHECK(approx_eq(a->forceRange_min.get_value(), -200.0));
+  TEST_CHECK(approx_eq(a->forceRange_max.get_value(), 200.0));
+  TEST_CHECK(approx_eq(a->actRange_min.get_value(), 0.0));
+  TEST_CHECK(approx_eq(a->actRange_max.get_value(), 2.0));
+  TEST_CHECK(approx_eq(a->lengthRange_min.get_value(), 0.18));
+  TEST_CHECK(approx_eq(a->lengthRange_max.get_value(), 0.29));
+  TEST_CHECK(approx_eq(a->crankLength.get_value(), 0.1));
+  TEST_CHECK(a->jointInParent.get_value() == true);
+  TEST_CHECK(a->refSite.authored());
+  if (a->refSite.authored()) {
+    auto rels = a->refSite.get_targetPaths();
+    TEST_CHECK(rels.size() == 1);
+    if (rels.size() == 1) TEST_CHECK(rels[0].prim_part() == "/World/Sites/p0");
+  }
+  TEST_CHECK(a->sliderSite.authored());
+  if (a->sliderSite.authored()) {
+    auto rels = a->sliderSite.get_targetPaths();
+    TEST_CHECK(rels.size() == 1);
+    if (rels.size() == 1) TEST_CHECK(rels[0].prim_part() == "/World/Sites/p1");
+  }
+  TEST_CHECK(a->actDim.get_value() == 2);
+  TEST_CHECK(a->dynType.get_value().str() == "filter");
+  TEST_CHECK(a->gainType.get_value().str() == "affine");
+  TEST_CHECK(a->biasType.get_value().str() == "affine");
+  auto dyn = a->dynPrm.get_value();
+  TEST_CHECK(dyn.has_value() && dyn.value().size() == 2);
+  auto gain = a->gainPrm.get_value();
+  TEST_CHECK(gain.has_value() && gain.value().size() == 3);
+  auto bias = a->biasPrm.get_value();
+  TEST_CHECK(bias.has_value() && bias.value().size() == 3);
+  TEST_CHECK(a->actEarly.get_value() == true);
+  TEST_CHECK(approx_eq(a->inheritRange.get_value(), 0.5));
+  TEST_CHECK(a->plugin.get_value().str() == "pid0");
+  TEST_CHECK(a->instance.get_value().str() == "inst0");
 }
 
 // MJCF <equality> connect/weld/joint -> Xform host prims with MjcEquality*API.
@@ -3624,6 +4174,28 @@ void urdf_json_mjc_sensors_test(void) {
       TEST_CHECK(s->refName.get_value().str() == "world");
     }
   }
+
+  std::string json;
+  std::string json_err;
+  tydra::PhysicsJsonExportOptions opts;
+  opts.include_mjc = true;
+  bool json_ok = tydra::ConvertPhysicsToJson(stage, &json, &json_err, opts);
+  if (!json_ok) { TEST_MSG("JSON export failed: %s", json_err.c_str()); }
+  TEST_CHECK(json_ok);
+  if (json_ok) {
+    TEST_CHECK(json.find("\"sensors\"") != std::string::npos);
+    TEST_CHECK(json.find("\"path\": \"/World/Sensors/imu_gyro\"") !=
+               std::string::npos);
+    TEST_CHECK(json.find("\"type\": \"gyro\"") != std::string::npos);
+    TEST_CHECK(json.find("\"objtype\": \"site\"") != std::string::npos);
+    TEST_CHECK(json.find("\"objname\": \"imu\"") != std::string::npos);
+    TEST_CHECK(json.find("\"cutoff\": 34.9") != std::string::npos);
+    TEST_CHECK(json.find("\"noise\": 0.01") != std::string::npos);
+    TEST_CHECK(json.find("\"type\": \"framepos\"") != std::string::npos);
+    TEST_CHECK(json.find("\"reftype\": \"body\"") != std::string::npos);
+    TEST_CHECK(json.find("\"refname\": \"world\"") != std::string::npos);
+  }
+
   // USDC round-trip preserves the sensor prim + typed fields.
   Stage rt;
   std::string w2, e2;
@@ -3640,6 +4212,66 @@ def "World" { def MjcSensor "g" { uniform token mjc:type = "gyro"
         TEST_CHECK(s->type.get_value().str() == "gyro");
         TEST_CHECK(approx_eq(s->cutoff.get_value(), 12.5));
       }
+    }
+  }
+}
+
+void urdf_json_mjc_sensor_aliases_test(void) {
+  const char *robot_json = R"JSON({
+  "name": "SensorAliasBot",
+  "sourceFormat": "mjcf",
+  "upAxis": "Z",
+  "links": [ { "name": "base" } ],
+  "sensors": [
+    { "name": "g", "type": "gyro", "site": "imu",
+      "group": 4, "user": [1, 2, 3] },
+    { "name": "tv", "type": "tendonvel", "tendon": "achilles" },
+    { "name": "fp", "type": "framepos", "body": "torso",
+      "refSite": "imu" }
+  ]
+})JSON";
+  Stage stage;
+  std::string warn, err;
+  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
+  TEST_CHECK(ok);
+  if (!ok) return;
+
+  auto g = stage.GetPrimAtPath(Path("/World/Sensors/g", ""));
+  TEST_CHECK(bool(g));
+  if (g) {
+    const auto *s = (*g)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "site");
+      TEST_CHECK(s->objName.get_value().str() == "imu");
+      TEST_CHECK(s->group.authored() && s->group.get_value() == 4);
+      auto user = s->user.get_value();
+      TEST_CHECK(user.has_value() && user.value().size() == 3);
+    }
+  }
+
+  auto tv = stage.GetPrimAtPath(Path("/World/Sensors/tv", ""));
+  TEST_CHECK(bool(tv));
+  if (tv) {
+    const auto *s = (*tv)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "tendon");
+      TEST_CHECK(s->objName.get_value().str() == "achilles");
+    }
+  }
+
+  auto fp = stage.GetPrimAtPath(Path("/World/Sensors/fp", ""));
+  TEST_CHECK(bool(fp));
+  if (fp) {
+    const auto *s = (*fp)->as<MjcSensor>();
+    TEST_CHECK(s != nullptr);
+    if (s) {
+      TEST_CHECK(s->objType.get_value().str() == "body");
+      TEST_CHECK(s->objName.get_value().str() == "torso");
+      TEST_CHECK(s->refType.get_value().str() == "site");
+      TEST_CHECK(s->refName.get_value().str() == "imu");
     }
   }
 }

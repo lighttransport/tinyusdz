@@ -186,6 +186,8 @@ private:
   // Helpers
   bool CheckByteAllocation(uint64_t bytes, const char* what);
   bool CheckElementAllocation(uint64_t count, size_t elem_size, const char* what);
+  bool ResolveRelativeOffset(size_t base, int64_t offset, size_t* out,
+                             const char* what);
   bool GetToken(uint32_t index, std::string& out);
   bool GetString(uint32_t index, std::string& out);
   bool ResolveFieldset(uint32_t fieldset_index,
@@ -370,16 +372,27 @@ bool CrateReader::Impl::DecodeTimeSamples(
   //   at (P+off_t+8)+off_v:[u64 N][ValueRep vals[N]]
   // Each `[i64 off]` is a relative jump: after reading the 8-byte offset at
   // position Q, the target is Q+off (i.e. seek_from_current(off-8)).
-  const int64_t P = static_cast<int64_t>(rep.payload());
-  if (P < 0 || !reader_->seek(static_cast<size_t>(P))) return false;
+  const uint64_t payload = rep.payload();
+  if (payload > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    return false;
+  }
+  const size_t P = static_cast<size_t>(payload);
+  if (!reader_->seek(P)) return false;
 
   int64_t off_t = 0;
   if (!reader_->read(&off_t, 8)) return false;
-  const int64_t times_pos = P + off_t;  // Q=P, target=Q+off_t
-  if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
+  size_t times_pos = 0;
+  if (!ResolveRelativeOffset(P, off_t, &times_pos, "TimeSamples times offset")) {
+    return false;
+  }
+  if (!reader_->seek(times_pos)) return false;
   uint64_t times_rep_raw = 0;
   if (!reader_->read_u64(times_rep_raw)) return false;
-  const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
+  size_t off_v_field = 0;
+  if (!safe::add(times_pos, size_t(8), &off_v_field) ||
+      off_v_field > reader_->size()) {
+    return false;
+  }
 
   Value times_val;
   if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
@@ -390,8 +403,12 @@ bool CrateReader::Impl::DecodeTimeSamples(
   if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
   if (!reader_->read(&off_v, 8)) return false;
-  const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
-  if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
+  size_t vals_pos = 0;
+  if (!ResolveRelativeOffset(off_v_field, off_v, &vals_pos,
+                             "TimeSamples values offset")) {
+    return false;
+  }
+  if (!reader_->seek(vals_pos)) return false;
   uint64_t n = 0;
   if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
@@ -878,7 +895,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
           if (idxs[i] >= tokens_.size()) return false;
           s = tokens_.str(idxs[i]);
         } else {
-          GetString(idxs[i], s);
+          if (!GetString(idxs[i], s)) return false;
         }
         data[i] = std::move(s);
       }
@@ -1014,7 +1031,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       AddWarning("Array element count exceeds available file bytes");
       return false;
     }
-    if (!CheckByteAllocation(count * elem_bytes, "Array payload")) {
+    if (!CheckElementAllocation(count, static_cast<size_t>(elem_bytes),
+                                "Array payload")) {
       return false;
     }
   }
@@ -1024,9 +1042,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
+    if (!CheckByteAllocation(comp_size, "Compressed integer array")) return false;
     std::vector<uint8_t> blob;
     if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;  // overflow-safe
-    std::vector<uint8_t> with_prefix(8 + blob.size());
+    size_t prefixed_size = 0;
+    if (!safe::add(size_t(8), blob.size(), &prefixed_size)) return false;
+    if (!CheckByteAllocation(prefixed_size, "Compressed integer array prefix")) {
+      return false;
+    }
+    std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU32(
@@ -2993,8 +3017,9 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     if (!keep) return true;
 
     std::string asset;
-    GetString(asset_idx, asset);
-    std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+    if (!GetString(asset_idx, asset)) return false;
+    if (path_idx >= paths_.size()) return false;
+    std::string prim = paths_[path_idx];
     std::string arc = "@" + asset + "@";
     if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
     if (offset != 0.0 || scale != 1.0) {
@@ -3041,8 +3066,7 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     uint32_t k = 0, v = 0;
     if (!reader_->read_u32(k) || !reader_->read_u32(v)) return false;
     std::string key, val;
-    GetString(k, key);
-    GetString(v, val);
+    if (!GetString(k, key) || !GetString(v, val)) return false;
     out.emplace_back(std::move(key), std::move(val));
   }
   return true;
@@ -3072,7 +3096,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
         if (idx >= tokens_.size()) return false;
         s = tokens_.str(idx);
       } else {
-        GetString(idx, s);
+        if (!GetString(idx, s)) return false;
       }
       out.push_back(std::move(s));
     }
@@ -3117,14 +3141,17 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     uint32_t kidx = 0;
     if (!reader_->read_u32(kidx)) return false;
     std::string key;
-    GetString(kidx, key);
+    if (!GetString(kidx, key)) return false;
 
     const size_t val_start = reader_->position();
     uint64_t rec_off_raw = 0;
     if (!reader_->read_u64(rec_off_raw)) return false;
     const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
-    const size_t rep_pos =
-        static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
+    size_t rep_pos = 0;
+    if (!ResolveRelativeOffset(val_start, rec_off, &rep_pos,
+                               "Dictionary value offset")) {
+      return false;
+    }
     if (!reader_->seek(rep_pos)) return false;
     uint64_t vrep_raw = 0;
     if (!reader_->read_u64(vrep_raw)) return false;
@@ -3133,9 +3160,9 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     ValueRep vr(vrep_raw);
     Value cv;
     if (vr.type_id() == CrateTypeId::Dictionary) {
-      DecodeDictionary(vr, cv, depth + 1);
+      if (!DecodeDictionary(vr, cv, depth + 1)) return false;
     } else if (vr.type_id() != CrateTypeId::Invalid) {
-      UnpackValue(vr, cv);
+      if (!UnpackValue(vr, cv)) return false;
     }
     d->set(std::move(key), std::move(cv));
 
@@ -3187,6 +3214,31 @@ bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
     return false;
   }
   return CheckByteAllocation(count * static_cast<uint64_t>(elem_size), what);
+}
+
+bool CrateReader::Impl::ResolveRelativeOffset(size_t base, int64_t offset,
+                                               size_t* out, const char* what) {
+  if (!out) return false;
+  size_t target = 0;
+  if (offset >= 0) {
+    if (!safe::add(base, static_cast<size_t>(offset), &target)) {
+      AddError(std::string(what) + " overflows addressable memory");
+      return false;
+    }
+  } else {
+    const uint64_t mag = static_cast<uint64_t>(-(offset + 1)) + 1u;
+    if (mag > static_cast<uint64_t>(base)) {
+      AddError(std::string(what) + " points before start of file");
+      return false;
+    }
+    target = base - static_cast<size_t>(mag);
+  }
+  if (target > reader_->size()) {
+    AddError(std::string(what) + " points outside file");
+    return false;
+  }
+  *out = target;
+  return true;
 }
 
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {

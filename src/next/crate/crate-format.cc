@@ -74,6 +74,8 @@ const char* CrateTypeIdName(CrateTypeId id) {
     case CrateTypeId::UnregisteredValueListOp: return "UnregisteredValueListOp";
     case CrateTypeId::PayloadListOp: return "PayloadListOp";
     case CrateTypeId::TimeCode: return "TimeCode";
+    case CrateTypeId::PathExpression: return "PathExpression";
+    case CrateTypeId::Spline: return "Spline";
   }
   return "Unknown";
 }

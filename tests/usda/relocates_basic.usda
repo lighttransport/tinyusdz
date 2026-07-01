@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    relocates = {
+        </World/source> : </World/target>,
+        </World/old/deep> : </World/new>,
+        </World/dropme> : <>
+    }
+)
+
+def Xform "World"
+{
+    def Scope "target"
+    {
+    }
+}

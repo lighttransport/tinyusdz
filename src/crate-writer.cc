@@ -35,6 +35,8 @@
 #include "lz4/lz4.h"
 
 #include "safe-arithmetic.hh"
+#include "spline-binary.hh"  // SplineBinaryFormatVersion
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
 // math::is_close — used for exact (eps == 0) floating-point comparison without
 // tripping -Wfloat-equal. is_close(a, b, 0) computes fabs(a - b) <= 0, which is
@@ -1286,9 +1288,28 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   memset(&boot, 0, sizeof(boot));
 
   memcpy(boot.ident, kMagicIdent, 8);
-  boot.version[0] = options_.version_major;
-  boot.version[1] = options_.version_minor;
-  boot.version[2] = options_.version_patch;
+  // Emit max(configured version, version required by written values). The
+  // latter is raised via RequestCrateVersionUpgrade() when e.g. an
+  // SdfPathExpression (>=0.10.0) or TsSpline (>=0.12.0) value is written, so
+  // the header truthfully declares the minimum reader version.
+  uint8_t ev_major = options_.version_major;
+  uint8_t ev_minor = options_.version_minor;
+  uint8_t ev_patch = options_.version_patch;
+  const bool req_higher =
+      (required_version_major_ > ev_major) ||
+      (required_version_major_ == ev_major &&
+       required_version_minor_ > ev_minor) ||
+      (required_version_major_ == ev_major &&
+       required_version_minor_ == ev_minor &&
+       required_version_patch_ > ev_patch);
+  if (req_higher) {
+    ev_major = required_version_major_;
+    ev_minor = required_version_minor_;
+    ev_patch = required_version_patch_;
+  }
+  boot.version[0] = ev_major;
+  boot.version[1] = ev_minor;
+  boot.version[2] = ev_patch;
   boot.toc_offset = saved_toc_offset;
 
   // Write bootstrap header
@@ -1314,6 +1335,34 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
   crate::ValueRep rep;
+
+  // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set, the
+  // array element type in the type byte, and a payload referencing the
+  // (valuesRep, indexesRep, isDense) tuple (payload 0 == identity edit).
+  if (auto* ae = value.as<value::ArrayEdit>()) {
+    RequestCrateVersionUpgrade(0, 14, 0);  // VtArrayEdit requires crate 0.14.0
+    crate::ValueRep aerep;
+    aerep.SetIsArrayEdit();
+    if (ae->ops.empty()) {
+      // Identity edit: no out-of-line data. The element type comes from the
+      // model (no literals are packed to derive it from).
+      aerep.SetType(ae->element_type_id);
+      aerep.SetPayload(0);
+      return aerep;
+    }
+    last_array_edit_elem_type_ = 0;
+    bool is_compressed = false;
+    int64_t offset = WriteValueData(value, &is_compressed, err);
+    if (offset < 0 || (err && !err->empty())) {
+      return crate::ValueRep();
+    }
+    // Adopt the element type from the packed literals array (robust even for
+    // ref-only edits with empty literals); fall back to the model's id.
+    aerep.SetType(last_array_edit_elem_type_ ? last_array_edit_elem_type_
+                                             : ae->element_type_id);
+    aerep.SetPayload(static_cast<uint64_t>(offset));
+    return aerep;
+  }
 
   // Try to inline the value
   if (TryInlineValue(value, &rep)) {
@@ -1416,6 +1465,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   PACK_ARRAY_TYPE(value::quatf, CRATE_DATA_TYPE_QUATF)
   PACK_ARRAY_TYPE(value::quatd, CRATE_DATA_TYPE_QUATD)
   PACK_ARRAY_TYPE(value::AssetPath, CRATE_DATA_TYPE_ASSET_PATH)
+  PACK_ARRAY_TYPE(value::PathExpression, CRATE_DATA_TYPE_PATH_EXPRESSION)
   PACK_ARRAY_TYPE(std::string, CRATE_DATA_TYPE_STRING)
   PACK_ARRAY_TYPE(value::token, CRATE_DATA_TYPE_TOKEN)
 
@@ -1425,6 +1475,12 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   // PathVector is a special type (type code 40) that doesn't use the array flag
   if (value.as<std::vector<Path>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR));
+  }
+  // SdfRelocates (Crate type 58): a list of (source, target) path pairs. Not an
+  // array type (the vector itself is the value). crate >= 0.11.0.
+  else if (value.as<std::vector<std::pair<Path, Path>>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES));
+    RequestCrateVersionUpgrade(0, 11, 0);  // SdfRelocates requires crate 0.11.0
   }
   // Dictionary type
   else if (value.as<value::dict>()) {
@@ -1469,6 +1525,23 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   // Phase 3: TimeSamples
   else if (value.as<value::TimeSamples>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES));
+  }
+  // Phase 3b: Spline (TsSpline, Crate type 59)
+  else if (auto* spline_data = value.as<primvar::PrimVar::SplineData>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE));
+    // A spline with tangent algorithms (binary version 2) requires crate
+    // 0.13.0; a plain spline (version 1) only requires 0.12.0.
+    if (SplineBinaryFormatVersion(*spline_data) >= 2) {
+      RequestCrateVersionUpgrade(0, 13, 0);
+    } else {
+      RequestCrateVersionUpgrade(0, 12, 0);
+    }
+  }
+  // Phase 3c: scalar SdfPathExpression (Crate type 57). Non-inlined: stored as
+  // a StringIndex at an offset (OpenUSD cannot decode an inlined PathExpression).
+  else if (value.as<value::PathExpression>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION));
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
   }
   // Unknown/unsupported type
   else {

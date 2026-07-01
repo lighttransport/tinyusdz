@@ -12,6 +12,10 @@ build/
 build_ninja/
 build-tinysubdiv/
 build-*/
+build_*/
+large-scene-tasks.md
+tests/asset-parse-results/
+tests/asset-parse-results-flatten/
 web/demo/dist/
 web/site/dist/
 web/build_ninja/
