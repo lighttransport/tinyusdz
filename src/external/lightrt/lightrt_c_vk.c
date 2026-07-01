@@ -2355,12 +2355,13 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
     const uint32_t ntlas = (ninsts + slice - 1u) / slice;
 
     int ok = 0;
+    int gpu_fail = 0;  /* a GPU build (not a host alloc) failed -> driver may be faulted */
     do {
         /* Build every prototype BLAS through the suballocation pools (a few large
          * blocks) instead of ~6 vkAllocateMemory + 2 submits per prototype, which
          * on ~100k-prototype scenes (full Moana island) exhausts NVIDIA's allocator
          * and faults the driver. */
-        if (!build_protos_pooled(e, protos, nprotos, s)) break;
+        if (!build_protos_pooled(e, protos, nprotos, s)) { gpu_fail = 1; break; }
 
         s->tlas_base = (uint32_t *)calloc(ntlas, sizeof(uint32_t));
         if (!s->tlas_base) break;
@@ -2379,23 +2380,33 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
                 break;
             }
         }
-        if (!slices_ok) break;
+        if (!slices_ok) { gpu_fail = 1; break; }
         s->ntlas = ntlas;
         ok = 1;
     } while (0);
 
     if (!ok) {
-        /* A build in the (possibly ~100k-BLAS) storm failed -- typically the GPU
-         * ran out of memory. NVIDIA's driver is then left in a state where
-         * destroying the already-built accels segfaults INSIDE the driver, so mark
-         * the device unusable: vk_accel_destroy / engine teardown skip all driver
-         * calls and only free host memory (the OS reclaims the GPU on exit). */
-        e->device_lost = 1;
+        /* A GPU build in the (possibly ~100k-BLAS) storm failed -- typically the GPU
+         * ran out of memory. NVIDIA's driver is then left in a state where destroying
+         * the already-built accels segfaults INSIDE the driver, so mark the device
+         * unusable: vk_accel_destroy / vk_subpool_free / engine teardown then skip all
+         * driver calls and only free host memory (the OS reclaims the GPU on exit).
+         * A pure host-allocation failure leaves the device healthy, so tear the
+         * partial scene down normally and keep the engine usable for a retry. */
+        if (gpu_fail) e->device_lost = 1;
         vk_accel_destroy(e, &s->tlas);
         if (s->extra_tlas)
             for (uint32_t k = 1; k < ntlas; k++)
                 vk_accel_destroy(e, &s->extra_tlas[k - 1u]);
         for (uint32_t p = 0; p < s->nblas; p++) vk_accel_destroy(e, &s->blas[p]);
+        if (s->blas_input_pool) {
+            vk_subpool_free(e, s->blas_input_pool);
+            free(s->blas_input_pool);
+        }
+        if (s->blas_store_pool) {
+            vk_subpool_free(e, s->blas_store_pool);
+            free(s->blas_store_pool);
+        }
         free(s->extra_tlas);
         free(s->tlas_base);
         free(s->blas);
@@ -2533,7 +2544,10 @@ static int rtx_trace_impl(lrt_vk_engine *e, lrt_vk_rtx_scene *s, vk_pipeline *pi
                        VK_ACCESS_HOST_READ_BIT);
         run_ok = vk_cmd_end_submit(e, cb);
     }
-    vkDestroyDescriptorPool(e->device, pool, NULL);
+    /* vk_cmd_end_submit may have flagged the device lost (trace timeout / loss); on a
+     * lost device every other site in this file skips driver calls, so match that and
+     * only leak the pool handle (the OS reclaims the GPU on exit). */
+    if (!e->device_lost) vkDestroyDescriptorPool(e->device, pool, NULL);
     if (!run_ok) {
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
