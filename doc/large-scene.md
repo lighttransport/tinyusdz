@@ -584,11 +584,32 @@ Commands:
   build_ninja/tusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
 ```
 
+For trusted scenes with individual referenced USD layers larger than the current
+512 MiB composition safety cap, current `tusdcat` has an explicit opt-in cap
+relaxation:
+
+```sh
+/usr/bin/time -v \
+  build_ninja/tusdcat -f --relax-asset-cap --memstat \
+  --output-format=usda -o /dev/null <root.usda>
+```
+
+`--relax-asset-cap` raises the per-composition-layer cap to 8 GiB. Use
+`--max-composition-asset-mb=N` when a tighter scene-specific cap is preferred.
+The default remains the 512 MiB security-policy cap for untrusted inputs.
+
 | Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `tusdcat` result |
 |---|---:|---:|---:|---|
 | Caldera `caldera.usda` | 3.53 s | 9.71 s | 2.93 GiB | 1:46.7 total, 10.37 GiB max RSS |
 | Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
 | ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
+
+With `--relax-asset-cap`, current `tusdcat` passes the Moana Island cap failure:
+the run completed composition in 8 iterations, wrote USDA to `/dev/null`, and
+reported Stage in-use memory of 7.23 GiB. The measured full current pipeline was
+9:09.98 elapsed with 30,416,912 KiB max RSS on a RelWithDebInfo build. The run is
+still much slower and higher-memory than `next_usdcat`, but it no longer fails at
+`xgGroundCover.usd` solely because that layer is 683,530,559 bytes.
 
 The table above is the pre-optimization snapshot; the ASCII writer was then
 optimized substantially (§6.2). After that work `next_usdcat` streams the
