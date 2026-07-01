@@ -70,8 +70,52 @@ struct Model : public Collection, MaterialBinding {
 // USDZ Schemas for AR — full definitions in usdAR.hh
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
 
-// NOTE: The UsdVol schema prims (Volume, FieldAsset, OpenVDBAsset,
-// Field3DAsset) are GPrim-derived and defined in usdGeom.hh.
+// -----------------------------------------------------------------------------
+// Placeholder schema prim types for UsdVol and UsdRender.
+//
+// These are recognized prim *types* (so `def Volume "x" {}`,
+// `def RenderSettings "y" {}`, etc. parse into distinct prims and round-trip
+// through USDA/USDC), but their schema attributes are not yet modeled as typed
+// fields -- all authored properties are retained generically in `props`. Full
+// typed accessors live on the consume side (separate branch). Shape mirrors the
+// minimal `Scope` placeholder.
+// -----------------------------------------------------------------------------
+#define TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(__cls)                              \
+  struct __cls {                                                             \
+    __cls() = default;                                                       \
+    std::string name;                                                        \
+    Specifier spec{Specifier::Def};                                          \
+    int64_t parent_id{-1};                                                   \
+    PrimMeta meta;                                                           \
+    std::map<std::string, Property> props;                                   \
+    const std::vector<value::token> &primChildrenNames() const {             \
+      return _primChildren;                                                  \
+    }                                                                        \
+    const std::vector<value::token> &propertyNames() const {                 \
+      return _properties;                                                    \
+    }                                                                        \
+    std::vector<value::token> &primChildrenNames() { return _primChildren; } \
+    std::vector<value::token> &propertyNames() { return _properties; }       \
+                                                                             \
+   private:                                                                  \
+    std::vector<value::token> _primChildren;                                 \
+    std::vector<value::token> _properties;                                   \
+  }
+
+// UsdVol
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(Volume);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(OpenVDBAsset);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(Field3DAsset);
+
+// UsdRender
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderVar);
+
+// UsdProc
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
+
+#undef TINYUSDZ_DEFINE_PLACEHOLDER_PRIM
 
 // MagicaVoxel Vox (used by the usdVox .vox import path).
 struct VoxAsset {
@@ -122,6 +166,15 @@ namespace value {
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
+
+// UsdVol / UsdRender placeholder prim types.
+DEFINE_TYPE_TRAIT(Volume, "Volume", TYPE_ID_VOLUME, 1);
+DEFINE_TYPE_TRAIT(OpenVDBAsset, "OpenVDBAsset", TYPE_ID_OPENVDB_ASSET, 1);
+DEFINE_TYPE_TRAIT(Field3DAsset, "Field3DAsset", TYPE_ID_FIELD3D_ASSET, 1);
+DEFINE_TYPE_TRAIT(RenderSettings, "RenderSettings", TYPE_ID_RENDER_SETTINGS, 1);
+DEFINE_TYPE_TRAIT(RenderProduct, "RenderProduct", TYPE_ID_RENDER_PRODUCT, 1);
+DEFINE_TYPE_TRAIT(RenderVar, "RenderVar", TYPE_ID_RENDER_VAR, 1);
+DEFINE_TYPE_TRAIT(GenerativeProcedural, "GenerativeProcedural", TYPE_ID_GENERATIVE_PROCEDURAL, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

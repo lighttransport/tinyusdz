@@ -812,6 +812,297 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
 
 namespace {
 
+// Split an absolute prim path "/A/B/C" into ["A","B","C"].
+bool SplitAbsPrimPath(const Path &path, std::vector<std::string> *out) {
+  if (!path.is_valid() || !path.is_absolute_path()) return false;
+  const std::string s = std::string(path.prim_part());
+  if (s.empty() || s[0] != '/') return false;
+  out->clear();
+  size_t i = 1;
+  while (i <= s.size()) {
+    size_t j = s.find('/', i);
+    if (j == std::string::npos) j = s.size();
+    if (j > i) out->push_back(s.substr(i, j - i));
+    i = j + 1;
+  }
+  return true;
+}
+
+// Descend `roots` following `comps`, returning a mutable pointer to the prim at
+// that path (nullptr if any component is missing). Empty `comps` => nullptr
+// (caller treats that as the pseudo-root).
+Prim *FindMutablePrim(std::vector<Prim> &roots,
+                      const std::vector<std::string> &comps) {
+  std::vector<Prim> *sib = &roots;
+  Prim *cur = nullptr;
+  for (const auto &name : comps) {
+    Prim *next = nullptr;
+    for (auto &p : *sib) {
+      if (std::string(p.element_name()) == name) {
+        next = &p;
+        break;
+      }
+    }
+    if (!next) return nullptr;
+    cur = next;
+    sib = &next->children();
+  }
+  return cur;
+}
+
+// Locate the mutable sibling vector + index of the prim at `comps`. `out_parent`
+// is null when the target is a root prim.
+bool FindPrimSlot(std::vector<Prim> &roots,
+                  const std::vector<std::string> &comps,
+                  std::vector<Prim> **out_siblings, size_t *out_index,
+                  Prim **out_parent) {
+  if (comps.empty()) return false;
+  std::vector<Prim> *sib = &roots;
+  Prim *parent = nullptr;
+  for (size_t c = 0; c + 1 < comps.size(); c++) {
+    Prim *next = nullptr;
+    for (auto &p : *sib) {
+      if (std::string(p.element_name()) == comps[c]) {
+        next = &p;
+        break;
+      }
+    }
+    if (!next) return false;
+    parent = next;
+    sib = &next->children();
+  }
+  for (size_t i = 0; i < sib->size(); i++) {
+    if (std::string((*sib)[i].element_name()) == comps.back()) {
+      *out_siblings = sib;
+      *out_index = i;
+      *out_parent = parent;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Replace `old_name` with `new_name` in a primChildren ordering list (no-op if
+// the list is empty or does not contain `old_name`).
+void RenameInPrimChildren(std::vector<value::token> &pc,
+                          const std::string &old_name,
+                          const std::string &new_name) {
+  for (auto &tok : pc) {
+    if (tok.str() == old_name) tok = value::token(new_name);
+  }
+}
+
+void RemoveFromPrimChildren(std::vector<value::token> &pc,
+                            const std::string &name) {
+  pc.erase(std::remove_if(pc.begin(), pc.end(),
+                          [&](const value::token &t) { return t.str() == name; }),
+           pc.end());
+}
+
+}  // namespace
+
+bool Stage::RenamePrim(const Path &path, const std::string &new_name,
+                       std::string *err) {
+  if (new_name.empty() || !ValidatePrimElementName(new_name)) {
+    if (err) *err = fmt::format("`{}` is not a valid Prim name.", new_name);
+    return false;
+  }
+  std::vector<std::string> comps;
+  if (!SplitAbsPrimPath(path, &comps) || comps.empty()) {
+    if (err) *err = "RenamePrim: path must be an absolute, non-root prim path.";
+    return false;
+  }
+
+  std::vector<Prim> *sib = nullptr;
+  size_t idx = 0;
+  Prim *parent = nullptr;
+  if (!FindPrimSlot(_root_nodes, comps, &sib, &idx, &parent)) {
+    if (err) *err = fmt::format("RenamePrim: prim not found: {}",
+                                std::string(path.prim_part()));
+    return false;
+  }
+
+  const std::string old_name = std::string((*sib)[idx].element_name());
+  if (old_name == new_name) return true;
+
+  for (size_t i = 0; i < sib->size(); i++) {
+    if (i != idx && std::string((*sib)[i].element_name()) == new_name) {
+      if (err) *err = fmt::format(
+          "RenamePrim: a sibling named `{}` already exists.", new_name);
+      return false;
+    }
+  }
+
+  Prim &target = (*sib)[idx];
+  if (!SetPrimElementName(target.get_data(), new_name)) {
+    if (err) *err = "RenamePrim: internal error setting elementName.";
+    return false;
+  }
+  target.element_path() = Path(new_name, /* prop */ "");
+  target.local_path() = Path(new_name, /* prop */ "");
+
+  RenameInPrimChildren(
+      parent ? parent->metas().primChildren : stage_metas.primChildren,
+      old_name, new_name);
+
+  if (!parent) _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
+  _dirty = true;
+  _prim_id_dirty = true;
+  return true;
+}
+
+bool Stage::RemovePrim(const Path &path, std::string *err) {
+  std::vector<std::string> comps;
+  if (!SplitAbsPrimPath(path, &comps) || comps.empty()) {
+    if (err) *err = "RemovePrim: path must be an absolute, non-root prim path.";
+    return false;
+  }
+
+  std::vector<Prim> *sib = nullptr;
+  size_t idx = 0;
+  Prim *parent = nullptr;
+  if (!FindPrimSlot(_root_nodes, comps, &sib, &idx, &parent)) {
+    if (err) *err = fmt::format("RemovePrim: prim not found: {}",
+                                std::string(path.prim_part()));
+    return false;
+  }
+
+  const std::string prim_name = std::string((*sib)[idx].element_name());
+  sib->erase(sib->begin() + static_cast<std::ptrdiff_t>(idx));
+  RemoveFromPrimChildren(
+      parent ? parent->metas().primChildren : stage_metas.primChildren,
+      prim_name);
+
+  if (!parent) _root_node_nameSet.clear();
+  _dirty = true;
+  _prim_id_dirty = true;
+  return true;
+}
+
+bool Stage::ReparentPrim(const Path &path, const Path &new_parent_path,
+                         const std::string &new_name, std::string *err) {
+  std::vector<std::string> comps;
+  if (!SplitAbsPrimPath(path, &comps) || comps.empty()) {
+    if (err) *err = "ReparentPrim: path must be an absolute, non-root prim path.";
+    return false;
+  }
+
+  // Resolve destination parent. The pseudo-root `/` is a valid destination.
+  const bool destIsRoot = new_parent_path.is_root_path();
+  std::vector<std::string> pcomps;
+  if (!destIsRoot) {
+    if (!SplitAbsPrimPath(new_parent_path, &pcomps) || pcomps.empty()) {
+      if (err) *err = "ReparentPrim: new_parent_path must be `/` or an absolute prim path.";
+      return false;
+    }
+  }
+
+  // Cycle guard: destination must not be the prim itself or a descendant.
+  if (!destIsRoot && pcomps.size() >= comps.size()) {
+    bool under = true;
+    for (size_t i = 0; i < comps.size(); i++) {
+      if (pcomps[i] != comps[i]) { under = false; break; }
+    }
+    if (under) {
+      if (err) *err = "ReparentPrim: cannot reparent a prim under itself or a descendant.";
+      return false;
+    }
+  }
+
+  std::vector<Prim> *sib = nullptr;
+  size_t idx = 0;
+  Prim *parent = nullptr;
+  if (!FindPrimSlot(_root_nodes, comps, &sib, &idx, &parent)) {
+    if (err) *err = fmt::format("ReparentPrim: prim not found: {}",
+                                std::string(path.prim_part()));
+    return false;
+  }
+
+  // Destination children vector (confirm the destination parent exists).
+  std::vector<Prim> *dest = nullptr;
+  if (destIsRoot) {
+    dest = &_root_nodes;
+  } else {
+    Prim *dparent = FindMutablePrim(_root_nodes, pcomps);
+    if (!dparent) {
+      if (err) *err = fmt::format("ReparentPrim: destination parent not found: {}",
+                                  std::string(new_parent_path.prim_part()));
+      return false;
+    }
+    dest = &dparent->children();
+  }
+
+  const std::string old_name = std::string((*sib)[idx].element_name());
+  const std::string final_name = new_name.empty() ? old_name : new_name;
+  if (!new_name.empty() && !ValidatePrimElementName(new_name)) {
+    if (err) *err = fmt::format("`{}` is not a valid Prim name.", new_name);
+    return false;
+  }
+
+  // Name clash in destination (the moved prim is not in `dest` yet).
+  for (const auto &p : *dest) {
+    if (std::string(p.element_name()) == final_name) {
+      if (err) *err = fmt::format(
+          "ReparentPrim: destination already has a child named `{}`.", final_name);
+      return false;
+    }
+  }
+
+  // Detach from source. (Erasing may shift later siblings, so the destination
+  // is re-resolved by path afterwards; the cycle guard guarantees the
+  // destination is not inside the moved subtree.)
+  Prim moved = std::move((*sib)[idx]);
+  sib->erase(sib->begin() + static_cast<std::ptrdiff_t>(idx));
+  RemoveFromPrimChildren(
+      parent ? parent->metas().primChildren : stage_metas.primChildren,
+      old_name);
+
+  // Apply optional rename to the detached prim.
+  if (!new_name.empty() && new_name != old_name) {
+    if (!SetPrimElementName(moved.get_data(), new_name)) {
+      if (err) *err = "ReparentPrim: internal error setting elementName.";
+      return false;
+    }
+    moved.element_path() = Path(new_name, "");
+    moved.local_path() = Path(new_name, "");
+  }
+
+  // Re-resolve destination after the erase, then attach.
+  std::vector<value::token> *dest_pc = nullptr;
+  if (destIsRoot) {
+    dest = &_root_nodes;
+    dest_pc = &stage_metas.primChildren;
+  } else {
+    Prim *dparent = FindMutablePrim(_root_nodes, pcomps);
+    if (!dparent) {
+      if (err) *err = "ReparentPrim: internal error re-resolving destination.";
+      return false;
+    }
+    dest = &dparent->children();
+    dest_pc = &dparent->metas().primChildren;
+  }
+  // Keep destination primChildren ordering consistent only when it is authored.
+  if (!dest_pc->empty()) {
+    dest_pc->push_back(value::token(final_name));
+  }
+  dest->emplace_back(std::move(moved));
+
+  _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
+  _dirty = true;
+  _prim_id_dirty = true;
+  return true;
+}
+
+namespace {
+
 // Iterative version of DumpPrimTree using explicit stack
 // Avoids recursion to save stack memory for deep hierarchies
 std::string DumpPrimTreeIterative(const std::vector<Prim> &root_prims) {
@@ -1012,6 +1303,15 @@ static size_t EstimatePrimPropsMemory(const Prim &prim) {
   // Model and Scope (generic/unknown prim types)
   TRY_PROPS(Model)
   TRY_PROPS(Scope)
+
+  // UsdVol / UsdRender placeholder prim types.
+  TRY_PROPS(Volume)
+  TRY_PROPS(OpenVDBAsset)
+  TRY_PROPS(Field3DAsset)
+  TRY_PROPS(RenderSettings)
+  TRY_PROPS(RenderProduct)
+  TRY_PROPS(RenderVar)
+  TRY_PROPS(GenerativeProcedural)
 
 #undef TRY_PROPS
 

@@ -22,6 +22,9 @@
 
 #include "common-macros.inc"
 #include "safe-arithmetic.hh"
+#include "primvar.hh"
+#include "spline-binary.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -116,10 +119,12 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(value::token)
   CONVERT_CRATE_VALUE(std::string)
   CONVERT_CRATE_VALUE(value::AssetPath)
+  CONVERT_CRATE_VALUE(value::PathExpression)
   // Token/String/AssetPath arrays
   CONVERT_CRATE_VALUE(std::vector<value::token>)
   CONVERT_CRATE_VALUE(std::vector<std::string>)
   CONVERT_CRATE_VALUE(std::vector<value::AssetPath>)
+  CONVERT_CRATE_VALUE(std::vector<value::PathExpression>)
   // Half-vec / matrix / quaternion scalars
   CONVERT_CRATE_VALUE(value::half2)
   CONVERT_CRATE_VALUE(value::half3)
@@ -860,6 +865,56 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       }
     }
   }
+  // Scalar PathExpression - a single StringIndex at this offset (non-inlined),
+  // matching OpenUSD's Write(GetText()). The reader decodes via GetStringToken.
+  else if (auto* expr_scalar = value.as<value::PathExpression>()) {
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
+    crate::StringIndex idx = GetOrCreateString(expr_scalar->GetText());
+    if (!Write(idx.value)) {
+      if (err) *err = "Failed to write pathExpression StringIndex";
+      return -1;
+    }
+  }
+  // PathExpression array - StringIndex elements (same encoding as AssetPath
+  // arrays; the reader decodes via GetStringToken).
+  else if (auto* expr_array = value.as<std::vector<value::PathExpression>>()) {
+    RequestCrateVersionUpgrade(0, 10, 0);  // SdfPathExpression requires crate 0.10.0
+    uint64_t count = expr_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write pathExpression[] count";
+      return -1;
+    }
+    for (const auto& pe : *expr_array) {
+      crate::StringIndex idx = GetOrCreateString(pe.GetText());
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write pathExpression[] element index";
+        return -1;
+      }
+    }
+  }
+  // SdfRelocates (crate type 58) - uint64 count followed by (source, target)
+  // PathIndex pairs, matching OpenUSD's Write<vector<SdfRelocate>>. crate 0.11.0.
+  else if (auto* relocates_val =
+               value.as<std::vector<std::pair<Path, Path>>>()) {
+    RequestCrateVersionUpgrade(0, 11, 0);  // SdfRelocates requires crate 0.11.0
+    uint64_t count = relocates_val->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write relocates count";
+      return -1;
+    }
+    for (const auto& reloc : *relocates_val) {
+      crate::PathIndex src_idx = GetOrCreatePath(reloc.first);
+      crate::PathIndex tgt_idx = GetOrCreatePath(reloc.second);
+      if (!Write(src_idx.value)) {
+        if (err) *err = "Failed to write relocate source PathIndex";
+        return -1;
+      }
+      if (!Write(tgt_idx.value)) {
+        if (err) *err = "Failed to write relocate target PathIndex";
+        return -1;
+      }
+    }
+  }
   // Token array - special handling (tokens are stored as indices)
   else if (auto* token_array = value.as<std::vector<value::token>>()) {
     uint64_t count = token_array->size();
@@ -900,6 +955,61 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // then call PackValue for each value. Otherwise, nested PackValue calls for
   // out-of-line values would write to value_data_end_offset_ which still points
   // to the start of the dictionary, corrupting the data.
+  else if (auto* ae = value.as<value::ArrayEdit>()) {
+    // VtArrayEdit struct (crate >= 0.14.0): [valuesRep:8][indexesRep:8][isDense:1].
+    // Only reached for non-identity edits (identity is handled in PackValue).
+    // Reserve the struct first, then pack the literals array and op stream as
+    // their own out-of-line values (which append after the struct), then fill
+    // the struct in -- the same choreography as the dictionary case below.
+    const int64_t array_edit_struct_size = 8 + 8 + 1;
+    int64_t struct_start = Tell();
+    {
+      std::vector<char> zeros(static_cast<size_t>(array_edit_struct_size), 0);
+      if (!WriteBytes(zeros.data(), zeros.size())) {
+        if (err) *err = "Failed to reserve array edit struct";
+        return -1;
+      }
+    }
+    value_data_end_offset_ = Tell();
+
+    // Literals: the typed VtArray<T>. Packed verbatim as a normal array value.
+    crate::CrateValue litCv;
+    litCv.get_raw() = ae->literals;
+    crate::ValueRep valuesRep = PackValue(litCv, err);
+    if (err && !err->empty()) return -1;
+    // The literals array's ValueRep carries the element type (set even for an
+    // empty typed array), so the array-edit rep can adopt it.
+    last_array_edit_elem_type_ = valuesRep.GetType();
+
+    // Op stream: a VtInt64Array (Vt_ArrayEditOps `_ins`).
+    crate::CrateValue idxCv;
+    idxCv.Set(ae->ops);
+    crate::ValueRep indexesRep = PackValue(idxCv, err);
+    if (err && !err->empty()) return -1;
+
+    if (!Seek(struct_start)) {
+      if (err) *err = "Failed to seek to array edit struct start";
+      return -1;
+    }
+    if (!Write(valuesRep.GetData())) {
+      if (err) *err = "Failed to write array edit valuesRep";
+      return -1;
+    }
+    if (!Write(indexesRep.GetData())) {
+      if (err) *err = "Failed to write array edit indexesRep";
+      return -1;
+    }
+    uint8_t isDense = 0;  // legacy field
+    if (!WriteBytes(reinterpret_cast<const char*>(&isDense), 1)) {
+      if (err) *err = "Failed to write array edit isDense flag";
+      return -1;
+    }
+
+    if (!Seek(value_data_end_offset_)) {
+      if (err) *err = "Failed to seek to end of value data after array edit";
+      return -1;
+    }
+  }
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
 
@@ -1767,6 +1877,34 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
 
     // Update value_data_end_offset_ to include all TimeSamples data
+    value_data_end_offset_ = Tell();
+  }
+  // Spline (TsSpline, Crate type 59): Write<vector<uint8_t>>(blob) followed by
+  // WriteMap(customData). Written sequentially at the current value offset.
+  else if (auto* spline_val = value.as<primvar::PrimVar::SplineData>()) {
+    std::vector<uint8_t> blob;
+    std::string serr;
+    if (!EncodeSplineToBinary(*spline_val, &blob, &serr)) {
+      if (err) *err = "Failed to encode spline: " + serr;
+      return -1;
+    }
+    const uint64_t blobSize = static_cast<uint64_t>(blob.size());
+    if (!Write(blobSize)) {
+      if (err) *err = "Failed to write spline blob size";
+      return -1;
+    }
+    if (blobSize > 0) {
+      if (!WriteBytes(blob.data(), blob.size())) {
+        if (err) *err = "Failed to write spline blob";
+        return -1;
+      }
+    }
+    // Empty per-knot customData map.
+    const uint64_t customDataCount = 0;
+    if (!Write(customDataCount)) {
+      if (err) *err = "Failed to write spline customData count";
+      return -1;
+    }
     value_data_end_offset_ = Tell();
   }
   // Integer ListOps are handled above (IntListOp, UIntListOp, Int64ListOp, UInt64ListOp)

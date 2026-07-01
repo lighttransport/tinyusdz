@@ -84,6 +84,7 @@ constexpr auto kPath =
 constexpr auto kAssetPath = "asset";  // `asset` in USDA
 constexpr auto kDictionary = "dictionary";
 constexpr auto kTimeCode = "timecode";
+constexpr auto kPathExpression = "pathExpression";  // `pathExpression` in USDA (SdfPathExpression)
 
 constexpr auto kBool = "bool";
 constexpr auto kChar = "char";
@@ -277,6 +278,32 @@ class TimeCode {
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 
+// SdfPathExpression value type.
+//
+// Stores the expression as its canonical text form (matching OpenUSD's
+// `SdfPathExpression::GetText()`), which is also how it is serialized in Crate
+// (a plain UTF-8 string). Parsing into a matchable representation and the
+// membership evaluation live in `core/path-expression.{hh,cc}` so that this
+// foundational header stays light. Storing the verbatim text gives loss-free
+// round-trip.
+class PathExpression {
+ public:
+  PathExpression() = default;
+  explicit PathExpression(const std::string &text) : text_(text) {}
+  explicit PathExpression(std::string &&text) : text_(std::move(text)) {}
+
+  const std::string &GetText() const { return text_; }
+  void SetText(const std::string &text) { text_ = text; }
+
+  bool empty() const { return text_.empty(); }
+
+  bool operator==(const PathExpression &rhs) const { return text_ == rhs.text_; }
+  bool operator!=(const PathExpression &rhs) const { return !(*this == rhs); }
+
+ private:
+  std::string text_;
+};
+
 //
 // Type ID for TypeTraits<T>::type_id.
 //
@@ -298,6 +325,7 @@ enum TypeId {
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
   TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
+  TYPE_ID_ANIMATION_BLOCK,  // Animation block. `AnimationBlock` in ascii (Crate type 60).
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
@@ -408,6 +436,8 @@ enum TypeId {
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
+  TYPE_ID_PATH_EXPRESSION,  // SdfPathExpression
+
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
@@ -436,12 +466,15 @@ enum TypeId {
 
   TYPE_ID_PATH,
   TYPE_ID_PATH_VECTOR,
+  TYPE_ID_RELOCATES,  // SdfRelocates: std::vector<std::pair<Path, Path>> (Crate type 58)
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
 
   // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
+  TYPE_ID_SPLINE_DATA,  // primvar::PrimVar::SplineData carrier (Crate type 59)
+  TYPE_ID_ARRAY_EDIT,  // value::ArrayEdit carrier (VtArrayEdit, crate >= 0.14.0)
   TYPE_ID_VARIANT_SELECION_MAP,
 
 
@@ -539,6 +572,18 @@ enum TypeId {
   TYPE_ID_OPENVDB_ASSET,
   TYPE_ID_FIELD3D_ASSET,
   TYPE_ID_VOL_END,
+
+  // Types for usdRender
+  TYPE_ID_RENDER_BEGIN = (1 << 12) + 16,
+  TYPE_ID_RENDER_SETTINGS,
+  TYPE_ID_RENDER_PRODUCT,
+  TYPE_ID_RENDER_VAR,
+  TYPE_ID_RENDER_END,
+
+  // Types for usdProc
+  TYPE_ID_PROC_BEGIN = (1 << 12) + 32,
+  TYPE_ID_GENERATIVE_PROCEDURAL,
+  TYPE_ID_PROC_END,
 
   // Types for usdSkel
   TYPE_ID_SKEL_BEGIN = 1 << 13,
@@ -1188,6 +1233,10 @@ struct texcoord3d {
 // Attribute value Block(`None`)
 struct ValueBlock {};
 
+// Attribute animation Block(`AnimationBlock`). Blocks spline/timeSamples on
+// weaker layers while letting the default value resolve (SdfAnimationBlock).
+struct AnimationBlock {};
+
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
@@ -1257,6 +1306,7 @@ struct TypeTraits<const char*> {
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 // DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
+DEFINE_TYPE_TRAIT(AnimationBlock, "AnimationBlock", TYPE_ID_ANIMATION_BLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
@@ -1366,6 +1416,7 @@ DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(PathExpression, kPathExpression, TYPE_ID_PATH_EXPRESSION, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
@@ -2890,6 +2941,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kRelationship);
   d.insert(kAssetPath);
+  d.insert(kPathExpression);
 
   d.insert(kDictionary);
 

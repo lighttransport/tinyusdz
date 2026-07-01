@@ -177,6 +177,33 @@ class Stage {
   bool replace_root_prim(const std::string &prim_name, Prim &&prim);
 
   ///
+  /// Namespace editing (mechanical, layer-level -- mirrors OpenUSD's
+  /// SdfBatchNamespaceEdit semantics). These mutate the prim tree in place:
+  /// the element name and prim-tree position are authoritative (absolute paths
+  /// are derived positionally), so descendants move with their parent. The
+  /// `primChildren` ordering metadata (when authored) and the lookup cache are
+  /// updated. NOTE: relationship-target / attribute-connection paths that
+  /// referenced the affected prim(s) are NOT rewritten (that stage-level fixup,
+  /// like UsdNamespaceEditor, is a follow-on); such targets may become dangling.
+  ///
+
+  /// Rename the prim at `path` to `new_name`. Fails if `path` is the root, does
+  /// not exist, or a sibling already uses `new_name`.
+  bool RenamePrim(const Path &path, const std::string &new_name,
+                  std::string *err = nullptr);
+
+  /// Remove the prim at `path` (and its subtree). Fails if `path` is the root
+  /// or does not exist.
+  bool RemovePrim(const Path &path, std::string *err = nullptr);
+
+  /// Move the prim at `path` to be a child of `new_parent_path` (which must
+  /// exist and must not be the prim itself or one of its descendants). Fails on
+  /// a name clash in the destination. Use `new_name` (non-empty) to rename
+  /// during the move.
+  bool ReparentPrim(const Path &path, const Path &new_parent_path,
+                    const std::string &new_name = "", std::string *err = nullptr);
+
+  ///
   /// @brief Get Stage metadatum
   ///
   /// @return Stage metadatum struct.

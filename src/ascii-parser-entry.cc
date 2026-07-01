@@ -561,6 +561,14 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Points");
   d.insert("GeomSubset");
   d.insert("Scope");
+  // UsdVol / UsdRender placeholder prim types.
+  d.insert("Volume");
+  d.insert("OpenVDBAsset");
+  d.insert("Field3DAsset");
+  d.insert("RenderSettings");
+  d.insert("RenderProduct");
+  d.insert("RenderVar");
+  d.insert("GenerativeProcedural");
   d.insert("Material");
   d.insert("NodeGraph");
   d.insert("Shader");
