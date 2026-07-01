@@ -100,6 +100,10 @@ struct lrt_vk_engine {
     uint32_t caps;
     char device_name[256];
     char err[512];
+    /* Set once any submit returns VK_ERROR_DEVICE_LOST (e.g. a build ran the GPU
+     * out of memory). On a lost device the NVIDIA driver crashes inside
+     * vkDestroy*, so all teardown skips driver calls and just frees host state. */
+    int device_lost;
 
     vk_pipeline trace_pipes[VK_TRACE_PIPE_CACHE];
     vk_pipeline build_pipe; /* build_morton: no spec constants */
@@ -252,8 +256,10 @@ static int vk_buffer_create_staging(lrt_vk_engine *e, VkDeviceSize size,
 }
 
 static void vk_buffer_destroy(lrt_vk_engine *e, vk_buffer *b) {
-    if (b->buf) vkDestroyBuffer(e->device, b->buf, NULL);
-    if (b->mem) vkFreeMemory(e->device, b->mem, NULL);
+    if (!e->device_lost) {  /* driver calls crash on a lost device; just free host */
+        if (b->buf) vkDestroyBuffer(e->device, b->buf, NULL);
+        if (b->mem) vkFreeMemory(e->device, b->mem, NULL);
+    }
     memset(b, 0, sizeof(*b));
 }
 
@@ -730,7 +736,11 @@ lrt_vk_engine *lrt_vk_engine_create(const lrt_vk_engine_options *opts,
 
 void lrt_vk_engine_destroy(lrt_vk_engine *e) {
     if (!e) return;
-    if (e->device) {
+    /* On a lost/corrupted device (e.g. a build ran the GPU out of memory) the
+     * NVIDIA driver segfaults inside vkDestroy / vkDeviceWaitIdle, so skip ALL
+     * driver teardown and just free the host handle -- the OS reclaims the GPU
+     * objects when the process exits. */
+    if (e->device && !e->device_lost) {
         vkDeviceWaitIdle(e->device);
         for (int i = 0; i < VK_TRACE_PIPE_CACHE; i++)
             vk_pipeline_destroy(e, &e->trace_pipes[i]);
@@ -741,7 +751,7 @@ void lrt_vk_engine_destroy(lrt_vk_engine *e) {
         if (e->cmd_pool) vkDestroyCommandPool(e->device, e->cmd_pool, NULL);
         vkDestroyDevice(e->device, NULL);
     }
-    if (e->instance) vkDestroyInstance(e->instance, NULL);
+    if (e->instance && !e->device_lost) vkDestroyInstance(e->instance, NULL);
     free(e);
 }
 
@@ -1420,7 +1430,7 @@ int lrt_vk_shade_scene_render(lrt_vk_engine *e, lrt_vk_shade_scene *s,
 
 void lrt_vk_shade_scene_free(lrt_vk_engine *e, lrt_vk_shade_scene *s) {
     if (!s) return;
-    if (e->device) vkDeviceWaitIdle(e->device);
+    if (e->device && !e->device_lost) vkDeviceWaitIdle(e->device);
     if (s->have_cmd) {
         vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &s->cmd);
         vkDestroyFence(e->device, s->fence, NULL);
@@ -1490,6 +1500,7 @@ static int vk_cmd_end_submit(lrt_vk_engine *e, VkCommandBuffer cb) {
         if (r == VK_TIMEOUT) {
             vk_set_err(e, "GPU command timed out after 5 s (device lost or "
                           "misconfigured acceleration-structure build)");
+            e->device_lost = 1;
             vkDestroyFence(e->device, fence, NULL);
             vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &cb);
             return 0;
@@ -1497,6 +1508,7 @@ static int vk_cmd_end_submit(lrt_vk_engine *e, VkCommandBuffer cb) {
     }
     if (r != VK_SUCCESS) {
         vk_set_errf(e, "vkQueueSubmit/vkWaitForFences", r);
+        if (r == VK_ERROR_DEVICE_LOST || r == VK_TIMEOUT) e->device_lost = 1;
         vkDestroyFence(e->device, fence, NULL);
         vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &cb);
         return 0;
@@ -1610,7 +1622,8 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
 }
 
 static void vk_accel_destroy(lrt_vk_engine *e, vk_accel *a) {
-    if (a->as) vkDestroyAccelerationStructureKHR(e->device, a->as, NULL);
+    if (a->as && !e->device_lost)
+        vkDestroyAccelerationStructureKHR(e->device, a->as, NULL);
     vk_buffer_destroy(e, &a->storage);
     memset(a, 0, sizeof(*a));
 }
@@ -1743,7 +1756,25 @@ struct lrt_vk_rtx_scene {
     vk_buffer hits_stage; /* host-visible TRANSFER_DST           */
     uint32_t cap;         /* trace-buffer capacity in rays       */
     uint32_t hit_words;   /* words written per hit: 4 (narrow) or 5 (wide id) */
+    /* Multi-TLAS: instanced scenes past the device TLAS maxInstanceCount (2^24)
+     * are split into `ntlas` slices of <= LRT_VK_TLAS_SLICE instances, each its
+     * own TLAS over the SHARED `blas` set. `tlas` is slice 0; `extra_tlas` holds
+     * slices 1..ntlas-1. `tlas_base[k]` is the global instance index where slice k
+     * starts (added back at trace so the reported instanceId is global). ntlas==1
+     * is the ordinary single-TLAS scene (extra_tlas NULL). Wide id only. */
+    vk_accel *extra_tlas; /* ntlas-1 additional TLAS slices, or NULL */
+    uint32_t *tlas_base;  /* ntlas global base instance indices */
+    uint32_t ntlas;       /* number of TLAS slices (>=1) */
 };
+
+/* Instances per TLAS slice for the multi-TLAS builder. Kept safely below the
+ * Vulkan-guaranteed TLAS maxInstanceCount floor (2^24 = 16,777,216). */
+#define LRT_VK_TLAS_SLICE (16u * 1000u * 1000u)
+
+/* Slice k's TLAS (slice 0 is the inline `tlas`, the rest live in extra_tlas). */
+static vk_accel *rtx_scene_tlas(lrt_vk_rtx_scene *s, uint32_t k) {
+    return k == 0u ? &s->tlas : &s->extra_tlas[k - 1u];
+}
 
 /* Bytes the trace shader writes per hit for scene s (narrow lrt_hit = 4 words). */
 static size_t rtx_hit_bytes(const lrt_vk_rtx_scene *s) {
@@ -2024,14 +2055,73 @@ static int build_proto_blas(lrt_vk_engine *e, const float *verts, uint32_t nvert
     return ok;
 }
 
-/* Core of both instanced builders. `wide`=0 uses the narrow 4-word trace and
+/* Build one TLAS over the instance slice insts[off .. off+count) referencing the
+ * scene's shared BLAS. instanceCustomIndex / build order is the slice-LOCAL index
+ * (0..count-1); the caller adds tlas_base[k]=off at trace to recover the global
+ * instance id. Returns 1 on success (out_tlas filled), 0 on failure. */
+static int build_tlas_slice(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t nprotos,
+                            const lrt_vk_instance *insts, uint32_t off,
+                            uint32_t count, vk_accel *out_tlas) {
+    VkAccelerationStructureInstanceKHR *vi =
+        (VkAccelerationStructureInstanceKHR *)calloc(
+            count, sizeof(VkAccelerationStructureInstanceKHR));
+    if (!vi) return 0;
+    vk_buffer instbuf = {0};
+    int ok = 0;
+    do {
+        int inst_ok = 1;
+        for (uint32_t j = 0; j < count; j++) {
+            const lrt_vk_instance *in = &insts[off + j];
+            if (in->proto >= nprotos) {
+                inst_ok = 0;
+                break;
+            }
+            /* transform[12] is row-major 3x4 (world = M*[p;1]), matching
+             * VkTransformMatrixKHR.matrix[3][4] exactly. */
+            memcpy(vi[j].transform.matrix, in->transform, 12u * sizeof(float));
+            vi[j].mask = 0xFFu;
+            vi[j].instanceCustomIndex = j;
+            vi[j].accelerationStructureReference = s->blas[in->proto].address;
+        }
+        if (!inst_ok) break;
+        VkDeviceSize inst_bytes =
+            (VkDeviceSize)count * sizeof(VkAccelerationStructureInstanceKHR);
+        if (!(vk_buffer_create_ex(
+                  e, inst_bytes,
+                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                  1, 1, &instbuf) &&
+              vk_buffer_write(e, &instbuf, vi, (size_t)inst_bytes)))
+            break;
+        VkAccelerationStructureGeometryKHR igeom;
+        memset(&igeom, 0, sizeof(igeom));
+        igeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        igeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+        igeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        igeom.geometry.instances.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+        igeom.geometry.instances.arrayOfPointers = VK_FALSE;
+        igeom.geometry.instances.data.deviceAddress = vk_device_address(e, &instbuf);
+        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, &igeom,
+                            count, 0u, 0u, out_tlas))
+            break;
+        ok = 1;
+    } while (0);
+    vk_buffer_destroy(e, &instbuf);
+    free(vi);
+    return ok;
+}
+
+/* Core of all instanced builders. `wide`=0 uses the narrow 4-word trace and
  * enforces the 32-bit prim_id product (ninsts*maxPrototypeTris < 2^32); `wide`=1
  * uses the 5-word trace that stores instanceId + prim separately, so there is no
- * product to overflow (the only ceiling is the TLAS maxInstanceCount). */
+ * product to overflow. `max_per_tlas`=0 builds a single TLAS; otherwise the
+ * instances are split into ceil(ninsts/max_per_tlas) TLAS slices sharing one BLAS
+ * set (multi-TLAS -- renders scenes past the device TLAS maxInstanceCount). Wide
+ * is required for multi-TLAS (the CPU merge needs the separate instanceId). */
 static lrt_vk_rtx_scene *rtx_build_instanced_core(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
     const lrt_vk_instance *insts, uint32_t ninsts, int wide,
-    uint32_t *out_tri_stride, lrt_result *err) {
+    uint32_t max_per_tlas, uint32_t *out_tri_stride, lrt_result *err) {
     if (!e || !protos || nprotos == 0 || !insts || ninsts == 0) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return NULL;
@@ -2081,7 +2171,20 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
     s->tri_chunk = stride;
     s->hit_words = wide ? 5u : 4u;
 
-    vk_buffer instbuf = {0};
+    /* Slice the instances across one or more TLASes (all sharing the BLAS set).
+     * LRT_VK_TLAS_SLICE (env) shrinks the slice for testing the merge on small
+     * scenes; it only applies to the multi-TLAS builder (max_per_tlas>0). */
+    uint32_t cap = max_per_tlas;
+    if (cap) {
+        const char *ev = getenv("LRT_VK_TLAS_SLICE");
+        if (ev) {
+            long v = atol(ev);
+            if (v > 0) cap = (uint32_t)v;
+        }
+    }
+    const uint32_t slice = (cap && cap < ninsts) ? cap : ninsts;
+    const uint32_t ntlas = (ninsts + slice - 1u) / slice;
+
     int ok = 0;
     do {
         int blas_ok = 1;
@@ -2095,61 +2198,42 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
         }
         if (!blas_ok) break;
 
-        /* One TLAS instance per placement, in caller order, so the hit's
-         * instanceId (build order) is the placement index. */
-        VkAccelerationStructureInstanceKHR *vi =
-            (VkAccelerationStructureInstanceKHR *)calloc(
-                ninsts, sizeof(VkAccelerationStructureInstanceKHR));
-        if (!vi) break;
-        int inst_ok = 1;
-        for (uint32_t i = 0; i < ninsts; i++) {
-            if (insts[i].proto >= nprotos) {
-                inst_ok = 0;
+        s->tlas_base = (uint32_t *)calloc(ntlas, sizeof(uint32_t));
+        if (!s->tlas_base) break;
+        if (ntlas > 1u) {
+            s->extra_tlas = (vk_accel *)calloc(ntlas - 1u, sizeof(vk_accel));
+            if (!s->extra_tlas) break;
+        }
+        int slices_ok = 1;
+        for (uint32_t k = 0; k < ntlas; k++) {
+            const uint32_t off = k * slice;
+            const uint32_t count = (off + slice <= ninsts) ? slice : (ninsts - off);
+            s->tlas_base[k] = off;
+            if (!build_tlas_slice(e, s, nprotos, insts, off, count,
+                                  rtx_scene_tlas(s, k))) {
+                slices_ok = 0;
                 break;
             }
-            /* transform[12] is row-major 3x4 (world = M*[p;1]), matching
-             * VkTransformMatrixKHR.matrix[3][4] exactly. */
-            memcpy(vi[i].transform.matrix, insts[i].transform,
-                   12u * sizeof(float));
-            vi[i].mask = 0xFFu;
-            vi[i].instanceCustomIndex = i;
-            vi[i].accelerationStructureReference = s->blas[insts[i].proto].address;
         }
-        if (!inst_ok) {
-            free(vi);
-            break;
-        }
-        VkDeviceSize inst_bytes =
-            (VkDeviceSize)ninsts * sizeof(VkAccelerationStructureInstanceKHR);
-        int ibuilt =
-            vk_buffer_create_ex(
-                e, inst_bytes,
-                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                1, 1, &instbuf) &&
-            vk_buffer_write(e, &instbuf, vi, (size_t)inst_bytes);
-        free(vi);
-        if (!ibuilt) break;
-        uint64_t iaddr = vk_device_address(e, &instbuf);
-
-        VkAccelerationStructureGeometryKHR igeom;
-        memset(&igeom, 0, sizeof(igeom));
-        igeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-        igeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-        igeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-        igeom.geometry.instances.sType =
-            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-        igeom.geometry.instances.arrayOfPointers = VK_FALSE;
-        igeom.geometry.instances.data.deviceAddress = iaddr;
-        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, &igeom,
-                            ninsts, 0u, 0u, &s->tlas))
-            break;
+        if (!slices_ok) break;
+        s->ntlas = ntlas;
         ok = 1;
     } while (0);
 
-    vk_buffer_destroy(e, &instbuf);
     if (!ok) {
+        /* A build in the (possibly ~100k-BLAS) storm failed -- typically the GPU
+         * ran out of memory. NVIDIA's driver is then left in a state where
+         * destroying the already-built accels segfaults INSIDE the driver, so mark
+         * the device unusable: vk_accel_destroy / engine teardown skip all driver
+         * calls and only free host memory (the OS reclaims the GPU on exit). */
+        e->device_lost = 1;
         vk_accel_destroy(e, &s->tlas);
+        if (s->extra_tlas)
+            for (uint32_t k = 1; k < ntlas; k++)
+                vk_accel_destroy(e, &s->extra_tlas[k - 1u]);
         for (uint32_t p = 0; p < s->nblas; p++) vk_accel_destroy(e, &s->blas[p]);
+        free(s->extra_tlas);
+        free(s->tlas_base);
         free(s->blas);
         free(s);
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
@@ -2165,14 +2249,23 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
     const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
     lrt_result *err) {
     return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
-                                    /*wide=*/0, out_tri_stride, err);
+                                    /*wide=*/0, /*max_per_tlas=*/0, out_tri_stride,
+                                    err);
 }
 
 lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_wide(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
     const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
     return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
-                                    /*wide=*/1, NULL, err);
+                                    /*wide=*/1, /*max_per_tlas=*/0, NULL, err);
+}
+
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_multi(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
+    return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
+                                    /*wide=*/1, /*max_per_tlas=*/LRT_VK_TLAS_SLICE,
+                                    NULL, err);
 }
 
 /* Grow the device-local + staging trace buffers to hold at least n rays. */
@@ -2217,8 +2310,8 @@ static void vk_buf_barrier(VkCommandBuffer cb, VkFlags src_stage, VkFlags dst_st
  * hits of rtx_hit_bytes(s). Both layouts store the miss sentinel LRT_TRI_NO_HIT in
  * word 3 (narrow prim_id / wide instanceId), so the hit count is one check. */
 static int rtx_trace_impl(lrt_vk_engine *e, lrt_vk_rtx_scene *s, vk_pipeline *pipe,
-                          const lrt_ray *rays, uint32_t n, void *out,
-                          lrt_result *err) {
+                          VkAccelerationStructureKHR tlas, const lrt_ray *rays,
+                          uint32_t n, void *out, lrt_result *err) {
     if (!e || !s || (n && (!rays || !out))) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
@@ -2243,7 +2336,7 @@ static int rtx_trace_impl(lrt_vk_engine *e, lrt_vk_rtx_scene *s, vk_pipeline *pi
 
     VkDescriptorPool pool;
     VkDescriptorSet set;
-    if (!vk_descriptors_bind_rtx(e, pipe->dsl, s->tlas.as, &s->rays_dev,
+    if (!vk_descriptors_bind_rtx(e, pipe->dsl, tlas, &s->rays_dev,
                                  &s->hits_dev, &pool, &set)) {
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
@@ -2302,7 +2395,8 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
     }
-    return rtx_trace_impl(e, s, rtx_get_pipeline(e), rays, n, out, err);
+    return rtx_trace_impl(e, s, rtx_get_pipeline(e), s ? s->tlas.as : VK_NULL_HANDLE,
+                          rays, n, out, err);
 }
 
 int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
@@ -2312,17 +2406,64 @@ int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
     }
-    return rtx_trace_impl(e, s, rtx_get_pipeline_wide(e), rays, n, out, err);
+    vk_pipeline *pipe = rtx_get_pipeline_wide(e);
+    /* Single TLAS: trace it directly into `out`. */
+    if (s->ntlas <= 1u)
+        return rtx_trace_impl(e, s, pipe, s->tlas.as, rays, n, out, err);
+
+    /* Multi-TLAS: trace slice 0 into `out` (its base is 0, so its instanceIds are
+     * already global), then trace each remaining slice into a scratch buffer and
+     * keep the nearer hit, offsetting the slice-local instanceId by tlas_base[k].
+     * K sequential dispatches + a CPU merge -- offline throughput, no shader/
+     * descriptor changes vs the single-TLAS wide path. */
+    int r = rtx_trace_impl(e, s, pipe, s->tlas.as, rays, n, out, err);
+    if (r < 0) return -1;
+    lrt_hit_wide *tmp = (lrt_hit_wide *)malloc((size_t)n * sizeof(lrt_hit_wide));
+    if (!tmp) {
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return -1;
+    }
+    for (uint32_t k = 1; k < s->ntlas; k++) {
+        if (rtx_trace_impl(e, s, pipe, s->extra_tlas[k - 1u].as, rays, n, tmp, err) <
+            0) {
+            free(tmp);
+            return -1;
+        }
+        const uint32_t base = s->tlas_base[k];
+        for (uint32_t i = 0; i < n; i++) {
+            if (tmp[i].inst == LRT_TRI_NO_HIT) continue;
+            if (out[i].inst == LRT_TRI_NO_HIT || tmp[i].t < out[i].t) {
+                out[i] = tmp[i];
+                out[i].inst += base;  /* slice-local -> global instance id */
+            }
+        }
+    }
+    free(tmp);
+    int hits = 0;
+    for (uint32_t i = 0; i < n; i++)
+        if (out[i].inst != LRT_TRI_NO_HIT) hits++;
+    if (err) *err = LRT_RESULT_OK;
+    return hits;
+}
+
+uint32_t lrt_vk_rtx_scene_ntlas(const lrt_vk_rtx_scene *s) {
+    return s ? s->ntlas : 0u;
 }
 
 void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s) {
     if (!e || !s) return;
-    vkDeviceWaitIdle(e->device);
+    if (!e->device_lost) vkDeviceWaitIdle(e->device);
     vk_buffer_destroy(e, &s->rays_dev);
     vk_buffer_destroy(e, &s->hits_dev);
     vk_buffer_destroy(e, &s->rays_stage);
     vk_buffer_destroy(e, &s->hits_stage);
     vk_accel_destroy(e, &s->tlas);
+    if (s->extra_tlas) {
+        for (uint32_t k = 1; k < s->ntlas; k++)
+            vk_accel_destroy(e, &s->extra_tlas[k - 1u]);
+        free(s->extra_tlas);
+    }
+    free(s->tlas_base);
     if (s->blas) {
         for (uint32_t c = 0; c < s->nblas; c++) vk_accel_destroy(e, &s->blas[c]);
         free(s->blas);

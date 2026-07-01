@@ -132,11 +132,16 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   // instanceId*stride + localTri, which must fit 32 bits (ninsts*maxProtoTris <
   // 2^32). When it would overflow (Moana-island scale, a large prototype poisons
   // stride), use the wide (5-word) trace that stores instanceId + localTri
-  // separately -- no product to overflow, only the TLAS maxInstanceCount ceiling.
+  // separately -- no product to overflow. The wide build is the MULTI-TLAS builder,
+  // which additionally splits > ~16M instances across several TLASes (sharing one
+  // BLAS set) so scenes past the device TLAS maxInstanceCount (2^24) -- the full
+  // ~42.8M-instance Moana island -- render in full; it builds a single TLAS when
+  // the scene fits, so smaller wide scenes are unaffected.
   uint32_t max_ntris = 1;
   for (const lrt_vk_proto &pr : cprotos)
     max_ntris = std::max(max_ntris, pr.ntris);
-  bool wide = uint64_t(cinsts.size()) * uint64_t(max_ntris) >= 0xFFFFFFFFull;
+  bool wide = uint64_t(cinsts.size()) * uint64_t(max_ntris) >= 0xFFFFFFFFull ||
+              cinsts.size() > 16000000u;  // multi-TLAS also needs the wide decode
   // Debug: force the wide encoding on any scene to validate the wide path against
   // the narrow one (they must be pixel-identical).
   if (std::getenv("TUSDR_FORCE_WIDE")) wide = true;
@@ -150,16 +155,25 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
 
   lrt_result builderr = LRT_RESULT_OK, trerr = LRT_RESULT_OK;
   int traced = -1;
+  uint32_t scene_ntlas = 1;
   if (wide) {
-    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced_wide(
+    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced_multi(
         vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
         uint32_t(cinsts.size()), &builderr);
     if (!rtx) {
-      std::cerr << "-vkInstanced wide build failed (rc=" << builderr
-                << "); falling back to the flat path.\n";
+      // OUT_OF_MEMORY here means the GPU ran out building the BLAS/TLAS set (e.g.
+      // full Moana island: ~110k prototype BLAS exhaust VRAM). The flat fallback
+      // would flatten to even MORE geometry and fail harder, so report and stop
+      // rather than fall back. Lower TUSDR_INST_BUDGET to render a bounded subset.
+      const bool oom = builderr == LRT_RESULT_OUT_OF_MEMORY;
+      std::cerr << "-vkInstanced wide/multi build failed (rc=" << builderr << ")"
+                << (oom ? "; the scene exceeds GPU memory -- lower TUSDR_INST_BUDGET "
+                          "to render a bounded subset.\n"
+                        : "; falling back to the flat path.\n");
       lrt_vk_engine_destroy(vk);
-      return false;
+      return oom;  // true = handled (do not try the doomed flat path)
     }
+    scene_ntlas = lrt_vk_rtx_scene_ntlas(rtx);
     scene.stride = max_ntris;  // reported only; wide decode does not use it
     std::vector<lrt_hit_wide> hits(rays.size());
     traced = lrt_vk_rtx_scene_trace_wide(vk, rtx, rays.data(),
@@ -211,7 +225,9 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   bool ok = ShadeAndWriteImageInstanced(opt, scene, rays, decoded, w, h, spp);
   if (ok) {
     std::cerr << "backend: LightRT VK (ray_query, two-level TLAS, "
-              << (wide ? "wide 64-bit hit id" : "32-bit hit id") << ")\n";
+              << (wide ? "wide 64-bit hit id" : "32-bit hit id");
+    if (scene_ntlas > 1) std::cerr << ", " << scene_ntlas << "-way multi-TLAS";
+    std::cerr << ")\n";
     std::cerr << "instanced: " << scene.protos.size() << " prototypes ("
               << unique_tris << " unique tris) x " << scene.insts.size()
               << " instances = " << placed_tris << " placed tris; BLAS memory "

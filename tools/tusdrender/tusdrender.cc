@@ -411,10 +411,11 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   };
 
   // Placement budget: bound host memory on scenes with tens of millions of
-  // instances. Default 16.77M (the 2^24 TLAS maxInstanceCount floor, so the
-  // default already targets the most the GPU can hold), env-overridable. With the
-  // streaming sink above, 16.77M placements cost ~1.5 GB of scene.insts.
-  size_t budget = 16u * 1024u * 1024u;
+  // instances. Default 16M -- one TLAS slice, so the default takes the single-TLAS
+  // fast path and stays well within GPU memory (Moana island's full ~42.8M
+  // instances / ~110k prototype BLAS exceed VRAM; raise TUSDR_INST_BUDGET to fan
+  // out across multiple TLASes, memory permitting). Env-overridable.
+  size_t budget = 16000000u;
   if (const char *e = std::getenv("TUSDR_INST_BUDGET")) {
     long v = std::atol(e);
     if (v > 0) budget = size_t(v);
@@ -549,15 +550,13 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     }
   }
 
-  // Graceful TLAS-instance cap. The wide (64-bit) hit encoding (picked
-  // automatically in RunVulkanLightRTInstanced when instance*stride would overflow
-  // 32 bits) stores instanceId and localTri separately, so the only ceiling is the
-  // device TLAS maxInstanceCount -- guaranteed by the Vulkan spec to be at least
-  // 2^24. Cap at that floor and keep the CAMERA-NEAREST placements (a first-
-  // collected subset would render off-screen under whole-scene auto-framing). This
-  // bounds island (~42M instances) to a visible ~16.7M subset instead of failing
-  // the TLAS build.
-  const uint64_t max_inst = 0xFFFFFFull;  // 2^24 - 1, the spec-guaranteed floor
+  // Graceful instance cap. The wide multi-TLAS builder splits the placements into
+  // ceil(N / 16M) TLAS slices (sharing one BLAS set), so a scene past the device
+  // TLAS maxInstanceCount (2^24) still renders in full -- the whole ~42.8M-instance
+  // Moana island fits. Cap only at a generous multi-slice ceiling (to bound VRAM /
+  // the K sequential dispatches) and keep the CAMERA-NEAREST placements past it.
+  // In practice the TUSDR_INST_BUDGET host-memory budget below binds first.
+  const uint64_t max_inst = 8ull * 16000000ull;  // 8 TLAS slices (~128M instances)
   if (scene.insts.size() > max_inst) {
     const Vec3 eye = camera.origin, fwd = camera.forward;
     auto depth = [&](const GpuInstPlacement &p) {  // view-space depth of o2w origin
