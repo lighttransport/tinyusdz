@@ -1255,37 +1255,78 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
 // meshes at/under those prim paths (usdrecord --mask); the full tree is still
 // walked so transform chains remain correct.
+// Emit one placement. Two-level streaming (`sink` set) hands (prim, world,
+// purpose) straight to the caller's grouping sink; the flat path (`jobs` set)
+// appends a world-space MeshJobNext. Exactly one of jobs/sink is non-null.
+static inline void EmitPlacementNext(std::vector<MeshJobNext> *jobs,
+                                     const RtInstanceSink *sink, size_t *emitted,
+                                     const tinyusdz::next::UsdPrim &prim,
+                                     const matrix4d &world,
+                                     tinyusdz::Purpose purpose) {
+  if (sink) {
+    (*sink)(prim, world, purpose);
+    if (emitted) ++*emitted;
+    return;
+  }
+  MeshJobNext job;
+  job.prim = prim;
+  job.world = world;
+  job.purpose = purpose;
+  jobs->push_back(std::move(job));
+}
+// Count of placements emitted so far (for the max_jobs budget), from whichever
+// sink is active.
+static inline size_t EmittedCountNext(const std::vector<MeshJobNext> *jobs,
+                                      const size_t *emitted) {
+  return emitted ? *emitted : jobs->size();
+}
+
 // Forward decls: instance -> world-space MeshJobNext expansion for the GPU flatten
-// path (mutually recursive with CollectRTPreviewMeshesNext for nesting).
+// path (mutually recursive with CollectPreviewImplNext for nesting). `jobs`/`sink`
+// select flat-vector vs streaming emit (see EmitPlacementNext).
 static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
-    size_t max_jobs);
+    const RtInstanceSink *sink, size_t *emitted, size_t max_jobs);
 // Native (scenegraph instanceable) instance: place the prototype's geometry at the
 // instance proxy's world transform.
 static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
                                          tinyusdz::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *jobs);
+                                         std::vector<MeshJobNext> *jobs,
+                                         const RtInstanceSink *sink,
+                                         size_t *emitted);
 // Collect a prototype's mesh jobs in prototype-LOCAL space (root at identity),
 // expanding any nested instancers. Shared by both expanders above.
 static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
                                          const tinyusdz::next::UsdPrim &proto,
                                          tinyusdz::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out);
+// Shared body behind the public vector collector and the streaming placement
+// collector.
+static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
+                                   const tinyusdz::next::UsdPrim &prim,
+                                   const matrix4d &parent_world,
+                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   const std::vector<std::string> &mask,
+                                   std::vector<MeshJobNext> *jobs,
+                                   const RtInstanceSink *sink, size_t *emitted,
+                                   bool expand_instancers, size_t max_jobs);
 
-void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
-                                const tinyusdz::next::UsdPrim &prim,
-                                const matrix4d &parent_world,
-                                tinyusdz::Purpose inherited_purpose, double time,
-                                const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs,
-                                bool expand_instancers, size_t max_jobs) {
+static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
+                                   const tinyusdz::next::UsdPrim &prim,
+                                   const matrix4d &parent_world,
+                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   const std::vector<std::string> &mask,
+                                   std::vector<MeshJobNext> *jobs,
+                                   const RtInstanceSink *sink, size_t *emitted,
+                                   bool expand_instancers, size_t max_jobs) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
-  if (max_jobs && jobs->size() >= max_jobs) return;  // instance budget reached
+  if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
+    return;  // instance budget reached
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -1317,7 +1358,7 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     // TLAS). Two-level callers leave expand_instancers=false and stop here.
     if (expand_instancers)
       ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs,
-                                   max_jobs);
+                                   sink, emitted, max_jobs);
     return;
   }
   {
@@ -1325,26 +1366,50 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     if (ispec && !ispec->meta().instance_prototype().empty()) {
       // Scenegraph (instanceable) native instance proxy: its children come from
       // the prototype. GPU flatten path expands it; two-level callers stop here.
-      if (expand_instancers && (!max_jobs || jobs->size() < max_jobs) &&
+      if (expand_instancers &&
+          (!max_jobs || EmittedCountNext(jobs, emitted) < max_jobs) &&
           PathMatchesMask(prim.GetPath().str(), mask))
         ExpandNativeInstanceJobsNext(stage, ispec->meta().instance_prototype(),
-                                     world, purpose, time, jobs);
+                                     world, purpose, time, jobs, sink, emitted);
       return;
     }
   }
   if (prim.GetTypeName() == "Mesh" &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
-    MeshJobNext job;
-    job.prim = prim;
-    job.world = world;
-    job.purpose = purpose;
-    jobs->push_back(std::move(job));
+    EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    if (max_jobs && jobs->size() >= max_jobs) break;
-    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs,
-                               expand_instancers, max_jobs);
+    if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs) break;
+    CollectPreviewImplNext(stage, child, world, purpose, time, mask, jobs, sink,
+                           emitted, expand_instancers, max_jobs);
   }
+}
+
+void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
+                                const tinyusdz::next::UsdPrim &prim,
+                                const matrix4d &parent_world,
+                                tinyusdz::Purpose inherited_purpose, double time,
+                                const std::vector<std::string> &mask,
+                                std::vector<MeshJobNext> *jobs,
+                                bool expand_instancers, size_t max_jobs) {
+  CollectPreviewImplNext(stage, prim, parent_world, inherited_purpose, time, mask,
+                         jobs, /*sink=*/nullptr, /*emitted=*/nullptr,
+                         expand_instancers, max_jobs);
+}
+
+size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
+                                       const tinyusdz::next::UsdPrim &prim,
+                                       const matrix4d &parent_world,
+                                       tinyusdz::Purpose inherited_purpose,
+                                       double time,
+                                       const std::vector<std::string> &mask,
+                                       const RtInstanceSink &sink,
+                                       size_t max_placements) {
+  size_t emitted = 0;
+  CollectPreviewImplNext(stage, prim, parent_world, inherited_purpose, time, mask,
+                         /*jobs=*/nullptr, &sink, &emitted,
+                         /*expand_instancers=*/true, max_placements);
+  return emitted;
 }
 
 // Expand a UsdGeomPointInstancer into world-space MeshJobNext placements for the
@@ -1359,7 +1424,7 @@ static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
-    size_t max_jobs) {
+    const RtInstanceSink *sink, size_t *emitted, size_t max_jobs) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
   const std::vector<tinyusdz::next::Path> *targets =
       instancer.GetRelationship("prototypes");
@@ -1411,7 +1476,8 @@ static void ExpandPointInstancerJobsNext(
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
-    if (max_jobs && jobs->size() >= max_jobs) break;  // instance budget reached
+    if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
+      break;  // instance budget reached
     if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= targets->size()) continue;
@@ -1423,13 +1489,9 @@ static void ExpandPointInstancerJobsNext(
         (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
     const matrix4d inst_world =
         InstanceTRS(&positions[i * 3], q, s) * instancer_world;
-    for (const MeshJobNext &pj : pjobs) {
-      MeshJobNext job;
-      job.prim = pj.prim;
-      job.world = pj.world * inst_world;  // prototype-local then instance world
-      job.purpose = pj.purpose;
-      jobs->push_back(std::move(job));
-    }
+    for (const MeshJobNext &pj : pjobs)
+      EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * inst_world,
+                        pj.purpose);
   }
 }
 
@@ -1469,18 +1531,15 @@ static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
                                          tinyusdz::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *jobs) {
+                                         std::vector<MeshJobNext> *jobs,
+                                         const RtInstanceSink *sink,
+                                         size_t *emitted) {
   tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   std::vector<MeshJobNext> proto_jobs;
   CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
-  for (const MeshJobNext &pj : proto_jobs) {
-    MeshJobNext job;
-    job.prim = pj.prim;
-    job.world = pj.world * world;  // prototype-local then instance world
-    job.purpose = pj.purpose;
-    jobs->push_back(std::move(job));
-  }
+  for (const MeshJobNext &pj : proto_jobs)
+    EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * world, pj.purpose);
 }
 
 // `next`-path UsdVol volumes: serial walk resolving world matrices; for each
