@@ -3622,10 +3622,11 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       AnimationClip anim;
 
       if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
-        PushError(fmt::format(
-            "Failed to convert SkelAnimation: {} for skeleton {}\n",
-            animPathStr, skeleton_id));
-        return false;
+        PushWarn(fmt::format(
+            "Skipping invalid SkelAnimation {} for skeleton {}: {}\n",
+            animPathStr, skeleton_id, GetError()));
+        _err.clear();
+        continue;
       }
 
       DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);

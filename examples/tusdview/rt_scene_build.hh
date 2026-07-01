@@ -53,6 +53,15 @@ struct HostVolParam {
   float emission[4];
 };
 
+// Compact RT texture descriptor. offset indexes HostScene::texels as RGBA8 bytes.
+struct HostTextureDesc {
+  int offset{0};
+  int width{0};
+  int height{0};
+  int wrapS{0};
+  int wrapT{0};
+};
+
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
@@ -66,7 +75,11 @@ struct HostScene {
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
   std::vector<float> matPbr;
+  std::vector<int> matTex;  // 4 ints/material: base, metalRough, normal, emissive
   int numMats = 0;
+  std::vector<uint8_t> texels;
+  std::vector<HostTextureDesc> textures;
+  int numTextures = 0;
   std::vector<float> volDens;
   std::vector<HostVolParam> volParams;
   int numVols = 0;

@@ -1236,6 +1236,9 @@ bool RenderSceneConverter::TriangulateFan(
     const uint32_t* face_vertex_counts, size_t face_count,
     const uint32_t* indices, size_t index_count,
     UInt32Chunked* out_indices) {
+  if (!face_vertex_counts || !indices || !out_indices) {
+    return false;
+  }
 
   // Count triangles
   size_t tri_count = 0;

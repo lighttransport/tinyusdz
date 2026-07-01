@@ -70,7 +70,11 @@ class HipRayTracer {
   uintptr_t dEmask_{0};      // uint8 wireframe edge mask per tri (orig-polygon edges)
   uintptr_t dMat_{0};        // int material id per tri (material-id viz)
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
+  uintptr_t dMatTex_{0};     // int[4] per material: base,metalRough,normal,emissive
   int numMats_{0};           // material count (matPbr index bound)
+  uintptr_t dTexels_{0};     // RGBA8 texture texels
+  uintptr_t dTextures_{0};   // HostTextureDesc[]
+  int numTextures_{0};
   uintptr_t dUV_{0};         // float[6] per-vertex uv per tri (uv viz)
   uintptr_t dUV1_{0};        // float[6] per-vertex uv set 1 per tri (multi-UV AOV)
   uintptr_t dInfl_{0};       // float[3] per-vertex blendshape influence per tri

@@ -9,6 +9,7 @@
 // identical structure.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -222,6 +223,16 @@ inline int KindId(const std::string& k) {
 
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
 
+enum class UdimMode : int { Sparse = 0, Atlas = 1 };
+enum class TextureCompressionMode : int { Off = 0, BCn = 1 };
+
+struct TextureRuntimeOptions {
+  int maxTextureSize{0};       // longest edge cap in texels; 0 = no cap
+  int textureBudgetMB{0};      // decoded/upload budget; 0 = no budget
+  UdimMode udimMode{UdimMode::Sparse};
+  TextureCompressionMode compression{TextureCompressionMode::Off};
+};
+
 struct DrawMaterialCPU {
   std::string name;
   float baseColor[3]{0.8f, 0.8f, 0.8f};
@@ -251,12 +262,35 @@ struct DrawMaterialCPU {
 
 // Wrap modes (match light3d / GL semantics).
 enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
+enum class DrawCompressedFormat : int { None = 0, BC1 = 1, BC3 = 3 };
+
+struct DrawCompressedImageCPU {
+  DrawCompressedFormat format{DrawCompressedFormat::None};
+  int width{0};
+  int height{0};
+  std::vector<uint8_t> data;
+};
+
+struct DrawUdimTileCPU {
+  uint32_t udim{1001};
+  uint32_t u{0};
+  uint32_t v{0};
+  light3d::Image image;  // RGBA8 tile layer
+  DrawCompressedImageCPU compressed;
+};
 
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear (normal/metalRough)
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
+  bool requestedCompressed{false};
+  DrawCompressedImageCPU compressed;
+  bool isUdim{false};
+  std::vector<DrawUdimTileCPU> udimTiles;
+  std::array<int, 100> udimLayer{};
+  int udimTileWidth{0};
+  int udimTileHeight{0};
 };
 
 // A UsdVol volume (OpenVDB) as a dense scalar (density) grid, for GPU 3D-texture

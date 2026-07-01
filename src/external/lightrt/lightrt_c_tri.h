@@ -48,6 +48,23 @@ typedef struct lrt_hit {
     uint32_t prim_id;
 } lrt_hit;
 
+/* High-precision (fp64) ray/hit for HPC visualization. Same closest-hit query
+ * over the same fp32 BVH, but the leaf ray-triangle math runs in double
+ * precision (A64FX: SVE 8-wide fp64; scalar double elsewhere), so t/u/v keep
+ * full fp64 precision along an fp64 ray (e.g. large world coordinates where an
+ * fp32 t loses resolution). Triangle vertices are the build's fp32 values. */
+typedef struct lrt_ray_hp {
+    double org[3];
+    double dir[3];
+    double tmin;
+    double tmax;
+} lrt_ray_hp;
+
+typedef struct lrt_hit_hp {
+    double t, u, v;
+    uint32_t prim_id;
+} lrt_hit_hp;
+
 typedef enum lrt_tri_quality {
     LRT_TRI_BUILD_FAST = 0,    /* LBVH (Morton sort + bit splits): fastest build */
     LRT_TRI_BUILD_DEFAULT = 1, /* binned SAH (16 bins) */
@@ -70,7 +87,11 @@ typedef enum lrt_tri_layout {
     LRT_TRI_LAYOUT_BVH8_Q4 = 10,
     /* 8-wide with 8-bit-FLOAT (E4M3) child bounds (128-byte nodes, same size as
      * BVH8Q): a tighter bound fit for skewed extents, not a memory win. */
-    LRT_TRI_LAYOUT_BVH8_QF8 = 11
+    LRT_TRI_LAYOUT_BVH8_QF8 = 11,
+    /* 16-wide nodes + 16-wide leaves to fill all 16 A64FX SVE fp32 lanes (no
+     * predicate waste). 512-byte nodes; plain-triangle scenes only; needs SVE
+     * (falls back to scalar otherwise). No serialization / refit / mmap. */
+    LRT_TRI_LAYOUT_BVH16 = 16
 } lrt_tri_layout;
 
 typedef struct lrt_tri_build_options {
@@ -119,6 +140,14 @@ void lrt_tri_scene_free(lrt_tri_scene *s);
 /* Closest hit. Returns 1 and fills *hit on a hit; returns 0 on miss (hit, if
  * non-NULL, gets prim_id = LRT_TRI_NO_HIT). Thread-safe. */
 int lrt_tri_intersect1(const lrt_tri_scene *s, const lrt_ray *ray, lrt_hit *hit);
+
+/* High-precision (fp64) closest hit for HPC visualization. Traverses the same
+ * fp32 BVH but runs the leaf ray-triangle intersection in double precision
+ * (A64FX: SVE 8-wide fp64; scalar double elsewhere). Returns 1 and fills
+ * *hit on a hit, 0 on miss. Plain-triangle scenes only (other prim_kinds
+ * return 0). Thread-safe. */
+int lrt_tri_intersect1_hp(const lrt_tri_scene *s, const lrt_ray_hp *ray,
+                          lrt_hit_hp *hit);
 
 /* Any hit (shadow/occlusion). Returns 1 if anything lies in [tmin, tmax]. */
 int lrt_tri_occluded1(const lrt_tri_scene *s, const lrt_ray *ray);

@@ -97,6 +97,90 @@ static inline int lrt_ctz(unsigned int x) { return __builtin_ctz(x); }
 #include <immintrin.h>
 #endif
 
+/* ARM A64FX: NEON (128-bit, BVH4) mirrors the SSE4 path; SVE (A64FX = 512-bit,
+ * BVH8) mirrors the AVX2 path. Compile-time only, like SSE4/AVX2; the scalar
+ * fallback stays available. Build with fcc -Nclang -march=armv8.2-a+sve (the
+ * ACLE intrinsics need clang mode).
+ *
+ * Define LRT_TRI_FORCE_SCALAR to disable every SIMD path (scalar-only) — used
+ * to measure the NEON/SVE speedup against the same build's scalar kernel. */
+#ifdef LRT_TRI_FORCE_SCALAR
+#undef LRT_TRI_HAS_AVX2
+#undef LRT_TRI_HAS_SSE4
+#define LRT_TRI_HAS_AVX2 0
+#define LRT_TRI_HAS_SSE4 0
+#define LRT_TRI_HAS_NEON 0
+#define LRT_TRI_HAS_SVE 0
+#define LRT_TRI_NEON_SHIM 0
+#else
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#define LRT_TRI_HAS_NEON 1
+#include <arm_neon.h>
+#else
+#define LRT_TRI_HAS_NEON 0
+#endif
+#if defined(__ARM_FEATURE_SVE)
+#define LRT_TRI_HAS_SVE 1
+#include <arm_sve.h>
+#else
+#define LRT_TRI_HAS_SVE 0
+#endif
+/* On ARM NEON (no x86 SSE), run the kernel's 4-wide SSE BVH4 code through a
+ * minimal SSE->NEON shim: set LRT_TRI_HAS_SSE4 = 1 so all the SSE-written
+ * leaf/node/traversal code (triangle, curve, point, sphere, quad, bilinear,
+ * qtri, and the parametric-patch traversal drivers) compiles + runs as NEON
+ * 4-wide. SVE (BVH8 + fp64) is a separate, native path keyed on
+ * LRT_TRI_HAS_SVE. LRT_TRI_NEON_SHIM marks this mode (e.g. for kernel names). */
+#if LRT_TRI_HAS_NEON && !LRT_TRI_HAS_SSE4
+#define LRT_TRI_NEON_SHIM 1
+#include "lightrt_sse2neon_min.h"
+#undef LRT_TRI_HAS_SSE4
+#define LRT_TRI_HAS_SSE4 1
+#else
+#define LRT_TRI_NEON_SHIM 0
+#endif
+#endif /* LRT_TRI_FORCE_SCALAR */
+
+/* Portable T0 prefetch (x86 _mm_prefetch vs the GCC/clang builtin on ARM). */
+#if LRT_TRI_HAS_SSE4
+#define TRI_PREFETCH_T0(p) _mm_prefetch((const char *)(p), _MM_HINT_T0)
+#else
+#define TRI_PREFETCH_T0(p) __builtin_prefetch((const void *)(p), 0, 3)
+#endif
+
+/* Tag for the 4-wide BVH4 SIMD path in kernel_name strings: "neon" when the
+ * SSE-written leaves run through the ARM shim, else "sse4". Used only inside
+ * #if LRT_TRI_HAS_SSE4 branches (the scalar case keeps its own "scalar"). */
+#if LRT_TRI_NEON_SHIM
+#define LRT_SIMD4_SUFFIX "neon"
+#else
+#define LRT_SIMD4_SUFFIX "sse4"
+#endif
+
+/* SVE 16-lane Bernstein evaluation of the bicubic Bézier / NURBS patch Newton
+ * leaf. Implemented and measured on A64FX, but it is NEUTRAL-to-slightly-slower
+ * than the scalar eval (the 9-12 horizontal svaddv reductions per eval cost
+ * about as much as the 18 scalar 1D cubic evals, and the eval is not the
+ * dominant cost — adaptive subdivision + AABB cull + Newton control flow are).
+ * So it is OFF by default; build with -DLRT_TRI_SVE_PATCH_EVAL to use it. */
+#if LRT_TRI_HAS_SVE && defined(LRT_TRI_SVE_PATCH_EVAL)
+#define LRT_TRI_PATCH_EVAL_SVE 1
+#else
+#define LRT_TRI_PATCH_EVAL_SVE 0
+#endif
+
+/* SVE 16-ray coherent packet for lrt_tri_intersect1N(COHERENT). A big win on
+ * primary/coherent rays (~3.9x BVH4), but its results are not bit-identical to
+ * the single-ray kernel (different FMA + traversal order -> ULP-level t and
+ * tie-break prim_id differences; still matches the fp64 oracle within
+ * tolerance). The default intersect1N keeps the bit-exact Ray4 path so
+ * batch==single holds; build with -DLRT_TRI_SVE_PACKET to use the fast packet. */
+#if LRT_TRI_HAS_SVE && defined(LRT_TRI_SVE_PACKET)
+#define LRT_TRI_PACKET_SVE 1
+#else
+#define LRT_TRI_PACKET_SVE 0
+#endif
+
 /* ------------------------------------------------------------------------- */
 /* Tunables.                                                                 */
 /* ------------------------------------------------------------------------- */
@@ -152,6 +236,16 @@ typedef struct lrt_bvh8_node {
     uint32_t _pad[7];
 } lrt_bvh8_node;
 
+/* 16-wide node (A64FX SVE fills all 16 fp32 lanes): SoA child bounds, 512 bytes
+ * = 8 cache lines. No perm table (traversal insertion-sorts hits like BVH8). */
+typedef struct lrt_bvh16_node {
+    float lo_x[16], lo_y[16], lo_z[16];
+    float hi_x[16], hi_y[16], hi_z[16];
+    uint32_t child[16];
+    uint32_t nchildren;
+    uint32_t _pad[15];
+} lrt_bvh16_node;
+
 /* Quantized 8-wide node: child bounds as 8-bit offsets on a node-local grid
  * (org + q * scale, quantization rounded outward so decoded boxes always
  * contain the true ones). 128 bytes = 2 cache lines. */
@@ -198,6 +292,15 @@ typedef struct lrt_tri8 {
     float e2x[8], e2y[8], e2z[8];
     uint32_t prim_id[8];
 } lrt_tri8;
+
+/* 16-wide triangle leaf block (A64FX SVE): 640 bytes. Same generic float
+ * layout (9 arrays of `width` floats + `width` prim ids) as lrt_tri4/8. */
+typedef struct lrt_tri16 {
+    float v0x[16], v0y[16], v0z[16];
+    float e1x[16], e1y[16], e1z[16];
+    float e2x[16], e2y[16], e2z[16];
+    uint32_t prim_id[16];
+} lrt_tri16;
 
 /* Capsule (hair sub-segment) leaf block: same 160-byte footprint as lrt_tri4,
  * so curve scenes reuse the triangle block allocator and leaf-ref encoding.
@@ -440,6 +543,7 @@ struct lrt_tri_scene {
     lrt_bvh8_node *nodes8;
     lrt_bvh8q_node *nodes8q;
     lrt_bvh8q4_node *nodes8q4;
+    lrt_bvh16_node *nodes16; /* layout == 16 (A64FX SVE) */
     int qnode; /* node-bound quant: 0=linear8(BVH8Q), 1=fp8(E4M3), 2=q4 */
     uint32_t node_count;
     void *blocks; /* lrt_tri4[] when layout==4, lrt_tri8[] when layout==8 */
@@ -482,7 +586,8 @@ struct lrt_tri_scene {
 };
 
 static inline size_t tri_block_size(int width) {
-    return width == 4 ? sizeof(lrt_tri4) : sizeof(lrt_tri8);
+    return width == 4 ? sizeof(lrt_tri4)
+                      : width == 16 ? sizeof(lrt_tri16) : sizeof(lrt_tri8);
 }
 
 /* Rebuild per-prim post-hit shade data from leaf blocks (defined below; used by
@@ -2954,7 +3059,7 @@ static uint32_t tri_collapse(tri_collapse_ctx *cc, uint32_t b_idx,
 
     /* Gather up to `width` binary children by repeatedly expanding the inner
      * member with the largest surface area. */
-    uint32_t set[8];
+    uint32_t set[16]; /* up to BVH16 width */
     int n = 0;
     set[n++] = bn->a;
     set[n++] = bn->b;
@@ -3098,6 +3203,21 @@ static uint32_t tri_collapse(tri_collapse_ctx *cc, uint32_t b_idx,
             uint32_t ref = tri_collapse(cc, set[i], depth + 1);
             s->nodes8q[node_idx].child[i] = ref;
         }
+    } else if (width == 16) {
+        lrt_bvh16_node *w = &s->nodes16[node_idx];
+        memset(w, 0, sizeof(*w));
+        for (int i = 0; i < 16; i++) {
+            w->lo_x[i] = w->lo_y[i] = w->lo_z[i] = TRI_INF_F;
+            w->hi_x[i] = w->hi_y[i] = w->hi_z[i] = TRI_INF_F;
+        }
+        w->nchildren = (uint32_t)n;
+        for (int i = 0; i < n; i++) {
+            tri_fill_slot(cc, set[i], depth + 1, s->nodes16[node_idx].lo_x,
+                          s->nodes16[node_idx].lo_y, s->nodes16[node_idx].lo_z,
+                          s->nodes16[node_idx].hi_x, s->nodes16[node_idx].hi_y,
+                          s->nodes16[node_idx].hi_z, s->nodes16[node_idx].child,
+                          i);
+        }
     } else {
         lrt_bvh8_node *w = &s->nodes8[node_idx];
         memset(w, 0, sizeof(*w));
@@ -3161,7 +3281,7 @@ typedef struct tri_stack_entry {
     float tnear;
 } tri_stack_entry;
 
-#if LRT_TRI_HAS_SSE4
+#if LRT_TRI_HAS_SSE4 || LRT_TRI_HAS_NEON || LRT_TRI_HAS_SVE
 /* Prefetch the data a child ref will touch when popped: the bounds planes of
  * an inner node (2 lines for BVH4, 3 for BVH8), or the first triangle block
  * of a leaf. Incoherent rays make these fetches the critical path. */
@@ -3171,29 +3291,29 @@ static inline void tri_prefetch_ref(const lrt_tri_scene *s, uint32_t ref,
     if (TRI_REF_IS_LEAF(ref)) {
         const char *b = (const char *)tri_block_ptr(
             s->blocks, TRI_REF_BLOCK(ref), s->block_stride);
-        _mm_prefetch(b, _MM_HINT_T0);
-        _mm_prefetch(b + 64, _MM_HINT_T0);
+        TRI_PREFETCH_T0(b);
+        TRI_PREFETCH_T0(b + 64);
         return;
     }
     if (s->qnode == 2) {
         const char *p = (const char *)&s->nodes8q4[TRI_REF_NODE(ref)];
-        _mm_prefetch(p, _MM_HINT_T0);
-        _mm_prefetch(p + 64, _MM_HINT_T0);
+        TRI_PREFETCH_T0(p);
+        TRI_PREFETCH_T0(p + 64);
         return;
     }
     if (s->quantized) {
         const char *p = (const char *)&s->nodes8q[TRI_REF_NODE(ref)];
-        _mm_prefetch(p, _MM_HINT_T0);
-        _mm_prefetch(p + 64, _MM_HINT_T0);
+        TRI_PREFETCH_T0(p);
+        TRI_PREFETCH_T0(p + 64);
         return;
     }
     const char *p = (width == 4) ? (const char *)&s->nodes4[TRI_REF_NODE(ref)]
                                  : (const char *)&s->nodes8[TRI_REF_NODE(ref)];
-    _mm_prefetch(p, _MM_HINT_T0);
-    _mm_prefetch(p + 64, _MM_HINT_T0);
+    TRI_PREFETCH_T0(p);
+    TRI_PREFETCH_T0(p + 64);
     if (width == 8) {
-        _mm_prefetch(p + 128, _MM_HINT_T0);
-        _mm_prefetch(p + 192, _MM_HINT_T0); /* child refs */
+        TRI_PREFETCH_T0(p + 128);
+        TRI_PREFETCH_T0(p + 192); /* child refs */
     }
 }
 #endif
@@ -4345,6 +4465,64 @@ static inline void tri_bezpatch_eval(const float cp[48], float u, float v,
     }
 }
 
+#if LRT_TRI_PATCH_EVAL_SVE
+/* SVE bicubic-patch evaluation: instead of 18 scalar 1D cubic evals, weight all
+ * 16 control points at once on A64FX's 16-lane fp32 vector. The Bernstein basis
+ * for (u,v) gives a 16-lane weight w[k] = Bu[k%4]*Bv[k>>2] (k = v*4+u, matching
+ * the cp point order j*4+i); the surface point / partials are then per-axis
+ * horizontal sums svaddv(w * cp_axis). Control points must be supplied as SoA
+ * (one contiguous array per axis), transposed once per patch by the caller. */
+static inline void tri_bern3(float u, float B[4], float dB[4]) {
+    float u1 = 1.0f - u;
+    B[0] = u1 * u1 * u1; B[1] = 3.0f * u1 * u1 * u;
+    B[2] = 3.0f * u1 * u * u; B[3] = u * u * u;
+    dB[0] = -3.0f * u1 * u1; dB[1] = 3.0f * u1 * u1 - 6.0f * u1 * u;
+    dB[2] = 6.0f * u1 * u - 3.0f * u * u; dB[3] = 3.0f * u * u;
+}
+/* Build the three 16-lane weight vectors w (value), wu (d/du), wv (d/dv). */
+static inline void tri_bicubic_weights_sve(float u, float v, svfloat32_t *w,
+                                           svfloat32_t *wu, svfloat32_t *wv) {
+    float Bu[4], dBu[4], Bv[4], dBv[4];
+    tri_bern3(u, Bu, dBu);
+    tri_bern3(v, Bv, dBv);
+    svbool_t pg = svptrue_b32();
+    svfloat32_t Bur = svld1rq_f32(pg, Bu);   /* lane k: Bu[k%4] (quad replicate) */
+    svfloat32_t dBur = svld1rq_f32(pg, dBu);
+    svfloat32_t Bvq = svld1rq_f32(pg, Bv);
+    svfloat32_t dBvq = svld1rq_f32(pg, dBv);
+    svuint32_t idx = svlsr_n_u32_x(pg, svindex_u32(0, 1), 2); /* k>>2 */
+    svfloat32_t Bve = svtbl_f32(Bvq, idx);   /* lane k: Bv[k>>2] */
+    svfloat32_t dBve = svtbl_f32(dBvq, idx);
+    *w = svmul_f32_x(pg, Bur, Bve);
+    *wu = svmul_f32_x(pg, dBur, Bve);
+    *wv = svmul_f32_x(pg, Bur, dBve);
+}
+static inline void tri_bezpatch_eval_sve(const float *cpx, const float *cpy,
+                                         const float *cpz, float u, float v,
+                                         float S[3], float dSdu[3],
+                                         float dSdv[3]) {
+    svbool_t pg = svptrue_b32();
+    svfloat32_t w, wu, wv;
+    tri_bicubic_weights_sve(u, v, &w, &wu, &wv);
+    svfloat32_t X = svld1_f32(pg, cpx), Y = svld1_f32(pg, cpy),
+                Z = svld1_f32(pg, cpz);
+    S[0] = svaddv_f32(pg, svmul_f32_x(pg, w, X));
+    S[1] = svaddv_f32(pg, svmul_f32_x(pg, w, Y));
+    S[2] = svaddv_f32(pg, svmul_f32_x(pg, w, Z));
+    dSdu[0] = svaddv_f32(pg, svmul_f32_x(pg, wu, X));
+    dSdu[1] = svaddv_f32(pg, svmul_f32_x(pg, wu, Y));
+    dSdu[2] = svaddv_f32(pg, svmul_f32_x(pg, wu, Z));
+    dSdv[0] = svaddv_f32(pg, svmul_f32_x(pg, wv, X));
+    dSdv[1] = svaddv_f32(pg, svmul_f32_x(pg, wv, Y));
+    dSdv[2] = svaddv_f32(pg, svmul_f32_x(pg, wv, Z));
+}
+#define TRI_BEZ_EVAL(cp, cx, cy, cz, u, v, S, du, dv) \
+    tri_bezpatch_eval_sve(cx, cy, cz, u, v, S, du, dv)
+#else
+#define TRI_BEZ_EVAL(cp, cx, cy, cz, u, v, S, du, dv) \
+    tri_bezpatch_eval(cp, u, v, S, du, dv)
+#endif
+
 /* de Casteljau split/restrict of a cubic over 4 points × 3 floats. */
 static void tri_bez_split3(const float c[12], float t, float L[12],
                            float R[12]) {
@@ -4400,13 +4578,19 @@ static inline float tri_det3(const float a[3], const float b[3],
 }
 
 /* Newton on (u,v,t): S(u,v) - (org + t*dir) = 0. */
-static int tri_bezpatch_newton(const float cp[48], const float *org,
-                               const float *dir, float u, float v, float t,
-                               float tmin, float best, float *t_out,
-                               float *u_out, float *v_out) {
+static int tri_bezpatch_newton(const float cp[48], const float *cpx,
+                               const float *cpy, const float *cpz,
+                               const float *org, const float *dir, float u,
+                               float v, float t, float tmin, float best,
+                               float *t_out, float *u_out, float *v_out) {
+#if LRT_TRI_PATCH_EVAL_SVE
+    (void)cp;
+#else
+    (void)cpx; (void)cpy; (void)cpz;
+#endif
     for (int it = 0; it < 8; it++) {
         float S[3], du[3], dv[3];
-        tri_bezpatch_eval(cp, u, v, S, du, dv);
+        TRI_BEZ_EVAL(cp, cpx, cpy, cpz, u, v, S, du, dv);
         float R[3] = {S[0] - org[0] - t * dir[0], S[1] - org[1] - t * dir[1],
                       S[2] - org[2] - t * dir[2]};
         float ndir[3] = {-dir[0], -dir[1], -dir[2]};
@@ -4449,6 +4633,16 @@ static int tri_bezpatch_isect_one(const float cp[48], const tri_ray_ctx *rc,
     sp++;
     float best = best_t;
     int hit = 0;
+    /* SoA control points for the SVE eval (transpose once per patch; all eval
+     * calls below reuse the full patch cp with global (u,v)). */
+    const float *cpx = NULL, *cpy = NULL, *cpz = NULL;
+#if LRT_TRI_PATCH_EVAL_SVE
+    float cx[16], cy[16], cz[16];
+    for (int k = 0; k < 16; k++) {
+        cx[k] = cp[k * 3 + 0]; cy[k] = cp[k * 3 + 1]; cz[k] = cp[k * 3 + 2];
+    }
+    cpx = cx; cpy = cy; cpz = cz;
+#endif
     while (sp > 0) {
         sp--;
         float u0 = stk[sp].u0, u1 = stk[sp].u1, v0 = stk[sp].v0, v1 = stk[sp].v1;
@@ -4478,7 +4672,7 @@ static int tri_bezpatch_isect_one(const float cp[48], const tri_ray_ctx *rc,
         if (depth >= BEZPATCH_MAXDEPTH) {
             float uc = 0.5f * (u0 + u1), vc = 0.5f * (v0 + v1);
             float S[3], du[3], dv[3];
-            tri_bezpatch_eval(cp, uc, vc, S, du, dv);
+            TRI_BEZ_EVAL(cp, cpx, cpy, cpz, uc, vc, S, du, dv);
             float ddot = rc->dir[0] * rc->dir[0] + rc->dir[1] * rc->dir[1] +
                          rc->dir[2] * rc->dir[2];
             float t0 = ((S[0] - rc->org[0]) * rc->dir[0] +
@@ -4486,8 +4680,8 @@ static int tri_bezpatch_isect_one(const float cp[48], const tri_ray_ctx *rc,
                         (S[2] - rc->org[2]) * rc->dir[2]) /
                        (ddot > 1e-20f ? ddot : 1e-20f);
             float th, uh, vh;
-            if (tri_bezpatch_newton(cp, rc->org, rc->dir, uc, vc, t0, rc->tmin,
-                                    best, &th, &uh, &vh)) {
+            if (tri_bezpatch_newton(cp, cpx, cpy, cpz, rc->org, rc->dir, uc, vc,
+                                    t0, rc->tmin, best, &th, &uh, &vh)) {
                 best = th;
                 *t_out = th;
                 *u_out = uh;
@@ -4600,13 +4794,60 @@ static inline void tri_rbezpatch_eval(const float cp[64], float u, float v,
     }
 }
 
-static int tri_rbezpatch_newton(const float cp[64], const float *org,
+#if LRT_TRI_PATCH_EVAL_SVE
+/* SVE rational bicubic eval: 16-lane Bernstein weights (as bezpatch) over the
+ * 4 homogeneous components (x,y,z,w in SoA), then the perspective divide +
+ * quotient-rule partials in scalar. */
+static inline void tri_rbezpatch_eval_sve(const float *cx, const float *cy,
+                                          const float *cz, const float *cw,
+                                          float u, float v, float S[3],
+                                          float dSdu[3], float dSdv[3]) {
+    svbool_t pg = svptrue_b32();
+    svfloat32_t w, wu, wv;
+    tri_bicubic_weights_sve(u, v, &w, &wu, &wv);
+    svfloat32_t X = svld1_f32(pg, cx), Y = svld1_f32(pg, cy),
+                Z = svld1_f32(pg, cz), W = svld1_f32(pg, cw);
+    float N[4], Nu[4], Nv[4];
+    N[0] = svaddv_f32(pg, svmul_f32_x(pg, w, X));
+    N[1] = svaddv_f32(pg, svmul_f32_x(pg, w, Y));
+    N[2] = svaddv_f32(pg, svmul_f32_x(pg, w, Z));
+    N[3] = svaddv_f32(pg, svmul_f32_x(pg, w, W));
+    Nu[0] = svaddv_f32(pg, svmul_f32_x(pg, wu, X));
+    Nu[1] = svaddv_f32(pg, svmul_f32_x(pg, wu, Y));
+    Nu[2] = svaddv_f32(pg, svmul_f32_x(pg, wu, Z));
+    Nu[3] = svaddv_f32(pg, svmul_f32_x(pg, wu, W));
+    Nv[0] = svaddv_f32(pg, svmul_f32_x(pg, wv, X));
+    Nv[1] = svaddv_f32(pg, svmul_f32_x(pg, wv, Y));
+    Nv[2] = svaddv_f32(pg, svmul_f32_x(pg, wv, Z));
+    Nv[3] = svaddv_f32(pg, svmul_f32_x(pg, wv, W));
+    float ww = N[3], iw = 1.0f / ww, iw2 = iw * iw;
+    for (int k = 0; k < 3; k++) {
+        S[k] = N[k] * iw;
+        dSdu[k] = (Nu[k] * ww - N[k] * Nu[3]) * iw2;
+        dSdv[k] = (Nv[k] * ww - N[k] * Nv[3]) * iw2;
+    }
+}
+#define TRI_RBEZ_EVAL(cp, cx, cy, cz, cw, u, v, S, du, dv) \
+    tri_rbezpatch_eval_sve(cx, cy, cz, cw, u, v, S, du, dv)
+#else
+#define TRI_RBEZ_EVAL(cp, cx, cy, cz, cw, u, v, S, du, dv) \
+    tri_rbezpatch_eval(cp, u, v, S, du, dv)
+#endif
+
+static int tri_rbezpatch_newton(const float cp[64], const float *cx,
+                                const float *cy, const float *cz,
+                                const float *cw, const float *org,
                                 const float *dir, float u, float v, float t,
                                 float tmin, float best, float *t_out,
                                 float *u_out, float *v_out) {
+#if LRT_TRI_PATCH_EVAL_SVE
+    (void)cp;
+#else
+    (void)cx; (void)cy; (void)cz; (void)cw;
+#endif
     for (int it = 0; it < 8; it++) {
         float S[3], du[3], dv[3];
-        tri_rbezpatch_eval(cp, u, v, S, du, dv);
+        TRI_RBEZ_EVAL(cp, cx, cy, cz, cw, u, v, S, du, dv);
         float R[3] = {S[0] - org[0] - t * dir[0], S[1] - org[1] - t * dir[1],
                       S[2] - org[2] - t * dir[2]};
         float ndir[3] = {-dir[0], -dir[1], -dir[2]};
@@ -4668,6 +4909,16 @@ static int tri_rbezpatch_isect_one(const float cp[64], const float dom[4],
     sp++;
     float best = best_t;
     int hit = 0;
+    /* SoA homogeneous control points for the SVE eval (transpose once). */
+    const float *cx = NULL, *cy = NULL, *cz = NULL, *cw = NULL;
+#if LRT_TRI_PATCH_EVAL_SVE
+    float cxa[16], cya[16], cza[16], cwa[16];
+    for (int k = 0; k < 16; k++) {
+        cxa[k] = cp[k * 4 + 0]; cya[k] = cp[k * 4 + 1];
+        cza[k] = cp[k * 4 + 2]; cwa[k] = cp[k * 4 + 3];
+    }
+    cx = cxa; cy = cya; cz = cza; cw = cwa;
+#endif
     while (sp > 0) {
         sp--;
         float u0 = stk[sp].u0, u1 = stk[sp].u1, v0 = stk[sp].v0, v1 = stk[sp].v1;
@@ -4701,7 +4952,7 @@ static int tri_rbezpatch_isect_one(const float cp[64], const float dom[4],
         if (depth >= RBEZ_MAXDEPTH) {
             float uc = 0.5f * (u0 + u1), vc = 0.5f * (v0 + v1);
             float S[3], du[3], dv[3];
-            tri_rbezpatch_eval(cp, uc, vc, S, du, dv);
+            TRI_RBEZ_EVAL(cp, cx, cy, cz, cw, uc, vc, S, du, dv);
             float ddot = rc->dir[0] * rc->dir[0] + rc->dir[1] * rc->dir[1] +
                          rc->dir[2] * rc->dir[2];
             float t0 = ((S[0] - rc->org[0]) * rc->dir[0] +
@@ -4709,8 +4960,8 @@ static int tri_rbezpatch_isect_one(const float cp[64], const float dom[4],
                         (S[2] - rc->org[2]) * rc->dir[2]) /
                        (ddot > 1e-20f ? ddot : 1e-20f);
             float th, uh, vh;
-            if (tri_rbezpatch_newton(cp, rc->org, rc->dir, uc, vc, t0, rc->tmin,
-                                     best, &th, &uh, &vh)) {
+            if (tri_rbezpatch_newton(cp, cx, cy, cz, cw, rc->org, rc->dir, uc, vc,
+                                     t0, rc->tmin, best, &th, &uh, &vh)) {
                 float gu = dom[0] + uh * (dom[1] - dom[0]); /* local -> global */
                 float gv = dom[2] + vh * (dom[3] - dom[2]);
                 /* trimmed hits are rejected; keep searching for the nearest
@@ -8507,6 +8758,1009 @@ static void tri_occluded1N_bvh8_avx2(const lrt_tri_scene *s,
 
 #endif /* LRT_TRI_HAS_AVX2 */
 
+/* Generic per-layout node view + decode (full definition below); forward
+ * declared here so the SVE ray packet can walk any layout. */
+typedef struct tri_node_view {
+    const float *lo_x, *lo_y, *lo_z, *hi_x, *hi_y, *hi_z;
+    const uint32_t *child;
+    int n;
+} tri_node_view;
+static inline void tri_node_load(const lrt_tri_scene *s, uint32_t node_ref,
+                                 float *dec, tri_node_view *v);
+
+/* ========================================================================= */
+/* ARM SVE BVH8 (A64FX = 512-bit). A mirror of the AVX2 BVH8 path. Each      */
+/* node/leaf uses the low 8 of 16 fp32 lanes (svwhilelt_b32(0,8)); on A64FX  */
+/* a predicated-off lane is free per-instruction, so 8-of-16 costs the same  */
+/* as a hypothetical narrow vector while keeping the existing BVH8 layout.   */
+/* SVE sizeless vector types can't be struct members, so the ray context is  */
+/* broadcast (svdup) inside each call rather than cached in a struct. The     */
+/* slab uses (bound-org)*invd to match tri_slab_scalar; the hit list is       */
+/* materialized to float[8] and the existing scalar insertion-sort drives the */
+/* nearest-first push, byte-for-byte reproducing the AVX2 traversal order.   */
+/* ========================================================================= */
+#if LRT_TRI_HAS_SVE
+
+#define TRI_SVE_P8() svwhilelt_b32((uint32_t)0, (uint32_t)8)
+
+/* Relative parallel-det cull (8 lanes), mirror of tri_isect_det_parallel8. */
+static inline svbool_t tri_det_parallel_sve(svbool_t pg, svfloat32_t e1x,
+                                            svfloat32_t e1y, svfloat32_t e1z,
+                                            svfloat32_t e2x, svfloat32_t e2y,
+                                            svfloat32_t e2z, svfloat32_t det) {
+    svfloat32_t e1l2 = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e1x, e1x),
+                                                    e1y, e1y),
+                                   e1z, e1z);
+    svfloat32_t e2l2 = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e2x, e2x),
+                                                    e2y, e2y),
+                                   e2z, e2z);
+    svfloat32_t zero = svdup_f32(0.0f);
+    svfloat32_t scale = svadd_f32_x(pg, svsqrt_f32_x(pg, svmax_f32_x(pg, e1l2, zero)),
+                                    svsqrt_f32_x(pg, svmax_f32_x(pg, e2l2, zero)));
+    svfloat32_t rel = svmul_f32_x(pg, svdup_f32(TRI_ISECT_DET_EPS_SCALE),
+                                  svmul_f32_x(pg, scale, scale));
+    rel = svmax_f32_x(pg, svdup_f32(TRI_ISECT_DET_EPS_MIN), rel);
+    rel = svmin_f32_x(pg, svdup_f32(TRI_ISECT_DET_EPS_MAX), rel);
+    return svcmpgt_f32(pg, svabs_f32_x(pg, det), rel);
+}
+
+/* 8-wide SoA Moller-Trumbore over one lrt_tri8 block. Updates best in place. */
+static inline void tri_block_isect_sve(const lrt_tri8 *blk,
+                                       const tri_ray_ctx *rc, float *best_t,
+                                       float *best_u, float *best_v,
+                                       uint32_t *best_prim) {
+    svbool_t pg = TRI_SVE_P8();
+    svfloat32_t dirx = svdup_f32(rc->dir[0]), diry = svdup_f32(rc->dir[1]),
+                dirz = svdup_f32(rc->dir[2]);
+    svfloat32_t e1x = svld1_f32(pg, blk->e1x), e1y = svld1_f32(pg, blk->e1y),
+                e1z = svld1_f32(pg, blk->e1z);
+    svfloat32_t e2x = svld1_f32(pg, blk->e2x), e2y = svld1_f32(pg, blk->e2y),
+                e2z = svld1_f32(pg, blk->e2z);
+    svfloat32_t px = svmls_f32_x(pg, svmul_f32_x(pg, diry, e2z), dirz, e2y);
+    svfloat32_t py = svmls_f32_x(pg, svmul_f32_x(pg, dirz, e2x), dirx, e2z);
+    svfloat32_t pz = svmls_f32_x(pg, svmul_f32_x(pg, dirx, e2y), diry, e2x);
+    svfloat32_t det = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e1x, px),
+                                                  e1y, py),
+                                  e1z, pz);
+    svbool_t valid = tri_det_parallel_sve(pg, e1x, e1y, e1z, e2x, e2y, e2z, det);
+    if (!svptest_any(pg, valid)) return;
+
+    svfloat32_t inv_det = svdiv_f32_x(pg, svdup_f32(1.0f), det);
+    svfloat32_t tvx = svsub_f32_x(pg, svdup_f32(rc->org[0]), svld1_f32(pg, blk->v0x));
+    svfloat32_t tvy = svsub_f32_x(pg, svdup_f32(rc->org[1]), svld1_f32(pg, blk->v0y));
+    svfloat32_t tvz = svsub_f32_x(pg, svdup_f32(rc->org[2]), svld1_f32(pg, blk->v0z));
+    svfloat32_t u = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, tvx, px), tvy, py),
+                        tvz, pz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, u, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, u, svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return;
+
+    svfloat32_t qx = svmls_f32_x(pg, svmul_f32_x(pg, tvy, e1z), tvz, e1y);
+    svfloat32_t qy = svmls_f32_x(pg, svmul_f32_x(pg, tvz, e1x), tvx, e1z);
+    svfloat32_t qz = svmls_f32_x(pg, svmul_f32_x(pg, tvx, e1y), tvy, e1x);
+    svfloat32_t v = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, dirx, qx), diry, qy),
+                        dirz, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, v, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid,
+                      svcmple_f32(pg, svadd_f32_x(pg, u, v), svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return;
+
+    svfloat32_t t = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e2x, qx), e2y, qy),
+                        e2z, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, t, svdup_f32(rc->tmin)));
+    valid = svand_b_z(pg, valid, svcmplt_f32(pg, t, svdup_f32(*best_t)));
+    if (!svptest_any(pg, valid)) return;
+
+    /* Materialize: invalid lanes get +INF so the scalar winner loop skips
+     * them (no movemask needed). */
+    _Alignas(64) float ta[8], ua[8], va[8];
+    svst1_f32(pg, ta, svsel_f32(valid, t, svdup_f32(TRI_INF_F)));
+    svst1_f32(pg, ua, u);
+    svst1_f32(pg, va, v);
+    for (int lane = 0; lane < 8; lane++) {
+        if (ta[lane] < *best_t) {
+            *best_t = ta[lane];
+            *best_u = ua[lane];
+            *best_v = va[lane];
+            *best_prim = blk->prim_id[lane];
+        }
+    }
+}
+
+static inline int tri_block_occluded_sve(const lrt_tri8 *blk,
+                                         const tri_ray_ctx *rc, float tmax) {
+    svbool_t pg = TRI_SVE_P8();
+    svfloat32_t dirx = svdup_f32(rc->dir[0]), diry = svdup_f32(rc->dir[1]),
+                dirz = svdup_f32(rc->dir[2]);
+    svfloat32_t e1x = svld1_f32(pg, blk->e1x), e1y = svld1_f32(pg, blk->e1y),
+                e1z = svld1_f32(pg, blk->e1z);
+    svfloat32_t e2x = svld1_f32(pg, blk->e2x), e2y = svld1_f32(pg, blk->e2y),
+                e2z = svld1_f32(pg, blk->e2z);
+    svfloat32_t px = svmls_f32_x(pg, svmul_f32_x(pg, diry, e2z), dirz, e2y);
+    svfloat32_t py = svmls_f32_x(pg, svmul_f32_x(pg, dirz, e2x), dirx, e2z);
+    svfloat32_t pz = svmls_f32_x(pg, svmul_f32_x(pg, dirx, e2y), diry, e2x);
+    svfloat32_t det = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e1x, px),
+                                                  e1y, py),
+                                  e1z, pz);
+    svbool_t valid = tri_det_parallel_sve(pg, e1x, e1y, e1z, e2x, e2y, e2z, det);
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t inv_det = svdiv_f32_x(pg, svdup_f32(1.0f), det);
+    svfloat32_t tvx = svsub_f32_x(pg, svdup_f32(rc->org[0]), svld1_f32(pg, blk->v0x));
+    svfloat32_t tvy = svsub_f32_x(pg, svdup_f32(rc->org[1]), svld1_f32(pg, blk->v0y));
+    svfloat32_t tvz = svsub_f32_x(pg, svdup_f32(rc->org[2]), svld1_f32(pg, blk->v0z));
+    svfloat32_t u = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, tvx, px), tvy, py),
+                        tvz, pz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, u, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, u, svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t qx = svmls_f32_x(pg, svmul_f32_x(pg, tvy, e1z), tvz, e1y);
+    svfloat32_t qy = svmls_f32_x(pg, svmul_f32_x(pg, tvz, e1x), tvx, e1z);
+    svfloat32_t qz = svmls_f32_x(pg, svmul_f32_x(pg, tvx, e1y), tvy, e1x);
+    svfloat32_t v = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, dirx, qx), diry, qy),
+                        dirz, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, v, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid,
+                      svcmple_f32(pg, svadd_f32_x(pg, u, v), svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t t = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e2x, qx), e2y, qy),
+                        e2z, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, t, svdup_f32(rc->tmin)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, t, svdup_f32(tmax)));
+    return svptest_any(pg, valid);
+}
+
+/* One ray vs the 8 child boxes; writes per-slot tnear and tfar to float[8]. */
+static inline void tri_bvh8_slab_sve(const lrt_bvh8_node *n,
+                                     const tri_ray_ctx *rc, float best_t,
+                                     float *tnear_out, float *tfar_out) {
+    svbool_t pg = TRI_SVE_P8();
+    svfloat32_t orgx = svdup_f32(rc->org[0]), orgy = svdup_f32(rc->org[1]),
+                orgz = svdup_f32(rc->org[2]);
+    svfloat32_t invdx = svdup_f32(rc->invd[0]), invdy = svdup_f32(rc->invd[1]),
+                invdz = svdup_f32(rc->invd[2]);
+    svfloat32_t tlx = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_x), orgx), invdx);
+    svfloat32_t thx = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_x), orgx), invdx);
+    svfloat32_t tly = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_y), orgy), invdy);
+    svfloat32_t thy = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_y), orgy), invdy);
+    svfloat32_t tlz = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_z), orgz), invdz);
+    svfloat32_t thz = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_z), orgz), invdz);
+    svfloat32_t tnear = svmax_f32_x(
+        pg, svmax_f32_x(pg, svmin_f32_x(pg, tlx, thx), svmin_f32_x(pg, tly, thy)),
+        svmax_f32_x(pg, svmin_f32_x(pg, tlz, thz), svdup_f32(rc->tmin)));
+    svfloat32_t tfar = svmin_f32_x(
+        pg, svmin_f32_x(pg, svmax_f32_x(pg, tlx, thx), svmax_f32_x(pg, tly, thy)),
+        svmin_f32_x(pg, svmax_f32_x(pg, tlz, thz), svdup_f32(best_t)));
+    svst1_f32(pg, tnear_out, tnear);
+    svst1_f32(pg, tfar_out, tfar);
+}
+
+static int tri_intersect_bvh8_sve(const lrt_tri_scene *s, const lrt_ray *ray,
+                                  lrt_hit *hit) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+
+    float best_t = ray->tmax;
+    float best_u = 0.0f, best_v = 0.0f;
+    uint32_t best_prim = LRT_TRI_NO_HIT;
+
+    tri_stack_entry stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp].ref = s->root;
+    stack[sp].tnear = rc.tmin;
+    sp++;
+
+    while (sp > 0) {
+        tri_stack_entry e = stack[--sp];
+        if (e.tnear >= best_t) continue;
+        if (TRI_REF_IS_LEAF(e.ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(e.ref);
+            uint32_t nblk = TRI_REF_NBLOCKS(e.ref);
+            const lrt_tri8 *blocks = (const lrt_tri8 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++) {
+                tri_block_isect_sve(&blocks[blk0 + b], &rc, &best_t, &best_u,
+                                    &best_v, &best_prim);
+            }
+            continue;
+        }
+
+        const lrt_bvh8_node *n = &s->nodes8[TRI_REF_NODE(e.ref)];
+        _Alignas(64) float tnear[8], tfar[8];
+        tri_bvh8_slab_sve(n, &rc, best_t, tnear, tfar);
+        int nch = (int)n->nchildren;
+        uint32_t hit_ref[8];
+        float hit_tn[8];
+        int nhit = 0;
+        for (int i = 0; i < nch; i++) {
+            if (!(tnear[i] <= tfar[i])) continue;
+            tri_prefetch_ref(s, n->child[i], 8);
+            int j = nhit++;
+            while (j > 0 && hit_tn[j - 1] > tnear[i]) {
+                hit_tn[j] = hit_tn[j - 1];
+                hit_ref[j] = hit_ref[j - 1];
+                j--;
+            }
+            hit_tn[j] = tnear[i];
+            hit_ref[j] = n->child[i];
+        }
+        for (int i = nhit - 1; i >= 0; i--) {
+            stack[sp].ref = hit_ref[i];
+            stack[sp].tnear = hit_tn[i];
+            sp++;
+        }
+    }
+
+    if (hit) {
+        hit->t = best_prim != LRT_TRI_NO_HIT ? best_t : 0.0f;
+        hit->u = best_u;
+        hit->v = best_v;
+        hit->prim_id = best_prim;
+    }
+    return best_prim != LRT_TRI_NO_HIT;
+}
+
+static int tri_occluded_bvh8_sve(const lrt_tri_scene *s, const lrt_ray *ray) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+    float tmax = ray->tmax;
+
+    uint32_t stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = s->root;
+
+    while (sp > 0) {
+        uint32_t ref = stack[--sp];
+        if (TRI_REF_IS_LEAF(ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(ref);
+            uint32_t nblk = TRI_REF_NBLOCKS(ref);
+            const lrt_tri8 *blocks = (const lrt_tri8 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++) {
+                if (tri_block_occluded_sve(&blocks[blk0 + b], &rc, tmax)) return 1;
+            }
+            continue;
+        }
+        const lrt_bvh8_node *n = &s->nodes8[TRI_REF_NODE(ref)];
+        _Alignas(64) float tnear[8], tfar[8];
+        tri_bvh8_slab_sve(n, &rc, tmax, tnear, tfar);
+        int nch = (int)n->nchildren;
+        for (int i = 0; i < nch; i++) {
+            if (tnear[i] <= tfar[i]) {
+                tri_prefetch_ref(s, n->child[i], 8);
+                stack[sp++] = n->child[i];
+            }
+        }
+    }
+    return 0;
+}
+
+/* ===== SVE BVH16: 16-wide node + leaf, filling all 16 A64FX fp32 lanes ===== */
+
+/* 16-wide Moller-Trumbore over one lrt_tri16 block (full svptrue_b32). */
+static inline void tri_block_isect_sve16(const lrt_tri16 *blk,
+                                         const tri_ray_ctx *rc, float *best_t,
+                                         float *best_u, float *best_v,
+                                         uint32_t *best_prim) {
+    svbool_t pg = svptrue_b32();
+    svfloat32_t dirx = svdup_f32(rc->dir[0]), diry = svdup_f32(rc->dir[1]),
+                dirz = svdup_f32(rc->dir[2]);
+    svfloat32_t e1x = svld1_f32(pg, blk->e1x), e1y = svld1_f32(pg, blk->e1y),
+                e1z = svld1_f32(pg, blk->e1z);
+    svfloat32_t e2x = svld1_f32(pg, blk->e2x), e2y = svld1_f32(pg, blk->e2y),
+                e2z = svld1_f32(pg, blk->e2z);
+    svfloat32_t px = svmls_f32_x(pg, svmul_f32_x(pg, diry, e2z), dirz, e2y);
+    svfloat32_t py = svmls_f32_x(pg, svmul_f32_x(pg, dirz, e2x), dirx, e2z);
+    svfloat32_t pz = svmls_f32_x(pg, svmul_f32_x(pg, dirx, e2y), diry, e2x);
+    svfloat32_t det = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e1x, px),
+                                                  e1y, py),
+                                  e1z, pz);
+    svbool_t valid = tri_det_parallel_sve(pg, e1x, e1y, e1z, e2x, e2y, e2z, det);
+    if (!svptest_any(pg, valid)) return;
+    svfloat32_t inv_det = svdiv_f32_x(pg, svdup_f32(1.0f), det);
+    svfloat32_t tvx = svsub_f32_x(pg, svdup_f32(rc->org[0]), svld1_f32(pg, blk->v0x));
+    svfloat32_t tvy = svsub_f32_x(pg, svdup_f32(rc->org[1]), svld1_f32(pg, blk->v0y));
+    svfloat32_t tvz = svsub_f32_x(pg, svdup_f32(rc->org[2]), svld1_f32(pg, blk->v0z));
+    svfloat32_t u = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, tvx, px), tvy, py),
+                        tvz, pz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, u, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, u, svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return;
+    svfloat32_t qx = svmls_f32_x(pg, svmul_f32_x(pg, tvy, e1z), tvz, e1y);
+    svfloat32_t qy = svmls_f32_x(pg, svmul_f32_x(pg, tvz, e1x), tvx, e1z);
+    svfloat32_t qz = svmls_f32_x(pg, svmul_f32_x(pg, tvx, e1y), tvy, e1x);
+    svfloat32_t v = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, dirx, qx), diry, qy),
+                        dirz, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, v, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid,
+                      svcmple_f32(pg, svadd_f32_x(pg, u, v), svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return;
+    svfloat32_t t = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e2x, qx), e2y, qy),
+                        e2z, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, t, svdup_f32(rc->tmin)));
+    valid = svand_b_z(pg, valid, svcmplt_f32(pg, t, svdup_f32(*best_t)));
+    if (!svptest_any(pg, valid)) return;
+    _Alignas(64) float ta[16], ua[16], va[16];
+    svst1_f32(pg, ta, svsel_f32(valid, t, svdup_f32(TRI_INF_F)));
+    svst1_f32(pg, ua, u);
+    svst1_f32(pg, va, v);
+    for (int lane = 0; lane < 16; lane++) {
+        if (ta[lane] < *best_t) {
+            *best_t = ta[lane]; *best_u = ua[lane]; *best_v = va[lane];
+            *best_prim = blk->prim_id[lane];
+        }
+    }
+}
+
+static inline int tri_block_occluded_sve16(const lrt_tri16 *blk,
+                                           const tri_ray_ctx *rc, float tmax) {
+    svbool_t pg = svptrue_b32();
+    svfloat32_t dirx = svdup_f32(rc->dir[0]), diry = svdup_f32(rc->dir[1]),
+                dirz = svdup_f32(rc->dir[2]);
+    svfloat32_t e1x = svld1_f32(pg, blk->e1x), e1y = svld1_f32(pg, blk->e1y),
+                e1z = svld1_f32(pg, blk->e1z);
+    svfloat32_t e2x = svld1_f32(pg, blk->e2x), e2y = svld1_f32(pg, blk->e2y),
+                e2z = svld1_f32(pg, blk->e2z);
+    svfloat32_t px = svmls_f32_x(pg, svmul_f32_x(pg, diry, e2z), dirz, e2y);
+    svfloat32_t py = svmls_f32_x(pg, svmul_f32_x(pg, dirz, e2x), dirx, e2z);
+    svfloat32_t pz = svmls_f32_x(pg, svmul_f32_x(pg, dirx, e2y), diry, e2x);
+    svfloat32_t det = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e1x, px),
+                                                  e1y, py),
+                                  e1z, pz);
+    svbool_t valid = tri_det_parallel_sve(pg, e1x, e1y, e1z, e2x, e2y, e2z, det);
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t inv_det = svdiv_f32_x(pg, svdup_f32(1.0f), det);
+    svfloat32_t tvx = svsub_f32_x(pg, svdup_f32(rc->org[0]), svld1_f32(pg, blk->v0x));
+    svfloat32_t tvy = svsub_f32_x(pg, svdup_f32(rc->org[1]), svld1_f32(pg, blk->v0y));
+    svfloat32_t tvz = svsub_f32_x(pg, svdup_f32(rc->org[2]), svld1_f32(pg, blk->v0z));
+    svfloat32_t u = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, tvx, px), tvy, py),
+                        tvz, pz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, u, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, u, svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t qx = svmls_f32_x(pg, svmul_f32_x(pg, tvy, e1z), tvz, e1y);
+    svfloat32_t qy = svmls_f32_x(pg, svmul_f32_x(pg, tvz, e1x), tvx, e1z);
+    svfloat32_t qz = svmls_f32_x(pg, svmul_f32_x(pg, tvx, e1y), tvy, e1x);
+    svfloat32_t v = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, dirx, qx), diry, qy),
+                        dirz, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, v, svdup_f32(0.0f)));
+    valid = svand_b_z(pg, valid,
+                      svcmple_f32(pg, svadd_f32_x(pg, u, v), svdup_f32(1.0f)));
+    if (!svptest_any(pg, valid)) return 0;
+    svfloat32_t t = svmul_f32_x(
+        pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, e2x, qx), e2y, qy),
+                        e2z, qz),
+        inv_det);
+    valid = svand_b_z(pg, valid, svcmpge_f32(pg, t, svdup_f32(rc->tmin)));
+    valid = svand_b_z(pg, valid, svcmple_f32(pg, t, svdup_f32(tmax)));
+    return svptest_any(pg, valid);
+}
+
+/* One ray vs the 16 child boxes; writes per-slot tnear/tfar to float[16]. */
+static inline void tri_bvh16_slab_sve(const lrt_bvh16_node *n,
+                                      const tri_ray_ctx *rc, float best_t,
+                                      float *tnear_out, float *tfar_out) {
+    svbool_t pg = svptrue_b32();
+    svfloat32_t orgx = svdup_f32(rc->org[0]), orgy = svdup_f32(rc->org[1]),
+                orgz = svdup_f32(rc->org[2]);
+    svfloat32_t invdx = svdup_f32(rc->invd[0]), invdy = svdup_f32(rc->invd[1]),
+                invdz = svdup_f32(rc->invd[2]);
+    svfloat32_t tlx = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_x), orgx), invdx);
+    svfloat32_t thx = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_x), orgx), invdx);
+    svfloat32_t tly = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_y), orgy), invdy);
+    svfloat32_t thy = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_y), orgy), invdy);
+    svfloat32_t tlz = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->lo_z), orgz), invdz);
+    svfloat32_t thz = svmul_f32_x(pg, svsub_f32_x(pg, svld1_f32(pg, n->hi_z), orgz), invdz);
+    svfloat32_t tnear = svmax_f32_x(
+        pg, svmax_f32_x(pg, svmin_f32_x(pg, tlx, thx), svmin_f32_x(pg, tly, thy)),
+        svmax_f32_x(pg, svmin_f32_x(pg, tlz, thz), svdup_f32(rc->tmin)));
+    svfloat32_t tfar = svmin_f32_x(
+        pg, svmin_f32_x(pg, svmax_f32_x(pg, tlx, thx), svmax_f32_x(pg, tly, thy)),
+        svmin_f32_x(pg, svmax_f32_x(pg, tlz, thz), svdup_f32(best_t)));
+    svst1_f32(pg, tnear_out, tnear);
+    svst1_f32(pg, tfar_out, tfar);
+}
+
+static int tri_intersect_bvh16_sve(const lrt_tri_scene *s, const lrt_ray *ray,
+                                   lrt_hit *hit) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+    float best_t = ray->tmax, best_u = 0.0f, best_v = 0.0f;
+    uint32_t best_prim = LRT_TRI_NO_HIT;
+    tri_stack_entry stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp].ref = s->root;
+    stack[sp].tnear = rc.tmin;
+    sp++;
+    while (sp > 0) {
+        tri_stack_entry e = stack[--sp];
+        if (e.tnear >= best_t) continue;
+        if (TRI_REF_IS_LEAF(e.ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(e.ref), nblk = TRI_REF_NBLOCKS(e.ref);
+            const lrt_tri16 *blocks = (const lrt_tri16 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++)
+                tri_block_isect_sve16(&blocks[blk0 + b], &rc, &best_t, &best_u,
+                                      &best_v, &best_prim);
+            continue;
+        }
+        const lrt_bvh16_node *n = &s->nodes16[TRI_REF_NODE(e.ref)];
+        _Alignas(64) float tnear[16], tfar[16];
+        tri_bvh16_slab_sve(n, &rc, best_t, tnear, tfar);
+        int nch = (int)n->nchildren;
+        uint32_t hit_ref[16];
+        float hit_tn[16];
+        int nhit = 0;
+        for (int i = 0; i < nch; i++) {
+            if (!(tnear[i] <= tfar[i])) continue;
+            tri_prefetch_ref(s, n->child[i], 8);
+            int j = nhit++;
+            while (j > 0 && hit_tn[j - 1] > tnear[i]) {
+                hit_tn[j] = hit_tn[j - 1];
+                hit_ref[j] = hit_ref[j - 1];
+                j--;
+            }
+            hit_tn[j] = tnear[i];
+            hit_ref[j] = n->child[i];
+        }
+        for (int i = nhit - 1; i >= 0; i--) {
+            stack[sp].ref = hit_ref[i];
+            stack[sp].tnear = hit_tn[i];
+            sp++;
+        }
+    }
+    if (hit) {
+        hit->t = best_prim != LRT_TRI_NO_HIT ? best_t : 0.0f;
+        hit->u = best_u;
+        hit->v = best_v;
+        hit->prim_id = best_prim;
+    }
+    return best_prim != LRT_TRI_NO_HIT;
+}
+
+static int tri_occluded_bvh16_sve(const lrt_tri_scene *s, const lrt_ray *ray) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+    float tmax = ray->tmax;
+    uint32_t stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = s->root;
+    while (sp > 0) {
+        uint32_t ref = stack[--sp];
+        if (TRI_REF_IS_LEAF(ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(ref), nblk = TRI_REF_NBLOCKS(ref);
+            const lrt_tri16 *blocks = (const lrt_tri16 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++)
+                if (tri_block_occluded_sve16(&blocks[blk0 + b], &rc, tmax)) return 1;
+            continue;
+        }
+        const lrt_bvh16_node *n = &s->nodes16[TRI_REF_NODE(ref)];
+        _Alignas(64) float tnear[16], tfar[16];
+        tri_bvh16_slab_sve(n, &rc, tmax, tnear, tfar);
+        int nch = (int)n->nchildren;
+        for (int i = 0; i < nch; i++)
+            if (tnear[i] <= tfar[i]) {
+                tri_prefetch_ref(s, n->child[i], 8);
+                stack[sp++] = n->child[i];
+            }
+    }
+    return 0;
+}
+
+/* ===== SVE BVH8Q: 8-bit quantized node bounds (memory-efficient layout) =====
+ * Node bounds are 8-bit offsets on a node-local grid (org + q*scale); decode
+ * on the fly to fp32 and run the same slab. Leaves are full-precision lrt_tri8
+ * (reuse tri_block_isect_sve / tri_block_occluded_sve). Plane = q*scale*invd +
+ * (org_node-org_ray)*invd, mirroring tri_bvh8q_slab_avx. 8-of-16 lanes. */
+static inline void tri_bvh8q_slab_sve(const lrt_bvh8q_node *n,
+                                      const tri_ray_ctx *rc, float best_t,
+                                      float *tnear_out, float *tfar_out) {
+    svbool_t pg = TRI_SVE_P8();
+    svfloat32_t sx = svdup_f32(n->scale[0] * rc->invd[0]);
+    svfloat32_t sy = svdup_f32(n->scale[1] * rc->invd[1]);
+    svfloat32_t sz = svdup_f32(n->scale[2] * rc->invd[2]);
+    svfloat32_t bx = svdup_f32((n->org[0] - rc->org[0]) * rc->invd[0]);
+    svfloat32_t by = svdup_f32((n->org[1] - rc->org[1]) * rc->invd[1]);
+    svfloat32_t bz = svdup_f32((n->org[2] - rc->org[2]) * rc->invd[2]);
+#define TRI_Q8_SVE(arr, s, b) \
+    svmla_f32_x(pg, (b), svcvt_f32_u32_x(pg, svld1ub_u32(pg, (arr))), (s))
+    svfloat32_t tlx = TRI_Q8_SVE(n->qlo_x, sx, bx);
+    svfloat32_t thx = TRI_Q8_SVE(n->qhi_x, sx, bx);
+    svfloat32_t tly = TRI_Q8_SVE(n->qlo_y, sy, by);
+    svfloat32_t thy = TRI_Q8_SVE(n->qhi_y, sy, by);
+    svfloat32_t tlz = TRI_Q8_SVE(n->qlo_z, sz, bz);
+    svfloat32_t thz = TRI_Q8_SVE(n->qhi_z, sz, bz);
+#undef TRI_Q8_SVE
+    svfloat32_t tnear = svmax_f32_x(
+        pg, svmax_f32_x(pg, svmin_f32_x(pg, tlx, thx), svmin_f32_x(pg, tly, thy)),
+        svmax_f32_x(pg, svmin_f32_x(pg, tlz, thz), svdup_f32(rc->tmin)));
+    svfloat32_t tfar = svmin_f32_x(
+        pg, svmin_f32_x(pg, svmax_f32_x(pg, tlx, thx), svmax_f32_x(pg, tly, thy)),
+        svmin_f32_x(pg, svmax_f32_x(pg, tlz, thz), svdup_f32(best_t)));
+    svst1_f32(pg, tnear_out, tnear);
+    svst1_f32(pg, tfar_out, tfar);
+}
+
+static int tri_intersect_bvh8q_sve(const lrt_tri_scene *s, const lrt_ray *ray,
+                                   lrt_hit *hit) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+    float best_t = ray->tmax, best_u = 0.0f, best_v = 0.0f;
+    uint32_t best_prim = LRT_TRI_NO_HIT;
+    tri_stack_entry stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp].ref = s->root;
+    stack[sp].tnear = rc.tmin;
+    sp++;
+    while (sp > 0) {
+        tri_stack_entry e = stack[--sp];
+        if (e.tnear >= best_t) continue;
+        if (TRI_REF_IS_LEAF(e.ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(e.ref), nblk = TRI_REF_NBLOCKS(e.ref);
+            const lrt_tri8 *blocks = (const lrt_tri8 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++)
+                tri_block_isect_sve(&blocks[blk0 + b], &rc, &best_t, &best_u,
+                                    &best_v, &best_prim);
+            continue;
+        }
+        const lrt_bvh8q_node *n = &s->nodes8q[TRI_REF_NODE(e.ref)];
+        _Alignas(64) float tnear[8], tfar[8];
+        tri_bvh8q_slab_sve(n, &rc, best_t, tnear, tfar);
+        int nch = (int)n->nchildren;
+        uint32_t hit_ref[8];
+        float hit_tn[8];
+        int nhit = 0;
+        for (int i = 0; i < nch; i++) {
+            if (!(tnear[i] <= tfar[i])) continue;
+            tri_prefetch_ref(s, n->child[i], 8);
+            int j = nhit++;
+            while (j > 0 && hit_tn[j - 1] > tnear[i]) {
+                hit_tn[j] = hit_tn[j - 1];
+                hit_ref[j] = hit_ref[j - 1];
+                j--;
+            }
+            hit_tn[j] = tnear[i];
+            hit_ref[j] = n->child[i];
+        }
+        for (int i = nhit - 1; i >= 0; i--) {
+            stack[sp].ref = hit_ref[i];
+            stack[sp].tnear = hit_tn[i];
+            sp++;
+        }
+    }
+    if (hit) {
+        hit->t = best_prim != LRT_TRI_NO_HIT ? best_t : 0.0f;
+        hit->u = best_u;
+        hit->v = best_v;
+        hit->prim_id = best_prim;
+    }
+    return best_prim != LRT_TRI_NO_HIT;
+}
+
+/* ===== SVE coherent ray packet: 16 rays vs 1 box/triangle (ray-parallel) =====
+ * For coherent batches (e.g. primary camera rays): the packet amortizes node +
+ * leaf fetches over 16 rays sharing the traversal. Works for any plain-triangle
+ * layout (BVH4/8/8q/16) via tri_node_load. Closest-hit is order-independent, so
+ * children are pushed if ANY active ray's interval enters them (within that
+ * ray's current best_t). nr in [1,16]; the tail uses a predicate. */
+#if LRT_TRI_PACKET_SVE
+static void tri_intersect16_sve(const lrt_tri_scene *s, const lrt_ray *rays,
+                                lrt_hit *hits, int nr) {
+    svbool_t pg = svwhilelt_b32((uint32_t)0, (uint32_t)nr);
+    float ox[16], oy[16], oz[16], dx[16], dy[16], dz[16];
+    float ix[16], iy[16], iz[16], tmn[16], tmx[16];
+    for (int r = 0; r < nr; r++) {
+        const lrt_ray *ray = &rays[r];
+        ox[r] = ray->org[0]; oy[r] = ray->org[1]; oz[r] = ray->org[2];
+        dx[r] = ray->dir[0]; dy[r] = ray->dir[1]; dz[r] = ray->dir[2];
+        for (int k = 0; k < 3; k++) {
+            float d = ray->dir[k];
+            float inv = d != 0.0f ? 1.0f / d : TRI_INVD_MAX;
+            if (!(inv >= -TRI_INVD_MAX && inv <= TRI_INVD_MAX))
+                inv = copysignf(TRI_INVD_MAX, d == 0.0f ? 1.0f : d);
+            (k == 0 ? ix : k == 1 ? iy : iz)[r] = inv;
+        }
+        tmn[r] = ray->tmin; tmx[r] = ray->tmax;
+    }
+    svfloat32_t orgx = svld1_f32(pg, ox), orgy = svld1_f32(pg, oy),
+                orgz = svld1_f32(pg, oz);
+    svfloat32_t dirx = svld1_f32(pg, dx), diry = svld1_f32(pg, dy),
+                dirz = svld1_f32(pg, dz);
+    svfloat32_t invdx = svld1_f32(pg, ix), invdy = svld1_f32(pg, iy),
+                invdz = svld1_f32(pg, iz);
+    svfloat32_t tmin = svld1_f32(pg, tmn);
+    svfloat32_t best_t = svld1_f32(pg, tmx);
+    svfloat32_t best_u = svdup_f32(0.0f), best_v = svdup_f32(0.0f);
+    uint32_t best_prim[16];
+    for (int r = 0; r < 16; r++) best_prim[r] = LRT_TRI_NO_HIT;
+    const int width = s->layout;
+
+    uint32_t stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = s->root;
+    while (sp > 0) {
+        uint32_t ref = stack[--sp];
+        if (TRI_REF_IS_LEAF(ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(ref), nblk = TRI_REF_NBLOCKS(ref);
+            for (uint32_t b = 0; b < nblk; b++) {
+                const float *f = tri_block_floats(s->blocks, blk0 + b, width);
+                const uint32_t *ids = (const uint32_t *)(f + 9 * width);
+                for (int lane = 0; lane < width; lane++) {
+                    if (ids[lane] == LRT_TRI_NO_HIT) continue;
+                    float e1x = f[3 * width + lane], e1y = f[4 * width + lane],
+                          e1z = f[5 * width + lane];
+                    float e2x = f[6 * width + lane], e2y = f[7 * width + lane],
+                          e2z = f[8 * width + lane];
+                    float e1l = sqrtf(e1x * e1x + e1y * e1y + e1z * e1z);
+                    float e2l = sqrtf(e2x * e2x + e2y * e2y + e2z * e2z);
+                    float sc = e1l + e2l;
+                    float rel = TRI_ISECT_DET_EPS_SCALE * sc * sc;
+                    rel = rel < TRI_ISECT_DET_EPS_MIN ? TRI_ISECT_DET_EPS_MIN : rel;
+                    rel = rel > TRI_ISECT_DET_EPS_MAX ? TRI_ISECT_DET_EPS_MAX : rel;
+                    svfloat32_t px = svmls_f32_x(pg, svmul_f32_x(pg, diry, svdup_f32(e2z)), dirz, svdup_f32(e2y));
+                    svfloat32_t py = svmls_f32_x(pg, svmul_f32_x(pg, dirz, svdup_f32(e2x)), dirx, svdup_f32(e2z));
+                    svfloat32_t pz = svmls_f32_x(pg, svmul_f32_x(pg, dirx, svdup_f32(e2y)), diry, svdup_f32(e2x));
+                    svfloat32_t det = svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, px, svdup_f32(e1x)), py, svdup_f32(e1y)), pz, svdup_f32(e1z));
+                    svbool_t valid = svcmpgt_f32(pg, svabs_f32_x(pg, det), svdup_f32(rel));
+                    if (!svptest_any(pg, valid)) continue;
+                    svfloat32_t inv = svdiv_f32_x(pg, svdup_f32(1.0f), det);
+                    svfloat32_t tvx = svsub_f32_x(pg, orgx, svdup_f32(f[0 * width + lane]));
+                    svfloat32_t tvy = svsub_f32_x(pg, orgy, svdup_f32(f[1 * width + lane]));
+                    svfloat32_t tvz = svsub_f32_x(pg, orgz, svdup_f32(f[2 * width + lane]));
+                    svfloat32_t u = svmul_f32_x(pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, tvx, px), tvy, py), tvz, pz), inv);
+                    valid = svand_b_z(pg, valid, svcmpge_f32(pg, u, svdup_f32(0.0f)));
+                    valid = svand_b_z(pg, valid, svcmple_f32(pg, u, svdup_f32(1.0f)));
+                    if (!svptest_any(pg, valid)) continue;
+                    svfloat32_t qx = svmls_f32_x(pg, svmul_f32_x(pg, tvy, svdup_f32(e1z)), tvz, svdup_f32(e1y));
+                    svfloat32_t qy = svmls_f32_x(pg, svmul_f32_x(pg, tvz, svdup_f32(e1x)), tvx, svdup_f32(e1z));
+                    svfloat32_t qz = svmls_f32_x(pg, svmul_f32_x(pg, tvx, svdup_f32(e1y)), tvy, svdup_f32(e1x));
+                    svfloat32_t vv = svmul_f32_x(pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, dirx, qx), diry, qy), dirz, qz), inv);
+                    valid = svand_b_z(pg, valid, svcmpge_f32(pg, vv, svdup_f32(0.0f)));
+                    valid = svand_b_z(pg, valid, svcmple_f32(pg, svadd_f32_x(pg, u, vv), svdup_f32(1.0f)));
+                    if (!svptest_any(pg, valid)) continue;
+                    svfloat32_t t = svmul_f32_x(pg, svmla_f32_x(pg, svmla_f32_x(pg, svmul_f32_x(pg, svdup_f32(e2x), qx), svdup_f32(e2y), qy), svdup_f32(e2z), qz), inv);
+                    valid = svand_b_z(pg, valid, svcmpge_f32(pg, t, tmin));
+                    svbool_t closer = svand_b_z(pg, valid, svcmplt_f32(pg, t, best_t));
+                    if (!svptest_any(pg, closer)) continue;
+                    best_t = svsel_f32(closer, t, best_t);
+                    best_u = svsel_f32(closer, u, best_u);
+                    best_v = svsel_f32(closer, vv, best_v);
+                    /* scatter prim id to the lanes that improved */
+                    uint32_t cm[16];
+                    svst1_u32(pg, cm, svsel_u32(closer, svdup_u32(1), svdup_u32(0)));
+                    for (int r = 0; r < nr; r++) if (cm[r]) best_prim[r] = ids[lane];
+                }
+            }
+            continue;
+        }
+        float dec[48];
+        tri_node_view nv;
+        tri_node_load(s, ref, dec, &nv);
+        for (int i = 0; i < nv.n && sp < TRI_STACK_SIZE; i++) {
+            svfloat32_t tlx = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.lo_x[i]), orgx), invdx);
+            svfloat32_t thx = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.hi_x[i]), orgx), invdx);
+            svfloat32_t tly = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.lo_y[i]), orgy), invdy);
+            svfloat32_t thy = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.hi_y[i]), orgy), invdy);
+            svfloat32_t tlz = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.lo_z[i]), orgz), invdz);
+            svfloat32_t thz = svmul_f32_x(pg, svsub_f32_x(pg, svdup_f32(nv.hi_z[i]), orgz), invdz);
+            svfloat32_t tnear = svmax_f32_x(pg, svmax_f32_x(pg, svmin_f32_x(pg, tlx, thx), svmin_f32_x(pg, tly, thy)), svmax_f32_x(pg, svmin_f32_x(pg, tlz, thz), tmin));
+            svfloat32_t tfar = svmin_f32_x(pg, svmin_f32_x(pg, svmax_f32_x(pg, tlx, thx), svmax_f32_x(pg, tly, thy)), svmin_f32_x(pg, svmax_f32_x(pg, tlz, thz), best_t));
+            if (svptest_any(pg, svcmple_f32(pg, tnear, tfar))) stack[sp++] = nv.child[i];
+        }
+    }
+    float ta[16], ua[16], va[16];
+    svst1_f32(pg, ta, best_t);
+    svst1_f32(pg, ua, best_u);
+    svst1_f32(pg, va, best_v);
+    for (int r = 0; r < nr; r++) {
+        hits[r].u = ua[r];
+        hits[r].v = va[r];
+        hits[r].prim_id = best_prim[r];
+        hits[r].t = best_prim[r] != LRT_TRI_NO_HIT ? ta[r] : 0.0f;
+    }
+}
+#endif /* LRT_TRI_PACKET_SVE */
+
+static int tri_occluded_bvh8q_sve(const lrt_tri_scene *s, const lrt_ray *ray) {
+    tri_ray_ctx rc;
+    tri_ray_setup(ray, &rc);
+    float tmax = ray->tmax;
+    uint32_t stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = s->root;
+    while (sp > 0) {
+        uint32_t ref = stack[--sp];
+        if (TRI_REF_IS_LEAF(ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(ref), nblk = TRI_REF_NBLOCKS(ref);
+            const lrt_tri8 *blocks = (const lrt_tri8 *)s->blocks;
+            for (uint32_t b = 0; b < nblk; b++)
+                if (tri_block_occluded_sve(&blocks[blk0 + b], &rc, tmax)) return 1;
+            continue;
+        }
+        const lrt_bvh8q_node *n = &s->nodes8q[TRI_REF_NODE(ref)];
+        _Alignas(64) float tnear[8], tfar[8];
+        tri_bvh8q_slab_sve(n, &rc, tmax, tnear, tfar);
+        int nch = (int)n->nchildren;
+        for (int i = 0; i < nch; i++)
+            if (tnear[i] <= tfar[i]) {
+                tri_prefetch_ref(s, n->child[i], 8);
+                stack[sp++] = n->child[i];
+            }
+    }
+    return 0;
+}
+
+#endif /* LRT_TRI_HAS_SVE */
+
+/* ========================================================================= */
+/* fp64 high-precision triangle query (HPC visualization).                   */
+/* Traverses the existing fp32 BVH (bounds promoted to double for a fully     */
+/* fp64-arithmetic slab) and runs the leaf Moller-Trumbore in double         */
+/* precision so t/u/v keep fp64 resolution along an fp64 ray. The leaf is     */
+/* SVE 8-wide fp64 on A64FX (svfloat64, svwhilelt_b64 over the block width),  */
+/* scalar double elsewhere. Triangle vertices are the build's fp32 values.    */
+/* ========================================================================= */
+typedef struct tri_ray_ctx_hp {
+    double org[3], dir[3], invd[3], tmin;
+} tri_ray_ctx_hp;
+
+#define TRI_INVD_MAX_HP 1e300
+
+static inline void tri_ray_setup_hp(const lrt_ray_hp *ray, tri_ray_ctx_hp *rc) {
+    for (int k = 0; k < 3; k++) {
+        rc->org[k] = ray->org[k];
+        rc->dir[k] = ray->dir[k];
+        double inv = ray->dir[k] != 0.0 ? 1.0 / ray->dir[k] : TRI_INVD_MAX_HP;
+        if (!(inv >= -TRI_INVD_MAX_HP && inv <= TRI_INVD_MAX_HP))
+            inv = copysign(TRI_INVD_MAX_HP, ray->dir[k] == 0.0 ? 1.0 : ray->dir[k]);
+        rc->invd[k] = inv;
+    }
+    rc->tmin = ray->tmin;
+}
+
+static inline double tri_mind(double a, double b) { return a < b ? a : b; }
+static inline double tri_maxd(double a, double b) { return a > b ? a : b; }
+
+/* fp64 slab for child slot i of SoA float bounds (promoted to double). */
+static inline int tri_slab_hp(const float *lo_x, const float *lo_y,
+                              const float *lo_z, const float *hi_x,
+                              const float *hi_y, const float *hi_z, int i,
+                              const tri_ray_ctx_hp *rc, double t_best,
+                              double *tnear_out) {
+    double tlx = ((double)lo_x[i] - rc->org[0]) * rc->invd[0];
+    double thx = ((double)hi_x[i] - rc->org[0]) * rc->invd[0];
+    double tly = ((double)lo_y[i] - rc->org[1]) * rc->invd[1];
+    double thy = ((double)hi_y[i] - rc->org[1]) * rc->invd[1];
+    double tlz = ((double)lo_z[i] - rc->org[2]) * rc->invd[2];
+    double thz = ((double)hi_z[i] - rc->org[2]) * rc->invd[2];
+    double tnear = tri_maxd(tri_maxd(tri_mind(tlx, thx), tri_mind(tly, thy)),
+                            tri_maxd(tri_mind(tlz, thz), rc->tmin));
+    double tfar = tri_mind(tri_mind(tri_maxd(tlx, thx), tri_maxd(tly, thy)),
+                           tri_mind(tri_maxd(tlz, thz), t_best));
+    *tnear_out = tnear;
+    return tnear <= tfar;
+}
+
+/* fp64 leaf Moller-Trumbore over a generic-width block (f = 9 float arrays of
+ * `bw` lanes), arithmetic in double. Updates best in place. */
+static inline void tri_block_isect_hp(const float *f, int bw,
+                                      const tri_ray_ctx_hp *rc, double *best_t,
+                                      double *best_u, double *best_v,
+                                      uint32_t *best_prim, const uint32_t *prim) {
+    /* Promote the block lanes to double scratch (bw <= 8). */
+    double v0x[8], v0y[8], v0z[8], e1x[8], e1y[8], e1z[8], e2x[8], e2y[8], e2z[8];
+    for (int l = 0; l < bw; l++) {
+        v0x[l] = f[0 * bw + l]; v0y[l] = f[1 * bw + l]; v0z[l] = f[2 * bw + l];
+        e1x[l] = f[3 * bw + l]; e1y[l] = f[4 * bw + l]; e1z[l] = f[5 * bw + l];
+        e2x[l] = f[6 * bw + l]; e2y[l] = f[7 * bw + l]; e2z[l] = f[8 * bw + l];
+    }
+    double ta[8], ua[8], va[8];
+#if LRT_TRI_HAS_SVE
+    svbool_t pg = svwhilelt_b64((uint64_t)0, (uint64_t)bw);
+    svfloat64_t dx = svdup_f64(rc->dir[0]), dy = svdup_f64(rc->dir[1]),
+                dz = svdup_f64(rc->dir[2]);
+    svfloat64_t E1x = svld1_f64(pg, e1x), E1y = svld1_f64(pg, e1y),
+                E1z = svld1_f64(pg, e1z);
+    svfloat64_t E2x = svld1_f64(pg, e2x), E2y = svld1_f64(pg, e2y),
+                E2z = svld1_f64(pg, e2z);
+    svfloat64_t px = svmls_f64_x(pg, svmul_f64_x(pg, dy, E2z), dz, E2y);
+    svfloat64_t py = svmls_f64_x(pg, svmul_f64_x(pg, dz, E2x), dx, E2z);
+    svfloat64_t pz = svmls_f64_x(pg, svmul_f64_x(pg, dx, E2y), dy, E2x);
+    svfloat64_t det = svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, E1x, px),
+                                                  E1y, py),
+                                  E1z, pz);
+    /* relative parallel-det cull (double) */
+    svfloat64_t e1l2 = svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, E1x, E1x),
+                                                   E1y, E1y),
+                                   E1z, E1z);
+    svfloat64_t e2l2 = svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, E2x, E2x),
+                                                   E2y, E2y),
+                                   E2z, E2z);
+    svfloat64_t z0 = svdup_f64(0.0);
+    svfloat64_t scl = svadd_f64_x(pg, svsqrt_f64_x(pg, svmax_f64_x(pg, e1l2, z0)),
+                                  svsqrt_f64_x(pg, svmax_f64_x(pg, e2l2, z0)));
+    svfloat64_t rel = svmul_f64_x(pg, svdup_f64((double)TRI_ISECT_DET_EPS_SCALE),
+                                  svmul_f64_x(pg, scl, scl));
+    rel = svmax_f64_x(pg, svdup_f64((double)TRI_ISECT_DET_EPS_MIN), rel);
+    rel = svmin_f64_x(pg, svdup_f64((double)TRI_ISECT_DET_EPS_MAX), rel);
+    svbool_t valid = svcmpgt_f64(pg, svabs_f64_x(pg, det), rel);
+    svfloat64_t inv = svdiv_f64_x(pg, svdup_f64(1.0), det);
+    svfloat64_t tvx = svsub_f64_x(pg, svdup_f64(rc->org[0]), svld1_f64(pg, v0x));
+    svfloat64_t tvy = svsub_f64_x(pg, svdup_f64(rc->org[1]), svld1_f64(pg, v0y));
+    svfloat64_t tvz = svsub_f64_x(pg, svdup_f64(rc->org[2]), svld1_f64(pg, v0z));
+    svfloat64_t U = svmul_f64_x(
+        pg, svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, tvx, px), tvy, py),
+                        tvz, pz),
+        inv);
+    valid = svand_b_z(pg, valid, svcmpge_f64(pg, U, svdup_f64(0.0)));
+    valid = svand_b_z(pg, valid, svcmple_f64(pg, U, svdup_f64(1.0)));
+    svfloat64_t qx = svmls_f64_x(pg, svmul_f64_x(pg, tvy, E1z), tvz, E1y);
+    svfloat64_t qy = svmls_f64_x(pg, svmul_f64_x(pg, tvz, E1x), tvx, E1z);
+    svfloat64_t qz = svmls_f64_x(pg, svmul_f64_x(pg, tvx, E1y), tvy, E1x);
+    svfloat64_t V = svmul_f64_x(
+        pg, svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, dx, qx), dy, qy),
+                        dz, qz),
+        inv);
+    valid = svand_b_z(pg, valid, svcmpge_f64(pg, V, svdup_f64(0.0)));
+    valid = svand_b_z(pg, valid,
+                      svcmple_f64(pg, svadd_f64_x(pg, U, V), svdup_f64(1.0)));
+    svfloat64_t T = svmul_f64_x(
+        pg, svmla_f64_x(pg, svmla_f64_x(pg, svmul_f64_x(pg, E2x, qx), E2y, qy),
+                        E2z, qz),
+        inv);
+    valid = svand_b_z(pg, valid, svcmpge_f64(pg, T, svdup_f64(rc->tmin)));
+    svst1_f64(pg, ta, svsel_f64(valid, T, svdup_f64((double)TRI_INF_F)));
+    svst1_f64(pg, ua, U);
+    svst1_f64(pg, va, V);
+#else
+    for (int l = 0; l < bw; l++) {
+        double px = rc->dir[1] * e2z[l] - rc->dir[2] * e2y[l];
+        double py = rc->dir[2] * e2x[l] - rc->dir[0] * e2z[l];
+        double pz = rc->dir[0] * e2y[l] - rc->dir[1] * e2x[l];
+        double det = e1x[l] * px + e1y[l] * py + e1z[l] * pz;
+        double e1l = sqrt(e1x[l] * e1x[l] + e1y[l] * e1y[l] + e1z[l] * e1z[l]);
+        double e2l = sqrt(e2x[l] * e2x[l] + e2y[l] * e2y[l] + e2z[l] * e2z[l]);
+        double scl = e1l + e2l;
+        double rel = (double)TRI_ISECT_DET_EPS_SCALE * scl * scl;
+        rel = tri_maxd((double)TRI_ISECT_DET_EPS_MIN, rel);
+        rel = tri_mind((double)TRI_ISECT_DET_EPS_MAX, rel);
+        ta[l] = (double)TRI_INF_F;
+        if (!(fabs(det) > rel)) continue;
+        double inv = 1.0 / det;
+        double tvx = rc->org[0] - v0x[l], tvy = rc->org[1] - v0y[l],
+               tvz = rc->org[2] - v0z[l];
+        double uu = (tvx * px + tvy * py + tvz * pz) * inv;
+        if (uu < 0.0 || uu > 1.0) continue;
+        double qx = tvy * e1z[l] - tvz * e1y[l];
+        double qy = tvz * e1x[l] - tvx * e1z[l];
+        double qz = tvx * e1y[l] - tvy * e1x[l];
+        double vv = (rc->dir[0] * qx + rc->dir[1] * qy + rc->dir[2] * qz) * inv;
+        if (vv < 0.0 || uu + vv > 1.0) continue;
+        double tt = (e2x[l] * qx + e2y[l] * qy + e2z[l] * qz) * inv;
+        if (tt < rc->tmin) continue;
+        ta[l] = tt;
+        ua[l] = uu;
+        va[l] = vv;
+    }
+#endif
+    for (int l = 0; l < bw; l++) {
+        if (ta[l] < *best_t) {
+            *best_t = ta[l];
+            *best_u = ua[l];
+            *best_v = va[l];
+            *best_prim = prim[l];
+        }
+    }
+}
+
+static int tri_intersect_hp(const lrt_tri_scene *s, const lrt_ray_hp *ray,
+                            lrt_hit_hp *hit) {
+    tri_ray_ctx_hp rc;
+    tri_ray_setup_hp(ray, &rc);
+    int bw = s->layout; /* 4 or 8 */
+    double best_t = ray->tmax, best_u = 0.0, best_v = 0.0;
+    uint32_t best_prim = LRT_TRI_NO_HIT;
+
+    tri_stack_entry stack[TRI_STACK_SIZE];
+    int sp = 0;
+    stack[sp].ref = s->root;
+    stack[sp].tnear = (float)rc.tmin;
+    sp++;
+
+    while (sp > 0) {
+        tri_stack_entry e = stack[--sp];
+        if ((double)e.tnear >= best_t) continue;
+        if (TRI_REF_IS_LEAF(e.ref)) {
+            uint32_t blk0 = TRI_REF_BLOCK(e.ref), nblk = TRI_REF_NBLOCKS(e.ref);
+            for (uint32_t b = 0; b < nblk; b++) {
+                const float *f =
+                    tri_block_floats(s->blocks, blk0 + b, bw);
+                const uint32_t *prim = (const uint32_t *)(f + 9 * bw);
+                tri_block_isect_hp(f, bw, &rc, &best_t, &best_u, &best_v,
+                                   &best_prim, prim);
+            }
+            continue;
+        }
+        if (bw == 8) {
+            const lrt_bvh8_node *n = &s->nodes8[TRI_REF_NODE(e.ref)];
+            int nch = (int)n->nchildren;
+            uint32_t hit_ref[8];
+            double hit_tn[8];
+            int nhit = 0;
+            for (int i = 0; i < nch; i++) {
+                double tnear;
+                if (tri_slab_hp(n->lo_x, n->lo_y, n->lo_z, n->hi_x, n->hi_y,
+                                n->hi_z, i, &rc, best_t, &tnear)) {
+                    int j = nhit++;
+                    while (j > 0 && hit_tn[j - 1] > tnear) {
+                        hit_tn[j] = hit_tn[j - 1];
+                        hit_ref[j] = hit_ref[j - 1];
+                        j--;
+                    }
+                    hit_tn[j] = tnear;
+                    hit_ref[j] = n->child[i];
+                }
+            }
+            for (int i = nhit - 1; i >= 0; i--) {
+                stack[sp].ref = hit_ref[i];
+                stack[sp].tnear = (float)hit_tn[i];
+                sp++;
+            }
+        } else {
+            const lrt_bvh4_node *n = &s->nodes4[TRI_REF_NODE(e.ref)];
+            int nch = (int)n->nchildren;
+            uint32_t hit_ref[4];
+            double hit_tn[4];
+            int nhit = 0;
+            for (int i = 0; i < nch; i++) {
+                double tnear;
+                if (tri_slab_hp(n->lo_x, n->lo_y, n->lo_z, n->hi_x, n->hi_y,
+                                n->hi_z, i, &rc, best_t, &tnear)) {
+                    int j = nhit++;
+                    while (j > 0 && hit_tn[j - 1] > tnear) {
+                        hit_tn[j] = hit_tn[j - 1];
+                        hit_ref[j] = hit_ref[j - 1];
+                        j--;
+                    }
+                    hit_tn[j] = tnear;
+                    hit_ref[j] = n->child[i];
+                }
+            }
+            for (int i = nhit - 1; i >= 0; i--) {
+                stack[sp].ref = hit_ref[i];
+                stack[sp].tnear = (float)hit_tn[i];
+                sp++;
+            }
+        }
+    }
+
+    if (hit) {
+        hit->t = best_prim != LRT_TRI_NO_HIT ? best_t : 0.0;
+        hit->u = best_u;
+        hit->v = best_v;
+        hit->prim_id = best_prim;
+    }
+    return best_prim != LRT_TRI_NO_HIT;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Public API.                                                               */
 /* ------------------------------------------------------------------------- */
@@ -8528,7 +9782,7 @@ static void tri_collapse_count(const tri_build_ctx *bc, int width,
         *blocks += (bn->count + (uint32_t)width - 1u) / (uint32_t)width;
         return;
     }
-    uint32_t set[8];
+    uint32_t set[16]; /* up to BVH16 width */
     int n = 0;
     set[n++] = bn->a;
     set[n++] = bn->b;
@@ -8598,6 +9852,7 @@ static int tri_collapse_into(lrt_tri_scene *s, tri_build_ctx *bc,
     s->stats.leaf_count = cc.leaf_count;
     s->stats.max_depth = cc.max_depth;
     size_t node_size = s->layout == 4    ? sizeof(lrt_bvh4_node)
+                       : s->layout == 16 ? sizeof(lrt_bvh16_node)
                        : s->quantized    ? sizeof(lrt_bvh8q_node)
                                          : sizeof(lrt_bvh8_node);
     s->stats.memory_bytes = (size_t)s->node_count * node_size +
@@ -8646,17 +9901,27 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
         layout = 8;
         quantized = 1;
         qnode = 2; /* 4-bit node bounds */
+    } else if (o.layout == LRT_TRI_LAYOUT_BVH16) {
+        layout = 16; /* A64FX SVE: fills all 16 fp32 lanes */
     } else {
         /* AUTO: BVH4. Measured on Zen 1 (mandelbulb, 128k tris, primary and
          * incoherent rays, 1 and 16 threads), BVH4 matches or beats BVH8:
          * 256-bit ops execute as 2x128-bit there, so the wider node test
          * gains nothing while 256-byte nodes cost more bandwidth. Pass
          * LRT_TRI_LAYOUT_BVH8 explicitly on CPUs with a native 256-bit
-         * datapath. */
+         * datapath (incl. A64FX/SVE, which has a native 512-bit datapath and a
+         * tri_intersect_bvh8_sve path). AUTO stays BVH4 (the NEON leaf) for a
+         * conservative, predictable default; benchmarks select BVH8 directly. */
         layout = 4;
     }
 #if !LRT_TRI_HAS_AVX2
     if (qnode != 0) { /* q4/fp8 node kernels are AVX2-only */
+        tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
+        return NULL;
+    }
+#endif
+#if !LRT_TRI_HAS_SVE
+    if (layout == 16) { /* BVH16 has no scalar traversal; needs SVE */
         tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
         return NULL;
     }
@@ -8672,7 +9937,7 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
     bc.vidx = vidx; /* NULL => flat soup; else indexed gather (tri_fetch9) */
     bc.ntris = ntris;
     bc.max_leaf = max_leaf;
-    bc.block_shift = layout == 8 ? 3u : 2u;
+    bc.block_shift = layout == 16 ? 4u : layout == 8 ? 3u : 2u;
     bc.quality = o.quality;
 
     size_t n3 = ntris * 3;
@@ -8792,6 +10057,9 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
         if (layout == 4) {
             s->nodes4 = (lrt_bvh4_node *)tri_aligned_alloc(
                 64, (size_t)node_cap * sizeof(lrt_bvh4_node));
+        } else if (layout == 16) {
+            s->nodes16 = (lrt_bvh16_node *)tri_aligned_alloc(
+                64, (size_t)node_cap * sizeof(lrt_bvh16_node));
         } else if (qnode == 2) {
             s->nodes8q4 = (lrt_bvh8q4_node *)tri_aligned_alloc(
                 64, (size_t)node_cap * sizeof(lrt_bvh8q4_node));
@@ -8804,7 +10072,8 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
         }
         s->blocks = tri_aligned_alloc(
             64, (size_t)block_cap * s->block_stride);
-        if ((!s->nodes4 && !s->nodes8 && !s->nodes8q && !s->nodes8q4) ||
+        if ((!s->nodes4 && !s->nodes8 && !s->nodes8q && !s->nodes8q4 &&
+             !s->nodes16) ||
             !s->blocks) {
             bc.failed = 1;
         } else {
@@ -8868,6 +10137,12 @@ static lrt_tri_scene *tri_scene_build_impl(const float *vertices, size_t ntris,
     s->kernel_name = layout == 4    ? "bvh4/sse4"
                      : quantized    ? "bvh8q/avx2"
                                     : "bvh8/avx2";
+#elif LRT_TRI_NEON_SHIM
+    /* ARM: BVH4 via the SSE->NEON shim, BVH8 via the native SVE path. */
+    s->kernel_name = layout == 4 ? "bvh4/neon"
+                     : layout == 16 ? "bvh16/sve"
+                     : quantized ? (LRT_TRI_HAS_SVE ? "bvh8q/sve" : "bvh8q/scalar")
+                                 : (LRT_TRI_HAS_SVE ? "bvh8/sve" : "bvh8/scalar");
 #elif LRT_TRI_HAS_SSE4
     s->kernel_name = layout == 4    ? "bvh4/sse4"
                      : quantized    ? "bvh8q/scalar"
@@ -9036,6 +10311,7 @@ void lrt_tri_scene_free(lrt_tri_scene *s) {
         tri_aligned_free(s->nodes8);
         tri_aligned_free(s->nodes8q);
         tri_aligned_free(s->nodes8q4);
+        tri_aligned_free(s->nodes16);
         tri_aligned_free(s->blocks);
     }
     free(s->prim2slot); /* always heap, even for mmap'd scenes (NULL if absent) */
@@ -9064,6 +10340,12 @@ int lrt_tri_intersect1(const lrt_tri_scene *s, const lrt_ray *ray, lrt_hit *hit)
         s->prim_kind == TRI_PRIM_BEZPATCH || s->prim_kind == TRI_PRIM_RBEZPATCH ||
         s->prim_kind == TRI_PRIM_TRIMNURBS)
         return tri_intersect_scalar(s, ray, hit);
+#if LRT_TRI_NEON_SHIM
+    /* The round-linear curve leaf (Embree CSG port, blendv/movemask-heavy) is
+     * measured slower as NEON than scalar on A64FX, so use the scalar path. */
+    if (s->prim_kind == TRI_PRIM_RLCURVE)
+        return tri_intersect_scalar(s, ray, hit);
+#endif
 #if LRT_TRI_HAS_SSE4
     if (s->curve) return tri_curve_intersect_bvh4(s, ray, hit);
     if (s->prim_kind == TRI_PRIM_RLCURVE)
@@ -9090,7 +10372,183 @@ int lrt_tri_intersect1(const lrt_tri_scene *s, const lrt_ray *ray, lrt_hit *hit)
 #if LRT_TRI_HAS_SSE4
     if (s->layout == 4) return tri_intersect_bvh4_sse(s, ray, hit);
 #endif
+#if LRT_TRI_HAS_SVE
+    /* Plain-triangle BVH8 / BVH16 -> SVE. Quantized-node BVH8 (qnode/quantized)
+     * has no SVE slab yet and falls through to scalar. */
+    if (s->layout == 16 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        !s->quantized)
+        return tri_intersect_bvh16_sve(s, ray, hit);
+    if (s->layout == 8 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        s->quantized && s->qnode == 0)
+        return tri_intersect_bvh8q_sve(s, ray, hit);
+    if (s->layout == 8 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        !s->quantized)
+        return tri_intersect_bvh8_sve(s, ray, hit);
+#endif
     return tri_intersect_scalar(s, ray, hit);
+}
+
+/* ===== fp64 high-precision parametric-surface (Bézier/NURBS) intersection =====
+ * For HPC visualization: an fp64 closest hit on bicubic Bézier / NURBS patches.
+ * The coarse find (which patch + an approximate (u,v) seed) reuses the fp32
+ * adaptive-subdivision intersector; the hit is then refined by an fp64 Newton on
+ * (u,v,t) using the fp64 ray and the patch control points (promoted to double),
+ * so t/u/v carry full fp64 resolution. The eval is scalar double: the fp32 SVE
+ * Bernstein eval was already neutral (svaddv-bound), and fp64 halves the lane
+ * count (16 CPs span two 8-lane vectors), so SVE does not help the fp64 eval —
+ * the precision, not throughput, is the point here. */
+static inline void tri_bez_cubic1_hp(double p0, double p1, double p2, double p3,
+                                     double u, double *val, double *der) {
+    double u1 = 1.0 - u;
+    *val = u1 * u1 * u1 * p0 + 3.0 * u1 * u1 * u * p1 + 3.0 * u1 * u * u * p2 +
+           u * u * u * p3;
+    *der = 3.0 * (u1 * u1 * (p1 - p0) + 2.0 * u1 * u * (p2 - p1) +
+                  u * u * (p3 - p2));
+}
+/* fp64 bicubic eval from fp32 control points (cp[48], point k=j*4+i). */
+static inline void tri_bezpatch_eval_hp(const float cp[48], double u, double v,
+                                        double S[3], double dSdu[3],
+                                        double dSdv[3]) {
+    for (int a = 0; a < 3; a++) {
+        double R[4], dR[4];
+        for (int j = 0; j < 4; j++)
+            tri_bez_cubic1_hp(cp[(j * 4 + 0) * 3 + a], cp[(j * 4 + 1) * 3 + a],
+                              cp[(j * 4 + 2) * 3 + a], cp[(j * 4 + 3) * 3 + a], u,
+                              &R[j], &dR[j]);
+        double sv, dsv, su, tmp;
+        tri_bez_cubic1_hp(R[0], R[1], R[2], R[3], v, &sv, &dsv);
+        tri_bez_cubic1_hp(dR[0], dR[1], dR[2], dR[3], v, &su, &tmp);
+        S[a] = sv; dSdv[a] = dsv; dSdu[a] = su;
+    }
+}
+/* fp64 rational bicubic eval from fp32 homogeneous control points (cp[64]). */
+static inline void tri_rbezpatch_eval_hp(const float cp[64], double u, double v,
+                                         double S[3], double dSdu[3],
+                                         double dSdv[3]) {
+    double N[4], Nu[4], Nv[4];
+    for (int a = 0; a < 4; a++) {
+        double R[4], dR[4];
+        for (int j = 0; j < 4; j++)
+            tri_bez_cubic1_hp(cp[(j * 4 + 0) * 4 + a], cp[(j * 4 + 1) * 4 + a],
+                              cp[(j * 4 + 2) * 4 + a], cp[(j * 4 + 3) * 4 + a], u,
+                              &R[j], &dR[j]);
+        double sv, dsv, su, tmp;
+        tri_bez_cubic1_hp(R[0], R[1], R[2], R[3], v, &sv, &dsv);
+        tri_bez_cubic1_hp(dR[0], dR[1], dR[2], dR[3], v, &su, &tmp);
+        N[a] = sv; Nv[a] = dsv; Nu[a] = su;
+    }
+    double w = N[3], iw = 1.0 / w, iw2 = iw * iw;
+    for (int a = 0; a < 3; a++) {
+        S[a] = N[a] * iw;
+        dSdu[a] = (Nu[a] * w - N[a] * Nu[3]) * iw2;
+        dSdv[a] = (Nv[a] * w - N[a] * Nv[3]) * iw2;
+    }
+}
+static inline double tri_det3_hp(const double a[3], const double b[3],
+                                 const double c[3]) {
+    return a[0] * (b[1] * c[2] - b[2] * c[1]) -
+           a[1] * (b[0] * c[2] - b[2] * c[0]) +
+           a[2] * (b[0] * c[1] - b[1] * c[0]);
+}
+/* fp64 Newton on (u,v,t) for a bicubic patch; rational==1 uses the NURBS eval.
+ * (u,v) are LOCAL [0,1]^2. Returns 1 + refined (t,u,v) on convergence. */
+static int tri_patch_newton_hp(const float *cp, int rational, const double org[3],
+                               const double dir[3], double u, double v, double t,
+                               double tmin, double best, double *t_out,
+                               double *u_out, double *v_out) {
+    for (int it = 0; it < 10; it++) {
+        double S[3], du[3], dv[3];
+        if (rational) tri_rbezpatch_eval_hp(cp, u, v, S, du, dv);
+        else tri_bezpatch_eval_hp(cp, u, v, S, du, dv);
+        double R[3] = {S[0] - org[0] - t * dir[0], S[1] - org[1] - t * dir[1],
+                       S[2] - org[2] - t * dir[2]};
+        double nd[3] = {-dir[0], -dir[1], -dir[2]};
+        double det = tri_det3_hp(du, dv, nd);
+        if (det > -1e-300 && det < 1e-300) return 0;
+        double inv = 1.0 / det;
+        u -= tri_det3_hp(R, dv, nd) * inv;
+        v -= tri_det3_hp(du, R, nd) * inv;
+        t -= tri_det3_hp(du, dv, R) * inv;
+        double rr = sqrt(R[0] * R[0] + R[1] * R[1] + R[2] * R[2]);
+        double sl = sqrt(S[0] * S[0] + S[1] * S[1] + S[2] * S[2]);
+        if (rr < 1e-12 * (1.0 + sl)) {
+            if (u >= -1e-6 && u <= 1.0 + 1e-6 && v >= -1e-6 && v <= 1.0 + 1e-6 &&
+                t >= tmin && t < best) {
+                *t_out = t; *u_out = u; *v_out = v;
+                return 1;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+/* fp64 patch closest hit: fp32 coarse find + fp64 Newton polish. */
+static int tri_patch_intersect_hp(const lrt_tri_scene *s, const lrt_ray_hp *ray,
+                                  lrt_hit_hp *hit) {
+    lrt_ray r32;
+    for (int k = 0; k < 3; k++) {
+        r32.org[k] = (float)ray->org[k];
+        r32.dir[k] = (float)ray->dir[k];
+    }
+    r32.tmin = (float)ray->tmin;
+    r32.tmax = (float)ray->tmax;
+    lrt_hit h32;
+    if (!lrt_tri_intersect1(s, &r32, &h32)) {
+        if (hit) hit->prim_id = LRT_TRI_NO_HIT;
+        return 0;
+    }
+    double t = h32.t, u = h32.u, v = h32.v; /* fp32-cast fallback */
+    uint32_t prim = h32.prim_id;
+    int k = s->prim_kind;
+    if (s->shade_cps && prim < s->shade_nprims &&
+        (k == TRI_PRIM_BEZPATCH || k == TRI_PRIM_RBEZPATCH ||
+         k == TRI_PRIM_TRIMNURBS)) {
+        const float *cp = &s->shade_cps[(size_t)prim * s->shade_stride];
+        double org[3] = {ray->org[0], ray->org[1], ray->org[2]};
+        double dir[3] = {ray->dir[0], ray->dir[1], ray->dir[2]};
+        double to, uo, vo;
+        if (k == TRI_PRIM_BEZPATCH) {
+            if (tri_patch_newton_hp(cp, 0, org, dir, u, v, t, ray->tmin,
+                                    ray->tmax, &to, &uo, &vo)) {
+                t = to; u = uo; v = vo;
+            }
+        } else { /* NURBS: (u,v) global -> local, refine, map back */
+            const float *dom = &s->shade_dom[(size_t)prim * 4];
+            double du = (double)dom[1] - dom[0], dv = (double)dom[3] - dom[2];
+            double lu = du != 0.0 ? (u - dom[0]) / du : 0.0;
+            double lv = dv != 0.0 ? (v - dom[2]) / dv : 0.0;
+            lu = lu < 0.0 ? 0.0 : (lu > 1.0 ? 1.0 : lu);
+            lv = lv < 0.0 ? 0.0 : (lv > 1.0 ? 1.0 : lv);
+            if (tri_patch_newton_hp(cp, 1, org, dir, lu, lv, t, ray->tmin,
+                                    ray->tmax, &to, &uo, &vo)) {
+                t = to; u = dom[0] + uo * du; v = dom[2] + vo * dv;
+            }
+        }
+    }
+    if (hit) {
+        hit->t = t; hit->u = u; hit->v = v; hit->prim_id = prim;
+    }
+    return 1;
+}
+
+int lrt_tri_intersect1_hp(const lrt_tri_scene *s, const lrt_ray_hp *ray,
+                          lrt_hit_hp *hit) {
+    if (!s || !ray) {
+        if (hit) hit->prim_id = LRT_TRI_NO_HIT;
+        return 0;
+    }
+    /* fp64 Bézier / NURBS surfaces: fp32 find + fp64 Newton polish. */
+    if (s->prim_kind == TRI_PRIM_BEZPATCH || s->prim_kind == TRI_PRIM_RBEZPATCH ||
+        s->prim_kind == TRI_PRIM_TRIMNURBS)
+        return tri_patch_intersect_hp(s, ray, hit);
+    /* Plain-triangle scenes (the fp64 leaf assumes the lrt_tri4/lrt_tri8 block
+     * layout). Other prim_kinds report a miss. */
+    if (s->prim_kind != TRI_PRIM_TRI || s->curve || s->quantized ||
+        (s->layout != 4 && s->layout != 8)) {
+        if (hit) hit->prim_id = LRT_TRI_NO_HIT;
+        return 0;
+    }
+    return tri_intersect_hp(s, ray, hit);
 }
 
 int lrt_tri_occluded1(const lrt_tri_scene *s, const lrt_ray *ray) {
@@ -9107,6 +10565,9 @@ int lrt_tri_occluded1(const lrt_tri_scene *s, const lrt_ray *ray) {
         s->prim_kind == TRI_PRIM_BEZPATCH || s->prim_kind == TRI_PRIM_RBEZPATCH ||
         s->prim_kind == TRI_PRIM_TRIMNURBS)
         return tri_occluded_scalar(s, ray);
+#if LRT_TRI_NEON_SHIM
+    if (s->prim_kind == TRI_PRIM_RLCURVE) return tri_occluded_scalar(s, ray);
+#endif
 #if LRT_TRI_HAS_SSE4
     if (s->curve) return tri_curve_occluded_bvh4(s, ray);
     if (s->prim_kind == TRI_PRIM_RLCURVE)
@@ -9131,6 +10592,17 @@ int lrt_tri_occluded1(const lrt_tri_scene *s, const lrt_ray *ray) {
 #if LRT_TRI_HAS_SSE4
     if (s->layout == 4) return tri_occluded_bvh4_sse(s, ray);
 #endif
+#if LRT_TRI_HAS_SVE
+    if (s->layout == 16 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        !s->quantized)
+        return tri_occluded_bvh16_sve(s, ray);
+    if (s->layout == 8 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        s->quantized && s->qnode == 0)
+        return tri_occluded_bvh8q_sve(s, ray);
+    if (s->layout == 8 && s->prim_kind == TRI_PRIM_TRI && !s->curve &&
+        !s->quantized)
+        return tri_occluded_bvh8_sve(s, ray);
+#endif
     return tri_occluded_scalar(s, ray);
 }
 
@@ -9153,6 +10625,18 @@ void lrt_tri_intersect1N(const lrt_tri_scene *s, const lrt_ray *rays,
         for (size_t i = 0; i < n; i++) lrt_tri_intersect1(s, &rays[i], &hits[i]);
         return;
     }
+#if LRT_TRI_PACKET_SVE
+    /* A64FX: coherent closest-hit via a 16-ray SVE packet (16 rays vs 1 box),
+     * amortizing node/leaf fetches over the packet. Works for any plain-triangle
+     * layout (BVH4/8/8q/16) via tri_node_load. Opt-in (-DLRT_TRI_SVE_PACKET):
+     * not bit-identical to the single-ray kernel (ULP-t / tie prim_id). */
+    if (hint == LRT_TRI_BATCH_COHERENT) {
+        size_t i = 0;
+        for (; i + 16 <= n; i += 16) tri_intersect16_sve(s, &rays[i], &hits[i], 16);
+        if (i < n) tri_intersect16_sve(s, &rays[i], &hits[i], (int)(n - i));
+        return;
+    }
+#endif
 #if LRT_TRI_HAS_SSE4
     if (hint == LRT_TRI_BATCH_COHERENT && s->layout == 4) {
         /* Coherent closest-hit: the Ray4 packet amortizes node and leaf fetches
@@ -9251,13 +10735,7 @@ const char *lrt_tri_kernel_name(const lrt_tri_scene *s) {
 /* ------------------------------------------------------------------------- */
 
 /* Unified view of a wide node's child bounds + refs (quantized nodes decoded
- * into the caller's float[48] scratch). */
-typedef struct tri_node_view {
-    const float *lo_x, *lo_y, *lo_z, *hi_x, *hi_y, *hi_z;
-    const uint32_t *child;
-    int n;
-} tri_node_view;
-
+ * into the caller's float[48] scratch). (tri_node_view declared above.) */
 static inline void tri_node_load(const lrt_tri_scene *s, uint32_t node_ref,
                                  float *dec, tri_node_view *v) {
     if (s->layout == 4) {
@@ -9271,6 +10749,11 @@ static inline void tri_node_load(const lrt_tri_scene *s, uint32_t node_ref,
                          dec + 40);
         v->lo_x = dec; v->lo_y = dec + 8; v->lo_z = dec + 16;
         v->hi_x = dec + 24; v->hi_y = dec + 32; v->hi_z = dec + 40;
+        v->child = n->child; v->n = (int)n->nchildren;
+    } else if (s->layout == 16) {
+        const lrt_bvh16_node *n = &s->nodes16[TRI_REF_NODE(node_ref)];
+        v->lo_x = n->lo_x; v->lo_y = n->lo_y; v->lo_z = n->lo_z;
+        v->hi_x = n->hi_x; v->hi_y = n->hi_y; v->hi_z = n->hi_z;
         v->child = n->child; v->n = (int)n->nchildren;
     } else {
         const lrt_bvh8_node *n = &s->nodes8[TRI_REF_NODE(node_ref)];
@@ -9902,7 +11385,7 @@ lrt_tri_scene *lrt_curve_scene_build(const float *segments, const float *radii,
     }
 
 #if LRT_TRI_HAS_SSE4
-    s->kernel_name = "curve-bvh4/sse4";
+    s->kernel_name = "curve-bvh4/" LRT_SIMD4_SUFFIX;
 #else
     s->kernel_name = "curve-bvh4/scalar";
 #endif
@@ -10172,8 +11655,10 @@ lrt_tri_scene *lrt_roundcurve_scene_build(const lrt_hair_strands *strands,
     }
     tri_build_shade_data(s); /* per-segment p0/r0/p1/r1 from the rlc leaves */
 
-#if LRT_TRI_HAS_SSE4
-    s->kernel_name = "rlcurve-bvh4/sse4";
+#if LRT_TRI_NEON_SHIM
+    s->kernel_name = "rlcurve-bvh4/scalar"; /* NEON leaf slower here; uses scalar */
+#elif LRT_TRI_HAS_SSE4
+    s->kernel_name = "rlcurve-bvh4/" LRT_SIMD4_SUFFIX;
 #else
     s->kernel_name = "rlcurve-bvh4/scalar";
 #endif
@@ -10326,7 +11811,7 @@ lrt_tri_scene *lrt_flatcurve_scene_build(const lrt_hair_strands *strands,
     }
     tri_build_shade_data(s); /* per-segment p0/r0/p1/r1 from the flat leaves */
 #if LRT_TRI_HAS_SSE4
-    s->kernel_name = "flatcurve-bvh4/sse4";
+    s->kernel_name = "flatcurve-bvh4/" LRT_SIMD4_SUFFIX;
 #else
     s->kernel_name = "flatcurve-bvh4/scalar";
 #endif
@@ -10448,7 +11933,7 @@ lrt_tri_scene *lrt_bezcurve_scene_build(const float *cps, size_t nseg,
      * segment parameter cannot be reconstructed -> lrt_tri_curve_frame rejects
      * BEZCURVE scenes. */
 #if LRT_TRI_HAS_SSE4
-    s->kernel_name = "bezcurve-bvh4/sse4";
+    s->kernel_name = "bezcurve-bvh4/" LRT_SIMD4_SUFFIX;
 #else
     s->kernel_name = "bezcurve-bvh4/scalar";
 #endif
@@ -10508,7 +11993,7 @@ static lrt_tri_scene *tri_finish_aabb_build(tri_build_ctx *bc, size_t nprims,
     }
 #if LRT_TRI_HAS_SSE4
     s->kernel_name =
-        prim_kind == TRI_PRIM_SPHERE ? "sphere-bvh4/sse4" : "user-bvh4/sse4";
+        prim_kind == TRI_PRIM_SPHERE ? "sphere-bvh4/" LRT_SIMD4_SUFFIX : "user-bvh4/" LRT_SIMD4_SUFFIX;
 #else
     s->kernel_name = prim_kind == TRI_PRIM_SPHERE ? "sphere-bvh4/scalar"
                                                   : "user-bvh4/scalar";
@@ -11898,7 +13383,7 @@ lrt_tri_scene *lrt_points_scene_build(const float *centers, const float *radii,
     if (s) {
         s->point_type = point_type;
 #if LRT_TRI_HAS_SSE4
-        s->kernel_name = "point-bvh4/sse4";
+        s->kernel_name = "point-bvh4/" LRT_SIMD4_SUFFIX;
 #else
         s->kernel_name = "point-bvh4/scalar";
 #endif
@@ -12332,6 +13817,7 @@ static size_t tri_align_up(size_t x, size_t a) {
 
 static size_t tri_node_stride(int layout, int quantized) {
     return layout == 4    ? sizeof(lrt_bvh4_node)
+           : layout == 16 ? sizeof(lrt_bvh16_node)
            : quantized    ? sizeof(lrt_bvh8q_node)
                           : sizeof(lrt_bvh8_node);
 }
@@ -12435,7 +13921,7 @@ static const void *tri_scene_nodes_ptr(const lrt_tri_scene *s) {
 static void tri_set_kernel_name(lrt_tri_scene *s) {
     if (s->prim_kind == TRI_PRIM_CURVE) {
 #if LRT_TRI_HAS_SSE4
-        s->kernel_name = "curve-bvh4/sse4";
+        s->kernel_name = "curve-bvh4/" LRT_SIMD4_SUFFIX;
 #else
         s->kernel_name = "curve-bvh4/scalar";
 #endif
@@ -12445,6 +13931,11 @@ static void tri_set_kernel_name(lrt_tri_scene *s) {
     s->kernel_name = s->layout == 4 ? "bvh4/sse4"
                      : s->quantized ? "bvh8q/avx2"
                                     : "bvh8/avx2";
+#elif LRT_TRI_NEON_SHIM
+    s->kernel_name = s->layout == 4 ? "bvh4/neon"
+                     : s->layout == 16 ? "bvh16/sve"
+                     : s->quantized ? (LRT_TRI_HAS_SVE ? "bvh8q/sve" : "bvh8q/scalar")
+                                    : (LRT_TRI_HAS_SVE ? "bvh8/sve" : "bvh8/scalar");
 #elif LRT_TRI_HAS_SSE4
     s->kernel_name = s->layout == 4 ? "bvh4/sse4"
                      : s->quantized ? "bvh8q/scalar"
@@ -12498,6 +13989,8 @@ lrt_result lrt_tri_scene_save_to_memory(const lrt_tri_scene *s, void **buf,
         return LRT_RESULT_INVALID_ARGUMENT; /* callbacks/qtri can't serialize */
     if (s->qnode != 0)
         return LRT_RESULT_INVALID_ARGUMENT; /* qnode format not in the v1 header */
+    if (s->layout == 16)
+        return LRT_RESULT_INVALID_ARGUMENT; /* BVH16 not in the serialization format */
     size_t nstride = tri_node_stride(s->layout, s->quantized);
     size_t bstride = s->block_stride;
     size_t node_off =
@@ -12921,6 +14414,7 @@ lrt_result lrt_tri_scene_refit(lrt_tri_scene *s, const float *vertices,
                                size_t ntris) {
     if (!s || !vertices || ntris == 0) return LRT_RESULT_INVALID_ARGUMENT;
     if (s->mem_mapped) return LRT_RESULT_INVALID_ARGUMENT; /* read-only */
+    if (s->layout == 16) return LRT_RESULT_INVALID_ARGUMENT; /* BVH16: no refit */
     if (s->prim_kind != TRI_PRIM_TRI) return LRT_RESULT_INVALID_ARGUMENT;
     /* Validate: ntris must match the original triangle count. */
     if ((size_t)s->original_ntris != ntris)

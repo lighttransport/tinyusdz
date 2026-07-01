@@ -164,6 +164,11 @@ void PrintUsage(const char *prog) {
       << "                        instanced scenes). Falls back to flat if no shares.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
+      << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N.\n"
+      << "  -texBudgetMb <N>      Best-effort decoded texture budget in MiB.\n"
+      << "  -texCompress off|bc   Request BCn compression; currently falls back to\n"
+      << "                        resized 8-bit textures where a backend lacks BCn.\n"
+      << "  -udim sparse|atlas    UDIM handling mode (default sparse).\n"
       << "  -noDirectPrims         Tessellate USD shapes/curves/NURBS instead of\n"
       << "                         using tusdrender direct primitive paths.\n"
       << "  -stats                 Print scene/BVH stats.\n"
@@ -279,6 +284,44 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->smooth = true;
     } else if (a == "-noDisplace" || a == "--noDisplace") {
       opt->displace = false;
+    } else if (a == "-texMaxSize" || a == "--texMaxSize") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->texture_max_size) ||
+          opt->texture_max_size < 0) {
+        std::cerr << "Invalid texture max size.\n";
+        return false;
+      }
+    } else if (a == "-texBudgetMb" || a == "--texBudgetMb") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->texture_budget_mb) ||
+          opt->texture_budget_mb < 0) {
+        std::cerr << "Invalid texture budget.\n";
+        return false;
+      }
+    } else if (a == "-texCompress" || a == "--texCompress") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode(v);
+      if (mode == "off") {
+        opt->texture_compress = Options::TextureCompress::Off;
+      } else if (mode == "bc") {
+        opt->texture_compress = Options::TextureCompress::BCn;
+      } else {
+        std::cerr << "Invalid texture compression mode.\n";
+        return false;
+      }
+    } else if (a == "-udim" || a == "--udim") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode(v);
+      if (mode == "sparse") {
+        opt->udim_mode = Options::UdimMode::Sparse;
+      } else if (mode == "atlas") {
+        opt->udim_mode = Options::UdimMode::Atlas;
+      } else {
+        std::cerr << "Invalid UDIM mode.\n";
+        return false;
+      }
     } else if (a == "-displaceScale" || a == "--displaceScale") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseFloatStrict(v, &opt->displace_scale)) {
