@@ -32,6 +32,16 @@ const std::string* FindAssetPathRemap(
   return nullptr;
 }
 
+uint16_t ApplySchemaPropertyFlags(PropNameId name_id, uint16_t flags) {
+  if (!name_id.is_valid()) return flags;
+  const PropNameTable& names = GetPropNameTable();
+  const std::string& name = names.get(name_id);
+  if (name_id == names.id_xformOpOrder || name == "info:id") {
+    flags |= PropSlot::kFlagUniform;
+  }
+  return flags;
+}
+
 }  // namespace
 
 // ============================================================
@@ -506,6 +516,7 @@ void PrimSpec::add_property(std::string_view name, Value value, uint16_t flags) 
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   if (!name_id.is_valid()) return;
+  flags = ApplySchemaPropertyFlags(name_id, flags);
   // Store value
   if (!values_) values_ = std::make_unique<ValueStorage>();
   uint32_t offset = values_->store(std::move(value));
@@ -602,6 +613,8 @@ PropMeta& PrimSpec::ensure_property_meta(std::string_view prop_name) {
 }
 
 void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t flags) {
+  flags = ApplySchemaPropertyFlags(name_id, flags);
+
   PropSlot slot;
   slot.name_id = name_id;
   slot.value_offset = UINT32_MAX;  // No default value

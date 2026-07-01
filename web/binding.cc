@@ -1823,6 +1823,39 @@ bool AddFallbackAttr(json &props, const std::string &name,
   return true;
 }
 
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::point3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::vector3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::quatf> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = QuatJson(attr.get_value());
+  return true;
+}
+
+template <typename T>
+bool AddTypedAttr(json &props, const std::string &name,
+                  const tinyusdz::TypedAttributeWithFallback<T> &attr) {
+  return AddFallbackAttr(props, name, attr);
+}
+
 template <typename T>
 bool AddAnimatableFallbackAttr(
     json &props, const std::string &name,
@@ -6728,14 +6761,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
     std::string input;
-    try {
-      input.resize(size);
-    } catch (const std::bad_alloc &) {
-      emscripten::val result = emscripten::val::object();
-      result.set("success", false);
-      result.set("error", std::string("Input allocation failed"));
-      return result;
-    }
+    input.resize(size);
     if (size > 0) {
       // Pass length as a JS Number (double): under wasm64 size_t marshals to a
       // BigInt and `new Uint8Array(buffer, byteOffset, bigint)` throws.
@@ -9465,15 +9491,7 @@ class RenderStream {
       return r;
     }
     std::string s;
-    try {
-      s.resize(size);
-    } catch (const std::bad_alloc &) {
-      emscripten::val r = emscripten::val::object();
-      error_ = "Input allocation failed";
-      r.set("success", false);
-      r.set("error", error_);
-      return r;
-    }
+    s.resize(size);
     if (size > 0) {
       emscripten::val view = emscripten::val::global("Uint8Array").new_(
           bytes["buffer"], bytes["byteOffset"],
