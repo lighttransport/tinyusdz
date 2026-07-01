@@ -360,6 +360,10 @@ class VulkanRenderer final : public Renderer {
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  // multiDrawIndirect + drawIndirectFirstInstance + shaderDrawParameters all
+  // present -> the instanced raster pass can draw via vkCmdDrawIndexedIndirect
+  // batches (per-draw meshId/flags come from a gl_DrawIDARB-indexed SSBO).
+  bool mdiSupported_{false};
   VkPipeline tessPipeline_{VK_NULL_HANDLE};
   VkShaderStageFlags pushStages_{VK_SHADER_STAGE_VERTEX_BIT |
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
@@ -442,6 +446,20 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
+  // Set 6 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
+  // entry per mesh plus a trailing slot for the shared box proxy. The fragment
+  // shader indexes it by (baseDraw + gl_DrawIDARB), so a multi-draw-indirect batch
+  // needs no per-draw push. Contents are static per mesh -> (re)built by
+  // ensureDrawMeta() only when the mesh count changes. Host-visible SSBO.
+  VkDescriptorSetLayout drawMetaSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool drawMetaPool_{VK_NULL_HANDLE};
+  VkDescriptorSet drawMetaSet_{VK_NULL_HANDLE};
+  VkBuffer drawMetaBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory drawMetaBufMem_{VK_NULL_HANDLE};
+  uint32_t drawMetaCount_{0};    // slots currently populated (meshes + 1 box slot)
+  uint32_t drawMetaCap_{0};      // slots the buffer can hold
+  uint32_t boxMetaSlot_{0};      // DrawMeta slot the box-proxy draw pushes as baseDraw
+  void ensureDrawMeta();         // rebuild drawMetaBuf_ when meshes_ changes
   // Sets 7 & 8: per-mesh GPU blendshape morph (delta SSBO + per-frame coeff SSBO).
   // Both are "readonly SSBO, vertex stage, binding 0", so they share one layout.
   // Non-morph meshes bind shared 1-element dummy descriptors (the shader statically

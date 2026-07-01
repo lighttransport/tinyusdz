@@ -96,10 +96,16 @@ static_assert(sizeof(PushC) == 128, "PushC must match mesh shaders and fit maxPu
 // Instanced flat-shaded prototype push constants (must match mesh_inst.vert/.frag).
 // viewProj / camPos / scene bbox / renderMode are frame-constant -> set-5 Frame UBO.
 struct InstPushC {
-  float emissive[4];   // 16  xyz selection-highlight override (else 0)
-  int32_t ids[4];      // 16  .x meshId, .y flags, .z/.w pad
+  int32_t draw[4];     // 16  .x = baseDraw: base slot into the DrawMeta SSBO
 };
-static_assert(sizeof(InstPushC) == 32, "InstPushC must match mesh_inst shaders");
+static_assert(sizeof(InstPushC) == 16, "InstPushC must match mesh_inst shaders");
+
+// One DrawMeta entry per instanced draw slot (set 6), fetched in the fragment
+// shader via the vertex-resolved slot (baseDraw + gl_DrawIDARB). Replaces the old
+// per-draw push of meshId/flags so a whole indirect batch shares one binding.
+struct DrawMeta {
+  int32_t ids[4];      // .x meshId, .y flags (geomN/dbl/purpose/kind), .z/.w pad
+};
 
 // Frame-constant uniforms shared by the mesh, tessellation and instanced
 // pipelines (descriptor set 5). Persistently mapped, written once per frame.
@@ -394,6 +400,31 @@ bool VulkanRenderer::createDevice(std::string* err) {
     devExts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
     ci.pNext = &bda;
   }
+
+  // shaderDrawParameters (Vulkan 1.1) exposes gl_DrawIDARB / gl_BaseInstance in the
+  // vertex shader, which the multi-draw-indirect instanced path uses to fetch
+  // per-draw metadata (meshId/flags) from an SSBO instead of a per-draw push
+  // constant. Query it, and chain the feature struct in front of whatever pNext the
+  // RT path set (or nothing). MDI itself needs the two core VkPhysicalDeviceFeatures
+  // flags enabled below. All optional: absent -> mdiSupported_ stays false and the
+  // renderer keeps the per-mesh draw loop.
+  VkPhysicalDeviceShaderDrawParametersFeatures sdp{};
+  sdp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+  {
+    VkPhysicalDeviceShaderDrawParametersFeatures sdpQuery{};
+    sdpQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+    VkPhysicalDeviceFeatures2 f2{};
+    f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    f2.pNext = &sdpQuery;
+    vkGetPhysicalDeviceFeatures2(phys_, &f2);
+    if (sdpQuery.shaderDrawParameters && f2.features.multiDrawIndirect &&
+        f2.features.drawIndirectFirstInstance) {
+      mdiSupported_ = true;
+      sdp.shaderDrawParameters = VK_TRUE;
+      sdp.pNext = const_cast<void*>(ci.pNext);  // preserve the RT chain (or null)
+      ci.pNext = &sdp;
+    }
+  }
   ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
   ci.ppEnabledExtensionNames = devExts.data();
 
@@ -412,6 +443,13 @@ bool VulkanRenderer::createDevice(std::string* err) {
   // when available; ubiquitous on desktop GPUs.
   if (supported.geometryShader) {
     enabledFeatures.geometryShader = VK_TRUE;
+  }
+  // Multi-draw-indirect: draw the whole instanced pass as a few indirect batches
+  // instead of one bind+draw per prototype. drawIndirectFirstInstance lets each
+  // indirect command point at its mesh's slice of the shared instance buffer.
+  if (mdiSupported_) {
+    enabledFeatures.multiDrawIndirect = VK_TRUE;
+    enabledFeatures.drawIndirectFirstInstance = VK_TRUE;
   }
   ci.pEnabledFeatures = &enabledFeatures;
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
@@ -1113,11 +1151,12 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   // Same 10-set layout as the main pipeline so the instanced shader can bind the
-  // GPU-morph SSBOs (sets 7/8/9); sets 0-6 are declared but unused here.
+  // GPU-morph SSBOs (sets 7/8/9) and the Frame UBO (set 5). Sets 0-4 are unused
+  // here; set 6 is the instanced pass's per-draw metadata SSBO (drawMetaSet_).
   VkDescriptorSetLayout setLayouts[10] = {texSetLayout_, skinSetLayout_,
                                           influenceSetLayout_, faceSetLayout_,
                                           texSetLayout_, dispParamsSetLayout_,
-                                          dispMatSetLayout_, morphSetLayout_,
+                                          drawMetaSetLayout_, morphSetLayout_,
                                           morphSetLayout_, morphSetLayout_};
   plci.setLayoutCount = 10;
   plci.pSetLayouts = setLayouts;
@@ -1981,6 +2020,40 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
       mw.pBufferInfo = &mbi;
       vkUpdateDescriptorSets(device_, 1, &mw, 0, nullptr);
     }
+  }
+
+  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read in
+  // the fragment stage via (baseDraw + gl_DrawIDARB). The layout/pool/set are fixed
+  // at init; the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
+  // (The main mesh pipeline keeps dispMatSet_ at set 6 -- separate pipeline layout.)
+  {
+    VkDescriptorSetLayoutBinding db{};
+    db.binding = 0;
+    db.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    db.descriptorCount = 1;
+    db.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dlci{};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 1;
+    dlci.pBindings = &db;
+    VK_CHECK(vkCreateDescriptorSetLayout(device_, &dlci, nullptr, &drawMetaSetLayout_),
+             "draw-meta set layout");
+    VkDescriptorPoolSize dps{};
+    dps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    dps.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo dpci{};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &dps;
+    VK_CHECK(vkCreateDescriptorPool(device_, &dpci, nullptr, &drawMetaPool_),
+             "draw-meta descriptor pool");
+    VkDescriptorSetAllocateInfo dai{};
+    dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool = drawMetaPool_;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts = &drawMetaSetLayout_;
+    vkAllocateDescriptorSets(device_, &dai, &drawMetaSet_);
   }
 
   // Sets 7 & 8: per-mesh GPU blendshape morph (delta SSBO + per-frame coeff SSBO).
@@ -3718,10 +3791,14 @@ void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_,
                             5, 1, &dispParamsSet_, 0, nullptr);
   }
+  if (drawMetaSet_ != VK_NULL_HANDLE) {
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_,
+                            6, 1, &drawMetaSet_, 0, nullptr);
+  }
+  // The box proxy's DrawMeta slot (meshId=-1, geometricNormal flag) is the trailing
+  // entry ensureDrawMeta() appended after the meshes; gl_DrawIDARB == 0 here.
   InstPushC ipc{};
-  ipc.emissive[0] = ipc.emissive[1] = ipc.emissive[2] = 0.0f;
-  ipc.ids[0] = -1;  // meshId: no source-face SSBO lookup (matches GL box draw)
-  ipc.ids[1] = 1;   // flags: geometricNormal (box has no useful vertex normals)
+  ipc.draw[0] = static_cast<int>(boxMetaSlot_);
   vkCmdPushConstants(cb, instPipelineLayout_,
                      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                      sizeof(InstPushC), &ipc);
@@ -4655,6 +4732,64 @@ bool VulkanRenderer::resizeHeadless(int w, int h) {
   return true;
 }
 
+// (Re)build the instanced-pass per-draw metadata SSBO (set 6). One DrawMeta slot
+// per mesh (meshId + geomN/dbl/purpose/kind flag bits) plus a trailing slot for the
+// shared box proxy. Contents are static per mesh, so this only does GPU work when
+// the mesh count changed since the last build (scene (re)load). Must be called
+// outside command-buffer recording and after the in-flight fence, so re-pointing
+// the descriptor set at a fresh buffer is safe.
+void VulkanRenderer::ensureDrawMeta() {
+  if (drawMetaSet_ == VK_NULL_HANDLE) return;  // device lacks the feature path
+  const uint32_t need = static_cast<uint32_t>(meshes_.size()) + 1u;  // +1 box slot
+  if (need == drawMetaCount_ && drawMetaBuf_ != VK_NULL_HANDLE) return;
+
+  std::vector<DrawMeta> meta(need);
+  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+    const auto& m = meshes_[mi];
+    meta[mi].ids[0] = static_cast<int32_t>(mi);  // meshId
+    meta[mi].ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
+                      ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
+    meta[mi].ids[2] = meta[mi].ids[3] = 0;
+  }
+  boxMetaSlot_ = static_cast<uint32_t>(meshes_.size());
+  meta[boxMetaSlot_].ids[0] = -1;  // box proxy: meshId=-1, geomN flag set (matches old push)
+  meta[boxMetaSlot_].ids[1] = 1;
+  meta[boxMetaSlot_].ids[2] = meta[boxMetaSlot_].ids[3] = 0;
+
+  const VkDeviceSize bytes = VkDeviceSize(need) * sizeof(DrawMeta);
+  if (need > drawMetaCap_ || drawMetaBuf_ == VK_NULL_HANDLE) {
+    if (drawMetaBuf_) vkDestroyBuffer(device_, drawMetaBuf_, nullptr);
+    if (drawMetaBufMem_) vkFreeMemory(device_, drawMetaBufMem_, nullptr);
+    drawMetaBuf_ = VK_NULL_HANDLE;
+    drawMetaBufMem_ = VK_NULL_HANDLE;
+    if (!createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, meta.data(),
+                          &drawMetaBuf_, &drawMetaBufMem_)) {
+      drawMetaCount_ = 0;
+      return;
+    }
+    drawMetaCap_ = need;
+    VkDescriptorBufferInfo bi{};
+    bi.buffer = drawMetaBuf_;
+    bi.range = VK_WHOLE_SIZE;
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = drawMetaSet_;
+    w.dstBinding = 0;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w.pBufferInfo = &bi;
+    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+  } else {
+    // Buffer big enough: refresh contents in place (createHostBuffer maps+copies on
+    // create; for the in-place case map the existing memory).
+    void* mapped = nullptr;
+    vkMapMemory(device_, drawMetaBufMem_, 0, bytes, 0, &mapped);
+    std::memcpy(mapped, meta.data(), static_cast<size_t>(bytes));
+    vkUnmapMemory(device_, drawMetaBufMem_);
+  }
+  drawMetaCount_ = need;
+}
+
 void VulkanRenderer::present() { presentImpl(ImGui::GetDrawData(), 0, 0); }
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -4705,6 +4840,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     imagesInFlight_[imageIndex] = inFlight_[frame_];
   }
   vkResetFences(device_, 1, &inFlight_[frame_]);
+
+  // Refresh the instanced-pass per-draw metadata (set 6) if the mesh set changed.
+  // Done here -- outside recording, after the in-flight fence -- so re-pointing the
+  // descriptor set is safe. No-op unless the mesh count changed.
+  ensureDrawMeta();
 
   VkCommandBuffer cb = cmd_[frame_];
   vkResetCommandBuffer(cb, 0);
@@ -5041,16 +5181,21 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 instPipelineLayout_, 5, 1, &dispParamsSet_, 0, nullptr);
       }
+      // Set 6: per-draw metadata SSBO (meshId/flags), shared by the whole pass. The
+      // fragment shader indexes it by (baseDraw + gl_DrawIDARB); in this per-mesh
+      // loop each draw is separate so gl_DrawIDARB == 0 and baseDraw = the mesh's
+      // slot. (P3 replaces the loop with per-block indirect batches over this set.)
+      if (drawMetaSet_ != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 6, 1, &drawMetaSet_, 0, nullptr);
+      }
       InstPushC ipc{};
-      ipc.emissive[0] = ipc.emissive[1] = ipc.emissive[2] = 0.0f;
       for (size_t mi = 0; mi < meshes_.size(); ++mi) {
         if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
         const auto& mesh = meshes_[mi];
         if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
         if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
-        ipc.ids[0] = static_cast<int>(mi);  // meshId
-        ipc.ids[1] = (mesh.geometricNormal ? 1 : 0) | (mesh.doubleSided ? 2 : 0) |
-                     ((mesh.purposeId & 3) << 2) | ((mesh.kindId & 7) << 4);  // flags
+        ipc.draw[0] = static_cast<int>(mi);  // DrawMeta slot for this mesh
         vkCmdPushConstants(cb, instPipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(InstPushC), &ipc);
@@ -5415,6 +5560,10 @@ void VulkanRenderer::shutdown() {
   if (dispMatSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispMatSetLayout_, nullptr); dispMatSetLayout_ = VK_NULL_HANDLE; }
   if (dispMatSsbo_) { vkDestroyBuffer(device_, dispMatSsbo_, nullptr); dispMatSsbo_ = VK_NULL_HANDLE; }
   if (dispMatSsboMem_) { vkFreeMemory(device_, dispMatSsboMem_, nullptr); dispMatSsboMem_ = VK_NULL_HANDLE; dispMatMapped_ = nullptr; }
+  if (drawMetaBuf_) { vkDestroyBuffer(device_, drawMetaBuf_, nullptr); drawMetaBuf_ = VK_NULL_HANDLE; }
+  if (drawMetaBufMem_) { vkFreeMemory(device_, drawMetaBufMem_, nullptr); drawMetaBufMem_ = VK_NULL_HANDLE; }
+  if (drawMetaPool_) { vkDestroyDescriptorPool(device_, drawMetaPool_, nullptr); drawMetaPool_ = VK_NULL_HANDLE; }
+  if (drawMetaSetLayout_) { vkDestroyDescriptorSetLayout(device_, drawMetaSetLayout_, nullptr); drawMetaSetLayout_ = VK_NULL_HANDLE; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
