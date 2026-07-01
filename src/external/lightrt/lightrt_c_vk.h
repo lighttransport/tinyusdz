@@ -208,6 +208,18 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_wide(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
     const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err);
 
+/* Multi-TLAS wide instanced build: as lrt_vk_rtx_scene_build_instanced_wide, but
+ * splits the instances into ceil(ninsts / ~16M) TLAS slices, each its own TLAS
+ * over the SAME shared BLAS set, so a scene with MORE than the device TLAS
+ * maxInstanceCount (2^24) instances renders IN FULL (Moana island's ~42.8M
+ * instances -> 3 TLASes). Trace with lrt_vk_rtx_scene_trace_wide: it traces the
+ * slices sequentially and merges the nearest hit on the host, reporting GLOBAL
+ * instanceIds (0..ninsts-1). Costs K sequential dispatches per trace + K TLAS
+ * instance buffers of VRAM; the BLAS is stored once regardless of K. */
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_multi(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err);
+
 /* Trace n rays against the resident AS. Returns #rays that hit, or -1 on error.
  * Trace buffers are reused/grown across calls. Rejects (-1) a scene built with
  * the wide builder -- use lrt_vk_rtx_scene_trace_wide for those. */
@@ -231,6 +243,10 @@ typedef struct lrt_hit_wide {
 int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                                 const lrt_ray *rays, uint32_t n, lrt_hit_wide *out,
                                 lrt_result *err);
+
+/* Number of TLAS slices the scene was built with (1 for a single-TLAS scene, >1
+ * for a multi-TLAS scene). 0 if s is NULL. Informational (logging / tests). */
+uint32_t lrt_vk_rtx_scene_ntlas(const lrt_vk_rtx_scene *s);
 
 void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s);
 
