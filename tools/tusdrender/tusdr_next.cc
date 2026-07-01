@@ -1261,7 +1261,8 @@ static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
-    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs);
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
+    size_t max_jobs);
 // Native (scenegraph instanceable) instance: place the prototype's geometry at the
 // instance proxy's world transform.
 static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
@@ -1282,8 +1283,9 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
-                                bool expand_instancers) {
+                                bool expand_instancers, size_t max_jobs) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  if (max_jobs && jobs->size() >= max_jobs) return;  // instance budget reached
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -1314,7 +1316,8 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     // GPU flatten path: expand the instancer into world-space placements (no GPU
     // TLAS). Two-level callers leave expand_instancers=false and stop here.
     if (expand_instancers)
-      ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs);
+      ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs,
+                                   max_jobs);
     return;
   }
   {
@@ -1322,7 +1325,8 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     if (ispec && !ispec->meta().instance_prototype().empty()) {
       // Scenegraph (instanceable) native instance proxy: its children come from
       // the prototype. GPU flatten path expands it; two-level callers stop here.
-      if (expand_instancers && PathMatchesMask(prim.GetPath().str(), mask))
+      if (expand_instancers && (!max_jobs || jobs->size() < max_jobs) &&
+          PathMatchesMask(prim.GetPath().str(), mask))
         ExpandNativeInstanceJobsNext(stage, ispec->meta().instance_prototype(),
                                      world, purpose, time, jobs);
       return;
@@ -1337,8 +1341,9 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     jobs->push_back(std::move(job));
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    if (max_jobs && jobs->size() >= max_jobs) break;
     CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs,
-                               expand_instancers);
+                               expand_instancers, max_jobs);
   }
 }
 
@@ -1353,7 +1358,8 @@ static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
-    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs) {
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
+    size_t max_jobs) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
   const std::vector<tinyusdz::next::Path> *targets =
       instancer.GetRelationship("prototypes");
@@ -1405,6 +1411,7 @@ static void ExpandPointInstancerJobsNext(
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
+    if (max_jobs && jobs->size() >= max_jobs) break;  // instance budget reached
     if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= targets->size()) continue;

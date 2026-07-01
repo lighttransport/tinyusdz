@@ -523,6 +523,52 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     }
   }
 
+  // Graceful 32-bit prim_id cap: the hit id encodes instance*stride + localTri, so
+  // the encodable instance count is (2^32-1)/stride (stride = max prototype tris).
+  // Rather than let the build reject the whole scene (which fell back to the flat
+  // path and OOMed on Moana island), keep the CAMERA-NEAREST placements and render
+  // a bounded instanced subset. (Keeping the first-collected subset would render
+  // off-screen under whole-scene auto-framing.) A future 64-bit hit encoding lifts
+  // this entirely.
+  uint32_t stride = 1;
+  for (const GpuInstProto &pr : scene.protos) stride = std::max(stride, pr.ntris);
+  const uint64_t max_inst = 0xFFFFFFFEull / uint64_t(stride);
+  if (scene.insts.size() > max_inst) {
+    const Vec3 eye = camera.origin, fwd = camera.forward;
+    auto depth = [&](const GpuInstPlacement &p) {  // view-space depth of o2w origin
+      return (p.o2w[3] - eye.x) * fwd.x + (p.o2w[7] - eye.y) * fwd.y +
+             (p.o2w[11] - eye.z) * fwd.z;
+    };
+    std::nth_element(scene.insts.begin(), scene.insts.begin() + size_t(max_inst),
+                     scene.insts.end(),
+                     [&](const GpuInstPlacement &a, const GpuInstPlacement &b) {
+                       return depth(a) < depth(b);
+                     });
+    std::cerr << "[vkInstanced] capping " << scene.insts.size() << " -> " << max_inst
+              << " instances to fit the 32-bit prim_id encoding (stride=" << stride
+              << "); keeping the camera-nearest subset.\n";
+    scene.insts.resize(size_t(max_inst));
+  }
+
+  // Prune prototypes no instance references (the cap / LOD can orphan many), so we
+  // don't build a BLAS per unused prototype. Remap the survivors compactly.
+  {
+    std::vector<uint32_t> remap(scene.protos.size(), 0xFFFFFFFFu);
+    std::vector<GpuInstProto> kept;
+    kept.reserve(scene.protos.size());
+    for (GpuInstPlacement &in : scene.insts) {
+      if (remap[in.proto] == 0xFFFFFFFFu) {
+        remap[in.proto] = uint32_t(kept.size());
+        kept.push_back(std::move(scene.protos[in.proto]));
+      }
+      in.proto = remap[in.proto];
+    }
+    if (kept.size() < scene.protos.size() && opt.stats)
+      std::cerr << "[vkInstanced] pruned " << scene.protos.size() << " -> "
+                << kept.size() << " referenced prototypes\n";
+    scene.protos.swap(kept);
+  }
+
   return RunVulkanLightRTInstanced(opt, scene, camera, out_height);
 }
 #endif  // HAVE_VULKAN
@@ -635,11 +681,28 @@ int main(int argc, char **argv) {
     // prototypes + placements, and render. On any failure (no shares, ray query
     // unavailable, encoding overflow) fall through to the flat GPU path below.
     if (opt.vulkan_instanced && opt.vulkan_rt) {
+      // Instance budget: cap the emitted placements so a huge instancer (Moana
+      // island: tens of millions) yields a bounded preview instead of OOMing the
+      // host during collection. Default 12M jobs (~2.4 GB of MeshJobNext), env-
+      // overridable. The 32-bit prim_id cap in TryRunInstancedVk may lower it
+      // further (a large prototype shrinks the encodable instance count).
+      size_t inst_budget = 12000000;
+      if (const char *e = std::getenv("TUSDR_INST_BUDGET")) {
+        long v = std::atol(e);
+        if (v > 0) inst_budget = size_t(v);
+      }
       std::vector<MeshJobNext> mjobs;
-      for (const auto &root : stage.GetRootPrims())
+      for (const auto &root : stage.GetRootPrims()) {
+        if (mjobs.size() >= inst_budget) break;
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
                                    tinyusdz::Purpose::Default, opt.timecode,
-                                   opt.mask, &mjobs, /*expand_instancers=*/true);
+                                   opt.mask, &mjobs, /*expand_instancers=*/true,
+                                   inst_budget);
+      }
+      if (mjobs.size() >= inst_budget)
+        std::cerr << "[vkInstanced] instance budget " << inst_budget
+                  << " reached; rendering a bounded subset (raise via "
+                     "TUSDR_INST_BUDGET).\n";
       if (TryRunInstancedVk(stage, mjobs, opt)) return EXIT_SUCCESS;
       std::cerr << "[vkInstanced] falling back to the flat GPU path.\n";
     }

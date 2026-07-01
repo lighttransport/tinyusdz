@@ -396,13 +396,19 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // only way to render instanced geometry (no GPU TLAS). Default false keeps the
 // two-level proto-collection callers byte-identical (they stop at instancers and
 // place prototype BLAS via the TLAS instead).
+//
+// `max_jobs` (0 = unlimited) caps the emitted-job count: once `jobs` reaches it,
+// instancer expansion stops early. This bounds host memory on scenes with tens of
+// millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
+// a budget so a huge instancer yields a bounded preview instead of OOMing.
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
-                                bool expand_instancers = false);
+                                bool expand_instancers = false,
+                                size_t max_jobs = 0);
 
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
