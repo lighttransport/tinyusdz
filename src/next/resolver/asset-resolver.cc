@@ -50,19 +50,6 @@ bool FileExistsImpl(const std::string& path) {
 #endif
 }
 
-bool DirectoryExistsImpl(const std::string& path) {
-#if defined(__EMSCRIPTEN__)
-  (void)path;
-  return false;
-#elif defined(_WIN32)
-  std::ifstream f(path);
-  return f.good();
-#else
-  struct stat st;
-  return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-#endif
-}
-
 std::string GetCurrentWorkingDirectory() {
 #if defined(__EMSCRIPTEN__)
   // No filesystem (and the getcwd syscall ABORTS under -sFILESYSTEM=0).

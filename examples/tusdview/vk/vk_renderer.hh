@@ -287,6 +287,14 @@ class VulkanRenderer final : public Renderer {
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView);
+  bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
+                                    VkImage* outImg, VkDeviceMemory* outMem,
+                                    VkImageView* outView);
+  bool createUdimTextureArrayImage(const DrawTextureCPU& tex, VkImage* outImg,
+                                   VkDeviceMemory* outMem,
+                                   VkImageView* outView);
+  bool createUdimLookupImage(const DrawTextureCPU& tex, VkImage* outImg,
+                             VkDeviceMemory* outMem, VkImageView* outView);
   bool createRgba32fTextureImage(int width, int height, const float* data,
                                  VkImage* outImg, VkDeviceMemory* outMem,
                                  VkImageView* outView);
@@ -465,11 +473,25 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory blackMem_{VK_NULL_HANDLE};
   VkImageView blackView_{VK_NULL_HANDLE};
   VkDescriptorSet blackDesc_{VK_NULL_HANDLE};
+  VkImage dummyArrayImg_{VK_NULL_HANDLE};
+  VkDeviceMemory dummyArrayMem_{VK_NULL_HANDLE};
+  VkImageView dummyArrayView_{VK_NULL_HANDLE};
+  VkDescriptorSet dummyArrayDesc_{VK_NULL_HANDLE};
+  VkImage dummyLutImg_{VK_NULL_HANDLE};
+  VkDeviceMemory dummyLutMem_{VK_NULL_HANDLE};
+  VkImageView dummyLutView_{VK_NULL_HANDLE};
+  VkDescriptorSet dummyLutDesc_{VK_NULL_HANDLE};
   std::vector<VkImage> texImgs_;
   std::vector<VkDeviceMemory> texMems_;
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
+  std::vector<VkDescriptorSet> texUdimArrayDescs_;
+  std::vector<VkDescriptorSet> texUdimLutDescs_;
+  std::vector<uint8_t> texIsUdim_;
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
+  std::vector<int> matMetalRoughTex_;  // per material: DrawScene texture index or -1
+  std::vector<int> matNormalTex_;      // per material: DrawScene texture index or -1
+  std::vector<int> matEmissiveTex_;    // per material: DrawScene texture index or -1
   std::vector<int> matDispTex_;  // per material: displacement texture index or -1
   std::vector<float> matDispConst_;  // per material: constant displacement amount
 

@@ -832,12 +832,20 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Set 6: per-material displacement texture scale/bias SSBO.
   // Sets 7 & 8: per-mesh GPU blendshape morph delta + coefficient SSBOs.
   // Set 9: per-mesh per-entry channelId SSBO (active-channel skip pre-check).
-  VkDescriptorSetLayout setLayouts[10] = {texSetLayout_, skinSetLayout_,
+  // Sets 10-12: preview-shading metal/roughness, emissive and normal textures.
+  // Sets 13-20: sparse UDIM array/LUT pairs for base, MR, normal and emissive.
+  VkDescriptorSetLayout setLayouts[21] = {texSetLayout_, skinSetLayout_,
                                           influenceSetLayout_, faceSetLayout_,
                                           texSetLayout_, dispParamsSetLayout_,
                                           dispMatSetLayout_, morphSetLayout_,
-                                          morphSetLayout_, morphSetLayout_};
-  plci.setLayoutCount = 10;
+                                          morphSetLayout_, morphSetLayout_,
+                                          texSetLayout_, texSetLayout_,
+                                          texSetLayout_, texSetLayout_,
+                                          texSetLayout_, texSetLayout_,
+                                          texSetLayout_, texSetLayout_,
+                                          texSetLayout_, texSetLayout_,
+                                          texSetLayout_};
+  plci.setLayoutCount = 21;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1809,7 +1817,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
 
   // One combined-image-sampler set per texture (cap = pool size); reset+realloc
   // on each uploadScene.
-  const uint32_t kMaxTexSets = 1024;
+  const uint32_t kMaxTexSets = 8192;
   VkDescriptorPoolSize ps{};
   ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   ps.descriptorCount = kMaxTexSets;
@@ -2241,6 +2249,286 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
 }
 
+bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& img,
+                                                  bool srgb, VkImage* outImg,
+                                                  VkDeviceMemory* outMem,
+                                                  VkImageView* outView) {
+  if (img.width <= 0 || img.height <= 0 || img.data.empty()) return false;
+  VkFormat format = VK_FORMAT_UNDEFINED;
+  if (img.format == DrawCompressedFormat::BC1) {
+    format = srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK
+                  : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::BC3) {
+    format = srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+  }
+  if (format == VK_FORMAT_UNDEFINED) return false;
+
+  const VkDeviceSize size = img.data.size();
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, img.data.data(),
+                        &staging, &stagingMem)) {
+    return false;
+  }
+
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = format;
+  ici.extent = {static_cast<uint32_t>(img.width),
+                static_cast<uint32_t>(img.height), 1};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, *outImg, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex =
+      findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device_, &mai, nullptr, outMem);
+  vkBindImageMemory(device_, *outImg, *outMem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {static_cast<uint32_t>(img.width),
+                        static_cast<uint32_t>(img.height), 1};
+  vkCmdCopyBufferToImage(cb, staging, *outImg,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = *outImg;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  vci.format = format;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+}
+
+bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
+                                                 VkImage* outImg,
+                                                 VkDeviceMemory* outMem,
+                                                 VkImageView* outView) {
+  if (!tex.isUdim || tex.udimTiles.empty() || tex.udimTileWidth <= 0 ||
+      tex.udimTileHeight <= 0) {
+    return false;
+  }
+  const size_t layerSize =
+      static_cast<size_t>(tex.udimTileWidth) * tex.udimTileHeight * 4;
+  std::vector<uint8_t> layers(layerSize * tex.udimTiles.size(), 255);
+  for (size_t i = 0; i < tex.udimTiles.size(); ++i) {
+    const light3d::Image& img = tex.udimTiles[i].image;
+    if (img.width != tex.udimTileWidth || img.height != tex.udimTileHeight ||
+        img.channels != 4 || img.data.size() < layerSize) {
+      continue;
+    }
+    std::memcpy(layers.data() + layerSize * i, img.data.data(), layerSize);
+  }
+
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(static_cast<VkDeviceSize>(layers.size()),
+                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, layers.data(),
+                        &staging, &stagingMem)) {
+    return false;
+  }
+
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.extent = {static_cast<uint32_t>(tex.udimTileWidth),
+                static_cast<uint32_t>(tex.udimTileHeight), 1};
+  ici.mipLevels = 1;
+  ici.arrayLayers = static_cast<uint32_t>(tex.udimTiles.size());
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, *outImg, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex =
+      findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device_, &mai, nullptr, outMem);
+  vkBindImageMemory(device_, *outImg, *outMem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = ici.arrayLayers;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = ici.arrayLayers;
+  region.imageExtent = ici.extent;
+  vkCmdCopyBufferToImage(cb, staging, *outImg,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = *outImg;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = ici.arrayLayers;
+  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+}
+
+bool VulkanRenderer::createUdimLookupImage(const DrawTextureCPU& tex,
+                                           VkImage* outImg,
+                                           VkDeviceMemory* outMem,
+                                           VkImageView* outView) {
+  uint8_t lut[100];
+  for (int i = 0; i < 100; ++i) {
+    const int layer = tex.udimLayer[static_cast<size_t>(i)];
+    lut[i] = static_cast<uint8_t>(layer >= 0 ? std::min(layer + 1, 255) : 0);
+  }
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(sizeof(lut), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, lut,
+                        &staging, &stagingMem)) {
+    return false;
+  }
+
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_1D;
+  ici.format = VK_FORMAT_R8_UNORM;
+  ici.extent = {100u, 1u, 1u};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(device_, *outImg, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex =
+      findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device_, &mai, nullptr, outMem);
+  vkBindImageMemory(device_, *outImg, *outMem, 0);
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = ici.extent;
+  vkCmdCopyBufferToImage(cb, staging, *outImg,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = *outImg;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_1D;
+  vci.format = VK_FORMAT_R8_UNORM;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+}
+
 bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
                                                const float* data,
                                                VkImage* outImg,
@@ -2393,6 +2681,22 @@ bool VulkanRenderer::createWhiteTexture(std::string* err) {
   b.data = {0, 0, 0, 255};
   if (!createTextureImage(b, &blackImg_, &blackMem_, &blackView_)) {
     if (err) *err = "failed to create black texture";
+    return false;
+  }
+  DrawTextureCPU dummy;
+  dummy.isUdim = true;
+  dummy.udimTileWidth = 1;
+  dummy.udimTileHeight = 1;
+  dummy.udimLayer.fill(-1);
+  DrawUdimTileCPU tile;
+  tile.udim = 1001;
+  tile.image = w;
+  dummy.udimTiles.push_back(std::move(tile));
+  if (!createUdimTextureArrayImage(dummy, &dummyArrayImg_, &dummyArrayMem_,
+                                   &dummyArrayView_) ||
+      !createUdimLookupImage(dummy, &dummyLutImg_, &dummyLutMem_,
+                             &dummyLutView_)) {
+    if (err) *err = "failed to create dummy UDIM textures";
     return false;
   }
   return true;
@@ -2740,6 +3044,9 @@ void VulkanRenderer::destroyScene() {
   freeHostPool();
   matColor_.clear();
   matBaseTex_.clear();
+  matMetalRoughTex_.clear();
+  matNormalTex_.clear();
+  matEmissiveTex_.clear();
 
   // UsdVol volumes (3D images + UBOs + descriptor sets).
   for (auto& gv : volumes_) {
@@ -2775,6 +3082,9 @@ void VulkanRenderer::destroyScene() {
   texImgs_.clear();
   texMems_.clear();
   texDescs_.clear();
+  texUdimArrayDescs_.clear();
+  texUdimLutDescs_.clear();
+  texIsUdim_.clear();
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
   if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
@@ -2794,6 +3104,8 @@ void VulkanRenderer::destroyScene() {
   }
   whiteDesc_ = VK_NULL_HANDLE;
   blackDesc_ = VK_NULL_HANDLE;
+  dummyArrayDesc_ = VK_NULL_HANDLE;
+  dummyLutDesc_ = VK_NULL_HANDLE;
 }
 
 void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
@@ -2804,13 +3116,23 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   // Default white texture descriptor + one white slot per texture (filled lazily).
   whiteDesc_ = allocTexDescriptor(whiteView_);
   blackDesc_ = allocTexDescriptor(blackView_);  // set 4 default = no displacement
+  dummyArrayDesc_ = allocTexDescriptor(dummyArrayView_);
+  dummyLutDesc_ = allocTexDescriptor(dummyLutView_);
   texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
+  texUdimArrayDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                            dummyArrayDesc_);
+  texUdimLutDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                          dummyLutDesc_);
+  texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
 
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
   // (metallic, roughness, 0, 0), emissive.rgb+0. The raster path's per-draw push
   // constants still carry only baseColor (matColor_ row 0), read with stride 12.
   matColor_.resize(materials.size() * 12);
   matBaseTex_.resize(materials.size());
+  matMetalRoughTex_.resize(materials.size());
+  matNormalTex_.resize(materials.size());
+  matEmissiveTex_.resize(materials.size());
   matDispTex_.resize(materials.size());
   matDispConst_.resize(materials.size());
   for (size_t i = 0; i < materials.size(); ++i) {
@@ -2824,6 +3146,9 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matColor_[i * 12 + 9] = materials[i].emissive[1];
     matColor_[i * 12 + 10] = materials[i].emissive[2];
     matBaseTex_[i] = materials[i].baseColorTex;
+    matMetalRoughTex_[i] = materials[i].metalRoughTex;
+    matNormalTex_[i] = materials[i].normalTex;
+    matEmissiveTex_[i] = materials[i].emissiveTex;
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
     // Per-material displacement texture scale/bias -> set 6 SSBO (2 floats each).
@@ -2840,11 +3165,46 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   VkImage img = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
   VkImageView view = VK_NULL_HANDLE;
-  if (createTextureImage(t.image, &img, &mem, &view)) {
+  bool ok = false;
+  if (t.requestedCompressed && t.compressed.format != DrawCompressedFormat::None) {
+    ok = createCompressedTextureImage(t.compressed, t.srgb, &img, &mem, &view);
+  }
+  if (!ok) {
+    ok = createTextureImage(t.image, &img, &mem, &view);
+  }
+  if (ok) {
     texImgs_.push_back(img);
     texMems_.push_back(mem);
     texViews_.push_back(view);
     texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
+  }
+  if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size() &&
+      static_cast<size_t>(slot) < texUdimLutDescs_.size()) {
+    VkImage arrImg = VK_NULL_HANDLE;
+    VkDeviceMemory arrMem = VK_NULL_HANDLE;
+    VkImageView arrView = VK_NULL_HANDLE;
+    VkImage lutImg = VK_NULL_HANDLE;
+    VkDeviceMemory lutMem = VK_NULL_HANDLE;
+    VkImageView lutView = VK_NULL_HANDLE;
+    if (createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView) &&
+        createUdimLookupImage(t, &lutImg, &lutMem, &lutView)) {
+      texImgs_.push_back(arrImg);
+      texMems_.push_back(arrMem);
+      texViews_.push_back(arrView);
+      texImgs_.push_back(lutImg);
+      texMems_.push_back(lutMem);
+      texViews_.push_back(lutView);
+      texUdimArrayDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(arrView);
+      texUdimLutDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(lutView);
+      texIsUdim_[static_cast<size_t>(slot)] = 1;
+    } else {
+      if (arrView) vkDestroyImageView(device_, arrView, nullptr);
+      if (arrImg) vkDestroyImage(device_, arrImg, nullptr);
+      if (arrMem) vkFreeMemory(device_, arrMem, nullptr);
+      if (lutView) vkDestroyImageView(device_, lutView, nullptr);
+      if (lutImg) vkDestroyImage(device_, lutImg, nullptr);
+      if (lutMem) vkFreeMemory(device_, lutMem, nullptr);
+    }
   }
 }
 
@@ -4528,18 +4888,71 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdBindVertexBuffers(cb, 0, 7, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
-        // Bind the submesh's base-color texture (white if untextured).
-        VkDescriptorSet ds = whiteDesc_;
-        if (sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < matBaseTex_.size()) {
-          const int bt = matBaseTex_[static_cast<size_t>(sub.materialId)];
-          if (bt >= 0 && static_cast<size_t>(bt) < texDescs_.size()) {
-            ds = texDescs_[static_cast<size_t>(bt)];
+        auto materialTexSlot = [&](const std::vector<int>& slots) -> int {
+          if (sub.materialId >= 0 &&
+              static_cast<size_t>(sub.materialId) < slots.size()) {
+            return slots[static_cast<size_t>(sub.materialId)];
           }
-        }
+          return -1;
+        };
+        auto textureDesc = [&](int slot, VkDescriptorSet fallback) -> VkDescriptorSet {
+          if (slot >= 0 && static_cast<size_t>(slot) < texDescs_.size()) {
+            return texDescs_[static_cast<size_t>(slot)];
+          }
+          return fallback;
+        };
+        auto udimArrayDesc = [&](int slot) -> VkDescriptorSet {
+          if (slot >= 0 && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
+            return texUdimArrayDescs_[static_cast<size_t>(slot)];
+          }
+          return dummyArrayDesc_;
+        };
+        auto udimLutDesc = [&](int slot) -> VkDescriptorSet {
+          if (slot >= 0 && static_cast<size_t>(slot) < texUdimLutDescs_.size()) {
+            return texUdimLutDescs_[static_cast<size_t>(slot)];
+          }
+          return dummyLutDesc_;
+        };
+        auto isUdimSlot = [&](int slot) -> bool {
+          return slot >= 0 && static_cast<size_t>(slot) < texIsUdim_.size() &&
+                 texIsUdim_[static_cast<size_t>(slot)] != 0;
+        };
+        const int baseSlot = materialTexSlot(matBaseTex_);
+        const int mrSlot = materialTexSlot(matMetalRoughTex_);
+        const int emSlot = materialTexSlot(matEmissiveTex_);
+        const int nmSlot = materialTexSlot(matNormalTex_);
+
+        // Bind the submesh's base-color texture (white if untextured).
+        VkDescriptorSet ds = textureDesc(baseSlot, whiteDesc_);
         if (ds != VK_NULL_HANDLE) {
           vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                   0, 1, &ds, 0, nullptr);
+        }
+        VkDescriptorSet mrDs = textureDesc(mrSlot, whiteDesc_);
+        VkDescriptorSet emDs = textureDesc(emSlot, whiteDesc_);
+        VkDescriptorSet nmDs = textureDesc(nmSlot, whiteDesc_);
+        if (mrDs != VK_NULL_HANDLE) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                  10, 1, &mrDs, 0, nullptr);
+        }
+        if (emDs != VK_NULL_HANDLE) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                  11, 1, &emDs, 0, nullptr);
+        }
+        if (nmDs != VK_NULL_HANDLE) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                  12, 1, &nmDs, 0, nullptr);
+        }
+        VkDescriptorSet udimSets[8] = {udimArrayDesc(baseSlot), udimLutDesc(baseSlot),
+                                       udimArrayDesc(mrSlot),   udimLutDesc(mrSlot),
+                                       udimArrayDesc(nmSlot),   udimLutDesc(nmSlot),
+                                       udimArrayDesc(emSlot),   udimLutDesc(emSlot)};
+        for (uint32_t si = 0; si < 8; ++si) {
+          if (udimSets[si] != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout_, 13 + si, 1, &udimSets[si],
+                                    0, nullptr);
+          }
         }
         // Set 4: displacement height map (vertex stage). Black (red=0) when the
         // material has no displacement or displacement is globally off, so the
@@ -4591,6 +5004,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         pc.ids[1] = flags;
         pc.ids[2] = static_cast<int>(mi);
         pc.ids[3] = 0;
+        if (isUdimSlot(baseSlot)) pc.ids[3] |= 1;
+        if (isUdimSlot(mrSlot)) pc.ids[3] |= 2;
+        if (isUdimSlot(nmSlot)) pc.ids[3] |= 4;
+        if (isUdimSlot(emSlot)) pc.ids[3] |= 8;
+        if (nmSlot >= 0) pc.ids[3] |= 16;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
@@ -4969,6 +5387,12 @@ void VulkanRenderer::shutdown() {
   if (blackView_) { vkDestroyImageView(device_, blackView_, nullptr); blackView_ = VK_NULL_HANDLE; }
   if (blackImg_) { vkDestroyImage(device_, blackImg_, nullptr); blackImg_ = VK_NULL_HANDLE; }
   if (blackMem_) { vkFreeMemory(device_, blackMem_, nullptr); blackMem_ = VK_NULL_HANDLE; }
+  if (dummyArrayView_) { vkDestroyImageView(device_, dummyArrayView_, nullptr); dummyArrayView_ = VK_NULL_HANDLE; }
+  if (dummyArrayImg_) { vkDestroyImage(device_, dummyArrayImg_, nullptr); dummyArrayImg_ = VK_NULL_HANDLE; }
+  if (dummyArrayMem_) { vkFreeMemory(device_, dummyArrayMem_, nullptr); dummyArrayMem_ = VK_NULL_HANDLE; }
+  if (dummyLutView_) { vkDestroyImageView(device_, dummyLutView_, nullptr); dummyLutView_ = VK_NULL_HANDLE; }
+  if (dummyLutImg_) { vkDestroyImage(device_, dummyLutImg_, nullptr); dummyLutImg_ = VK_NULL_HANDLE; }
+  if (dummyLutMem_) { vkFreeMemory(device_, dummyLutMem_, nullptr); dummyLutMem_ = VK_NULL_HANDLE; }
   if (boneMapped_) { vkUnmapMemory(device_, boneMem_); boneMapped_ = nullptr; }
   if (boneBuf_) { vkDestroyBuffer(device_, boneBuf_, nullptr); boneBuf_ = VK_NULL_HANDLE; }
   if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }

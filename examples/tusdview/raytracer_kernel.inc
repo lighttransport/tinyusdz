@@ -12,6 +12,7 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[3]; int blasRoot; int instId; };
+struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; };
 
 typedef struct { float x, y, z; } F3;
 __device__ F3 mk(float x, float y, float z){ F3 r; r.x=x; r.y=y; r.z=z; return r; }
@@ -26,6 +27,34 @@ __device__ F3 idColor(int id){
   if (id<0) return mk(0.45f,0.45f,0.45f);
   unsigned int h=((unsigned int)id+1u)*2654435761u;
   return mk((h&255u)*(1.f/255.f), ((h>>8)&255u)*(1.f/255.f), ((h>>16)&255u)*(1.f/255.f));
+}
+__device__ float wrapCoord(float x, int mode){
+  if (mode==0 || mode==3) return fminf(fmaxf(x,0.f),1.f);       // clamp
+  if (mode==2){ float t=floorf(x); float f=x-t; return ((int)t&1)?(1.f-f):f; } // mirror
+  return x-floorf(x);                                            // repeat
+}
+__device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
+                           int numTex, int id, float u, float v){
+  if (!texels || !tex || id<0 || id>=numTex) return mk(1.f,1.f,1.f);
+  TexDesc td=tex[id];
+  if (td.width<=0 || td.height<=0) return mk(1.f,1.f,1.f);
+  float su=wrapCoord(u,td.wrapS)*(td.width-1);
+  float sv=wrapCoord(v,td.wrapT)*(td.height-1);
+  int x0=(int)floorf(su), y0=(int)floorf(sv);
+  int x1=(x0+1<td.width)?(x0+1):(td.width-1);
+  int y1=(y0+1<td.height)?(y0+1):(td.height-1);
+  float tx=su-x0, ty=sv-y0;
+  const unsigned char* p00=texels+td.offset+(y0*td.width+x0)*4;
+  const unsigned char* p10=texels+td.offset+(y0*td.width+x1)*4;
+  const unsigned char* p01=texels+td.offset+(y1*td.width+x0)*4;
+  const unsigned char* p11=texels+td.offset+(y1*td.width+x1)*4;
+  F3 c00=mk(p00[0]*(1.f/255.f),p00[1]*(1.f/255.f),p00[2]*(1.f/255.f));
+  F3 c10=mk(p10[0]*(1.f/255.f),p10[1]*(1.f/255.f),p10[2]*(1.f/255.f));
+  F3 c01=mk(p01[0]*(1.f/255.f),p01[1]*(1.f/255.f),p01[2]*(1.f/255.f));
+  F3 c11=mk(p11[0]*(1.f/255.f),p11[1]*(1.f/255.f),p11[2]*(1.f/255.f));
+  F3 a=add(scale(c00,1.f-tx),scale(c10,tx));
+  F3 b=add(scale(c01,1.f-tx),scale(c11,tx));
+  return add(scale(a,1.f-ty),scale(b,ty));
 }
 
 // Hash RNG + cosine-weighted hemisphere sampler for ambient occlusion.
@@ -284,6 +313,8 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const float* matPbr, int numMats,
+                                 const int* matTex, const unsigned char* texels,
+                                 const TexDesc* textures, int numTextures,
                                  const float* uvs, const float* uvs1,
                                  const float* infls, const int* faces,
                                  const float* domw, const int* domj,
@@ -331,6 +362,18 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     const float* cv=&cols[ht*9];
     F3 base=mk(cv[0]*w0+cv[3]*bu+cv[6]*bv, cv[1]*w0+cv[4]*bu+cv[7]*bv, cv[2]*w0+cv[5]*bu+cv[8]*bv);
     base=mk(base.x*I->tint[0], base.y*I->tint[1], base.z*I->tint[2]);  // per-instance tint
+    const float* uvh=&uvs[ht*6];
+    float uu=uvh[0]*w0+uvh[2]*bu+uvh[4]*bv;
+    float vv2=uvh[1]*w0+uvh[3]*bu+uvh[5]*bv;
+    int mid=mats[ht];
+    int baseTex=-1, mrTex=-1, normalTex=-1, emissiveTex=-1;
+    if (matTex && mid>=0 && mid<numMats){
+      baseTex=matTex[mid*4+0]; mrTex=matTex[mid*4+1];
+      normalTex=matTex[mid*4+2]; emissiveTex=matTex[mid*4+3];
+    }
+    (void)normalTex;
+    F3 bt=sampleTexRGB(texels,textures,numTextures,baseTex,uu,vv2);
+    base=mk(base.x*bt.x,base.y*bt.y,base.z*bt.z);
 
     // Default shaded view: match the tusdrender -vk/-vkr preview exactly so the
     // two GPU ray-traced previews agree (tools/tusdrender/tusdr_vulkan.cc). Orient
@@ -343,7 +386,13 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float key=fmaxf(dot3(Ns,L),0.f);
     float head=fmaxf(dot3(Ns,V),0.f);
     float k=0.05f+0.8f*key+0.35f*head;
-    outc=mk(base.x*k,base.y*k,base.z*k);
+    F3 em=mk(0.f,0.f,0.f);
+    if (mid>=0&&mid<numMats) {
+      em=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);
+      F3 et=sampleTexRGB(texels,textures,numTextures,emissiveTex,uu,vv2);
+      em=mk(em.x*et.x,em.y*et.y,em.z*et.z);
+    }
+    outc=add(mk(base.x*k,base.y*k,base.z*k),em);
     // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
     // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).
     int rmode=(int)(cam.clear[3]+0.5f);
@@ -377,8 +426,6 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);
       outc=mk(Ng.x*0.5f+0.5f, Ng.y*0.5f+0.5f, Ng.z*0.5f+0.5f);
     } else if (rmode==5){
-      const float* uv=&uvs[ht*6];
-      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       outc=mk(uu-floorf(uu), vv2-floorf(vv2), 0.f);
     } else if (rmode==6){
       float dd=fminf(fmaxf(t/fmaxf(cam.lightDir[3],1e-3f),0.f),1.f);
@@ -388,21 +435,20 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     } else if (rmode==8){  // facing
       outc=(dot3(cross3(sub(wp1,wp0),sub(wp2,wp0)),d)<0.f)?mk(0.1f,0.7f,0.1f):mk(0.7f,0.1f,0.1f);
     } else if (rmode==9){  // roughness (matPbr layout: metal,rough,emitR,emitG,emitB,alpha)
-      int mid=mats[ht]; float r=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f; outc=mk(r,r,r);
+      F3 mt=sampleTexRGB(texels,textures,numTextures,mrTex,uu,vv2);
+      float r=(mid>=0&&mid<numMats)?matPbr[mid*6+1]*mt.y:0.5f; outc=mk(r,r,r);
     } else if (rmode==10){  // metallic
-      int mid=mats[ht]; float mt=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f; outc=mk(mt,mt,mt);
+      F3 mrt=sampleTexRGB(texels,textures,numTextures,mrTex,uu,vv2);
+      float mt=(mid>=0&&mid<numMats)?matPbr[mid*6+0]*mrt.z:0.f; outc=mk(mt,mt,mt);
     } else if (rmode==11){  // emissive
-      int mid=mats[ht];
-      outc=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
+      outc=em;
     } else if (rmode==12){  // opacity
-      int mid=mats[ht]; float a=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f; outc=mk(a,a,a);
+      float a=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f; outc=mk(a,a,a);
     } else if (rmode==13){  // world position
       outc=mk(fminf(fmaxf((hit.x-cam.sceneMin[0])/fmaxf(cam.sceneExtent[0],1e-4f),0.f),1.f),
               fminf(fmaxf((hit.y-cam.sceneMin[1])/fmaxf(cam.sceneExtent[1],1e-4f),0.f),1.f),
               fminf(fmaxf((hit.z-cam.sceneMin[2])/fmaxf(cam.sceneExtent[2],1e-4f),0.f),1.f));
     } else if (rmode==23){  // uv checker
-      const float* uv=&uvs[ht*6];
-      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       float cx=floorf((uu-floorf(uu))*16.f), cy=floorf((vv2-floorf(vv2))*16.f);
       float kk=fmodf(cx+cy,2.f); float g=0.25f+0.6f*kk; outc=mk(g,g,g);
     } else if (rmode==22){  // tangent (from triangle UV gradient)
@@ -427,8 +473,6 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       int k=(geo[ht]>>3)&7;
       outc=(k==1)?mk(0.2f,0.8f,0.8f):(k==2)?mk(0.85f,0.3f,0.85f):(k==3)?mk(0.95f,0.6f,0.15f):(k==4)?mk(0.5f,0.85f,0.4f):mk(0.35f,0.35f,0.35f);
     } else if (rmode==30){  // udim tile from UV set 0
-      const float* uv=&uvs[ht*6];
-      float uu=uv[0]*w0+uv[2]*bu+uv[4]*bv, vv2=uv[1]*w0+uv[3]*bu+uv[5]*bv;
       int tile=int(floorf(uu))+10*int(floorf(vv2));
       outc=idColor(tile);
     } else if (rmode==33){  // texel density (per-triangle UV/world area ratio)

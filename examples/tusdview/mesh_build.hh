@@ -32,7 +32,8 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw);
 // BlendShape prims and remapped to DrawVertex order alongside the primary target).
 void BuildDrawScene(const tinyusdz::tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl = nullptr,
-                    const tinyusdz::Stage* stage = nullptr);
+                    const tinyusdz::Stage* stage = nullptr,
+                    const TextureRuntimeOptions& textureOptions = {});
 
 // Build DrawVolumeCPU entries from RenderScene::volumes (UsdVol / OpenVDB).
 void BuildDrawVolumes(const tinyusdz::tydra::RenderScene& rs, DrawScene* out);
@@ -47,6 +48,7 @@ void BuildDrawVolumes(const tinyusdz::tydra::RenderScene& rs, DrawScene* out);
 bool BuildDrawSceneStreaming(tinyusdz::tydra::RenderSceneConverter& converter,
                              const tinyusdz::tydra::RenderSceneConverterEnv& env,
                              tinyusdz::tydra::RenderScene* render, DrawScene* out,
-                             LoadControl* ctrl = nullptr);
+                             LoadControl* ctrl = nullptr,
+                             const TextureRuntimeOptions& textureOptions = {});
 
 }  // namespace tusdview

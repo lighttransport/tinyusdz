@@ -149,13 +149,6 @@ bool IsDoubleBackedArray(TypeId id) {
   }
 }
 
-// Check if type requires heap allocation
-bool RequiresHeap(TypeId id, bool is_array) {
-  if (is_array) return true;
-  if (id == TypeId::Dictionary) return true;
-  return false;
-}
-
 }  // anonymous namespace
 
 // ============================================================

@@ -397,14 +397,22 @@ bool RenderSceneConverter::TriangulateFan(
     const uint32_t* face_vertex_counts, size_t face_count,
     const uint32_t* indices, size_t index_count,
     UInt32Chunked* out_indices) {
+  if (!face_vertex_counts || !indices || !out_indices) {
+    return false;
+  }
 
   // Count triangles
   size_t tri_count = 0;
+  size_t required_indices = 0;
   for (size_t i = 0; i < face_count; ++i) {
     uint32_t nverts = face_vertex_counts[i];
+    required_indices += nverts;
     if (nverts >= 3) {
       tri_count += nverts - 2;
     }
+  }
+  if (required_indices > index_count) {
+    return false;
   }
 
   out_indices->reserve(tri_count * 3);
@@ -659,6 +667,8 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
 bool RenderSceneConverter::ConvertAnimation(const UsdPrim& prim, AnimationClip* out) {
   // TODO: Implement animation extraction
+  (void)prim;
+  (void)out;
   return false;
 }
 

@@ -4,7 +4,9 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -27,6 +29,20 @@ GLint GLWrap(int w) {
     case 2: return GL_MIRRORED_REPEAT;
     case 3: return GL_CLAMP_TO_BORDER;
     default: return GL_CLAMP_TO_EDGE;
+  }
+}
+
+GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
+  switch (format) {
+    case DrawCompressedFormat::BC1:
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+                  : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    case DrawCompressedFormat::BC3:
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+                  : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case DrawCompressedFormat::None:
+    default:
+      return 0;
   }
 }
 
@@ -119,6 +135,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
+  uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
+  uMetalRoughTexIsUdim_ = glGetUniformLocation(program_, "uMetalRoughTexIsUdim");
+  uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
+  uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -135,6 +155,14 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
+  glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimTex"), 11);
+  glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimLut"), 12);
+  glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimLut"), 14);
+  glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
+  glUniform1i(glGetUniformLocation(program_, "uNormalUdimLut"), 16);
+  glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
+  glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimLut"), 18);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
@@ -777,8 +805,10 @@ void GLRenderer::destroyScene() {
     if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
   }
   volumes_.clear();
-  if (!textures_.empty()) {
-    glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
+  for (GLTexture& tex : textures_) {
+    if (tex.tex2d) glDeleteTextures(1, &tex.tex2d);
+    if (tex.arrayTex) glDeleteTextures(1, &tex.arrayTex);
+    if (tex.lutTex) glDeleteTextures(1, &tex.lutTex);
   }
   textures_.clear();
   materials_.clear();
@@ -788,7 +818,8 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                             int textureCount) {
   destroyScene();
   // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
-  textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                   GLTexture{});
   materials_.reserve(materials.size());
   for (const auto& m : materials) {
     GLMaterial gm;
@@ -815,23 +846,129 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
-  GLuint tex = 0;
-  glGenTextures(1, &tex);
-  glBindTexture(GL_TEXTURE_2D, tex);
-  // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
-  // linear RGBA8 target don't re-encode gamma).
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, t.image.data.empty() ? nullptr : t.image.data.data());
-  glGenerateMipmap(GL_TEXTURE_2D);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glBindTexture(GL_TEXTURE_2D, 0);
-  if (textures_[static_cast<size_t>(slot)]) {
-    glDeleteTextures(1, &textures_[static_cast<size_t>(slot)]);
+  GLTexture gpu;
+  if (t.isUdim && !t.udimTiles.empty() && t.udimTileWidth > 0 &&
+      t.udimTileHeight > 0) {
+    glGenTextures(1, &gpu.arrayTex);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, gpu.arrayTex);
+    bool compressedArray = t.requestedCompressed;
+    DrawCompressedFormat arrayFormat = DrawCompressedFormat::None;
+    size_t layerBytes = 0;
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      if (tile.compressed.format == DrawCompressedFormat::None ||
+          tile.compressed.data.empty()) {
+        compressedArray = false;
+        break;
+      }
+      if (arrayFormat == DrawCompressedFormat::None) {
+        arrayFormat = tile.compressed.format;
+        layerBytes = tile.compressed.data.size();
+      } else if (arrayFormat != tile.compressed.format ||
+                 layerBytes != tile.compressed.data.size()) {
+        compressedArray = false;
+        break;
+      }
+    }
+    const GLenum compressedFmt = compressedArray
+                                     ? GLCompressedFormat(arrayFormat, t.srgb)
+                                     : 0;
+    if (compressedFmt != 0) {
+      std::vector<uint8_t> layers;
+      layers.reserve(layerBytes * t.udimTiles.size());
+      for (const DrawUdimTileCPU& tile : t.udimTiles) {
+        layers.insert(layers.end(), tile.compressed.data.begin(),
+                      tile.compressed.data.end());
+      }
+      glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, compressedFmt,
+                             t.udimTileWidth, t.udimTileHeight,
+                             static_cast<GLsizei>(t.udimTiles.size()), 0,
+                             static_cast<GLsizei>(layers.size()), layers.data());
+    } else {
+      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, t.udimTileWidth,
+                   t.udimTileHeight, static_cast<GLsizei>(t.udimTiles.size()), 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+      for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
+        const light3d::Image& img = t.udimTiles[layer].image;
+        if (img.width != t.udimTileWidth || img.height != t.udimTileHeight ||
+            img.data.empty()) {
+          continue;
+        }
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0,
+                        static_cast<GLint>(layer), t.udimTileWidth,
+                        t.udimTileHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                        img.data.data());
+      }
+    }
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
+                    GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+    std::array<int16_t, 100> lut{};
+    lut.fill(-1);
+    for (size_t i = 0; i < t.udimLayer.size(); ++i) {
+      lut[i] = static_cast<int16_t>(t.udimLayer[i]);
+    }
+    glGenTextures(1, &gpu.lutTex);
+    glBindTexture(GL_TEXTURE_1D, gpu.lutTex);
+    glTexImage1D(GL_TEXTURE_1D, 0, GL_R16I, 100, 0, GL_RED_INTEGER, GL_SHORT,
+                 lut.data());
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_1D, 0);
+    gpu.isUdim = true;
+
+    glGenTextures(1, &gpu.tex2d);
+    glBindTexture(GL_TEXTURE_2D, gpu.tex2d);
+    const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
+    if (t.requestedCompressed && fmt != 0 && !t.compressed.data.empty()) {
+      glCompressedTexImage2D(GL_TEXTURE_2D, 0, fmt, t.compressed.width,
+                             t.compressed.height, 0,
+                             static_cast<GLsizei>(t.compressed.data.size()),
+                             t.compressed.data.data());
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE,
+                   t.image.data.empty() ? nullptr : t.image.data.data());
+    }
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  } else {
+    glGenTextures(1, &gpu.tex2d);
+    glBindTexture(GL_TEXTURE_2D, gpu.tex2d);
+    // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
+    // linear RGBA8 target don't re-encode gamma).
+    const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
+    if (t.requestedCompressed && fmt != 0 && !t.compressed.data.empty()) {
+      glCompressedTexImage2D(GL_TEXTURE_2D, 0, fmt, t.compressed.width,
+                             t.compressed.height, 0,
+                             static_cast<GLsizei>(t.compressed.data.size()),
+                             t.compressed.data.data());
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE,
+                   t.image.data.empty() ? nullptr : t.image.data.data());
+    }
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
   }
-  textures_[static_cast<size_t>(slot)] = tex;
+  GLTexture& old = textures_[static_cast<size_t>(slot)];
+  if (old.tex2d) glDeleteTextures(1, &old.tex2d);
+  if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
+  if (old.lutTex) glDeleteTextures(1, &old.lutTex);
+  old = gpu;
 }
 
 void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
@@ -1629,10 +1766,17 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // of range or not yet uploaded (lazy texture streaming).
       auto slotTex = [&](int slot) -> GLuint {
         if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
-            textures_[static_cast<size_t>(slot)]) {
-          return textures_[static_cast<size_t>(slot)];
+            textures_[static_cast<size_t>(slot)].tex2d) {
+          return textures_[static_cast<size_t>(slot)].tex2d;
         }
         return whiteTex_;
+      };
+      auto slotGpuTex = [&](int slot) -> const GLTexture* {
+        if (slot >= 0 && static_cast<size_t>(slot) < textures_.size()) {
+          const GLTexture& tex = textures_[static_cast<size_t>(slot)];
+          if (tex.tex2d || (tex.isUdim && tex.arrayTex && tex.lutTex)) return &tex;
+        }
+        return nullptr;
       };
       // Coarse displacement: applied identically in the normal and highlight passes
       // (the deformed positions must match) and forces geometric normals so shading
@@ -1729,24 +1873,48 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasMetalRoughTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
+        glUniform1i(uBaseColorTexIsUdim_, 0);
+        glUniform1i(uMetalRoughTexIsUdim_, 0);
+        glUniform1i(uNormalTexIsUdim_, 0);
+        glUniform1i(uEmissiveTexIsUdim_, 0);
       } else {
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
+        auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
+                                       GLenum texUnitArray, GLenum texUnitLut,
+                                       GLint hasLoc, GLint isUdimLoc) {
+          const GLTexture* tex = slotGpuTex(slot);
+          const bool hasTex = tex != nullptr;
+          const bool isUdim =
+              hasTex && tex->isUdim && tex->arrayTex && tex->lutTex;
+          glUniform1i(hasLoc, hasTex ? 1 : 0);
+          glUniform1i(isUdimLoc, isUdim ? 1 : 0);
+          glActiveTexture(texUnit2D);
+          glBindTexture(GL_TEXTURE_2D,
+                        (hasTex && tex->tex2d) ? tex->tex2d : whiteTex_);
+          if (isUdim) {
+            glActiveTexture(texUnitArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, tex->arrayTex);
+            glActiveTexture(texUnitLut);
+            glBindTexture(GL_TEXTURE_1D, tex->lutTex);
+          }
+        };
+        bindMaterialTexture(mat.baseColorTex, GL_TEXTURE0, GL_TEXTURE11,
+                            GL_TEXTURE12, uHasBaseColorTex_,
+                            uBaseColorTexIsUdim_);
+        bindMaterialTexture(mat.metalRoughTex, GL_TEXTURE1, GL_TEXTURE13,
+                            GL_TEXTURE14, uHasMetalRoughTex_,
+                            uMetalRoughTexIsUdim_);
+        bindMaterialTexture(mat.normalTex, GL_TEXTURE2, GL_TEXTURE15,
+                            GL_TEXTURE16, uHasNormalTex_,
+                            uNormalTexIsUdim_);
+        bindMaterialTexture(mat.emissiveTex, GL_TEXTURE3, GL_TEXTURE17,
+                            GL_TEXTURE18, uHasEmissiveTex_,
+                            uEmissiveTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.baseColorTex));
-        glUniform1i(uHasBaseColorTex_, mat.baseColorTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.metalRoughTex));
-        glUniform1i(uHasMetalRoughTex_, mat.metalRoughTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.normalTex));
-        glUniform1i(uHasNormalTex_, mat.normalTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.emissiveTex));
-        glUniform1i(uHasEmissiveTex_, mat.emissiveTex >= 0 ? 1 : 0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
                      (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));

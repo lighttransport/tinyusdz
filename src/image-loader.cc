@@ -536,16 +536,25 @@ struct ExrBudgetAllocator {
 
 // Locate the standard color channels (R/G/B/A and luminance Y) by name in a
 // v3 exr_part's name-sorted channel list. Returns false if none are present.
+static bool ExrChannelNameIs(const char *name, const char *channel) {
+  if (!name || !channel) return false;
+  const size_t name_len = std::strlen(name);
+  const size_t channel_len = std::strlen(channel);
+  if (name_len < channel_len) return false;
+  if (std::strcmp(name + name_len - channel_len, channel) != 0) return false;
+  return name_len == channel_len || name[name_len - channel_len - 1] == '.';
+}
+
 static bool ExrFindRGBAY(const exr_part *part, int *idxR, int *idxG, int *idxB,
                          int *idxA, int *idxY) {
   *idxR = *idxG = *idxB = *idxA = *idxY = -1;
   for (int c = 0; c < part->header.num_channels; c++) {
     const char *n = part->header.channels[c].name;
-    if (std::strcmp(n, "R") == 0) *idxR = c;
-    else if (std::strcmp(n, "G") == 0) *idxG = c;
-    else if (std::strcmp(n, "B") == 0) *idxB = c;
-    else if (std::strcmp(n, "A") == 0) *idxA = c;
-    else if (std::strcmp(n, "Y") == 0) *idxY = c;
+    if (ExrChannelNameIs(n, "R")) *idxR = c;
+    else if (ExrChannelNameIs(n, "G")) *idxG = c;
+    else if (ExrChannelNameIs(n, "B")) *idxB = c;
+    else if (ExrChannelNameIs(n, "A")) *idxA = c;
+    else if (ExrChannelNameIs(n, "Y")) *idxY = c;
   }
   return (*idxR >= 0 || *idxG >= 0 || *idxB >= 0 || *idxY >= 0);
 }
@@ -920,11 +929,11 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
   int idxR = -1, idxG = -1, idxB = -1, idxA = -1, idxY = -1;
   for (int c = 0; c < header.num_channels; c++) {
     const char *n = header.channels[c].name;
-    if (std::strcmp(n, "R") == 0) idxR = c;
-    else if (std::strcmp(n, "G") == 0) idxG = c;
-    else if (std::strcmp(n, "B") == 0) idxB = c;
-    else if (std::strcmp(n, "A") == 0) idxA = c;
-    else if (std::strcmp(n, "Y") == 0) idxY = c;
+    if (ExrChannelNameIs(n, "R")) idxR = c;
+    else if (ExrChannelNameIs(n, "G")) idxG = c;
+    else if (ExrChannelNameIs(n, "B")) idxB = c;
+    else if (ExrChannelNameIs(n, "A")) idxA = c;
+    else if (ExrChannelNameIs(n, "Y")) idxY = c;
   }
   // No standard color channel (e.g. custom/layered names) — bail so the caller
   // falls back to the fp32 path instead of emitting a silently-black image.

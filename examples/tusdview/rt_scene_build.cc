@@ -453,6 +453,28 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   out->numMats = static_cast<int>(scene.materials.size());
   out->matPbr.assign(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
+  out->matTex.assign(std::max<size_t>(scene.materials.size(), 1) * 4, -1);
+  out->textures.clear();
+  out->texels.clear();
+  std::vector<int> rtTexMap(scene.textures.size(), -1);
+  out->textures.reserve(scene.textures.size());
+  for (size_t ti = 0; ti < scene.textures.size(); ++ti) {
+    const DrawTextureCPU& tex = scene.textures[ti];
+    HostTextureDesc td;
+    td.offset = static_cast<int>(out->texels.size());
+    td.width = tex.image.width;
+    td.height = tex.image.height;
+    td.wrapS = tex.wrapS;
+    td.wrapT = tex.wrapT;
+    if (tex.image.width > 0 && tex.image.height > 0 && tex.image.channels == 4 &&
+        !tex.image.data.empty()) {
+      out->texels.insert(out->texels.end(), tex.image.data.begin(),
+                         tex.image.data.end());
+      rtTexMap[ti] = static_cast<int>(out->textures.size());
+      out->textures.push_back(td);
+    }
+  }
+  out->numTextures = static_cast<int>(out->textures.size());
   for (size_t i = 0; i < scene.materials.size(); ++i) {
     const DrawMaterialCPU& dm = scene.materials[i];
     out->matPbr[i * 6 + 0] = dm.metallic;
@@ -461,6 +483,15 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matPbr[i * 6 + 3] = dm.emissive[1];
     out->matPbr[i * 6 + 4] = dm.emissive[2];
     out->matPbr[i * 6 + 5] = dm.alpha;
+    auto mapTex = [&](int t) -> int {
+      return (t >= 0 && static_cast<size_t>(t) < rtTexMap.size())
+                 ? rtTexMap[static_cast<size_t>(t)]
+                 : -1;
+    };
+    out->matTex[i * 4 + 0] = mapTex(dm.baseColorTex);
+    out->matTex[i * 4 + 1] = mapTex(dm.metalRoughTex);
+    out->matTex[i * 4 + 2] = mapTex(dm.normalTex);
+    out->matTex[i * 4 + 3] = mapTex(dm.emissiveTex);
   }
   return true;
 }
