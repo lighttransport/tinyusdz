@@ -99,13 +99,8 @@ struct InstPushC {
   int32_t draw[4];     // 16  .x = baseDraw: base slot into the DrawMeta SSBO
 };
 static_assert(sizeof(InstPushC) == 16, "InstPushC must match mesh_inst shaders");
-
-// One DrawMeta entry per instanced draw slot (set 6), fetched in the fragment
-// shader via the vertex-resolved slot (baseDraw + gl_DrawIDARB). Replaces the old
-// per-draw push of meshId/flags so a whole indirect batch shares one binding.
-struct DrawMeta {
-  int32_t ids[4];      // .x meshId, .y flags (geomN/dbl/purpose/kind), .z/.w pad
-};
+// The per-draw metadata entry (set 6) is VulkanRenderer::DrawMetaCPU {int32_t
+// ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
 
 // Frame-constant uniforms shared by the mesh, tessellation and instanced
 // pipelines (descriptor set 5). Persistently mapped, written once per frame.
@@ -3096,12 +3091,17 @@ void VulkanRenderer::destroyScene() {
     if (m.morphCoeffMem) vkFreeMemory(device_, m.morphCoeffMem, nullptr);
     if (m.morphChanBuf) vkDestroyBuffer(device_, m.morphChanBuf, nullptr);
     if (m.morphChanMem) vkFreeMemory(device_, m.morphChanMem, nullptr);
-    if (m.instVbo) vkDestroyBuffer(device_, m.instVbo, nullptr);
-    if (m.instVboMem) vkFreeMemory(device_, m.instVboMem, nullptr);
-    if (m.instColorBuf) vkDestroyBuffer(device_, m.instColorBuf, nullptr);
-    if (m.instColorMem) vkFreeMemory(device_, m.instColorMem, nullptr);
-    if (m.instVtxColorBuf) vkDestroyBuffer(device_, m.instVtxColorBuf, nullptr);
-    if (m.instVtxColorMem) vkFreeMemory(device_, m.instVtxColorMem, nullptr);
+    // MDI-eligible meshes' instVbo/instColorBuf/instVtxColorBuf are ALIASES into the
+    // shared MDI buffers (freed once by destroyMdiBuffers below), so don't free them
+    // per mesh -- that would double-free.
+    if (!m.mdiEligible) {
+      if (m.instVbo) vkDestroyBuffer(device_, m.instVbo, nullptr);
+      if (m.instVboMem) vkFreeMemory(device_, m.instVboMem, nullptr);
+      if (m.instColorBuf) vkDestroyBuffer(device_, m.instColorBuf, nullptr);
+      if (m.instColorMem) vkFreeMemory(device_, m.instColorMem, nullptr);
+      if (m.instVtxColorBuf) vkDestroyBuffer(device_, m.instVtxColorBuf, nullptr);
+      if (m.instVtxColorMem) vkFreeMemory(device_, m.instVtxColorMem, nullptr);
+    }
     if (m.influenceDataBuf) vkDestroyBuffer(device_, m.influenceDataBuf, nullptr);
     if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
@@ -3111,6 +3111,19 @@ void VulkanRenderer::destroyScene() {
     if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
   }
   meshes_.clear();
+  // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
+  // skipped for eligible meshes). Reset the MDI state so the next scene rebuilds it.
+  destroyMdiBuffers();
+  std::vector<float>().swap(mdiInstXfStage_);
+  std::vector<float>().swap(mdiInstColStage_);
+  std::vector<float>().swap(mdiVtxStage_);
+  std::vector<float>().swap(mdiVtxColStage_);
+  std::vector<uint32_t>().swap(mdiMorphStage_);
+  std::vector<uint32_t>().swap(mdiIdxStage_);
+  mdiInstTotal_ = 0;
+  mdiVertTotal_ = 0;
+  mdiBuilt_ = false;
+  drawMetaCount_ = 0;  // force ensureDrawMeta/buildInstMdi to rebuild for the new scene
   // All pooled per-mesh buffers were destroyed in the loop above; release the shared
   // host-memory blocks they sub-allocated from (their per-buffer *Mem was NULL, so the
   // vkFreeMemory calls above were no-ops).
@@ -3632,13 +3645,6 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const size_t ni = sm.instanceXforms.size() / 12;
     gm.instanceCount = static_cast<uint32_t>(ni);
     gm.drawInstanceCount = gm.instanceCount;
-    // Per-instance 3x4 o2w rows. Pool-suballocated like everything else (so the
-    // 83801-prototype upload doesn't allocate per mesh); per-instance culling re-maps
-    // the visible subset through the persistent pool mapping (gm.instVboMapped).
-    createHostBuffer(sm.instanceXforms.size() * sizeof(float),
-                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.instanceXforms.data(),
-                     &gm.instVbo, &gm.instVboMem, false, /*poolable=*/true,
-                     &gm.instVboMapped);
     // Per-instance color: authored instanceColors, else the prototype's flatColor
     // repeated (matches the GL aColor path).
     std::vector<float> icol;
@@ -3652,16 +3658,48 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
         icol[k * 3 + 2] = sm.flatColor[2];
       }
     }
-    createHostBuffer(icol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     icol.data(), &gm.instColorBuf, &gm.instColorMem, false,
-                     /*poolable=*/true, &gm.instColorMapped);
     // Per-vertex prototype color (binding 3; white when the prototype has none).
     std::vector<float> vcol = sm.vertexColors;
     if (vcol.size() != sm.vertices.size() * 3)
       vcol.assign(sm.vertices.size() * 3, 1.0f);
-    createHostBuffer(vcol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem, false,
-                     /*poolable=*/true);
+
+    // MDI-eligible (device supports it, non-morph prototype): stage this mesh's
+    // geometry + instances into the shared buffers instead of allocating per-mesh.
+    // buildInstMdi() later points gm.instVbo/instColorBuf at the global buffer, so
+    // the cull path writes the visible subset into this mesh's slice. Morph
+    // prototypes (MDI can't switch morph descriptor sets per draw) keep the legacy
+    // per-mesh buffers below and are drawn by the per-mesh fallback loop.
+    if (mdiSupported_ && !gm.hasMorph) {
+      gm.mdiEligible = true;
+      gm.mdiInstFirst = mdiInstTotal_;
+      gm.mdiVertBase = mdiVertTotal_;
+      gm.mdiIdxBase = static_cast<uint32_t>(mdiIdxStage_.size());
+      mdiInstXfStage_.insert(mdiInstXfStage_.end(), sm.instanceXforms.begin(),
+                             sm.instanceXforms.end());
+      mdiInstColStage_.insert(mdiInstColStage_.end(), icol.begin(), icol.end());
+      const float* vf = reinterpret_cast<const float*>(sm.vertices.data());
+      mdiVtxStage_.insert(mdiVtxStage_.end(), vf, vf + sm.vertices.size() * 8);
+      mdiVtxColStage_.insert(mdiVtxColStage_.end(), vcol.begin(), vcol.end());
+      mdiMorphStage_.insert(mdiMorphStage_.end(), sm.vertices.size() * 2, 0u);
+      mdiIdxStage_.insert(mdiIdxStage_.end(), sm.indices.begin(), sm.indices.end());
+      mdiInstTotal_ += static_cast<uint32_t>(ni);
+      mdiVertTotal_ += static_cast<uint32_t>(sm.vertices.size());
+      mdiBuilt_ = false;
+    } else {
+      // Legacy per-mesh instance buffers, pool-suballocated (so the 83801-prototype
+      // upload doesn't allocate per mesh); cull re-maps the visible subset through
+      // the persistent pool mapping (gm.instVboMapped).
+      createHostBuffer(sm.instanceXforms.size() * sizeof(float),
+                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sm.instanceXforms.data(),
+                       &gm.instVbo, &gm.instVboMem, false, /*poolable=*/true,
+                       &gm.instVboMapped);
+      createHostBuffer(icol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       icol.data(), &gm.instColorBuf, &gm.instColorMem, false,
+                       /*poolable=*/true, &gm.instColorMapped);
+      createHostBuffer(vcol.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       vcol.data(), &gm.instVtxColorBuf, &gm.instVtxColorMem, false,
+                       /*poolable=*/true);
+    }
   }
   meshes_.push_back(gm);
 }
@@ -4740,10 +4778,11 @@ bool VulkanRenderer::resizeHeadless(int w, int h) {
 // the descriptor set at a fresh buffer is safe.
 void VulkanRenderer::ensureDrawMeta() {
   if (drawMetaSet_ == VK_NULL_HANDLE) return;  // device lacks the feature path
+  if (mdiActive_) return;                      // buildInstMdi owns the meta buffer
   const uint32_t need = static_cast<uint32_t>(meshes_.size()) + 1u;  // +1 box slot
   if (need == drawMetaCount_ && drawMetaBuf_ != VK_NULL_HANDLE) return;
 
-  std::vector<DrawMeta> meta(need);
+  std::vector<DrawMetaCPU> meta(need);
   for (size_t mi = 0; mi < meshes_.size(); ++mi) {
     const auto& m = meshes_[mi];
     meta[mi].ids[0] = static_cast<int32_t>(mi);  // meshId
@@ -4751,12 +4790,21 @@ void VulkanRenderer::ensureDrawMeta() {
                       ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
     meta[mi].ids[2] = meta[mi].ids[3] = 0;
   }
+  mdiMeshMetaBase_ = 0;  // per-mesh loop pushes baseDraw = mesh index directly
   boxMetaSlot_ = static_cast<uint32_t>(meshes_.size());
   meta[boxMetaSlot_].ids[0] = -1;  // box proxy: meshId=-1, geomN flag set (matches old push)
   meta[boxMetaSlot_].ids[1] = 1;
   meta[boxMetaSlot_].ids[2] = meta[boxMetaSlot_].ids[3] = 0;
+  writeDrawMeta(meta);
+}
 
-  const VkDeviceSize bytes = VkDeviceSize(need) * sizeof(DrawMeta);
+// (Re)create drawMetaBuf_ to hold `meta` and repoint drawMetaSet_ at it. Grows the
+// buffer when needed, else refreshes in place. Shared by ensureDrawMeta (per-mesh
+// layout) and buildInstMdi (per-command layout).
+void VulkanRenderer::writeDrawMeta(const std::vector<DrawMetaCPU>& meta) {
+  if (drawMetaSet_ == VK_NULL_HANDLE || meta.empty()) return;
+  const uint32_t need = static_cast<uint32_t>(meta.size());
+  const VkDeviceSize bytes = VkDeviceSize(need) * sizeof(DrawMetaCPU);
   if (need > drawMetaCap_ || drawMetaBuf_ == VK_NULL_HANDLE) {
     if (drawMetaBuf_) vkDestroyBuffer(device_, drawMetaBuf_, nullptr);
     if (drawMetaBufMem_) vkFreeMemory(device_, drawMetaBufMem_, nullptr);
@@ -4780,14 +4828,154 @@ void VulkanRenderer::ensureDrawMeta() {
     w.pBufferInfo = &bi;
     vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
   } else {
-    // Buffer big enough: refresh contents in place (createHostBuffer maps+copies on
-    // create; for the in-place case map the existing memory).
     void* mapped = nullptr;
     vkMapMemory(device_, drawMetaBufMem_, 0, bytes, 0, &mapped);
     std::memcpy(mapped, meta.data(), static_cast<size_t>(bytes));
     vkUnmapMemory(device_, drawMetaBufMem_);
   }
   drawMetaCount_ = need;
+}
+
+// Free the shared MDI buffers (scene reload / shutdown). The eligible meshes'
+// instVbo/instColorBuf are aliases into these, so they must NOT be destroyed by the
+// per-mesh scene teardown -- destroyScene skips buffers of mdiEligible meshes.
+void VulkanRenderer::destroyMdiBuffers() {
+  if (mdiInstMapped_) { vkUnmapMemory(device_, mdiInstMem_); mdiInstMapped_ = nullptr; }
+  if (mdiInstColMapped_) { vkUnmapMemory(device_, mdiInstColMem_); mdiInstColMapped_ = nullptr; }
+  auto kill = [&](VkBuffer& b, VkDeviceMemory& m) {
+    if (b) vkDestroyBuffer(device_, b, nullptr);
+    if (m) vkFreeMemory(device_, m, nullptr);
+    b = VK_NULL_HANDLE; m = VK_NULL_HANDLE;
+  };
+  kill(mdiVbo_, mdiVboMem_);       kill(mdiVtxColBuf_, mdiVtxColMem_);
+  kill(mdiMorphBuf_, mdiMorphMem_); kill(mdiEbo_, mdiEboMem_);
+  kill(mdiInstBuf_, mdiInstMem_);   kill(mdiInstColBuf_, mdiInstColMem_);
+  kill(mdiIndirectBuf_, mdiIndirectMem_);
+  mdiIndirectMapped_ = nullptr;
+  mdiCmds_.clear();
+  mdiDrawCount_ = 0;
+  mdiActive_ = false;
+}
+
+// Upload the staged geometry + instance data into the shared MDI buffers and wire
+// each eligible mesh's instance-buffer aliases + the per-command indirect list.
+// Runs once per scene (staging is freed afterward); a no-op when nothing eligible.
+void VulkanRenderer::buildInstMdi() {
+  if (mdiBuilt_) return;
+  mdiBuilt_ = true;
+  if (!mdiSupported_ || mdiInstTotal_ == 0) { mdiActive_ = false; return; }
+  destroyMdiBuffers();
+
+  // Shared geometry (positions/normals/uv, per-vertex color, zero morph, indices).
+  createHostBuffer(mdiVtxStage_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxStage_.data(), &mdiVbo_,
+                   &mdiVboMem_);
+  createHostBuffer(mdiVtxColStage_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxColStage_.data(),
+                   &mdiVtxColBuf_, &mdiVtxColMem_);
+  createHostBuffer(mdiMorphStage_.size() * sizeof(uint32_t),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiMorphStage_.data(),
+                   &mdiMorphBuf_, &mdiMorphMem_);
+  createHostBuffer(mdiIdxStage_.size() * sizeof(uint32_t),
+                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mdiIdxStage_.data(), &mdiEbo_,
+                   &mdiEboMem_);
+  // Global per-instance o2w + color, persistently mapped so the cull path writes the
+  // visible subset straight into each mesh's slice.
+  createHostBuffer(mdiInstXfStage_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiInstXfStage_.data(),
+                   &mdiInstBuf_, &mdiInstMem_);
+  vkMapMemory(device_, mdiInstMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstMapped_);
+  createHostBuffer(mdiInstColStage_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiInstColStage_.data(),
+                   &mdiInstColBuf_, &mdiInstColMem_);
+  vkMapMemory(device_, mdiInstColMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstColMapped_);
+
+  // Point each eligible mesh's instance buffers at its slice of the global buffers.
+  for (auto& m : meshes_) {
+    if (!m.mdiEligible) continue;
+    m.instVbo = mdiInstBuf_;
+    m.instVboMapped =
+        static_cast<char*>(mdiInstMapped_) + size_t(m.mdiInstFirst) * 12 * sizeof(float);
+    m.instColorBuf = mdiInstColBuf_;
+    m.instColorMapped =
+        static_cast<char*>(mdiInstColMapped_) + size_t(m.mdiInstFirst) * 3 * sizeof(float);
+    m.instVtxColorBuf = mdiVtxColBuf_;  // non-null so cull/draw guards pass
+  }
+
+  // One indirect command per (eligible mesh, submesh). instanceCount is refreshed
+  // every frame by patchMdiIndirect().
+  mdiCmds_.clear();
+  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+    const auto& m = meshes_[mi];
+    if (!m.mdiEligible) continue;
+    for (const auto& sub : m.submeshes) {
+      MdiCmd c{};
+      c.meshIndex = static_cast<uint32_t>(mi);
+      c.cmd.indexCount = sub.indexCount;
+      c.cmd.instanceCount = m.drawInstanceCount;
+      c.cmd.firstIndex = m.mdiIdxBase + sub.indexOffset;
+      c.cmd.vertexOffset = static_cast<int32_t>(m.mdiVertBase);
+      c.cmd.firstInstance = m.mdiInstFirst;
+      mdiCmds_.push_back(c);
+    }
+  }
+  mdiDrawCount_ = static_cast<uint32_t>(mdiCmds_.size());
+
+  // Packed indirect buffer (host-visible, persistently mapped), patched per frame.
+  {
+    std::vector<VkDrawIndexedIndirectCommand> packed(mdiCmds_.size());
+    for (size_t i = 0; i < mdiCmds_.size(); ++i) packed[i] = mdiCmds_[i].cmd;
+    const VkDeviceSize bytes =
+        std::max<VkDeviceSize>(1, packed.size() * sizeof(VkDrawIndexedIndirectCommand));
+    createHostBuffer(bytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, packed.data(),
+                     &mdiIndirectBuf_, &mdiIndirectMem_);
+    vkMapMemory(device_, mdiIndirectMem_, 0, VK_WHOLE_SIZE, 0, &mdiIndirectMapped_);
+  }
+
+  // DrawMeta: [0,Ncmds) command metas (indexed by gl_DrawIDARB), then a per-mesh
+  // region for the fallback loop (baseDraw = mdiMeshMetaBase_ + meshIndex), then the
+  // box-proxy slot. Repoints drawMetaSet_ at the built buffer.
+  mdiMeshMetaBase_ = mdiDrawCount_;
+  const uint32_t nmesh = static_cast<uint32_t>(meshes_.size());
+  std::vector<DrawMetaCPU> meta(mdiDrawCount_ + nmesh + 1u);
+  auto meshIds = [&](size_t mi, DrawMetaCPU& d) {
+    const auto& m = meshes_[mi];
+    d.ids[0] = static_cast<int32_t>(mi);
+    d.ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
+               ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
+    d.ids[2] = d.ids[3] = 0;
+  };
+  for (uint32_t i = 0; i < mdiDrawCount_; ++i) meshIds(mdiCmds_[i].meshIndex, meta[i]);
+  for (uint32_t mi = 0; mi < nmesh; ++mi) meshIds(mi, meta[mdiDrawCount_ + mi]);
+  boxMetaSlot_ = mdiDrawCount_ + nmesh;
+  meta[boxMetaSlot_].ids[0] = -1;
+  meta[boxMetaSlot_].ids[1] = 1;
+  meta[boxMetaSlot_].ids[2] = meta[boxMetaSlot_].ids[3] = 0;
+  writeDrawMeta(meta);  // (re)creates drawMetaBuf_ + updates drawMetaSet_
+
+  mdiActive_ = true;
+
+  // Free staging (island's instance staging is ~2 GB).
+  std::vector<float>().swap(mdiInstXfStage_);
+  std::vector<float>().swap(mdiInstColStage_);
+  std::vector<float>().swap(mdiVtxStage_);
+  std::vector<float>().swap(mdiVtxColStage_);
+  std::vector<uint32_t>().swap(mdiMorphStage_);
+  std::vector<uint32_t>().swap(mdiIdxStage_);
+}
+
+// Refresh the per-command instanceCount from the latest cull result + per-mesh
+// visibility mask. Cheap (a few × 10^4 struct writes) and done every frame.
+void VulkanRenderer::patchMdiIndirect() {
+  if (!mdiActive_ || !mdiIndirectMapped_) return;
+  auto* dst = static_cast<VkDrawIndexedIndirectCommand*>(mdiIndirectMapped_);
+  for (size_t i = 0; i < mdiCmds_.size(); ++i) {
+    const MdiCmd& c = mdiCmds_[i];
+    uint32_t inst = meshes_[c.meshIndex].drawInstanceCount;
+    if (c.meshIndex < meshVisible_.size() && !meshVisible_[c.meshIndex]) inst = 0;
+    dst[i] = c.cmd;
+    dst[i].instanceCount = inst;
+  }
 }
 
 void VulkanRenderer::present() { presentImpl(ImGui::GetDrawData(), 0, 0); }
@@ -4841,10 +5029,14 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   }
   vkResetFences(device_, 1, &inFlight_[frame_]);
 
-  // Refresh the instanced-pass per-draw metadata (set 6) if the mesh set changed.
-  // Done here -- outside recording, after the in-flight fence -- so re-pointing the
-  // descriptor set is safe. No-op unless the mesh count changed.
+  // Build the shared MDI buffers once (uploads staged geometry/instances, wires the
+  // indirect command list + meta), then refresh the per-draw metadata for the
+  // non-MDI path. Both are outside recording and after the in-flight fence, so
+  // (re)pointing the descriptor set is safe. patchMdiIndirect refreshes the per-mesh
+  // instanceCount every frame from the latest cull result.
+  buildInstMdi();
   ensureDrawMeta();
+  patchMdiIndirect();
 
   VkCommandBuffer cb = cmd_[frame_];
   vkResetCommandBuffer(cb, 0);
@@ -5182,20 +5374,44 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                                 instPipelineLayout_, 5, 1, &dispParamsSet_, 0, nullptr);
       }
       // Set 6: per-draw metadata SSBO (meshId/flags), shared by the whole pass. The
-      // fragment shader indexes it by (baseDraw + gl_DrawIDARB); in this per-mesh
-      // loop each draw is separate so gl_DrawIDARB == 0 and baseDraw = the mesh's
-      // slot. (P3 replaces the loop with per-block indirect batches over this set.)
+      // fragment shader indexes it by (baseDraw + gl_DrawIDARB).
       if (drawMetaSet_ != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 instPipelineLayout_, 6, 1, &drawMetaSet_, 0, nullptr);
       }
+      // MDI batch: every eligible (non-morph) prototype drawn as ONE
+      // vkCmdDrawIndexedIndirect over the shared buffers, collapsing ~83k per-mesh
+      // bind+draw sequences into a single call. baseDraw=0 so gl_DrawIDARB is the
+      // command index (= its DrawMeta slot). instanceCount / visibility are baked
+      // into the indirect buffer by patchMdiIndirect().
+      if (mdiActive_ && mdiDrawCount_ > 0) {
+        InstPushC ipc{};  // baseDraw = 0
+        vkCmdPushConstants(cb, instPipelineLayout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(InstPushC), &ipc);
+        VkBuffer bufs[5] = {mdiVbo_, mdiInstBuf_, mdiInstColBuf_, mdiVtxColBuf_,
+                            mdiMorphBuf_};
+        VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
+        vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
+        VkDescriptorSet dm[3] = {dummyMorphDesc_, dummyMorphDesc_, dummyMorphDesc_};
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 7, 3, dm, 0, nullptr);
+        vkCmdBindIndexBuffer(cb, mdiEbo_, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexedIndirect(cb, mdiIndirectBuf_, 0, mdiDrawCount_,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+      }
+      // Per-mesh loop: non-eligible instanced prototypes (morph -- can't share the
+      // batch's descriptor sets) plus, when MDI is unavailable, ALL of them. Eligible
+      // meshes are skipped here (drawn by the batch above). baseDraw indexes the
+      // per-mesh DrawMeta region (mdiMeshMetaBase_ is 0 on the non-MDI path).
       InstPushC ipc{};
       for (size_t mi = 0; mi < meshes_.size(); ++mi) {
         if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
         const auto& mesh = meshes_[mi];
+        if (mesh.mdiEligible) continue;
         if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
         if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
-        ipc.draw[0] = static_cast<int>(mi);  // DrawMeta slot for this mesh
+        ipc.draw[0] = static_cast<int>(mdiMeshMetaBase_ + mi);  // per-mesh DrawMeta slot
         vkCmdPushConstants(cb, instPipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(InstPushC), &ipc);
