@@ -110,6 +110,11 @@ if (TINYUSDZ_WASM_DEMODEV)
   message(STATUS "demodev build")
 endif()
 
+# WASM/browser builds intentionally keep C++ threading disabled by default. Do
+# not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
+# browser-threading build option opts into it.
+set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
@@ -133,10 +138,19 @@ list(
   ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-arrays.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-decode.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-api.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-sections.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-stage.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-unpack.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
@@ -160,6 +174,13 @@ add_executable(${BUILD_TARGET} ${SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
+target_compile_options(${BUILD_TARGET}
+                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+target_compile_definitions(${BUILD_TARGET}
+                           PRIVATE JSON_NOEXCEPTION=1
+                                   TINYUSDZ_CXX_EXCEPTIONS=0
+                                   TINYUSDZ_CXX_RTTI=1
+                                   EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
@@ -222,8 +243,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   else()
     # Standard debug mode
@@ -236,8 +255,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   endif()
 else()

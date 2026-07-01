@@ -4,9 +4,6 @@
 //
 // Crate(binary format) reader
 //
-//
-// - [] Unify BuildDecompressedPathsImpl and BuildNodeHierarchy
-
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX

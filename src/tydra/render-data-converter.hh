@@ -341,6 +341,16 @@ struct MaterialConverterConfig {
   // https://github.com/syoyo/tinyusdz/issues/120
   std::string default_backface_material_purpose_name{"back"};
 
+  // Assign a generated RenderMaterial to meshes that have no authored material
+  // binding. Disabled by default to preserve legacy `material_id == -1`
+  // behavior for callers that distinguish unbound geometry.
+  bool assign_default_material{false};
+  std::string default_material_name{"defaultMaterial"};
+  vec3 default_material_diffuse_color{0.18f, 0.18f, 0.18f};
+  float default_material_roughness{0.5f};
+  float default_material_metallic{0.0f};
+  float default_material_opacity{1.0f};
+
   // DefaultTextureImageLoader will be used when nullptr;
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
@@ -1231,6 +1241,15 @@ class RenderSceneConverter {
                         int32_t target_node_index,
                         AnimationClip *anim_out);
 
+  /// Extract numeric non-xform attribute time samples from any render node prim
+  /// into CustomProperty channels. This covers camera, light, material/shader,
+  /// and schema-specific parameter animation when a node exists for the prim.
+  bool ExtractPrimPropertyAnimation(const RenderSceneConverterEnv &env,
+                        const Prim &prim,
+                        const Path &abs_path,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
+
   ///
   /// Bake USD value-clip animation into AnimationClip by loading clip layers,
   /// resolving active clip selection at sampled stage times,
@@ -1359,6 +1378,8 @@ class RenderSceneConverter {
                                    int64_t *material_id) const;
   void RememberMaterialSourceSignature(const std::string &signature,
                                        int64_t material_id);
+  bool GetOrCreateDefaultMaterial(const RenderSceneConverterEnv &env,
+                                  int *material_id);
 
   // Wrapper around GetBoundMaterial with caching.
   // Avoids repeated ancestor walks for sibling prims.
@@ -1431,6 +1452,10 @@ class RenderSceneConverter {
   // Supports multiple animations per skeleton by processing all discovered SkelAnimation prims
   // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
   bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
+
+  // Resolve SkelAnimation blendShapeWeights channels to mesh nodes after the
+  // render node hierarchy has stable node indices.
+  bool ResolveBlendShapeAnimationTargets();
 
   /// Process a single XformNode's data into a Node (no children).
   bool BuildSingleNode(

@@ -4,15 +4,19 @@
 #include "usdz-convert.hh"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
 #include <condition_variable>
+#endif
 #include <cstdio>
 #include <deque>
 #include <fstream>
 #include <map>
 #include <set>
+#if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
+#endif
 #include <utility>
 
 #include "tinyusdz.hh"
@@ -478,6 +482,51 @@ void CollectLayerTextureAssetPaths(const Layer &layer,
   }
 }
 
+std::string TexturePathKey(std::string path) {
+  std::replace(path.begin(), path.end(), '\\', '/');
+  while (path.rfind("./", 0) == 0) {
+    path = path.substr(2);
+  }
+  return io::NormalizePath(path);
+}
+
+void CollectUnusedTextureFilePaths(const std::vector<std::string> &inputs,
+                                   const std::vector<std::string> &texture_paths,
+                                   std::vector<std::string> *out) {
+  if (!out) return;
+  std::set<std::string> known;
+  for (const std::string &path : texture_paths) {
+    known.insert(TexturePathKey(path));
+  }
+
+  std::set<std::string> dirs;
+  for (const std::string &input : inputs) {
+    std::string dir = io::GetBaseDir(input);
+    if (dir.empty()) dir = ".";
+    dirs.insert(io::NormalizePath(dir));
+  }
+
+  std::set<std::string> emitted;
+  for (const std::string &dir : dirs) {
+    if (out->size() >= kMaxAssetCollectCount) return;
+    if (!io::IsDirectory(dir)) continue;
+    const std::vector<std::string> entries = io::ListDir(dir, true);
+    for (const std::string &rel : entries) {
+      if (out->size() >= kMaxAssetCollectCount) return;
+      const std::string ext = to_lower(io::GetFileExtension(rel));
+      if (!IsAllowedTextureExt(ext)) continue;
+      const std::string asset_path = TexturePathKey(rel);
+      const std::string full_path = TexturePathKey(io::JoinPath(dir, rel));
+      if (known.count(asset_path) || known.count(full_path) ||
+          emitted.count(asset_path)) {
+        continue;
+      }
+      emitted.insert(asset_path);
+      out->push_back(asset_path);
+    }
+  }
+}
+
 void CollectARKitCompatibilityWarnings(const PrimSpec &primspec,
                                        std::string *warn,
                                        int depth = 0) {
@@ -850,6 +899,16 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 template <typename Job, typename ProduceFn, typename RunFn>
 bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
                            const ProduceFn &produce, const RunFn &run) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)num_threads_option;
+  for (Job &job : jobs) {
+    if (!produce(job)) {
+      return false;
+    }
+    run(job);
+  }
+  return true;
+#else
   size_t num_threads =
       (num_threads_option > 0)
           ? size_t(num_threads_option)
@@ -928,6 +987,7 @@ bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
     worker.join();
   }
   return ok;
+#endif
 }
 
 bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
@@ -1970,6 +2030,22 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   }
   Log(options.verbose,
       "Found " + std::to_string(texture_paths.size()) + " texture reference(s).");
+  if (options.output_format == OutputFormat::USDZ &&
+      options.include_unused_textures) {
+    std::vector<std::string> unused_texture_paths;
+    CollectUnusedTextureFilePaths(options.inputs, texture_paths,
+                                  &unused_texture_paths);
+    if (!unused_texture_paths.empty()) {
+      texture_paths.insert(texture_paths.end(), unused_texture_paths.begin(),
+                           unused_texture_paths.end());
+      if (stats) {
+        stats->num_unused_textures_included = unused_texture_paths.size();
+      }
+      Log(options.verbose,
+          "Including " + std::to_string(unused_texture_paths.size()) +
+              " unreferenced texture file(s).");
+    }
+  }
 
   // Texture packing is only relevant when writing a USDZ archive.
   // For flat USDC/USDA output, textures remain as external references.
@@ -2083,7 +2159,8 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   std::set<std::string> queued_paths;
 
   for (const std::string &orig : texture_paths) {
-    if (path_to_archive.count(orig) || queued_paths.count(orig)) {
+    const std::string orig_key = TexturePathKey(orig);
+    if (path_to_archive.count(orig) || queued_paths.count(orig_key)) {
       continue;  // already processed or queued
     }
 
@@ -2129,7 +2206,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       job.needs_process = true;
     }
 
-    queued_paths.insert(orig);
+    queued_paths.insert(orig_key);
     texture_jobs.push_back(std::move(job));
   }
 

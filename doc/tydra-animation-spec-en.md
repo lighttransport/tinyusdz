@@ -18,6 +18,7 @@ separate section at the end, **what is still proposed**.
 |---|---|---|
 | `UsdSkelAnimation` (joint TRS + blendShape weights) | `ConvertSkelAnimation` | One clip per SkelAnimation prim. |
 | `xformOp` timeSamples on Xformable prims | `ExtractXformOpAnimation` | Per animated op; `xformOp:transform` matrices are decomposed to TRS. |
+| Render parameter timeSamples | `ExtractPrimPropertyAnimation` | Emits generic `CustomProperty` tracks for numeric camera, light, shader/material, and custom prim attributes. |
 | USD value clips | `ConvertValueClipAnimation` | Loads clip layers, resolves the active clip per stage time, **bakes** to TRS + generic property tracks. |
 
 All three produce `AnimationClip` objects stored in `RenderScene::animations`.
@@ -43,8 +44,11 @@ enum class AnimationInterpolation { Linear, Step, CubicSpline };
 `KeyframeSampler` holds flat `times` (seconds) + `values` arrays and an
 `AnimationInterpolation`. `AnimationChannel` binds a sampler to a target:
 `SceneNode` channels use `target_node` (index into `RenderScene::nodes`);
-`SkeletonJoint` channels use `skeleton_id` + `joint_id`. `CustomProperty`
-channels carry `is_custom_property` + `property_name`.
+`SkeletonJoint` channels use `skeleton_id` + `joint_id`. Channels may also
+carry `target_prim_path` for stable USD-path binding metadata. `CustomProperty`
+channels carry `is_custom_property` + `property_name`; `Weights` channels
+generated from `blendShapeWeights` carry `blendshape_target_names` to preserve
+the morph target order.
 
 `AnimationClip` carries `name`, `prim_name`, `abs_path`, `duration`,
 `source_type`, the value-clip baking fields (`has_value_clip`,
@@ -108,9 +112,11 @@ tracks array. Target names are index-based, not prim-name-based:
 | `+ Weights` | `…​.morphTargetInfluences` | `number` |
 | `+ CustomProperty` | `…​.{property_name}` | `number` / `vector2/3/4` (by component count) |
 
-Material, camera, light, and visibility animation have **no** dedicated track
-mapping in the exporter; they are only representable through the generic
-`CustomProperty` path.
+Material, camera, light, and visibility animation have **no** dedicated typed
+track mapping in the exporter; numeric parameters are represented through the
+generic `CustomProperty` path. Exported tracks include `userData.target_prim_path`
+when available, and blendshape weight tracks include
+`userData.blendshape_target_names`.
 
 ### 1.6 Unit / coordinate conversions
 
@@ -133,10 +139,10 @@ enums, structs, fields, or methods below exist yet.
 
 ### 2.1 Additional animation sources
 
-Dedicated extraction for material-parameter, camera-parameter,
+Dedicated typed extraction for material-parameter, camera-parameter,
 light-parameter, visibility, and vertex (`points` timeSamples) animation. Today
-these are only reachable via the generic `CustomProperty` mechanism inside value
-clips.
+numeric render parameters are reachable via generic `CustomProperty` tracks;
+dedicated typed target objects and exporter mappings are still future work.
 
 ### 2.2 IR extensions
 

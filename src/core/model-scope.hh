@@ -102,11 +102,6 @@ struct Model : public Collection, MaterialBinding {
     std::vector<value::token> _properties;                                   \
   }
 
-// UsdVol
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(Volume);
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(OpenVDBAsset);
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(Field3DAsset);
-
 // UsdRender
 TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
 TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
@@ -167,10 +162,7 @@ namespace value {
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
-// UsdVol / UsdRender placeholder prim types.
-DEFINE_TYPE_TRAIT(Volume, "Volume", TYPE_ID_VOLUME, 1);
-DEFINE_TYPE_TRAIT(OpenVDBAsset, "OpenVDBAsset", TYPE_ID_OPENVDB_ASSET, 1);
-DEFINE_TYPE_TRAIT(Field3DAsset, "Field3DAsset", TYPE_ID_FIELD3D_ASSET, 1);
+// UsdRender placeholder prim types.
 DEFINE_TYPE_TRAIT(RenderSettings, "RenderSettings", TYPE_ID_RENDER_SETTINGS, 1);
 DEFINE_TYPE_TRAIT(RenderProduct, "RenderProduct", TYPE_ID_RENDER_PRODUCT, 1);
 DEFINE_TYPE_TRAIT(RenderVar, "RenderVar", TYPE_ID_RENDER_VAR, 1);

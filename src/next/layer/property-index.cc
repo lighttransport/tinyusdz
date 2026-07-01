@@ -31,6 +31,10 @@ void PropNameTable::unfreeze() {}
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
+  return intern(std::string_view(name));
+}
+
+PropNameId PropNameTable::intern(std::string_view name) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   if (frozen_.load(std::memory_order_acquire)) {
     // Frozen fast path: the common compose-time intern is a HIT (every property
@@ -57,8 +61,10 @@ PropNameId PropNameTable::intern(const std::string& name) {
     return PropNameId{it->second};
   }
   uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
+  auto interned_name = std::make_unique<std::string>(name);
+  const std::string_view key(*interned_name);
+  names_.push_back(std::move(interned_name));
+  name_to_id_.emplace(key, id);
   return PropNameId{id};
 #else
   auto it = name_to_id_.find(name);
@@ -66,15 +72,17 @@ PropNameId PropNameTable::intern(const std::string& name) {
     return PropNameId{it->second};
   }
   uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
+  auto interned_name = std::make_unique<std::string>(name);
+  const std::string_view key(*interned_name);
+  names_.push_back(std::move(interned_name));
+  name_to_id_.emplace(key, id);
   return PropNameId{id};
 #endif
 }
 
 PropNameId PropNameTable::intern(const char* name) {
   if (!name) return PropNameId{};
-  return intern(std::string(name));
+  return intern(std::string_view(name));
 }
 
 const std::string& PropNameTable::get(PropNameId id) const {
@@ -83,17 +91,29 @@ const std::string& PropNameTable::get(PropNameId id) const {
   if (!frozen_.load(std::memory_order_acquire)) {
     // Shared lock: a concurrent intern() on another thread may push_back names_
     // (parallel composition warms referenced layers on workers). When frozen the
-    // deque is immutable, so concurrent reads need no lock.
+    // name storage is immutable, so concurrent reads need no lock.
     std::shared_lock<std::shared_mutex> rlk(mu_);
     if (id.id >= names_.size()) return empty;
-    return names_[id.id];
+    return *names_[id.id];
   }
 #endif
   if (id.id >= names_.size()) return empty;
-  return names_[id.id];
+  return *names_[id.id];
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  return find(std::string_view(name));
+#else
+  auto it = name_to_id_.find(name);
+  if (it != name_to_id_.end()) {
+    return PropNameId{it->second};
+  }
+  return PropNameId{};
+#endif
+}
+
+PropNameId PropNameTable::find(std::string_view name) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   if (!frozen_.load(std::memory_order_acquire)) {
     // Shared lock vs. a concurrent intern() rehash of name_to_id_. When frozen
@@ -113,7 +133,7 @@ PropNameId PropNameTable::find(const std::string& name) const {
 
 PropNameId PropNameTable::find(const char* name) const {
   if (!name) return PropNameId{};
-  return find(std::string(name));
+  return find(std::string_view(name));
 }
 
 void PropNameTable::register_common_names() {

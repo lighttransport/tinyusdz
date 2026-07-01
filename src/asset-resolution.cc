@@ -95,19 +95,7 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
   return false;
 #else
   // default fallback: File-based
-  if ((_current_working_path == ".") || (_current_working_path == "./")) {
-    std::string rpath = io::FindFile(assetPath, {});
-  } else {
-    // TODO: Only find when input path is relative.
-    std::string rpath = io::FindFile(assetPath, {_current_working_path});
-    if (rpath.size()) {
-      return true;
-    }
-  }
-
-  // TODO: Cache resolition.
-  std::string fpath = io::FindFile(assetPath, _search_paths);
-  return fpath.size();
+  return resolve_literal(assetPath).size();
 #endif
 
 }
@@ -223,6 +211,11 @@ std::string AssetResolutionResolver::resolve_literal(
     TUSDZ_LOG_E("Failed to resolve asssetPath: " << assetPath);
 #else
 
+    auto cache_it = _cached_resolved_paths.find(assetPath);
+    if (cache_it != _cached_resolved_paths.end()) {
+      return cache_it->second;
+    }
+
     std::string rpath;
     if ((_current_working_path == ".") || (_current_working_path == "./")) {
       rpath = io::FindFile(assetPath, {});
@@ -233,9 +226,10 @@ std::string AssetResolutionResolver::resolve_literal(
     if (rpath.size()) {
       resolvedPath = rpath;
     } else {
-      // TODO: Cache resolution.
       resolvedPath = io::FindFile(assetPath, _search_paths);
     }
+
+    _cached_resolved_paths[assetPath] = resolvedPath;
 #endif
   }
 

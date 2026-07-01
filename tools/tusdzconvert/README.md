@@ -62,6 +62,7 @@ but root-layer discovery itself is not recursive.
 | `-pngEncoder <fpnge\|fpng>` | PNG encoder backend |
 | `-jpegQuality <1-100>` | JPEG quality (default 90) |
 | `-noReencode` | Copy unmodified textures through byte-for-byte |
+| `-includeUnusedTextures` | Also convert/package image files in the input layer directories that are not referenced by `UsdUVTexture` |
 | `-targetTextureSize <size>` | Shrink all textures so their **total** fits `<size>` (e.g. `100MB`, `50mb`, `1048576`) |
 | `-fitStrategy <size\|quality>` | Lever to meet the budget: reduce dimensions (`size`) or transcode to JPEG + lower quality (`quality`) |
 | `-fitMinTextureSize <N>` | Smallest longest-edge allowed by the size search (default 64) |

@@ -432,7 +432,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                const bool error_when_no_prims_found,
                const bool error_when_asset_not_found,
                const bool error_when_unsupported_fileformat,
-               const bool allow_parent_relative_paths, std::string *warn,
+               const bool allow_parent_relative_paths, const size_t max_asset_bytes,
+               std::string *warn,
                std::string *err,
                std::map<std::string, Layer> *layer_cache = nullptr) {
   if (!dst_layer) {
@@ -546,7 +547,10 @@ bool LoadAsset(AssetResolutionResolver &resolver,
         fmt::format("Failed to open asset `{}`.", resolved_path));
   }
 
-  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
+  const size_t asset_limit = max_asset_bytes
+                                 ? max_asset_bytes
+                                 : security_policy::kResolverMaxAssetReadBytes;
+  if (asset.size() > asset_limit) {
     // An over-cap asset (e.g. Moana island's 683 MB xgGroundCover.usd vs the
     // 512 MB cap) must not abort the WHOLE composition -- a single oversized
     // sub-asset would otherwise drop the entire scene. Treat it like an
@@ -555,13 +559,12 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     if (error_when_asset_not_found) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                      asset.size(), security_policy::GetMaxAssetReadBytes()));
+                      asset.size(), asset_limit));
     }
     warn_once(resolved_path,
               fmt::format("Asset `{}` exceeds the max composition read size "
                           "({} > {} bytes); skipping this arc.",
-                          asset_path, asset.size(),
-                          security_policy::GetMaxAssetReadBytes()));
+                          asset_path, asset.size(), asset_limit));
     if (dst_primspec_root) {
       (*dst_primspec_root) = nullptr;
     }
@@ -1143,7 +1146,8 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    options.error_when_no_prims_in_sublayer,
                    options.error_when_asset_not_found,
                    options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths,
+                   options.max_asset_bytes, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
     }
@@ -1378,8 +1382,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1499,8 +1504,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1660,8 +1666,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1762,8 +1769,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));

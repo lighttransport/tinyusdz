@@ -8,10 +8,14 @@
 #include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
-#include <fstream>
+#include <algorithm>
 #include <cstdlib>
-#include <thread>
 #include <cstring>
+#include <fstream>
+#include <memory>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -75,49 +79,73 @@ FileFormat DetectFormatFromExtension(const std::string& filename) {
   return FileFormat::Unknown;
 }
 
-bool ReadFile(const std::string& filename, std::vector<uint8_t>* data, std::string* err) {
-  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
+FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* err) {
+  std::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
-    if (err) *err = "Failed to open file: " + filename;
-    return false;
+    if (err) *err = "Failed to open file for format detection: " + filename;
+    return FileFormat::Unknown;
   }
 
-  std::streamsize size = ifs.tellg();
-  ifs.seekg(0, std::ios::beg);
-
-  data->resize(static_cast<size_t>(size));
-  if (!ifs.read(reinterpret_cast<char*>(data->data()), size)) {
-    if (err) *err = "Failed to read file: " + filename;
-    return false;
+  uint8_t header[4096] = {};
+  ifs.read(reinterpret_cast<char*>(header), sizeof(header));
+  const std::streamsize nread = ifs.gcount();
+  if (nread <= 0) {
+    if (err) *err = "Failed to read file header: " + filename;
+    return FileFormat::Unknown;
   }
+  return DetectFormat(header, static_cast<size_t>(nread));
+}
 
-  return true;
+size_t MinNonZero(size_t a, size_t b) {
+  if (a == 0) return b;
+  if (b == 0) return a;
+  return std::min(a, b);
+}
+
+LoadOptions EffectiveUSDAOptions(const LoadUSDOptions& options) {
+  LoadOptions out = options.usda_options;
+  out.parse_options.max_file_size =
+      MinNonZero(out.parse_options.max_file_size, options.max_memory);
+  return out;
+}
+
+USDCLoadOptions EffectiveUSDCOptions(const LoadUSDOptions& options) {
+  USDCLoadOptions out = options.usdc_options;
+  out.crate_options.max_memory =
+      MinNonZero(out.crate_options.max_memory, options.max_memory);
+  return out;
+}
+
+USDZReadOptions EffectiveUSDZOptions(const LoadUSDOptions& options) {
+  USDZReadOptions out = options.usdz_options;
+  out.max_archive_size = MinNonZero(out.max_archive_size, options.max_memory);
+  out.max_entry_size = MinNonZero(out.max_entry_size, options.max_memory);
+  return out;
 }
 
 }  // namespace
 
 bool LoadUSD(const std::string& filename, Stage* stage,
              std::string* warn, std::string* err) {
+  return LoadUSD(filename, stage, LoadUSDOptions{}, warn, err);
+}
+
+bool LoadUSD(const std::string& filename, Stage* stage,
+             const LoadUSDOptions& options, std::string* warn,
+             std::string* err) {
   if (!stage) {
     if (err) *err = "stage is null";
     return false;
   }
 
-  // Read file to detect format
-  std::vector<uint8_t> data;
-  if (!ReadFile(filename, &data, err)) {
-    return false;
-  }
-
-  // Detect format
   FileFormat format = DetectFormatFromExtension(filename);
   if (format == FileFormat::Unknown) {
-    format = DetectFormat(data.data(), data.size());
+    format = DetectFormatFromFileHeader(filename, err);
   }
 
   switch (format) {
     case FileFormat::USDA: {
-      LoadResult result = LoadUSDAFromFile(filename);
+      LoadResult result = LoadUSDAFromFile(filename, EffectiveUSDAOptions(options));
       if (!result.success) {
         if (err) *err = result.error_summary;
         return false;
@@ -132,7 +160,8 @@ bool LoadUSD(const std::string& filename, Stage* stage,
     }
 
     case FileFormat::USDC: {
-      USDCLoadResult result = LoadUSDCFromFile(filename);
+      USDCLoadResult result =
+          LoadUSDCFromFile(filename, EffectiveUSDCOptions(options));
       if (!result.success) {
         if (err) *err = result.error_summary;
         return false;
@@ -148,8 +177,11 @@ bool LoadUSD(const std::string& filename, Stage* stage,
 
     case FileFormat::USDZ: {
       USDZReader usdz;
-      if (!usdz.OpenFile(filename)) {
-        if (err) *err = "Failed to open USDZ file";
+      if (!usdz.OpenFile(filename, EffectiveUSDZOptions(options))) {
+        if (err) {
+          *err = usdz.Error().empty() ? "Failed to open USDZ file"
+                                      : usdz.Error();
+        }
         return false;
       }
       // Try USDC first, then USDA
@@ -172,7 +204,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
 
       // Delegate to USDC or USDA reader
       if (inner_fmt == FileFormat::USDC) {
-        USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size);
+        USDCLoadResult result =
+            LoadUSDCFromMemory(entry_data, entry_size,
+                               EffectiveUSDCOptions(options));
         if (!result.success) {
           if (err) *err = result.error_summary;
           return false;
@@ -182,8 +216,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         }
         *stage = std::move(result.stage);
       } else {
-        std::string usda_str(reinterpret_cast<const char*>(entry_data), entry_size);
-        LoadResult result = LoadUSDAFromString(usda_str);
+        LoadResult result = LoadUSDAFromString(
+            reinterpret_cast<const char*>(entry_data), entry_size,
+            EffectiveUSDAOptions(options));
         if (!result.success) {
           if (err) *err = result.error_summary;
           return false;
@@ -227,8 +262,16 @@ std::string DirOfPath(const std::string& path) {
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn, std::string* err,
                      const pcp::CompositionOptions* comp_opts) {
+  return LoadUSDComposed(filename, stage, LoadUSDOptions{}, warn, err,
+                         comp_opts);
+}
+
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     const LoadUSDOptions& load_options,
+                     std::string* warn, std::string* err,
+                     const pcp::CompositionOptions* comp_opts) {
   // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
-  if (!LoadUSD(filename, stage, warn, err)) {
+  if (!LoadUSD(filename, stage, load_options, warn, err)) {
     return false;
   }
   Layer* root = stage->GetRootLayer();
@@ -260,27 +303,53 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
   // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
   if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
-  // Parallel composition is on by default (the per-prim opinion fill runs across
-  // cores; byte-identical to the serial fill). TUSDRENDER_COMPOSE_THREADS=N
-  // overrides the thread count (1 = force serial).
+  // Parallel composition is opt-in via TINYUSDZ_ENABLE_THREAD so wasm builds do
+  // not require Emscripten pthreads / SharedArrayBuffer by default.
+#if defined(TINYUSDZ_ENABLE_THREAD)
   copts.num_threads = std::thread::hardware_concurrency();
   if (copts.num_threads < 1) copts.num_threads = 1;
+#else
+  copts.num_threads = 1;
+#endif
+  copts.max_layer_memory = load_options.max_memory;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
+#if defined(TINYUSDZ_ENABLE_THREAD)
     if (n >= 1) copts.num_threads = static_cast<unsigned>(n);
+#else
+    (void)n;
+#endif
   }
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.
   if (comp_opts) {
+    copts.load_payloads = comp_opts->load_payloads;
+    copts.max_depth = comp_opts->max_depth;
+    copts.max_namespace_depth = comp_opts->max_namespace_depth;
+    copts.error_when_asset_not_found = comp_opts->error_when_asset_not_found;
+    copts.detect_instances = comp_opts->detect_instances;
+    copts.flatten_instances = comp_opts->flatten_instances;
+    copts.instance_flatten_mode = comp_opts->instance_flatten_mode;
+    copts.prototype_numbering = comp_opts->prototype_numbering;
+    copts.apply_list_ops = comp_opts->apply_list_ops;
+    if (comp_opts->num_threads >= 1) copts.num_threads = comp_opts->num_threads;
+    copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
+    if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
     if (!comp_opts->variant_overrides.empty())
       copts.variant_overrides = comp_opts->variant_overrides;
-    // Other composition fields from comp_opts can be merged here as needed.
+    copts.max_layer_memory =
+        MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
   }
 
   Stage composed;
   std::string cwarn, cerr;
-  if (!pcp::ComposeStageFromFile(filename, resolver, &composed, copts, &cwarn,
-                                 &cerr)) {
+  std::shared_ptr<Layer> root_layer(stage->ReleaseRootLayer());
+  if (!root_layer) {
+    if (err) *err = "composition failed: root layer is null";
+    return false;
+  }
+  if (!pcp::ComposeStageFromLayer(std::move(root_layer), resolver, &composed,
+                                  filename, copts, &cwarn, &cerr)) {
     if (err) {
       *err = "composition failed for " + filename +
              (cerr.empty() ? "" : ": " + cerr);
@@ -297,12 +366,17 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
 
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn, std::string* err) {
+  return LoadUSDA(filename, stage, LoadOptions{}, warn, err);
+}
+
+bool LoadUSDA(const std::string& filename, Stage* stage,
+              const LoadOptions& options, std::string* warn, std::string* err) {
   if (!stage) {
     if (err) *err = "stage is null";
     return false;
   }
 
-  LoadResult result = LoadUSDAFromFile(filename);
+  LoadResult result = LoadUSDAFromFile(filename, options);
   if (!result.success) {
     if (err) *err = result.error_summary;
     return false;
@@ -320,12 +394,18 @@ bool LoadUSDA(const std::string& filename, Stage* stage,
 
 bool LoadUSDC(const std::string& filename, Stage* stage,
               std::string* warn, std::string* err) {
+  return LoadUSDC(filename, stage, USDCLoadOptions{}, warn, err);
+}
+
+bool LoadUSDC(const std::string& filename, Stage* stage,
+              const USDCLoadOptions& options, std::string* warn,
+              std::string* err) {
   if (!stage) {
     if (err) *err = "stage is null";
     return false;
   }
 
-  USDCLoadResult result = LoadUSDCFromFile(filename);
+  USDCLoadResult result = LoadUSDCFromFile(filename, options);
   if (!result.success) {
     if (err) *err = result.error_summary;
     return false;

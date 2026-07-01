@@ -342,6 +342,50 @@ def Xform "W" (
   std::cout << "  Metadata/dict/property-metadata round-trip passed!" << std::endl;
 }
 
+void test_relationship_body_listops() {
+  std::cout << "Testing relationship body list-ops..." << std::endl;
+
+  const char* input = R"usda(#usda 1.0
+
+def Xform "World"
+{
+    rel targets = </A>
+    append rel targets = [</B>, </C>]
+    prepend rel targets = </Root>
+    add rel targets = [</C>, </D>]
+    delete rel targets = </B>
+}
+)usda";
+
+  LoadResult r = LoadUSDAFromString(input);
+  if (!r.success) {
+    std::cerr << "Parse failed: " << r.error_summary << std::endl;
+    assert(false);
+  }
+
+  UsdPrim world = r.stage.GetPrimAtPath("/World");
+  assert(world.IsValid());
+  const std::vector<Path>* targets = world.GetRelationship("targets");
+  assert(targets && targets->size() == 4);
+  assert((*targets)[0].str() == "/Root");
+  assert((*targets)[1].str() == "/A");
+  assert((*targets)[2].str() == "/C");
+  assert((*targets)[3].str() == "/D");
+
+  std::string out = WriteUSDAToString(r.stage);
+  LoadResult r2 = LoadUSDAFromString(out.c_str());
+  assert(r2.success);
+  UsdPrim world2 = r2.stage.GetPrimAtPath("/World");
+  const std::vector<Path>* targets2 = world2.GetRelationship("targets");
+  assert(targets2 && targets2->size() == 4);
+  assert((*targets2)[0].str() == "/Root");
+  assert((*targets2)[1].str() == "/A");
+  assert((*targets2)[2].str() == "/C");
+  assert((*targets2)[3].str() == "/D");
+
+  std::cout << "  Relationship body list-ops passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Complex USDA Tests ===" << std::endl;
   std::cout << std::endl;
@@ -351,6 +395,7 @@ int main() {
     test_animation();
     test_large_scene_ascii_grammar_regressions();
     test_metadata_dict_propmeta_roundtrip();
+    test_relationship_body_listops();
 
     std::cout << std::endl;
     std::cout << "All complex USDA tests passed!" << std::endl;

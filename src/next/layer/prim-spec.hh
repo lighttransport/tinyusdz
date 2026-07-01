@@ -12,9 +12,12 @@
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <functional>
+#include <map>
+#include <string_view>
 
 namespace tinyusdz {
 namespace next {
@@ -35,9 +38,22 @@ struct TypeNameId {
 /// Type name interning table
 class TypeNameTable {
 public:
-  TypeNameId intern(const std::string& name);
+  TypeNameId intern(std::string_view name);
+  TypeNameId intern_array(std::string_view base_name);
+  TypeNameId intern(const std::string& name) {
+    return intern(std::string_view(name));
+  }
+  TypeNameId intern(const char* name) {
+    return name ? intern(std::string_view(name)) : TypeNameId{};
+  }
   const std::string& get(TypeNameId id) const;
-  TypeNameId find(const std::string& name) const;
+  TypeNameId find(std::string_view name) const;
+  TypeNameId find(const std::string& name) const {
+    return find(std::string_view(name));
+  }
+  TypeNameId find(const char* name) const {
+    return name ? find(std::string_view(name)) : TypeNameId{};
+  }
 
   // Pre-registered type IDs
   TypeNameId id_Xform;
@@ -64,8 +80,25 @@ public:
   void register_common_types();
 
 private:
-  std::vector<std::string> names_;
-  std::unordered_map<std::string, uint16_t> name_to_id_;
+  std::vector<std::unique_ptr<std::string>> names_;
+
+  struct StringViewHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view s) const noexcept {
+      return std::hash<std::string_view>{}(s);
+    }
+  };
+
+  struct StringViewEq {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+      return a == b;
+    }
+  };
+
+  std::unordered_map<std::string_view, uint16_t, StringViewHash, StringViewEq>
+      name_to_id_;
+  std::unordered_map<uint16_t, uint16_t> base_to_array_type_id_;
 };
 
 TypeNameTable& GetTypeNameTable();
@@ -468,6 +501,9 @@ public:
   /// Get value at offset
   const Value* value(uint32_t offset) const;
 
+  /// Rewrite scalar asset path sample values.
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+
   /// Check if property has time samples
   bool has(PropNameId name_id) const;
 
@@ -527,8 +563,8 @@ private:
 class PrimSpec {
 public:
   PrimSpec();
-  explicit PrimSpec(const std::string& name);
-  PrimSpec(const std::string& name, const std::string& type_name);
+  explicit PrimSpec(std::string_view name);
+  PrimSpec(std::string_view name, std::string_view type_name);
   ~PrimSpec();
 
   // Move only (for efficiency)
@@ -552,6 +588,7 @@ public:
   const std::string& type_name() const;
   TypeNameId type_id() const { return type_id_; }
   void set_type_name(const std::string& name);
+  void set_type_name(std::string_view name);
 
   /// Get specifier
   PrimSpecifier specifier() const { return specifier_; }
@@ -569,14 +606,14 @@ public:
   const PropSlot* property(PropNameId name_id) const;
 
   /// Get property by name string
-  const PropSlot* property(const std::string& name) const;
+  const PropSlot* property(std::string_view name) const;
 
   /// Get property value
   const Value* property_value(PropNameId name_id) const;
-  const Value* property_value(const std::string& name) const;
+  const Value* property_value(std::string_view name) const;
 
   /// Add a property
-  void add_property(const std::string& name, Value value, uint16_t flags = 0);
+  void add_property(std::string_view name, Value value, uint16_t flags = 0);
   void add_property(PropNameId name_id, Value value, uint16_t flags = 0);
 
   /// Add a property slot without value (for time-sampled properties)
@@ -596,6 +633,10 @@ public:
   /// independent fields, so a weaker source's default fills a stronger
   /// connection-only opinion. Returns true if a value was filled.
   bool fill_property_value_if_absent(PropNameId name_id, Value value);
+
+  /// Replace an existing property's authored default value. Returns false when
+  /// the slot is absent or has no authored default value.
+  bool set_property_value(PropNameId name_id, Value value);
 
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
@@ -618,6 +659,9 @@ public:
 
   /// Get value at a specific time sample offset
   const Value* time_sample_value(uint32_t offset) const;
+
+  /// Rewrite scalar asset paths stored in defaults and time samples.
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
 
   /// Get all property names that have time samples
   std::vector<PropNameId> time_sampled_properties() const;
@@ -647,11 +691,36 @@ public:
   // Relationships
   // ============================================================
 
+  enum class RelationshipListOp {
+    Append,
+    Prepend,
+    Add,
+    Delete,
+  };
+
   /// Add a relationship target
-  void add_relationship(const std::string& name, const Path& target);
+  void add_relationship(std::string_view name, const Path& target);
+  void add_relationship(std::string_view name, Path&& target);
+
+  /// Apply same-spec relationship list-op targets. Used by USDA body syntax
+  /// such as `prepend rel prototypes = [...]`.
+  void apply_relationship_list_op(const std::string& name,
+                                  const std::vector<Path>& targets,
+                                  RelationshipListOp op);
 
   /// Get relationship targets
   const std::vector<Path>* relationship(const std::string& name) const;
+  const std::vector<Path>* relationship(PropNameId name_id) const;
+
+  /// Enumerate all relationships without allocating name strings.
+  template <typename Fn>
+  void ForEachRelationship(Fn&& fn) const {
+    for (const auto& kv : relationships_) {
+      fn(kv.first, kv.second);
+    }
+  }
+
+  size_t relationship_count() const { return relationships_.size(); }
 
   /// Get all relationship names
   std::vector<std::string> relationship_names() const;
@@ -662,7 +731,10 @@ public:
 
   /// Add an attribute connection target (e.g. inputs:x.connect = </path>).
   /// The property itself should also exist as a slot (kFlagConnection).
-  void add_connection(const std::string& prop_name, const Path& target);
+  void add_connection(std::string_view prop_name, const Path& target);
+  void add_connection(std::string_view prop_name, Path&& target);
+  void add_connection(PropNameId prop_name_id, const Path& target);
+  void add_connection(PropNameId prop_name_id, Path&& target);
 
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
@@ -679,11 +751,14 @@ public:
   /// "token", "float[]"). Needed to faithfully re-emit attributes that have
   /// no authored default value (connection-only / declared-only) and to
   /// round-trip the exact role type for valued attributes.
-  void set_property_type_name(const std::string& prop_name,
-                              const std::string& type_name);
+  void set_property_type_name(std::string_view prop_name,
+                             std::string_view type_name);
+  void set_property_type_name(PropNameId prop_name_id,
+                             std::string_view type_name);
 
   /// Get the declared type name of a property (nullptr if not recorded)
-  const std::string* property_type_name(const std::string& prop_name) const;
+  const std::string* property_type_name(std::string_view prop_name) const;
+  const std::string* property_type_name(PropNameId prop_name_id) const;
 
   // ============================================================
   // Per-property metadata (interpolation / customData / ...)
@@ -691,10 +766,14 @@ public:
 
   /// Get a property's metadata, or nullptr if none authored (never allocates).
   const PropMeta* property_meta(PropNameId name_id) const;
-  const PropMeta* property_meta(const std::string& prop_name) const;
+  const PropMeta* property_meta(std::string_view prop_name) const;
+
+  /// Get connection targets by interned property-name id (never allocate lookup
+  /// string keys).
+  const std::vector<Path>* connection(PropNameId name_id) const;
 
   /// Get (lazily allocating) a property's mutable metadata for population.
-  PropMeta& ensure_property_meta(const std::string& prop_name);
+  PropMeta& ensure_property_meta(std::string_view prop_name);
   PropMeta& ensure_property_meta(PropNameId name_id);
 
   // ============================================================

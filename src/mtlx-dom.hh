@@ -153,6 +153,9 @@ public:
   // Input-specific attributes
   const std::string& GetNodeName() const { return nodename_; }
   void SetNodeName(const std::string& nodename) { nodename_ = nodename; }
+
+  const std::string& GetNodeGraph() const { return nodegraph_; }
+  void SetNodeGraph(const std::string& nodegraph) { nodegraph_ = nodegraph; }
   
   const std::string& GetOutput() const { return output_; }
   void SetOutput(const std::string& output) { output_ = output; }
@@ -168,6 +171,7 @@ public:
   
 private:
   std::string nodename_;
+  std::string nodegraph_;
   std::string output_;
   std::string interfacename_;
   std::string channels_;

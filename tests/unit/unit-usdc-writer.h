@@ -203,6 +203,11 @@ void usdc_writer_uint64_array_test(void);
 void usdc_writer_layer_offset_payload_test(void);
 void usdc_writer_scene_name_test(void);
 void usdc_writer_customdata_array_types_test(void);
+void usdc_writer_uint_tuple_unregistered_test(void);
+void usdc_writer_half_role_values_test(void);
+void usdc_writer_timecode_value_test(void);
+void usdc_writer_matrixf_unregistered_test(void);
+void usdc_writer_small_integer_unregistered_test(void);
 
 // Quaternion wire-format coverage (pxr-compat regression fence)
 void usdc_writer_quatf_array_roundtrip_test(void);

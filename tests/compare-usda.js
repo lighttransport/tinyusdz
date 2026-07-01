@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 /**
  * Simple glob pattern matcher
@@ -2160,13 +2160,18 @@ function compareSingleFile(inputFile, options) {
     let content1, content2;
 
     // Run tusdcat with timeout
-    try {
-      content1 = execSync(`"${options.tusdcat}" "${inputFile}"`, {
+    const runUsdTool = (exe, filePath) => {
+      return execFileSync(exe, [filePath], {
         encoding: 'utf-8',
         maxBuffer: 100 * 1024 * 1024,
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: options.timeout
       });
+    };
+
+    // Run tusdcat with timeout
+    try {
+      content1 = runUsdTool(options.tusdcat, inputFile);
     } catch (e) {
       result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
@@ -2176,12 +2181,7 @@ function compareSingleFile(inputFile, options) {
 
     // Run usdcat with timeout
     try {
-      content2 = execSync(`"${options.usdcat}" "${inputFile}"`, {
-        encoding: 'utf-8',
-        maxBuffer: 100 * 1024 * 1024,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: options.timeout
-      });
+      content2 = runUsdTool(options.usdcat, inputFile);
     } catch (e) {
       result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
