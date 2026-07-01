@@ -68,15 +68,26 @@ struct GpuInstancedScene {
 bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
                                const CameraFrame &camera, int height);
 
-// Shade the traced `hits` for the two-level scene: decode prim_id ->
-// (instance, prototype-local triangle), shade the prototype's triangle and
-// transform its object-space normal by the instance's normal matrix. Same
-// lighting model + spp averaging as ShadeAndWriteImage. Returns false on write
-// failure.
+// One traced primary-ray sample already decoded to two-level scene coordinates:
+// `inst` = placement index, `local` = prototype-local triangle, (u,v) = hit
+// barycentrics. `valid` is false for a miss. The narrow (32-bit prim_id) and wide
+// (separate instanceId/prim) traces both decode into this, so the shader below is
+// independent of the hit wire format.
+struct InstSampleHit {
+  uint32_t inst = 0;
+  uint32_t local = 0;
+  float u = 0.0f, v = 0.0f;
+  bool valid = false;
+};
+
+// Shade the decoded `hits` for the two-level scene: shade each sample's prototype
+// triangle and transform its object-space normal by the instance's normal matrix.
+// Same lighting model + spp averaging as ShadeAndWriteImage. `hits` is indexed
+// identically to `rays` ((y*w+x)*spp + s). Returns false on write failure.
 bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
                                  const std::vector<lrt_ray> &rays,
-                                 const std::vector<lrt_hit> &hits, int w, int h,
-                                 int spp);
+                                 const std::vector<InstSampleHit> &hits, int w,
+                                 int h, int spp);
 
 // Generate w*h*spp primary rays for `camera`, ray index = (y*w + x)*spp + s,
 // each sample offset by a Halton(2,3) sub-pixel jitter for anti-aliasing.

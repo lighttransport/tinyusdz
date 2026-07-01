@@ -196,11 +196,41 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
     const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
     lrt_result *err);
 
+/* Wide-id instanced build: same inputs as lrt_vk_rtx_scene_build_instanced, but
+ * the hit id is NOT packed into a single 32-bit prim_id. Instead the trace stores
+ * the TLAS instanceId and the prototype-local triangle index in SEPARATE 32-bit
+ * words (lrt_hit_wide below), so there is no ninsts*maxPrototypeTris product to
+ * overflow -- the only remaining ceiling is the device TLAS maxInstanceCount
+ * (commonly 2^24). Use this for instanced scenes the narrow builder rejects
+ * (Moana-island scale). A scene built this way MUST be traced with
+ * lrt_vk_rtx_scene_trace_wide (the narrow trace returns -1 on it). */
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_wide(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err);
+
 /* Trace n rays against the resident AS. Returns #rays that hit, or -1 on error.
- * Trace buffers are reused/grown across calls. */
+ * Trace buffers are reused/grown across calls. Rejects (-1) a scene built with
+ * the wide builder -- use lrt_vk_rtx_scene_trace_wide for those. */
 int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                            const lrt_ray *rays, uint32_t n, lrt_hit *out,
                            lrt_result *err);
+
+/* Wide-id hit: like lrt_hit but the single 32-bit prim_id is replaced by the two
+ * fields the wide trace stores separately. `inst` is the TLAS instance (placement)
+ * id 0..ninsts-1; `local` is the prototype-local triangle index. A miss sets
+ * inst == LRT_TRI_NO_HIT (as lrt_hit.prim_id does). The caller maps inst ->
+ * prototype via its own instance list and shades prototype triangle `local`. */
+typedef struct lrt_hit_wide {
+    float t, u, v;
+    uint32_t inst;
+    uint32_t local;
+} lrt_hit_wide;
+
+/* As lrt_vk_rtx_scene_trace, for a scene built with lrt_vk_rtx_scene_build_instanced_wide.
+ * Writes n lrt_hit_wide. Rejects (-1) a narrow scene. */
+int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
+                                const lrt_ray *rays, uint32_t n, lrt_hit_wide *out,
+                                lrt_result *err);
 
 void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s);
 

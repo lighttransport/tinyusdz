@@ -523,16 +523,15 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     }
   }
 
-  // Graceful 32-bit prim_id cap: the hit id encodes instance*stride + localTri, so
-  // the encodable instance count is (2^32-1)/stride (stride = max prototype tris).
-  // Rather than let the build reject the whole scene (which fell back to the flat
-  // path and OOMed on Moana island), keep the CAMERA-NEAREST placements and render
-  // a bounded instanced subset. (Keeping the first-collected subset would render
-  // off-screen under whole-scene auto-framing.) A future 64-bit hit encoding lifts
-  // this entirely.
-  uint32_t stride = 1;
-  for (const GpuInstProto &pr : scene.protos) stride = std::max(stride, pr.ntris);
-  const uint64_t max_inst = 0xFFFFFFFEull / uint64_t(stride);
+  // Graceful TLAS-instance cap. The wide (64-bit) hit encoding (picked
+  // automatically in RunVulkanLightRTInstanced when instance*stride would overflow
+  // 32 bits) stores instanceId and localTri separately, so the only ceiling is the
+  // device TLAS maxInstanceCount -- guaranteed by the Vulkan spec to be at least
+  // 2^24. Cap at that floor and keep the CAMERA-NEAREST placements (a first-
+  // collected subset would render off-screen under whole-scene auto-framing). This
+  // bounds island (~42M instances) to a visible ~16.7M subset instead of failing
+  // the TLAS build.
+  const uint64_t max_inst = 0xFFFFFFull;  // 2^24 - 1, the spec-guaranteed floor
   if (scene.insts.size() > max_inst) {
     const Vec3 eye = camera.origin, fwd = camera.forward;
     auto depth = [&](const GpuInstPlacement &p) {  // view-space depth of o2w origin
@@ -545,8 +544,8 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
                        return depth(a) < depth(b);
                      });
     std::cerr << "[vkInstanced] capping " << scene.insts.size() << " -> " << max_inst
-              << " instances to fit the 32-bit prim_id encoding (stride=" << stride
-              << "); keeping the camera-nearest subset.\n";
+              << " instances to fit the TLAS maxInstanceCount; keeping the "
+                 "camera-nearest subset.\n";
     scene.insts.resize(size_t(max_inst));
   }
 
