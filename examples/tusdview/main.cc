@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
   bool deferReferences = false;           // --defer-references (explicit opt-in)
   bool allowParentPaths = false;          // --allow-parent-paths: permit '..' in
                                           // composition asset paths (e.g. ALab)
+  tusdview::TextureRuntimeOptions textureOptions;
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
@@ -171,6 +172,36 @@ int main(int argc, char** argv) {
       deferReferences = true;
     } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
       allowParentPaths = true;
+    } else if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
+      textureOptions.maxTextureSize = std::atoi(argv[++i]);
+      if (textureOptions.maxTextureSize < 0) {
+        textureOptions.maxTextureSize = 0;
+      }
+    } else if (std::strcmp(argv[i], "--texture-budget-mb") == 0 && (i + 1) < argc) {
+      textureOptions.textureBudgetMB = std::atoi(argv[++i]);
+      if (textureOptions.textureBudgetMB < 0) {
+        textureOptions.textureBudgetMB = 0;
+      }
+    } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "off") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Off;
+      } else if (std::strcmp(mode, "bc") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::BCn;
+      } else {
+        LOGE("--texture-compress must be off or bc");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--udim") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "sparse") == 0) {
+        textureOptions.udimMode = tusdview::UdimMode::Sparse;
+      } else if (std::strcmp(mode, "atlas") == 0) {
+        textureOptions.udimMode = tusdview::UdimMode::Atlas;
+      } else {
+        LOGE("--udim must be sparse or atlas");
+        return 1;
+      }
     } else if ((std::strcmp(argv[i], "--time") == 0 ||
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
@@ -346,6 +377,14 @@ int main(int argc, char** argv) {
           "  --allow-parent-paths  Permit parent-directory ('..') segments in "
           "composition asset paths (rejected by default as unsafe). Needed by some "
           "production scenes, e.g. Animal Logic ALab's `../lightingrenderovers/`.\n"
+          "  --texture-max-size N  Downsize decoded textures whose longest edge "
+          "exceeds N texels (0 = keep source size).\n"
+          "  --texture-budget-mb N  Best-effort decoded texture memory budget "
+          "for viewer uploads (0 = unlimited).\n"
+          "  --texture-compress off|bc  Request BCn texture compression. Backends "
+          "without BCn upload support warn and fall back to resized RGBA8.\n"
+          "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
+          "UVs and can consume much more memory on large tile sets).\n"
           "  --time CODE   Evaluate the scene at this USD time code (animated "
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
@@ -454,6 +493,7 @@ int main(int argc, char** argv) {
     // non-standard, so honor the flag verbatim even for --frames runs.
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
+    lo.textureOptions = textureOptions;
     if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }

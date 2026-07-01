@@ -8,6 +8,14 @@ layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec3 vColor;
 layout(location = 3) flat in int vInstanceId;
+layout(location = 4) flat in int vDrawSlot;
+
+// Per-draw metadata (set 6), indexed by the vertex-resolved draw slot. Replaces
+// the old per-draw push constant so a whole multi-draw-indirect batch shares one
+// binding: each draw's meshId + flag bits come from meta[vDrawSlot]. Instanced
+// prototypes are never selection-highlighted, so there is no emissive term.
+struct DrawMeta { ivec4 ids; };  // .x meshId, .y flags (as before)
+layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
 layout(set = 5, binding = 0) uniform Frame {
@@ -18,10 +26,7 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   ivec4 mode;        // .x renderMode
 } fr;
-layout(push_constant) uniform InstPushC {
-  vec4 emissive;     // xyz = selection-highlight override (else 0)
-  ivec4 ids;         // .x meshId, .y flags (bit0=geomN, bit1=dbl, 2-3=purpose, 4-6=kind)
-} pc;
+layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
 layout(location = 0) out vec4 outColor;
 
@@ -52,10 +57,11 @@ void main() {
   vec3 Vdir = normalize(fr.camPos.xyz - vWorldPos);
   vec3 N = Ngeo;
   if (dot(N, Vdir) < 0.0) N = -N;
-  const bool geoNrm = (pc.ids.y & 1) != 0;
-  const bool dsided = (pc.ids.y & 2) != 0;
-  const int purpose = (pc.ids.y >> 2) & 3;
-  const int kind = (pc.ids.y >> 4) & 7;
+  const ivec4 ids = meta[vDrawSlot].ids;
+  const bool geoNrm = (ids.y & 1) != 0;
+  const bool dsided = (ids.y & 2) != 0;
+  const int purpose = (ids.y >> 2) & 3;
+  const int kind = (ids.y >> 4) & 7;
   if (fr.mode.x != 0) {
     vec3 Nshade = geoNrm ? Ngeo : normalize(vNormal);
     if (fr.mode.x == 2) { outColor = vec4(Nshade * 0.5 + 0.5, 1.0); return; }
@@ -72,7 +78,7 @@ void main() {
       outColor = vec4(clamp((vWorldPos - fr.sceneMin.xyz) / fr.sceneExtent.xyz, 0.0, 1.0), 1.0); return;
     }
     if (fr.mode.x == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
-    if (fr.mode.x == 16) { outColor = vec4(idColor(pc.ids.x), 1.0); return; }        // mesh id
+    if (fr.mode.x == 16) { outColor = vec4(idColor(ids.x), 1.0); return; }           // mesh id
     if (fr.mode.x == 19) {  // missing normals
       outColor = geoNrm ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0); return;
     }
@@ -96,5 +102,5 @@ void main() {
   vec3 H = normalize(L + V);
   float NdotH = max(dot(N, H), 0.0);
   vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);
-  outColor = vec4(col + pc.emissive.xyz, 1.0);
+  outColor = vec4(col, 1.0);  // instanced prototypes carry no selection emissive
 }

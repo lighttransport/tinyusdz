@@ -4,6 +4,8 @@
 // as the monolith is split into per-module .cc files).
 #pragma once
 
+#include <functional>
+
 #include "tusdr_types.hh"
 
 namespace tusdr {
@@ -396,13 +398,44 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // only way to render instanced geometry (no GPU TLAS). Default false keeps the
 // two-level proto-collection callers byte-identical (they stop at instancers and
 // place prototype BLAS via the TLAS instead).
+//
+// `max_jobs` (0 = unlimited) caps the emitted-job count: once `jobs` reaches it,
+// instancer expansion stops early. This bounds host memory on scenes with tens of
+// millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
+// a budget so a huge instancer yields a bounded preview instead of OOMing.
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
-                                bool expand_instancers = false);
+                                bool expand_instancers = false,
+                                size_t max_jobs = 0);
+
+// Streaming instance sink: called once per emitted placement with the prototype
+// mesh prim, its world transform, and purpose. Same (prim, world, purpose) an
+// expanded MeshJobNext would carry -- the two-level -vkInstanced collector uses
+// this to group placements on the fly instead of materializing one MeshJobNext
+// per instance (each ~392 B); a large instanced scene then costs ~88 B/placement
+// of host memory during collection instead of ~392 B, so Moana island fits in far
+// less RAM. See CollectRTInstancePlacementsNext.
+using RtInstanceSink = std::function<void(const tinyusdz::next::UsdPrim & /*prim*/,
+                                          const matrix4d & /*world*/,
+                                          tinyusdz::Purpose /*purpose*/)>;
+
+// Streaming counterpart of CollectRTPreviewMeshesNext(expand_instancers=true):
+// traverses `prim`, expands PointInstancer / native instances, and delivers each
+// placement to `sink` instead of appending a MeshJobNext. Stops after
+// `max_placements` sink calls (0 = unlimited). Returns the number of placements
+// emitted (so the caller can report a hit budget).
+size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
+                                       const tinyusdz::next::UsdPrim &prim,
+                                       const matrix4d &parent_world,
+                                       tinyusdz::Purpose inherited_purpose,
+                                       double time,
+                                       const std::vector<std::string> &mask,
+                                       const RtInstanceSink &sink,
+                                       size_t max_placements);
 
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,

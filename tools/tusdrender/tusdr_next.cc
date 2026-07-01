@@ -16,6 +16,7 @@
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/next/render-extract.hh"
+#include "tydra/texture-util.hh"
 #include "usdVol.hh"
 #include "tusdr_context.hh"
 #include "tusdr_rt_lod.hh"
@@ -552,6 +553,46 @@ bool UsdzEntryMatches(const std::string &entry, const std::string &asset) {
   return base(entry) == base(a);
 }
 
+bool IsUdimPattern(const std::string &asset) {
+  return asset.find("<UDIM>") != std::string::npos;
+}
+
+std::string ReplaceUdimToken(const std::string &asset, int udim) {
+  std::string out = asset;
+  const size_t pos = out.find("<UDIM>");
+  if (pos != std::string::npos) {
+    out.replace(pos, 6, std::to_string(udim));
+  }
+  return out;
+}
+
+bool LoadTextureImage(TextureCache &tc, const std::string &asset_path,
+                      tinyusdz::Image *out) {
+  if (!out) return false;
+  if (tc.usdz) {
+    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
+      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
+      auto res = tinyusdz::image::LoadImageFromMemory(
+          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
+      if (res) {
+        *out = std::move(res.value().image);
+        return true;
+      }
+      return false;
+    }
+  }
+  if (!asset_path.empty()) {
+    std::string path = asset_path;
+    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
+    auto res = tinyusdz::image::LoadImageFromFile(path);
+    if (res) {
+      *out = std::move(res.value().image);
+      return true;
+    }
+  }
+  return false;
+}
+
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
                           WrapMode ws, WrapMode wt, bool srgb,
                           const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
@@ -562,43 +603,118 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   auto it = tc.by_key.find(key);
   if (it != tc.by_key.end()) return it->second;
 
-  auto adopt = [&](const tinyusdz::Image &img) -> int32_t {
+  auto make_texture = [&](const tinyusdz::Image &img, const std::string &label,
+                          Texture *out) -> bool {
+    if (!out) return false;
     if (img.width <= 0 || img.height <= 0 || img.bpp != 8 || img.data.empty()) {
-      return -1;
+      return false;
+    }
+    tinyusdz::Image use = img;
+    if (tc.options && tc.options->texture_max_size > 0) {
+      const int longest = std::max(use.width, use.height);
+      if (longest > tc.options->texture_max_size) {
+        const double ratio = static_cast<double>(tc.options->texture_max_size) /
+                             static_cast<double>(longest);
+        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
+        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
+        tinyusdz::Image resized;
+        std::string err;
+        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+                                 : tinyusdz::tydra::ResizeFilter::Linear;
+        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
+          use = std::move(resized);
+        } else {
+          std::cerr << "WARN: failed to resize texture " << label << ": "
+                    << err << "\n";
+        }
+      }
+    }
+    if (tc.options && tc.options->texture_budget_mb > 0) {
+      const size_t budget =
+          static_cast<size_t>(tc.options->texture_budget_mb) * 1024ull * 1024ull;
+      const size_t bytes = use.data.size();
+      if (budget > 0 && tc.decoded_bytes + bytes > budget) {
+        const double remain = tc.decoded_bytes < budget
+                                  ? static_cast<double>(budget - tc.decoded_bytes)
+                                  : 0.0;
+        const double ratio =
+            remain > 0.0 ? std::sqrt(remain / static_cast<double>(bytes)) : 0.125;
+        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
+        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
+        tinyusdz::Image resized;
+        std::string err;
+        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+                                 : tinyusdz::tydra::ResizeFilter::Linear;
+        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
+          use = std::move(resized);
+        } else {
+          std::cerr << "WARN: failed to fit texture budget for " << label
+                    << ": " << err << "\n";
+        }
+      }
+    }
+    if (tc.options &&
+        tc.options->texture_compress == Options::TextureCompress::BCn) {
+      std::cerr << "WARN: -texCompress bc requested; " << label
+                << " is currently kept as resized 8-bit texels in tusdrender\n";
     }
     Texture t;
-    t.width = img.width;
-    t.height = img.height;
-    t.channels = img.channels;
-    t.pixels = img.data;
+    t.width = use.width;
+    t.height = use.height;
+    t.channels = use.channels;
+    t.pixels = std::move(use.data);
     t.wrap_s = ws;
     t.wrap_t = wt;
     t.srgb = srgb;
     t.scale = scale;
     t.bias = bias;
     t.build_mips();
+    tc.decoded_bytes += t.pixels.size();
+    *out = std::move(t);
+    return true;
+  };
+
+  auto adopt = [&](const tinyusdz::Image &img, const std::string &label) -> int32_t {
+    Texture t;
+    if (!make_texture(img, label, &t)) return -1;
     int32_t id = int32_t(tc.textures->size());
     tc.textures->push_back(std::move(t));
     return id;
   };
 
   int32_t id = -1;
-  // 1. usdz-embedded.
-  if (tc.usdz) {
-    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
-      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
-      auto res = tinyusdz::image::LoadImageFromMemory(
-          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
-      if (res) id = adopt(res.value().image);
-      break;
+  if (IsUdimPattern(asset_path)) {
+    Texture udim;
+    udim.is_udim = true;
+    udim.wrap_s = ws;
+    udim.wrap_t = wt;
+    udim.srgb = srgb;
+    udim.scale = scale;
+    udim.bias = bias;
+    for (int tile_id = 1001; tile_id <= 1100; ++tile_id) {
+      const std::string tile_path = ReplaceUdimToken(asset_path, tile_id);
+      tinyusdz::Image img;
+      if (!LoadTextureImage(tc, tile_path, &img)) continue;
+      Texture tile_tex;
+      if (!make_texture(img, tile_path, &tile_tex)) continue;
+      Texture::UdimTile tile;
+      tile.udim = tile_id;
+      tile.width = tile_tex.width;
+      tile.height = tile_tex.height;
+      tile.channels = tile_tex.channels;
+      tile.pixels = std::move(tile_tex.pixels);
+      tile.mips = std::move(tile_tex.mips);
+      udim.udim_tiles.push_back(std::move(tile));
     }
-  }
-  // 2. filesystem (anchored to the input dir).
-  if (id < 0 && (!asset_path.empty())) {
-    std::string path = asset_path;
-    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
-    auto res = tinyusdz::image::LoadImageFromFile(path);
-    if (res) id = adopt(res.value().image);
+    if (!udim.udim_tiles.empty()) {
+      id = int32_t(tc.textures->size());
+      tc.textures->push_back(std::move(udim));
+    }
+  } else {
+    tinyusdz::Image img;
+    if (LoadTextureImage(tc, asset_path, &img)) {
+      id = adopt(img, asset_path);
+    }
   }
   if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
   tc.by_key[key] = id;
@@ -1125,35 +1241,78 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // flatten Mesh prims into jobs. `mask` (if non-empty) restricts emission to
 // meshes at/under those prim paths (usdrecord --mask); the full tree is still
 // walked so transform chains remain correct.
+// Emit one placement. Two-level streaming (`sink` set) hands (prim, world,
+// purpose) straight to the caller's grouping sink; the flat path (`jobs` set)
+// appends a world-space MeshJobNext. Exactly one of jobs/sink is non-null.
+static inline void EmitPlacementNext(std::vector<MeshJobNext> *jobs,
+                                     const RtInstanceSink *sink, size_t *emitted,
+                                     const tinyusdz::next::UsdPrim &prim,
+                                     const matrix4d &world,
+                                     tinyusdz::Purpose purpose) {
+  if (sink) {
+    (*sink)(prim, world, purpose);
+    if (emitted) ++*emitted;
+    return;
+  }
+  MeshJobNext job;
+  job.prim = prim;
+  job.world = world;
+  job.purpose = purpose;
+  jobs->push_back(std::move(job));
+}
+// Count of placements emitted so far (for the max_jobs budget), from whichever
+// sink is active.
+static inline size_t EmittedCountNext(const std::vector<MeshJobNext> *jobs,
+                                      const size_t *emitted) {
+  return emitted ? *emitted : jobs->size();
+}
+
 // Forward decls: instance -> world-space MeshJobNext expansion for the GPU flatten
-// path (mutually recursive with CollectRTPreviewMeshesNext for nesting).
+// path (mutually recursive with CollectPreviewImplNext for nesting). `jobs`/`sink`
+// select flat-vector vs streaming emit (see EmitPlacementNext).
 static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
-    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs);
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
+    const RtInstanceSink *sink, size_t *emitted, size_t max_jobs);
 // Native (scenegraph instanceable) instance: place the prototype's geometry at the
 // instance proxy's world transform.
 static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
                                          tinyusdz::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *jobs);
+                                         std::vector<MeshJobNext> *jobs,
+                                         const RtInstanceSink *sink,
+                                         size_t *emitted);
 // Collect a prototype's mesh jobs in prototype-LOCAL space (root at identity),
 // expanding any nested instancers. Shared by both expanders above.
 static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
                                          const tinyusdz::next::UsdPrim &proto,
                                          tinyusdz::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out);
+// Shared body behind the public vector collector and the streaming placement
+// collector.
+static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
+                                   const tinyusdz::next::UsdPrim &prim,
+                                   const matrix4d &parent_world,
+                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   const std::vector<std::string> &mask,
+                                   std::vector<MeshJobNext> *jobs,
+                                   const RtInstanceSink *sink, size_t *emitted,
+                                   bool expand_instancers, size_t max_jobs);
 
-void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
-                                const tinyusdz::next::UsdPrim &prim,
-                                const matrix4d &parent_world,
-                                tinyusdz::Purpose inherited_purpose, double time,
-                                const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs,
-                                bool expand_instancers) {
+static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
+                                   const tinyusdz::next::UsdPrim &prim,
+                                   const matrix4d &parent_world,
+                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   const std::vector<std::string> &mask,
+                                   std::vector<MeshJobNext> *jobs,
+                                   const RtInstanceSink *sink, size_t *emitted,
+                                   bool expand_instancers, size_t max_jobs) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
+    return;  // instance budget reached
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -1184,7 +1343,8 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     // GPU flatten path: expand the instancer into world-space placements (no GPU
     // TLAS). Two-level callers leave expand_instancers=false and stop here.
     if (expand_instancers)
-      ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs);
+      ExpandPointInstancerJobsNext(stage, prim, world, purpose, time, mask, jobs,
+                                   sink, emitted, max_jobs);
     return;
   }
   {
@@ -1192,24 +1352,50 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
     if (ispec && !ispec->meta().instance_prototype().empty()) {
       // Scenegraph (instanceable) native instance proxy: its children come from
       // the prototype. GPU flatten path expands it; two-level callers stop here.
-      if (expand_instancers && PathMatchesMask(prim.GetPath().str(), mask))
+      if (expand_instancers &&
+          (!max_jobs || EmittedCountNext(jobs, emitted) < max_jobs) &&
+          PathMatchesMask(prim.GetPath().str(), mask))
         ExpandNativeInstanceJobsNext(stage, ispec->meta().instance_prototype(),
-                                     world, purpose, time, jobs);
+                                     world, purpose, time, jobs, sink, emitted);
       return;
     }
   }
   if (prim.GetTypeName() == "Mesh" &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
-    MeshJobNext job;
-    job.prim = prim;
-    job.world = world;
-    job.purpose = purpose;
-    jobs->push_back(std::move(job));
+    EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    CollectRTPreviewMeshesNext(stage, child, world, purpose, time, mask, jobs,
-                               expand_instancers);
+    if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs) break;
+    CollectPreviewImplNext(stage, child, world, purpose, time, mask, jobs, sink,
+                           emitted, expand_instancers, max_jobs);
   }
+}
+
+void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
+                                const tinyusdz::next::UsdPrim &prim,
+                                const matrix4d &parent_world,
+                                tinyusdz::Purpose inherited_purpose, double time,
+                                const std::vector<std::string> &mask,
+                                std::vector<MeshJobNext> *jobs,
+                                bool expand_instancers, size_t max_jobs) {
+  CollectPreviewImplNext(stage, prim, parent_world, inherited_purpose, time, mask,
+                         jobs, /*sink=*/nullptr, /*emitted=*/nullptr,
+                         expand_instancers, max_jobs);
+}
+
+size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
+                                       const tinyusdz::next::UsdPrim &prim,
+                                       const matrix4d &parent_world,
+                                       tinyusdz::Purpose inherited_purpose,
+                                       double time,
+                                       const std::vector<std::string> &mask,
+                                       const RtInstanceSink &sink,
+                                       size_t max_placements) {
+  size_t emitted = 0;
+  CollectPreviewImplNext(stage, prim, parent_world, inherited_purpose, time, mask,
+                         /*jobs=*/nullptr, &sink, &emitted,
+                         /*expand_instancers=*/true, max_placements);
+  return emitted;
 }
 
 // Expand a UsdGeomPointInstancer into world-space MeshJobNext placements for the
@@ -1223,7 +1409,8 @@ static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
     tinyusdz::Purpose purpose, double time,
-    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs) {
+    const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
+    const RtInstanceSink *sink, size_t *emitted, size_t max_jobs) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
   const std::vector<tinyusdz::next::Path> *targets =
       instancer.GetRelationship("prototypes");
@@ -1275,6 +1462,8 @@ static void ExpandPointInstancerJobsNext(
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
+    if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
+      break;  // instance budget reached
     if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= targets->size()) continue;
@@ -1286,13 +1475,9 @@ static void ExpandPointInstancerJobsNext(
         (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
     const matrix4d inst_world =
         InstanceTRS(&positions[i * 3], q, s) * instancer_world;
-    for (const MeshJobNext &pj : pjobs) {
-      MeshJobNext job;
-      job.prim = pj.prim;
-      job.world = pj.world * inst_world;  // prototype-local then instance world
-      job.purpose = pj.purpose;
-      jobs->push_back(std::move(job));
-    }
+    for (const MeshJobNext &pj : pjobs)
+      EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * inst_world,
+                        pj.purpose);
   }
 }
 
@@ -1332,18 +1517,15 @@ static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
                                          tinyusdz::Purpose purpose, double time,
-                                         std::vector<MeshJobNext> *jobs) {
+                                         std::vector<MeshJobNext> *jobs,
+                                         const RtInstanceSink *sink,
+                                         size_t *emitted) {
   tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   std::vector<MeshJobNext> proto_jobs;
   CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
-  for (const MeshJobNext &pj : proto_jobs) {
-    MeshJobNext job;
-    job.prim = pj.prim;
-    job.world = pj.world * world;  // prototype-local then instance world
-    job.purpose = pj.purpose;
-    jobs->push_back(std::move(job));
-  }
+  for (const MeshJobNext &pj : proto_jobs)
+    EmitPlacementNext(jobs, sink, emitted, pj.prim, pj.world * world, pj.purpose);
 }
 
 // `next`-path UsdVol volumes: serial walk resolving world matrices; for each
@@ -2635,6 +2817,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.textures = &ctx.textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = usdz_ptr;
+      tc.options = &opt;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -2730,6 +2913,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.textures = &ctx.textures;
     tc.base_dir = DirName(opt.input);
     tc.usdz = usdz_ptr;
+    tc.options = &opt;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);

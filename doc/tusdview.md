@@ -192,6 +192,60 @@ b=np.array(Image.open('b.png').convert('RGB')).astype(int); \
 print('maxdiff', int(np.abs(a-b).max()))"
 ```
 
+### OpenGL from a Codex sandbox
+
+In the Codex managed sandbox, `DISPLAY=:0` may point at a real desktop X socket
+but still fail at GLFW permission/auth time:
+
+```text
+glfw error 65544: X11: Failed to open display :0
+```
+
+The usual `xvfb-run` wrapper can also fail if the host's `/tmp/.X11-unix`
+directory is not root-owned inside the sandbox view:
+
+```text
+_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to root
+Fatal server error: Cannot establish any listening sockets
+```
+
+For a correctness screenshot, start Xvfb directly outside the sandbox with Unix
+sockets disabled and TCP enabled, then run `tusdview` against that display:
+
+```sh
+# Run outside the sandbox / with command escalation, and keep it running:
+Xvfb :88 -screen 0 1280x720x24 -ac -nolisten unix -nolisten local -listen tcp
+
+# In another command, also outside the sandbox if client TCP connect is blocked:
+env DISPLAY=localhost:88 \
+  ./build_ninja/tusdview --backend gl --frames 8 \
+  --screenshot /tmp/tusdview_gl.ppm model.usdz
+```
+
+If the captured viewport is unexpectedly tiny, pass a temporary config with an
+explicit window size:
+
+```json
+{
+  "window_size": { "width": 1280, "height": 720 },
+  "recent_scenes": []
+}
+```
+
+Then run:
+
+```sh
+env DISPLAY=localhost:88 \
+  ./build_ninja/tusdview --config /tmp/tusdview_1280.json --backend gl \
+  --frames 4 --screenshot /tmp/tusdview_gl.ppm model.usdz
+```
+
+Stop the temporary Xvfb server after the run and confirm it is gone:
+
+```sh
+pgrep -a Xvfb || true
+```
+
 ## Headless HW-accelerated GL (NVIDIA) + GPU profiling
 
 Under `xvfb-run`, the **OpenGL** backend falls back to **llvmpipe** (Mesa software

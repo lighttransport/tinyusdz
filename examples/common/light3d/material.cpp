@@ -355,13 +355,25 @@ uniform vec3 uCameraPos;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
+uniform sampler2DArray uBaseColorUdimTex;
+uniform isampler1D uBaseColorUdimLut;
 uniform bool uHasBaseColorTex;
+uniform bool uBaseColorTexIsUdim;
 uniform sampler2D uMetalRoughTex;
+uniform sampler2DArray uMetalRoughUdimTex;
+uniform isampler1D uMetalRoughUdimLut;
 uniform bool uHasMetalRoughTex;
+uniform bool uMetalRoughTexIsUdim;
 uniform sampler2D uNormalTex;
+uniform sampler2DArray uNormalUdimTex;
+uniform isampler1D uNormalUdimLut;
 uniform bool uHasNormalTex;
+uniform bool uNormalTexIsUdim;
 uniform sampler2D uEmissiveTex;
+uniform sampler2DArray uEmissiveUdimTex;
+uniform isampler1D uEmissiveUdimLut;
 uniform bool uHasEmissiveTex;
+uniform bool uEmissiveTexIsUdim;
 
 out vec4 fragColor;
 
@@ -402,6 +414,19 @@ vec3 kindColor(int k) {
     return vec3(0.35);                         // no kind: dark gray
 }
 
+vec4 sampleUdim(sampler2DArray tex, isampler1D lut, vec2 uv) {
+    ivec2 tile = ivec2(floor(uv));
+    int idx = tile.x + tile.y * 10;
+    if (idx < 0 || idx >= 100) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    int layer = texelFetch(lut, idx, 0).r;
+    if (layer < 0) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    return texture(tex, vec3(fract(uv), float(layer)));
+}
+
 void main() {
     vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
     float metallic = uMetallic;
@@ -409,22 +434,30 @@ void main() {
     vec3 emissive = uEmissive;
 
     if (uHasBaseColorTex) {
-        baseColor *= texture(uBaseColorTex, vUV).rgb;
+        baseColor *= (uBaseColorTexIsUdim
+                          ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, vUV)
+                          : texture(uBaseColorTex, vUV)).rgb;
     }
     if (uHasMetalRoughTex) {
-        vec4 mr = texture(uMetalRoughTex, vUV);
+        vec4 mr = uMetalRoughTexIsUdim
+                      ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, vUV)
+                      : texture(uMetalRoughTex, vUV);
         roughness *= mr.g;
         metallic *= mr.b;
     }
     if (uHasEmissiveTex) {
-        emissive *= texture(uEmissiveTex, vUV).rgb;
+        emissive *= (uEmissiveTexIsUdim
+                         ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, vUV)
+                         : texture(uEmissiveTex, vUV)).rgb;
     }
 
     vec3 N = uGeometricNormal
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                  : normalize(vNormal);
     if (uHasNormalTex) {
-        vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
+        vec3 tangentNormal = (uNormalTexIsUdim
+                                  ? sampleUdim(uNormalUdimTex, uNormalUdimLut, vUV)
+                                  : texture(uNormalTex, vUV)).xyz * 2.0 - 1.0;
         N = normalize(N + tangentNormal * 0.1);
     }
 
