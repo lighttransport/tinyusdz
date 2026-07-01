@@ -80,6 +80,46 @@ struct VoxAsset {
   std::string filePath;  // asset
 };
 
+// -----------------------------------------------------------------------------
+// Placeholder schema prim types for UsdRender and UsdProc.
+//
+// These are recognized prim *types* (so `def RenderSettings "y" {}` parses into
+// a distinct prim and round-trips through USDA/USDC), but their schema
+// attributes are not yet modeled as typed fields -- all authored properties are
+// retained generically in `props`.
+// -----------------------------------------------------------------------------
+#define TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(__cls)                              \
+  struct __cls {                                                             \
+    __cls() = default;                                                       \
+    std::string name;                                                        \
+    Specifier spec{Specifier::Def};                                          \
+    int64_t parent_id{-1};                                                   \
+    PrimMeta meta;                                                           \
+    std::map<std::string, Property> props;                                   \
+    const std::vector<value::token> &primChildrenNames() const {             \
+      return _primChildren;                                                  \
+    }                                                                        \
+    const std::vector<value::token> &propertyNames() const {                 \
+      return _properties;                                                    \
+    }                                                                        \
+    std::vector<value::token> &primChildrenNames() { return _primChildren; } \
+    std::vector<value::token> &propertyNames() { return _properties; }       \
+                                                                             \
+   private:                                                                  \
+    std::vector<value::token> _primChildren;                                 \
+    std::vector<value::token> _properties;                                   \
+  }
+
+// UsdRender
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderVar);
+
+// UsdProc
+TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
+
+#undef TINYUSDZ_DEFINE_PLACEHOLDER_PRIM
+
 // `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
@@ -122,6 +162,12 @@ namespace value {
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
+
+// UsdRender / UsdProc placeholder prim types.
+DEFINE_TYPE_TRAIT(RenderSettings, "RenderSettings", TYPE_ID_RENDER_SETTINGS, 1);
+DEFINE_TYPE_TRAIT(RenderProduct, "RenderProduct", TYPE_ID_RENDER_PRODUCT, 1);
+DEFINE_TYPE_TRAIT(RenderVar, "RenderVar", TYPE_ID_RENDER_VAR, 1);
+DEFINE_TYPE_TRAIT(GenerativeProcedural, "GenerativeProcedural", TYPE_ID_GENERATIVE_PROCEDURAL, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

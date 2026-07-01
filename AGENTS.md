@@ -81,8 +81,10 @@ src/                       Core library sources (~250 .cc/.hh files)
   external/, nonstd/         Vendored deps (header-only): nonstd::
                              optional, expected, string_view, fmt,
                              stb_image, base122, miniz, …
-  attic/, blender/, next/    Experimental / under-construction code
-                             not built into the main library
+  next/                      Stable standalone next-generation core library
+                             and tests (`src/next`, `tests/next`)
+  attic/, blender/           Experimental / under-construction code not
+                             built into the main library
 
 python/                    CPython abi3 wheel (built from
                            src/python/module.c via setuptools +
@@ -187,7 +189,7 @@ The procedure is in that doc; the threaded VK-RT case study is in
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
-The experimental `next` module (`src/next/`, `tests/next/`) is **excluded from the regression gate** by design — it is a standalone CMake project that the main `build/` does not compile (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`), so it never appears in `ctest`. Do not block merges on it; build/run it on demand only (see [Experimental `next` library tests](doc/testing-cpp.md#experimental-next-library-tests)).
+The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project with its own Debug test build. It does not appear in the main native `ctest` tree, so run it explicitly as part of the regression gate (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
 
 ### Pre-merge checklist
 
@@ -205,7 +207,15 @@ ctest -R roundtrip --output-on-failure
 ctest -R feat --output-on-failure
 ```
 
-2. Run web/WASM checks when web or JS-facing code changed
+2. Run stable `next` checks
+
+```bash
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+```
+
+3. Run web/WASM checks when web or JS-facing code changed
 
 ```bash
 cd web
@@ -214,19 +224,19 @@ cmake --build build -j16
 ctest --test-dir build --output-on-failure
 ```
 
-3. Run Pixar compatibility regression if available
+4. Run Pixar compatibility regression if available
 
 ```bash
 USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
-4. Check docs and commit hygiene
+5. Check docs and commit hygiene
 
 - Confirm any behavior-impacting changes are covered in [doc/testing-cpp.md](doc/testing-cpp.md)
 - Verify no unrelated artifacts are left uncommitted for review
 
-Do not merge if any command in steps 1–3 fails.
+Do not merge if any command in steps 1–4 fails.
 
 Copy-paste pre-merge script:
 
@@ -247,6 +257,12 @@ ctest --output-on-failure
 ctest -R unit --output-on-failure
 ctest -R roundtrip --output-on-failure
 ctest -R feat --output-on-failure
+
+cd "$ROOT_DIR"
+cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
+  -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
+ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
 
 cd "$ROOT_DIR/web"
 if [ -f "$ROOT_DIR/web/CMakeLists.txt" ]; then

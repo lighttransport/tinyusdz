@@ -58,6 +58,31 @@ int SecurityTestReadAsset(const char * /*resolved_asset_name*/,
   return 0;
 }
 
+int SecurityTestSmallSizeAsset(const char * /*resolved_asset_name*/,
+                               uint64_t *nbytes, std::string * /*err*/,
+                               void * /*userdata*/) {
+  if (!nbytes) {
+    return -1;
+  }
+  *nbytes = 16;
+  return 0;
+}
+
+int SecurityTestOverreportedReadAsset(const char * /*resolved_asset_name*/,
+                                      uint64_t req_nbytes, uint8_t *out_buf,
+                                      uint64_t *nbytes,
+                                      std::string * /*err*/,
+                                      void * /*userdata*/) {
+  if (!out_buf || !nbytes) {
+    return -1;
+  }
+  if (req_nbytes > 0) {
+    memset(out_buf, 0, static_cast<size_t>(req_nbytes));
+  }
+  *nbytes = req_nbytes + 1;
+  return 0;
+}
+
 }  // namespace
 
 void security_empty_input_test(void) {
@@ -426,6 +451,23 @@ void security_resolver_oversized_custom_asset_rejected_test(void) {
   bool ok = resolver.open_asset("virtual.foo", "virtual.foo", &asset, &warn, &err);
   TEST_CHECK(!ok);
   TEST_CHECK(err.find("exceeds max bytes") != std::string::npos);
+}
+
+void security_resolver_overreported_custom_asset_rejected_test(void) {
+  AssetResolutionResolver resolver;
+  resolver.set_max_asset_bytes_in_mb(1);
+
+  AssetResolutionHandler handler;
+  handler.resolve_fun = SecurityTestResolveAsset;
+  handler.size_fun = SecurityTestSmallSizeAsset;
+  handler.read_fun = SecurityTestOverreportedReadAsset;
+  resolver.register_asset_resolution_handler("foo", handler);
+
+  Asset asset;
+  std::string warn, err;
+  bool ok = resolver.open_asset("virtual.foo", "virtual.foo", &asset, &warn, &err);
+  TEST_CHECK(!ok);
+  TEST_CHECK(err.find("larger size than requested") != std::string::npos);
 }
 
 void security_nested_zstd_depth_rejected_test(void) {

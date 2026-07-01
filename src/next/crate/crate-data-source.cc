@@ -346,9 +346,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!r.read_u64(comp_size)) return false;
+    if (comp_size > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+      return false;
+    }
+    if (static_cast<size_t>(comp_size) > r.remaining()) return false;
     std::vector<uint8_t> blob;
     if (!r.read(blob, static_cast<size_t>(comp_size))) return false;
-    std::vector<uint8_t> with_prefix(8 + blob.size());
+    size_t prefixed_size = 0;
+    if (!safe::add(size_t(8), blob.size(), &prefixed_size)) return false;
+    std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU32(

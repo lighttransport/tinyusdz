@@ -490,6 +490,8 @@ class CrateReader {
   bool ReadIndex(crate::Index *i);
   bool ReadString(std::string *s);
   bool ReadValueRep(crate::ValueRep *rep);
+  // Decode a VtArrayEdit ValueRep (IsArrayEdit bit set, crate >= 0.14.0).
+  bool UnpackArrayEditRep(const crate::ValueRep &rep, crate::CrateValue *value);
 
   bool ReadPathArray(std::vector<Path> *d);
   bool ReadStringArray(std::vector<std::string> *d);

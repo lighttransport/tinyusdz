@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Xform "BodyA"
+    {
+    }
+
+    def Xform "BodyB"
+    {
+    }
+
+    def PhysicsRevoluteJoint "Hinge" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </World/BodyA>
+        rel physics:body1 = </World/BodyB>
+        token physics:axis = "Z"
+        double mjc:damping = 0.75
+    }
+}
