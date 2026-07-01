@@ -248,6 +248,11 @@ class VulkanRenderer final : public Renderer {
   VkDeviceAddress bufferDeviceAddress(VkBuffer buf) const;
   bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
+  // Device-local buffer initialized from `data` via a one-shot staging copy (no
+  // device address). For static geometry that the GPU reads every frame -- keeps
+  // it in VRAM instead of host-visible memory fetched over PCIe per draw.
+  bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                               const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void buildBlas(VkMeshGPU& m);
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
