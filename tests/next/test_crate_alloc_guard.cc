@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,39 @@ static std::shared_ptr<CrateDataSource> MakeSource(std::string bytes) {
   return CrateDataSource::Adopt(std::move(bytes), CrateVersion{0, 8, 0});
 }
 
+static bool RejectsRaisedLimitOverflowCount() {
+  // Simulate a caller raising max_array_elements above the default. The decoded
+  // byte count must still be checked without overflowing count * stride.
+  std::vector<uint8_t> buf(16, 0);
+  uint64_t count = (std::numeric_limits<uint64_t>::max)() / 128ull + 1ull;
+  std::memcpy(buf.data() + 8, &count, 8);
+  ValueRep rep = ValueRep::Make(CrateTypeId::Matrix4d, /*payload=*/8,
+                                /*is_array=*/true, /*is_inlined=*/false);
+  std::vector<std::string> tokens;
+  Value out;
+  bool ok = DecodeCrateArray(buf.data(), buf.size(), rep, tokens,
+                             (std::numeric_limits<size_t>::max)(), &out);
+  return !ok;
+}
+
+static bool RejectsCompressedHugeBlob() {
+  // Compressed int arrays read a [u64 compressedSize] before the blob. A forged
+  // size must be rejected before the helper allocates the blob/prefixed buffer.
+  std::vector<uint8_t> buf(24, 0);
+  uint64_t count = 16;
+  uint64_t comp_size = (std::numeric_limits<uint64_t>::max)();
+  std::memcpy(buf.data() + 8, &count, 8);
+  std::memcpy(buf.data() + 16, &comp_size, 8);
+  ValueRep rep = ValueRep::Make(CrateTypeId::Int, /*payload=*/8,
+                                /*is_array=*/true, /*is_inlined=*/false,
+                                /*is_compressed=*/true);
+  std::vector<std::string> tokens;
+  Value out;
+  bool ok = DecodeCrateArray(buf.data(), buf.size(), rep, tokens,
+                             1024ull * 1024 * 1024, &out);
+  return !ok;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Crate Allocation-Guard Test ===" << std::endl;
 
@@ -59,6 +93,8 @@ int main() {
   assert(RejectsHugeArray(CrateTypeId::Vec3f));     // 12 B/elem
   assert(RejectsHugeArray(CrateTypeId::Int));       // 4 B/elem
   assert(RejectsHugeArray(CrateTypeId::Token));     // 4 B index/elem
+  assert(RejectsRaisedLimitOverflowCount());
+  assert(RejectsCompressedHugeBlob());
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):

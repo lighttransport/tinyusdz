@@ -40,20 +40,18 @@ Relevant options in the current build configuration:
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The experimental `next` module (`src/next/`, `tinyusdz_next`) and
-> its tests under `tests/next/` are **not** part of this regression suite. They
-> are a standalone CMake project, are not built by the main `build/` (so they do
-> not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
-> treat `next` results as part of the regression gate. See
-> [Experimental `next` library tests](#experimental-next-library-tests) for how
-> to build and run them on demand.
+> **Scope:** The stable `next` module (`src/next/`, `tinyusdz_next`) is part of
+> the regression gate. It remains a standalone CMake project, so it does not
+> appear in the main `build/` `ctest` run; run its Debug test build explicitly.
+> See [Stable `next` library tests](#stable-next-library-tests).
 
-The full regression pass has two parts:
+The full regression pass has three parts:
 
 1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
    corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
    and the main Acutest unit suite.
-2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
+2. The standalone Debug `next` CTest suite.
+3. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
    checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
    corpora.
 
@@ -68,7 +66,12 @@ cd build
 ctest --output-on-failure
 cd ..
 
-# 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+# 2. Run the stable next module tests. Keep this Debug: tests use assert().
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+
+# 3. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
 #    Build it once with: scripts/build-openusd-usdcat.sh
 #    For headless environments lacking PySide, `--full` will retry with a reduced
 #    full-core profile unless OPENUSD_RETRY_NO_PYSIDE=0 is set.
@@ -467,19 +470,19 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
-### Experimental `next` library tests
+### Stable `next` library tests
 
-`next` (`src/next/`, library `tinyusdz_next`) is an **experimental, under-construction**
-rewrite of the core with a new modular architecture. It is intentionally kept
-out of the main regression suite:
+`next` (`src/next/`, library `tinyusdz_next`) is a stable standalone rewrite of
+the core with a modular architecture. It is part of the regression gate, but it
+is built and run separately from the main native build:
 
 - It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
-  `project()`), *not* added by the top-level `CMakeLists.txt`. The default
-  `build/` therefore does not compile it, and none of its tests appear in the
-  `build/` `ctest` run or the Pixar comparison runner.
+  `project()`), *not* added by the top-level `CMakeLists.txt` by default. The
+  default `build/` therefore does not compile it, and none of its tests appear
+  in the main `build/` `ctest` run.
 - Its tests are gated behind `TINYUSDZ_NEXT_BUILD_TESTS` (**OFF by default**).
-- Treat its results as informational only — **not** a merge/regression gate.
-  Do not wire `next` into the full regression gate until the suite is hardened.
+- Treat its results as required regression coverage for changes that touch core
+  parsing, crate IO, composition, schema conversion, or Web flattening paths.
 
 Build and run them on demand in a separate build directory. The preferred
 entrypoint is:
@@ -726,4 +729,4 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+- The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project and does not appear in the main `build/` `ctest` tree (`TINYUSDZ_NEXT_BUILD_TESTS=OFF` by default); run its separate Debug test build as part of the regression gate. See [Stable `next` library tests](#stable-next-library-tests).

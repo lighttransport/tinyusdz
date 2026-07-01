@@ -99,6 +99,8 @@ static std::string AnimationPathToString(tinyusdz::tydra::AnimationPath path) {
       return "Scale";
     case tinyusdz::tydra::AnimationPath::Weights:
       return "Weights";
+    case tinyusdz::tydra::AnimationPath::CustomProperty:
+      return "CustomProperty";
   }
   return "Unknown";
 }
@@ -167,6 +169,7 @@ static void DumpAnimationTimesamples(const tinyusdz::tydra::RenderScene& scene) 
             components = 4;  // quat (x, y, z, w)
             break;
           case tinyusdz::tydra::AnimationPath::Weights:
+          case tinyusdz::tydra::AnimationPath::CustomProperty:
             // Variable, depends on number of morph targets
             if (!sampler.times.empty() && !sampler.values.empty()) {
               components = sampler.values.size() / sampler.times.size();

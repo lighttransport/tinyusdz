@@ -109,7 +109,7 @@ option(TINYUSDZ_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
 option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
-       "Use next::pcp::Cache backend for LargeSceneLoader (experimental; links tinyusdz_next)."
+       "Use stable next::pcp::Cache backend for LargeSceneLoader (links tinyusdz_next)."
        OFF)
 option(TINYUSDZ_ENABLE_SIMD
        "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
@@ -491,6 +491,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
+    ${PROJECT_SOURCE_DIR}/src/spline-binary.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-props.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-entry.cc
@@ -521,6 +522,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition-graph.cc
     ${PROJECT_SOURCE_DIR}/src/large-scene-loader.cc
     ${PROJECT_SOURCE_DIR}/src/core/instance-key.cc
+    ${PROJECT_SOURCE_DIR}/src/core/path-expression.cc
+    ${PROJECT_SOURCE_DIR}/src/core/path-expression-eval.cc
     ${PROJECT_SOURCE_DIR}/src/hash-util.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc

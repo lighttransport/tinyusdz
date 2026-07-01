@@ -1321,6 +1321,45 @@ bool AsciiParser::MaybeNone() {
   return false;
 }
 
+// Consume and return true iff the upcoming token is the literal keyword
+// `AnimationBlock` (the SdfAnimationBlock sentinel, parallel to `None`).
+// Uses identifier reading so it respects word boundaries.
+bool AsciiParser::MaybeAnimationBlock() {
+  auto loc = CurrLoc();
+
+  std::string tok;
+  if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (tok == "AnimationBlock") {
+    return true;  // consumed
+  }
+
+  SeekTo(loc);
+  return false;
+}
+
+// Consume and return true iff the upcoming token is the `edit` keyword (the
+// start of a VtArrayEdit value: `edit [ ... ]`).
+bool AsciiParser::MaybeArrayEdit() {
+  auto loc = CurrLoc();
+
+  std::string tok;
+  if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (tok == "edit") {
+    return true;  // consumed
+  }
+
+  SeekTo(loc);
+  return false;
+}
+
 bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;
@@ -1872,15 +1911,17 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   std::string tok = std::move(buf);
 
   if (contains(tok, '.')) {
-    if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
+    if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples") ||
+        endsWith(tok, ".spline")) {
       // OK
     } else {
       // Restore cursor to start position for accurate error reporting
       _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for "
-                              "attrbute name: `{}`",
-                              tok));
+          kAscii,
+          fmt::format("Must ends with `.connect`, `.timeSamples` or `.spline` "
+                      "for attrbute name: `{}`",
+                      tok));
     }
 
     // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)

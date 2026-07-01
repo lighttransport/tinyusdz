@@ -803,6 +803,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
 
   Prim prim(node.prim);
   prim.prim_type_name() = node.typeName;
+  prim.specifier() = node.specifier;  // def / over / class
 
   DCOUT("prim[" << primIdx << "].name = " << prim.element_name());
   DCOUT("prim[" << primIdx << "].type = " << node.prim.type_name());
@@ -1035,6 +1036,12 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
+
+  // UsdRender / UsdProc placeholder prim types.
+  RegisterReconstructCallback<RenderSettings>();
+  RegisterReconstructCallback<RenderProduct>();
+  RegisterReconstructCallback<RenderVar>();
+  RegisterReconstructCallback<GenerativeProcedural>();
 
   RegisterReconstructCallback<SphereLight>();
   RegisterReconstructCallback<DomeLight>();

@@ -47,6 +47,12 @@ struct CollectionInstance {
   RelationshipProperty includes; // rel collection:<collectionName>:includes
   RelationshipProperty excludes; // rel collection:<collectionName>:excludes
 
+  // uniform pathExpression collection:<collectionName>:membershipExpression
+  // When authored, the collection is in "expression mode" (pattern-based
+  // membership) instead of the relationship-based includes/excludes mode.
+  TypedAttribute<value::PathExpression> membershipExpression;
+
+  bool has_membershipExpression() const { return membershipExpression.authored(); }
 };
 
 class Collection

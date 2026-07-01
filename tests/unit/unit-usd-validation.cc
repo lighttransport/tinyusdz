@@ -1498,6 +1498,100 @@ def Mesh "mesh"
   TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.range"));
 }
 
+void usd_validation_physics_mjc_tendon_route_arrays_test(void) {
+  const char *usda = R"(#usda 1.0
+
+def MjcTendon "badRoute"
+{
+    rel mjc:path = [</a>, </b>]
+    int[] mjc:path:indices = [0]
+    double[] mjc:path:coef = [1]
+    rel mjc:sideSites = [</s>]
+    int[] mjc:sideSites:indices = [0, 1]
+}
+)";
+
+  Layer layer;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(parse_layer(usda, &layer, &warn, &err));
+
+  const USDValidationResult result =
+      ValidateLayerAgainstAOUSDCore(layer, AllGroups());
+  TEST_CHECK(HasRule(result, "physics.extension.mjc.array"));
+
+  const char *valid_usda = R"(#usda 1.0
+
+def MjcTendon "goodRoute"
+{
+    rel mjc:path = [</a>, </b>]
+    int[] mjc:path:indices = [0, 1]
+    double[] mjc:path:coef = [1, -0.5]
+    rel mjc:sideSites = [</s>]
+    int[] mjc:sideSites:indices = [0]
+}
+)";
+
+  Layer valid_layer;
+  TEST_CHECK(parse_layer(valid_usda, &valid_layer, &warn, &err));
+  const USDValidationResult valid_result =
+      ValidateLayerAgainstAOUSDCore(valid_layer, AllGroups());
+  TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.array"));
+}
+
+void usd_validation_physics_mjc_sensor_type_test(void) {
+  const char *valid_usda = R"(#usda 1.0
+
+def MjcSensor "gyro"
+{
+    token mjc:type = "gyro"
+    token mjc:objtype = "site"
+    token mjc:objname = "imu"
+    double mjc:cutoff = 34.9
+    double mjc:noise = 0.01
+}
+
+def MjcSensor "frame"
+{
+    token mjc:type = "framepos"
+    token mjc:objtype = "body"
+    token mjc:objname = "torso"
+    token mjc:reftype = "site"
+    token mjc:refname = "imu"
+}
+)";
+
+  Layer valid_layer;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(parse_layer(valid_usda, &valid_layer, &warn, &err));
+
+  const USDValidationResult valid_result =
+      ValidateLayerAgainstAOUSDCore(valid_layer, AllGroups());
+  TEST_CHECK(!HasRule(valid_result, "physics.extension.mjc.token"));
+
+  const char *invalid_usda = R"(#usda 1.0
+
+def MjcSensor "bad"
+{
+    token mjc:type = "notasensor"
+}
+
+def MjcSensor "badObject"
+{
+    token mjc:type = "gyro"
+    token mjc:objtype = "definitely_not_an_object_type"
+    token mjc:reftype = "also_bad"
+}
+)";
+
+  Layer invalid_layer;
+  TEST_CHECK(parse_layer(invalid_usda, &invalid_layer, &warn, &err));
+  const USDValidationResult invalid_result =
+      ValidateLayerAgainstAOUSDCore(invalid_layer, AllGroups());
+  TEST_CHECK(HasRule(invalid_result, "physics.extension.mjc.token"));
+}
+
 void usd_validation_physics_newton_extension_test(void) {
   const char *usda = R"(#usda 1.0
 

@@ -3654,5 +3654,76 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
   return true;
 }
 
+size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
+  if (!scene) {
+    return 0;
+  }
+
+  size_t resolved = 0;
+
+  for (size_t li = 0; li < scene->lights.size(); li++) {
+    RenderLight &light = scene->lights[li];
+
+    Path lpath(light.abs_path, "");
+    if (!lpath.is_valid()) {
+      continue;
+    }
+    auto pret = stage.GetPrimAtPath(lpath);
+    if (!pret || !pret.value()) {
+      continue;
+    }
+    const Collection *coll = nullptr;
+    if (!GetCollection(*pret.value(), &coll) || !coll) {
+      continue;  // No collections authored -> links all (defaults).
+    }
+
+    // Resolve one link collection instance ("lightLink" / "shadowLink").
+    auto resolve_link = [&](const std::string &inst_name, bool *links_all,
+                            std::vector<int> *mesh_indices) -> bool {
+      const CollectionInstance *inst = nullptr;
+      if (!coll->get_instance(inst_name, &inst) || !inst) {
+        return false;
+      }
+      const bool authored = inst->has_membershipExpression() ||
+                            inst->includes.authored() ||
+                            inst->excludes.authored();
+      if (!authored) {
+        return false;  // unauthored -> keep default (links all)
+      }
+
+      CollectionMembershipQuery q =
+          BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
+
+      *links_all = false;
+      mesh_indices->clear();
+      for (size_t mi = 0; mi < scene->meshes.size(); mi++) {
+        const std::string &mpath = scene->meshes[mi].abs_path;
+        if (mpath.empty()) {
+          continue;
+        }
+        if (IsPathIncluded(q, stage, Path(mpath, ""))) {
+          mesh_indices->push_back(static_cast<int>(mi));
+        }
+      }
+      return true;
+    };
+
+    bool any = false;
+    if (resolve_link("lightLink", &light.light_links_all,
+                     &light.light_link_mesh_indices)) {
+      any = true;
+    }
+    if (resolve_link("shadowLink", &light.shadow_links_all,
+                     &light.shadow_link_mesh_indices)) {
+      any = true;
+    }
+    if (any) {
+      resolved++;
+    }
+  }
+
+  return resolved;
+}
+
 }  // namespace tydra
 }  // namespace tinyusdz

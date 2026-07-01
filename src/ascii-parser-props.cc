@@ -67,6 +67,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "array-edit.hh"  // value::ArrayEdit + op helpers
 
 namespace tinyusdz {
 
@@ -192,6 +193,8 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<Path>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<value::AssetPath>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::PathExpression>> *result);
 
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
@@ -317,11 +320,14 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<Path> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::AssetPath> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::PathExpression> *result);
 
 
 constexpr auto kRel = "rel";
 constexpr auto kTimeSamplesSuffix = ".timeSamples";
 constexpr auto kConnectSuffix = ".connect";
+constexpr auto kSplineSuffix = ".spline";
 
 constexpr auto kAscii = "[ASCII]";
 
@@ -864,15 +870,208 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
 }
 
 template <typename T>
+bool AsciiParser::ParseArrayEditValue(std::vector<T> *literals,
+                                     std::vector<int64_t> *ops) {
+  if (!literals || !ops) return false;
+
+  // The `edit` keyword has already been consumed. Parse `[ <op>; ... ]`.
+  if (!SkipWhitespace()) return false;
+  if (!Expect('[')) {
+    PUSH_ERROR_AND_RETURN("Expected `[` after `edit`.");
+  }
+
+  // `[ <int64> ]`
+  auto parseIndex = [&](int64_t *idx) -> bool {
+    if (!SkipWhitespace()) return false;
+    if (!Expect('[')) return false;
+    if (!SkipWhitespace()) return false;
+    if (!ReadBasicType(idx)) return false;
+    if (!SkipWhitespace()) return false;
+    if (!Expect(']')) return false;
+    return true;
+  };
+
+  // Read a literal element of type T, append it, return its literal index.
+  auto addLiteral = [&](int64_t *out_idx) -> bool {
+    if (!SkipWhitespace()) return false;
+    T v;
+    if (!ReadBasicType(&v)) return false;
+    literals->push_back(v);
+    *out_idx = static_cast<int64_t>(literals->size()) - 1;
+    return true;
+  };
+
+  // Expect a bare keyword (`to` / `at`).
+  auto expectWord = [&](const char *w) -> bool {
+    if (!SkipWhitespace()) return false;
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    return kw == std::string(w);
+  };
+
+  // True iff the next non-whitespace char starts an index ref `[`.
+  auto nextIsIndex = [&]() -> bool {
+    if (!SkipWhitespace()) return false;
+    char c;
+    return LookChar1(&c) && (c == '[');
+  };
+
+  auto emit = [&](value::ArrayEditOp op, int64_t a1, bool hasA2, int64_t a2) {
+    ops->push_back(value::ArrayEditPackOpWord(op, 1));
+    ops->push_back(a1);
+    if (hasA2) ops->push_back(a2);
+  };
+
+  while (true) {
+    // Ops may span multiple lines and be separated by `;` and/or newlines.
+    if (!SkipCommentAndWhitespaceAndNewline(/* allow_semicolon */ true)) {
+      return false;
+    }
+    char c;
+    if (!LookChar1(&c)) {
+      PUSH_ERROR_AND_RETURN("Unexpected EOF in array edit value.");
+    }
+    if (c == ']') {
+      Char1(&c);
+      break;
+    }
+    if (c == ',') {  // optional comma separator
+      Char1(&c);
+      continue;
+    }
+
+    std::string kw;
+    if (!ReadIdentifier(&kw)) {
+      PUSH_ERROR_AND_RETURN("Expected array edit op keyword.");
+    }
+
+    if (kw == "write") {
+      if (nextIsIndex()) {
+        int64_t a1, a2;
+        if (!parseIndex(&a1)) return false;
+        if (!expectWord("to"))
+          PUSH_ERROR_AND_RETURN("Expected `to` in array edit `write`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::WriteRef, a1, true, a2);
+      } else {
+        int64_t li, a2;
+        if (!addLiteral(&li)) return false;
+        if (!expectWord("to"))
+          PUSH_ERROR_AND_RETURN("Expected `to` in array edit `write`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::WriteLiteral, li, true, a2);
+      }
+    } else if (kw == "insert") {
+      if (nextIsIndex()) {
+        int64_t a1, a2;
+        if (!parseIndex(&a1)) return false;
+        if (!expectWord("at"))
+          PUSH_ERROR_AND_RETURN("Expected `at` in array edit `insert`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, a2);
+      } else {
+        int64_t li, a2;
+        if (!addLiteral(&li)) return false;
+        if (!expectWord("at"))
+          PUSH_ERROR_AND_RETURN("Expected `at` in array edit `insert`.");
+        if (!parseIndex(&a2)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true, a2);
+      }
+    } else if (kw == "prepend") {
+      if (nextIsIndex()) {
+        int64_t a1;
+        if (!parseIndex(&a1)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, 0);
+      } else {
+        int64_t li;
+        if (!addLiteral(&li)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true, 0);
+      }
+    } else if (kw == "append") {
+      if (nextIsIndex()) {
+        int64_t a1;
+        if (!parseIndex(&a1)) return false;
+        emit(value::ArrayEditOp::InsertRef, a1, true, value::kArrayEditEndIndex);
+      } else {
+        int64_t li;
+        if (!addLiteral(&li)) return false;
+        emit(value::ArrayEditOp::InsertLiteral, li, true,
+             value::kArrayEditEndIndex);
+      }
+    } else if (kw == "erase") {
+      int64_t a1;
+      if (!parseIndex(&a1)) return false;
+      emit(value::ArrayEditOp::EraseRef, a1, false, 0);
+    } else if (kw == "minsize" || kw == "resize") {
+      if (!SkipWhitespace()) return false;
+      int64_t n;
+      if (!ReadBasicType(&n)) return false;
+      // Optional `fill <literal>`.
+      bool hasFill = false;
+      int64_t li = 0;
+      {
+        auto loc = CurrLoc();
+        char fc;
+        if (SkipWhitespace() && LookChar1(&fc) &&
+            std::isalpha(static_cast<unsigned char>(fc))) {
+          std::string fkw;
+          if (ReadIdentifier(&fkw) && (fkw == "fill")) {
+            if (!addLiteral(&li)) return false;
+            hasFill = true;
+          } else {
+            SeekTo(loc);
+          }
+        } else {
+          SeekTo(loc);
+        }
+      }
+      value::ArrayEditOp op =
+          (kw == "minsize")
+              ? (hasFill ? value::ArrayEditOp::MinSizeFill
+                         : value::ArrayEditOp::MinSize)
+              : (hasFill ? value::ArrayEditOp::SetSizeFill
+                         : value::ArrayEditOp::SetSize);
+      emit(op, n, hasFill, li);
+    } else if (kw == "maxsize") {
+      if (!SkipWhitespace()) return false;
+      int64_t n;
+      if (!ReadBasicType(&n)) return false;
+      emit(value::ArrayEditOp::MaxSize, n, false, 0);
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown array edit op: " + kw);
+    }
+  }
+
+  return true;
+}
+
+template <typename T>
 bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
                                      Attribute *out_attr) {
   Attribute attr;
   primvar::PrimVar var;
   bool blocked{false};
+  bool anim_blocked{false};
+  bool array_edit{false};
+  std::vector<T> ae_literals;
+  std::vector<int64_t> ae_ops;
 
-  if (array_qual) {
+  // `AnimationBlock` is a sentinel keyword (like `None`) that may appear in
+  // place of a typed value; it blocks animation while letting the default
+  // resolve. Detect it before attempting to parse a typed value.
+  if (MaybeAnimationBlock()) {
+    anim_blocked = true;
+  } else if (array_qual) {
     if (MaybeNone()) {
+    } else if (MaybeArrayEdit()) {
+      // VtArrayEdit value: `edit [ <op>; ... ]` (only for array-typed attrs).
+      if (!ParseArrayEditValue<T>(&ae_literals, &ae_ops)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to parse array edit value for `{}` (type {}[])",
+            primattr_name, std::string(value::TypeTraits<T>::type_name())));
+      }
+      array_edit = true;
     } else {
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
@@ -914,7 +1113,26 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   }
   attr.metas() = meta;
 
-  if (blocked) {
+  if (array_edit) {
+    // VtArrayEdit value. The declared attribute type is the array element type
+    // (`int[]` etc.); the element crate type is derived from the literals at
+    // write time, so element_type_id is left unset here.
+    value::ArrayEdit aedit;
+    aedit.literals = value::Value(std::move(ae_literals));
+    aedit.ops = std::move(ae_ops);
+    attr.set_type_name(value::TypeTraits<T>::type_name() + std::string("[]"));
+    attr.set_value(std::move(aedit));
+  } else if (anim_blocked) {
+    // AnimationBlock sentinel: carried as a normal default value (not a full
+    // ValueBlock), so the declared type is retained.
+    value::AnimationBlock animval;
+    attr.set_value(std::move(animval));
+    if (array_qual) {
+      attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");
+    } else {
+      attr.set_type_name(value::TypeTraits<T>::type_name());
+    }
+  } else if (blocked) {
     // There is still have a type for ValueBlock.
     value::ValueBlock noneval;
     attr.set_value(std::move(noneval));
@@ -929,6 +1147,299 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   }
 
   (*out_attr) = std::move(attr);
+
+  return true;
+}
+
+bool AsciiParser::ParseSplineValue(const std::string &type_name,
+                                   primvar::PrimVar::SplineData *out) {
+  if (!out) {
+    return false;
+  }
+  if (type_name != value::kDouble && type_name != value::kFloat &&
+      type_name != value::kHalf) {
+    PUSH_ERROR_AND_RETURN(
+        "Spline value type must be double, float or half, but got: " +
+        type_name);
+  }
+
+  // Wrap a parsed numeric literal in a value::Value of the attribute type.
+  auto makeVal = [&](double d) -> value::Value {
+    if (type_name == value::kFloat) {
+      return value::Value(static_cast<float>(d));
+    }
+    if (type_name == value::kHalf) {
+      return value::Value(value::float_to_half_full(static_cast<float>(d)));
+    }
+    return value::Value(d);
+  };
+
+  if (!SkipWhitespace()) return false;
+  if (!Expect('{')) {
+    PUSH_ERROR_AND_RETURN("Expected `{` for spline value.");
+  }
+
+  // Optional tangent algorithm keyword: none|custom|autoEase
+  // (OpenUSD TsTangentAlgorithm: 0=None, 1=Custom, 2=AutoEase).
+  auto parseTangentAlgo = [&](int *algo) -> bool {
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    if (kw == "none") {
+      *algo = 0;
+    } else if (kw == "custom") {
+      *algo = 1;
+    } else if (kw == "autoEase") {
+      *algo = 2;
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown spline tangent algorithm: " + kw);
+    }
+    return true;
+  };
+
+  // `( <width>, <slope> [, <algo>] )` (bezier) or `( <slope> [, <algo>] )`
+  // (hermite). Detected by the presence of a comma; a trailing identifier
+  // after a comma is the tangent algorithm (crate 0.13.0 feature).
+  auto parseTangent = [&](double *width, double *slope, int *algo) -> bool {
+    *algo = 0;
+    if (!SkipWhitespace()) return false;
+    if (!Expect('(')) return false;
+    if (!SkipWhitespace()) return false;
+    double a;
+    if (!ReadBasicType(&a)) return false;
+    if (!SkipWhitespace()) return false;
+    char c;
+    if (LookChar1(&c) && c == ',') {
+      Char1(&c);
+      if (!SkipWhitespace()) return false;
+      char nc;
+      if (LookChar1(&nc) &&
+          (std::isalpha(static_cast<unsigned char>(nc)) || nc == '_')) {
+        // hermite with algorithm: `( <slope>, <algo> )`
+        *width = 1.0;
+        *slope = a;
+        if (!parseTangentAlgo(algo)) return false;
+      } else {
+        // bezier: `( <width>, <slope> [, <algo>] )`
+        double b;
+        if (!ReadBasicType(&b)) return false;
+        *width = a;
+        *slope = b;
+        if (!SkipWhitespace()) return false;
+        char c2;
+        if (LookChar1(&c2) && c2 == ',') {
+          Char1(&c2);
+          if (!SkipWhitespace()) return false;
+          if (!parseTangentAlgo(algo)) return false;
+        }
+      }
+    } else {
+      *width = 1.0;  // hermite: width is implied
+      *slope = a;
+    }
+    if (!SkipWhitespace()) return false;
+    if (!Expect(')')) return false;
+    return true;
+  };
+
+  // none|held|linear|sloped(x)|loop [repeat|reset|oscillate]
+  auto parseExtrap = [&](int *mode, double *slope) -> bool {
+    if (!SkipWhitespace()) return false;
+    std::string kw;
+    if (!ReadIdentifier(&kw)) return false;
+    *slope = 0.0;
+    if (kw == "none") {
+      *mode = 0;
+    } else if (kw == "held") {
+      *mode = 1;
+    } else if (kw == "linear") {
+      *mode = 2;
+    } else if (kw == "sloped") {
+      *mode = 3;
+      if (!SkipWhitespace()) return false;
+      if (!Expect('(')) return false;
+      if (!SkipWhitespace()) return false;
+      if (!ReadBasicType(slope)) return false;
+      if (!SkipWhitespace()) return false;
+      if (!Expect(')')) return false;
+    } else if (kw == "loop") {
+      *mode = 4;  // LoopRepeat
+      if (!SkipWhitespace()) return false;
+      char c;
+      if (LookChar1(&c) && (std::isalpha(static_cast<unsigned char>(c)))) {
+        std::string sub;
+        if (!ReadIdentifier(&sub)) return false;
+        if (sub == "repeat") {
+          *mode = 4;
+        } else if (sub == "reset") {
+          *mode = 5;
+        } else if (sub == "oscillate") {
+          *mode = 6;
+        }
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("Unknown spline extrapolation mode: " + kw);
+    }
+    return true;
+  };
+
+  while (true) {
+    if (!SkipCommentAndWhitespaceAndNewline()) return false;
+    char c;
+    if (!LookChar1(&c)) {
+      PUSH_ERROR_AND_RETURN("Unexpected EOF in spline value.");
+    }
+    if (c == '}') {
+      Char1(&c);
+      break;
+    }
+
+    if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+      std::string ident;
+      if (!ReadIdentifier(&ident)) return false;
+      if (ident == "bezier") {
+        out->curveType = 0;
+      } else if (ident == "hermite") {
+        out->curveType = 1;
+      } else if (ident == "pre" || ident == "post") {
+        if (!SkipWhitespace()) return false;
+        if (!Expect(':')) {
+          PUSH_ERROR_AND_RETURN("Expected `:` after spline `" + ident + "`.");
+        }
+        int mode = 1;
+        double slope = 0.0;
+        if (!parseExtrap(&mode, &slope)) return false;
+        if (ident == "pre") {
+          out->preExtrapolation = mode;
+          out->preExtrapolationSlope = slope;
+        } else {
+          out->postExtrapolation = mode;
+          out->postExtrapolationSlope = slope;
+        }
+      } else if (ident == "loop") {
+        if (!SkipWhitespace()) return false;
+        if (!Expect(':')) {
+          PUSH_ERROR_AND_RETURN("Expected `:` after spline `loop`.");
+        }
+        if (!SkipWhitespace()) return false;
+        if (!Expect('(')) {
+          PUSH_ERROR_AND_RETURN("Expected `(` for spline loop params.");
+        }
+        // (protoStart, protoEnd, numPreLoops, numPostLoops, valueOffset)
+        double vals[5] = {0, 0, 0, 0, 0};
+        for (int i = 0; i < 5; i++) {
+          if (!SkipWhitespace()) return false;
+          if (!ReadBasicType(&vals[i])) return false;
+          if (!SkipWhitespace()) return false;
+          char sc;
+          if (i < 4) {
+            if (!Expect(',')) {
+              PUSH_ERROR_AND_RETURN("Expected `,` in spline loop params.");
+            }
+          } else if (LookChar1(&sc) && sc == ')') {
+            Char1(&sc);
+          }
+        }
+        out->hasLoop = true;
+        out->loopProtoStart = vals[0];
+        out->loopProtoEnd = vals[1];
+        out->loopNumPreLoops = static_cast<int>(vals[2]);
+        out->loopNumPostLoops = static_cast<int>(vals[3]);
+        out->loopValueOffset = vals[4];
+      } else {
+        PUSH_ERROR_AND_RETURN("Unknown spline keyword: " + ident);
+      }
+    } else {
+      // Knot: <time> : <value> [& <postValue>] [; <specs>] [{ customData }]
+      primvar::PrimVar::SplineKnotData kd;
+      double time;
+      if (!ReadBasicType(&time)) return false;
+      kd.time = time;
+      if (!SkipWhitespace()) return false;
+      if (!Expect(':')) {
+        PUSH_ERROR_AND_RETURN("Expected `:` in spline knot.");
+      }
+      if (!SkipWhitespace()) return false;
+      double v0;
+      if (!ReadBasicType(&v0)) return false;
+      if (!SkipWhitespace()) return false;
+      char amp;
+      if (LookChar1(&amp) && amp == '&') {
+        // Dual-valued knot: `<preValue> & <value>`.
+        Char1(&amp);
+        if (!SkipWhitespace()) return false;
+        double v1;
+        if (!ReadBasicType(&v1)) return false;
+        kd.preValue = makeVal(v0);
+        kd.val = makeVal(v1);
+        kd.hasDualValue = true;
+      } else {
+        kd.val = makeVal(v0);
+        kd.preValue = kd.val;
+      }
+
+      // Optional `;`-separated tangent / interpolation specs on the same line.
+      while (true) {
+        if (!SkipWhitespace()) return false;
+        char pc;
+        if (!LookChar1(&pc) || pc != ';') {
+          break;
+        }
+        Char1(&pc);  // consume ';'
+        if (!SkipWhitespace()) return false;
+        if (LookChar1(&pc) && pc == '{') {
+          // Per-knot customData dictionary: consume (not retained).
+          int depth = 0;
+          do {
+            char cc;
+            if (!Char1(&cc)) {
+              PUSH_ERROR_AND_RETURN("Unterminated spline knot customData.");
+            }
+            if (cc == '{') depth++;
+            else if (cc == '}') depth--;
+          } while (depth > 0);
+          continue;
+        }
+        std::string spec;
+        if (!ReadIdentifier(&spec)) return false;
+        if (spec == "pre") {
+          if (!parseTangent(&kd.preTangentWidth, &kd.preTangentSlope,
+                            &kd.preTangentAlgorithm)) {
+            return false;
+          }
+        } else if (spec == "post") {
+          if (!SkipWhitespace()) return false;
+          std::string interp;
+          if (!ReadIdentifier(&interp)) return false;
+          if (interp == "none") {
+            kd.interpolationMode = 0;
+          } else if (interp == "held") {
+            kd.interpolationMode = 1;
+          } else if (interp == "linear") {
+            kd.interpolationMode = 2;
+          } else if (interp == "curve") {
+            kd.interpolationMode = 3;
+            if (!parseTangent(&kd.postTangentWidth, &kd.postTangentSlope,
+                              &kd.postTangentAlgorithm)) {
+              return false;
+            }
+          } else {
+            PUSH_ERROR_AND_RETURN("Unknown spline interpolation: " + interp);
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN("Unknown spline knot spec: " + spec);
+        }
+      }
+
+      out->knots.push_back(kd);
+    }
+
+    // Optional `,` entry separator.
+    if (!SkipWhitespace()) return false;
+    char sep;
+    if (LookChar1(&sep) && sep == ',') {
+      Char1(&sep);
+    }
+  }
 
   return true;
 }
@@ -1247,6 +1758,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);
+  bool isSpline = endsWith(primattr_name, kSplineSuffix);
 
   // Remove suffix
   std::string attr_name = primattr_name;
@@ -1255,6 +1767,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
   }
   if (isConnection) {
     attr_name = removeSuffix(primattr_name, kConnectSuffix);
+  }
+  if (isSpline) {
+    attr_name = removeSuffix(primattr_name, kSplineSuffix);
   }
 
   bool define_only = false;
@@ -1513,6 +2028,50 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       //  pattr->set_varying_authored();
       //}
 
+      pattr->name() = attr_name;
+
+      Property p(attr, custom_qual);
+      p.set_property_type(Property::Type::Attrib);
+      (*props)[attr_name] = p;
+    }
+
+    record_prim_attr_and_property(attr_name);
+
+    return true;
+
+  } else if (isSpline) {
+    // `<type> <attr>.spline = { ... }` (AOUSD Core Spec 7.4.2.4).
+    if (value_blocked) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Syntax error. ValueBlock to .spline is invalid: {}", attr_name));
+    }
+    if (array_qual) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Spline value cannot be an array type: {}", attr_name));
+    }
+
+    primvar::PrimVar::SplineData sd;
+    if (!ParseSplineValue(type_name, &sd)) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii, fmt::format("Failed to parse spline value of type {} for {}",
+                              type_name, attr_name));
+    }
+
+    Attribute attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists =
+        props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+      pattr = &(props->at(attr_name).attribute());
+      pattr->get_var().set_spline(std::move(sd));
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
+    } else {
+      pattr = &attr;
+      primvar::PrimVar var;
+      var.set_spline(std::move(sd));
+      pattr->set_type_name(type_name);
+      pattr->set_var(std::move(var));
+      pattr->variability() = variability;
       pattr->name() = attr_name;
 
       Property p(attr, custom_qual);
@@ -1928,6 +2487,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       } else if (type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
                                                   pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kPathExpression) {
+        if (!ParseBasicPrimAttr<value::PathExpression>(array_qual,
+                                                       primattr_name, pattr)) {
           return false;
         }
       } else {

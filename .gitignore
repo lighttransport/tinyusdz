@@ -12,12 +12,16 @@ build/
 build_ninja/
 build-tinysubdiv/
 build-*/
+build_*/
 ref/openusd/
 ref/openusd-build/
 ref/openusd-build*/
 ref/openusd-venv/
 ref/dist/
 ref/dist*/
+large-scene-tasks.md
+tests/asset-parse-results/
+tests/asset-parse-results-flatten/
 web/demo/dist/
 web/site/dist/
 web/build_ninja/
