@@ -316,7 +316,7 @@ int main(int argc, char** argv) {
           "  --lod-stream  View-dependent district LOD (needs --next): promote "
           "the camera-nearest districts to full under memory budgets.\n"
           "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
-          "(0 = auto, 50%).\n"
+          "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
           "  --max-asset-bytes N  Override the per-asset composition read cap "

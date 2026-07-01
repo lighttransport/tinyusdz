@@ -48,9 +48,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     const crate::Spec &spec = (*_specs)[spec_index];
 
-    // Property must be Attribute or Relationship
+    // Property must be Attribute, Relationship, or Connection
     if ((spec.spec_type == SpecType::Attribute) ||
-        (spec.spec_type == SpecType::Relationship)) {
+        (spec.spec_type == SpecType::Relationship) ||
+        (spec.spec_type == SpecType::Connection)) {
       // OK
     } else {
       continue;
@@ -74,6 +75,15 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     {
       std::string prop_name = path.value().prop_part();
+      if (spec.spec_type == SpecType::Connection) {
+        if (!endsWith(prop_name, ".connect")) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag,
+              fmt::format("Invalid connection property name `{}`", prop_name));
+        }
+        prop_name = removeSuffix(prop_name, ".connect");
+      }
+
       if (prop_name.empty()) {
         DCOUT("path = " << dump_path(path.value()));
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
@@ -358,9 +368,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       // Check for ValueBlock first (rel ... = None)
       if (fv.second.get_value<value::ValueBlock>()) {
-        // Relationship is blocked (None)
-        rel.set_blocked();
-        DCOUT("targetPaths = None (blocked)");
+        // Relationship or connection is blocked (None)
+        if (spec_type == SpecType::Connection) {
+          hasDefault = true;
+        } else {
+          rel.set_blocked();
+          DCOUT("targetPaths = None (blocked)");
+        }
       } else if (auto pv = fv.second.get_value<ListOp<Path>>()) {
         const ListOp<Path> &p = pv.value();
         DCOUT("targetPaths = " << to_string(p));
@@ -381,19 +395,36 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         auto qual = std::get<0>(ps[0]);
         auto items = std::get<1>(ps[0]);
 
-        if (items.size() == 1) {
-          // Single
+        if (items.size() == 1 && (spec_type != SpecType::Connection)) {
+          // Single (relationship)
           const Path path = items[0];
           rel.set(path);
+        } else if (spec_type == SpecType::Connection) {
+          attr.set_connections(items);
         } else {
           rel.set(items);  // [Path]
         }
 
-        rel.set_listedit_qual(qual);
+        if (spec_type != SpecType::Connection) {
+          rel.set_listedit_qual(qual);
+        }
 
+      } else if (auto path_vec = fv.second.get_value<std::vector<Path>>()) {
+        auto &items = path_vec.value();
+        if (spec_type == SpecType::Connection) {
+          attr.set_connections(items);
+        } else {
+          rel.set(items);  // [Path]
+        }
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "`targetPaths` field is not `ListOp[Path]` or ValueBlock type.");
+        if (spec_type == SpecType::Connection) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`targetPaths` field is not `PathVector`, `ListOp[Path]`, "
+                    "or `None`.");
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`targetPaths` field is not `ListOp[Path]` or ValueBlock type.");
+        }
       }
 
     } else if (fv.first == "hidden") {
@@ -572,9 +603,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
     } else {
-      // TODO: register unkown metadataum as custom metadata?
-      PUSH_WARN("TODO: " << fv.first);
-      DCOUT("TODO: " << fv.first);
+      MetaVariable unknown_meta;
+      if (allow_move_from_fvs) {
+        unknown_meta.set_value(fv.first, std::move(fv.second.get_raw()));
+      } else {
+        unknown_meta.set_value(fv.first, fv.second.get_raw());
+      }
+      meta.data()[fv.first] = std::move(unknown_meta);
+      PUSH_WARN("Preserved unknown property metadata: " << fv.first);
+      DCOUT("Preserved unknown property metadata: " << fv.first);
     }
   }
   DCOUT("== End List of Fields");
@@ -663,8 +700,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
 
 
-  if (hasTargetPaths) {
-    // Relationship
+  if (hasTargetPaths && (spec_type != SpecType::Connection)) {
+    // Relationship spec
 
     if (hasDefault) {
       PUSH_WARN("Relationship property has `default` field. Ignore `default` field.");
@@ -685,10 +722,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
     rel.metas() = std::move(meta);
     (*prop) = Property(std::move(rel), custom);
-  } else if (hasDefault || hasTimeSamples || hasSpline || hasConnectionPaths) {
+  } else if (hasDefault || hasTimeSamples || hasConnectionPaths ||
+             hasSpline ||
+             ((spec_type == SpecType::Connection) && hasTargetPaths)) {
 
     // Attribute
-    if (hasTargetPaths) {
+    if (hasTargetPaths && (spec_type != SpecType::Connection)) {
       PUSH_WARN("Attribute property has `targetPaths` field. Ignore `targetPaths` field.");
     }
 

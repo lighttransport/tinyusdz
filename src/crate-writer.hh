@@ -741,6 +741,14 @@ private:
   /// Returns the ValueRep and may write out-of-line data to file
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
 
+  /// Pack a TokenVector metadata value into ValueRep.
+  crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
+                                       std::string* err);
+
+  /// Pack a metadata dictionary value into a Crate ValueRep.
+  bool PackMetaVariable(const std::string& key, const MetaVariable& meta,
+                        crate::ValueRep* value_rep, std::string* err);
+
   /// Write a value to the value data section
   /// Returns the file offset where the value was written
   int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,

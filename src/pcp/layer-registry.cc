@@ -32,7 +32,7 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
 
   // Honor the per-prim current-working-path for relative resolution.
   // RAII restore so the shared resolver's working-path is put back on every exit
-  // path (any early return / future throw), not just the linear fall-through.
+  // path, not just the linear fall-through.
   const std::string old_cwp = resolver.current_working_path();
   struct CwpRestore {
     AssetResolutionResolver &r;

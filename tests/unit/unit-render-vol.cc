@@ -9,7 +9,7 @@
 #include "unit-render-vol.h"
 #include "tinyusdz.hh"
 #include "usdc-writer.hh"
-#include "prim-types.hh"
+#include "usdGeom.hh"
 #include "core/model-scope.hh"
 
 #include <string>

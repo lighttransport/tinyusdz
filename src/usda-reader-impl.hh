@@ -273,10 +273,7 @@ DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY
 DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
-// UsdVol / UsdRender placeholder prim types.
-DEFINE_PRIM_TYPE(Volume, "Volume", value::TYPE_ID_VOLUME);
-DEFINE_PRIM_TYPE(OpenVDBAsset, "OpenVDBAsset", value::TYPE_ID_OPENVDB_ASSET);
-DEFINE_PRIM_TYPE(Field3DAsset, "Field3DAsset", value::TYPE_ID_FIELD3D_ASSET);
+// UsdRender placeholder prim types.
 DEFINE_PRIM_TYPE(RenderSettings, "RenderSettings", value::TYPE_ID_RENDER_SETTINGS);
 DEFINE_PRIM_TYPE(RenderProduct, "RenderProduct", value::TYPE_ID_RENDER_PRODUCT);
 DEFINE_PRIM_TYPE(RenderVar, "RenderVar", value::TYPE_ID_RENDER_VAR);
@@ -1410,9 +1407,6 @@ namespace prim {
   extern template bool ReconstructPrim<__T>( \
       const Specifier &, PropertyMap &, const ReferenceList &, \
       __T *, std::string *, std::string *, const PrimReconstructOptions &);
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Volume)
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(OpenVDBAsset)
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Field3DAsset)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderSettings)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderProduct)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderVar)
@@ -1457,9 +1451,6 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(Material)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Shader)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NodeGraph)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Scope)
-USDA_EXTERN_REGISTER_RECONSTRUCT(Volume)
-USDA_EXTERN_REGISTER_RECONSTRUCT(OpenVDBAsset)
-USDA_EXTERN_REGISTER_RECONSTRUCT(Field3DAsset)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderSettings)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderProduct)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderVar)

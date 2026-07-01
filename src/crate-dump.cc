@@ -435,11 +435,7 @@ static void DumpSpecsYAML(const CrateReader& reader, const DumpOptions& opts, In
       io.out() << "path_index: " << spec.path_index.value << std::endl;
       if (spec.path_index.value < reader.GetPaths().size()) {
         const auto& path = reader.GetPaths()[spec.path_index.value];
-        io.out() << "path: \"" << EscapeYAML(path.full_path_name());
-        if (!path.prop_part().empty()) {
-          std::cout << "." << EscapeYAML(path.prop_part());
-        }
-        std::cout << "\"" << std::endl;
+        io.out() << "path: \"" << EscapeYAML(path.full_path_name()) << "\"" << std::endl;
       }
 
       io.out() << "fieldset_index: " << spec.fieldset_index.value << std::endl;

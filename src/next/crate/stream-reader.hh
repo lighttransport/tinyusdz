@@ -201,33 +201,43 @@ public:
 
   /// Read array of uint32_t
   bool read_u32_array(std::vector<uint32_t>& arr, size_t count) {
-    if (!has_elements(count, sizeof(uint32_t))) return false;
+    size_t bytes = 0;
+    if (!array_byte_count(count, sizeof(uint32_t), &bytes)) return false;
     arr.resize(count);
-    return read(arr.data(), count * sizeof(uint32_t));
+    return read(arr.data(), bytes);
   }
 
   /// Read array of int32_t
   bool read_i32_array(std::vector<int32_t>& arr, size_t count) {
-    if (!has_elements(count, sizeof(int32_t))) return false;
+    size_t bytes = 0;
+    if (!array_byte_count(count, sizeof(int32_t), &bytes)) return false;
     arr.resize(count);
-    return read(arr.data(), count * sizeof(int32_t));
+    return read(arr.data(), bytes);
   }
 
   /// Read array of float
   bool read_f32_array(std::vector<float>& arr, size_t count) {
-    if (!has_elements(count, sizeof(float))) return false;
+    size_t bytes = 0;
+    if (!array_byte_count(count, sizeof(float), &bytes)) return false;
     arr.resize(count);
-    return read(arr.data(), count * sizeof(float));
+    return read(arr.data(), bytes);
   }
 
   /// Read array of double
   bool read_f64_array(std::vector<double>& arr, size_t count) {
-    if (!has_elements(count, sizeof(double))) return false;
+    size_t bytes = 0;
+    if (!array_byte_count(count, sizeof(double), &bytes)) return false;
     arr.resize(count);
-    return read(arr.data(), count * sizeof(double));
+    return read(arr.data(), bytes);
   }
 
 private:
+  bool array_byte_count(size_t count, size_t elem_size, size_t* bytes) const {
+    if (!bytes || !has_elements(count, elem_size)) return false;
+    *bytes = count * elem_size;
+    return true;
+  }
+
   const uint8_t* data_;
   size_t size_;
   size_t pos_;

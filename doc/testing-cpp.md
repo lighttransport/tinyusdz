@@ -40,18 +40,20 @@ Relevant options in the current build configuration:
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The stable `next` module (`src/next/`, `tinyusdz_next`) is part of
-> the regression gate. It remains a standalone CMake project, so it does not
-> appear in the main `build/` `ctest` run; run its Debug test build explicitly.
-> See [Stable `next` library tests](#stable-next-library-tests).
+> **Scope:** The experimental `next` module (`src/next/`, `tinyusdz_next`) and
+> its tests under `tests/next/` are **not** part of this regression suite. They
+> are a standalone CMake project, are not built by the main `build/` (so they do
+> not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
+> treat `next` results as part of the regression gate. See
+> [Experimental `next` library tests](#experimental-next-library-tests) for how
+> to build and run them on demand.
 
-The full regression pass has three parts:
+The full regression pass has two parts:
 
 1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
    corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
    and the main Acutest unit suite.
-2. The standalone Debug `next` CTest suite.
-3. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
+2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
    checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
    corpora.
 
@@ -66,23 +68,28 @@ cd build
 ctest --output-on-failure
 cd ..
 
-# 2. Run the stable next module tests. Keep this Debug: tests use assert().
-cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
-
-# 3. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+# 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+#    Build it once with: scripts/build-openusd-usdcat.sh
+#    For headless environments lacking PySide, `--full` will retry with a reduced
+#    full-core profile unless OPENUSD_RETRY_NO_PYSIDE=0 is set.
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
 `tests/run-usdcat-compare.sh` requires Node.js and a working OpenUSD v26.05
-`usdcat`. Prefer a sibling OpenUSD v26.05 install at
-`../OpenUSD/dist/bin/usdcat`. The script falls back to
-`~/local/USD/dist/bin/usdcat` when the sibling install is not present, but full
-regression results should use v26.05 unless a test intentionally targets
-another OpenUSD release. Set `USDCAT_PATH` explicitly when needed.
+`usdcat`. Prefer the repo-local helper install at `ref/dist/bin/usdcat`,
+created by `scripts/build-openusd-usdcat.sh`. Use
+`scripts/build-openusd-usdcat.sh --prepare-only` when you only need to clone or
+refresh the local `ref/openusd` checkout on OpenUSD v26.05 without building
+`usdcat`; use `OPENUSD_FETCH=0` to skip network fetches when the ref is already
+present locally, and `scripts/build-openusd-usdcat.sh --full` when you need a full
+OpenUSD release build rather than the default minimal usdcat/tool install. The
+comparison script falls back to a sibling
+`../OpenUSD/dist/bin/usdcat` and then `~/local/USD/dist/bin/usdcat` when the
+repo-local install is not present, but full regression results should use v26.05
+unless a test intentionally targets another OpenUSD release. Set `USDCAT_PATH`
+explicitly when needed.
 
 The comparison runner writes detailed logs to `tests/comparison-results/` and
 prints a failure/warning summary. It continues across individual files so one
@@ -95,19 +102,19 @@ Useful variants:
 # Quieter comparison logs.
 SHOW_DETAILED_DIFF=false \
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Longer per-file timeout for slow debug/ASan builds.
 TIMEOUT_MS=120000 \
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Single-file comparison through the Node.js runner.
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
@@ -216,12 +223,12 @@ These checks catch cross-version serialization or compatibility drift:
 
 ```bash
 # Batch script for broad coverage
-USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=ref/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
   bash tests/run-usdcat-compare.sh
 
 # Per-file diff for regression investigation
 node tests/compare-usda.js --detailed-diff \
-  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  --tusdcat ./build/tusdcat --usdcat ref/dist/bin/usdcat \
   tests/usda/somefile.usda
 ```
 
@@ -460,25 +467,44 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
-### Stable `next` library tests
+### Experimental `next` library tests
 
-`next` (`src/next/`, library `tinyusdz_next`) is a stable standalone rewrite of
-the core with a modular architecture. It is part of the regression gate, but it
-is built and run separately from the main native build:
+`next` (`src/next/`, library `tinyusdz_next`) is an **experimental, under-construction**
+rewrite of the core with a new modular architecture. It is intentionally kept
+out of the main regression suite:
 
 - It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
-  `project()`), *not* added by the top-level `CMakeLists.txt` by default. The
-  default `build/` therefore does not compile it, and none of its tests appear
-  in the main `build/` `ctest` run.
+  `project()`), *not* added by the top-level `CMakeLists.txt`. The default
+  `build/` therefore does not compile it, and none of its tests appear in the
+  `build/` `ctest` run or the Pixar comparison runner.
 - Its tests are gated behind `TINYUSDZ_NEXT_BUILD_TESTS` (**OFF by default**).
-- Treat its results as required regression coverage for changes that touch core
-  parsing, crate IO, composition, schema conversion, or Web flattening paths.
+- Treat its results as informational only — **not** a merge/regression gate.
+  Do not wire `next` into the full regression gate until the suite is hardened.
 
-Build and run them in a separate build directory:
+Build and run them on demand in a separate build directory. The preferred
+entrypoint is:
+
+```bash
+scripts/run-next-checks.sh
+```
+
+Useful environment overrides:
+
+```bash
+scripts/run-next-checks.sh --help
+BUILD_DIR=build-next-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+```
+
+The equivalent manual commands are:
 
 ```bash
 # Configure the standalone next project with its tests enabled.
-cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake -S src/next -B build-next \
+  -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
+  -DTINYUSDZ_NEXT_ENABLE_THREAD=ON \
+  -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
 ```
@@ -490,6 +516,22 @@ ctest --test-dir build-next --output-on-failure
 > null-dereference SIGSEGV in `test_usdc_roundtrip` when the `toc`-populating
 > `ParseUSDCBinary()` call was compiled out). Build with `-DCMAKE_BUILD_TYPE=Debug`
 > for meaningful validation, and keep side-effecting calls out of `assert()`.
+
+Current USDC-focused next coverage:
+
+- `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
+  magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
+  counts, missing required sections, allocation caps, and malformed
+  FIELD/FIELDSET/SPECS payloads. Prefer adding compact generated cases here when
+  a malformed input can be described structurally.
+- `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
+  from `tests/next/crash_regressions/`. Prefer this only when the exact byte
+  sequence matters.
+- `next_test_usdc_roundtrip` includes focused roundtrip cases plus a dense
+  generated fixture covering layer metadata, dictionaries, composition arcs,
+  mesh arrays, per-property metadata, relationships, connection-flagged
+  properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
+  time samples.
 
 ### CMake targets not in ctest
 
@@ -559,7 +601,7 @@ Short form:
 
 ```bash
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
@@ -568,7 +610,7 @@ Single-file mode through the Node.js comparator:
 ```bash
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
@@ -684,4 +726,4 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project and does not appear in the main `build/` `ctest` tree (`TINYUSDZ_NEXT_BUILD_TESTS=OFF` by default); run its separate Debug test build as part of the regression gate. See [Stable `next` library tests](#stable-next-library-tests).
+- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).

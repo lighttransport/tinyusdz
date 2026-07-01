@@ -39,13 +39,7 @@ std::string to_string(const Model &model, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const Scope &scope, const uint32_t indent = 0,
                       bool closing_brace = true);
-// UsdVol / UsdRender placeholder prim types.
-std::string to_string(const Volume &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
-std::string to_string(const OpenVDBAsset &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
-std::string to_string(const Field3DAsset &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
+// UsdRender placeholder prim types.
 std::string to_string(const RenderSettings &v, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const RenderProduct &v, const uint32_t indent = 0,

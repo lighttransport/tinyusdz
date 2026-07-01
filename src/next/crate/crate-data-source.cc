@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 // Posix mmap is used to back a CrateDataSource directly off the file (Phase
 // 8.3). WASM (emscripten/wasi) and non-posix platforms keep the owned-buffer
@@ -42,6 +43,15 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(
   ds->version_ = version;
   ds->tokens_ = std::move(tokens);
   ds->string_indices_ = std::move(string_indices);
+  return ds;
+}
+
+std::shared_ptr<CrateDataSource> CrateDataSource::AdoptBorrowed(
+    const uint8_t* bytes, size_t size, CrateVersion version) {
+  std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
+  ds->borrowed_base_ = bytes;
+  ds->borrowed_size_ = size;
+  ds->version_ = version;
   return ds;
 }
 
@@ -254,10 +264,20 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
     // Block layout: [u64 count][u64 comp_size][comp_size bytes].
     uint64_t comp_size = 0;
     if (!r.read_u64(comp_size)) return false;
+    if (comp_size >
+        (std::numeric_limits<uint64_t>::max)() - 16ull) {
+      out->block_len = 0;
+      return true;
+    }
     out->block_len = 8ull + 8ull + comp_size;
   } else if (!compressed && out->src_elem_stride > 0) {
     // Block layout: [u64 count][count*stride bytes].
-    out->block_len = 8ull + count * uint64_t(out->src_elem_stride);
+    const uint64_t stride = uint64_t(out->src_elem_stride);
+    if (count > ((std::numeric_limits<uint64_t>::max)() - 8ull) / stride) {
+      out->block_len = 0;
+      return true;
+    }
+    out->block_len = 8ull + count * stride;
   } else {
     // Unknown layout (e.g. a compressed array of an unsupported type) — leave
     // block_len = 0 so write-time pass-through declines and re-encodes instead.
@@ -323,7 +343,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     if (count > cap / elem_bytes) return false;  // count*elem_bytes > cap
   }
 
-  auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
+  auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!r.read_u64(comp_size)) return false;
     if (comp_size > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
@@ -338,11 +358,14 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU32(
-        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+        with_prefix.data(), with_prefix.size(), dst, n);
     return dr.success;
   };
+  auto read_compressed_u32 = [&](uint32_t* dst) -> bool {
+    return read_compressed_u32_n(dst, static_cast<size_t>(count));
+  };
 
-  auto read_compressed_u64 = [&](uint64_t* dst) -> bool {
+  auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!r.read_u64(comp_size)) return false;
     std::vector<uint8_t> blob;
@@ -351,8 +374,11 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU64(
-        with_prefix.data(), with_prefix.size(), dst, static_cast<size_t>(count));
+        with_prefix.data(), with_prefix.size(), dst, n);
     return dr.success;
+  };
+  auto read_compressed_u64 = [&](uint64_t* dst) -> bool {
+    return read_compressed_u64_n(dst, static_cast<size_t>(count));
   };
 
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
@@ -361,11 +387,77 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     return r.read(dst, static_cast<size_t>(count) * elem_size);
   };
 
+  auto read_compressed_floating_n = [&](auto* dst, size_t n) -> bool {
+    using T = typename std::remove_pointer<decltype(dst)>::type;
+    int8_t code = 0;
+    if (!r.read_i8(code)) return false;
+    if (code == 'i') {
+      std::vector<uint32_t> ints(n);
+      if (!read_compressed_u32_n(ints.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
+        dst[i] = static_cast<T>(static_cast<int32_t>(ints[i]));
+      }
+      return true;
+    }
+    if (code == 't') {
+      uint32_t lut_size = 0;
+      if (!r.read_u32(lut_size)) return false;
+      if (lut_size == 0 || lut_size > max_elements) return false;
+      if (!r.has_elements(size_t(lut_size), sizeof(T))) return false;
+      std::vector<T> lut(lut_size);
+      size_t lut_bytes;
+      if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
+      if (!r.read(lut.data(), lut_bytes)) return false;
+      std::vector<uint32_t> idxs(n);
+      if (!read_compressed_u32_n(idxs.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
+        if (idxs[i] >= lut_size) return false;
+        dst[i] = lut[idxs[i]];
+      }
+      return true;
+    }
+    return false;
+  };
+
+  auto read_compressed_half_n = [&](uint16_t* dst, size_t n) -> bool {
+    int8_t code = 0;
+    if (!r.read_i8(code)) return false;
+    if (code == 'i') {
+      std::vector<uint32_t> ints(n);
+      if (!read_compressed_u32_n(ints.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
+        dst[i] = FloatToHalf(static_cast<float>(static_cast<int32_t>(ints[i])));
+      }
+      return true;
+    }
+    if (code == 't') {
+      uint32_t lut_size = 0;
+      if (!r.read_u32(lut_size)) return false;
+      if (lut_size == 0 || lut_size > max_elements) return false;
+      if (!r.has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
+      std::vector<uint16_t> lut(lut_size);
+      size_t lut_bytes;
+      if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
+      if (!r.read(lut.data(), lut_bytes)) return false;
+      std::vector<uint32_t> idxs(n);
+      if (!read_compressed_u32_n(idxs.data(), n)) return false;
+      for (size_t i = 0; i < n; ++i) {
+        if (idxs[i] >= lut_size) return false;
+        dst[i] = lut[idxs[i]];
+      }
+      return true;
+    }
+    return false;
+  };
+
   switch (type_id) {
     case CrateTypeId::Float: {
-      if (compressed) return false;
       std::vector<float> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(float))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
+      } else if (!read_raw(data.data(), sizeof(float))) {
+        return false;
+      }
       *out = Value::MakeFloatArray(std::move(data));
       return true;
     }
@@ -380,23 +472,36 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return true;
     }
     case CrateTypeId::Vec2f: {
-      if (compressed) return false;
-      std::vector<float> data(static_cast<size_t>(count) * 2);
-      if (!read_raw(data.data(), 2 * sizeof(float))) return false;
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(2), &scalars)) return false;
+      std::vector<float> data(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), 2 * sizeof(float))) {
+        return false;
+      }
       *out = Value::MakeFloat2Array(std::move(data));
       return true;
     }
     case CrateTypeId::Vec3f: {
-      if (compressed) return false;
-      std::vector<float> data(static_cast<size_t>(count) * 3);
-      if (!read_raw(data.data(), 3 * sizeof(float))) return false;
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(3), &scalars)) return false;
+      std::vector<float> data(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), 3 * sizeof(float))) {
+        return false;
+      }
       *out = Value::MakeFloat3Array(std::move(data));
       return true;
     }
     case CrateTypeId::Double: {
-      if (compressed) return false;
       std::vector<double> data(static_cast<size_t>(count));
-      if (!read_raw(data.data(), sizeof(double))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
+      } else if (!read_raw(data.data(), sizeof(double))) {
+        return false;
+      }
       *out = Value::MakeDoubleArray(std::move(data));
       return true;
     }
@@ -434,15 +539,16 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       if (compressed) return false;
       std::vector<uint8_t> bytes(static_cast<size_t>(count));
       if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
-      std::vector<bool> out_bool(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
-      *out = Value::MakeBoolArray(out_bool);
+      *out = Value::MakeBoolArrayFromBytes(std::move(bytes));
       return true;
     }
     case CrateTypeId::Token: {
-      if (compressed) return false;
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (!read_raw(idxs.data(), sizeof(uint32_t))) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(idxs.data())) return false;
+      } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
+        return false;
+      }
       std::vector<std::string> data(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) {
         if (idxs[i] >= tokens.size()) return false;
@@ -453,7 +559,6 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::Vec4f:
     case CrateTypeId::Quatf: {
-      if (compressed) return false;
       const uint32_t stride_bytes = CrateArrayElemStride(type_id);
       const uint32_t comps = stride_bytes / 4;
       if (comps == 0 ||
@@ -461,7 +566,11 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         return false;
       }
       std::vector<float> data(static_cast<size_t>(count) * comps);
-      if (!read_raw(data.data(), stride_bytes)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), data.size())) return false;
+      } else if (!read_raw(data.data(), stride_bytes)) {
+        return false;
+      }
       *out = Value::MakeFloatCompArray(std::move(data),
                                        CrateArrayValueType(type_id), comps);
       return true;
@@ -473,7 +582,6 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     case CrateTypeId::Matrix2d:
     case CrateTypeId::Matrix3d:
     case CrateTypeId::Matrix4d: {
-      if (compressed) return false;
       const uint32_t stride_bytes = CrateArrayElemStride(type_id);
       const uint32_t comps = stride_bytes / 8;
       if (comps == 0 ||
@@ -481,7 +589,11 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         return false;
       }
       std::vector<double> data(static_cast<size_t>(count) * comps);
-      if (!read_raw(data.data(), stride_bytes)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), data.size())) return false;
+      } else if (!read_raw(data.data(), stride_bytes)) {
+        return false;
+      }
       *out = Value::MakeDoubleCompArray(std::move(data),
                                         CrateArrayValueType(type_id), comps);
       return true;
@@ -491,14 +603,17 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     case CrateTypeId::Vec3h:
     case CrateTypeId::Vec4h:
     case CrateTypeId::Quath: {
-      if (compressed) return false;
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       if (comps == 0 ||
           count > (std::numeric_limits<size_t>::max)() / comps) {
         return false;
       }
       std::vector<uint16_t> halfs(static_cast<size_t>(count) * comps);
-      if (!read_raw(halfs.data(), comps * 2)) return false;
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_half_n(halfs.data(), halfs.size())) return false;
+      } else if (!read_raw(halfs.data(), comps * 2)) {
+        return false;
+      }
       std::vector<float> data(halfs.size());
       for (size_t i = 0; i < halfs.size(); ++i) data[i] = HalfToFloat(halfs[i]);
       *out = Value::MakeFloatCompArray(std::move(data),

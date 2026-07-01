@@ -296,9 +296,6 @@ std::string to_string(const Scope &scope, const uint32_t indent,
     return ss.str();                                                     \
   }
 
-DEFINE_PLACEHOLDER_PRIM_TO_STRING(Volume, "Volume")
-DEFINE_PLACEHOLDER_PRIM_TO_STRING(OpenVDBAsset, "OpenVDBAsset")
-DEFINE_PLACEHOLDER_PRIM_TO_STRING(Field3DAsset, "Field3DAsset")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderSettings, "RenderSettings")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderProduct, "RenderProduct")
 DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderVar, "RenderVar")

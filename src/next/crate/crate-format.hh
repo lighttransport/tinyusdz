@@ -438,6 +438,9 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
 /// Encode uint32_t values using pxrUSD delta-coding format.
 /// Returns the raw (uncompressed) delta-coded byte sequence.
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count);
+std::vector<uint8_t> EncodeDeltaU32WithCommon(const uint32_t* values,
+                                              size_t count,
+                                              int32_t common_delta);
 
 /// Decode uint32_t values from pxrUSD delta-coded format.
 /// buffer points to the raw (already decompressed) delta-coded data.

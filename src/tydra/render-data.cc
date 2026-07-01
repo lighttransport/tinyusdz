@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -1395,6 +1394,117 @@ bool RenderSceneConverter::BuildNodeHierarchy(
   return true;
 }
 
+bool RenderSceneConverter::ResolveBlendShapeAnimationTargets() {
+  struct MeshNodeRef {
+    int32_t node_index{-1};
+    int32_t mesh_id{-1};
+    std::string abs_path;
+  };
+
+  std::vector<MeshNodeRef> mesh_nodes;
+  int32_t node_index = 0;
+  std::function<void(const Node &)> collectMeshNodes = [&](const Node &node) {
+    const int32_t current_index = node_index++;
+    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+        size_t(node.id) < meshes.size()) {
+      MeshNodeRef ref;
+      ref.node_index = current_index;
+      ref.mesh_id = node.id;
+      ref.abs_path = node.abs_path;
+      mesh_nodes.push_back(std::move(ref));
+    }
+    for (const Node &child : node.children) {
+      collectMeshNodes(child);
+    }
+  };
+
+  for (const Node &root : root_nodes) {
+    collectMeshNodes(root);
+  }
+
+  auto meshMatchesChannel = [&](const RenderMesh &mesh,
+                                const AnimationChannel &channel) {
+    if (mesh.skel_id != channel.skeleton_id) {
+      return false;
+    }
+    if (channel.blendshape_target_names.empty()) {
+      return !mesh.targets.empty();
+    }
+    for (const std::string &name : channel.blendshape_target_names) {
+      if (mesh.targets.find(name) == mesh.targets.end()) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  size_t resolved_count = 0;
+  for (AnimationClip &clip : animations) {
+    const size_t original_channel_count = clip.channels.size();
+    std::vector<AnimationChannel> extra_channels;
+
+    for (size_t ch_idx = 0; ch_idx < original_channel_count; ch_idx++) {
+      AnimationChannel &channel = clip.channels[ch_idx];
+      if (channel.path != AnimationPath::Weights ||
+          channel.target_type != ChannelTargetType::SceneNode ||
+          channel.target_node >= 0 || channel.skeleton_id < 0) {
+        continue;
+      }
+
+      std::vector<MeshNodeRef> matches;
+      for (const MeshNodeRef &ref : mesh_nodes) {
+        const RenderMesh &mesh = meshes[size_t(ref.mesh_id)];
+        if (meshMatchesChannel(mesh, channel)) {
+          matches.push_back(ref);
+        }
+      }
+
+      if (matches.empty()) {
+        PushWarn(fmt::format(
+            "Could not resolve blendShapeWeights target for animation {} "
+            "skeleton_id {}.",
+            clip.abs_path, channel.skeleton_id));
+        continue;
+      }
+
+      channel.target_node = matches[0].node_index;
+      channel.target_prim_path = matches[0].abs_path;
+      resolved_count++;
+
+      for (size_t i = 1; i < matches.size(); i++) {
+        AnimationChannel duplicate = channel;
+        duplicate.target_node = matches[i].node_index;
+        duplicate.target_prim_path = matches[i].abs_path;
+        extra_channels.push_back(std::move(duplicate));
+        resolved_count++;
+      }
+    }
+
+    if (!extra_channels.empty()) {
+      clip.channels.insert(clip.channels.end(), extra_channels.begin(),
+                           extra_channels.end());
+    }
+
+    std::set<int32_t> animated_nodes;
+    for (const AnimationChannel &channel : clip.channels) {
+      if (channel.target_type == ChannelTargetType::SceneNode &&
+          channel.target_node >= 0) {
+        animated_nodes.insert(channel.target_node);
+      }
+    }
+    if (!animated_nodes.empty()) {
+      clip.num_animated_nodes = int32_t(animated_nodes.size());
+    }
+  }
+
+  if (resolved_count > 0) {
+    PushInfo("Resolved " + std::to_string(resolved_count) +
+             " blendShapeWeights animation target(s).");
+  }
+
+  return true;
+}
+
 bool RenderSceneConverter::GetBoundMaterialCached(
     const Stage &stage, const Path &abs_path,
     const std::string &purpose, Path *materialPath,
@@ -1819,6 +1929,9 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
     if (!BuildNodeHierarchy(env, xform_node)) {
       return false;
     }
+    if (!ResolveBlendShapeAnimationTargets()) {
+      return false;
+    }
     hierarchy_ms = ElapsedMs(phase_start);
   }
 
@@ -1871,39 +1984,57 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
       if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
       const int32_t node_index = next_node_index++;
 
-      // Check if this node has a prim with xformOps
-      if (node.prim && IsXformablePrim(*node.prim)) {
-        const Xformable *xformable = nullptr;
-        if (CastToXformable(*node.prim, &xformable) && xformable) {
-          AnimationClip anim;
-          bool converted = false;
+      if (node.prim) {
+        const Path &prim_path = node.absolute_path;
 
-          // node.absolute_path is already a Path object
-          const Path &prim_path = node.absolute_path;
+        // Check if this node has a prim with xformOps.
+        if (IsXformablePrim(*node.prim)) {
+          const Xformable *xformable = nullptr;
+          if (CastToXformable(*node.prim, &xformable) && xformable) {
+            AnimationClip anim;
+            bool converted = false;
 
-          // Prefer value clip animation baking when enabled.
-          if (env.scene_config.enable_value_clips &&
-              ConvertValueClipAnimation(env, *node.prim, prim_path,
-                                       node_index, &anim)) {
-            converted = true;
-          }
-
-          // Fallback to direct xformOp sampling when no clip animation exists.
-          if (!converted && xformable->has_timesamples()) {
-            if (ExtractXformOpAnimation(env, prim_path, node.element_name,
-                                       *xformable, node_index, &anim)) {
+            // Prefer value clip animation baking when enabled.
+            if (env.scene_config.enable_value_clips &&
+                ConvertValueClipAnimation(env, *node.prim, prim_path,
+                                          node_index, &anim)) {
               converted = true;
             }
-          }
 
-          if (converted) {
-            // Check if animation with this path already exists via O(1) lookup
-            const auto &anim_abs_path = anim.abs_path;
-            if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
-              DCOUT("Extracted animation from: " << anim_abs_path);
-              _animPathToIndex[anim_abs_path] = int32_t(animations.size());
-              animations.emplace_back(std::move(anim));
+            // Fallback to direct xformOp sampling when no clip animation exists.
+            if (!converted && xformable->has_timesamples()) {
+              if (ExtractXformOpAnimation(env, prim_path, node.element_name,
+                                          *xformable, node_index, &anim)) {
+                converted = true;
+              }
             }
+
+            if (converted) {
+              // Check if animation with this path already exists via O(1) lookup
+              const auto &anim_abs_path = anim.abs_path;
+              if (_animPathToIndex.find(anim_abs_path) ==
+                  _animPathToIndex.end()) {
+                DCOUT("Extracted animation from: " << anim_abs_path);
+                _animPathToIndex[anim_abs_path] =
+                    int32_t(animations.size());
+                animations.emplace_back(std::move(anim));
+              }
+            }
+          }
+        }
+
+        AnimationClip property_anim;
+        if (ExtractPrimPropertyAnimation(env, *node.prim, prim_path,
+                                         node_index, &property_anim)) {
+          const std::string property_anim_key =
+              property_anim.abs_path + "#properties";
+          if (_animPathToIndex.find(property_anim_key) ==
+              _animPathToIndex.end()) {
+            DCOUT("Extracted property animation from: "
+                  << property_anim.abs_path);
+            _animPathToIndex[property_anim_key] =
+                int32_t(animations.size());
+            animations.emplace_back(std::move(property_anim));
           }
         }
       }
@@ -2314,7 +2445,6 @@ bool DefaultTextureImageLoaderFunction(
 
   DCOUT("Resolved asset path = " << resolvedPath);
 
-  // TODO: user-defined image loader handler.
   auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
@@ -2362,9 +2492,9 @@ bool DefaultTextureImageLoaderFunction(
       return false;
     }
   } else {
-    DCOUT("TODO: bpp = " << result.value().image.bpp);
+    DCOUT("Unsupported bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) += "TODO or unsupported bpp: " +
+      (*err) += "Unsupported bpp: " +
                std::to_string(result.value().image.bpp) + "\n";
     }
     return false;

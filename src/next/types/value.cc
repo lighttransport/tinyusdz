@@ -118,6 +118,13 @@ bool IsFloatBackedArray(TypeId id) {
     case TypeId::Half2:
     case TypeId::Half3:
     case TypeId::Half4:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Color4h:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord3h:
     case TypeId::Quath:
       return true;
     default:
@@ -147,13 +154,6 @@ bool IsDoubleBackedArray(TypeId id) {
     default:
       return false;
   }
-}
-
-// Check if type requires heap allocation
-bool RequiresHeap(TypeId id, bool is_array) {
-  if (is_array) return true;
-  if (id == TypeId::Dictionary) return true;
-  return false;
 }
 
 }  // anonymous namespace
@@ -226,6 +226,10 @@ Value::Value(double v) : type_id_(TypeId::Double) {
 
 Value::Value(const char* v) : type_id_(TypeId::String) {
   new (storage_) StringStorage{std::string(v ? v : "")};
+}
+
+Value::Value(std::string_view v) : type_id_(TypeId::String) {
+  new (storage_) StringStorage{std::string(v)};
 }
 
 Value::Value(const std::string& v) : type_id_(TypeId::String) {
@@ -377,6 +381,20 @@ Value Value::MakeToken(const std::string& s) {
   return v;
 }
 
+Value Value::MakeToken(const char* s) {
+  Value v;
+  v.type_id_ = TypeId::Token;
+  new (v.storage_) StringStorage{std::string(s ? s : "")};
+  return v;
+}
+
+Value Value::MakeToken(std::string_view s) {
+  Value v;
+  v.type_id_ = TypeId::Token;
+  new (v.storage_) StringStorage{std::string(s)};
+  return v;
+}
+
 Value Value::MakeToken(std::string&& s) {
   Value v;
   v.type_id_ = TypeId::Token;
@@ -388,6 +406,20 @@ Value Value::MakeAssetPath(const std::string& s) {
   Value v;
   v.type_id_ = TypeId::AssetPath;
   new (v.storage_) StringStorage{s};
+  return v;
+}
+
+Value Value::MakeAssetPath(const char* s) {
+  Value v;
+  v.type_id_ = TypeId::AssetPath;
+  new (v.storage_) StringStorage{std::string(s ? s : "")};
+  return v;
+}
+
+Value Value::MakeAssetPath(std::string_view s) {
+  Value v;
+  v.type_id_ = TypeId::AssetPath;
+  new (v.storage_) StringStorage{std::string(s)};
   return v;
 }
 
@@ -622,6 +654,12 @@ Value Value::MakeBoolArray(const std::vector<bool>& data) {
   std::vector<uint8_t> tmp(data.size());
   for (size_t i = 0; i < data.size(); i++) tmp[i] = data[i] ? 1 : 0;
   new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(tmp))); return v;
+}
+Value Value::MakeBoolArrayFromBytes(std::vector<uint8_t>&& data) {
+  Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  for (uint8_t& b : data) b = b ? uint8_t{1} : uint8_t{0};
+  new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(data))); return v;
 }
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;

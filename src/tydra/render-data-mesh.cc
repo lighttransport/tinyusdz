@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -94,6 +93,9 @@
 #include "tydra/shader-network.hh"
 
 #include "tydra/render-data-mesh-internal.hh"
+
+#include <cstdint>
+
 namespace tinyusdz {
 
 namespace tydra {
@@ -103,9 +105,11 @@ namespace {
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
 bool SizeToU32(size_t n, uint32_t *out) {
+#if SIZE_MAX > UINT32_MAX
   if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
     return false;
   }
+#endif
   *out = uint32_t(n);
   return true;
 }
@@ -2844,11 +2848,15 @@ bool RenderSceneConverter::ConvertMesh(
   if (auto it = rmaterial_map.find(material_path.material_path);
       it != rmaterial_map.s_end()) {
     dst.material_id = int(it->second);
+  } else {
+    dst.material_id = material_path.default_material_id;
   }
 
   if (auto it = rmaterial_map.find(material_path.backface_material_path);
       it != rmaterial_map.s_end()) {
     dst.backface_material_id = int(it->second);
+  } else {
+    dst.backface_material_id = material_path.default_backface_material_id;
   }
 
   if (env.mesh_config.validate_geomsubset) {
@@ -2900,12 +2908,16 @@ bool RenderSceneConverter::ConvertMesh(
         ms.material_id = int(mat_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : material_id "
                                 << ms.material_id);
+      } else {
+        ms.material_id = mp.default_material_id;
       }
       if (auto backface_it = rmaterial_map.find(mp.backface_material_path);
           backface_it != rmaterial_map.s_end()) {
         ms.backface_material_id = int(backface_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : backface_material_id "
                                 << ms.backface_material_id);
+      } else {
+        ms.backface_material_id = mp.default_backface_material_id;
       }
     }
 
@@ -3177,10 +3189,14 @@ bool RenderSceneConverter::ConvertMesh(
   std::vector<int> subdiv_skin_joint_indices;
   std::vector<float> subdiv_skin_joint_weights;
   bool subdiv_skin_refined = false;
-  // Per BlendShape: compacted (refined point indices, xyz offsets).
-  std::map<const BlendShape *,
-           std::pair<std::vector<uint32_t>, std::vector<float>>>
-      subdiv_bs_offsets;
+  // Per BlendShape: compacted refined point indices, primary xyz offsets and
+  // optional in-between xyz offsets keyed by their authored weight.
+  struct RefinedBlendShapeOffsets {
+    std::vector<uint32_t> indices;
+    std::vector<float> point_offsets;
+    std::map<float, std::vector<float>> inbetween_offsets;
+  };
+  std::map<const BlendShape *, RefinedBlendShapeOffsets> subdiv_bs_offsets;
 
   //
   // Apply subdivision: geometry plus the gathered UV, display, tangent,
@@ -3426,6 +3442,12 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<const BlendShape *> bs_refined;
     std::vector<std::vector<float>> bs_dense;
     const size_t bs_channel_begin = vertex_primvars.size();
+    struct RefinedBlendShapeInbetween {
+      const BlendShape *blendshape{nullptr};
+      float weight{0.0f};
+    };
+    std::vector<RefinedBlendShapeInbetween> bs_ib_refined;
+    std::vector<std::vector<float>> bs_ib_dense;
     for (const auto &bs_it : blendshapes) {
       const BlendShape *bs = bs_it.second;
       if (!bs) {
@@ -3459,12 +3481,58 @@ bool RenderSceneConverter::ConvertMesh(
       }
       bs_dense.push_back(std::move(dense));
       bs_refined.push_back(bs);
+
+      for (const auto &pkv : bs->props) {
+        if (pkv.first.rfind("inbetweens:", 0) != 0) {
+          continue;
+        }
+        const Property &p = pkv.second;
+        if (!p.is_attribute()) {
+          continue;
+        }
+        const Attribute &a = p.get_attribute();
+        if (!a.metas().has_weight()) {
+          PUSH_WARN(fmt::format(
+              "In-between BlendShape `{}` has no `weight` metadata. Skipping.",
+              pkv.first));
+          continue;
+        }
+        std::vector<value::vector3f> ib_offsets;
+        if (!a.get_value(&ib_offsets)) {
+          continue;
+        }
+        if (ib_offsets.size() != bs_indices.size()) {
+          PUSH_WARN(fmt::format(
+              "In-between BlendShape `{}` offset count {} differs from "
+              "pointIndices count {}. Skipping.",
+              pkv.first, ib_offsets.size(), bs_indices.size()));
+          continue;
+        }
+
+        std::vector<float> ib_dense(size_t(num_vertices) * 3, 0.0f);
+        for (size_t i = 0; i < bs_indices.size(); i++) {
+          ib_dense[size_t(bs_indices[i]) * 3 + 0] = ib_offsets[i][0];
+          ib_dense[size_t(bs_indices[i]) * 3 + 1] = ib_offsets[i][1];
+          ib_dense[size_t(bs_indices[i]) * 3 + 2] = ib_offsets[i][2];
+        }
+        bs_ib_refined.push_back(
+            RefinedBlendShapeInbetween{bs, float(a.metas().get_weight())});
+        bs_ib_dense.push_back(std::move(ib_dense));
+      }
     }
     for (const std::vector<float> &dense : bs_dense) {
       tsd::VertexPrimvarView pv;
       pv.values = dense.data();
       pv.stride = 3;
       pv.varying = false;  // offsets follow the surface (smooth weights)
+      vertex_primvars.push_back(pv);
+    }
+    const size_t bs_ib_channel_begin = vertex_primvars.size();
+    for (const std::vector<float> &dense : bs_ib_dense) {
+      tsd::VertexPrimvarView pv;
+      pv.values = dense.data();
+      pv.stride = 3;
+      pv.varying = false;
       vertex_primvars.push_back(pv);
     }
 
@@ -3598,27 +3666,57 @@ bool RenderSceneConverter::ConvertMesh(
       subdiv_skin_refined = true;
     }
 
-    // Compact refined blendshape offsets: refinement weights are affine
-    // combinations of parent values, so points outside a shape's support
-    // stay exactly zero and can be dropped.
+    // Compact refined blendshape offsets. Include points touched by either the
+    // primary shape or any in-between so all compacted offset arrays remain
+    // parallel.
     for (size_t i = 0; i < bs_refined.size(); i++) {
+      const BlendShape *bs = bs_refined[i];
       const std::vector<float> &vals =
           refined.vertex_primvars[bs_channel_begin + i];
       std::vector<uint32_t> indices;
       std::vector<float> offsets;
+      std::vector<size_t> ib_channels;
+      for (size_t ib_i = 0; ib_i < bs_ib_refined.size(); ib_i++) {
+        if (bs_ib_refined[ib_i].blendshape == bs) {
+          ib_channels.push_back(ib_i);
+        }
+      }
+      std::map<float, std::vector<float>> inbetween_offsets;
       for (size_t v = 0; v < refined_points; v++) {
         const float x = vals[3 * v];
         const float y = vals[3 * v + 1];
         const float z = vals[3 * v + 2];
-        if (x != 0.0f || y != 0.0f || z != 0.0f) {
+        bool keep = (x != 0.0f || y != 0.0f || z != 0.0f);
+        for (size_t ib_i : ib_channels) {
+          const std::vector<float> &ib_vals =
+              refined.vertex_primvars[bs_ib_channel_begin + ib_i];
+          if (ib_vals[3 * v] != 0.0f || ib_vals[3 * v + 1] != 0.0f ||
+              ib_vals[3 * v + 2] != 0.0f) {
+            keep = true;
+            break;
+          }
+        }
+        if (keep) {
           indices.push_back(uint32_t(v));
           offsets.push_back(x);
           offsets.push_back(y);
           offsets.push_back(z);
+          for (size_t ib_i : ib_channels) {
+            const std::vector<float> &ib_vals =
+                refined.vertex_primvars[bs_ib_channel_begin + ib_i];
+            std::vector<float> &ib_out =
+                inbetween_offsets[bs_ib_refined[ib_i].weight];
+            ib_out.push_back(ib_vals[3 * v]);
+            ib_out.push_back(ib_vals[3 * v + 1]);
+            ib_out.push_back(ib_vals[3 * v + 2]);
+          }
         }
       }
-      subdiv_bs_offsets[bs_refined[i]] = {std::move(indices),
-                                          std::move(offsets)};
+      RefinedBlendShapeOffsets refined_bs;
+      refined_bs.indices = std::move(indices);
+      refined_bs.point_offsets = std::move(offsets);
+      refined_bs.inbetween_offsets = std::move(inbetween_offsets);
+      subdiv_bs_offsets[bs] = std::move(refined_bs);
     }
     // Uniform (per-face) attributes replicate through face_source.
     for (VertexAttribute *vattr : uniform_attrs) {
@@ -4624,10 +4722,6 @@ bool RenderSceneConverter::ConvertMesh(
       continue;
     }
 
-    //
-    // TODO: in-between attribs
-    //
-
     std::vector<int> vertex_indices;
     std::vector<value::vector3f> normal_offsets;
     std::vector<value::vector3f> vertex_offsets;
@@ -4653,11 +4747,20 @@ bool RenderSceneConverter::ConvertMesh(
             bs->name));
         continue;
       }
-      shapeTarget.pointIndices = std::move(sit->second.first);
-      const std::vector<float> &flat = sit->second.second;
+      shapeTarget.pointIndices = std::move(sit->second.indices);
+      const std::vector<float> &flat = sit->second.point_offsets;
       shapeTarget.pointOffsets.resize(flat.size() / 3);
       memcpy(shapeTarget.pointOffsets.data(), flat.data(),
              flat.size() * sizeof(float));
+      for (auto &ib_kv : sit->second.inbetween_offsets) {
+        InbetweenShapeTarget ibt;
+        ibt.weight = ib_kv.first;
+        const std::vector<float> &ib_flat = ib_kv.second;
+        ibt.pointOffsets.resize(ib_flat.size() / 3);
+        memcpy(ibt.pointOffsets.data(), ib_flat.data(),
+               ib_flat.size() * sizeof(float));
+        shapeTarget.inbetweens[ibt.weight] = std::move(ibt);
+      }
       dst.targets[bs->name] = shapeTarget;
       DCOUT("Converted refined blendshape target: " << bs->name);
       continue;

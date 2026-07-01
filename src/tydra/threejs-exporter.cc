@@ -1324,6 +1324,18 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
       continue; // Unknown path type
     }
 
+    if (!channel.target_prim_path.empty() ||
+        !channel.blendshape_target_names.empty()) {
+      track["userData"] = json::object();
+      if (!channel.target_prim_path.empty()) {
+        track["userData"]["target_prim_path"] = channel.target_prim_path;
+      }
+      if (!channel.blendshape_target_names.empty()) {
+        track["userData"]["blendshape_target_names"] =
+            channel.blendshape_target_names;
+      }
+    }
+
     anim_json["tracks"].push_back(track);
   }
 

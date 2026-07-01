@@ -68,6 +68,11 @@ using next::LightType;
 using next::GetLightData;
 using next::LightData;
 
+using next::IsPointInstancer;
+using next::UsdGeomPointInstancer;
+using next::PointInstancerTransform;
+using next::GetAllPointInstancers;
+
 // Attribute evaluation
 using next::AttributeEval;
 using next::EvalResult;

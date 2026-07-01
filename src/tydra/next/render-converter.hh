@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "render-data.hh"
+#include "render-extract.hh"
 #include "scene-access.hh"
 #include "next/stage/stage.hh"
 
@@ -55,9 +56,16 @@ struct MaterialConfig {
   TextureLoader custom_texture_loader;
 };
 
+struct PointInstancerConfig {
+  // Keep the default as lightweight draw references. Enable this only for
+  // consumers that require ordinary mesh payloads for each visible instance.
+  bool duplicate_meshes = false;
+};
+
 struct ConverterConfig {
   MeshConfig mesh;
   MaterialConfig material;
+  PointInstancerConfig point_instancer;
 
   // Time code for evaluation
   double time_code = 0.0;
@@ -97,6 +105,7 @@ class RenderSceneConverter {
 
   // Individual conversion methods (for custom pipelines)
   bool ConvertMesh(const UsdPrim& prim, RenderMesh* out);
+  bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
   bool ConvertCamera(const UsdPrim& prim, RenderCamera* out);
@@ -111,7 +120,11 @@ class RenderSceneConverter {
 
  private:
   // Build scene hierarchy
-  void BuildNodeHierarchy(const ::tinyusdz::next::Stage& stage, RenderScene* scene);
+  void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
+  void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
+                              RenderScene* scene);
+  void AssignPointInstanceDrawMaterials(RenderScene* scene);
+  void DuplicatePointInstanceMeshes(RenderScene* scene);
 
   // Extract mesh data directly into chunked arrays
   bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
@@ -129,9 +142,18 @@ class RenderSceneConverter {
   bool ComputeVertexNormals(RenderMesh* mesh);
 
   // Material extraction
+  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
+                       const UsdPrim& prim,
+                       RenderMaterial* out,
+                       RenderScene* scene);
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
-                             PreviewSurfaceShader* out);
+                             PreviewSurfaceShader* out,
+                             RenderScene* scene);
+  bool ExtractOpenPBRSurface(const ::tinyusdz::next::Stage& stage,
+                             const UsdPrim& shader_prim,
+                             OpenPBRSurfaceShader* out,
+                             RenderScene* scene);
   bool ExtractShaderParam(const ::tinyusdz::next::Stage& stage,
                           const UsdPrim& shader_prim,
                           const std::string& param_name,

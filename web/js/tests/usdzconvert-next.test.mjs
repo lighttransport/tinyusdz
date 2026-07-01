@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 
-import { loadWasm, convertFolderToUSDZ } from '../src/usdzconvert.js';
+import { loadWasm, convertFolderToUSDZ, unpackUSDZ } from '../src/usdzconvert.js';
 
 async function testAsync(name, fn) {
   try { await fn(); console.log(`ok - ${name}`); }
@@ -33,6 +33,22 @@ def Xform "World"
 }
 `;
 
+const TEXTURED_SCENE_USDA = `#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World"
+{
+    def Shader "Texture"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @tex.png@
+        token inputs:sourceColorSpace = "sRGB"
+        float3 outputs:rgb
+    }
+}
+`;
+
 const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
 const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
 const glueUrl = new URL(glue, import.meta.url).href;
@@ -45,6 +61,21 @@ function makeUsdzWithUsdcRoot() {
   return convertFolderToUSDZ(native, map, {
     rootPath: 'scene.usda',
     rootLayerFormat: 'usdc',   // top-level USDC root, required by `next`
+    reencode: false,
+  });
+}
+
+function makeTexturedUsdzWithUsdcRoot() {
+  const tex = native.repackChannels({ channels: 3, width: 8, height: 8,
+    r: { const: 200 }, g: { const: 100 }, b: { const: 50 } });
+  assert.ok(tex && tex.success, 'test texture generation should produce PNG');
+  const map = new Map([
+    ['scene.usda', new TextEncoder().encode(TEXTURED_SCENE_USDA)],
+    ['tex.png', new Uint8Array(tex.data)],
+  ]);
+  return convertFolderToUSDZ(native, map, {
+    rootPath: 'scene.usda',
+    rootLayerFormat: 'usdc',
     reencode: false,
   });
 }
@@ -82,6 +113,34 @@ await testAsync('next pipeline: flattens a single USDC-root .usdz and reloads', 
 
   // And it must produce a valid, reloadable USDZ.
   assertReloadableUsdz(usdz, 'next');
+});
+
+await testAsync('next pipeline: remaps texture format changes in a single .usdz', async () => {
+  const base = await makeTexturedUsdzWithUsdcRoot();
+  assertReloadableUsdz(base.usdz, 'base textured (legacy)');
+
+  const log = [];
+  const map = new Map([['scene.usdz', base.usdz]]);
+  const { usdz, stats } = await convertFolderToUSDZ(native, map, {
+    rootPath: 'scene.usdz',
+    pipeline: 'next',
+    textureFormat: 'jpeg',
+    reencode: false,
+    log: (m) => log.push(String(m)),
+  });
+
+  const declined = log.some((l) => /next pipeline (declined|error)/.test(l));
+  assert.ok(!declined, `next pipeline must not decline/fall back. log:\n${log.join('\n')}`);
+  assert.equal(stats.pipeline, 'next');
+  assert.equal(stats.textures, 1);
+  assert.equal(stats.reencoded, 1);
+  assert.ok(stats.assetPathsRemapped > 0,
+    `expected next root to remap texture asset paths, got ${stats.assetPathsRemapped}`);
+
+  const { entries } = unpackUSDZ(usdz);
+  assert.ok(entries.has('tex.jpg'), 'converted texture should be packed as tex.jpg');
+  assert.ok(!entries.has('tex.png'), 'original texture name should not remain packed');
+  assertReloadableUsdz(usdz, 'next textured');
 });
 
 console.log(`usdzconvert-next tests done (${wasm64 ? 'wasm64' : 'wasm32'})`);
