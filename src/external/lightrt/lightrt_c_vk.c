@@ -1765,7 +1765,34 @@ struct lrt_vk_rtx_scene {
     vk_accel *extra_tlas; /* ntlas-1 additional TLAS slices, or NULL */
     uint32_t *tlas_base;  /* ntlas global base instance indices */
     uint32_t ntlas;       /* number of TLAS slices (>=1) */
+    /* BLAS suballocation pools (see vk_subpool). A scene with ~100k prototypes
+     * would otherwise do ~6 vkAllocateMemory per BLAS -> hundreds of thousands of
+     * allocations (NVIDIA's allocator is ~O(live allocs); also a per-device count
+     * limit), exhausting/faulting the driver. These pool the per-BLAS vertex/index
+     * input and AS storage into a few large blocks each. Live for the scene. */
+    struct vk_subpool *blas_input_pool;  /* host-visible verts+indices, dev address */
+    struct vk_subpool *blas_store_pool;  /* device-local AS storage */
 };
+
+/* Bump suballocator: many small "buffers" share a few large VkBuffer blocks (one
+ * VkDeviceMemory each), handed out as (block buffer, offset, device address). No
+ * per-item free -- the whole pool is released at scene teardown. Collapses the
+ * per-BLAS allocation storm into O(total_bytes / block_size) allocations. */
+typedef struct vk_pool_block {
+    vk_buffer buf;       /* the block's VkBuffer + VkDeviceMemory (via vk_buffer) */
+    uint64_t base_addr;  /* device address of offset 0 (0 if not addressable)     */
+    void *mapped;        /* persistent host pointer (host-visible pools), else NULL */
+    VkDeviceSize used;   /* bump offset                                            */
+} vk_pool_block;
+
+typedef struct vk_subpool {
+    VkBufferUsageFlags usage;
+    int host_visible;
+    int device_addr;
+    VkDeviceSize block_size;
+    vk_pool_block *blocks;
+    uint32_t nblocks, cap;
+} vk_subpool;
 
 /* Instances per TLAS slice for the multi-TLAS builder. Kept safely below the
  * Vulkan-guaranteed TLAS maxInstanceCount floor (2^24 = 16,777,216). */
@@ -1987,48 +2014,120 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_indexed(lrt_vk_engine *e,
     return rtx_scene_build_core(e, vertices, nverts, indices, ntris, err);
 }
 
-/* Build ONE BLAS from a single indexed prototype mesh (prototype-local space),
- * staging the vertex/index inputs into device-local memory and freeing them once
- * the build completes (the AS is self-contained). No chunk splitting — one BLAS
- * per prototype keeps the instance->triangle id encoding (instanceId*stride+prim)
- * intact. */
-static int build_proto_blas(lrt_vk_engine *e, const float *verts, uint32_t nverts,
-                            const uint32_t *indices, uint32_t ntris,
-                            vk_accel *out) {
-    vk_buffer vstage = {0}, vbuf = {0}, istage = {0}, idxbuf = {0};
-    int ok = 0;
-    do {
-        VkDeviceSize vbytes = (VkDeviceSize)nverts * 3u * sizeof(float);
-        VkDeviceSize ibytes = (VkDeviceSize)ntris * 3u * sizeof(uint32_t);
-        if (!vk_buffer_create_ex(e, vbytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, 0,
-                                 &vstage))
+/* --- BLAS suballocation pool ------------------------------------------------- */
+
+static void vk_subpool_init(vk_subpool *p, VkBufferUsageFlags usage,
+                            int host_visible, int device_addr,
+                            VkDeviceSize block_size) {
+    memset(p, 0, sizeof(*p));
+    p->usage = usage;
+    p->host_visible = host_visible;
+    p->device_addr = device_addr;
+    p->block_size = block_size;
+}
+
+/* Suballocate `size` bytes (aligned to power-of-two `align`) from the pool. Returns
+ * the containing block's VkBuffer, the byte offset within it, and -- when
+ * applicable -- the persistent host pointer and device address at that offset. */
+static int vk_subpool_alloc(lrt_vk_engine *e, vk_subpool *p, VkDeviceSize size,
+                            VkDeviceSize align, VkBuffer *out_buf,
+                            VkDeviceSize *out_off, void **out_mapped,
+                            uint64_t *out_addr) {
+    if (size == 0) size = 16;
+    if (align == 0) align = 1;
+    VkDeviceSize off = 0;
+    int need_new = 1;
+    if (p->nblocks) {
+        vk_pool_block *last = &p->blocks[p->nblocks - 1];
+        off = (last->used + (align - 1)) & ~(align - 1);
+        if (off + size <= last->buf.size) need_new = 0;
+    }
+    if (need_new) {
+        VkDeviceSize bs = size > p->block_size ? size : p->block_size;
+        if (p->nblocks == p->cap) {
+            uint32_t nc = p->cap ? p->cap * 2u : 8u;
+            vk_pool_block *nb =
+                (vk_pool_block *)realloc(p->blocks, nc * sizeof(vk_pool_block));
+            if (!nb) return 0;
+            p->blocks = nb;
+            p->cap = nc;
+        }
+        vk_pool_block *blk = &p->blocks[p->nblocks];
+        memset(blk, 0, sizeof(*blk));
+        if (!vk_buffer_create_ex(e, bs, p->usage, p->host_visible, p->device_addr,
+                                 &blk->buf))
+            return 0;
+        if (p->device_addr) blk->base_addr = vk_device_address(e, &blk->buf);
+        if (p->host_visible &&
+            vkMapMemory(e->device, blk->buf.mem, 0, VK_WHOLE_SIZE, 0, &blk->mapped) !=
+                VK_SUCCESS) {
+            vk_buffer_destroy(e, &blk->buf);
+            return 0;
+        }
+        p->nblocks++;
+        off = 0;
+    }
+    vk_pool_block *blk = &p->blocks[p->nblocks - 1];
+    blk->used = off + size;
+    if (out_buf) *out_buf = blk->buf.buf;
+    if (out_off) *out_off = off;
+    if (out_mapped) *out_mapped = blk->mapped ? (char *)blk->mapped + off : NULL;
+    if (out_addr) *out_addr = blk->base_addr ? blk->base_addr + off : 0u;
+    return 1;
+}
+
+static void vk_subpool_free(lrt_vk_engine *e, vk_subpool *p) {
+    if (!p) return;
+    for (uint32_t i = 0; i < p->nblocks; i++) {
+        if (p->blocks[i].mapped && !e->device_lost)
+            vkUnmapMemory(e->device, p->blocks[i].buf.mem);
+        vk_buffer_destroy(e, &p->blocks[i].buf);
+    }
+    free(p->blocks);
+    memset(p, 0, sizeof(*p));
+}
+
+/* Build all prototype BLAS through two suballocation pools (vertex/index INPUT and
+ * AS STORAGE) plus one reused scratch buffer, instead of ~6 vkAllocateMemory + 2
+ * submits per prototype. On a ~100k-prototype scene (full Moana island) the naive
+ * path exhausts NVIDIA's allocator and the driver faults; pooling keeps it to a few
+ * dozen block allocations. Input verts/indices go in a host-visible, device-address
+ * pool (memcpy'd directly -- no staging, no copy submit); each BLAS is built into a
+ * pooled device-local storage slice. blas[p].as owns only the AS handle (storage is
+ * pool-owned; blas[p].storage stays empty). Returns 1 on success. */
+static int build_protos_pooled(lrt_vk_engine *e, const lrt_vk_proto *protos,
+                               uint32_t nprotos, lrt_vk_rtx_scene *s) {
+    const VkDeviceSize BLOCK = 128u * 1024u * 1024u;  // 128 MiB blocks
+    s->blas_input_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
+    s->blas_store_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
+    if (!s->blas_input_pool || !s->blas_store_pool) return 0;
+    vk_subpool_init(
+        s->blas_input_pool,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        /*host_visible=*/1, /*device_addr=*/1, BLOCK);
+    vk_subpool_init(s->blas_store_pool,
+                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                    /*host_visible=*/0, /*device_addr=*/0, BLOCK);
+
+    vk_buffer scratch = {0};  // reused across builds, grown on demand
+    int ok = 1;
+    for (uint32_t p = 0; p < nprotos && ok; p++) {
+        const lrt_vk_proto *pr = &protos[p];
+        VkDeviceSize vbytes = (VkDeviceSize)pr->nverts * 3u * sizeof(float);
+        VkDeviceSize ibytes = (VkDeviceSize)pr->ntris * 3u * sizeof(uint32_t);
+        VkBuffer vbuf, ibuf;
+        VkDeviceSize voff, ioff;
+        void *vmap, *imap;
+        uint64_t vaddr, iaddr;
+        if (!vk_subpool_alloc(e, s->blas_input_pool, vbytes, 16, &vbuf, &voff, &vmap,
+                              &vaddr) ||
+            !vk_subpool_alloc(e, s->blas_input_pool, ibytes, 16, &ibuf, &ioff, &imap,
+                              &iaddr)) {
+            ok = 0;
             break;
-        if (!vk_buffer_write(e, &vstage, verts, (size_t)vbytes)) break;
-        if (!vk_buffer_create_ex(
-                e, vbytes,
-                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                0, 1, &vbuf))
-            break;
-        if (!vk_buffer_create_ex(e, ibytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, 0,
-                                 &istage))
-            break;
-        if (!vk_buffer_write(e, &istage, indices, (size_t)ibytes)) break;
-        if (!vk_buffer_create_ex(
-                e, ibytes,
-                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                0, 1, &idxbuf))
-            break;
-        VkCommandBuffer cb = vk_cmd_begin(e);
-        if (!cb) break;
-        VkBufferCopy vcopy = {0, 0, vbytes};
-        vkCmdCopyBuffer(cb, vstage.buf, vbuf.buf, 1, &vcopy);
-        VkBufferCopy icopy = {0, 0, ibytes};
-        vkCmdCopyBuffer(cb, istage.buf, idxbuf.buf, 1, &icopy);
-        if (!vk_cmd_end_submit(e, cb)) break;
-        uint64_t vaddr = vk_device_address(e, &vbuf);
-        uint64_t iaddr = vk_device_address(e, &idxbuf);
+        }
+        memcpy(vmap, pr->vertices, (size_t)vbytes);
+        memcpy(imap, pr->indices, (size_t)ibytes);
 
         VkAccelerationStructureGeometryKHR g;
         memset(&g, 0, sizeof(g));
@@ -2040,18 +2139,88 @@ static int build_proto_blas(lrt_vk_engine *e, const float *verts, uint32_t nvert
         g.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
         g.geometry.triangles.vertexData.deviceAddress = vaddr;
         g.geometry.triangles.vertexStride = 3u * sizeof(float);
-        g.geometry.triangles.maxVertex = nverts - 1u;
+        g.geometry.triangles.maxVertex = pr->nverts - 1u;
         g.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
         g.geometry.triangles.indexData.deviceAddress = iaddr;
-        if (!vk_build_accel(e, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, &g,
-                            ntris, 0u, 0u, out))
+
+        VkAccelerationStructureBuildGeometryInfoKHR bgi;
+        memset(&bgi, 0, sizeof(bgi));
+        bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        bgi.geometryCount = 1;
+        bgi.pGeometries = &g;
+
+        VkAccelerationStructureBuildSizesInfoKHR sizes;
+        memset(&sizes, 0, sizeof(sizes));
+        sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+        vkGetAccelerationStructureBuildSizesKHR(
+            e->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
+            &pr->ntris, &sizes);
+
+        VkBuffer sbuf;
+        VkDeviceSize soff;
+        if (!vk_subpool_alloc(e, s->blas_store_pool, sizes.accelerationStructureSize,
+                              256, &sbuf, &soff, NULL, NULL)) {
+            ok = 0;
             break;
-        ok = 1;
-    } while (0);
-    vk_buffer_destroy(e, &vstage);
-    vk_buffer_destroy(e, &istage);
-    vk_buffer_destroy(e, &vbuf);
-    vk_buffer_destroy(e, &idxbuf);
+        }
+        VkAccelerationStructureCreateInfoKHR ci;
+        memset(&ci, 0, sizeof(ci));
+        ci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        ci.buffer = sbuf;
+        ci.offset = soff;
+        ci.size = sizes.accelerationStructureSize;
+        ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        if (vkCreateAccelerationStructureKHR(e->device, &ci, NULL, &s->blas[p].as) !=
+            VK_SUCCESS) {
+            ok = 0;
+            break;
+        }
+
+        VkDeviceSize need = sizes.buildScratchSize + 256u;
+        if (scratch.size < need) {
+            vk_buffer_destroy(e, &scratch);
+            if (!vk_buffer_create_ex(e, need, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0, 1,
+                                     &scratch)) {
+                ok = 0;
+                break;
+            }
+        }
+        uint64_t saddr = (vk_device_address(e, &scratch) + 255u) & ~(uint64_t)255u;
+
+        bgi.dstAccelerationStructure = s->blas[p].as;
+        bgi.scratchData.deviceAddress = saddr;
+        VkAccelerationStructureBuildRangeInfoKHR range = {pr->ntris, 0u, 0u, 0u};
+        const VkAccelerationStructureBuildRangeInfoKHR *pranges = &range;
+
+        VkCommandBuffer cb = vk_cmd_begin(e);
+        if (cb == VK_NULL_HANDLE) {
+            ok = 0;
+            break;
+        }
+        vkCmdBuildAccelerationStructuresKHR(cb, 1, &bgi, &pranges);
+        VkMemoryBarrier mb;
+        memset(&mb, 0, sizeof(mb));
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
+                             1, &mb, 0, NULL, 0, NULL);
+        if (!vk_cmd_end_submit(e, cb)) {
+            ok = 0;
+            break;
+        }
+        VkAccelerationStructureDeviceAddressInfoKHR ai;
+        memset(&ai, 0, sizeof(ai));
+        ai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        ai.accelerationStructure = s->blas[p].as;
+        s->blas[p].address =
+            vkGetAccelerationStructureDeviceAddressKHR(e->device, &ai);
+    }
+    vk_buffer_destroy(e, &scratch);
     return ok;
 }
 
@@ -2187,16 +2356,11 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
 
     int ok = 0;
     do {
-        int blas_ok = 1;
-        for (uint32_t p = 0; p < nprotos; p++) {
-            if (!build_proto_blas(e, protos[p].vertices, protos[p].nverts,
-                                  protos[p].indices, protos[p].ntris,
-                                  &s->blas[p])) {
-                blas_ok = 0;
-                break;
-            }
-        }
-        if (!blas_ok) break;
+        /* Build every prototype BLAS through the suballocation pools (a few large
+         * blocks) instead of ~6 vkAllocateMemory + 2 submits per prototype, which
+         * on ~100k-prototype scenes (full Moana island) exhausts NVIDIA's allocator
+         * and faults the driver. */
+        if (!build_protos_pooled(e, protos, nprotos, s)) break;
 
         s->tlas_base = (uint32_t *)calloc(ntlas, sizeof(uint32_t));
         if (!s->tlas_base) break;
@@ -2465,8 +2629,17 @@ void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s) {
     }
     free(s->tlas_base);
     if (s->blas) {
+        /* Destroys only the AS handles; the underlying storage is pool-owned. */
         for (uint32_t c = 0; c < s->nblas; c++) vk_accel_destroy(e, &s->blas[c]);
         free(s->blas);
+    }
+    if (s->blas_input_pool) {
+        vk_subpool_free(e, s->blas_input_pool);
+        free(s->blas_input_pool);
+    }
+    if (s->blas_store_pool) {
+        vk_subpool_free(e, s->blas_store_pool);
+        free(s->blas_store_pool);
     }
     free(s);
 }
