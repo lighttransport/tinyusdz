@@ -53,11 +53,13 @@ HipRayTracer::~HipRayTracer() {
 
 void HipRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dMatTex_);
+  F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
   numMats_ = 0;
+  numTextures_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
@@ -142,6 +144,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   tlasNodeCount_ = hs.tlasNodeCount;
   nodeCount_ = blasNodeCount_ + tlasNodeCount_;
   numMats_ = hs.numMats;
+  numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
@@ -168,6 +171,9 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.blas.data(), hs.blas.size() * sizeof(Node), &dBlasNodes_)) return false;
   if (!up(hs.tlas.data(), hs.tlas.size() * sizeof(Node), &dTlasNodes_)) return false;
   if (!up(hs.instances.data(), hs.instances.size() * sizeof(Inst), &dInstances_)) return false;
+  if (!up(hs.matTex.data(), hs.matTex.size() * sizeof(int), &dMatTex_)) return false;
+  if (!up(hs.texels.data(), hs.texels.size(), &dTexels_)) return false;
+  if (!up(hs.textures.data(), hs.textures.size() * sizeof(HostTextureDesc), &dTextures_)) return false;
   if (hs.numVols > 0) {
     if (!up(hs.volDens.data(), hs.volDens.size() * sizeof(float), &dVolDens_)) return false;
     if (!up(hs.volParams.data(), hs.volParams.size() * sizeof(HostVolParam), &dVolParams_))
@@ -208,6 +214,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
         *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
         *dM = reinterpret_cast<void*>(dMat_), *dMP = reinterpret_cast<void*>(dMatPbr_),
+        *dMT = reinterpret_cast<void*>(dMatTex_), *dTx = reinterpret_cast<void*>(dTexels_),
+        *dTD = reinterpret_cast<void*>(dTextures_),
         *dU = reinterpret_cast<void*>(dUV_), *dU1 = reinterpret_cast<void*>(dUV1_),
         *dIn = reinterpret_cast<void*>(dInfl_), *dF = reinterpret_cast<void*>(dFace_),
         *dDw = reinterpret_cast<void*>(dDomW_), *dDj = reinterpret_cast<void*>(dDomJoint_),
@@ -216,12 +224,14 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dVD = reinterpret_cast<void*>(dVolDens_), *dVP = reinterpret_cast<void*>(dVolParams_);
   void* dEm = reinterpret_cast<void*>(dEmask_);
   int numMats = numMats_;
+  int numTextures = numTextures_;
   int numVols = numVols_;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
-  // uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
+  // matTex,texels,textures,numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dU, &dU1, &dIn,
-                  &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dMT, &dTx,
+                  &dTD, &numTextures, &dU, &dU1, &dIn, &dF,  &dDw, &dDj,
+                  &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   const int samples = spp < 1 ? 1 : spp;

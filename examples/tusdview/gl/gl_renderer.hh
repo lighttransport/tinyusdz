@@ -147,6 +147,8 @@ class GLRenderer final : public Renderer {
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
+  GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
+  GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
@@ -227,7 +229,13 @@ class GLRenderer final : public Renderer {
   GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
   int vpW_{0}, vpH_{0};
 
-  std::vector<GLuint> textures_;
+  struct GLTexture {
+    GLuint tex2d{0};
+    GLuint arrayTex{0};
+    GLuint lutTex{0};
+    bool isUdim{false};
+  };
+  std::vector<GLTexture> textures_;
   std::vector<GLMaterial> materials_;
   std::vector<GLMesh> meshes_;
 

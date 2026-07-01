@@ -17,6 +17,7 @@
 #include "usdGeom.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/render-data-shader.hh"
+#include "tydra/texture-util.hh"
 
 namespace tusdview {
 
@@ -324,17 +325,365 @@ bool DecodeToRGBA8(const tydra::RenderScene& rs, const tydra::TextureImage& img,
   return false;  // unsupported texel type
 }
 
+size_t TextureBytes(const light3d::Image& img) {
+  return static_cast<size_t>(std::max(img.width, 0)) *
+         static_cast<size_t>(std::max(img.height, 0)) *
+         static_cast<size_t>(std::max(img.channels, 0));
+}
+
+size_t TextureBytes(const DrawTextureCPU& tex) {
+  if (tex.isUdim && !tex.udimTiles.empty()) {
+    size_t total = 0;
+    for (const DrawUdimTileCPU& tile : tex.udimTiles) {
+      total += TextureBytes(tile.image);
+    }
+    return total;
+  }
+  return TextureBytes(tex.image);
+}
+
+bool ResizeDrawImage(light3d::Image* img, int dstW, int dstH, bool srgb,
+                     std::string* err) {
+  if (!img || dstW <= 0 || dstH <= 0 || img->width <= 0 || img->height <= 0) {
+    return false;
+  }
+  if (img->width == dstW && img->height == dstH) return true;
+  tinyusdz::Image src;
+  src.width = img->width;
+  src.height = img->height;
+  src.channels = img->channels;
+  src.bpp = 8;
+  src.format = tinyusdz::Image::PixelFormat::UInt;
+  src.data = img->data;
+  tinyusdz::Image dst;
+  const auto filter =
+      srgb ? tydra::ResizeFilter::SRGB : tydra::ResizeFilter::Linear;
+  if (!tydra::ResizeImage(src, dstW, dstH, &dst, filter, err)) {
+    return false;
+  }
+  img->width = dst.width;
+  img->height = dst.height;
+  img->channels = dst.channels;
+  img->data = std::move(dst.data);
+  return true;
+}
+
+void InitUdimLookup(DrawTextureCPU* tex) {
+  tex->udimLayer.fill(-1);
+  for (size_t i = 0; i < tex->udimTiles.size(); ++i) {
+    const uint32_t udim = tex->udimTiles[i].udim;
+    if (udim >= 1001 && udim <= 1100) {
+      tex->udimLayer[udim - 1001] = static_cast<int>(i);
+    }
+  }
+}
+
+void NormalizeUdimTiles(DrawTextureCPU* tex, bool srgb, DrawScene* out) {
+  if (!tex || !tex->isUdim || tex->udimTiles.empty()) return;
+  int w = 0;
+  int h = 0;
+  for (const DrawUdimTileCPU& tile : tex->udimTiles) {
+    w = std::max(w, tile.image.width);
+    h = std::max(h, tile.image.height);
+  }
+  if (w <= 0 || h <= 0) return;
+  for (DrawUdimTileCPU& tile : tex->udimTiles) {
+    if (tile.image.width == w && tile.image.height == h) continue;
+    std::string err;
+    if (!ResizeDrawImage(&tile.image, w, h, srgb, &err) && out) {
+      out->skipped.push_back("UDIM tile resize failed: " + err);
+    }
+  }
+  tex->udimTileWidth = w;
+  tex->udimTileHeight = h;
+  tex->image = tex->udimTiles.front().image;  // representative fallback.
+  InitUdimLookup(tex);
+}
+
+uint16_t PackRGB565(uint8_t r, uint8_t g, uint8_t b) {
+  return uint16_t(((uint16_t(r) >> 3) << 11) | ((uint16_t(g) >> 2) << 5) |
+                  (uint16_t(b) >> 3));
+}
+
+void UnpackRGB565(uint16_t c, uint8_t* r, uint8_t* g, uint8_t* b) {
+  const uint8_t r5 = uint8_t((c >> 11) & 31);
+  const uint8_t g6 = uint8_t((c >> 5) & 63);
+  const uint8_t b5 = uint8_t(c & 31);
+  *r = uint8_t((r5 << 3) | (r5 >> 2));
+  *g = uint8_t((g6 << 2) | (g6 >> 4));
+  *b = uint8_t((b5 << 3) | (b5 >> 2));
+}
+
+void EncodeBC1Block(const uint8_t rgba[16][4], uint8_t* out) {
+  uint8_t minv[3] = {255, 255, 255};
+  uint8_t maxv[3] = {0, 0, 0};
+  for (int i = 0; i < 16; ++i) {
+    for (int c = 0; c < 3; ++c) {
+      minv[c] = std::min(minv[c], rgba[i][c]);
+      maxv[c] = std::max(maxv[c], rgba[i][c]);
+    }
+  }
+  uint16_t c0 = PackRGB565(maxv[0], maxv[1], maxv[2]);
+  uint16_t c1 = PackRGB565(minv[0], minv[1], minv[2]);
+  if (c0 < c1) std::swap(c0, c1);
+  uint8_t pal[4][3]{};
+  UnpackRGB565(c0, &pal[0][0], &pal[0][1], &pal[0][2]);
+  UnpackRGB565(c1, &pal[1][0], &pal[1][1], &pal[1][2]);
+  for (int c = 0; c < 3; ++c) {
+    pal[2][c] = uint8_t((2 * int(pal[0][c]) + int(pal[1][c])) / 3);
+    pal[3][c] = uint8_t((int(pal[0][c]) + 2 * int(pal[1][c])) / 3);
+  }
+  uint32_t bits = 0;
+  for (int i = 0; i < 16; ++i) {
+    int best = 0;
+    int bestErr = std::numeric_limits<int>::max();
+    for (int p = 0; p < 4; ++p) {
+      int err = 0;
+      for (int c = 0; c < 3; ++c) {
+        const int d = int(rgba[i][c]) - int(pal[p][c]);
+        err += d * d;
+      }
+      if (err < bestErr) {
+        bestErr = err;
+        best = p;
+      }
+    }
+    bits |= uint32_t(best) << (2 * i);
+  }
+  out[0] = uint8_t(c0 & 255);
+  out[1] = uint8_t(c0 >> 8);
+  out[2] = uint8_t(c1 & 255);
+  out[3] = uint8_t(c1 >> 8);
+  std::memcpy(out + 4, &bits, 4);
+}
+
+void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
+  uint8_t a0 = 0;
+  uint8_t a1 = 255;
+  for (int i = 0; i < 16; ++i) {
+    a0 = std::max(a0, rgba[i][3]);
+    a1 = std::min(a1, rgba[i][3]);
+  }
+  out[0] = a0;
+  out[1] = a1;
+  uint8_t pal[8]{};
+  pal[0] = a0;
+  pal[1] = a1;
+  if (a0 > a1) {
+    for (int i = 1; i <= 6; ++i) {
+      pal[i + 1] = uint8_t(((7 - i) * int(a0) + i * int(a1)) / 7);
+    }
+  } else {
+    for (int i = 1; i <= 4; ++i) {
+      pal[i + 1] = uint8_t(((5 - i) * int(a0) + i * int(a1)) / 5);
+    }
+    pal[6] = 0;
+    pal[7] = 255;
+  }
+  uint64_t bits = 0;
+  for (int i = 0; i < 16; ++i) {
+    int best = 0;
+    int bestErr = std::numeric_limits<int>::max();
+    for (int p = 0; p < 8; ++p) {
+      const int d = int(rgba[i][3]) - int(pal[p]);
+      const int err = d * d;
+      if (err < bestErr) {
+        bestErr = err;
+        best = p;
+      }
+    }
+    bits |= uint64_t(best) << (3 * i);
+  }
+  for (int i = 0; i < 6; ++i) out[2 + i] = uint8_t((bits >> (8 * i)) & 255);
+}
+
+bool EncodeBCn(const light3d::Image& img, DrawCompressedImageCPU* out) {
+  if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
+      img.data.empty()) {
+    return false;
+  }
+  bool opaque = true;
+  for (size_t i = 3; i < img.data.size(); i += 4) {
+    if (img.data[i] < 250) {
+      opaque = false;
+      break;
+    }
+  }
+  out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
+  out->width = img.width;
+  out->height = img.height;
+  const int bw = (img.width + 3) / 4;
+  const int bh = (img.height + 3) / 4;
+  const int blockBytes = opaque ? 8 : 16;
+  out->data.assign(static_cast<size_t>(bw) * static_cast<size_t>(bh) *
+                       static_cast<size_t>(blockBytes),
+                   0);
+  for (int by = 0; by < bh; ++by) {
+    for (int bx = 0; bx < bw; ++bx) {
+      uint8_t block[16][4]{};
+      for (int y = 0; y < 4; ++y) {
+        const int sy = std::min(by * 4 + y, img.height - 1);
+        for (int x = 0; x < 4; ++x) {
+          const int sx = std::min(bx * 4 + x, img.width - 1);
+          const uint8_t* src =
+              img.data.data() + (static_cast<size_t>(sy) * img.width + sx) * 4;
+          std::memcpy(block[y * 4 + x], src, 4);
+        }
+      }
+      uint8_t* dst = out->data.data() +
+                     (static_cast<size_t>(by) * bw + bx) * blockBytes;
+      if (opaque) {
+        EncodeBC1Block(block, dst);
+      } else {
+        EncodeBC3AlphaBlock(block, dst);
+        EncodeBC1Block(block, dst + 8);
+      }
+    }
+  }
+  return true;
+}
+
+void CompressTexture(DrawTextureCPU* tex) {
+  if (!tex) return;
+  if (tex->isUdim) {
+    for (DrawUdimTileCPU& tile : tex->udimTiles) {
+      EncodeBCn(tile.image, &tile.compressed);
+    }
+  }
+  EncodeBCn(tex->image, &tex->compressed);
+}
+
+void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out) return;
+  if (opt.maxTextureSize > 0) {
+    for (DrawTextureCPU& tex : out->textures) {
+      auto resizeOne = [&](light3d::Image* img) {
+        const int longest = std::max(img->width, img->height);
+        if (longest <= opt.maxTextureSize || longest <= 0) return;
+        const double scale = static_cast<double>(opt.maxTextureSize) /
+                             static_cast<double>(longest);
+        const int nw =
+            std::max(1, static_cast<int>(std::floor(img->width * scale)));
+        const int nh =
+            std::max(1, static_cast<int>(std::floor(img->height * scale)));
+        std::string err;
+        if (!ResizeDrawImage(img, nw, nh, tex.srgb, &err)) {
+          out->skipped.push_back("texture resize failed: " + err);
+        }
+      };
+      if (tex.isUdim) {
+        for (DrawUdimTileCPU& tile : tex.udimTiles) resizeOne(&tile.image);
+        NormalizeUdimTiles(&tex, tex.srgb, out);
+      } else {
+        resizeOne(&tex.image);
+      }
+    }
+  }
+
+  if (opt.textureBudgetMB > 0) {
+    size_t total = 0;
+    for (const DrawTextureCPU& tex : out->textures) total += TextureBytes(tex);
+    const size_t budget =
+        static_cast<size_t>(opt.textureBudgetMB) * 1024ull * 1024ull;
+    if (budget > 0 && total > budget) {
+      const double scale =
+          std::sqrt(static_cast<double>(budget) / static_cast<double>(total));
+      for (DrawTextureCPU& tex : out->textures) {
+        auto resizeOne = [&](light3d::Image* img) {
+          const int nw =
+              std::max(1, static_cast<int>(std::floor(img->width * scale)));
+          const int nh =
+              std::max(1, static_cast<int>(std::floor(img->height * scale)));
+          std::string err;
+          if (!ResizeDrawImage(img, nw, nh, tex.srgb, &err)) {
+            out->skipped.push_back("texture budget resize failed: " + err);
+          }
+        };
+        if (tex.isUdim) {
+          for (DrawUdimTileCPU& tile : tex.udimTiles) resizeOne(&tile.image);
+          NormalizeUdimTiles(&tex, tex.srgb, out);
+        } else {
+          resizeOne(&tex.image);
+        }
+      }
+    }
+  }
+
+  if (opt.compression == TextureCompressionMode::BCn) {
+    for (DrawTextureCPU& tex : out->textures) {
+      tex.requestedCompressed = true;
+      CompressTexture(&tex);
+    }
+  }
+}
+
 // --- Shared per-element builders (used by both BuildDrawScene and the
 // streaming path so the two produce identical output) ---------------------
 
 // Build the renderable textures (dedup by texture_image_id) and a mapping
 // drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
 void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
-                       std::vector<int>* drawTexMap) {
+                       std::vector<int>* drawTexMap,
+                       const TextureRuntimeOptions& textureOptions) {
   drawTexMap->assign(rs.textures.size(), -1);
   std::unordered_map<int64_t, int> imgToDrawTex;
+  std::unordered_map<int64_t, int> udimToDrawTex;
   for (size_t uvIdx = 0; uvIdx < rs.textures.size(); ++uvIdx) {
     const tydra::UVTexture& uv = rs.textures[uvIdx];
+    if (uv.is_udim && uv.udim_texture_id >= 0 &&
+        static_cast<size_t>(uv.udim_texture_id) < rs.udim_textures.size()) {
+      auto found = udimToDrawTex.find(uv.udim_texture_id);
+      if (found != udimToDrawTex.end()) {
+        (*drawTexMap)[uvIdx] = found->second;
+        continue;
+      }
+      const tydra::UDIMTexture& udim =
+          rs.udim_textures[static_cast<size_t>(uv.udim_texture_id)];
+      std::vector<std::pair<uint32_t, int32_t>> tileIds;
+      tileIds.reserve(udim.imageTileIds.size());
+      for (const auto& kv : udim.imageTileIds) tileIds.push_back(kv);
+      std::sort(tileIds.begin(), tileIds.end(),
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+
+      DrawTextureCPU tex;
+      tex.isUdim = true;
+      tex.srgb = true;
+      tex.wrapS = MapWrap(uv.wrapS);
+      tex.wrapT = MapWrap(uv.wrapT);
+      for (const auto& kv : tileIds) {
+        const uint32_t udimId = kv.first;
+        const int32_t imgIndex = kv.second;
+        if (imgIndex < 0 || static_cast<size_t>(imgIndex) >= rs.images.size()) {
+          continue;
+        }
+        const tydra::TextureImage& img =
+            rs.images[static_cast<size_t>(imgIndex)];
+        DrawUdimTileCPU tile;
+        tile.udim = udimId;
+        tile.u = (udimId - 1001u) % 10u;
+        tile.v = (udimId - 1001u) / 10u;
+        if (!DecodeToRGBA8(rs, img, &tile.image)) {
+          out->skipped.push_back("UDIM tile " + std::to_string(udimId) +
+                                 " for texture '" + uv.prim_name +
+                                 "': undecoded/unsupported image");
+          continue;
+        }
+        tex.srgb = IsSrgb(img.colorSpace);
+        tex.udimTiles.push_back(std::move(tile));
+      }
+      if (tex.udimTiles.empty()) {
+        out->skipped.push_back("UDIM texture '" + uv.prim_name +
+                               "': no decoded tiles");
+        continue;
+      }
+      NormalizeUdimTiles(&tex, tex.srgb, out);
+      int drawIdx = static_cast<int>(out->textures.size());
+      out->textures.push_back(std::move(tex));
+      udimToDrawTex[uv.udim_texture_id] = drawIdx;
+      (*drawTexMap)[uvIdx] = drawIdx;
+      continue;
+    }
+
     const int64_t imgId = uv.texture_image_id;
     if (imgId < 0 || static_cast<size_t>(imgId) >= rs.images.size()) {
       out->skipped.push_back("texture '" + uv.prim_name +
@@ -361,6 +710,7 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
     imgToDrawTex[imgId] = drawIdx;
     (*drawTexMap)[uvIdx] = drawIdx;
   }
+  ApplyTextureRuntimeOptions(textureOptions, out);
 }
 
 // Build the renderable materials from the RenderScene, mapping UVTexture
@@ -1031,7 +1381,8 @@ void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
 }
 
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
-                    LoadControl* ctrl, const tinyusdz::Stage* stage) {
+                    LoadControl* ctrl, const tinyusdz::Stage* stage,
+                    const TextureRuntimeOptions& textureOptions) {
   *out = DrawScene{};
   (void)stage;  // in-betweens now carried by tydra (RenderMesh::targets)
 
@@ -1042,7 +1393,7 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   }
 
   std::vector<int> drawTexMap;
-  BuildDrawTextures(rs, out, &drawTexMap);
+  BuildDrawTextures(rs, out, &drawTexMap, textureOptions);
   BuildDrawMaterials(rs, out, drawTexMap);
 
   size_t cumulativeVertexBytes = 0;
@@ -1099,7 +1450,8 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
 bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
                              const tydra::RenderSceneConverterEnv& env,
                              tydra::RenderScene* render, DrawScene* out,
-                             LoadControl* ctrl) {
+                             LoadControl* ctrl,
+                             const TextureRuntimeOptions& textureOptions) {
   *out = DrawScene{};
 
   // Streaming state (lives for the duration of the synchronous conversion).
@@ -1160,7 +1512,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
   // Build textures + materials from the finished scene, then finalize bounds.
   sink.on_complete = [&](const tydra::RenderScene& scene, void*) -> bool {
     std::vector<int> drawTexMap;
-    BuildDrawTextures(scene, out, &drawTexMap);
+    BuildDrawTextures(scene, out, &drawTexMap, textureOptions);
     BuildDrawMaterials(scene, out, drawTexMap);
     // Any mesh not referenced by a node keeps identity placement (matches
     // BuildDrawScene, which uses identity when no transform is found).

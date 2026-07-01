@@ -56,6 +56,7 @@ struct LoadOptions {
   // referenced as `../lightingrenderovers/...`) need it; resolution of the
   // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
   bool allowParentRelativePaths{false};
+  TextureRuntimeOptions textureOptions;
 };
 
 // A payload/reference arc that was skipped during composition.

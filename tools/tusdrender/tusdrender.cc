@@ -353,6 +353,7 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   tc.textures = &disp_textures;
   tc.base_dir = DirName(opt.input);
   tc.usdz = nullptr;
+  tc.options = &opt;
   // Append a prototype + its object-space AABB; returns its index.
   auto push_proto = [&](GpuInstProto &&pr) -> uint32_t {
     Bounds bb;
@@ -676,6 +677,7 @@ int main(int argc, char **argv) {
       tc.textures = &disp_textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
+      tc.options = &opt;
 
       // Stream geometry in WORLD space.
       for (MeshJobNext &job : mesh_jobs) {

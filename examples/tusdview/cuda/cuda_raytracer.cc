@@ -52,11 +52,13 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dMatTex_);
+  F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
   numMats_ = 0;
+  numTextures_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
@@ -145,14 +147,15 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   tlasNodeCount_ = hs.tlasNodeCount;
   nodeCount_ = blasNodeCount_ + tlasNodeCount_;
   numMats_ = hs.numMats;
+  numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
     CUdeviceptr p;
-    CU_OK(cuMemAlloc(&p, bytes), "cuMemAlloc");
-    CU_OK(cuMemcpyHtoD(p, host, bytes), "cuMemcpyHtoD");
+    CU_OK(cuMemAlloc(&p, bytes ? bytes : 1), "cuMemAlloc");
+    if (bytes) CU_OK(cuMemcpyHtoD(p, host, bytes), "cuMemcpyHtoD");
     *dptr = static_cast<uintptr_t>(p);
     return true;
   };
@@ -171,6 +174,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.blas.data(), hs.blas.size() * sizeof(Node), &dBlasNodes_)) return false;
   if (!up(hs.tlas.data(), hs.tlas.size() * sizeof(Node), &dTlasNodes_)) return false;
   if (!up(hs.instances.data(), hs.instances.size() * sizeof(Inst), &dInstances_)) return false;
+  if (!up(hs.matTex.data(), hs.matTex.size() * sizeof(int), &dMatTex_)) return false;
+  if (!up(hs.texels.data(), hs.texels.size(), &dTexels_)) return false;
+  if (!up(hs.textures.data(), hs.textures.size() * sizeof(HostTextureDesc), &dTextures_)) return false;
   if (hs.numVols > 0) {
     if (!up(hs.volDens.data(), hs.volDens.size() * sizeof(float), &dVolDens_)) return false;
     if (!up(hs.volParams.data(), hs.volParams.size() * sizeof(HostVolParam), &dVolParams_))
@@ -209,17 +215,20 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dMP = dMatPbr_, dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
+              dMP = dMatPbr_, dMT = dMatTex_, dTx = dTexels_, dTD = dTextures_,
+              dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
               dI = dInstances_, dO = dOut_;
   CUdeviceptr dVD = dVolDens_, dVP = dVolParams_, dEm = dEmask_;
   int numMats = numMats_;
+  int numTextures = numTextures_;
   int numVols = numVols_;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
-  // uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
+  // matTex,texels,textures,numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dU, &dU1, &dIn,
-                  &dF,  &dDw, &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dMT, &dTx,
+                  &dTD, &numTextures, &dU, &dU1, &dIn, &dF,  &dDw, &dDj,
+                  &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   const int samples = spp < 1 ? 1 : spp;

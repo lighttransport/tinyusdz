@@ -52,7 +52,15 @@ struct Texture {
     int w, h;
     std::vector<uint8_t> data;
   };
+  struct UdimTile {
+    int udim{1001};
+    int width{0}, height{0}, channels{0};
+    std::vector<uint8_t> pixels;
+    std::vector<Mip> mips;
+  };
   std::vector<Mip> mips;
+  bool is_udim{false};
+  std::vector<UdimTile> udim_tiles;
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
@@ -116,6 +124,118 @@ struct Texture {
     }
   }
 
+  static int UdimFromUv(float u, float v, float *local_u, float *local_v) {
+    const int tu = int(std::floor(u));
+    const int tv = int(std::floor(v));
+    if (local_u) *local_u = u - float(tu);
+    if (local_v) *local_v = v - float(tv);
+    return 1001 + tu + tv * 10;
+  }
+
+  const UdimTile *find_udim_tile(int udim) const {
+    for (const UdimTile &tile : udim_tiles) {
+      if (tile.udim == udim) return &tile;
+    }
+    return nullptr;
+  }
+
+  static Vec3 bilinear_level_data(const uint8_t *d, int w, int h, int ch,
+                                  float wu, float wv) {
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> Vec3 {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(ch)];
+      return Vec3{float(p[0]) / 255.0f,
+                  float(ch > 1 ? p[1] : p[0]) / 255.0f,
+                  float(ch > 2 ? p[2] : p[0]) / 255.0f};
+    };
+    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
+      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t};
+    };
+    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+  }
+
+  static float bilinear_channel_data(const uint8_t *d, int w, int h, int ch,
+                                     float wu, float wv, int chan) {
+    if (chan >= ch) return chan == 3 ? 1.0f : 0.0f;
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> float {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      return float(d[(size_t(y) * w + x) * size_t(ch) + size_t(chan)]) / 255.0f;
+    };
+    float c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    float c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    float a = c00 + (c10 - c00) * tx;
+    float b = c01 + (c11 - c01) * tx;
+    return a + (b - a) * ty;
+  }
+
+  static Vec3 sample_data(const uint8_t *pixels, int width, int height,
+                          int channels, const std::vector<Mip> &mips,
+                          WrapMode wrap_s, WrapMode wrap_t, bool srgb,
+                          float u, float v, float lod) {
+    if (width <= 0 || height <= 0 || !pixels) return Vec3{0.5f, 0.5f, 0.5f};
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return Vec3{0.0f, 0.0f, 0.0f};
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    auto level = [&](int lvl) -> Vec3 {
+      if (lvl <= 0 || mips.empty()) {
+        return bilinear_level_data(pixels, width, height, channels, wu, wv);
+      }
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      return bilinear_level_data(m.data.data(), m.w, m.h, channels, wu, wv);
+    };
+    Vec3 c = level(l0);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      Vec3 c1 = level(l0 + 1);
+      c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
+               c.z + (c1.z - c.z) * f};
+    }
+    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
+    return c;
+  }
+
+  static float sample_channel_data(const uint8_t *pixels, int width, int height,
+                                   int channels, const std::vector<Mip> &mips,
+                                   WrapMode wrap_s, WrapMode wrap_t, float u,
+                                   float v, float lod, int chan) {
+    if (width <= 0 || height <= 0 || !pixels) return 0.5f;
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return 0.0f;
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    auto level = [&](int lvl) -> float {
+      if (lvl <= 0 || mips.empty()) {
+        return bilinear_channel_data(pixels, width, height, channels, wu, wv, chan);
+      }
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      return bilinear_channel_data(m.data.data(), m.w, m.h, channels, wu, wv, chan);
+    };
+    float c = level(l0);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      c = c + (level(l0 + 1) - c) * f;
+    }
+    return c;
+  }
+
   // Bilinear lookup in a single level (raw, no sRGB), at pre-wrapped (wu,wv).
   Vec3 bilinear_level(int lvl, float wu, float wv) const {
     int w, h;
@@ -130,29 +250,22 @@ struct Texture {
       h = m.h;
       d = m.data.data();
     }
-    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> Vec3 {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(channels)];
-      return Vec3{float(p[0]) / 255.0f,
-                  float(channels > 1 ? p[1] : p[0]) / 255.0f,
-                  float(channels > 2 ? p[2] : p[0]) / 255.0f};
-    };
-    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
-      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t};
-    };
-    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+    return bilinear_level_data(d, w, h, channels, wu, wv);
   }
 
   // Trilinear sample at mip level `lod` (lod<=0 = full res); wrap + sRGB applied.
   // (USD UV origin is bottom-left, so v is flipped.)
   Vec3 sample(float u, float v, float lod = 0.0f) const {
+    if (is_udim) {
+      float lu = 0.0f, lv = 0.0f;
+      const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
+      if (!tile || tile->width <= 0 || tile->height <= 0 || tile->pixels.empty()) {
+        return Vec3{0.5f, 0.5f, 0.5f};
+      }
+      return sample_data(tile->pixels.data(), tile->width, tile->height,
+                         tile->channels, tile->mips, wrap_s, wrap_t, srgb, lu,
+                         lv, lod);
+    }
     if (width <= 0 || height <= 0 || pixels.empty()) {
       return Vec3{0.5f, 0.5f, 0.5f};
     }
@@ -223,26 +336,23 @@ struct Texture {
       w = m.w; h = m.h; d = m.data.data();
     }
     if (ch >= channels) return ch == 3 ? 1.0f : 0.0f;
-    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> float {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-      return float(d[(size_t(y) * w + x) * size_t(channels) + size_t(ch)]) /
-             255.0f;
-    };
-    float c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    float c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    float a = c00 + (c10 - c00) * tx;
-    float b = c01 + (c11 - c01) * tx;
-    return a + (b - a) * ty;
+    return bilinear_channel_data(d, w, h, channels, wu, wv, ch);
   }
 
   // Trilinear single-channel sample (incl. alpha). Raw (scalar inputs are always
   // sourceColorSpace=raw), so no sRGB. Matches ChannelOf(sample(...)) bit-for-bit
   // for r/g/b on a raw texture; additionally exposes alpha (ch=3).
   float sample_channel(float u, float v, float lod, int ch) const {
+    if (is_udim) {
+      float lu = 0.0f, lv = 0.0f;
+      const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
+      if (!tile || tile->width <= 0 || tile->height <= 0 || tile->pixels.empty()) {
+        return 0.5f;
+      }
+      return sample_channel_data(tile->pixels.data(), tile->width, tile->height,
+                                 tile->channels, tile->mips, wrap_s, wrap_t,
+                                 lu, lv, lod, ch);
+    }
     if (width <= 0 || height <= 0 || pixels.empty()) return 0.5f;
     bool su = true, sv = true;
     float wu = ApplyWrap(u, wrap_s, &su);
@@ -453,6 +563,12 @@ struct Options {
   std::string env_file;            // --env <hdr>: IBL environment map override
   bool displace{true};             // apply UsdPreviewSurface displacement (coarse)
   float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
+  int texture_max_size{0};         // -texMaxSize: longest edge cap, 0 = source
+  int texture_budget_mb{0};        // -texBudgetMb: best-effort decoded budget
+  enum class TextureCompress { Off, BCn };
+  TextureCompress texture_compress{TextureCompress::Off};  // -texCompress
+  enum class UdimMode { Sparse, Atlas };
+  UdimMode udim_mode{UdimMode::Sparse};  // -udim; sparse is the large-scene default
 };
 
 struct DirectShape {
@@ -671,6 +787,8 @@ struct TextureCache {
   std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
   const tinyusdz::next::USDZReader *usdz{nullptr};
+  const Options *options{nullptr};
+  size_t decoded_bytes{0};
 };
 
 struct ResolvedMat {

@@ -306,6 +306,7 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
                              const std::string& path,
                              const std::shared_ptr<tinyusdz::io::MMapFileHandle>& mmap,
                              double timecode, bool rtPath, bool loadTextures,
+                             const TextureRuntimeOptions& textureOptions,
                              tinyusdz::tydra::RenderScene* render, DrawScene* draw,
                              std::string* warn, std::string* err,
                              LoadControl* ctrl) {
@@ -365,12 +366,16 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // source USD face (SourceFaceId debug AOV).
   mc.keep_triangulation_intermediates = true;
 
-  // Keep texels 8-bit (avoids float-image conversion) and let UDIM collapse to
-  // an atlas so the renderer never sees a raw UDIM texture.
+  // Keep texels 8-bit (avoids float-image conversion). Sparse UDIM is the
+  // default for large scenes; atlas mode remains available for older backends.
   auto& matc = env.material_config;
   matc.preserve_texel_bitdepth = true;
   matc.linearize_color_space = false;
-  matc.combine_udim_tiles = true;
+  matc.combine_udim_tiles =
+      textureOptions.udimMode == UdimMode::Atlas;
+  if (textureOptions.maxTextureSize > 0) {
+    matc.udim_max_atlas_size = textureOptions.maxTextureSize;
+  }
   // Graceful skip for missing/failed textures (these are already defaults).
   matc.allow_texture_load_failure = true;
   matc.allow_missing_asset = true;
@@ -407,7 +412,8 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // are produced (and fully populates *render). Falls back to the monolithic
   // path if no DrawScene sink was requested.
   const bool converted =
-      draw ? BuildDrawSceneStreaming(converter, env, render, draw, ctrl)
+      draw ? BuildDrawSceneStreaming(converter, env, render, draw, ctrl,
+                                     textureOptions)
            : converter.ConvertToRenderScene(env, render);
   if (!converted) {
     if (ctrl && ctrl->cancel.load()) {
@@ -434,6 +440,7 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
 // Convert out->stage to RenderScene + DrawScene at `timecode` (out->stage,
 // out->mmap, out->render, out->warn/err are the load targets).
 bool ConvertStageToScene(const std::string& path, double timecode,
+                         const TextureRuntimeOptions& textureOptions,
                          LoadedScene* out, DrawScene* draw, bool rtPath,
                          LoadControl* ctrl) {
   // When loading at a concrete time code (e.g. --time for a headless screenshot
@@ -443,19 +450,20 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   // via RenderSceneAtTime).
   if (draw && std::isfinite(timecode)) {
     if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
-                                 /*loadTextures=*/true, &out->render,
+                                 /*loadTextures=*/true, textureOptions, &out->render,
                                  /*draw=*/nullptr, &out->warn, &out->err,
                                  ctrl)) {
       return false;
     }
     DeformSkinnedMeshes(out->stage, out->render, timecode);
-    BuildDrawScene(out->render, draw, ctrl, &out->stage);
+    BuildDrawScene(out->render, draw, ctrl, &out->stage, textureOptions);
     ApplyMeshPurposes(out->stage, draw);
     out->ok = true;
     return true;
   }
   if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
-                               /*loadTextures=*/true, &out->render, draw,
+                               /*loadTextures=*/true, textureOptions,
+                               &out->render, draw,
                                &out->warn, &out->err, ctrl)) {
     return false;
   }
@@ -493,7 +501,8 @@ bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
     return false;
   }
 
-  return ConvertStageToScene(path, opts.timecode, out, draw, rtPath, ctrl);
+  return ConvertStageToScene(path, opts.timecode, opts.textureOptions, out,
+                             draw, rtPath, ctrl);
 }
 
 bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
@@ -522,7 +531,8 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
     return false;
   }
 
-  return ConvertStageToScene(path, opts.timecode, out, draw, rtPath, ctrl);
+  return ConvertStageToScene(path, opts.timecode, opts.textureOptions, out,
+                             draw, rtPath, ctrl);
 }
 
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
@@ -548,7 +558,8 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
     scratch = restCache->scene;  // copy rest (cheap vs re-converting the stage)
   } else {
     if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
-                                 rtPath, /*loadTextures=*/false, &scratch,
+                                 rtPath, /*loadTextures=*/false,
+                                 TextureRuntimeOptions{}, &scratch,
                                  /*draw=*/nullptr, warn, err, ctrl)) {
       return false;
     }

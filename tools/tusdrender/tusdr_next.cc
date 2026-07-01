@@ -14,6 +14,7 @@
 #include "image-writer.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
+#include "tydra/texture-util.hh"
 #include "usdVol.hh"
 #include "tusdr_context.hh"
 #include "tusdr_rt_lod.hh"
@@ -565,6 +566,46 @@ bool UsdzEntryMatches(const std::string &entry, const std::string &asset) {
   return base(entry) == base(a);
 }
 
+bool IsUdimPattern(const std::string &asset) {
+  return asset.find("<UDIM>") != std::string::npos;
+}
+
+std::string ReplaceUdimToken(const std::string &asset, int udim) {
+  std::string out = asset;
+  const size_t pos = out.find("<UDIM>");
+  if (pos != std::string::npos) {
+    out.replace(pos, 6, std::to_string(udim));
+  }
+  return out;
+}
+
+bool LoadTextureImage(TextureCache &tc, const std::string &asset_path,
+                      tinyusdz::Image *out) {
+  if (!out) return false;
+  if (tc.usdz) {
+    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
+      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
+      auto res = tinyusdz::image::LoadImageFromMemory(
+          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
+      if (res) {
+        *out = std::move(res.value().image);
+        return true;
+      }
+      return false;
+    }
+  }
+  if (!asset_path.empty()) {
+    std::string path = asset_path;
+    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
+    auto res = tinyusdz::image::LoadImageFromFile(path);
+    if (res) {
+      *out = std::move(res.value().image);
+      return true;
+    }
+  }
+  return false;
+}
+
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
                           WrapMode ws, WrapMode wt, bool srgb,
                           const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
@@ -575,43 +616,118 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   auto it = tc.by_key.find(key);
   if (it != tc.by_key.end()) return it->second;
 
-  auto adopt = [&](const tinyusdz::Image &img) -> int32_t {
+  auto make_texture = [&](const tinyusdz::Image &img, const std::string &label,
+                          Texture *out) -> bool {
+    if (!out) return false;
     if (img.width <= 0 || img.height <= 0 || img.bpp != 8 || img.data.empty()) {
-      return -1;
+      return false;
+    }
+    tinyusdz::Image use = img;
+    if (tc.options && tc.options->texture_max_size > 0) {
+      const int longest = std::max(use.width, use.height);
+      if (longest > tc.options->texture_max_size) {
+        const double ratio = static_cast<double>(tc.options->texture_max_size) /
+                             static_cast<double>(longest);
+        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
+        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
+        tinyusdz::Image resized;
+        std::string err;
+        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+                                 : tinyusdz::tydra::ResizeFilter::Linear;
+        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
+          use = std::move(resized);
+        } else {
+          std::cerr << "WARN: failed to resize texture " << label << ": "
+                    << err << "\n";
+        }
+      }
+    }
+    if (tc.options && tc.options->texture_budget_mb > 0) {
+      const size_t budget =
+          static_cast<size_t>(tc.options->texture_budget_mb) * 1024ull * 1024ull;
+      const size_t bytes = use.data.size();
+      if (budget > 0 && tc.decoded_bytes + bytes > budget) {
+        const double remain = tc.decoded_bytes < budget
+                                  ? static_cast<double>(budget - tc.decoded_bytes)
+                                  : 0.0;
+        const double ratio =
+            remain > 0.0 ? std::sqrt(remain / static_cast<double>(bytes)) : 0.125;
+        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
+        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
+        tinyusdz::Image resized;
+        std::string err;
+        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+                                 : tinyusdz::tydra::ResizeFilter::Linear;
+        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
+          use = std::move(resized);
+        } else {
+          std::cerr << "WARN: failed to fit texture budget for " << label
+                    << ": " << err << "\n";
+        }
+      }
+    }
+    if (tc.options &&
+        tc.options->texture_compress == Options::TextureCompress::BCn) {
+      std::cerr << "WARN: -texCompress bc requested; " << label
+                << " is currently kept as resized 8-bit texels in tusdrender\n";
     }
     Texture t;
-    t.width = img.width;
-    t.height = img.height;
-    t.channels = img.channels;
-    t.pixels = img.data;
+    t.width = use.width;
+    t.height = use.height;
+    t.channels = use.channels;
+    t.pixels = std::move(use.data);
     t.wrap_s = ws;
     t.wrap_t = wt;
     t.srgb = srgb;
     t.scale = scale;
     t.bias = bias;
     t.build_mips();
+    tc.decoded_bytes += t.pixels.size();
+    *out = std::move(t);
+    return true;
+  };
+
+  auto adopt = [&](const tinyusdz::Image &img, const std::string &label) -> int32_t {
+    Texture t;
+    if (!make_texture(img, label, &t)) return -1;
     int32_t id = int32_t(tc.textures->size());
     tc.textures->push_back(std::move(t));
     return id;
   };
 
   int32_t id = -1;
-  // 1. usdz-embedded.
-  if (tc.usdz) {
-    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
-      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
-      auto res = tinyusdz::image::LoadImageFromMemory(
-          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
-      if (res) id = adopt(res.value().image);
-      break;
+  if (IsUdimPattern(asset_path)) {
+    Texture udim;
+    udim.is_udim = true;
+    udim.wrap_s = ws;
+    udim.wrap_t = wt;
+    udim.srgb = srgb;
+    udim.scale = scale;
+    udim.bias = bias;
+    for (int tile_id = 1001; tile_id <= 1100; ++tile_id) {
+      const std::string tile_path = ReplaceUdimToken(asset_path, tile_id);
+      tinyusdz::Image img;
+      if (!LoadTextureImage(tc, tile_path, &img)) continue;
+      Texture tile_tex;
+      if (!make_texture(img, tile_path, &tile_tex)) continue;
+      Texture::UdimTile tile;
+      tile.udim = tile_id;
+      tile.width = tile_tex.width;
+      tile.height = tile_tex.height;
+      tile.channels = tile_tex.channels;
+      tile.pixels = std::move(tile_tex.pixels);
+      tile.mips = std::move(tile_tex.mips);
+      udim.udim_tiles.push_back(std::move(tile));
     }
-  }
-  // 2. filesystem (anchored to the input dir).
-  if (id < 0 && (!asset_path.empty())) {
-    std::string path = asset_path;
-    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
-    auto res = tinyusdz::image::LoadImageFromFile(path);
-    if (res) id = adopt(res.value().image);
+    if (!udim.udim_tiles.empty()) {
+      id = int32_t(tc.textures->size());
+      tc.textures->push_back(std::move(udim));
+    }
+  } else {
+    tinyusdz::Image img;
+    if (LoadTextureImage(tc, asset_path, &img)) {
+      id = adopt(img, asset_path);
+    }
   }
   if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
   tc.by_key[key] = id;
@@ -2651,6 +2767,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.textures = &ctx.textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = usdz_ptr;
+      tc.options = &opt;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -2746,6 +2863,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.textures = &ctx.textures;
     tc.base_dir = DirName(opt.input);
     tc.usdz = usdz_ptr;
+    tc.options = &opt;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
