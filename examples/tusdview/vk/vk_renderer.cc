@@ -4995,7 +4995,15 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   const bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
                        rtImage_ && !meshes_.empty();
 
+  // Split-timer (TUSDVIEW_TIME_PRESENT): the previous frame's GPU cost surfaces as
+  // the fence wait here (1 frame in flight); everything after is CPU record + submit.
+  static const bool timePresent = std::getenv("TUSDVIEW_TIME_PRESENT") != nullptr;
+  const auto tw0 = std::chrono::steady_clock::now();
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+  const double waitMs =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw0)
+          .count();
+  const auto trec0 = std::chrono::steady_clock::now();
 
   // (Re)build the acceleration structure AFTER the in-flight fence so the previous
   // frame (the only consumer of the old TLAS / descriptor set, with one frame in
@@ -5485,6 +5493,14 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     si.pSignalSemaphores = &renderFinished_[imageIndex];  // per-image present-wait
   }
   vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
+  if (timePresent) {
+    const double recMs = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - trec0)
+                             .count();
+    std::fprintf(stderr,
+                 "[present] prev-frame GPU wait=%.1fms  CPU record+submit=%.1fms\n",
+                 waitMs, recMs);
+  }
 
   if (headless_) {
     // The composite image is left in TRANSFER_SRC_OPTIMAL; captureWindow() reads it.
