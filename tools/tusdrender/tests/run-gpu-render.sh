@@ -74,6 +74,7 @@ render() {
 TOL_FUZZ="0.5%"   # per-pixel colour difference ignored below this
 TOL_PIXELS=48     # allow up to this many pixels past the fuzz (200x150 = 30000 px)
 IM_COMPARE=""
+IM_SKIPPED=0        # set when a cross-backend compare was skipped for lack of ImageMagick
 if command -v compare >/dev/null 2>&1; then
   IM_COMPARE="compare"
 elif command -v magick >/dev/null 2>&1; then
@@ -91,7 +92,13 @@ images_agree() {
     echo "  (differing pixels past ${TOL_FUZZ} fuzz: ${ae} > ${TOL_PIXELS})"
     return 1
   fi
-  cmp -s "$1" "$2"                       # no ImageMagick: byte-exact fallback
+  # No ImageMagick: we cannot compare within tolerance, and a byte-exact `cmp` would
+  # spuriously fail on the legitimate sub-ULP edge noise between compute (-vk) and
+  # hardware ray query (-vkr). So SKIP the cross-backend agreement check here (the
+  # per-backend non-blank assertion in render() still runs) and report agreement as
+  # untested rather than falsely pass/fail on byte identity.
+  IM_SKIPPED=1
+  return 0
 }
 
 echo "=== tusdrender GPU backends ==="
@@ -122,7 +129,9 @@ fi
 
 if [ -n "$IM_COMPARE" ]; then
   echo "PASS: $ok GPU backend(s) render non-blank and agree within tolerance"
+elif [ "$IM_SKIPPED" -ne 0 ]; then
+  echo "PASS: $ok GPU backend(s) render non-blank (cross-backend agreement UNTESTED: install ImageMagick to enable it)"
 else
-  echo "PASS: $ok GPU backend(s) render non-blank and agree byte-for-byte (no ImageMagick)"
+  echo "PASS: $ok GPU backend(s) render non-blank"
 fi
 exit 0

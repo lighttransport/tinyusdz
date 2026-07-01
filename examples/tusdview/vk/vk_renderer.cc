@@ -401,8 +401,11 @@ bool VulkanRenderer::createDevice(std::string* err) {
   // per-draw metadata (meshId/flags) from an SSBO instead of a per-draw push
   // constant. Query it, and chain the feature struct in front of whatever pNext the
   // RT path set (or nothing). MDI itself needs the two core VkPhysicalDeviceFeatures
-  // flags enabled below. All optional: absent -> mdiSupported_ stays false and the
-  // renderer keeps the per-mesh draw loop.
+  // flags enabled below. mesh_inst.vert hard-requires shaderDrawParameters, so this
+  // gates the whole instanced pipeline (not just the MDI batch vs per-mesh draw
+  // strategy): absent -> mdiSupported_ stays false, createInstPipeline() skips
+  // building instPipeline_, and instanced prototypes are not drawn. Ubiquitous on
+  // desktop GPUs (the target), so this is a safety net, not an expected path.
   VkPhysicalDeviceShaderDrawParametersFeatures sdp{};
   sdp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
   {
@@ -1139,6 +1142,16 @@ void VulkanRenderer::createTessPipeline() {
 // drawn with vkCmdDrawIndexed(indexCount, instanceCount, ...). Uses only push
 // constants (no descriptor sets), so it has its own pipeline layout.
 bool VulkanRenderer::createInstPipeline(std::string* err) {
+  // mesh_inst.vert unconditionally declares the shaderDrawParameters capability
+  // (gl_DrawIDARB), so this pipeline is only valid when that feature was enabled at
+  // device creation (mdiSupported_). If it is absent, skip building the pipeline and
+  // leave instPipeline_ null -- the instanced draw sites all null-guard it, so
+  // instanced prototypes are simply not drawn on such a device (graceful skip, not an
+  // init failure). This is not the target hardware (desktop GPUs all expose it).
+  if (!mdiSupported_) {
+    instPipeline_ = VK_NULL_HANDLE;
+    return true;
+  }
   VkPushConstantRange pcr{};
   pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   pcr.offset = 0;
@@ -4910,28 +4923,51 @@ void VulkanRenderer::buildInstMdi() {
   // DEVICE-LOCAL VRAM (uploaded once via staging) rather than host-visible memory
   // the GPU would refetch over PCIe each draw -- the main lever for island's
   // GPU-bound frame time.
-  createDeviceLocalBuffer(mdiVtxStage_.size() * sizeof(float),
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxStage_.data(),
-                          &mdiVbo_, &mdiVboMem_);
-  createDeviceLocalBuffer(mdiVtxColStage_.size() * sizeof(float),
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxColStage_.data(),
-                          &mdiVtxColBuf_, &mdiVtxColMem_);
-  createDeviceLocalBuffer(mdiMorphStage_.size() * sizeof(uint32_t),
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiMorphStage_.data(),
-                          &mdiMorphBuf_, &mdiMorphMem_);
-  createDeviceLocalBuffer(mdiIdxStage_.size() * sizeof(uint32_t),
-                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mdiIdxStage_.data(),
-                          &mdiEbo_, &mdiEboMem_);
+  bool allocOk = true;
+  allocOk &= createDeviceLocalBuffer(mdiVtxStage_.size() * sizeof(float),
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                     mdiVtxStage_.data(), &mdiVbo_, &mdiVboMem_);
+  allocOk &= createDeviceLocalBuffer(mdiVtxColStage_.size() * sizeof(float),
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                     mdiVtxColStage_.data(), &mdiVtxColBuf_,
+                                     &mdiVtxColMem_);
+  allocOk &= createDeviceLocalBuffer(mdiMorphStage_.size() * sizeof(uint32_t),
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                     mdiMorphStage_.data(), &mdiMorphBuf_,
+                                     &mdiMorphMem_);
+  allocOk &= createDeviceLocalBuffer(mdiIdxStage_.size() * sizeof(uint32_t),
+                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                     mdiIdxStage_.data(), &mdiEbo_, &mdiEboMem_);
   // Global per-instance o2w + color, persistently mapped so the cull path writes the
   // visible subset straight into each mesh's slice.
-  createHostBuffer(mdiInstXfStage_.size() * sizeof(float),
-                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiInstXfStage_.data(),
-                   &mdiInstBuf_, &mdiInstMem_);
-  vkMapMemory(device_, mdiInstMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstMapped_);
-  createHostBuffer(mdiInstColStage_.size() * sizeof(float),
-                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiInstColStage_.data(),
-                   &mdiInstColBuf_, &mdiInstColMem_);
-  vkMapMemory(device_, mdiInstColMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstColMapped_);
+  allocOk &= createHostBuffer(mdiInstXfStage_.size() * sizeof(float),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              mdiInstXfStage_.data(), &mdiInstBuf_, &mdiInstMem_);
+  if (allocOk) vkMapMemory(device_, mdiInstMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstMapped_);
+  allocOk &= createHostBuffer(mdiInstColStage_.size() * sizeof(float),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              mdiInstColStage_.data(), &mdiInstColBuf_, &mdiInstColMem_);
+  if (allocOk)
+    vkMapMemory(device_, mdiInstColMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstColMapped_);
+
+  if (!allocOk) {
+    // A shared MDI buffer failed to allocate -- this path targets the largest scenes
+    // (island's instance staging is ~2 GB), so a mid-build OOM is the plausible
+    // failure. Bail cleanly rather than bind a null buffer handle: free whatever was
+    // built and leave MDI inactive. The per-mesh fallback loop then draws the
+    // non-eligible meshes; eligible meshes have no per-mesh buffers so they drop out
+    // (graceful degradation on an OOM the scene likely could not fit anyway).
+    fprintf(stderr, "[mdi] shared buffer allocation failed; disabling MDI path\n");
+    destroyMdiBuffers();
+    mdiActive_ = false;
+    std::vector<float>().swap(mdiInstXfStage_);
+    std::vector<float>().swap(mdiInstColStage_);
+    std::vector<float>().swap(mdiVtxStage_);
+    std::vector<float>().swap(mdiVtxColStage_);
+    std::vector<uint32_t>().swap(mdiMorphStage_);
+    std::vector<uint32_t>().swap(mdiIdxStage_);
+    return;
+  }
 
   // Point each eligible mesh's instance buffers at its slice of the global buffers.
   for (auto& m : meshes_) {
