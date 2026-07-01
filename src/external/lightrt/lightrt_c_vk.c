@@ -23,6 +23,7 @@
 #include "vk/shaders/trace_bvh.spv.h"        /* trace_bvh_spv[]       */
 #include "vk/shaders/build_morton.spv.h"     /* build_morton_spv[]    */
 #include "vk/shaders/trace_ray_query.spv.h"  /* trace_ray_query_spv[] */
+#include "vk/shaders/trace_ray_query_wide.spv.h" /* trace_ray_query_wide_spv[] */
 #include "vk/shaders/shade_analytic.spv.h"   /* shade_analytic_spv[]  */
 
 /* Host-read sync flags not declared in lightrt_vkew.h. */
@@ -103,6 +104,7 @@ struct lrt_vk_engine {
     vk_pipeline trace_pipes[VK_TRACE_PIPE_CACHE];
     vk_pipeline build_pipe; /* build_morton: no spec constants */
     vk_pipeline rtx_pipe;   /* trace_ray_query: AS + 2 SSBO bindings */
+    vk_pipeline rtx_pipe_wide; /* trace_ray_query_wide: 5-word hits (inst,prim) */
     vk_pipeline shade_pipe; /* shade_analytic: 3 SSBO bindings + push */
 };
 
@@ -734,6 +736,7 @@ void lrt_vk_engine_destroy(lrt_vk_engine *e) {
             vk_pipeline_destroy(e, &e->trace_pipes[i]);
         vk_pipeline_destroy(e, &e->build_pipe);
         vk_pipeline_destroy(e, &e->rtx_pipe);
+        vk_pipeline_destroy(e, &e->rtx_pipe_wide);
         vk_pipeline_destroy(e, &e->shade_pipe);
         if (e->cmd_pool) vkDestroyCommandPool(e->device, e->cmd_pool, NULL);
         vkDestroyDevice(e->device, NULL);
@@ -1634,6 +1637,22 @@ static vk_pipeline *rtx_get_pipeline(lrt_vk_engine *e) {
     return &e->rtx_pipe;
 }
 
+/* Wide-id trace pipeline: identical bindings/push to rtx_pipe, but the shader
+ * writes 5 words/hit ({t,u,v,instanceId,prim}) so instanced scenes past the
+ * 32-bit prim_id product still trace. Same descriptor layout, so scenes can bind
+ * against either pipeline. */
+static vk_pipeline *rtx_get_pipeline_wide(lrt_vk_engine *e) {
+    if (e->rtx_pipe_wide.valid) return &e->rtx_pipe_wide;
+    VkDescriptorType types[3] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
+                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+    if (!vk_pipeline_build(e, trace_ray_query_wide_spv,
+                           sizeof(trace_ray_query_wide_spv), 3, types,
+                           (uint32_t)sizeof(rtx_push), NULL, &e->rtx_pipe_wide))
+        return NULL;
+    return &e->rtx_pipe_wide;
+}
+
 /* TLAS + 2 storage buffers (rays, hits). The AS write is chained via pNext. */
 static int vk_descriptors_bind_rtx(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
                                    VkAccelerationStructureKHR tlas,
@@ -1723,7 +1742,13 @@ struct lrt_vk_rtx_scene {
     vk_buffer rays_stage; /* host-visible TRANSFER_SRC           */
     vk_buffer hits_stage; /* host-visible TRANSFER_DST           */
     uint32_t cap;         /* trace-buffer capacity in rays       */
+    uint32_t hit_words;   /* words written per hit: 4 (narrow) or 5 (wide id) */
 };
+
+/* Bytes the trace shader writes per hit for scene s (narrow lrt_hit = 4 words). */
+static size_t rtx_hit_bytes(const lrt_vk_rtx_scene *s) {
+    return (size_t)(s->hit_words ? s->hit_words : 4u) * sizeof(uint32_t);
+}
 
 /* Shared BLAS+TLAS build behind the soup and indexed entry points. When
  * `indices` is NULL the BLAS is built from a de-indexed triangle soup
@@ -1999,10 +2024,14 @@ static int build_proto_blas(lrt_vk_engine *e, const float *verts, uint32_t nvert
     return ok;
 }
 
-lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
+/* Core of both instanced builders. `wide`=0 uses the narrow 4-word trace and
+ * enforces the 32-bit prim_id product (ninsts*maxPrototypeTris < 2^32); `wide`=1
+ * uses the 5-word trace that stores instanceId + prim separately, so there is no
+ * product to overflow (the only ceiling is the TLAS maxInstanceCount). */
+static lrt_vk_rtx_scene *rtx_build_instanced_core(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
-    const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
-    lrt_result *err) {
+    const lrt_vk_instance *insts, uint32_t ninsts, int wide,
+    uint32_t *out_tri_stride, lrt_result *err) {
     if (!e || !protos || nprotos == 0 || !insts || ninsts == 0) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return NULL;
@@ -2013,12 +2042,14 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
         if (err) *err = LRT_RESULT_NOT_BUILT;
         return NULL;
     }
-    if (!rtx_get_pipeline(e)) {
+    if (!(wide ? rtx_get_pipeline_wide(e) : rtx_get_pipeline(e))) {
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return NULL;
     }
-    /* prim_id = instanceId*stride + prim must fit 32 bits and never collide with
-     * LRT_TRI_NO_HIT (0xFFFFFFFF). stride = max prototype triangle count. */
+    /* Narrow: prim_id = instanceId*stride + prim must fit 32 bits and never
+     * collide with LRT_TRI_NO_HIT (0xFFFFFFFF). stride = max prototype tri count.
+     * Wide: instanceId and prim are stored separately, so stride is unused for
+     * encoding (kept only to report *out_tri_stride). */
     uint32_t stride = 1u;
     for (uint32_t p = 0; p < nprotos; p++) {
         if (!protos[p].vertices || !protos[p].indices || protos[p].ntris == 0 ||
@@ -2028,9 +2059,9 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
         }
         if (protos[p].ntris > stride) stride = protos[p].ntris;
     }
-    if ((uint64_t)ninsts * (uint64_t)stride >= (uint64_t)LRT_TRI_NO_HIT) {
+    if (!wide && (uint64_t)ninsts * (uint64_t)stride >= (uint64_t)LRT_TRI_NO_HIT) {
         vk_set_err(e, "instanced scene exceeds 32-bit prim_id encoding "
-                      "(ninsts*maxPrototypeTris too large; use the flat builder)");
+                      "(ninsts*maxPrototypeTris too large; use the wide builder)");
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return NULL;
     }
@@ -2048,6 +2079,7 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
     }
     s->nblas = nprotos;
     s->tri_chunk = stride;
+    s->hit_words = wide ? 5u : 4u;
 
     vk_buffer instbuf = {0};
     int ok = 0;
@@ -2128,6 +2160,21 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
     return s;
 }
 
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
+    lrt_result *err) {
+    return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
+                                    /*wide=*/0, out_tri_stride, err);
+}
+
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_wide(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
+    return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
+                                    /*wide=*/1, NULL, err);
+}
+
 /* Grow the device-local + staging trace buffers to hold at least n rays. */
 static int rtx_scene_ensure(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t n) {
     if (s->rays_dev.buf && n <= s->cap) return 1;
@@ -2137,7 +2184,7 @@ static int rtx_scene_ensure(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t n) {
     vk_buffer_destroy(e, &s->hits_stage);
     s->cap = 0;
     VkDeviceSize rb = (VkDeviceSize)n * sizeof(lrt_ray);
-    VkDeviceSize hb = (VkDeviceSize)n * sizeof(lrt_hit);
+    VkDeviceSize hb = (VkDeviceSize)n * rtx_hit_bytes(s);
     if (!vk_buffer_create_ex(e, rb,
                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -2165,9 +2212,13 @@ static void vk_buf_barrier(VkCommandBuffer cb, VkFlags src_stage, VkFlags dst_st
     vkCmdPipelineBarrier(cb, src_stage, dst_stage, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 
-int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
-                           const lrt_ray *rays, uint32_t n, lrt_hit *out,
-                           lrt_result *err) {
+/* Shared trace body for both the narrow (lrt_hit, 4-word) and wide (lrt_hit_wide,
+ * 5-word) hit layouts. `pipe` selects the shader variant; `out` must point at n
+ * hits of rtx_hit_bytes(s). Both layouts store the miss sentinel LRT_TRI_NO_HIT in
+ * word 3 (narrow prim_id / wide instanceId), so the hit count is one check. */
+static int rtx_trace_impl(lrt_vk_engine *e, lrt_vk_rtx_scene *s, vk_pipeline *pipe,
+                          const lrt_ray *rays, uint32_t n, void *out,
+                          lrt_result *err) {
     if (!e || !s || (n && (!rays || !out))) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
@@ -2176,11 +2227,11 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         if (err) *err = LRT_RESULT_OK;
         return 0;
     }
-    vk_pipeline *pipe = rtx_get_pipeline(e);
     if (!pipe || !rtx_scene_ensure(e, s, n)) {
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
     }
+    const size_t hit_bytes = rtx_hit_bytes(s);
 
     /* Host -> staging (bulk memcpy), then one command buffer does staging ->
      * device-local rays, dispatch (reads/writes VRAM), device-local hits ->
@@ -2218,7 +2269,7 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         vk_buf_barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                        VK_ACCESS_TRANSFER_READ_BIT);
-        VkBufferCopy down = {0, 0, (VkDeviceSize)n * sizeof(lrt_hit)};
+        VkBufferCopy down = {0, 0, (VkDeviceSize)n * hit_bytes};
         vkCmdCopyBuffer(cb, s->hits_dev.buf, s->hits_stage.buf, 1, &down);
         vk_buf_barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -2230,16 +2281,38 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
     }
-    if (!vk_buffer_read(e, &s->hits_stage, out, (size_t)n * sizeof(lrt_hit))) {
+    if (!vk_buffer_read(e, &s->hits_stage, out, (size_t)n * hit_bytes)) {
         if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
     }
 
+    const uint32_t hw = s->hit_words ? s->hit_words : 4u;
+    const uint32_t *w = (const uint32_t *)out;
     int hits = 0;
     for (uint32_t i = 0; i < n; i++)
-        if (out[i].prim_id != LRT_TRI_NO_HIT) hits++;
+        if (w[(size_t)i * hw + 3u] != LRT_TRI_NO_HIT) hits++;
     if (err) *err = LRT_RESULT_OK;
     return hits;
+}
+
+int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
+                           const lrt_ray *rays, uint32_t n, lrt_hit *out,
+                           lrt_result *err) {
+    if (s && s->hit_words == 5u) {  /* built wide: caller must use the wide trace */
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    return rtx_trace_impl(e, s, rtx_get_pipeline(e), rays, n, out, err);
+}
+
+int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
+                                const lrt_ray *rays, uint32_t n, lrt_hit_wide *out,
+                                lrt_result *err) {
+    if (!s || s->hit_words != 5u) {  /* not built wide */
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    return rtx_trace_impl(e, s, rtx_get_pipeline_wide(e), rays, n, out, err);
 }
 
 void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s) {

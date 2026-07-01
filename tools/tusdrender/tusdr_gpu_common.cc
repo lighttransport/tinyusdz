@@ -83,8 +83,8 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
 
 bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
                                  const std::vector<lrt_ray> &rays,
-                                 const std::vector<lrt_hit> &hits, int w, int h,
-                                 int spp) {
+                                 const std::vector<InstSampleHit> &hits, int w,
+                                 int h, int spp) {
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
@@ -107,10 +107,10 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
       size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
       Vec3 color{0, 0, 0};
       for (int sp = 0; sp < spp; ++sp) {
-        const lrt_hit &hit = hits[base + size_t(sp)];
-        if (hit.prim_id == 0xFFFFFFFFu || s.stride == 0) continue;
-        const uint32_t inst = hit.prim_id / s.stride;
-        const uint32_t local = hit.prim_id % s.stride;
+        const InstSampleHit &hit = hits[base + size_t(sp)];
+        if (!hit.valid) continue;
+        const uint32_t inst = hit.inst;
+        const uint32_t local = hit.local;
         if (inst >= s.insts.size()) continue;
         const GpuInstPlacement &pl = s.insts[inst];
         if (pl.proto >= s.protos.size()) continue;
