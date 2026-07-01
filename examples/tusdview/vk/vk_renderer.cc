@@ -3055,6 +3055,45 @@ bool VulkanRenderer::createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags us
   return true;
 }
 
+bool VulkanRenderer::createDeviceLocalBuffer(VkDeviceSize size,
+                                             VkBufferUsageFlags usage,
+                                             const void* data, VkBuffer* buf,
+                                             VkDeviceMemory* mem) {
+  if (size == 0) return false;
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = size;
+  bi.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, buf) != VK_SUCCESS) return false;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(device_, *buf, &req);
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = req.size;
+  ai.memoryTypeIndex =
+      findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
+  vkBindBufferMemory(device_, *buf, *mem, 0);
+  // Stage the data through a host-visible scratch buffer and copy on the queue.
+  VkBuffer stg = VK_NULL_HANDLE;
+  VkDeviceMemory stgMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg, &stgMem)) {
+    return false;
+  }
+  VkCommandBuffer cb = beginOneShot();
+  VkBufferCopy c{0, 0, size};
+  vkCmdCopyBuffer(cb, stg, *buf, 1, &c);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, stg, nullptr);
+  vkFreeMemory(device_, stgMem, nullptr);
+  return true;
+}
+
 VkDeviceAddress VulkanRenderer::bufferDeviceAddress(VkBuffer buf) const {
   if (!pfnGetBufferDeviceAddress_ || !buf) return 0;
   VkBufferDeviceAddressInfo info{};
@@ -4867,18 +4906,22 @@ void VulkanRenderer::buildInstMdi() {
   destroyMdiBuffers();
 
   // Shared geometry (positions/normals/uv, per-vertex color, zero morph, indices).
-  createHostBuffer(mdiVtxStage_.size() * sizeof(float),
-                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxStage_.data(), &mdiVbo_,
-                   &mdiVboMem_);
-  createHostBuffer(mdiVtxColStage_.size() * sizeof(float),
-                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxColStage_.data(),
-                   &mdiVtxColBuf_, &mdiVtxColMem_);
-  createHostBuffer(mdiMorphStage_.size() * sizeof(uint32_t),
-                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiMorphStage_.data(),
-                   &mdiMorphBuf_, &mdiMorphMem_);
-  createHostBuffer(mdiIdxStage_.size() * sizeof(uint32_t),
-                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mdiIdxStage_.data(), &mdiEbo_,
-                   &mdiEboMem_);
+  // Static for the scene's lifetime and read by the GPU every frame, so keep it in
+  // DEVICE-LOCAL VRAM (uploaded once via staging) rather than host-visible memory
+  // the GPU would refetch over PCIe each draw -- the main lever for island's
+  // GPU-bound frame time.
+  createDeviceLocalBuffer(mdiVtxStage_.size() * sizeof(float),
+                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxStage_.data(),
+                          &mdiVbo_, &mdiVboMem_);
+  createDeviceLocalBuffer(mdiVtxColStage_.size() * sizeof(float),
+                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiVtxColStage_.data(),
+                          &mdiVtxColBuf_, &mdiVtxColMem_);
+  createDeviceLocalBuffer(mdiMorphStage_.size() * sizeof(uint32_t),
+                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mdiMorphStage_.data(),
+                          &mdiMorphBuf_, &mdiMorphMem_);
+  createDeviceLocalBuffer(mdiIdxStage_.size() * sizeof(uint32_t),
+                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mdiIdxStage_.data(),
+                          &mdiEbo_, &mdiEboMem_);
   // Global per-instance o2w + color, persistently mapped so the cull path writes the
   // visible subset straight into each mesh's slice.
   createHostBuffer(mdiInstXfStage_.size() * sizeof(float),
