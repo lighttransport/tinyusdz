@@ -321,7 +321,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const Node* blas, const Node* tlas, const Inst* insts,
                                  unsigned char* out, int W, int H, Cam cam,
                                  const float* volDens, const VolParam* volParams,
-                                 int numVols, const unsigned char* emask){
+                                 int numVols, const unsigned char* emask,
+                                 float* accum, int sampleIdx, int numSamples){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
@@ -550,9 +551,26 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
   }
   int idx=(py*W+px)*4;
-  out[idx+0]=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
-  out[idx+1]=(unsigned char)(fminf(fmaxf(outc.y,0.f),1.f)*255.f+0.5f);
-  out[idx+2]=(unsigned char)(fminf(fmaxf(outc.z,0.f),1.f)*255.f+0.5f);
-  out[idx+3]=255;
+  unsigned char qr=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
+  unsigned char qg=(unsigned char)(fminf(fmaxf(outc.y,0.f),1.f)*255.f+0.5f);
+  unsigned char qb=(unsigned char)(fminf(fmaxf(outc.z,0.f),1.f)*255.f+0.5f);
+  if (numSamples<=1 || !accum){
+    out[idx+0]=qr; out[idx+1]=qg; out[idx+2]=qb; out[idx+3]=255;
+    return;
+  }
+  // Supersampled AA: accumulate the QUANTIZED sample on the device (identical
+  // math to the old host loop, so the averaged image is byte-identical) and
+  // resolve on the last sample -- one readback for the whole frame instead of
+  // one per sample.
+  float ar=(sampleIdx==0)?(float)qr:accum[idx+0]+(float)qr;
+  float ag=(sampleIdx==0)?(float)qg:accum[idx+1]+(float)qg;
+  float ab=(sampleIdx==0)?(float)qb:accum[idx+2]+(float)qb;
+  accum[idx+0]=ar; accum[idx+1]=ag; accum[idx+2]=ab;
+  if (sampleIdx==numSamples-1){
+    out[idx+0]=(unsigned char)(ar/(float)numSamples+0.5f);
+    out[idx+1]=(unsigned char)(ag/(float)numSamples+0.5f);
+    out[idx+2]=(unsigned char)(ab/(float)numSamples+0.5f);
+    out[idx+3]=255;
+  }
 }
 )CUDA";

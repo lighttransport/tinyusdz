@@ -101,6 +101,8 @@ class CudaRayTracer {
   int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_
+  uintptr_t dAccum_{0};      // float RGBA supersample accumulator (spp > 1)
+  size_t accumCap_{0};       // bytes currently allocated for dAccum_
 
   size_t triCount_{0};       // unique prototype triangles (geometry stored once)
   size_t instCount_{0};      // total instances (TLAS leaves)
