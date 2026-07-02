@@ -162,7 +162,7 @@
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
-          uint32_t tok_idx = InternToken(prim_meta.apiSchemas()[i]);
+          uint32_t tok_idx = InternToken(prim_meta.apiSchemas()[i].sv());
           std::memcpy(api_data.data() + 1 + 8 + i * 4, &tok_idx, 4);
         }
         DataBlock block{TypeId::Token, std::move(api_data)};

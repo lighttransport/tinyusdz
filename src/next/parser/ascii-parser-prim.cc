@@ -197,8 +197,14 @@ bool AsciiParser::Impl::ParseAttribute() {
     is_array = true;
   }
 
-  std::string attr_name;
-  if (!ParseNamespacedName(&attr_name, "attribute name")) {
+  // Transient scratch for this property's (possibly namespaced) name; the view
+  // is consumed synchronously below (interned / copied into the layer), so the
+  // arena is recycled per property and stays a single small block.
+  name_scratch_.reset();
+  bool attr_name_ok = false;
+  const std::string_view attr_name =
+      ParseNamespacedNameView("attribute name", &attr_name_ok);
+  if (!attr_name_ok) {
     return false;
   }
 
@@ -329,8 +335,11 @@ bool AsciiParser::Impl::ParseAttribute() {
 bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
   lexer_->consume();
 
-  std::string rel_name;
-  if (!ParseNamespacedName(&rel_name, "relationship name")) {
+  name_scratch_.reset();
+  bool rel_name_ok = false;
+  const std::string_view rel_name =
+      ParseNamespacedNameView("relationship name", &rel_name_ok);
+  if (!rel_name_ok) {
     return false;
   }
 
@@ -363,7 +372,9 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
 
   if (!targets.empty()) {
     if (PrimSpec* prim = builder_->current()) {
-      prim->apply_relationship_list_op(rel_name, targets, op);
+      // apply_relationship_list_op needs an owned map key; relationships are far
+      // less common than attributes, so a std::string here is negligible.
+      prim->apply_relationship_list_op(std::string(rel_name), targets, op);
     }
   }
   ParsePropertyMetadata(rel_name);

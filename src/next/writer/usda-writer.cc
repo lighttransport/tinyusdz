@@ -593,7 +593,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       std::string s = "apiSchemas = [";
       for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
         if (i > 0) s += ", ";
-        s += "\"" + meta.apiSchemas()[i] + "\"";
+        s += "\"" + meta.apiSchemas()[i].str() + "\"";
       }
       s += "]";
       kv(s);

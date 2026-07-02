@@ -10,7 +10,7 @@
 namespace tinyusdz {
 namespace next {
 
-bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
+bool AsciiParser::Impl::ParseTimeSamples(std::string_view prop_name,
                                          TypeId type_id, bool is_array) {
   if (!Match(TokenType::OpenBrace)) {
     AddError("Expected '{' for timeSamples");

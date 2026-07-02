@@ -173,6 +173,8 @@ cd python && python3 -m pytest tests/ -q
 - `TINYUSDZ_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
 - `TINYUSDZ_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
   - `TUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
+- `TINYUSDZ_WITH_NEXT_CORE=ON` - Build and link the lean **next-core** USD library (`src/next`, the template-free USDA/USDC read+write + PCP/composition core). Default **OFF**; when OFF the legacy core is completely unaffected (`src/next` is not even added to the build). When ON, the main library links the `next_core` target and defines `TINYUSDZ_WITH_NEXT_CORE` so callers can `#if defined(TINYUSDZ_WITH_NEXT_CORE)` guard use of the `tinyusdz::next` API (headers under `src/next/`, e.g. `next/tinyusdz-next.hh`). Namespace-isolated (`tinyusdz::next`), so it coexists with the legacy `tinyusdz::` API.
+  - `TINYUSDZ_NEXT_CORE_MINIMAL=ON` (sub-option, standalone `src/next` build) shrinks `next_core` to IO + composition only, dropping the schema convenience APIs + attribute-eval (smallest library / WASM). Not compatible with the C API / Python bindings, which need that layer.
 
 ### GUI viewer (`tusdview`) + Vulkan debugging
 

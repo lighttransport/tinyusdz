@@ -111,6 +111,9 @@ option(TINYUSDZ_WITH_PCP
 option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
        "Use stable next::pcp::Cache backend for LargeSceneLoader (links tinyusdz_next)."
        OFF)
+option(TINYUSDZ_WITH_NEXT_CORE
+       "Build and link the lean next-core USD library (src/next: template-free USDA/USDC read+write + PCP/composition). Leaves the legacy core intact; default OFF."
+       OFF)
 option(TINYUSDZ_ENABLE_SIMD
        "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
        ON)
@@ -1546,9 +1549,12 @@ if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
 endif()
 
 #
-# Optional: next::pcp::Cache backend for LargeSceneLoader
+# Optional: the lean src/next library. Added once for whichever consumer needs
+# it (the next::pcp::Cache LargeSceneLoader backend and/or the gated next-core
+# library). The subdir defines both `next_core` (lean IO + composition) and
+# `tinyusdz_next` (core + C API).
 #
-if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE OR TINYUSDZ_WITH_NEXT_CORE)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next tinyusdz_next_build)
 endif()
 
@@ -1695,6 +1701,15 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PUBLIC "TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE")
     target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_next)
+  endif()
+
+  # Gate the lean next-core library into the main library. Links `next_core`
+  # (the IO + composition core) and exposes TINYUSDZ_WITH_NEXT_CORE so callers
+  # can #ifdef the tinyusdz::next API surface. The legacy core is untouched.
+  if(TINYUSDZ_WITH_NEXT_CORE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PUBLIC "TINYUSDZ_WITH_NEXT_CORE")
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} next_core)
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}

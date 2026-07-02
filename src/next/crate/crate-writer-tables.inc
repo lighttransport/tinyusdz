@@ -138,7 +138,7 @@
       // Metadata strings
       if (!prim.meta().doc().empty()) InternString(prim.meta().doc());
       for (const auto& schema : prim.meta().apiSchemas()) {
-        InternToken(schema);
+        InternToken(schema.sv());
       }
       for (const auto& ref : prim.meta().references) {
         InternString(ref);

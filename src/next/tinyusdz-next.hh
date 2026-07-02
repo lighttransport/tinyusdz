@@ -52,14 +52,19 @@
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 
-// Evaluation
-#include "eval/attribute-eval.hh"
-
 // Asset resolution
 #include "resolver/asset-resolver.hh"
 
 // Composition
 #include "composition/composition.hh"
+
+// Schema convenience APIs + attribute evaluation. These form the optional
+// convenience layer on top of the IO + composition core; a minimal next_core
+// build (TINYUSDZ_NEXT_CORE_MINIMAL) omits their translation units, so do not
+// pull their headers in that configuration.
+#if !defined(TINYUSDZ_NEXT_CORE_MINIMAL)
+// Evaluation
+#include "eval/attribute-eval.hh"
 
 // Schema APIs
 #include "schema/geom-mesh.hh"
@@ -73,6 +78,7 @@
 #include "schema/usd-ar.hh"
 #include "schema/usd-media.hh"
 #include "schema/usd-mtlx.hh"
+#endif  // !TINYUSDZ_NEXT_CORE_MINIMAL
 
 namespace tinyusdz {
 namespace next {

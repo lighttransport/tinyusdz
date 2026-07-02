@@ -877,7 +877,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "kind") {
       std::string v;
       if (lexer_->expect(TokenType::String, v)) {
-        prim->meta().kind() = v;
+        prim->meta().set_kind(v);
       }
     } else if (key == "displayName") {
       std::string v;
@@ -899,7 +899,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (Check(TokenType::String)
                   ? lexer_->expect(TokenType::String, schema)
                   : lexer_->expect(TokenType::Identifier, schema)) {
-            prim->meta().apiSchemas().push_back(schema);
+            prim->meta().apiSchemas().emplace_back(schema);
           }
           Match(TokenType::Comma);
         }
