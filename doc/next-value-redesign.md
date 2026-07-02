@@ -173,10 +173,15 @@ makes new types data-driven — the C-style dispatch the module already favors
    alloc). Measured on an 80k-value scene: **RSS −5.6%**, malloc **+2.1%**
    (one box per `double3` scalar). Bonus: `String` copies are now COW-shared
    through composition instead of deep-copied. Byte-parity perfect through USDA
-   **and** USDC; 25/25; ASan + TSan clean. **Remaining to hit 24 B:**
-   `storage_` `alignas(16)→alignas(8)` + pack the four flag bools into `uint8_t`
-   bitfields (needs a real `Value()` ctor — C++17 forbids bitfield default-member
-   initializers).
+   **and** USDC; 25/25; ASan + TSan clean.
+6. **[LANDED]** Reached the **24-byte** target: `storage_` `alignas(16)->alignas(8)`
+   (inline types are now <= double, 8-aligned; boxed matrices are 16-aligned in
+   their `ScalarBox`) and packed the four flag bools into `uint8_t : 1` bitfields.
+   C++17 forbids bitfield default-member-initializers, so `Value()` initializes
+   them and every typed ctor delegates to `Value()` (copy/move set them via
+   `copy_from`/`move_from`). **`sizeof(Value)` 32 -> 24** (48 -> 24 overall,
+   -50%); another -2.6% RSS (-8.8% cumulative on the 80k-value scene). Byte-parity
+   perfect; 25/25; ASan + UBSan (alignment) + TSan clean.
 
 Each step is independently revertable and keeps `sizeof` assertions + the
 byte-identical USDA/USDC roundtrip suite green.
