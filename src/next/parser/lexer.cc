@@ -165,7 +165,7 @@ void Lexer::skip_line() {
 }
 
 bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
-                                      bool* out_simple) {
+                                      bool* out_simple, size_t* out_commas) {
   if (!out_data || !out_len) return false;
   const Token& tok = peek();
   if (tok.type != TokenType::OpenBracket) {
@@ -180,6 +180,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
   // "Simple" = no comment/string/asset/nested-bracket bytes inside, so every
   // comma/paren is a pure separator (safe to split for parallel numeric parse).
   bool simple = true;
+  size_t commas = 0;
   int depth = 1;
   while (pos_ < length_ && depth > 0) {
     // SIMD-skip the "boring" array bytes (digits/commas/whitespace) straight to
@@ -190,7 +191,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
       const char* base = data_ + pos_;
       size_t nl = 0;
       const char* hit =
-          simdscan::ScanArrayStructural(base, data_ + length_, &nl);
+          simdscan::ScanArrayStructural(base, data_ + length_, &nl, &commas);
       pos_ += static_cast<size_t>(hit - base);
       line_ += nl;  // column_ left approximate inside arrays (error cosmetics)
       if (pos_ >= length_ || depth <= 0) break;
@@ -270,6 +271,7 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
   *out_data = data_ + start;
   *out_len = pos_ - start;
   if (out_simple) *out_simple = simple;
+  if (out_commas) *out_commas = commas;
   has_current_ = false;
   return true;
 }

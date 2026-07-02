@@ -696,6 +696,50 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
   return v;
 }
 
+namespace {
+
+template <class T>
+void MakeDeferredStorage(char* slot, Value::DeferredArrayFill* out_fill) {
+  auto storage = std::make_shared<VecArrayStorage<T>>();
+  out_fill->keepalive = storage;
+  out_fill->vec = &storage->data;
+  new (slot) ArrayHandle(std::move(storage));
+}
+
+}  // namespace
+
+Value Value::MakeDeferredArray(TypeId elem_type, ArrayScalarKind kind,
+                               uint32_t elem_count,
+                               DeferredArrayFill* out_fill) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  // Final size now; the payload arrives later through *out_fill. See the
+  // header for the no-reads-before-fill contract.
+  v.array_size_ = elem_count;
+  switch (kind) {
+    case ArrayScalarKind::Float:
+      MakeDeferredStorage<float>(v.storage_, out_fill);
+      break;
+    case ArrayScalarKind::Double:
+      MakeDeferredStorage<double>(v.storage_, out_fill);
+      break;
+    case ArrayScalarKind::Int32:
+      MakeDeferredStorage<int32_t>(v.storage_, out_fill);
+      break;
+    case ArrayScalarKind::UInt32:
+      MakeDeferredStorage<uint32_t>(v.storage_, out_fill);
+      break;
+    case ArrayScalarKind::Int64:
+      MakeDeferredStorage<int64_t>(v.storage_, out_fill);
+      break;
+    case ArrayScalarKind::UInt64:
+      MakeDeferredStorage<uint64_t>(v.storage_, out_fill);
+      break;
+  }
+  return v;
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================

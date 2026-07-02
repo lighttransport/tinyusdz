@@ -9,11 +9,111 @@
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <system_error>
 
+#if defined(_WIN32)
+#define TINYUSDZ_NEXT_HAVE_MMAP 0
+#else
+#define TINYUSDZ_NEXT_HAVE_MMAP 1
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace tinyusdz {
 namespace next {
+
+namespace {
+
+using ProfileClock = std::chrono::steady_clock;
+
+double ProfileMs(ProfileClock::duration d) {
+  return std::chrono::duration<double, std::milli>(d).count();
+}
+
+class MappedFile {
+ public:
+  MappedFile() = default;
+  ~MappedFile() { Close(); }
+  MappedFile(const MappedFile&) = delete;
+  MappedFile& operator=(const MappedFile&) = delete;
+
+  bool Open(const char* filename, size_t max_file_size, std::string* err) {
+#if TINYUSDZ_NEXT_HAVE_MMAP
+    int fd = ::open(filename, O_RDONLY);
+    if (fd < 0) {
+      if (err) *err = "Failed to open file";
+      return false;
+    }
+    struct stat st;
+    if (::fstat(fd, &st) != 0) {
+      ::close(fd);
+      if (err) *err = "Failed to stat file";
+      return false;
+    }
+    if (st.st_size < 0) {
+      ::close(fd);
+      if (err) *err = "Invalid file size";
+      return false;
+    }
+    const size_t n = static_cast<size_t>(st.st_size);
+    if (max_file_size > 0 && n > max_file_size) {
+      ::close(fd);
+      if (err) *err = "File size exceeds maximum allowed";
+      return false;
+    }
+    if (n == 0) {
+      fd_ = fd;
+      size_ = 0;
+      data_ = nullptr;
+      return true;
+    }
+    void* p = ::mmap(nullptr, n, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (p == MAP_FAILED) {
+      ::close(fd);
+      if (err) *err = "Failed to mmap file";
+      return false;
+    }
+    fd_ = fd;
+    data_ = static_cast<const char*>(p);
+    size_ = n;
+    return true;
+#else
+    (void)filename;
+    (void)max_file_size;
+    if (err) *err = "mmap unavailable";
+    return false;
+#endif
+  }
+
+  void Close() {
+#if TINYUSDZ_NEXT_HAVE_MMAP
+    if (data_ && size_) {
+      ::munmap(const_cast<char*>(data_), size_);
+    }
+    if (fd_ >= 0) {
+      ::close(fd_);
+    }
+#endif
+    data_ = nullptr;
+    size_ = 0;
+    fd_ = -1;
+  }
+
+  const char* data() const { return data_; }
+  size_t size() const { return size_; }
+
+ private:
+  const char* data_ = nullptr;
+  size_t size_ = 0;
+  int fd_ = -1;
+};
+
+}  // namespace
 
 bool IsNameToken(const Token& tok) {
   switch (tok.type) {
@@ -40,10 +140,84 @@ bool IsNameToken(const Token& tok) {
   }
 }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+namespace {
+// Deferral window. Below the floor, per-item bookkeeping beats the parse cost;
+// at/above the ceiling the existing intra-array parallel path (see
+// kParallelArrayMinBytes in value-parser-arrays.inc) already splits the single
+// array across the pool and must keep doing so — a deferred batch would parse
+// it on one worker.
+constexpr size_t kDeferredArrayMinBytes = 256;
+constexpr size_t kDeferredArrayMaxBytes = size_t(4) << 20;  // 4 MiB
+}  // namespace
+#endif
+
+ParseResult AsciiParser::Impl::ParseArrayValueMaybeDeferred(TypeId type_id,
+                                                            bool* out_deferred) {
+  if (out_deferred) *out_deferred = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (deferred_arrays_ && !deferred_arrays_->failed() &&
+      CanParseCapturedArrayValue(type_id) &&
+      lexer_->peek().type == TokenType::OpenBracket) {
+    const char* data = nullptr;
+    size_t len = 0;
+    bool simple = false;
+    size_t commas = 0;
+    if (!lexer_->capture_bracketed_literal(&data, &len, &simple, &commas)) {
+      return ParseResult::Error(lexer_->error());
+    }
+
+    Value::ArrayScalarKind kind{};
+    uint32_t comps = 0;
+    // `commas >= 1` guarantees at least two scalars, which makes the
+    // comma-count scalar prediction exact for every well-formed input (an
+    // empty or single-element array can't be distinguished from whitespace by
+    // counts alone — those parse synchronously, and are tiny anyway).
+    if (simple && commas >= 1 && len >= kDeferredArrayMinBytes &&
+        len < kDeferredArrayMaxBytes &&
+        GetDeferredArrayInfo(type_id, &kind, &comps)) {
+      const uint64_t scalars = static_cast<uint64_t>(commas) + 1;
+      if ((scalars % comps) == 0 && scalars <= (uint64_t(1) << 30)) {
+        Value::DeferredArrayFill fill;
+        Value v = Value::MakeDeferredArray(
+            type_id, kind, static_cast<uint32_t>(scalars / comps), &fill);
+        DeferredArrayItem item;
+        item.data = data;
+        item.len = static_cast<uint32_t>(len);
+        item.expected_scalars = static_cast<uint32_t>(scalars);
+        item.type_id = type_id;
+        item.fill = std::move(fill);
+        deferred_arrays_->Enqueue(std::move(item));
+        if (USDAParseProfile* profile = options_.profile) {
+          profile->arrays++;
+          profile->array_bytes += len;
+          profile->simple_arrays++;
+          profile->numeric_arrays++;
+          profile->numeric_array_bytes += len;
+          profile->numeric_array_scalars += scalars;
+          profile->deferred_arrays++;
+          profile->deferred_array_bytes += len;
+        }
+        if (out_deferred) *out_deferred = true;
+        return ParseResult::Ok(std::move(v));
+      }
+    }
+    // Captured but not deferrable: parse the span synchronously.
+    return ParseCapturedArrayValue(data, len, simple, commas, type_id,
+                                   lexer_->num_threads, options_.profile);
+  }
+#endif
+  return ParseArrayValue(*lexer_, type_id);
+}
+
 bool AsciiParser::Impl::Parse(const char* data, size_t length) {
+  const auto t_parse_start = ProfileClock::now();
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
+  if (options_.profile) {
+    options_.profile->input_bytes += length;
+  }
 
   if (options_.max_file_size > 0 && length > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
@@ -56,21 +230,55 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
 
   lexer_ = std::make_unique<Lexer>(data, length);
   lexer_->num_threads = options_.num_threads;
+  lexer_->profile = options_.profile;
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (options_.async_arrays && options_.num_threads != 1) {
+    deferred_arrays_ = DeferredArrayScheduler::Create(options_.num_threads);
+  }
+  // Deferred workers hold spans into `data` and write into committed payloads:
+  // every exit from Parse (including early error returns) MUST join them
+  // before the input buffer and the layer can die. The destructor's Drain is
+  // idempotent, so the explicit success-path Drain below is unaffected.
+  struct DrainGuard {
+    std::unique_ptr<DeferredArrayScheduler>& scheduler;
+    ~DrainGuard() { scheduler.reset(); }  // ~DeferredArrayScheduler drains
+  } drain_guard{deferred_arrays_};
+#endif
 
   // Parse stage metadata (header block)
+  const auto t_meta_start = ProfileClock::now();
   if (!ParseStageMetadata()) {
     return false;
   }
+  const auto t_meta_end = ProfileClock::now();
 
   // Parse root prims
+  const auto t_prims_start = ProfileClock::now();
   while (!AtEnd()) {
     if (!ParsePrim()) {
       return false;
     }
   }
+  const auto t_prims_end = ProfileClock::now();
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Join barrier: all deferred array payloads must be filled before the layer
+  // is finalized/consumed. A worker-side parse failure fails the load, same as
+  // the synchronous path.
+  if (deferred_arrays_) {
+    std::string deferred_error;
+    if (!deferred_arrays_->Drain(&deferred_error)) {
+      AddError(deferred_error);
+      return false;
+    }
+  }
+#endif
 
   // Finalize the layer
+  const auto t_finalize_start = ProfileClock::now();
   builder_->finalize();
+  const auto t_finalize_end = ProfileClock::now();
 
   // Create stage from layer
   stage_ = Stage();
@@ -80,14 +288,36 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   builder_.reset();
   layer_.reset();
 
+  if (options_.profile) {
+    options_.profile->stage_metadata_ms += ProfileMs(t_meta_end - t_meta_start);
+    options_.profile->prims_ms += ProfileMs(t_prims_end - t_prims_start);
+    options_.profile->finalize_ms += ProfileMs(t_finalize_end - t_finalize_start);
+    options_.profile->parser_ms += ProfileMs(ProfileClock::now() - t_parse_start);
+  }
+
   return errors_.empty();
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+  const auto t_open_start = ProfileClock::now();
+  MappedFile mapped;
+  std::string map_error;
+  if (mapped.Open(filename, options_.max_file_size, &map_error)) {
+    if (options_.profile) {
+      options_.profile->file_open_ms += ProfileMs(ProfileClock::now() - t_open_start);
+      options_.profile->used_mmap = true;
+    }
+    const char empty = '\0';
+    return Parse(mapped.size() ? mapped.data() : &empty, mapped.size());
+  }
+
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
     AddError(std::string("Failed to open file: ") + filename);
     return false;
+  }
+  if (options_.profile) {
+    options_.profile->file_open_ms += ProfileMs(ProfileClock::now() - t_open_start);
   }
 
   size_t size = static_cast<size_t>(file.tellg());
@@ -101,9 +331,13 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
   // uninitialized, so we skip zero-filling hundreds of MB we immediately
   // overwrite with file.read (the zero-fill was ~8% of a big-file parse).
   std::unique_ptr<char[]> content(new char[size ? size : 1]);
+  const auto t_read_start = ProfileClock::now();
   if (size && !file.read(content.get(), static_cast<std::streamsize>(size))) {
     AddError("Failed to read file contents");
     return false;
+  }
+  if (options_.profile) {
+    options_.profile->file_read_ms += ProfileMs(ProfileClock::now() - t_read_start);
   }
 
   return Parse(content.get(), size);

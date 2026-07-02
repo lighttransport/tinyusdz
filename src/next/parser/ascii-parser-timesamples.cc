@@ -39,8 +39,9 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
     }
 
     ParseResult value_result;
+    bool deferred = false;
     if (is_array) {
-      value_result = ParseArrayValue(*lexer_, type_id);
+      value_result = ParseArrayValueMaybeDeferred(type_id, &deferred);
     } else {
       value_result = ParseValue(*lexer_, type_id);
     }
@@ -49,7 +50,13 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
       return false;
     }
 
-    builder_->add_time_sample(prop_name, time, std::move(value_result.value));
+    // Deferred-fill values skip content-hash dedup: their payload is not
+    // parsed yet (see PrimSpec::add_time_sample).
+    builder_->add_time_sample(prop_name, time, std::move(value_result.value),
+                              /*dedup=*/!deferred);
+    if (options_.profile) {
+      options_.profile->time_samples++;
+    }
 
     Match(TokenType::Comma);
   }

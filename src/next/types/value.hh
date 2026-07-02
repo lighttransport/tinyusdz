@@ -8,6 +8,7 @@
 
 #include "type-id.hh"
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,6 +163,31 @@ public:
                                   uint32_t comps_per_elem);
   static Value MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
                                    uint32_t comps_per_elem);
+
+  /// Storage scalar kind of a numeric array payload (what the flat vector's
+  /// element type is — half/float vector types are all Float-backed).
+  enum class ArrayScalarKind : uint8_t { Float, Double, Int32, UInt32, Int64, UInt64 };
+
+  /// Handle to a deferred array payload created by MakeDeferredArray. `vec`
+  /// points at the storage's flat scalar vector (std::vector<float>* for
+  /// ArrayScalarKind::Float, etc.); `keepalive` owns the storage so the vector
+  /// stays valid even if the committed Value is destroyed early (error paths).
+  struct DeferredArrayFill {
+    std::shared_ptr<void> keepalive;
+    void* vec = nullptr;
+  };
+
+  /// Deferred-fill array factory for the async USDA array parser: returns a
+  /// fully-typed array Value whose flat payload vector is still EMPTY. The
+  /// caller commits the Value into the layer immediately (type_id / is_array /
+  /// array_size are final at creation) and a parser worker later fills the
+  /// payload in place through *out_fill. The payload vector's address is
+  /// stable (heap storage behind the copy-on-write shared_ptr handle), but the
+  /// value must not be hashed, compared, printed, payload-accessed, or
+  /// COW-detached until the fill completes (the parse's drain barrier).
+  static Value MakeDeferredArray(TypeId elem_type, ArrayScalarKind kind,
+                                 uint32_t elem_count,
+                                 DeferredArrayFill* out_fill);
 
   // ============================================================
   // Type queries

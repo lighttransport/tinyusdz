@@ -7,6 +7,7 @@
 
 #include "ascii-parser.hh"
 #include "lexer.hh"
+#include "value-parser.hh"
 #include "../layer/layer.hh"
 
 #include <memory>
@@ -39,6 +40,12 @@ private:
   std::unique_ptr<Layer> layer_;
   std::unique_ptr<LayerBuilder> builder_;
   size_t depth_ = 0;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Active only with ParseOptions::async_arrays: batches captured simple
+  // numeric arrays onto the value worker pool; drained (join barrier) before
+  // finalize and on every Parse() exit path (the spans die with the input).
+  std::unique_ptr<DeferredArrayScheduler> deferred_arrays_;
+#endif
 
   // Parsing methods
   bool ParseStageMetadata();
@@ -50,6 +57,11 @@ private:
   bool ParseMetadataBlock();
   bool ParseTimeSamples(const std::string& prop_name, TypeId type_id,
                         bool is_array);
+  // Array-value parse for attribute defaults and timeSamples: captures the
+  // bracketed span and either hands it to the deferred-array scheduler
+  // (placeholder Value committed now, payload filled by a worker before the
+  // drain barrier; *out_deferred=true) or parses it synchronously.
+  ParseResult ParseArrayValueMaybeDeferred(TypeId type_id, bool* out_deferred);
   bool ParseVariantSetBody(const std::string& variant_set_name);
   bool ParseVariantSetBodyInto(const std::string& variant_set_name,
                                std::vector<VariantSetData>& target, int depth);

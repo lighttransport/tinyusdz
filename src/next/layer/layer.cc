@@ -266,14 +266,15 @@ void LayerBuilder::add_property(std::string_view name, Value value,
   }
 }
 
-void LayerBuilder::add_time_sample(std::string_view prop_name, double time, Value value) {
+void LayerBuilder::add_time_sample(std::string_view prop_name, double time, Value value,
+                                   bool dedup) {
   if (PrimSpec* p = current()) {
     PropNameId name_id = GetPropNameTable().intern(prop_name);
 
     // First, add the time sample (stores the value and records time)
     TypeId type_id = value.type_id();
     bool is_array = value.is_array();
-    p->add_time_sample(name_id, time, std::move(value));
+    p->add_time_sample(name_id, time, std::move(value), dedup);
 
     // Ensure property slot exists with the time-sampled flag set.
     const PropSlot* existing = p->property(name_id);
