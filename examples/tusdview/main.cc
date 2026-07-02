@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -22,6 +24,71 @@
 #include "config.hh"
 #include "log.hh"
 #include "renderer.hh"
+
+namespace {
+
+enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+
+const char* ProfileName(LargeSceneProfile p) {
+  switch (p) {
+    case LargeSceneProfile::Off: return "off";
+    case LargeSceneProfile::Auto: return "auto";
+    case LargeSceneProfile::Caldera: return "caldera";
+    case LargeSceneProfile::Island: return "island";
+    case LargeSceneProfile::ALab: return "alab";
+  }
+  return "off";
+}
+
+std::string LowerCopy(const std::string& s) {
+  std::string out = s;
+  for (char& c : out) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return out;
+}
+
+bool ParseProfile(const char* s, LargeSceneProfile* out) {
+  if (!s || !out) return false;
+  const std::string v = LowerCopy(s);
+  if (v == "off") *out = LargeSceneProfile::Off;
+  else if (v == "auto") *out = LargeSceneProfile::Auto;
+  else if (v == "caldera") *out = LargeSceneProfile::Caldera;
+  else if (v == "island") *out = LargeSceneProfile::Island;
+  else if (v == "alab") *out = LargeSceneProfile::ALab;
+  else return false;
+  return true;
+}
+
+LargeSceneProfile DetectProfileFromPath(const std::string& path) {
+  const std::string p = LowerCopy(path);
+  if (p.find("caldera") != std::string::npos) return LargeSceneProfile::Caldera;
+  if (p.find("island") != std::string::npos ||
+      p.find("moana") != std::string::npos) return LargeSceneProfile::Island;
+  if (p.find("alab") != std::string::npos ||
+      p.find("animal_logic") != std::string::npos ||
+      p.find("animal-logic") != std::string::npos) {
+    return LargeSceneProfile::ALab;
+  }
+  return LargeSceneProfile::Off;
+}
+
+std::uint64_t ParseByteCount(const std::string& text) {
+  std::string v = text;
+  std::uint64_t mul = 1;
+  if (!v.empty()) {
+    char s = v.back();
+    if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+    else if (s == 'm' || s == 'M') { mul = 1024ull * 1024ull; v.pop_back(); }
+    else if (s == 'g' || s == 'G') {
+      mul = 1024ull * 1024ull * 1024ull;
+      v.pop_back();
+    }
+  }
+  return static_cast<std::uint64_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
 #if defined(HAVE_VULKAN)
@@ -46,6 +113,24 @@ int main(int argc, char** argv) {
   bool rasterLod = false;       // --raster-lod: view-dependent raster instance LOD
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
+  LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
+  bool maxTrisExplicit = false;
+  bool maxGpuMemExplicit = false;
+  bool maxDrawMeshesExplicit = false;
+  bool rtLodExplicit = false;
+  bool rtLodFullExplicit = false;
+  bool rtLodCullExplicit = false;
+  bool rtLodBandExplicit = false;
+  bool rasterLodExplicit = false;
+  bool rasterLodFullExplicit = false;
+  bool rasterLodCullExplicit = false;
+  bool useNextExplicit = false;
+  bool lodStreamExplicit = false;
+  bool lodMaxMemExplicit = false;
+  bool lodMaxVramExplicit = false;
+  bool allowParentPathsExplicit = false;
+  bool maxAssetBytesExplicit = false;
+  std::uint64_t maxAssetReadBytes = 0;
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
@@ -111,39 +196,51 @@ int main(int argc, char** argv) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
+      maxTrisExplicit = true;
     } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
       // Override per-asset composition/resolver read cap (default 512MB).
       // Accepts a byte count with optional K/M/G suffix, e.g. 2G.
-      std::string v = argv[++i];
-      size_t mul = 1;
-      if (!v.empty()) {
-        char s = v.back();
-        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
-        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
-        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
-      }
-      tinyusdz::security_policy::SetMaxAssetReadBytes(
-          static_cast<size_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul);
+      maxAssetReadBytes = ParseByteCount(argv[++i]);
+      maxAssetBytesExplicit = true;
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
+      maxGpuMemExplicit = true;
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
+      maxDrawMeshesExplicit = true;
     } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
       robustFrame = false;
     } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
       rtLod = true;
+      rtLodExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
+      rtLodFullExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
       rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
+      rtLodCullExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
       rtLodBand = static_cast<float>(std::atof(argv[++i]));
+      rtLodBandExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod") == 0) {
       rasterLod = true;
+      rasterLodExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
       rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
+      rasterLodFullExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
       rasterLodCullPx = static_cast<float>(std::atof(argv[++i]));
+      rasterLodCullExplicit = true;
+    } else if (std::strcmp(argv[i], "--large-scene-profile") == 0 && (i + 1) < argc) {
+      if (!ParseProfile(argv[++i], &largeSceneProfile)) {
+        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        return 1;
+      }
+    } else if (std::strncmp(argv[i], "--large-scene-profile=", 22) == 0) {
+      if (!ParseProfile(argv[i] + 22, &largeSceneProfile)) {
+        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -156,6 +253,7 @@ int main(int argc, char** argv) {
       threaded = true;
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
+      useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
@@ -172,6 +270,7 @@ int main(int argc, char** argv) {
       deferReferences = true;
     } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
       allowParentPaths = true;
+      allowParentPathsExplicit = true;
     } else if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
       textureOptions.maxTextureSize = std::atoi(argv[++i]);
       if (textureOptions.maxTextureSize < 0) {
@@ -229,10 +328,13 @@ int main(int argc, char** argv) {
       if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
+      lodStreamExplicit = true;
     } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
+      lodMaxMemExplicit = true;
     } else if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
       lodMaxVram = std::atof(argv[++i]);
+      lodMaxVramExplicit = true;
     } else if (std::strcmp(argv[i], "--max-instances") == 0 && i + 1 < argc) {
       rtMaxInstances = std::atoll(argv[++i]);
       if (rtMaxInstances < 0) rtMaxInstances = 0;
@@ -350,6 +452,10 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
+          "Vulkan realtime preset for public large scenes. Profiles set existing "
+          "large-scene knobs only; explicit CLI flags win. No texture resize or "
+          "compression behavior is changed.\n"
           "  --max-asset-bytes N  Override the per-asset composition read cap "
           "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
@@ -408,6 +514,58 @@ int main(int argc, char** argv) {
     }
   }
 
+  LargeSceneProfile effectiveProfile = largeSceneProfile;
+  if (effectiveProfile == LargeSceneProfile::Auto) {
+    effectiveProfile = DetectProfileFromPath(file);
+  }
+  if (effectiveProfile != LargeSceneProfile::Off) {
+    if (!useNextExplicit) useNextLoader = true;
+    if (!backendExplicit) {
+      backend = tusdview::Backend::Vulkan;
+      backendExplicit = true;
+    }
+    if (!rasterLodExplicit) rasterLod = true;
+    if (!rtLodExplicit) rtLod = true;
+    if (!rtLodFullExplicit) rtLodFullPx = 64.0f;
+    if (!rtLodCullExplicit) rtLodCullPx = 2.0f;
+    if (!rtLodBandExplicit) rtLodBand = 0.25f;
+    if (!maxAssetBytesExplicit) maxAssetReadBytes = 2ull * 1024ull * 1024ull * 1024ull;
+
+    if (effectiveProfile == LargeSceneProfile::Caldera) {
+      if (!maxTrisExplicit) maxTris = 40000000;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 12.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 80000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+      if (cameraName.empty()) cameraName = "phospate_mine_overview";
+    } else if (effectiveProfile == LargeSceneProfile::Island) {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 20000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+    } else if (effectiveProfile == LargeSceneProfile::ALab) {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 50000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 36.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+      if (!allowParentPathsExplicit) allowParentPaths = true;
+    } else {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 40000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.5f;
+    }
+    if (effectiveProfile == LargeSceneProfile::Caldera && !lodStreamExplicit) {
+      lodStream = true;
+      if (!lodMaxMemExplicit) lodMaxMem = 32.0;
+      if (!lodMaxVramExplicit) lodMaxVram = 8.0;
+    }
+  }
+  if (maxAssetReadBytes > 0) {
+    tinyusdz::security_policy::SetMaxAssetReadBytes(
+        static_cast<size_t>(maxAssetReadBytes));
+  }
+
   // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
   if (wantRt) {
     backend = tusdview::Backend::Vulkan;
@@ -431,6 +589,26 @@ int main(int argc, char** argv) {
     wantRt = false;
   }
 #endif
+
+  if (effectiveProfile != LargeSceneProfile::Off) {
+    LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
+         "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
+         "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
+         ProfileName(effectiveProfile),
+         backend == tusdview::Backend::Vulkan ? "vk" : "gl",
+         useNextLoader ? "on" : "off",
+         rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
+         rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
+         maxGpuMemGiB, maxDrawMeshes, maxTris);
+    if (effectiveProfile == LargeSceneProfile::ALab && allowParentPaths) {
+      LOGI("large-scene-profile alab: parent-relative composition paths allowed");
+    }
+    if (maxAssetReadBytes > 0) {
+      LOGI("large-scene-profile %s: max asset read bytes=%llu",
+           ProfileName(effectiveProfile),
+           static_cast<unsigned long long>(maxAssetReadBytes));
+    }
+  }
 
   const tusdview::ConfigLoadResult config = tusdview::LoadStartupConfig(configPath);
   if (config.status == tusdview::ConfigLoadStatus::Error) {

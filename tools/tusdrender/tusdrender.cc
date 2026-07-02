@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -88,6 +89,87 @@ extern "C" {
 // The Vulkan backend and main() below live in the global namespace; pull in the
 // tusdr names they use (Vec3, Options, RTPreviewStats, qjs::*, ...).
 using namespace tusdr;
+
+static const char *LargeSceneProfileName(Options::LargeSceneProfile p) {
+  switch (p) {
+    case Options::LargeSceneProfile::Off: return "off";
+    case Options::LargeSceneProfile::Auto: return "auto";
+    case Options::LargeSceneProfile::Caldera: return "caldera";
+    case Options::LargeSceneProfile::Island: return "island";
+    case Options::LargeSceneProfile::ALab: return "alab";
+  }
+  return "off";
+}
+
+static std::string LowerAscii(std::string s) {
+  for (char &c : s) {
+    c = char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
+static Options::LargeSceneProfile DetectLargeSceneProfile(const std::string &path) {
+  const std::string p = LowerAscii(path);
+  if (p.find("caldera") != std::string::npos) return Options::LargeSceneProfile::Caldera;
+  if (p.find("island") != std::string::npos ||
+      p.find("moana") != std::string::npos) return Options::LargeSceneProfile::Island;
+  if (p.find("alab") != std::string::npos ||
+      p.find("animal_logic") != std::string::npos ||
+      p.find("animal-logic") != std::string::npos) {
+    return Options::LargeSceneProfile::ALab;
+  }
+  return Options::LargeSceneProfile::Off;
+}
+
+static void ApplyLargeSceneProfile(Options *opt) {
+  if (!opt) return;
+  Options::LargeSceneProfile p = opt->large_scene_profile;
+  if (p == Options::LargeSceneProfile::Auto) {
+    p = DetectLargeSceneProfile(opt->input);
+  }
+  if (p == Options::LargeSceneProfile::Off) return;
+
+  if (!opt->backend_explicit) {
+    opt->vulkan = true;
+    opt->vulkan_rt = true;
+    opt->vulkan_instanced = true;
+  }
+  if (!opt->rt_lod_explicit) opt->rt_lod = true;
+  if (!opt->rt_lod_full_px_explicit) opt->rt_lod_full_px = 64.0f;
+  if (!opt->rt_lod_cull_px_explicit) opt->rt_lod_cull_px = 2.0f;
+
+  if (p == Options::LargeSceneProfile::Caldera) {
+    if (!opt->camera_explicit && opt->camera.empty()) {
+      opt->camera = "phospate_mine_overview";
+    }
+    if (!opt->lod_stream_explicit) opt->lod_stream = true;
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 8.0;
+  } else if (p == Options::LargeSceneProfile::Island) {
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+  } else if (p == Options::LargeSceneProfile::ALab) {
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+  }
+
+  std::cerr << "largeSceneProfile " << LargeSceneProfileName(p)
+            << " resolved: backend="
+            << (opt->vulkan_instanced ? "vkr+vkInstanced"
+                : opt->vulkan_rt ? "vkr"
+                : opt->vulkan ? "vk"
+                : opt->hip ? "hip"
+                : opt->use_d3d ? "d3d"
+                : opt->rt_preview ? "rtPreview" : "default")
+            << " rtLod=" << (opt->rt_lod ? "on" : "off")
+            << " fullPx=" << opt->rt_lod_full_px
+            << " cullPx=" << opt->rt_lod_cull_px
+            << " lodStream=" << (opt->lod_stream ? "on" : "off")
+            << " maxMem=" << opt->max_mem_gib
+            << " maxVram=" << opt->max_vram_gib;
+  if (!opt->camera.empty()) std::cerr << " camera=" << opt->camera;
+  std::cerr << "\n";
+}
 
 // ---------------------------------------------------------------------------
 // LightRT Vulkan backend: uses the LightRT C API (lightrt_c_vk.h) for GPU
@@ -622,6 +704,7 @@ int main(int argc, char **argv) {
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
   }
+  ApplyLargeSceneProfile(&opt);
 
   // Configure the process memory budget: -maxMem <GiB>, else auto
   // min(32 GiB, 0.5 * system MemAvailable). Keeps tusdrender from being
@@ -685,6 +768,10 @@ int main(int argc, char **argv) {
   // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip) {
+    if (opt.gpu_shade == Options::GpuShadeMode::Preview) {
+      std::cerr << "-gpuShade preview: GPU preview shading is not enabled yet; "
+                   "using cpu shade-after-hit path.\n";
+    }
     // Load through next loader.
     tinyusdz::next::Stage stage;
     std::string warn, err;

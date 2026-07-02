@@ -16,12 +16,14 @@ Common flags:
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
+| `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/memory knobs; explicit flags win |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
 | `-mask <prim,...>` | restrict to these prim subtrees |
 | `-complexity low\|med\|high\|veryhigh` | subdivision preset |
 | `-smooth` | interpolate authored normals (smooth shading) |
+| `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
 | `-maxMem <GiB>` | memory cap override (default `min(32, 0.5·MemAvailable)`) |
 | `-stats` | print mesh/triangle/memory/timing stats |

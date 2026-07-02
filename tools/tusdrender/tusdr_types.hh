@@ -497,6 +497,16 @@ struct Options {
   bool no_assetresolver{false};
   bool stats{false};
   bool direct_prims{true};
+  enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+  LargeSceneProfile large_scene_profile{LargeSceneProfile::Off};
+  bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip
+  bool camera_explicit{false};
+  bool max_mem_explicit{false};
+  bool max_vram_explicit{false};
+  bool lod_stream_explicit{false};
+  bool rt_lod_explicit{false};
+  bool rt_lod_full_px_explicit{false};
+  bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
@@ -552,6 +562,8 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  enum class GpuShadeMode { Cpu, Preview };
+  GpuShadeMode gpu_shade{GpuShadeMode::Cpu};  // -gpuShade cpu|preview
   // -vkInstanced: on -vkr, build a TRUE two-level GPU TLAS (one BLAS per
   // prototype, one instance per placement) instead of flattening instances into
   // one world-space BLAS. Stores instanced geometry ONCE on the device (memory

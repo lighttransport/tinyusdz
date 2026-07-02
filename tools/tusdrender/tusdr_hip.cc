@@ -17,7 +17,7 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                    const std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height) {
   GpuTriScene s;
-  if (!BuildGpuTriScene(base_colors, geos, &s)) return false;
+  if (!BuildGpuTriScene(base_colors, geos, opt.threads, true, &s)) return false;
 
   // Create the HIP engine (compiles the trace kernel via hiprtc).
   lrt_hip_engine_options hopts;
@@ -36,13 +36,20 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
   const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "HIP", &nrays)) {
+    lrt_tri_scene_free(s.scene);
+    lrt_hip_engine_destroy(hip);
+    return false;
+  }
+  const uint32_t ray_count = uint32_t(nrays);
   std::vector<lrt_ray> rays;
   GenerateCameraRays(camera, w, h, spp, &rays);
 
-  std::vector<lrt_hit> hits(rays.size());
+  std::vector<lrt_hit> hits(nrays);
   lrt_result trerr = LRT_RESULT_OK;
   int traced = lrt_hip_trace_scene(hip, s.scene, rays.data(),
-                                   uint32_t(rays.size()), hits.data(), &trerr);
+                                   ray_count, hits.data(), &trerr);
   if (traced < 0) {
     std::cerr << "HIP trace failed (rc=" << trerr
               << "): " << lrt_hip_engine_last_error(hip) << "\n";

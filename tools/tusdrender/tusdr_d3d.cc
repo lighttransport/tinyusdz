@@ -10,11 +10,13 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include "image-writer.hh"
 #include "lightrt_c_d3d11.h"
 #include "tusdr_context.hh"
+#include "tusdr_gpu_common.hh"
 
 namespace tusdr {
 
@@ -27,16 +29,54 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::vector<uint32_t> flat_idx;
   std::vector<Vec3> tri_base_colors;
   std::vector<Vec3> tri_normals;
-  uint32_t base_idx = 0;
+  size_t total_pos = 0;
+  size_t total_idx = 0;
+  size_t total_vertices = 0;
+  const size_t max_u32 = size_t(std::numeric_limits<uint32_t>::max());
   for (const auto &g : geos) {
+    if ((g.positions.size() % 3u) != 0u) {
+      std::cerr << "Invalid mesh positions: component count is not a multiple of 3.\n";
+      return false;
+    }
+    if ((g.indices.size() % 3u) != 0u) {
+      std::cerr << "Invalid mesh indices: index count is not a multiple of 3.\n";
+      return false;
+    }
+    const size_t nv = g.positions.size() / 3u;
+    if (nv > max_u32 || total_vertices > max_u32 - nv) {
+      std::cerr << "Too many flattened vertices for 32-bit GPU indices.\n";
+      return false;
+    }
+    total_pos += g.positions.size();
+    total_idx += g.indices.size();
+    total_vertices += nv;
+  }
+  const size_t total_tris = total_idx / 3;
+  if (total_tris > max_u32) {
+    std::cerr << "Too many triangles for 32-bit GPU tracing.\n";
+    return false;
+  }
+  flat_verts.reserve(total_pos);
+  flat_idx.reserve(total_idx);
+  tri_base_colors.reserve(total_tris);
+  tri_normals.reserve(total_tris);
+  uint32_t base_idx = 0;
+  for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
+    const auto &g = geos[mesh_idx];
     uint32_t nv = uint32_t(g.positions.size() / 3);
     for (uint32_t j = 0; j < nv; ++j) {
       flat_verts.push_back(g.positions[j * 3 + 0]);
       flat_verts.push_back(g.positions[j * 3 + 1]);
       flat_verts.push_back(g.positions[j * 3 + 2]);
     }
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j)
-      flat_idx.push_back(g.indices[j] + base_idx);
+    for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
+      if (g.indices[j] >= nv) {
+        std::cerr << "Invalid mesh index " << g.indices[j] << " for "
+                  << nv << " vertices.\n";
+        return false;
+      }
+      flat_idx.push_back(base_idx + g.indices[j]);
+    }
     for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
       uint32_t i0 = g.indices[j * 3 + 0], i1 = g.indices[j * 3 + 1],
                i2 = g.indices[j * 3 + 2];
@@ -46,8 +86,7 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
       tri_normals.push_back(Normalize(Cross(Sub(p1, p0), Sub(p2, p0))));
     }
     size_t nm = std::min(base_colors.size(), geos.size());
-    Vec3 bc = (size_t(&g - &geos[0]) < nm) ? base_colors[&g - &geos[0]]
-                                           : Vec3{0.5f, 0.5f, 0.5f};
+    Vec3 bc = (mesh_idx < nm) ? base_colors[mesh_idx] : Vec3{0.5f, 0.5f, 0.5f};
     for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j)
       tri_base_colors.push_back(bc);
     base_idx += nv;
@@ -63,7 +102,7 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::memset(&bopts, 0, sizeof(bopts));
   bopts.quality = LRT_TRI_BUILD_DEFAULT;
   bopts.layout = LRT_TRI_LAYOUT_BVH4;
-  bopts.num_threads = 1;
+  bopts.num_threads = WorkerThreadCount(opt.threads);
   lrt_result lrterr = LRT_RESULT_OK;
   lrt_tri_scene *scene = lrt_tri_scene_build_indexed(
       flat_verts.data(), flat_verts.size() / 3, flat_idx.data(), ntris, &bopts,
@@ -85,6 +124,13 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
   const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Direct3D 11", &nrays)) {
+    lrt_d3d11_engine_destroy(dev);
+    lrt_tri_scene_free(scene);
+    return false;
+  }
+  const uint32_t ray_count = uint32_t(nrays);
 
   // Camera basis.
   Vec3 eye = camera.origin, fwd = camera.forward, up = camera.up;
@@ -97,7 +143,6 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   // Build every primary ray for the frame (spp samples per pixel), then trace
   // them all in one GPU dispatch.
   const size_t npix = size_t(w) * size_t(h);
-  const size_t nrays = npix * size_t(spp);
   std::vector<lrt_ray> rays(nrays);
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
@@ -116,7 +161,7 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::vector<lrt_hit> hits(nrays);
   lrt_result trerr = LRT_RESULT_OK;
   int traced = lrt_d3d11_trace_scene(dev, scene, rays.data(),
-                                     uint32_t(nrays), hits.data(), &trerr);
+                                     ray_count, hits.data(), &trerr);
   if (traced < 0) {
     std::cerr << "Direct3D 11 trace failed: "
               << lrt_d3d11_engine_last_error(dev) << "\n";
