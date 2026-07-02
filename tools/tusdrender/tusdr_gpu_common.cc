@@ -6,10 +6,39 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 #include "image-writer.hh"
 
 namespace tusdr {
+
+namespace {
+
+// Run fn(y0, y1) over disjoint row slabs on up to `nthreads` threads. Each
+// pixel's work is independent and written to a disjoint output range, so the
+// result is byte-identical to the serial loop.
+template <typename F>
+void ParallelRows(int h, unsigned nthreads, F &&fn) {
+  if (h <= 0) return;
+  nthreads = std::min(nthreads, unsigned(h));
+  if (nthreads <= 1) {
+    fn(0, h);
+    return;
+  }
+  const int chunk = (h + int(nthreads) - 1) / int(nthreads);
+  std::vector<std::thread> workers;
+  workers.reserve(nthreads);
+  for (unsigned t = 0; t < nthreads; ++t) {
+    const int y0 = int(t) * chunk;
+    const int y1 = std::min(h, y0 + chunk);
+    if (y0 >= y1) break;
+    workers.emplace_back([y0, y1, &fn] { fn(y0, y1); });
+  }
+  for (auto &w : workers) w.join();
+}
+
+}  // namespace
 
 bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
@@ -106,7 +135,8 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
                 m[6] * n.x + m[7] * n.y + m[8] * n.z};
   };
 
-  for (int y = 0; y < h; ++y) {
+  ParallelRows(h, WorkerThreadCount(opt.threads), [&](int yBegin, int yEnd) {
+  for (int y = yBegin; y < yEnd; ++y) {
     for (int x = 0; x < w; ++x) {
       size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
       Vec3 color{0, 0, 0};
@@ -147,6 +177,7 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
       img.data[pi + 3] = 255;
     }
   }
+  });
 
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
@@ -171,7 +202,8 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 
   const size_t nrays = size_t(w) * size_t(h) * size_t(spp);
   rays->resize(nrays);
-  for (int y = 0; y < h; ++y) {
+  ParallelRows(h, std::thread::hardware_concurrency(), [&](int yBegin, int yEnd) {
+  for (int y = yBegin; y < yEnd; ++y) {
     for (int x = 0; x < w; ++x) {
       size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
       for (int s = 0; s < spp; ++s) {
@@ -189,6 +221,7 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
       }
     }
   }
+  });
 }
 
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
@@ -204,7 +237,8 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
   img.bpp = 8;
   img.data.resize(size_t(w) * size_t(h) * 4, 0);
 
-  for (int y = 0; y < h; ++y) {
+  ParallelRows(h, WorkerThreadCount(opt.threads), [&](int yBegin, int yEnd) {
+  for (int y = yBegin; y < yEnd; ++y) {
     for (int x = 0; x < w; ++x) {
       size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
       Vec3 color{0, 0, 0};
@@ -245,6 +279,7 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
       img.data[pi + 3] = 255;
     }
   }
+  });
 
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;

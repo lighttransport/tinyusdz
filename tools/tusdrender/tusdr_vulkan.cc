@@ -3,6 +3,7 @@
 // Compiles to nothing unless HAVE_VULKAN is defined. Geometry flatten, ray
 // generation and shading are shared with the HIP backend (tusdr_gpu_common).
 #ifdef HAVE_VULKAN
+#include <chrono>
 #include <vector>
 
 #include "lightrt_c_vk.h"
@@ -10,6 +11,16 @@
 #include "tusdr_gpu_common.hh"
 
 namespace tusdr {
+
+namespace {
+
+// Seconds since `t0`, for the -stats per-stage timing lines.
+double SecsSince(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+      .count();
+}
+
+}  // namespace
 
 bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
@@ -40,10 +51,12 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
 
   GpuTriScene s;
   const bool use_rt = has_rt && opt.vulkan_rt;
+  auto t0 = std::chrono::steady_clock::now();
   if (!BuildGpuTriScene(opt, base_colors, geos, &s, /*build_bvh=*/!use_rt)) {
     lrt_vk_engine_destroy(vk);
     return false;
   }
+  const double flatten_s = SecsSince(t0);
 
   // Generate every primary ray and trace the whole frame in ONE batched GPU
   // dispatch (the -vkr ray-query AS is built once, not per pixel).
@@ -56,22 +69,29 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::vector<lrt_hit> hits(rays.size());
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
+  double as_build_s = 0.0, trace_s = 0.0;
   if (use_rt) {
     // Build the ray-query acceleration structure directly from the indexed mesh
     // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
     // primitiveIndex == triangle build order == caller index, matching the
     // CPU/compute paths. Build once, trace the whole frame, free.
     uint32_t nverts = uint32_t(s.flat_verts.size() / 3u);
+    t0 = std::chrono::steady_clock::now();
     lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
         vk, s.flat_verts.data(), nverts, s.flat_idx.data(), s.ntris, &trerr);
+    as_build_s = SecsSince(t0);
     if (rtx) {
+      t0 = std::chrono::steady_clock::now();
       traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(rays.size()),
                                       hits.data(), &trerr);
+      trace_s = SecsSince(t0);
       lrt_vk_rtx_scene_free(vk, rtx);
     }
   } else {
+    t0 = std::chrono::steady_clock::now();
     traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), uint32_t(rays.size()),
                                 hits.data(), &trerr);
+    trace_s = SecsSince(t0);
   }
   if (traced < 0) {
     std::cerr << "Vulkan trace failed (rc=" << trerr << ").\n";
@@ -80,7 +100,14 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     return false;
   }
 
+  t0 = std::chrono::steady_clock::now();
   bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] flatten+bvh " << flatten_s << " s, ";
+    if (use_rt) std::cerr << "as-build " << as_build_s << " s, ";
+    std::cerr << "trace " << trace_s << " s, shade+write " << SecsSince(t0)
+              << " s\n";  // compute-path trace includes the BVH upload
+  }
   if (ok) {
     std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
     std::cerr << "backend: LightRT VK ("
@@ -161,10 +188,13 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   lrt_result builderr = LRT_RESULT_OK, trerr = LRT_RESULT_OK;
   int traced = -1;
   uint32_t scene_ntlas = 1;
+  double as_build_s = 0.0, trace_s = 0.0;
+  auto t0 = std::chrono::steady_clock::now();
   if (wide) {
     lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced_multi(
         vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
         uint32_t(cinsts.size()), &builderr);
+    as_build_s = SecsSince(t0);
     if (!rtx) {
       // OUT_OF_MEMORY here means the GPU ran out building the BLAS/TLAS set (e.g.
       // full Moana island: ~110k prototype BLAS exhaust VRAM). The flat fallback
@@ -181,8 +211,10 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     scene_ntlas = lrt_vk_rtx_scene_ntlas(rtx);
     scene.stride = max_ntris;  // reported only; wide decode does not use it
     std::vector<lrt_hit_wide> hits(rays.size());
+    t0 = std::chrono::steady_clock::now();
     traced = lrt_vk_rtx_scene_trace_wide(vk, rtx, rays.data(),
                                          uint32_t(rays.size()), hits.data(), &trerr);
+    trace_s = SecsSince(t0);
     lrt_vk_rtx_scene_free(vk, rtx);
     if (traced >= 0)
       for (size_t i = 0; i < hits.size(); ++i) {
@@ -198,6 +230,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced(
         vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
         uint32_t(cinsts.size()), &stride, &builderr);
+    as_build_s = SecsSince(t0);
     if (!rtx) {
       std::cerr << "-vkInstanced build failed (rc=" << builderr
                 << "); falling back to the flat path.\n";
@@ -206,8 +239,10 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     }
     scene.stride = stride;
     std::vector<lrt_hit> hits(rays.size());
+    t0 = std::chrono::steady_clock::now();
     traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(rays.size()),
                                     hits.data(), &trerr);
+    trace_s = SecsSince(t0);
     lrt_vk_rtx_scene_free(vk, rtx);
     if (traced >= 0)
       for (size_t i = 0; i < hits.size(); ++i) {
@@ -227,7 +262,12 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     return false;
   }
 
+  t0 = std::chrono::steady_clock::now();
   bool ok = ShadeAndWriteImageInstanced(opt, scene, rays, decoded, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] as-build " << as_build_s << " s, trace+decode "
+              << trace_s << " s, shade+write " << SecsSince(t0) << " s\n";
+  }
   if (ok) {
     std::cerr << "backend: LightRT VK (ray_query, two-level TLAS, "
               << (wide ? "wide 64-bit hit id" : "32-bit hit id");
