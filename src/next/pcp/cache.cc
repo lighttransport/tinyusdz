@@ -31,6 +31,14 @@ namespace pcp {
 
 namespace {
 
+// One resolved spec: a PrimSpec + its owning layer (identity). Moved to file
+// scope (was Cache::Impl::SpecRef) so Src can cache a pointer to a Specs() result.
+struct SpecRef {
+  const PrimSpec *spec = nullptr;
+  const Layer *layer = nullptr;
+  std::string layer_id;
+};
+
 // A single composition source (one node's worth of provenance).
 struct Src {
   uint32_t stack_idx = 0;
@@ -46,6 +54,13 @@ struct Src {
   // For Variant sources: the selected variant's inline opinions (lives inside a
   // shared layer's PrimSpecMeta, so the pointer is stable). null otherwise.
   const VariantData *variant = nullptr;
+  // Memoized Specs(stack_idx, site) result for this exact (stack_idx, site), so
+  // the 2-3 read-side lookups per composed prim (ComposeChildNames,
+  // IsInstanceable, instance-key, ComposeOpinions) skip re-hashing `site`. Points
+  // into spec_cache_by_stack_ (stable). Only set via SpecsFor() on the MAIN Impl's
+  // stable sources_cache Srcs; MergeSources resets it (a worker's pointer would
+  // dangle in main). Left null on child-build (fresh Src, different site).
+  mutable const std::vector<SpecRef> *specs_ = nullptr;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.

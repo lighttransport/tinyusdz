@@ -71,10 +71,16 @@
     };
     for (auto &kv : w.sources_cache) {
       if (sources_cache.count(kv.first)) continue;
-      std::vector<Src> srcs = kv.second;
+      // The worker Impl is discarded right after this merge and warms subtrees
+      // disjoint from the other workers (shared seeded keys are skipped above),
+      // so steal its Src vector instead of copying it.
+      std::vector<Src> srcs = std::move(kv.second);
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
+        // A worker-set specs_ points into the (discarded) worker spec cache and
+        // the stack_idx just changed; drop it so main re-resolves via SpecsFor.
+        s.specs_ = nullptr;
       }
       sources_cache.emplace(kv.first, std::move(srcs));
     }

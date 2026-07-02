@@ -5,43 +5,48 @@
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------
-
-  struct SpecRef {
-    const PrimSpec *spec = nullptr;
-    const Layer *layer = nullptr;
-    std::string layer_id;
-  };
+  // SpecRef is defined at file scope (see cache.cc) so Src can cache a pointer
+  // to a Specs() result.
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
   // composed prim (ExpandArcs, AnyAuthors, ComposeInto, ComputePrimIndex,
-  // instance-key); each call walked every layer and parsed the site Path. The
-  // cache keys by (stack_idx, site) and returns a stable reference (unordered_map
-  // keeps element addresses valid across rehash, so a recursive insert during
-  // expansion never dangles the outer reference). Results depend only on layer
-  // contents, which change solely on InvalidateLayer -> spec_cache_ is cleared
-  // there (Invalidate(prim) leaves layer stacks intact, so it stays valid).
-  struct SpecCacheKey {
-    uint32_t stack;
-    std::string site;
-    bool operator==(const SpecCacheKey &o) const {
-      return stack == o.stack && site == o.site;
-    }
-  };
-  struct SpecCacheKeyHash {
-    size_t operator()(const SpecCacheKey &k) const {
-      return std::hash<std::string>()(k.site) * 1000003u + k.stack;
-    }
-  };
-  mutable std::unordered_map<SpecCacheKey, std::vector<SpecRef>, SpecCacheKeyHash>
-      spec_cache_;
+  // instance-key); each call walked every layer and parsed the site Path.
+  //
+  // Keyed per-stack (outer index = stack_idx) then by the `site` string, so a
+  // lookup keys by the CALLER's existing `site` string BY REFERENCE with no
+  // per-call key allocation. (The old (stack_idx, site) struct key deep-copied
+  // the site string into the key on every call -- hits included -- which showed
+  // up as ~7% self-time in Specs on heavily-instanced scenes.) Stable element
+  // addresses: the per-stack maps live in a deque (growing it never relocates an
+  // in-use map -- deque never invalidates element refs on end-insertion), and
+  // unordered_map keeps node addresses across rehash, so a recursive insert
+  // during expansion never dangles the outer reference. Results depend only on
+  // layer contents, which change solely on InvalidateLayer -> the cache is
+  // cleared there (Invalidate(prim) leaves layer stacks intact, so it stays valid).
+  mutable std::deque<std::unordered_map<std::string, std::vector<SpecRef>>>
+      spec_cache_by_stack_;
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const {
-    SpecCacheKey key{stack_idx, site};
-    auto it = spec_cache_.find(key);
-    if (it != spec_cache_.end()) return it->second;
+    if (stack_idx >= spec_cache_by_stack_.size())
+      spec_cache_by_stack_.resize(stack_idx + 1);
+    auto &m = spec_cache_by_stack_[stack_idx];
+    auto it = m.find(site);  // keys by the caller's string, no key copy
+    if (it != m.end()) return it->second;
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
-    return spec_cache_.emplace(std::move(key), std::move(refs)).first->second;
+    return m.emplace(site, std::move(refs)).first->second;
+  }
+
+  // Specs() with a per-Src memo: the 2-3 read-side spec lookups per composed prim
+  // (ComposeChildNames, IsInstanceable, instance-key, ComposeOpinions) all key on
+  // the SAME (stack_idx, site) -> cache the resolved vector pointer in the Src so
+  // only the first pays the site-string hash. Safe only on stable sources_cache
+  // Srcs (see Src::specs_); MergeSources clears any worker-set pointer.
+  const std::vector<SpecRef> &SpecsFor(const Src &s) const {
+    if (s.specs_) return *s.specs_;
+    const std::vector<SpecRef> &r = Specs(s.stack_idx, s.site);
+    s.specs_ = &r;
+    return r;
   }
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const {
@@ -72,7 +77,7 @@
 
   bool AnyAuthors(const std::vector<Src> &srcs) const {
     for (const Src &s : srcs) {
-      if (!Specs(s.stack_idx, s.site).empty()) return true;
+      if (!SpecsFor(s).empty()) return true;
     }
     return false;
   }
@@ -156,7 +161,7 @@
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
+      for (const SpecRef &sr : SpecsFor(s)) {
         if (sr.spec->meta().instanceable) return true;
       }
     }
@@ -180,7 +185,7 @@
     std::string key;
     for (const Src &s : srcs) {
       bool found_type = false;
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
+      for (const SpecRef &sr : SpecsFor(s)) {
         if (!sr.spec->type_name().empty()) {
           key += "T:" + sr.spec->type_name() + ";";
           found_type = true;

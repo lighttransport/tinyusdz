@@ -44,7 +44,7 @@
         continue;
       }
 
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       if (specs.empty()) continue;
 
       for (const SpecRef &sr : specs) {
@@ -90,7 +90,7 @@
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;
         const Layer *layer = rit->layer;

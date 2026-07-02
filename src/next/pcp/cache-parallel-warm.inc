@@ -34,6 +34,21 @@
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    // Pre-warm sources_cache in parallel: SourcesForPath (LIVRPS arc resolution)
+    // is the dominant SERIAL cost of the structure pass below (ALab: ~1.5 s).
+    // Warming fills the cache from worker Impls seeded with the main's resolution
+    // context, so the serial walk finds SourcesForPath a cache HIT and only pays
+    // ComposeChildNames + RegisterInstance + add_prim serially. Byte-identical:
+    // warming only fills a cache, layer-stack identities are seeded identical, and
+    // property emission is name-ordered (intern/parse-order independent). OPT-IN
+    // via num_threads > 1. WarmSubtree is instancing-aware (stops at instanceable
+    // prims), and the old PropNameTable-lock / serial-merge regressions on
+    // instanced scenes are gone (RCU-lite name snapshots + parallel merge).
+    if (options.num_threads > 1 && !root_names.empty()) {
+      ParallelWarmSources(root_names, options.num_threads, warn, err);
+    }
+#endif
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();
@@ -341,8 +356,13 @@
     using PWClock = std::chrono::steady_clock;
     const bool prof = options.enable_timing;
     auto t_start = prof ? PWClock::now() : PWClock::time_point{};
-    const size_t want = static_cast<size_t>(nt) * 4;
-    const uint32_t kMaxFrontierDepth = 8;
+    // Aim for many more frontier roots than workers: subtrees are wildly uneven
+    // (one hero-asset subtree can be a large fraction of the whole), so a coarse
+    // nt*4 frontier leaves work-stealing with a heavy tail one worker gets stuck
+    // on. A finer frontier lets stealing balance that tail. Discovery is a cheap
+    // serial ancestor walk (a few ms), so digging a couple levels deeper is free.
+    const size_t want = static_cast<size_t>(nt) * 16;
+    const uint32_t kMaxFrontierDepth = 12;
     std::vector<std::pair<Path, uint32_t>> level;  // (src_path, depth)
     for (const std::string &nm : root_names) {
       level.push_back({Path("/" + nm), 1});
