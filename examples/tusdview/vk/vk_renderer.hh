@@ -618,6 +618,10 @@ class VulkanRenderer final : public Renderer {
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};
+  // Visible USD purposes for the RT TLAS (bit i = PurposeId i; default: guide
+  // hidden, matching the raster/GUI default). rebuildTlas skips hidden-purpose
+  // meshes so e.g. Caldera's guide planes never enter (or pay for) the AS.
+  uint32_t rtPurposeMask_{0xBu};
 
   // VK_EXT_memory_budget: live device-local VRAM usage/budget (0 = unsupported).
   bool memBudgetSupported_{false};
