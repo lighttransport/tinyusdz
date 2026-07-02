@@ -1469,6 +1469,46 @@ typedef struct VkMemoryAllocateFlagsInfo {
     uint32_t deviceMask;
 } VkMemoryAllocateFlagsInfo;
 
+/* --- Query pool + AS compaction ------------------------------------------- */
+/* Minimal query-pool surface for VK_QUERY_TYPE_ACCELERATION_STRUCTURE_
+ * COMPACTED_SIZE_KHR: build a BLAS with ALLOW_COMPACTION, write its compacted
+ * size into a query, then vkCmdCopyAccelerationStructureKHR (COMPACT mode)
+ * into right-sized storage. */
+typedef enum VkQueryType {
+    VK_QUERY_TYPE_OCCLUSION = 0,
+    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR = 1000150000,
+    VK_QUERY_TYPE_MAX_ENUM = 0x7FFFFFFF
+} VkQueryType;
+typedef VkFlags VkQueryPoolCreateFlags;
+typedef VkFlags VkQueryPipelineStatisticFlags;
+typedef VkFlags VkQueryResultFlags;
+#define VK_QUERY_RESULT_64_BIT 0x00000001
+#define VK_QUERY_RESULT_WAIT_BIT 0x00000002
+
+typedef struct VkQueryPoolCreateInfo {
+    VkStructureType sType;
+    const void* pNext;
+    VkQueryPoolCreateFlags flags;
+    VkQueryType queryType;
+    uint32_t queryCount;
+    VkQueryPipelineStatisticFlags pipelineStatistics;
+} VkQueryPoolCreateInfo;
+
+#define VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR 1000150010
+typedef enum VkCopyAccelerationStructureModeKHR {
+    VK_COPY_ACCELERATION_STRUCTURE_MODE_CLONE_KHR = 0,
+    VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR = 1,
+    VK_COPY_ACCELERATION_STRUCTURE_MODE_MAX_ENUM_KHR = 0x7FFFFFFF
+} VkCopyAccelerationStructureModeKHR;
+
+typedef struct VkCopyAccelerationStructureInfoKHR {
+    VkStructureType sType;
+    const void* pNext;
+    VkAccelerationStructureKHR src;
+    VkAccelerationStructureKHR dst;
+    VkCopyAccelerationStructureModeKHR mode;
+} VkCopyAccelerationStructureInfoKHR;
+
 typedef VkDeviceAddress (VKAPI_PTR *PFN_vkGetBufferDeviceAddress)(VkDevice, const VkBufferDeviceAddressInfo*);
 typedef VkDeviceAddress (VKAPI_PTR *PFN_vkGetBufferDeviceAddressKHR)(VkDevice, const VkBufferDeviceAddressInfo*);
 typedef void (VKAPI_PTR *PFN_vkGetAccelerationStructureBuildSizesKHR)(VkDevice, VkAccelerationStructureBuildTypeKHR, const VkAccelerationStructureBuildGeometryInfoKHR*, const uint32_t*, VkAccelerationStructureBuildSizesInfoKHR*);
@@ -1476,6 +1516,12 @@ typedef VkResult (VKAPI_PTR *PFN_vkCreateAccelerationStructureKHR)(VkDevice, con
 typedef void (VKAPI_PTR *PFN_vkDestroyAccelerationStructureKHR)(VkDevice, VkAccelerationStructureKHR, const VkAllocationCallbacks*);
 typedef void (VKAPI_PTR *PFN_vkCmdBuildAccelerationStructuresKHR)(VkCommandBuffer, uint32_t, const VkAccelerationStructureBuildGeometryInfoKHR*, const VkAccelerationStructureBuildRangeInfoKHR* const*);
 typedef VkDeviceAddress (VKAPI_PTR *PFN_vkGetAccelerationStructureDeviceAddressKHR)(VkDevice, const VkAccelerationStructureDeviceAddressInfoKHR*);
+typedef VkResult (VKAPI_PTR *PFN_vkCreateQueryPool)(VkDevice, const VkQueryPoolCreateInfo*, const VkAllocationCallbacks*, VkQueryPool*);
+typedef void (VKAPI_PTR *PFN_vkDestroyQueryPool)(VkDevice, VkQueryPool, const VkAllocationCallbacks*);
+typedef VkResult (VKAPI_PTR *PFN_vkGetQueryPoolResults)(VkDevice, VkQueryPool, uint32_t, uint32_t, size_t, void*, VkDeviceSize, VkQueryResultFlags);
+typedef void (VKAPI_PTR *PFN_vkCmdResetQueryPool)(VkCommandBuffer, VkQueryPool, uint32_t, uint32_t);
+typedef void (VKAPI_PTR *PFN_vkCmdWriteAccelerationStructuresPropertiesKHR)(VkCommandBuffer, uint32_t, const VkAccelerationStructureKHR*, VkQueryType, VkQueryPool, uint32_t);
+typedef void (VKAPI_PTR *PFN_vkCmdCopyAccelerationStructureKHR)(VkCommandBuffer, const VkCopyAccelerationStructureInfoKHR*);
 
 // Soft-loaded: NULL unless the relevant extension was enabled at device creation.
 extern PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
@@ -1484,6 +1530,13 @@ extern PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
 extern PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
 extern PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
 extern PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
+// Query pool (core 1.0) + AS compaction (VK_KHR_acceleration_structure).
+extern PFN_vkCreateQueryPool vkCreateQueryPool;
+extern PFN_vkDestroyQueryPool vkDestroyQueryPool;
+extern PFN_vkGetQueryPoolResults vkGetQueryPoolResults;
+extern PFN_vkCmdResetQueryPool vkCmdResetQueryPool;
+extern PFN_vkCmdWriteAccelerationStructuresPropertiesKHR vkCmdWriteAccelerationStructuresPropertiesKHR;
+extern PFN_vkCmdCopyAccelerationStructureKHR vkCmdCopyAccelerationStructureKHR;
 
 #ifdef __cplusplus
 }
