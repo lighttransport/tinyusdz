@@ -1444,8 +1444,9 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-// MJCF <tendon><fixed> -> tendon payload entries (consumed by the C++
-// converter's AddMjcTendonFromJson). Spatial tendons need sites -> warn, skip.
+// MJCF <tendon> -> tendon payload entries (consumed by the C++ converter's
+// AddMjcTendonFromJson). Preserve solver, limit, visual, and routing metadata
+// so the USD MuJoCo extension can round-trip richer fixed/spatial tendons.
 function parseMujocoTendons(root) {
   const tendonRoot = firstChild(root, 'tendon');
   if (!tendonRoot) return [];
@@ -1453,6 +1454,7 @@ function parseMujocoTendons(root) {
   for (const node of childElements(tendonRoot)) {
     if (node.name !== 'fixed' && node.name !== 'spatial') continue;
     const range = parseNumbers(node.attrs.range, []);
+    const frcRange = parseNumbers(node.attrs.actuatorfrcrange, []);
     const tendon = { name: node.attrs.name || `tendon_${out.length}`, type: node.name };
     if (node.name === 'fixed') {
       const jlist = [];
@@ -1465,23 +1467,51 @@ function parseMujocoTendons(root) {
     } else {
       // Spatial (muscle) tendon: ordered <site>/<geom sidesite=..> waypoints.
       const path = [];
+      const sideSites = [];
       for (const w of childElements(node)) {
         if (w.name === 'site' && w.attrs.site) path.push({ site: w.attrs.site });
         else if (w.name === 'geom') {
           const wp = { geom: w.attrs.geom || '' };
-          if (w.attrs.sidesite) wp.sidesite = w.attrs.sidesite;
+          if (w.attrs.sidesite) {
+            wp.sidesite = w.attrs.sidesite;
+            sideSites.push({ site: w.attrs.sidesite });
+          }
           path.push(wp);
+        } else if (w.name === 'pulley') {
+          const divisor = numberAttr(w.attrs, 'divisor');
+          if (Number.isFinite(divisor)) {
+            if (!tendon.routeDivisors) tendon.routeDivisors = [];
+            tendon.routeDivisors.push(divisor);
+          }
         }
       }
-      if (path.length < 2) continue;
+      if (!path.length) continue;
       tendon.path = path;
+      if (sideSites.length) tendon.sideSites = sideSites;
       if (node.attrs.width) tendon.width = numberAttr(node.attrs, 'width');
       const rgba = parseNumbers(node.attrs.rgba, []);
       if (rgba.length >= 4) tendon.rgba = rgba.slice(0, 4);
     }
     if (Number.isFinite(numberAttr(node.attrs, 'stiffness'))) tendon.stiffness = numberAttr(node.attrs, 'stiffness');
     if (Number.isFinite(numberAttr(node.attrs, 'damping'))) tendon.damping = numberAttr(node.attrs, 'damping');
+    if (Number.isFinite(numberAttr(node.attrs, 'armature'))) tendon.armature = numberAttr(node.attrs, 'armature');
+    if (Number.isFinite(numberAttr(node.attrs, 'frictionloss'))) tendon.frictionloss = numberAttr(node.attrs, 'frictionloss');
+    if (Number.isFinite(numberAttr(node.attrs, 'margin'))) tendon.margin = numberAttr(node.attrs, 'margin');
+    if (node.attrs.group !== undefined) tendon.group = Math.round(numberAttr(node.attrs, 'group'));
+    if (node.attrs.limited !== undefined) tendon.limited = node.attrs.limited;
+    if (node.attrs.actuatorfrclimited !== undefined) tendon.actuatorfrclimited = node.attrs.actuatorfrclimited;
     if (range.length >= 2) tendon.range = [range[0], range[1]];
+    if (frcRange.length >= 2) tendon.actuatorfrcrange = [frcRange[0], frcRange[1]];
+    for (const [attr, key] of [
+      ['springlength', 'springlength'],
+      ['solreflimit', 'solreflimit'],
+      ['solimplimit', 'solimplimit'],
+      ['solreffriction', 'solreffriction'],
+      ['solimpfriction', 'solimpfriction']
+    ]) {
+      const values = parseNumbers(node.attrs[attr], []);
+      if (values.length) tendon[key] = values;
+    }
     out.push(tendon);
   }
   return out;
@@ -1537,17 +1567,32 @@ function parseMujocoMuscleActuators(root) {
     else if (node.attrs.gain !== undefined) a.gainPrm = [numberAttr(node.attrs, 'gain')];
     const biasprm = parseNumbers(node.attrs.biasprm, []);
     if (biasprm.length) a.biasPrm = biasprm;
+    const dynprm = parseNumbers(node.attrs.dynprm, []);
+    if (dynprm.length) a.dynPrm = dynprm;
     const lengthrange = parseNumbers(node.attrs.lengthrange, []);
     if (lengthrange.length >= 2) a.lengthRange = [lengthrange[0], lengthrange[1]];
     const ctrlrange = parseNumbers(node.attrs.ctrlrange, []);
     if (ctrlrange.length >= 2) a.ctrlRange = [ctrlrange[0], ctrlrange[1]];
     const forcerange = parseNumbers(node.attrs.forcerange, []);
     if (forcerange.length >= 2) a.forceRange = [forcerange[0], forcerange[1]];
+    const actrange = parseNumbers(node.attrs.actrange, []);
+    if (actrange.length >= 2) a.actRange = [actrange[0], actrange[1]];
     const gear = parseNumbers(node.attrs.gear, []);
     if (gear.length) a.gear = gear;
     if (node.attrs.gaintype) a.gainType = node.attrs.gaintype;
     if (node.attrs.biastype) a.biasType = node.attrs.biastype;
     if (node.attrs.dyntype) a.dynType = node.attrs.dyntype;
+    if (node.attrs.ctrllimited) a.ctrlLimited = node.attrs.ctrllimited;
+    if (node.attrs.forcelimited) a.forceLimited = node.attrs.forcelimited;
+    if (node.attrs.actlimited) a.actLimited = node.attrs.actlimited;
+    if (node.attrs.group !== undefined) a.group = Math.round(numberAttr(node.attrs, 'group'));
+    if (node.attrs.actdim !== undefined) a.actDim = Math.round(numberAttr(node.attrs, 'actdim'));
+    if (node.attrs.cranklength !== undefined) a.crankLength = numberAttr(node.attrs, 'cranklength');
+    if (node.attrs.inheritrange !== undefined) a.inheritRange = numberAttr(node.attrs, 'inheritrange');
+    if (node.attrs.jointinparent !== undefined) a.jointInParent = mjcBoolAttr(node.attrs.jointinparent);
+    if (node.attrs.actearly !== undefined) a.actEarly = mjcBoolAttr(node.attrs.actearly);
+    if (node.attrs.refsite) a.refSite = node.attrs.refsite;
+    if (node.attrs.slidersite) a.sliderSite = node.attrs.slidersite;
     // Engine-plugin actuator (<plugin plugin=".." instance="..">).
     if (node.attrs.plugin) a.plugin = node.attrs.plugin;
     if (node.attrs.instance) a.instance = node.attrs.instance;
@@ -1611,16 +1656,36 @@ function parseMujocoSensors(root) {
     const type = node.name;
     if (!type) continue;
     const s = { type, name: node.attrs.name || `${type}_${out.length}` };
+    const targetAliases = ['site', 'joint', 'actuator', 'tendon', 'body', 'xbody',
+      'geom', 'camera', 'light', 'sensor', 'numeric', 'text', 'tuple', 'key',
+      'plugin'];
     if (node.attrs.objtype !== undefined) {
       s.objtype = node.attrs.objtype;
       if (node.attrs.objname !== undefined) s.objname = node.attrs.objname;
     } else {
-      for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+      for (const k of targetAliases) {
         if (node.attrs[k] !== undefined) { s.objtype = k; s.objname = node.attrs[k]; break; }
       }
     }
-    if (node.attrs.reftype !== undefined) s.reftype = node.attrs.reftype;
-    if (node.attrs.refname !== undefined) s.refname = node.attrs.refname;
+    if (node.attrs.reftype !== undefined) {
+      s.reftype = node.attrs.reftype;
+      if (node.attrs.refname !== undefined) s.refname = node.attrs.refname;
+    } else {
+      for (const k of targetAliases) {
+        const refKey = `ref${k}`;
+        const camelRefKey = `ref${k[0].toUpperCase()}${k.slice(1)}`;
+        if (node.attrs[refKey] !== undefined) {
+          s.reftype = k;
+          s.refname = node.attrs[refKey];
+          break;
+        }
+        if (node.attrs[camelRefKey] !== undefined) {
+          s.reftype = k;
+          s.refname = node.attrs[camelRefKey];
+          break;
+        }
+      }
+    }
     if (node.attrs.group !== undefined) s.group = Math.round(numberAttr(node.attrs, 'group'));
     if (node.attrs.cutoff !== undefined) s.cutoff = numberAttr(node.attrs, 'cutoff');
     if (node.attrs.noise !== undefined) s.noise = numberAttr(node.attrs, 'noise');

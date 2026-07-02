@@ -92,10 +92,8 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
   } else {
     // USD allows multiple list-edit qualifiers on the same field (e.g.
     // `delete` + `prepend`). Process each present group, preserving it in
-    // `authoredOps`. Canonical apply order: delete, add, append, prepend.
-    if (arg.GetOrderedItems().size()) {
-      return nonstd::make_unexpected("TODO: Ordered apiSchemas ListOp items.");
-    }
+    // `authoredOps`. Canonical apply order: delete, add, append, prepend,
+    // order.
     struct { const std::vector<value::token>& items; ListEditQual qual; } groups[] = {
       // Some writers populate explicit items without setting the IsExplicit()
       // flag (e.g. apiSchemas round-tripped through USDC). Handle that here so
@@ -105,6 +103,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       {arg.GetAddedItems(), ListEditQual::Add},
       {arg.GetAppendedItems(), ListEditQual::Append},
       {arg.GetPrependedItems(), ListEditQual::Prepend},
+      {arg.GetOrderedItems(), ListEditQual::Order},
     };
     bool any = false;
     for (const auto &g : groups) {
@@ -210,6 +209,18 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       } else {
         PUSH_ERROR_AND_RETURN(
             "`subLayerOffsets` value must be LayerOffset[] "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+    } else if (fv.first == "relocates") {
+      // AOUSD Core Spec 10.3.2.6: layer-level relocates (Crate type 58).
+      if (auto vr =
+              fv.second.get_value<std::vector<std::pair<Path, Path>>>()) {
+        metas->layerRelocates = vr.value();
+        DCOUT("relocates = " << metas->layerRelocates.size() << " pair(s)");
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`relocates` value must be SdfRelocates "
             "type, but got '" +
             fv.second.type_name() + "'");
       }
@@ -411,6 +422,13 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Model, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Scope, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Volume, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(OpenVDBAsset, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Field3DAsset, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(RenderSettings, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(RenderProduct, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(RenderVar, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GenerativeProcedural, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Volume, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(FieldAsset, typeName, prim_name, spec)

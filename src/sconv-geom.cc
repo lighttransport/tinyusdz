@@ -1541,8 +1541,8 @@ bool CrateWriter::ExtractBlendShapeProperties(
     }
   }
 
-  // TODO: Handle inbetween blend shapes (stored in props with "inbetweens:" namespace)
-  // For now, just extract basic properties
+  // In-between blend shapes are namespaced attributes stored in BlendShape::props.
+  // ConvertSinglePrim emits them through the generic props-map path.
 
   return true;
 }

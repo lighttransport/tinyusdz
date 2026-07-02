@@ -17,11 +17,47 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "value-types.hh"
+#include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
 #include "common-macros.inc"
 
 namespace tinyusdz {
 namespace value {
+
+// Print literal element `idx` of a VtArrayEdit's type-erased literals array,
+// for the OpenUSD `edit [...]` textual form.
+static void PrintArrayEditLiteral(std::ostream& os, const Value& lits,
+                                  int64_t idx) {
+#define PE_NUM(T)                                                  \
+  if (auto* p = lits.as<std::vector<T>>()) {                       \
+    if (idx >= 0 && static_cast<size_t>(idx) < p->size())          \
+      os << (*p)[static_cast<size_t>(idx)];                        \
+    else                                                           \
+      os << "<?>";                                                 \
+    return;                                                        \
+  }
+  PE_NUM(int32_t) PE_NUM(int64_t) PE_NUM(uint32_t) PE_NUM(uint64_t)
+  PE_NUM(float) PE_NUM(double)
+  PE_NUM(value::float2) PE_NUM(value::float3) PE_NUM(value::float4)
+  PE_NUM(value::double2) PE_NUM(value::double3) PE_NUM(value::double4)
+  PE_NUM(value::int2) PE_NUM(value::int3) PE_NUM(value::int4)
+#undef PE_NUM
+  if (auto* p = lits.as<std::vector<std::string>>()) {
+    if (idx >= 0 && static_cast<size_t>(idx) < p->size())
+      os << '"' << (*p)[static_cast<size_t>(idx)] << '"';
+    else
+      os << "<?>";
+    return;
+  }
+  if (auto* p = lits.as<std::vector<value::token>>()) {
+    if (idx >= 0 && static_cast<size_t>(idx) < p->size())
+      os << '"' << (*p)[static_cast<size_t>(idx)].str() << '"';
+    else
+      os << "<?>";
+    return;
+  }
+  os << "<?>";
+}
 
 // Simple brute-force way..
 // TODO: Use std::function or some template technique?
@@ -33,8 +69,22 @@ namespace value {
   __FUNC(half2)                \
   __FUNC(half3)                \
   __FUNC(half4)                \
+  __FUNC(int16_t)              \
+  __FUNC(uint16_t)             \
   __FUNC(int32_t)              \
   __FUNC(uint32_t)             \
+  __FUNC(char2)                \
+  __FUNC(char3)                \
+  __FUNC(char4)                \
+  __FUNC(uchar2)               \
+  __FUNC(uchar3)               \
+  __FUNC(uchar4)               \
+  __FUNC(short2)               \
+  __FUNC(short3)               \
+  __FUNC(short4)               \
+  __FUNC(ushort2)              \
+  __FUNC(ushort3)              \
+  __FUNC(ushort4)              \
   __FUNC(int2)                 \
   __FUNC(int3)                 \
   __FUNC(int4)                 \
@@ -205,6 +255,25 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
 
+    case TypeTraits<value::PathExpression>::type_id(): {
+      auto p = v.as<value::PathExpression>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: pathExpression type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<std::vector<value::PathExpression>>::type_id(): {
+      auto p = v.as<std::vector<value::PathExpression>>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: pathExpression[] type TypeId mismatch.]";
+      }
+      break;
+    }
+
     case TypeTraits<value::token>::type_id(): {
       auto p = v.as<value::token>();
       if (p) {
@@ -241,7 +310,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<value::StringData>::type_id(): {
       auto p = v.as<value::StringData>();
       if (p) {
-        os << (*p);  // FIXME: Call buildEscapedAndQuotedStringForUSDA() here?
+        os << buildEscapedAndQuotedStringForUSDA(p->value);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -270,6 +339,30 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
     // uchar (uint8_t) needs special handling: os << uint8_t prints as char
+    case TypeTraits<char>::type_id(): {
+      auto p = v.as<char>();
+      if (p) {
+        os << static_cast<int>(*p);
+      } else {
+        os << "[InternalError: char TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<std::vector<char>>::type_id(): {
+      if (auto p = v.as<std::vector<char>>()) {
+        os << "[";
+        for (size_t i = 0; i < p->size(); ++i) {
+          if (i) {
+            os << ", ";
+          }
+          os << static_cast<int>((*p)[i]);
+        }
+        os << "]";
+      } else {
+        os << "[InternalError: char[] TypeId mismatch.]";
+      }
+      break;
+    }
     case TypeTraits<uint8_t>::type_id(): {
       auto p = v.as<uint8_t>();
       if (p) {
@@ -294,6 +387,92 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       } else {
         os << "[InternalError: ValueBlock type TypeId mismatch.]";
       }
+      break;
+    }
+    case TypeTraits<value::AnimationBlock>::type_id(): {
+      if (v.as<value::AnimationBlock>()) {
+        os << "AnimationBlock";
+      } else {
+        os << "[InternalError: AnimationBlock type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<value::ArrayEdit>::type_id(): {
+      const value::ArrayEdit* ae = v.as<value::ArrayEdit>();
+      if (!ae) {
+        os << "[InternalError: ArrayEdit type TypeId mismatch.]";
+        break;
+      }
+      // OpenUSD `edit [<op>; <op>; ...]` form (see Vt_ArrayEditStreamImpl).
+      os << "edit [";
+      const std::vector<int64_t>& ins = ae->ops;
+      auto idxstr = [&](int64_t x) { os << '[' << x << ']'; };
+      size_t i = 0;
+      size_t emitted = 0;
+      while (i < ins.size()) {
+        const value::ArrayEditOp op = value::ArrayEditWordOp(ins[i]);
+        const int64_t count = value::ArrayEditWordCount(ins[i]);
+        ++i;
+        const int arity = value::ArrayEditOpArity(op);
+        for (int64_t c = 0; c < count; c++) {
+          if (i + static_cast<size_t>(arity) > ins.size()) {
+            i = ins.size();
+            break;
+          }
+          const int64_t a1 = ins[i++];
+          const int64_t a2 = (arity == 2) ? ins[i++] : 0;
+          if (emitted++) os << "; ";
+          switch (op) {
+            case value::ArrayEditOp::WriteLiteral:
+              os << "write "; PrintArrayEditLiteral(os, ae->literals, a1);
+              os << " to "; idxstr(a2);
+              break;
+            case value::ArrayEditOp::WriteRef:
+              os << "write "; idxstr(a1); os << " to "; idxstr(a2);
+              break;
+            case value::ArrayEditOp::InsertLiteral:
+              if (a2 == 0) {
+                os << "prepend "; PrintArrayEditLiteral(os, ae->literals, a1);
+              } else if (a2 == value::kArrayEditEndIndex) {
+                os << "append "; PrintArrayEditLiteral(os, ae->literals, a1);
+              } else {
+                os << "insert "; PrintArrayEditLiteral(os, ae->literals, a1);
+                os << " at "; idxstr(a2);
+              }
+              break;
+            case value::ArrayEditOp::InsertRef:
+              if (a2 == 0) {
+                os << "prepend "; idxstr(a1);
+              } else if (a2 == value::kArrayEditEndIndex) {
+                os << "append "; idxstr(a1);
+              } else {
+                os << "insert "; idxstr(a1); os << " at "; idxstr(a2);
+              }
+              break;
+            case value::ArrayEditOp::EraseRef:
+              os << "erase "; idxstr(a1);
+              break;
+            case value::ArrayEditOp::MinSize:
+              os << "minsize " << a1;
+              break;
+            case value::ArrayEditOp::MinSizeFill:
+              os << "minsize " << a1 << " fill ";
+              PrintArrayEditLiteral(os, ae->literals, a2);
+              break;
+            case value::ArrayEditOp::SetSize:
+              os << "resize " << a1;
+              break;
+            case value::ArrayEditOp::SetSizeFill:
+              os << "resize " << a1 << " fill ";
+              PrintArrayEditLiteral(os, ae->literals, a2);
+              break;
+            case value::ArrayEditOp::MaxSize:
+              os << "maxsize " << a1;
+              break;
+          }
+        }
+      }
+      os << "]";
       break;
     }
     // TODO: List-up all case and remove `default` clause.

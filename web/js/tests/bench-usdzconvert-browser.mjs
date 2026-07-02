@@ -11,7 +11,8 @@
 //   node tests/bench-usdzconvert-browser.mjs --sw --scene <dir> --root <rel> \
 //     --case browser:png:1024 --case wasm:png:1024
 //
-// Each --case is codec:textureFormat:resize (codec = browser|wasm).
+// Each --case is codec:textureFormat:resize
+// (codec = browser|wasm, optionally prefixed with stream- or stream-next-).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +27,7 @@ const WEB_JS_DIR = path.resolve(SCRIPT_DIR, '..');
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = {
     scenes: [],   // { dir, root }
-    cases: [],    // { codec, textureFormat, resize }
+    cases: [],    // { codec, pipeline, textureFormat, resize }
     out: path.join(SCRIPT_DIR, 'bench-usdzconvert'),
     port: 5191,
     hw: false,
@@ -36,6 +37,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     wasm64: true,
     concurrency: 8,
     jpegQuality: 90,
+    includeUnusedTextures: false,
     maxUsdcMb: 0,
     maxMemMb: 0,
   };
@@ -50,13 +52,14 @@ function parseArgs(argv = process.argv.slice(2)) {
       pendingDir = null;
     }
     else if (a === '--case') {
-      // codec:format:resize. codec may carry a "stream-" prefix to use the
-      // lazy streaming pipeline (textures fetched/processed/zip-appended one
-      // at a time) instead of the in-memory folder upload.
+      // codec:format:resize. codec may carry a "stream-" or "stream-next-"
+      // prefix to use the lazy streaming source path instead of the in-memory
+      // folder upload.
       let [codec, textureFormat, resize] = argv[++i].split(':');
       let pipeline = 'memory';
+      if (codec.startsWith('stream-next-')) { pipeline = 'stream-next'; codec = codec.slice(12); }
       if (codec.startsWith('stream-')) { pipeline = 'stream'; codec = codec.slice(7); }
-      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be [stream-]browser|wasm (got ${codec})`);
+      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be [stream-|stream-next-]browser|wasm (got ${codec})`);
       opts.cases.push({ codec, pipeline, textureFormat: textureFormat || 'keep', resize: Number(resize || 0) });
     }
     else if (a === '--out') opts.out = path.resolve(argv[++i]);
@@ -68,6 +71,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--wasm32') opts.wasm64 = false;
     else if (a === '--concurrency') opts.concurrency = Number(argv[++i]);
     else if (a === '--jpeg-quality') opts.jpegQuality = Number(argv[++i]);
+    else if (a === '--include-unused-textures') opts.includeUnusedTextures = true;
     else if (a === '--max-usdc-mb') opts.maxUsdcMb = Number(argv[++i]);
     else if (a === '--max-mem-mb') opts.maxMemMb = Number(argv[++i]);
     else throw new Error(`Unknown option: ${a}`);
@@ -90,15 +94,17 @@ function printHelp() {
 
 Options:
   --scene <dir> --root <rel>   Scene folder + root USD (repeatable, in pairs)
-  --case codec:fmt:resize      [stream-]browser|wasm : png|jpeg|keep : N
-                               (repeatable; "stream-" prefix = lazy streaming
-                               pipeline; keep:0 = passthrough)
+  --case codec:fmt:resize      [stream-|stream-next-]browser|wasm : png|jpeg|keep : N
+                               (repeatable; stream prefixes = lazy streaming
+                               pipeline; stream-next uses next flattening;
+                               keep:0 = passthrough)
                                default: wasm/browser x png/jpeg @1024
   --hw                         ANGLE/Vulkan GPU path; run under xvfb-run -a
   --sw                         Force true-headless SwiftShader
   --headful                    Visible browser
   --wasm32                     Use the wasm32 module (default: wasm64)
   --concurrency <n>            Browser texture-processor concurrency (default 8)
+  --include-unused-textures    With stream-next, package unreferenced texture files
   --max-usdc-mb <n>            Raise USDC writer size cap (0 = conservative default;
                                2048 = cross-browser-safe 2 GB ceiling)
   --max-mem-mb <n>             Raise USDC writer memory cap (0 = default)
@@ -214,6 +220,7 @@ async function runCase(browser, baseUrl, manifestUrl, scene, kase, opts) {
       wasm64: opts.wasm64 ? '1' : '0',
       concurrency: String(opts.concurrency),
       jpegQuality: String(opts.jpegQuality),
+      includeUnusedTextures: opts.includeUnusedTextures ? '1' : '0',
       maxUsdcMb: String(opts.maxUsdcMb),
       maxMemMb: String(opts.maxMemMb),
     });
@@ -288,7 +295,8 @@ async function main() {
       console.log(`\n== ${sceneName} (${manifest.length} files) root=${scene.root}`);
 
       for (const kase of opts.cases) {
-        const label = `${kase.pipeline === 'stream' ? 'stream-' : ''}${kase.codec}:${kase.textureFormat}:${kase.resize}`;
+        const prefix = kase.pipeline === 'stream-next' ? 'stream-next-' : (kase.pipeline === 'stream' ? 'stream-' : '');
+        const label = `${prefix}${kase.codec}:${kase.textureFormat}:${kase.resize}`;
         process.stdout.write(`  ...   ${label}`);
         // eslint-disable-next-line no-await-in-loop
         const res = await runCase(browser, baseUrl, manifestUrl, scene, kase, opts);

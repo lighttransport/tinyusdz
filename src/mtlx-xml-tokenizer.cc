@@ -446,7 +446,12 @@ bool XMLTokenizer::NextToken(Token& token) {
     if (ParseAttribute(token)) {
       return true;
     }
-    // ParseAttribute returns false when tag closes, continue to next token
+    // ParseAttribute returns false when a non-self-closing start tag consumes
+    // its closing '>'. Return an empty text sentinel so callers that are
+    // parsing attributes do not accidentally consume the first content token.
+    token.type = TokenType::Text;
+    token.value.clear();
+    return true;
   }
   
   // Skip whitespace between tags

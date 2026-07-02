@@ -188,7 +188,11 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
     </body>
   </worldbody>
   <tendon>
-    <fixed name="couple" stiffness="120" damping="3" range="-1 1">
+    <fixed name="couple" stiffness="120" damping="3" armature="0.02"
+           frictionloss="0.1" margin="0.01" group="2" limited="true"
+           actuatorfrclimited="false" range="-1 1"
+           actuatorfrcrange="-4 5" springlength="0.2 0.8"
+           solreflimit="0.03 1.1" solimplimit="0.8 0.9 0.01 0.5 2">
       <joint joint="jl" coef="1"/>
       <joint joint="jr" coef="-1"/>
     </fixed>
@@ -209,6 +213,18 @@ await testAsync('MJCF tendon / equality / contact-exclude / fullinertia -> paylo
     assert.equal(payload.tendons[0].joints[0].coef, 1);
     assert.equal(payload.tendons[0].joints[1].coef, -1);
     assert.equal(payload.tendons[0].stiffness, 120);
+    assert.equal(payload.tendons[0].damping, 3);
+    assert.equal(payload.tendons[0].armature, 0.02);
+    assert.equal(payload.tendons[0].frictionloss, 0.1);
+    assert.equal(payload.tendons[0].margin, 0.01);
+    assert.equal(payload.tendons[0].group, 2);
+    assert.equal(payload.tendons[0].limited, 'true');
+    assert.equal(payload.tendons[0].actuatorfrclimited, 'false');
+    assert.deepEqual(payload.tendons[0].range, [-1, 1]);
+    assert.deepEqual(payload.tendons[0].actuatorfrcrange, [-4, 5]);
+    assert.deepEqual(payload.tendons[0].springlength, [0.2, 0.8]);
+    assert.deepEqual(payload.tendons[0].solreflimit, [0.03, 1.1]);
+    assert.deepEqual(payload.tendons[0].solimplimit, [0.8, 0.9, 0.01, 0.5, 2]);
     // Equality
     assert.equal(payload.equalities.length, 2);
     const mirror = payload.equalities.find((e) => e.name === 'mirror');
@@ -301,11 +317,12 @@ await testAsync('MJCF <sensor> -> sensors payload', async () => {
   <sensor>
     <gyro name="g" site="imu" cutoff="34.9" noise="0.01"/>
     <jointpos name="jp" joint="j"/>
-    <framepos name="fp" objtype="body" objname="b" reftype="body" refname="world"/>
+    <framepos name="fp" body="b" refsite="imu" group="4" user="1 2 3"/>
+    <tendonvel name="tv" tendon="t0"/>
   </sensor>
 </mujoco>`;
     const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
-    assert.equal(payload.sensors.length, 3);
+    assert.equal(payload.sensors.length, 4);
     const g = payload.sensors.find((s) => s.name === 'g');
     assert.equal(g.type, 'gyro');
     assert.equal(g.objtype, 'site');
@@ -316,8 +333,16 @@ await testAsync('MJCF <sensor> -> sensors payload', async () => {
     assert.equal(jp.objtype, 'joint');
     const fp = payload.sensors.find((s) => s.name === 'fp');
     assert.equal(fp.type, 'framepos');
-    assert.equal(fp.reftype, 'body');
-    assert.equal(fp.refname, 'world');
+    assert.equal(fp.objtype, 'body');
+    assert.equal(fp.objname, 'b');
+    assert.equal(fp.reftype, 'site');
+    assert.equal(fp.refname, 'imu');
+    assert.equal(fp.group, 4);
+    assert.deepEqual(fp.user, [1, 2, 3]);
+    const tv = payload.sensors.find((s) => s.name === 'tv');
+    assert.equal(tv.type, 'tendonvel');
+    assert.equal(tv.objtype, 'tendon');
+    assert.equal(tv.objname, 't0');
   });
 });
 
@@ -429,9 +454,11 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
     <body name="pelvis">
       <site name="m_p1" pos="0 0 0.1"/>
       <geom type="sphere" size="0.05"/>
+      <site name="ref_site" pos="0.02 0 0"/>
       <body name="femur" pos="0 0 -0.3">
         <joint name="hip" type="hinge" axis="0 1 0"/>
         <site name="m_p2" pos="0.05 0 -0.2"/>
+        <site name="slider_site" pos="0.02 0 -0.1"/>
         <geom type="capsule" fromto="0 0 0 0 0 -0.4" size="0.04"/>
       </body>
     </body>
@@ -439,17 +466,25 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
   <tendon>
     <spatial name="glute_tendon" stiffness="10">
       <site site="m_p1"/>
+      <pulley divisor="2.5"/>
       <site site="m_p2"/>
     </spatial>
   </tendon>
   <actuator>
     <general name="glute" class="muscle" tendon="glute_tendon"
-             lengthrange="0.18 0.29" gainprm="0.75 1.05 916.8" biasprm="0.75 1.05 916.8" ctrlrange="0 1"/>
+             lengthrange="0.18 0.29" gainprm="0.75 1.05 916.8"
+             biasprm="0.75 1.05 916.8" dynprm="0.01 0.02"
+             ctrlrange="0 1" forcerange="-2 3" actrange="-0.5 0.5"
+             gaintype="muscle" biastype="muscle" dyntype="filter"
+             ctrllimited="true" forcelimited="false" actlimited="auto"
+             group="4" actdim="2" cranklength="0.1" inheritrange="0.4"
+             jointinparent="true" actearly="true"
+             refsite="ref_site" slidersite="slider_site"/>
   </actuator>
 </mujoco>`;
     const { payload } = await buildMujocoPayload(xml, { assetDirs: [dir], upAxis: 'Z' }, dir);
     // Sites (with baked world matrices)
-    assert.equal(payload.sites.length, 2);
+    assert.equal(payload.sites.length, 4);
     assert.ok(payload.sites.find((s) => s.name === 'm_p1'));
     assert.ok(payload.sites.find((s) => s.name === 'm_p2'));
     assert.equal(payload.sites[0].matrix.length, 16);
@@ -458,11 +493,30 @@ await testAsync('MJCF spatial (muscle) tendon + sites + muscle actuator -> paylo
     assert.equal(payload.tendons[0].type, 'spatial');
     assert.equal(payload.tendons[0].path.length, 2);
     assert.equal(payload.tendons[0].path[0].site, 'm_p1');
+    assert.deepEqual(payload.tendons[0].routeDivisors, [2.5]);
     // Muscle actuator targeting the tendon
     assert.equal(payload.mjcActuators.length, 1);
     assert.equal(payload.mjcActuators[0].targetTendon, 'glute_tendon');
     assert.deepEqual(payload.mjcActuators[0].gainPrm, [0.75, 1.05, 916.8]);
+    assert.deepEqual(payload.mjcActuators[0].biasPrm, [0.75, 1.05, 916.8]);
+    assert.deepEqual(payload.mjcActuators[0].dynPrm, [0.01, 0.02]);
     assert.deepEqual(payload.mjcActuators[0].lengthRange, [0.18, 0.29]);
+    assert.deepEqual(payload.mjcActuators[0].forceRange, [-2, 3]);
+    assert.deepEqual(payload.mjcActuators[0].actRange, [-0.5, 0.5]);
+    assert.equal(payload.mjcActuators[0].gainType, 'muscle');
+    assert.equal(payload.mjcActuators[0].biasType, 'muscle');
+    assert.equal(payload.mjcActuators[0].dynType, 'filter');
+    assert.equal(payload.mjcActuators[0].ctrlLimited, 'true');
+    assert.equal(payload.mjcActuators[0].forceLimited, 'false');
+    assert.equal(payload.mjcActuators[0].actLimited, 'auto');
+    assert.equal(payload.mjcActuators[0].group, 4);
+    assert.equal(payload.mjcActuators[0].actDim, 2);
+    assert.equal(payload.mjcActuators[0].crankLength, 0.1);
+    assert.equal(payload.mjcActuators[0].inheritRange, 0.4);
+    assert.equal(payload.mjcActuators[0].jointInParent, true);
+    assert.equal(payload.mjcActuators[0].actEarly, true);
+    assert.equal(payload.mjcActuators[0].refSite, 'ref_site');
+    assert.equal(payload.mjcActuators[0].sliderSite, 'slider_site');
   });
 });
 

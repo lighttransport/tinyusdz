@@ -204,41 +204,41 @@ bool CrateWriter::ExtractPhysicsSceneProperties(
 #define EXTRACT_JOINT_BASE(j) do { \
   EXTRACT_REL((j).body0, "physics:body0"); \
   EXTRACT_REL((j).body1, "physics:body1"); \
-  EXTRACT_TYPED((j).localPos0, "physics:localPos0"); \
-  EXTRACT_TYPED((j).localPos1, "physics:localPos1"); \
-  EXTRACT_TYPED((j).localRot0, "physics:localRot0"); \
-  EXTRACT_TYPED((j).localRot1, "physics:localRot1"); \
-  EXTRACT_TYPED((j).jointEnabled, "physics:jointEnabled"); \
-  EXTRACT_TYPED((j).collisionEnabled, "physics:collisionEnabled"); \
-  EXTRACT_TYPED((j).breakForce, "physics:breakForce"); \
-  EXTRACT_TYPED((j).breakTorque, "physics:breakTorque"); \
-  EXTRACT_TYPED((j).excludeFromArticulation, "physics:excludeFromArticulation"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).localPos0, "physics:localPos0"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).localPos1, "physics:localPos1"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).localRot0, "physics:localRot0"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).localRot1, "physics:localRot1"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).jointEnabled, "physics:jointEnabled"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).collisionEnabled, "physics:collisionEnabled"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).breakForce, "physics:breakForce"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).breakTorque, "physics:breakTorque"); \
+  EXTRACT_FALLBACK_IF_AUTHORED((j).excludeFromArticulation, "physics:excludeFromArticulation"); \
   /* MjcJointAPI mirror: the reconstruct path consumes mjc:* into a typed   \
    * MjcJointAPI struct and removes them from `props`, so the generic       \
    * props-map iteration in stage-converter.cc never sees them. Re-emit     \
    * here so USDC round-trip preserves the values for downstream consumers  \
    * (MuJoCo / Genesis / Newton / PhysX schema mirror). Only emit when the  \
    * API schema is actually attached.                                       \
-   */ \
+  */ \
   if ((j).mjcJoint.has_value()) { \
     const auto &_m = (j).mjcJoint.value(); \
-    EXTRACT_FALLBACK(_m.group, "mjc:group"); \
-    EXTRACT_FALLBACK(_m.stiffness, "mjc:stiffness"); \
-    EXTRACT_FALLBACK(_m.damping, "mjc:damping"); \
-    EXTRACT_FALLBACK(_m.armature, "mjc:armature"); \
-    EXTRACT_FALLBACK(_m.frictionloss, "mjc:frictionloss"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.group, "mjc:group"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.stiffness, "mjc:stiffness"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.damping, "mjc:damping"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.armature, "mjc:armature"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.frictionloss, "mjc:frictionloss"); \
     EXTRACT_TYPED(_m.springdamper, "mjc:springdamper"); \
-    EXTRACT_FALLBACK(_m.springref, "mjc:springref"); \
-    EXTRACT_FALLBACK(_m.ref, "mjc:ref"); \
-    EXTRACT_FALLBACK(_m.margin, "mjc:margin"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.springref, "mjc:springref"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.ref, "mjc:ref"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.margin, "mjc:margin"); \
     EXTRACT_TYPED(_m.solreflimit, "mjc:solreflimit"); \
     EXTRACT_TYPED(_m.solimplimit, "mjc:solimplimit"); \
     EXTRACT_TYPED(_m.solreffriction, "mjc:solreffriction"); \
     EXTRACT_TYPED(_m.solimpfriction, "mjc:solimpfriction"); \
-    EXTRACT_FALLBACK(_m.actuatorfrcrange_min, "mjc:actuatorfrcrange:min"); \
-    EXTRACT_FALLBACK(_m.actuatorfrcrange_max, "mjc:actuatorfrcrange:max"); \
-    EXTRACT_TOKEN_FALLBACK(_m.actuatorfrclimited, "mjc:actuatorfrclimited"); \
-    EXTRACT_FALLBACK(_m.actuatorgravcomp, "mjc:actuatorgravcomp"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.actuatorfrcrange_min, "mjc:actuatorfrcrange:min"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.actuatorfrcrange_max, "mjc:actuatorfrcrange:max"); \
+    EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(_m.actuatorfrclimited, "mjc:actuatorfrclimited"); \
+    EXTRACT_FALLBACK_IF_AUTHORED(_m.actuatorgravcomp, "mjc:actuatorgravcomp"); \
   } \
   if ((j).newtonMimic.has_value()) { \
     const auto &_n = (j).newtonMimic.value(); \
@@ -338,13 +338,13 @@ bool CrateWriter::ExtractMjcActuatorProperties(
     crate::FieldValuePairVector &fields, std::string *err) {
   const MjcActuator *a = prim.data().as<MjcActuator>();
   if (!a) { if (err) *err = "Failed to cast to MjcActuator"; return false; }
-  EXTRACT_FALLBACK(a->group, "mjc:group");
+  EXTRACT_FALLBACK_IF_AUTHORED(a->group, "mjc:group");
   EXTRACT_REL(a->target, "mjc:target");
   EXTRACT_REL(a->refSite, "mjc:refSite");
   EXTRACT_REL(a->sliderSite, "mjc:sliderSite");
-  EXTRACT_TOKEN_FALLBACK(a->dynType, "mjc:dynType");
-  EXTRACT_TOKEN_FALLBACK(a->gainType, "mjc:gainType");
-  EXTRACT_TOKEN_FALLBACK(a->biasType, "mjc:biasType");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->dynType, "mjc:dynType");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->gainType, "mjc:gainType");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(a->biasType, "mjc:biasType");
   // The remaining typed attributes were previously dropped on USDC write (only
   // group/target/dyn/gain/bias above survived), losing ctrlRange/forceRange/
   // gainPrm/biasPrm/gear/lengthRange/etc. through a crate round-trip. Emit each
@@ -402,11 +402,33 @@ bool CrateWriter::ExtractMjcTendonProperties(
     crate::FieldValuePairVector &fields, std::string *err) {
   const MjcTendon *t = prim.data().as<MjcTendon>();
   if (!t) { if (err) *err = "Failed to cast to MjcTendon"; return false; }
-  EXTRACT_TOKEN_FALLBACK(t->type, "mjc:type");
-  EXTRACT_FALLBACK(t->group, "mjc:group");
-  EXTRACT_FALLBACK(t->stiffness, "mjc:stiffness");
-  EXTRACT_FALLBACK(t->damping, "mjc:damping");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(t->type, "mjc:type");
   EXTRACT_REL(t->path, "mjc:path");
+  EXTRACT_REL(t->sideSites, "mjc:sideSites");
+  EXTRACT_TYPED(t->path_indices, "mjc:path:indices");
+  EXTRACT_TYPED(t->sideSites_indices, "mjc:sideSites:indices");
+  EXTRACT_TYPED(t->path_segments, "mjc:path:segments");
+  EXTRACT_TYPED(t->path_divisors, "mjc:path:divisors");
+  EXTRACT_TYPED(t->path_coef, "mjc:path:coef");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->group, "mjc:group");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(t->limited, "mjc:limited");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(t->actuatorfrclimited, "mjc:actuatorfrclimited");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->range_min, "mjc:range:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->range_max, "mjc:range:max");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->actuatorfrcrange_min, "mjc:actuatorfrcrange:min");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->actuatorfrcrange_max, "mjc:actuatorfrcrange:max");
+  EXTRACT_TYPED(t->solreflimit, "mjc:solreflimit");
+  EXTRACT_TYPED(t->solimplimit, "mjc:solimplimit");
+  EXTRACT_TYPED(t->solreffriction, "mjc:solreffriction");
+  EXTRACT_TYPED(t->solimpfriction, "mjc:solimpfriction");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->margin, "mjc:margin");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->frictionloss, "mjc:frictionloss");
+  EXTRACT_TYPED(t->springlength, "mjc:springlength");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->stiffness, "mjc:stiffness");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->damping, "mjc:damping");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->armature, "mjc:armature");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->width, "mjc:width");
+  EXTRACT_FALLBACK_IF_AUTHORED(t->rgba, "mjc:rgba");
   return true;
 }
 
@@ -430,14 +452,14 @@ bool CrateWriter::ExtractMjcSensorProperties(
     crate::FieldValuePairVector &fields, std::string *err) {
   const MjcSensor *s = prim.data().as<MjcSensor>();
   if (!s) { if (err) *err = "Failed to cast to MjcSensor"; return false; }
-  EXTRACT_TOKEN_FALLBACK(s->type, "mjc:type");
-  EXTRACT_TOKEN_FALLBACK(s->objType, "mjc:objtype");
-  EXTRACT_TOKEN_FALLBACK(s->objName, "mjc:objname");
-  EXTRACT_TOKEN_FALLBACK(s->refType, "mjc:reftype");
-  EXTRACT_TOKEN_FALLBACK(s->refName, "mjc:refname");
-  EXTRACT_FALLBACK(s->group, "mjc:group");
-  EXTRACT_FALLBACK(s->cutoff, "mjc:cutoff");
-  EXTRACT_FALLBACK(s->noise, "mjc:noise");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(s->type, "mjc:type");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(s->objType, "mjc:objtype");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(s->objName, "mjc:objname");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(s->refType, "mjc:reftype");
+  EXTRACT_TOKEN_FALLBACK_IF_AUTHORED(s->refName, "mjc:refname");
+  EXTRACT_FALLBACK_IF_AUTHORED(s->group, "mjc:group");
+  EXTRACT_FALLBACK_IF_AUTHORED(s->cutoff, "mjc:cutoff");
+  EXTRACT_FALLBACK_IF_AUTHORED(s->noise, "mjc:noise");
   EXTRACT_TYPED(s->user, "mjc:user");
   (void)prim_path;
   return true;

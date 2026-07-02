@@ -1,0 +1,37 @@
+#usda 1.0
+
+def RenderSettings "settings"
+{
+    rel products = </Render/product>
+    token aspectRatioConformPolicy = "expandAperture"
+    int2 resolution = (1920, 1080)
+}
+
+def RenderProduct "product"
+{
+    token productType = "raster"
+    rel orderedVars = </Render/var>
+    asset productName = @render.exr@
+}
+
+def RenderVar "var"
+{
+    token sourceName = "Ci"
+    token dataType = "color3f"
+}
+
+def Volume "vol"
+{
+    rel field:density = </vol/density>
+}
+
+def OpenVDBAsset "density"
+{
+    asset filePath = @density.vdb@
+    token fieldName = "density"
+}
+
+def GenerativeProcedural "proc"
+{
+    token primvars:displayColor = "foo"
+}

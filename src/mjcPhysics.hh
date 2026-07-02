@@ -23,6 +23,7 @@
 /// - MjcActuator: Force transmission (actuators)
 /// - MjcTendon: Fixed and spatial tendons
 /// - MjcKeyframe: Simulation state snapshots
+/// - MjcSensor: Sensor declarations
 ///
 #pragma once
 

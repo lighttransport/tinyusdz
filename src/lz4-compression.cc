@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <limits>
 
 //
 
@@ -16,6 +17,7 @@
 
 #include "lz4-compression.hh"
 #include "common-macros.inc"
+#include "stream-reader.hh"
 
 
 
@@ -276,6 +278,61 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
     return totalDecompressed;
   }
   // unreachable.
+}
+
+size_t LZ4Compression::DecompressFromStreamReader(const StreamReader &stream,
+                                                  char *output,
+                                                  size_t compressedSize,
+                                                  size_t maxOutputSize,
+                                                  std::string *err) {
+  if (!output) {
+    if (err) {
+      (*err) = "Invalid null output buffer for LZ4 decompression.\n";
+    }
+    return 0;
+  }
+
+  const uint64_t pos = stream.tell();
+  const uint64_t input_size = stream.size();
+  if (pos > input_size) {
+    if (err) {
+      (*err) = "Invalid StreamReader position for LZ4 decompression.\n";
+    }
+    return 0;
+  }
+
+  const uint64_t remaining = input_size - pos;
+  if (compressedSize > remaining) {
+    if (err) {
+      (*err) = "LZ4 compressed data exceeds remaining StreamReader bytes.\n";
+    }
+    return 0;
+  }
+
+  if (compressedSize >
+      static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+    if (err) {
+      (*err) = "LZ4 compressed data is too large to seek over.\n";
+    }
+    return 0;
+  }
+
+  const char *compressed = reinterpret_cast<const char *>(stream.data() + pos);
+  const size_t decompressed =
+      DecompressFromBuffer(compressed, output, compressedSize, maxOutputSize,
+                           err);
+  if (decompressed == 0) {
+    return 0;
+  }
+
+  if (!stream.seek_from_current(static_cast<int64_t>(compressedSize))) {
+    if (err) {
+      (*err) = "Failed to advance StreamReader after LZ4 decompression.\n";
+    }
+    return 0;
+  }
+
+  return decompressed;
 }
 
 }  // namespace tinyusdz

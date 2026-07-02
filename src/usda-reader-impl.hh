@@ -164,6 +164,7 @@ struct PrimNode {
   value::Value prim; // stores typed Prim value. Xform, GeomMesh, ...
   std::string elementName;
   std::string typeName; // Prim's typeName
+  Specifier specifier{Specifier::Def}; // `def`, `over` or `class`
 
   int64_t parent{-1};            // -1 = root node
   //bool parent_is_variant{false}; // True when this Prim is defined under variantSet stmt.
@@ -271,6 +272,12 @@ DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY
 // usdMedia
 DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
+
+// UsdRender placeholder prim types.
+DEFINE_PRIM_TYPE(RenderSettings, "RenderSettings", value::TYPE_ID_RENDER_SETTINGS);
+DEFINE_PRIM_TYPE(RenderProduct, "RenderProduct", value::TYPE_ID_RENDER_PRODUCT);
+DEFINE_PRIM_TYPE(RenderVar, "RenderVar", value::TYPE_ID_RENDER_VAR);
+DEFINE_PRIM_TYPE(GenerativeProcedural, "GenerativeProcedural", value::TYPE_ID_GENERATIVE_PROCEDURAL);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
 
@@ -1337,6 +1344,7 @@ bool USDAReader::Impl::RegisterReconstructCallback() {
 
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
           _prim_nodes[size_t(primIdx)].typeName = primTypeName;
+          _prim_nodes[size_t(primIdx)].specifier = spec;
           _prim_nodes[size_t(primIdx)].variantNodeMap = variantSets;
 
 
@@ -1389,6 +1397,25 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
+// Explicit instantiation declarations for prim::ReconstructPrim placeholder
+// specializations defined in prim-reconstruct.cc. These keep split reader TUs
+// from instantiating from only the forward declaration under -Weverything.
+}  // namespace usda
+namespace prim {
+
+#define USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(__T) \
+  extern template bool ReconstructPrim<__T>( \
+      const Specifier &, PropertyMap &, const ReferenceList &, \
+      __T *, std::string *, std::string *, const PrimReconstructOptions &);
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderSettings)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderProduct)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderVar)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(GenerativeProcedural)
+#undef USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM
+
+}  // namespace prim
+namespace usda {
+
 
 // --- Split reconstruct: RegisterReconstructCallback<T> is instantiated across
 // usda-reader-reconstruct-{1,2,3,4}.cc. Declared extern so the RegisterReconstructCallbacks()
@@ -1424,6 +1451,10 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(Material)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Shader)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NodeGraph)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Scope)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderSettings)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderProduct)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderVar)
+USDA_EXTERN_REGISTER_RECONSTRUCT(GenerativeProcedural)
 USDA_EXTERN_REGISTER_RECONSTRUCT(SphereLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DomeLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DiskLight)

@@ -12,6 +12,12 @@ build/
 build_ninja/
 build-tinysubdiv/
 build-*/
+ref/openusd/
+ref/openusd-build/
+ref/openusd-build*/
+ref/openusd-venv/
+ref/dist/
+ref/dist*/
 web/demo/dist/
 web/site/dist/
 web/build_ninja/
@@ -380,23 +386,12 @@ CMakeUserPresets.json
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
 !tests/usda/validation/valid/*.usda
-!examples/tusdview/tests/*.usda
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
-# Symlinked-asset resolver regression fixture (subdir + a symlink payload
-# target; consumed by next_test_resolver_symlink and the usdcat --flatten
-# comparison). The symlink mesh_link.usda is itself a *.usda name.
-!tests/usda/feat-symlink-payload/*.usda
-!tests/usda/feat-symlink-payload/geo/*.usda
-# cwp-anchoring regression fixtures (variant-nested payloads + subLayer-anchored
-# references through an outer reference). Both use subdirectories.
-!tests/usda/feat-variant-payload-cwp/**/*.usda
-!tests/usda/feat-sublayer-ref-cwp/**/*.usda
-!tests/usda/feat-nested-payload-cwp/**/*.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
@@ -467,16 +462,3 @@ python/tinyusdz/_version.py
 priv/
 resume.md
 gpu-task.md
-
-# Vulkan validation-layer build (scripts/setup-vulkan-validation.ps1)
-/third_party/vulkan/
-/activate-vulkan-validation.ps1
-/third_party/spirv-cross/
-
-# Local reference checkouts (e.g. ref/SaschaWillems-Vulkan), not part of the repo.
-/ref/
-
-# Node tooling for the optional browser keyboard test (examples/tusdview/tests)
-/node_modules/
-/package.json
-/package-lock.json

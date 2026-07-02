@@ -20,12 +20,50 @@ static int pass_count = 0;
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); } while(0)
 #define SKIP(msg) do { printf("SKIP: %s\n", msg); } while(0)
 
-static const char* USDCAT_PATH = "/home/syoyo/local/USD/dist/bin/usdcat";
+static const char* kDefaultUsdcatPath = "/home/syoyo/local/USD/dist/bin/usdcat";
+
+static std::string GetUsdcatPath() {
+  const char* env = std::getenv("USDCAT_PATH");
+  if (env && env[0] != '\0') return std::string(env);
+  return std::string(kDefaultUsdcatPath);
+}
 
 static bool HasUsdcat() {
-  FILE* f = fopen(USDCAT_PATH, "rb");
+  const std::string path = GetUsdcatPath();
+  FILE* f = fopen(path.c_str(), "rb");
   if (f) { fclose(f); return true; }
   return false;
+}
+
+static std::string ShellQuote(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'') {
+      out += "'\\''";
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+}
+
+static bool RunUsdcat(std::string* output, int* exit_code, bool suppress_stderr) {
+  if (!output || !exit_code) return false;
+  output->clear();
+  std::string cmd = ShellQuote(GetUsdcatPath()) + " /tmp/test_usdcat.usdc";
+  cmd += suppress_stderr ? " 2>/dev/null" : " 2>&1";
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe) return false;
+
+  char buf[4096];
+  size_t nread;
+  while ((nread = fread(buf, 1, sizeof(buf) - 1, pipe)) > 0) {
+    buf[nread] = '\0';
+    *output += buf;
+  }
+  *exit_code = pclose(pipe);
+  return true;
 }
 
 static Stage MakeTestStage() {
@@ -93,20 +131,9 @@ void test_usdcat_parse() {
 
   TEST("usdcat parses USDC file");
 
-  // Run usdcat on our USDC file
-  std::string cmd = std::string(USDCAT_PATH) + " /tmp/test_usdcat.usdc 2>/dev/null";
-  FILE* pipe = popen(cmd.c_str(), "r");
-  if (!pipe) { FAIL("popen failed"); return; }
-
-  // Read output
   std::string output;
-  char buf[4096];
-  size_t nread;
-  while ((nread = fread(buf, 1, sizeof(buf) - 1, pipe)) > 0) {
-    buf[nread] = '\0';
-    output += buf;
-  }
-  int exit_code = pclose(pipe);
+  int exit_code = 0;
+  if (!RunUsdcat(&output, &exit_code, true)) { FAIL("popen failed"); return; }
 
   if (exit_code != 0) {
     FAIL("usdcat exited with non-zero status");
@@ -133,18 +160,9 @@ void test_usdcat_prims() {
 
   TEST("usdcat reads prim content");
 
-  std::string cmd = std::string(USDCAT_PATH) + " /tmp/test_usdcat.usdc 2>&1";
-  FILE* pipe = popen(cmd.c_str(), "r");
-  if (!pipe) { FAIL("popen failed"); return; }
-
   std::string output;
-  char buf[4096];
-  size_t nread;
-  while ((nread = fread(buf, 1, sizeof(buf) - 1, pipe)) > 0) {
-    buf[nread] = '\0';
-    output += buf;
-  }
-  pclose(pipe);
+  int exit_code = 0;
+  if (!RunUsdcat(&output, &exit_code, false)) { FAIL("popen failed"); return; }
 
   // Count prim definitions (lines starting with "def ")
   int prim_count = 0;
