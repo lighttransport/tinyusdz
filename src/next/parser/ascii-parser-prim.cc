@@ -87,7 +87,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
         tok.type == TokenType::Class) {
-      if (!ParsePrim()) {
+      if (!ParsePrimMaybeParallel()) {
         return false;
       }
       continue;

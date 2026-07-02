@@ -45,6 +45,10 @@ struct LayerLoadOptions {
   /// (attribute defaults and timeSample values). Bit-identical output.
   bool parse_async_arrays = true;
 
+  /// USDA parallel prim-subtree parse on the worker pool (semantically
+  /// identical output; tree order preserved).
+  bool parse_parallel_prims = true;
+
   /// Optional USDA parser profile accumulator.
   USDAParseProfile* usda_profile = nullptr;
 

@@ -139,7 +139,11 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       std::unique_ptr<LayerBuilder> host_builder = std::move(builder_);
       layer_ = std::move(content_layer);
       builder_ = std::move(content_builder);
+      // Guard: prims inside variant content must parse inline (subtree
+      // dispatch would attach fragment placeholders to the variant layer).
+      variant_depth_++;
       bool ok = ParsePrim();
+      variant_depth_--;
       content_layer = std::move(layer_);
       content_builder = std::move(builder_);
       layer_ = std::move(host_layer);

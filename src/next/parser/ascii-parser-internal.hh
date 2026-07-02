@@ -13,9 +13,38 @@
 #include <memory>
 #include <string>
 #include <vector>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <condition_variable>
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+/// One dispatched prim subtree, parsed by a worker into its own Layer
+/// fragment (exactly one root prim) and stitched into the main layer after
+/// the join. Object address is stable (owned via unique_ptr in the state's
+/// fragment list) so workers write through a raw pointer.
+struct SubtreeFragment {
+  std::unique_ptr<Layer> layer;
+};
+
+/// Shared state of the parallel prim-subtree parse; owned by the root parser.
+/// `fragments` is mutated by the main thread only (dispatch order = authored
+/// order = placeholder resolution order); workers touch only their own
+/// SubtreeFragment plus the counters under `mu`.
+struct SubtreeParseState {
+  std::mutex mu;
+  std::condition_variable cv;
+  size_t inflight = 0;
+  size_t max_inflight = 0;
+  bool failed = false;
+  ParseError first_error;
+  USDAParseProfile merged_profile;  // workers accumulate under mu
+  std::vector<std::unique_ptr<SubtreeFragment>> fragments;
+};
+#endif
 
 class AsciiParser::Impl {
 public:
@@ -40,12 +69,33 @@ private:
   std::unique_ptr<Layer> layer_;
   std::unique_ptr<LayerBuilder> builder_;
   size_t depth_ = 0;
+  // Nonzero while parsing prims inside a variant block (builder_ is swapped to
+  // a variant-content builder there — subtree dispatch must stay off).
+  size_t variant_depth_ = 0;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // Active only with ParseOptions::async_arrays: batches captured simple
   // numeric arrays onto the value worker pool; drained (join barrier) before
   // finalize and on every Parse() exit path (the spans die with the input).
-  std::unique_ptr<DeferredArrayScheduler> deferred_arrays_;
+  // Shared: parallel prim-subtree sub-parsers enqueue into the root's
+  // scheduler (Enqueue is thread-safe).
+  std::shared_ptr<DeferredArrayScheduler> deferred_arrays_;
+  // Active only with ParseOptions::parallel_prims on the ROOT parser: prim
+  // blocks in a size window are captured and parsed by pool workers into
+  // Layer fragments, stitched after JoinSubtreeTasks(). Null in sub-parsers.
+  std::shared_ptr<SubtreeParseState> subtree_state_;
+  // Parse one captured prim block into `fragment` (worker or inline).
+  static void RunSubtreeParse(const ParseOptions& base_options,
+                              std::shared_ptr<DeferredArrayScheduler> arrays,
+                              SubtreeParseState* st, const char* data,
+                              size_t len, size_t start_line, size_t base_depth,
+                              const std::string& parent_path,
+                              SubtreeFragment* fragment);
+  // Wait for all dispatched subtrees, merge profiles/errors, stitch fragments.
+  bool JoinSubtreeTasks();
 #endif
+  // ParsePrim, or capture the block and dispatch it to a worker when the
+  // parallel subtree parse is active and the block is in the size window.
+  bool ParsePrimMaybeParallel();
 
   // Parsing methods
   bool ParseStageMetadata();

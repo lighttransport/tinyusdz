@@ -194,6 +194,13 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 
+bool SubmitPoolTask(int num_threads, std::function<void()> task) {
+  ValueWorkerPool* pool = GetValueWorkerPool(num_threads);
+  if (!pool) return false;
+  pool->Submit(std::move(task));
+  return true;
+}
+
 // Batch shaping. Target enough text per task that the pool's mutex/condvar and
 // std::function overhead vanish against the parse work (~0.5 MB of array text
 // is roughly 1.5 ms of numeric conversion), while staying small enough that
@@ -258,11 +265,8 @@ bool DeferredArrayScheduler::failed() const {
   return shared_->failed.load(std::memory_order_relaxed);
 }
 
-void DeferredArrayScheduler::SubmitBatch() {
-  if (current_.empty()) return;
-  std::vector<DeferredArrayItem> batch;
-  batch.swap(current_);
-  current_bytes_ = 0;
+void DeferredArrayScheduler::DispatchBatch(std::vector<DeferredArrayItem> batch) {
+  if (batch.empty()) return;
 
   {
     std::unique_lock<std::mutex> lock(shared_->mu);
@@ -297,16 +301,29 @@ void DeferredArrayScheduler::SubmitBatch() {
 }
 
 void DeferredArrayScheduler::Enqueue(DeferredArrayItem item) {
-  current_bytes_ += item.len;
-  current_.push_back(std::move(item));
-  if (current_bytes_ >= kDeferredBatchTargetBytes ||
-      current_.size() >= kDeferredBatchMaxItems) {
-    SubmitBatch();
+  std::vector<DeferredArrayItem> batch;
+  {
+    std::lock_guard<std::mutex> lock(enqueue_mu_);
+    current_bytes_ += item.len;
+    current_.push_back(std::move(item));
+    if (current_bytes_ < kDeferredBatchTargetBytes &&
+        current_.size() < kDeferredBatchMaxItems) {
+      return;
+    }
+    batch.swap(current_);
+    current_bytes_ = 0;
   }
+  DispatchBatch(std::move(batch));  // outside the producer lock
 }
 
 bool DeferredArrayScheduler::Drain(std::string* error) {
-  SubmitBatch();
+  std::vector<DeferredArrayItem> batch;
+  {
+    std::lock_guard<std::mutex> lock(enqueue_mu_);
+    batch.swap(current_);
+    current_bytes_ = 0;
+  }
+  DispatchBatch(std::move(batch));
   {
     std::unique_lock<std::mutex> lock(shared_->mu);
     shared_->cv.wait(lock, [this]() { return shared_->inflight == 0; });

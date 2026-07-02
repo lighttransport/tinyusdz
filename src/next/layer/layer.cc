@@ -74,6 +74,56 @@ Layer Layer::Clone() const {
   return out;
 }
 
+void Layer::add_root_pending(uint32_t fragment_id) {
+  root_indices_.push_back(kPendingIndexBit | fragment_id);
+}
+
+uint32_t Layer::adopt_fragment(Layer&& fragment) {
+  const uint32_t offset = static_cast<uint32_t>(prims_.size());
+  // Geometric growth only — an exact-size reserve here would reallocate (and
+  // move every PrimSpec of) the main vector once per fragment: quadratic.
+  // Callers adopting many fragments pre-reserve the known total instead.
+  const size_t needed = prims_.size() + fragment.prims_.size();
+  if (prims_.capacity() < needed) {
+    prims_.reserve(std::max(needed, prims_.size() + prims_.size() / 2));
+  }
+  for (PrimSpec& p : fragment.prims_) {
+    for (uint32_t& ci : p.mutable_child_indices()) {
+      ci += offset;  // fragments contain no pending markers (workers don't split)
+    }
+    prims_.push_back(std::move(p));
+  }
+  uint32_t root = UINT32_MAX;
+  if (!fragment.root_indices_.empty()) {
+    root = fragment.root_indices_.front() + offset;
+  }
+  fragment.prims_.clear();
+  fragment.root_indices_.clear();
+  return root;
+}
+
+void Layer::resolve_pending_indices(const std::vector<uint32_t>& resolved) {
+  auto fix = [&](uint32_t& v) {
+    if (v & kPendingIndexBit) {
+      const uint32_t id = v & ~kPendingIndexBit;
+      v = (id < resolved.size()) ? resolved[id] : UINT32_MAX;
+    }
+  };
+  for (uint32_t& r : root_indices_) fix(r);
+  for (PrimSpec& p : prims_) {
+    for (uint32_t& ci : p.mutable_child_indices()) fix(ci);
+  }
+  // Drop any placeholder that failed to resolve (worker error path — the load
+  // fails anyway; this keeps the structure self-consistent for teardown).
+  root_indices_.erase(
+      std::remove(root_indices_.begin(), root_indices_.end(), UINT32_MAX),
+      root_indices_.end());
+  for (PrimSpec& p : prims_) {
+    auto& kids = p.mutable_child_indices();
+    kids.erase(std::remove(kids.begin(), kids.end(), UINT32_MAX), kids.end());
+  }
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 
@@ -209,7 +259,8 @@ uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_n
     // Build path based on parent stack.
     std::string path_str;
     if (prim_stack_.empty()) {
-      path_str.reserve(name.size() + 1);
+      path_str.reserve(path_prefix_.size() + name.size() + 1);
+      path_str = path_prefix_;  // empty for a real layer root
       path_str.push_back('/');
       path_str.append(name);
     } else {

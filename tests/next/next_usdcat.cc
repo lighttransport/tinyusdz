@@ -211,6 +211,7 @@ int main(int argc, char **argv) {
   bool timing = false;
   bool parse_profile = false;
   bool async_arrays = true;
+  bool parallel_prims = true;
   bool write_usdc_memory = false;
   USDCReadCaps read_caps;
   bool usdc_caps_explicit = false;
@@ -280,6 +281,8 @@ int main(int argc, char **argv) {
       async_arrays = true;
     } else if (std::strcmp(argv[i], "--no-async-arrays") == 0) {
       async_arrays = false;
+    } else if (std::strcmp(argv[i], "--no-parallel-prims") == 0) {
+      parallel_prims = false;
     } else if (std::strcmp(argv[i], "--parse-threads") == 0 && i + 1 < argc) {
       if (!ParseIntArg(argv[++i], &parse_threads) || parse_threads < 0) {
         std::fprintf(stderr,
@@ -377,7 +380,7 @@ int main(int argc, char **argv) {
                          "[--temp-dir <dir>] "
                          "[--no-stage-finalize] "
                          "[--timing] [--parse-profile] "
-                         "[--no-async-arrays] "
+                         "[--no-async-arrays] [--no-parallel-prims] "
                          "[--usdc-max N] "
                          "[--usdc-max-fields N] [--usdc-max-specs N] [--usdc-max-paths N] "
                          "[--usdc-max-tokens N] [--usdc-max-strings N] [--usdc-max-array-elements N] "
@@ -522,6 +525,7 @@ int main(int argc, char **argv) {
     USDAParseProfile usda_profile;
     lopts.parse_num_threads = parse_threads;
     lopts.parse_async_arrays = async_arrays;
+    lopts.parse_parallel_prims = parallel_prims;
     lopts.usda_profile = parse_profile ? &usda_profile : nullptr;
     lopts.finalize_usdc_stage = finalize_usdc_stage;
     lopts.enable_usdc_timing = timing;
