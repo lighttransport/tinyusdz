@@ -472,8 +472,8 @@ bool CrateReader::Impl::BuildStage() {
         for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
           const auto& spec = specs_[spec_i];
           if (spec.path_index.value >= paths_.size()) continue;
-          const std::string& full_path_ref = paths_[spec.path_index.value];
-          const std::string_view full_path = full_path_ref;
+          const std::string_view full_path =
+              paths_.view(spec.path_index.value);
           const bool bracketed =
               full_path.find('{') != std::string_view::npos;
 
@@ -646,8 +646,7 @@ bool CrateReader::Impl::BuildStage() {
   if (!parallel_collect_done)
   for (const auto& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) continue;
-    const std::string& full_path_ref = paths_[spec.path_index.value];
-    const std::string_view full_path = full_path_ref;
+    const std::string_view full_path = paths_.view(spec.path_index.value);
     const bool bracketed = full_path.find('{') != std::string_view::npos;
 
     if (!saw_pseudo_root && spec.spec_type == SpecType::PseudoRoot) {

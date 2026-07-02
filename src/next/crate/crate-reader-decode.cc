@@ -205,9 +205,9 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
         // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
         // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
         // (and survive repeated round-trips). Prim targets pass through as-is.
-        const std::string& p = paths_[idx];
+        const std::string_view p = paths_.view(idx);
         if (!p.empty() && p[0] == '.') {
-          std::string_view body = std::string_view(p).substr(1);  // "/a/b/prop"
+          std::string_view body = p.substr(1);  // "/a/b/prop"
           const size_t slash = body.rfind('/');
           if (slash != std::string_view::npos) {
             std::string s;
@@ -220,7 +220,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
             out.emplace_back(body);
           }
         } else {
-          out.push_back(p);  // prim path "/a/b"
+          out.emplace_back(p);  // prim path "/a/b"
         }
       }
     }
@@ -267,9 +267,9 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
       return true;
     }
 
-    const std::string& p = paths_[idx];
+    const std::string_view p = paths_.view(idx);
     if (!p.empty() && p[0] == '.') {
-      std::string_view body = std::string_view(p).substr(1);  // "/a/b/prop"
+      std::string_view body = p.substr(1);  // "/a/b/prop"
       const size_t slash = body.rfind('/');
       if (slash != std::string_view::npos) {
         std::string s;
@@ -284,7 +284,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
       return true;
     }
 
-    out.emplace_back(p);
+    out.emplace_back(std::string(p));
     return true;
   };
 
@@ -373,7 +373,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
           std::string_view prim;
           if (path_idx < paths_.size()) {
-            prim = paths_[path_idx];
+            prim = paths_.view(path_idx);
           }
 
           std::string arc;
@@ -440,7 +440,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
         std::string_view asset;
         if (!GetString(idxs[base], &asset)) return false;
         std::string_view prim;
-        if (idxs[base + 1] < paths_.size()) prim = paths_[base + 1];
+        if (idxs[base + 1] < paths_.size()) prim = paths_.view(base + 1);
 
         if (asset.empty()) {
           if (!prim.empty() && prim != "/") {

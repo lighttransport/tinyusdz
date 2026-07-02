@@ -126,7 +126,9 @@ public:
   std::vector<std::string> tokens() const;
 
   /// Get paths table
-  const std::vector<std::string>& paths() const;
+  // Materialized copy of the path table (diagnostics only; the reader stores
+  // paths pooled, see PathPool in the .cc).
+  std::vector<std::string> paths() const;
 
   /// Get fields table
   const std::vector<CrateField>& fields() const;
