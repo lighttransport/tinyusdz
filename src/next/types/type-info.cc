@@ -76,82 +76,19 @@ struct extent_t {
 };
 
 // ============================================================
-// Generic operation templates
-// ============================================================
-
-template <typename T>
-void GenericConstruct(void* dest) {
-  new (dest) T();
-}
-
-template <typename T>
-void GenericDestruct(void* obj) {
-  static_cast<T*>(obj)->~T();
-}
-
-template <typename T>
-void GenericCopy(void* dest, const void* src) {
-  *static_cast<T*>(dest) = *static_cast<const T*>(src);
-}
-
-template <typename T>
-void GenericMove(void* dest, void* src) {
-  *static_cast<T*>(dest) = static_cast<T&&>(*static_cast<T*>(src));
-}
-
-template <typename T>
-bool GenericEquals(const void* a, const void* b) {
-  return *static_cast<const T*>(a) == *static_cast<const T*>(b);
-}
-
-// POD-specific operations (faster, no constructor/destructor needed)
-template <typename T>
-void PodConstruct(void* dest) {
-  std::memset(dest, 0, sizeof(T));
-}
-
-template <typename T>
-void PodDestruct(void*) {
-  // No-op for POD types
-}
-
-template <typename T>
-void PodCopy(void* dest, const void* src) {
-  std::memcpy(dest, src, sizeof(T));
-}
-
-template <typename T>
-void PodMove(void* dest, void* src) {
-  std::memcpy(dest, src, sizeof(T));
-}
-
-template <typename T>
-bool PodEquals(const void* a, const void* b) {
-  return std::memcmp(a, b, sizeof(T)) == 0;
-}
-
-// ============================================================
 // Type info table
 // ============================================================
 
 constexpr size_t kTypeCount = static_cast<size_t>(TypeId::Count);
 
-// Macro to define POD type info entry
+// Macro to define a type info entry (identity + layout only).
 #define POD_TYPE_INFO(id_val, usd_name, cpp_name_str, type) \
-  { TypeId::id_val, usd_name, cpp_name_str, sizeof(type), alignof(type), \
-    &PodConstruct<type>, &PodDestruct<type>, &PodCopy<type>, \
-    &PodMove<type>, &PodEquals<type> }
-
-// Macro to define complex type info entry (with constructor/destructor)
-#define COMPLEX_TYPE_INFO(id_val, usd_name, cpp_name_str, type) \
-  { TypeId::id_val, usd_name, cpp_name_str, sizeof(type), alignof(type), \
-    &GenericConstruct<type>, &GenericDestruct<type>, &GenericCopy<type>, \
-    &GenericMove<type>, &GenericEquals<type> }
+  { TypeId::id_val, usd_name, cpp_name_str, sizeof(type), alignof(type) }
 
 // Static type info array - indexed directly by TypeId
 std::array<TypeInfo, kTypeCount> g_type_info = {{
   // Invalid
-  { TypeId::Invalid, nullptr, nullptr, 0, 0, nullptr, nullptr, nullptr, nullptr, nullptr },
+  { TypeId::Invalid, nullptr, nullptr, 0, 0 },
 
   // Scalars
   POD_TYPE_INFO(Bool, "bool", "bool", bool),
@@ -164,9 +101,9 @@ std::array<TypeInfo, kTypeCount> g_type_info = {{
   POD_TYPE_INFO(Double, "double", "double", double),
 
   // String types (variable size - use 0)
-  { TypeId::String, "string", "std::string", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::Token, "token", "Token", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::AssetPath, "asset", "AssetPath", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+  { TypeId::String, "string", "std::string", 0, 1 },
+  { TypeId::Token, "token", "Token", 0, 1 },
+  { TypeId::AssetPath, "asset", "AssetPath", 0, 1 },
 
   // Integer vectors
   POD_TYPE_INFO(Int2, "int2", "int2", int2),
@@ -238,15 +175,14 @@ std::array<TypeInfo, kTypeCount> g_type_info = {{
   // Special types
   POD_TYPE_INFO(TimeCode, "timecode", "TimeCode", double),
   POD_TYPE_INFO(Extent, "float3[]", "extent", extent_t),
-  { TypeId::Dictionary, "dictionary", "Dictionary", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+  { TypeId::Dictionary, "dictionary", "Dictionary", 0, 1 },
 
   // Relationship types
-  { TypeId::Relationship, "rel", "Relationship", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
-  { TypeId::Reference, "reference", "Reference", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+  { TypeId::Relationship, "rel", "Relationship", 0, 1 },
+  { TypeId::Reference, "reference", "Reference", 0, 1 },
 }};
 
 #undef POD_TYPE_INFO
-#undef COMPLEX_TYPE_INFO
 
 bool g_registry_initialized = false;
 

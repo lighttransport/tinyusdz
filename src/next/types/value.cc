@@ -5,9 +5,11 @@
 
 #include "value.hh"
 #include "type-info.hh"
+#include "token.hh"
 #include "../crate/lazy-array.hh"
 #include "../crate/crate-data-source.hh"
 
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -26,25 +28,42 @@ struct StringStorage {
   std::string value;
 };
 
-// Array types are heap-allocated and held by a std::shared_ptr in the SBO slot,
-// giving copy-on-write: copying a Value bumps the refcount (no element copy);
-// the first mutable access detaches (clones) if the buffer is shared. This is
-// the VtArray _DetachIfNotUnique pattern — the dominant composition/flatten
-// memory win for materialized (USDA / eager-crate) arrays, which previously
-// deep-copied on every compose/Clone/CopyLocalOpinions.
-struct ArrayStorageBase {
-  virtual ~ArrayStorageBase() = default;
-  virtual std::shared_ptr<ArrayStorageBase> clone() const = 0;
+// Array types are heap-allocated and held by an intrusive COW handle in the SBO
+// slot: copying a Value bumps the box refcount (no element copy); the first
+// mutable access detaches (clones) if the buffer is shared. This is the VtArray
+// _DetachIfNotUnique pattern — the dominant composition/flatten memory win for
+// materialized (USDA / eager-crate) arrays, which previously deep-copied on
+// every compose/Clone/CopyLocalOpinions.
+//
+// Intrusive-refcounted COW box for array element buffers. This is next-core
+// Value redesign step 1: it replaces `shared_ptr<ArrayBox>` (16 bytes +
+// a separate control-block allocation + a vtable) with the box's OWN atomic
+// refcount and a per-element-type function-pointer table (clone/destroy) — no
+// vtable, and an 8-byte owning handle. Semantics (VtArray-style copy-on-write)
+// are unchanged; the smaller handle is what lets the future compact Value fit an
+// array reference in a 16-byte inline payload (see doc/next-value-redesign.md).
+struct ArrayBox {
+  std::atomic<uint32_t> rc;
+  ArrayBox* (*clone_fn)(const ArrayBox*);  // deep-copy (COW detach)
+  void (*destroy_fn)(ArrayBox*);           // delete as the concrete type
+ protected:
+  ArrayBox(ArrayBox* (*c)(const ArrayBox*), void (*d)(ArrayBox*))
+      : rc(1), clone_fn(c), destroy_fn(d) {}
 };
 
 template <class T>
-struct VecArrayStorage : ArrayStorageBase {
+struct VecArrayStorage : ArrayBox {
   std::vector<T> data;
-  VecArrayStorage() = default;
-  explicit VecArrayStorage(const std::vector<T>& d) : data(d) {}
-  explicit VecArrayStorage(std::vector<T>&& d) : data(std::move(d)) {}
-  std::shared_ptr<ArrayStorageBase> clone() const override {
-    return std::make_shared<VecArrayStorage<T>>(data);
+  VecArrayStorage() : ArrayBox(&clone_impl, &destroy_impl) {}
+  explicit VecArrayStorage(const std::vector<T>& d)
+      : ArrayBox(&clone_impl, &destroy_impl), data(d) {}
+  explicit VecArrayStorage(std::vector<T>&& d)
+      : ArrayBox(&clone_impl, &destroy_impl), data(std::move(d)) {}
+  static ArrayBox* clone_impl(const ArrayBox* b) {
+    return new VecArrayStorage<T>(static_cast<const VecArrayStorage<T>*>(b)->data);
+  }
+  static void destroy_impl(ArrayBox* b) {
+    delete static_cast<VecArrayStorage<T>*>(b);
   }
 };
 
@@ -57,8 +76,50 @@ using UInt64ArrayStorage = VecArrayStorage<uint64_t>;
 using BoolArrayStorage = VecArrayStorage<uint8_t>;  // 0/1 values
 using TokenArrayStorage = VecArrayStorage<std::string>;
 
-// The SBO slot for an array Value holds this shared_ptr (placement-constructed).
-using ArrayHandle = std::shared_ptr<ArrayStorageBase>;
+inline void array_box_retain(ArrayBox* b) {
+  if (b) b->rc.fetch_add(1, std::memory_order_relaxed);
+}
+inline void array_box_release(ArrayBox* b) {
+  if (b && b->rc.fetch_sub(1, std::memory_order_acq_rel) == 1) b->destroy_fn(b);
+}
+
+// Owning, copy-on-write handle to an ArrayBox. 8 bytes (one pointer) — half the
+// size of the former shared_ptr. Mirrors just enough of the shared_ptr surface
+// (get()/operator->/use_count()/copy=retain/move) that the Value call sites are
+// unchanged; the SBO slot for an array Value holds one, placement-constructed.
+class ArrayHandle {
+ public:
+  ArrayHandle() : box_(nullptr) {}
+  // Adopts an already-refcounted box (rc == 1); does NOT bump the count.
+  explicit ArrayHandle(ArrayBox* b) : box_(b) {}
+  ArrayHandle(const ArrayHandle& o) : box_(o.box_) { array_box_retain(box_); }
+  ArrayHandle(ArrayHandle&& o) noexcept : box_(o.box_) { o.box_ = nullptr; }
+  ArrayHandle& operator=(const ArrayHandle& o) {
+    if (this != &o) { array_box_retain(o.box_); array_box_release(box_); box_ = o.box_; }
+    return *this;
+  }
+  ArrayHandle& operator=(ArrayHandle&& o) noexcept {
+    if (this != &o) { array_box_release(box_); box_ = o.box_; o.box_ = nullptr; }
+    return *this;
+  }
+  ~ArrayHandle() { array_box_release(box_); }
+  ArrayBox* get() const { return box_; }
+  ArrayBox* operator->() const { return box_; }
+  uint32_t use_count() const {
+    return box_ ? box_->rc.load(std::memory_order_acquire) : 0;
+  }
+  // COW: clone the buffer if shared, so a subsequent mutation is private.
+  void detach_if_shared() {
+    if (box_ && box_->rc.load(std::memory_order_acquire) > 1) {
+      ArrayBox* nb = box_->clone_fn(box_);  // rc == 1
+      array_box_release(box_);
+      box_ = nb;
+    }
+  }
+ private:
+  ArrayBox* box_;
+};
+
 inline ArrayHandle* ArraySlot(char* s) {
   return reinterpret_cast<ArrayHandle*>(s);
 }
@@ -68,9 +129,51 @@ inline const ArrayHandle* ArraySlot(const char* s) {
 
 // Copy-on-write: before handing out a mutable view, clone the buffer if it is
 // shared with another Value so the mutation is private.
-inline void DetachArray(char* s) {
-  ArrayHandle& h = *ArraySlot(s);
-  if (h.use_count() > 1) h = h->clone();
+inline void DetachArray(char* s) { ArraySlot(s)->detach_if_shared(); }
+
+// COW box for scalar POD payloads that exceed the (shrunk) 32-byte SBO — i.e.
+// the large matrices (matrix3f/4f/3d/4d). Value redesign step 3. Scalars have no
+// mutable accessor (they are replaced wholesale), so this is share-only COW: a
+// copy just bumps the intrusive refcount, no detach needed. `alignas(16)` makes
+// the 8-byte header round up to 16, so the payload is 16-aligned (safe for the
+// double matrices). The SBO slot holds the ScalarBox* (8 bytes).
+struct alignas(16) ScalarBox {
+  std::atomic<uint32_t> rc;
+  uint32_t size;
+  void* data() { return this + 1; }
+  const void* data() const { return this + 1; }
+};
+inline ScalarBox* scalar_box_alloc(const void* src, size_t bytes) {
+  auto* b = static_cast<ScalarBox*>(::operator new(sizeof(ScalarBox) + bytes));
+  new (&b->rc) std::atomic<uint32_t>(1);
+  b->size = static_cast<uint32_t>(bytes);
+  std::memcpy(b->data(), src, bytes);
+  return b;
+}
+inline void scalar_box_retain(ScalarBox* b) {
+  if (b) b->rc.fetch_add(1, std::memory_order_relaxed);
+}
+inline void scalar_box_release(ScalarBox* b) {
+  if (b && b->rc.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    ::operator delete(b);
+  }
+}
+inline ScalarBox*& ScalarSlot(char* s) {
+  return *reinterpret_cast<ScalarBox**>(s);
+}
+inline ScalarBox* ScalarSlot(const char* s) {
+  return *reinterpret_cast<ScalarBox* const*>(s);
+}
+
+// A scalar POD type whose payload does not fit in the SBO (only matrices today).
+// Strings/tokens/arrays/dicts have their own storage and are checked earlier, so
+// callers only apply this to the "plain POD scalar" residual.
+inline bool IsBoxedScalar(TypeId id) { return GetTypeSize(id) > Value::kSBOSize; }
+
+// Pointer to a scalar's payload: the box buffer if boxed, else inline storage.
+inline const void* scalar_data(TypeId id, const char* storage) {
+  return IsBoxedScalar(id) ? ScalarSlot(storage)->data()
+                           : static_cast<const void*>(storage);
 }
 
 // Dictionary values are held by a shared_ptr<Dict> in the SBO slot — the same
@@ -89,9 +192,12 @@ inline void DetachDict(char* s) {
   if (h.use_count() > 1) h = std::make_shared<Dict>(*h);
 }
 
-// Check if type uses string storage
+// Check if type uses string storage. NOTE: Token is NOT here — a scalar token is
+// stored as an inline 4-byte interned TfToken id (Value redesign step 2), so it
+// flows through the inline-POD copy/move/destroy paths and gets explicit
+// equality/hash/raw_bytes branches. String / AssetPath keep std::string storage.
 bool UsesStringStorage(TypeId id) {
-  return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
+  return id == TypeId::String || id == TypeId::AssetPath;
 }
 
 // Array element types stored as a flat std::vector<float> (FloatArrayStorage):
@@ -341,15 +447,15 @@ Value Value::MakeMatrix2f(const float* data) {
 
 Value Value::MakeMatrix3f(const float* data) {
   Value v;
-  v.type_id_ = TypeId::Matrix3f;
-  std::memcpy(v.storage_, data, 9 * sizeof(float));
+  v.type_id_ = TypeId::Matrix3f;  // 36 B > SBO -> boxed
+  ScalarSlot(v.storage_) = scalar_box_alloc(data, 9 * sizeof(float));
   return v;
 }
 
 Value Value::MakeMatrix4f(const float* data) {
   Value v;
-  v.type_id_ = TypeId::Matrix4f;
-  std::memcpy(v.storage_, data, 16 * sizeof(float));
+  v.type_id_ = TypeId::Matrix4f;  // 64 B > SBO -> boxed
+  ScalarSlot(v.storage_) = scalar_box_alloc(data, 16 * sizeof(float));
   return v;
 }
 
@@ -362,43 +468,46 @@ Value Value::MakeMatrix2d(const double* data) {
 
 Value Value::MakeMatrix3d(const double* data) {
   Value v;
-  v.type_id_ = TypeId::Matrix3d;
-  std::memcpy(v.storage_, data, 9 * sizeof(double));
+  v.type_id_ = TypeId::Matrix3d;  // 72 B > SBO -> boxed
+  ScalarSlot(v.storage_) = scalar_box_alloc(data, 9 * sizeof(double));
   return v;
 }
 
 Value Value::MakeMatrix4d(const double* data) {
   Value v;
-  v.type_id_ = TypeId::Matrix4d;
-  std::memcpy(v.storage_, data, 16 * sizeof(double));
+  v.type_id_ = TypeId::Matrix4d;  // 128 B > SBO -> boxed
+  ScalarSlot(v.storage_) = scalar_box_alloc(data, 16 * sizeof(double));
   return v;
 }
 
+// A scalar token is an interned TfToken (4-byte id) stored inline in the SBO —
+// dedup + O(1) compare, and no per-token std::string. as_token() returns the
+// stable table string so callers/the writer are unchanged.
 Value Value::MakeToken(const std::string& s) {
   Value v;
   v.type_id_ = TypeId::Token;
-  new (v.storage_) StringStorage{s};
+  new (v.storage_) TfToken(s);
   return v;
 }
 
 Value Value::MakeToken(const char* s) {
   Value v;
   v.type_id_ = TypeId::Token;
-  new (v.storage_) StringStorage{std::string(s ? s : "")};
+  new (v.storage_) TfToken(s);
   return v;
 }
 
 Value Value::MakeToken(std::string_view s) {
   Value v;
   v.type_id_ = TypeId::Token;
-  new (v.storage_) StringStorage{std::string(s)};
+  new (v.storage_) TfToken(s);
   return v;
 }
 
 Value Value::MakeToken(std::string&& s) {
   Value v;
   v.type_id_ = TypeId::Token;
-  new (v.storage_) StringStorage{std::move(s)};
+  new (v.storage_) TfToken(s);
   return v;
 }
 
@@ -524,7 +633,9 @@ Value Value::MakeFromRaw(TypeId type_id, const void* data) {
     new (v.storage_) StringStorage{std::string(static_cast<const char*>(data))};
   } else {
     size_t size = GetTypeSize(type_id);
-    if (size > 0 && size <= kSBOSize) {
+    if (size > kSBOSize) {
+      ScalarSlot(v.storage_) = scalar_box_alloc(data, size);  // oversized -> box
+    } else if (size > 0) {
       std::memcpy(v.storage_, data, size);
     }
   }
@@ -540,7 +651,7 @@ Value Value::MakeFloatArray(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(data));
   return v;
 }
 
@@ -549,7 +660,7 @@ Value Value::MakeFloatArray(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(std::move(data)));
   return v;
 }
 
@@ -558,7 +669,7 @@ Value Value::MakeIntArray(const std::vector<int32_t>& data) {
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(data));
+  new (v.storage_) ArrayHandle(new IntArrayStorage(data));
   return v;
 }
 
@@ -567,7 +678,7 @@ Value Value::MakeIntArray(std::vector<int32_t>&& data) {
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new IntArrayStorage(std::move(data)));
   return v;
 }
 
@@ -576,7 +687,7 @@ Value Value::MakeFloat2Array(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 2);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(data));
   return v;
 }
 
@@ -585,7 +696,7 @@ Value Value::MakeFloat2Array(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 2);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(std::move(data)));
   return v;
 }
 
@@ -594,7 +705,7 @@ Value Value::MakeFloat3Array(const std::vector<float>& data) {
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 3);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(data));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(data));
   return v;
 }
 
@@ -603,7 +714,7 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size() / 3);
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(std::move(data)));
   return v;
 }
 
@@ -611,65 +722,65 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
 Value Value::MakeDoubleArray(const std::vector<double>& data) {
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(new DoubleArrayStorage(data)); return v;
 }
 Value Value::MakeDoubleArray(std::vector<double>&& data) {
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new DoubleArrayStorage(std::move(data))); return v;
 }
 Value Value::MakeInt64Array(const std::vector<int64_t>& data) {
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(new Int64ArrayStorage(data)); return v;
 }
 Value Value::MakeInt64Array(std::vector<int64_t>&& data) {
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new Int64ArrayStorage(std::move(data))); return v;
 }
 Value Value::MakeUIntArray(const std::vector<uint32_t>& data) {
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(new UIntArrayStorage(data)); return v;
 }
 Value Value::MakeUIntArray(std::vector<uint32_t>&& data) {
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new UIntArrayStorage(std::move(data))); return v;
 }
 Value Value::MakeUInt64Array(const std::vector<uint64_t>& data) {
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(new UInt64ArrayStorage(data)); return v;
 }
 Value Value::MakeUInt64Array(std::vector<uint64_t>&& data) {
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new UInt64ArrayStorage(std::move(data))); return v;
 }
 Value Value::MakeBoolArray(const std::vector<bool>& data) {
   Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   std::vector<uint8_t> tmp(data.size());
   for (size_t i = 0; i < data.size(); i++) tmp[i] = data[i] ? 1 : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(tmp))); return v;
+  new (v.storage_) ArrayHandle(new BoolArrayStorage(std::move(tmp))); return v;
 }
 Value Value::MakeBoolArrayFromBytes(std::vector<uint8_t>&& data) {
   Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   for (uint8_t& b : data) b = b ? uint8_t{1} : uint8_t{0};
-  new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new BoolArrayStorage(std::move(data))); return v;
 }
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(data)); return v;
+  new (v.storage_) ArrayHandle(new TokenArrayStorage(data)); return v;
 }
 Value Value::MakeTokenArray(std::vector<std::string>&& data) {
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new TokenArrayStorage(std::move(data))); return v;
 }
 
 Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
@@ -680,7 +791,7 @@ Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<FloatArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new FloatArrayStorage(std::move(data)));
   return v;
 }
 
@@ -692,7 +803,7 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
   v.array_size_ = comps_per_elem
                       ? static_cast<uint32_t>(data.size() / comps_per_elem)
                       : 0;
-  new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data)));
+  new (v.storage_) ArrayHandle(new DoubleArrayStorage(std::move(data)));
   return v;
 }
 
@@ -700,10 +811,14 @@ namespace {
 
 template <class T>
 void MakeDeferredStorage(char* slot, Value::DeferredArrayFill* out_fill) {
-  auto storage = std::make_shared<VecArrayStorage<T>>();
-  out_fill->keepalive = storage;
-  out_fill->vec = &storage->data;
-  new (slot) ArrayHandle(std::move(storage));
+  auto* box = new VecArrayStorage<T>();  // rc == 1, adopted by the SBO handle
+  new (slot) ArrayHandle(box);
+  out_fill->vec = &box->data;
+  // keepalive keeps the box alive independent of the committed Value: take a
+  // second intrusive ref and release it via the type-erased shared_ptr deleter.
+  array_box_retain(box);  // rc == 2
+  out_fill->keepalive = std::shared_ptr<void>(
+      box, [](void* p) { array_box_release(static_cast<ArrayBox*>(p)); });
 }
 
 }  // namespace
@@ -781,6 +896,8 @@ void Value::destroy() {
     DictSlot(storage_)->~DictHandle();
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
+  } else if (IsBoxedScalar(type_id_)) {
+    scalar_box_release(ScalarSlot(storage_));  // COW release of the boxed matrix
   }
 
   type_id_ = TypeId::Invalid;
@@ -813,6 +930,11 @@ void Value::copy_from(const Value& other) {
     new (storage_) DictHandle(*DictSlot(other.storage_));  // refcount++ (CoW)
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{reinterpret_cast<const StringStorage*>(other.storage_)->value};
+  } else if (IsBoxedScalar(other.type_id_)) {
+    // COW: share the boxed matrix buffer (bump refcount, no element copy).
+    ScalarBox* b = ScalarSlot(other.storage_);
+    scalar_box_retain(b);
+    ScalarSlot(storage_) = b;
   } else {
     std::memcpy(storage_, other.storage_, kSBOSize);
   }
@@ -932,6 +1054,8 @@ void* Value::data_ptr() {
     DetachDict(storage_);
     return DictSlot(storage_)->get();
   }
+  // Boxed scalar (oversized matrix): return the box buffer, not the SBO pointer.
+  if (IsBoxedScalar(type_id_)) return ScalarSlot(storage_)->data();
   return storage_;
 }
 
@@ -943,6 +1067,7 @@ const void* Value::data_ptr() const {
   if (type_id_ == TypeId::Dictionary) {
     return DictSlot(storage_)->get();
   }
+  if (IsBoxedScalar(type_id_)) return ScalarSlot(storage_)->data();
   return storage_;
 }
 
@@ -990,7 +1115,8 @@ std::string* Value::as_string() {
 
 const std::string* Value::as_token() const {
   if (type_id_ != TypeId::Token || is_array_) return nullptr;
-  return &reinterpret_cast<const StringStorage*>(storage_)->value;
+  // Return the stable, table-owned interned string for the inline TfToken id.
+  return &reinterpret_cast<const TfToken*>(storage_)->str();
 }
 
 const std::string* Value::as_asset_path() const {
@@ -1073,12 +1199,12 @@ const float* Value::as_matrix2f() const {
 
 const float* Value::as_matrix3f() const {
   if (type_id_ != TypeId::Matrix3f || is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const float* Value::as_matrix4f() const {
   if (type_id_ != TypeId::Matrix4f || is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_matrix2d() const {
@@ -1088,19 +1214,19 @@ const double* Value::as_matrix2d() const {
 
 const double* Value::as_matrix3d() const {
   if (type_id_ != TypeId::Matrix3d || is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_matrix4d() const {
   if (type_id_ != TypeId::Matrix4d || is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 // Array accessors
 const std::vector<float>* Value::as_float_array() const {
   ensure_materialized();
   if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
@@ -1109,14 +1235,14 @@ std::vector<float>* Value::as_float_array() {
   dirty_ = true;
   if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
 const std::vector<int32_t>* Value::as_int_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Int || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
 
@@ -1125,72 +1251,72 @@ std::vector<int32_t>* Value::as_int_array() {
   dirty_ = true;
   if (type_id_ != TypeId::Int || !is_array_) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
 
 const std::vector<double>* Value::as_double_array() const {
   ensure_materialized();
   if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 std::vector<double>* Value::as_double_array() {
   ensure_materialized(); dirty_ = true;
   if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 const std::vector<int64_t>* Value::as_int64_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
 }
 std::vector<int64_t>* Value::as_int64_array() {
   ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
 }
 const std::vector<uint32_t>* Value::as_uint_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 std::vector<uint32_t>* Value::as_uint_array() {
   ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 const std::vector<uint64_t>* Value::as_uint64_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
 }
 std::vector<uint64_t>* Value::as_uint64_array() {
   ensure_materialized(); dirty_ = true;
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
   DetachArray(storage_);
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
 }
 const std::vector<uint8_t>* Value::as_bool_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Bool || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<BoolArrayStorage*>(ptr)->data;
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Token || !is_array_) return nullptr;
-  ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+  ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
 
@@ -1241,6 +1367,12 @@ bool Value::operator==(const Value& other) const {
     return true;
   }
 
+  if (type_id_ == TypeId::Token) {
+    // Interned: equal ids iff equal strings.
+    return reinterpret_cast<const TfToken*>(storage_)->id() ==
+           reinterpret_cast<const TfToken*>(other.storage_)->id();
+  }
+
   if (UsesStringStorage(type_id_)) {
     return reinterpret_cast<const StringStorage*>(storage_)->value ==
            reinterpret_cast<const StringStorage*>(other.storage_)->value;
@@ -1248,7 +1380,8 @@ bool Value::operator==(const Value& other) const {
 
   size_t size = GetTypeSize(type_id_);
   if (size > 0) {
-    return std::memcmp(storage_, other.storage_, size) == 0;
+    return std::memcmp(scalar_data(type_id_, storage_),
+                       scalar_data(other.type_id_, other.storage_), size) == 0;
   }
 
   return false;
@@ -1353,6 +1486,13 @@ uint64_t Value::hash() const {
     return h;
   }
 
+  // Scalar token: hash the interned id (self-consistent within a run).
+  if (type_id_ == TypeId::Token) {
+    const uint32_t id = reinterpret_cast<const TfToken*>(storage_)->id();
+    h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(&id), sizeof(id));
+    return h;
+  }
+
   // Hash string types
   if (UsesStringStorage(type_id_)) {
     const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
@@ -1362,10 +1502,11 @@ uint64_t Value::hash() const {
     return h;
   }
 
-  // Hash scalar/vector types from storage
+  // Hash scalar/vector types from storage (box buffer if the scalar is boxed).
   size_t size = GetTypeSize(type_id_);
   if (size > 0) {
-    h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(storage_), size);
+    h ^= fnv1a_hash(
+        reinterpret_cast<const uint8_t*>(scalar_data(type_id_, storage_)), size);
   }
 
   return h;
@@ -1425,6 +1566,12 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
     return nullptr;
   }
 
+  if (type_id_ == TypeId::Token) {
+    // Inline interned id (4 bytes); self-consistent for dedup within a run.
+    *out_size = sizeof(uint32_t);
+    return reinterpret_cast<const uint8_t*>(storage_);
+  }
+
   if (UsesStringStorage(type_id_)) {
     const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
     *out_size = s.size();
@@ -1434,7 +1581,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   size_t size = GetTypeSize(type_id_);
   if (size > 0) {
     *out_size = size;
-    return reinterpret_cast<const uint8_t*>(storage_);
+    return reinterpret_cast<const uint8_t*>(scalar_data(type_id_, storage_));
   }
 
   return nullptr;
