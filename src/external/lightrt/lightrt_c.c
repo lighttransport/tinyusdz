@@ -30,6 +30,14 @@
 #if defined(LRT_HAVE_SSE2)
 #include <emmintrin.h>
 #endif
+/* A64FX / ARM64: accelerate the BVH node slab test with NEON (the fp64 leaf
+ * stays the user's double-precision callback, which is the high-precision HPC
+ * custom-geometry path). NEON's 4-lane vector fits the 3-axis box test; SVE
+ * adds nothing for a single-box test, so it is intentionally not used here. */
+#if !defined(LRT_HAVE_SSE2) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+#define LRT_HAVE_NEON 1
+#include <arm_neon.h>
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* Tunables (mirror lightrt's BVHBuildConfig defaults).                      */
@@ -486,6 +494,24 @@ static inline int lrt_aabb_intersect(const float lo[3], const float hi[3],
     if (tmax_vals[0] < tmax) tmax = tmax_vals[0];
     if (tmax_vals[1] < tmax) tmax = tmax_vals[1];
     if (tmax_vals[2] < tmax) tmax = tmax_vals[2];
+#elif defined(LRT_HAVE_NEON)
+    /* NEON slab (A64FX). 4th lane neutral (0 diff, 1 invd) like the SSE2 path;
+     * only lanes 0..2 enter the reduction. */
+    float32x4_t lo_vec = {lo[0], lo[1], lo[2], 0.f};
+    float32x4_t hi_vec = {hi[0], hi[1], hi[2], 0.f};
+    float32x4_t org_vec = {org[0], org[1], org[2], 0.f};
+    float32x4_t inv_vec = {invd[0], invd[1], invd[2], 1.f};
+    float32x4_t t0 = vmulq_f32(vsubq_f32(lo_vec, org_vec), inv_vec);
+    float32x4_t t1 = vmulq_f32(vsubq_f32(hi_vec, org_vec), inv_vec);
+    _Alignas(16) float tmin_vals[4], tmax_vals[4];
+    vst1q_f32(tmin_vals, vminq_f32(t0, t1));
+    vst1q_f32(tmax_vals, vmaxq_f32(t0, t1));
+    if (tmin_vals[0] > tmin) tmin = tmin_vals[0];
+    if (tmin_vals[1] > tmin) tmin = tmin_vals[1];
+    if (tmin_vals[2] > tmin) tmin = tmin_vals[2];
+    if (tmax_vals[0] < tmax) tmax = tmax_vals[0];
+    if (tmax_vals[1] < tmax) tmax = tmax_vals[1];
+    if (tmax_vals[2] < tmax) tmax = tmax_vals[2];
 #else
     for (int a = 0; a < 3; a++) {
         float t0a = (lo[a] - org[a]) * invd[a];
@@ -759,7 +785,13 @@ void lrt_scene_clear_cancel(lrt_scene *s) {
 
 int lrt_scene_cancel_requested(const lrt_scene *s) {
     if (!s) return 0;
-    return atomic_load_explicit(&s->cancel_requested, memory_order_relaxed) ? 1 : 0;
+    /* Relaxed read of an atomic flag. Cast away const on the atomic pointer:
+     * a load does not mutate, but some C11 fronts (e.g. fcc/clang's
+     * __c11_atomic_load builtin) reject a pointer-to-const _Atomic. */
+    return atomic_load_explicit((atomic_int *)&s->cancel_requested,
+                                memory_order_relaxed)
+               ? 1
+               : 0;
 }
 
 lrt_result lrt_scene_last_result(const lrt_scene *s) {

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_ARB_shader_draw_parameters : require
 
 // Instanced flat-shaded prototype (large-scene --next path). Per-instance 3x4
 // object-to-world (instance-rate, rows = output x/y/z) at locations 3/4/5 -- the
@@ -35,19 +36,22 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   ivec4 mode;        // .x renderMode
 } fr;
-// Per-draw push constants (<= 128 B): selection highlight + ids only.
-layout(push_constant) uniform InstPushC {
-  vec4 emissive;     // xyz = selection-highlight override (else 0)
-  ivec4 ids;         // .x meshId, .y flags (bit0=geomN, bit1=dbl, 2-3=purpose, 4-6=kind)
-} pc;
+// Per-draw push constant: the base index of this draw in the DrawMeta SSBO. In
+// the per-mesh loop each draw is separate (gl_DrawIDARB == 0) so baseDraw selects
+// the mesh; in a multi-draw-indirect batch baseDraw is the batch's first slot and
+// gl_DrawIDARB walks its commands. The resolved slot is passed flat to the
+// fragment stage (gl_DrawIDARB is not available there).
+layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw
 
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec3 vColor;
 layout(location = 3) flat out int vInstanceId;
+layout(location = 4) flat out int vDrawSlot;
 
 void main() {
   vInstanceId = gl_InstanceIndex;
+  vDrawSlot = pc.draw.x + gl_DrawIDARB;
   // GPU blendshape morph (active-channel skip), before the per-instance transform.
   vec3 pos = aPos;
   if (aMorphOffsetCount.y > 0u) {
