@@ -443,6 +443,32 @@ bool CrateReader::Impl::BuildStage() {
       auto collect_range = [&](CollectChunk& lc) {
         ThreadDecodeCtx decode_ctx(*reader_);
         ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
+        // Exact-reserve the local sinks (one cheap enum scan): growth
+        // reallocations move ~136-byte AttrInfo entries and were a measurable
+        // slice of the allocator churn.
+        {
+          size_t n_prims = 0, n_attrs = 0, n_rels = 0;
+          for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
+            switch (specs_[spec_i].spec_type) {
+              case SpecType::Prim:
+              case SpecType::Variant:
+              case SpecType::VariantSet:
+                ++n_prims;
+                break;
+              case SpecType::Attribute:
+                ++n_attrs;
+                break;
+              case SpecType::Relationship:
+                ++n_rels;
+                break;
+              default:
+                break;
+            }
+          }
+          lc.prims.reserve(n_prims);
+          lc.attrs.reserve(n_attrs);
+          lc.rels.reserve(n_rels);
+        }
         for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
           const auto& spec = specs_[spec_i];
           if (spec.path_index.value >= paths_.size()) continue;
