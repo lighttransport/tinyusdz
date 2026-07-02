@@ -698,10 +698,10 @@ duplication, mesh compatibility, and hierarchy depth.
 
 GPU-backend review outcome (NVIDIA RTX 5060 Ti 16 GiB, driver-reported
 15.57 GiB device-local budget). Every row below was measured with
-`scripts/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
+`benchmark/tusdrender/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
 idle baseline — earlier "VRAM" numbers in this doc that came from RSS are
 host RAM, not VRAM). The **6 GiB rows additionally completed unchanged under
-a 10 GiB VRAM ballast** (`scripts/vram_ballast.py 10`), i.e. with only
+a 10 GiB VRAM ballast** (`benchmark/tusdrender/vram_ballast.py 10`), i.e. with only
 ~5.5 GiB of the card actually available. Cameras: island `shotCam`, caldera
 `phospate_mine_overview`. tusdview headless default 1469×1284; tusdrender
 1280×720.
