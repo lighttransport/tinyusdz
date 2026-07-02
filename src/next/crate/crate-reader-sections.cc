@@ -4,6 +4,12 @@
 // TinyUSDZ Next - USDC Crate Reader structural section readers
 
 #include "crate-reader-internal.hh"
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+#include "../parser/value-parser.hh"  // SubmitPoolTask (shared worker pool)
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#endif
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
 
@@ -336,6 +342,24 @@ bool CrateReader::Impl::ReadFields() {
     return false;
   }
 
+  // Read the value-reps payload up front (the stream cursor moves through the
+  // section sequentially) so the two independent decompressions below can be
+  // overlapped under the parallel gate.
+  uint64_t reps_size;
+  if (!reader()->read_u64(reps_size)) {
+    AddError("Failed to read reps size");
+    return false;
+  }
+  if (!CheckByteAllocation(reps_size, "Field value reps")) return false;
+
+  std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
+
+  std::vector<uint8_t> reps_data;
+  if (!reader()->read(reps_data, static_cast<size_t>(reps_size))) {
+    AddError("Failed to read value reps");
+    return false;
+  }
+
   // Try pxrUSD format (n_chunks LZ4 + delta-coded) first, fall back to legacy
   std::vector<uint32_t> token_indices_vec(static_cast<size_t>(num_fields));
   // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
@@ -350,7 +374,45 @@ bool CrateReader::Impl::ReadFields() {
     std::memcpy(indices_with_prefix.data() + 8, indices_data.data(),
                 indices_data.size());
   }
-  DecompressResult dr = DecompressCompressedU32(indices_with_prefix.data(), indices_with_prefix.size(),
+  DecompressResult dr;
+  DecompressResult rdr_pre;
+  bool rdr_pre_valid = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && num_fields >= 65536) {
+      // Token-index and value-rep payloads decompress independently: run the
+      // indices on the worker pool while this thread does the reps blob. The
+      // (retained) legacy fallbacks below stay serial and order-identical.
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      bool done = false;
+      const bool submitted = SubmitPoolTask(options_.num_threads, [&]() {
+        dr = DecompressCompressedU32(indices_with_prefix.data(),
+                                     indices_with_prefix.size(),
+                                     token_indices_vec.data(),
+                                     static_cast<size_t>(num_fields));
+        std::lock_guard<std::mutex> lock(done_mu);
+        done = true;
+        done_cv.notify_all();
+      });
+      if (submitted) {
+        rdr_pre = DecompressCrateBlob(reps_data.data(), reps_data.size(),
+                                      field_value_rep_bytes);
+        rdr_pre_valid = true;
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return done; });
+      }
+    }
+  }
+  if (!rdr_pre_valid)
+#endif
+  dr = DecompressCompressedU32(indices_with_prefix.data(), indices_with_prefix.size(),
                                                  token_indices_vec.data(),
                                                  static_cast<size_t>(num_fields));
   if (!dr.success) {
@@ -378,26 +440,13 @@ bool CrateReader::Impl::ReadFields() {
     }
   }
 
-  uint64_t reps_size;
-  if (!reader()->read_u64(reps_size)) {
-    AddError("Failed to read reps size");
-    return false;
-  }
-  if (!CheckByteAllocation(reps_size, "Field value reps")) return false;
-
-  std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
-
-  std::vector<uint8_t> reps_data;
-  if (!reader()->read(reps_data, static_cast<size_t>(reps_size))) {
-    AddError("Failed to read value reps");
-    return false;
-  }
-
   // ValueRep[] is normally TfFastCompression/LZ4-compressed bytes. Do not
   // classify by byte count alone: small OpenUSD files can have compressed size
   // equal to the uncompressed `num_fields * 8` length.
-  DecompressResult rdr = DecompressCrateBlob(
-      reps_data.data(), reps_data.size(), field_value_rep_bytes);
+  DecompressResult rdr =
+      rdr_pre_valid ? std::move(rdr_pre)
+                    : DecompressCrateBlob(reps_data.data(), reps_data.size(),
+                                          field_value_rep_bytes);
   if (rdr.success && rdr.data.size() >= field_value_rep_bytes) {
     if (field_value_rep_bytes > 0) {
       std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
@@ -1086,6 +1135,171 @@ bool CrateReader::Impl::ReadPaths() {
     return true;
   };
 
+  bool parallel_paths_done = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && n >= 65536) {
+      // Three passes replacing the (retained) serial walk below with identical
+      // stored strings:
+      //   A. sequential STRUCTURAL walk — same traversal (incl. the
+      //      max_path_depth descend cap), but records only parent links, no
+      //      string building. Visitation order is strictly increasing, so
+      //      parent_of[i] < i always.
+      //   B. sequential length pass applying the exact serial join rules.
+      //   C. PARALLEL fill: each path is assembled independently by walking
+      //      its ancestor chain backward into an exact-size buffer (no
+      //      dependency on the parent's built string), then stored into its
+      //      unique paths_ slot (slot uniqueness validated above).
+      constexpr uint32_t kNoParent = UINT32_MAX;
+      std::vector<uint32_t> parent_of(n, kNoParent);
+      std::vector<uint8_t> visited(n, 0);
+      struct WalkFrame {
+        size_t next_index;
+        uint32_t parent;
+        size_t depth;
+      };
+      std::vector<WalkFrame> wstack;
+      wstack.reserve(options_.max_path_depth + 1);
+      {
+        size_t i = 0;
+        size_t depth = 0;
+        uint32_t cur_parent = kNoParent;
+        while (i < n) {
+          visited[i] = 1;
+          parent_of[i] = cur_parent;
+          const int32_t jump = static_cast<int32_t>(jump_raw[i]);
+          const bool has_child = (jump == -1 || jump > 0);
+          const bool has_sibling = (jump == 0 || jump > 0);
+          const bool descend = has_child && (depth < options_.max_path_depth);
+          if (descend) {
+            if (has_sibling) {
+              wstack.push_back({jump > 0 ? static_cast<size_t>(i + jump) : i + 1,
+                                cur_parent, depth});
+            }
+            cur_parent = static_cast<uint32_t>(i);
+            i = i + 1;
+            ++depth;
+            continue;
+          }
+          if (!has_sibling) {
+            if (wstack.empty()) break;
+            const WalkFrame f = wstack.back();
+            wstack.pop_back();
+            i = f.next_index;
+            cur_parent = f.parent;
+            depth = f.depth;
+            continue;
+          }
+          i = jump > 0 ? static_cast<size_t>(i + jump) : i + 1;
+        }
+      }
+
+      // Element view (sign already validated above).
+      auto elem_of = [&](size_t i) -> std::string_view {
+        const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
+        const uint32_t token_idx =
+            elem_token < 0
+                ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
+                : static_cast<uint32_t>(elem_token);
+        return tokens_.view(token_idx);
+      };
+
+      std::vector<uint32_t> plen(n, 0);
+      std::vector<uint8_t> rootish(n, 0);  // node path is exactly "/"
+      for (size_t i = 0; i < n; ++i) {
+        if (!visited[i]) continue;
+        const std::string_view elem = elem_of(i);
+        const uint32_t par = parent_of[i];
+        const size_t base = (par == kNoParent) ? 0 : plen[par];
+        if (base == 0) {
+          if (elem.empty() || elem == "/") {
+            plen[i] = 1;
+            rootish[i] = 1;
+          } else {
+            plen[i] = static_cast<uint32_t>(1 + elem.size());
+          }
+        } else if (base == 1) {  // parent is "/"
+          plen[i] = static_cast<uint32_t>(1 + elem.size());
+        } else {
+          plen[i] = static_cast<uint32_t>(base + 1 + elem.size());
+        }
+      }
+
+      const size_t chunk = std::max<size_t>(
+          16384, n / (static_cast<size_t>(nt) * 4));
+      struct FillRange {
+        size_t begin, end;
+      };
+      std::vector<FillRange> ranges;
+      for (size_t b = 0; b < n; b += chunk) {
+        ranges.push_back({b, std::min(n, b + chunk)});
+      }
+      auto fill_range = [&](const FillRange& r) {
+        for (size_t i = r.begin; i < r.end; ++i) {
+          if (!visited[i]) continue;
+          const uint32_t store_idx = path_indices[i];
+          if (store_idx >= num_paths) continue;
+          const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
+          const bool is_prop = elem_token < 0;
+          const size_t L = plen[i];
+          std::string out;
+          out.resize(L + (is_prop ? 1 : 0));
+          char* buf = &out[0];
+          if (is_prop) {
+            buf[0] = '.';
+            ++buf;
+          }
+          // Backward ancestor-chain fill.
+          size_t j = i;
+          for (;;) {
+            if (rootish[j]) {
+              buf[0] = '/';
+              break;
+            }
+            const std::string_view ej = elem_of(j);
+            const uint32_t par = parent_of[j];
+            const size_t base = (par == kNoParent) ? 0 : plen[par];
+            if (base <= 1) {
+              buf[0] = '/';
+              std::memcpy(buf + 1, ej.data(), ej.size());
+              break;
+            }
+            buf[base] = '/';
+            std::memcpy(buf + base + 1, ej.data(), ej.size());
+            j = par;
+          }
+          paths_[store_idx] = std::move(out);
+        }
+      };
+
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      size_t remaining = ranges.size();
+      for (const FillRange& r : ranges) {
+        const FillRange* rp = &r;
+        auto task = [&, rp]() {
+          fill_range(*rp);
+          std::lock_guard<std::mutex> lock(done_mu);
+          if (--remaining == 0) done_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, task)) task();
+      }
+      if (!ranges.empty()) {
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+      }
+      parallel_paths_done = true;
+    }
+  }
+#endif  // TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE
+
+  if (!parallel_paths_done) {
   struct PathFrame {
     size_t next_index = 0;
     size_t parent_path_len = 0;
@@ -1157,6 +1371,7 @@ bool CrateReader::Impl::ReadPaths() {
     parent_path.resize(parent_len);
     i = jump > 0 ? static_cast<size_t>(i + jump) : i + 1;
   }
+  }  // !parallel_paths_done (retained serial walk)
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {

@@ -12,16 +12,10 @@
 #include <algorithm>
 #include <chrono>
 
-// Parallel stage build (emit phase): prim bodies are decoded into per-worker
-// Layer fragments on the shared parser worker pool, then stitched in authored
-// order with a depth-stack link rebuild identical to the serial emit. The
-// serial implementation below is fully retained and used when this gate is
-// off, when threads are unavailable, or for small layers. Define
-// TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE to force the serial path at
-// compile time.
-#if defined(TINYUSDZ_ENABLE_THREAD) && \
-    !defined(TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE)
-#define TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE 1
+// Parallel stage build (collect/emit/index): see the gate note in
+// crate-reader-internal.hh (TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE; the serial
+// implementations are fully retained).
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -850,6 +844,113 @@ bool CrateReader::Impl::BuildStage() {
     }
   };
 
+  bool parallel_index_done = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    const size_t lookup_total =
+        (attrs_sorted_by_prim ? 0 : attr_entries.size()) +
+        (rels_sorted_by_prim ? 0 : rel_entries.size()) +
+        (variants_sorted_by_prim ? 0 : variant_sels.size());
+    if (nt > 1 && lookup_total >= 4096) {
+      // Split link_by_prim into a PARALLEL hash-lookup pass (the expensive
+      // part: one string hash+find per property entry against the read-only
+      // prim path map) and the retained-order serial list append (cheap array
+      // writes that must run in entry order).
+      std::vector<size_t> attr_pidx, rel_pidx, variant_pidx;
+      if (!attrs_sorted_by_prim) attr_pidx.assign(attr_entries.size(), kNoIndex);
+      if (!rels_sorted_by_prim) rel_pidx.assign(rel_entries.size(), kNoIndex);
+      if (!variants_sorted_by_prim)
+        variant_pidx.assign(variant_sels.size(), kNoIndex);
+
+      struct LookupRange {
+        int kind = 0;  // 0=attr 1=rel 2=variant
+        size_t begin = 0;
+        size_t end = 0;
+      };
+      std::vector<LookupRange> ranges;
+      const size_t lr_chunk = std::max<size_t>(
+          8192, lookup_total / (static_cast<size_t>(nt) * 4));
+      auto add_ranges = [&](int kind, size_t count) {
+        for (size_t b = 0; b < count; b += lr_chunk) {
+          ranges.push_back({kind, b, std::min(count, b + lr_chunk)});
+        }
+      };
+      if (!attrs_sorted_by_prim) add_ranges(0, attr_entries.size());
+      if (!rels_sorted_by_prim) add_ranges(1, rel_entries.size());
+      if (!variants_sorted_by_prim) add_ranges(2, variant_sels.size());
+
+      auto lookup_range = [&](const LookupRange& r) {
+        for (size_t i = r.begin; i < r.end; ++i) {
+          const std::string_view key = (r.kind == 0)   ? attr_entries[i].first
+                                       : (r.kind == 1) ? rel_entries[i].first
+                                                       : variant_sels[i].prim_path;
+          const auto it = prim_path_to_index.find(key);
+          if (it == prim_path_to_index.end()) continue;
+          if (it->second >= prim_entries.size()) continue;
+          if (r.kind == 0) {
+            attr_pidx[i] = it->second;
+          } else if (r.kind == 1) {
+            rel_pidx[i] = it->second;
+          } else {
+            variant_pidx[i] = it->second;
+          }
+        }
+      };
+
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      size_t remaining = ranges.size();
+      for (const LookupRange& r : ranges) {
+        const LookupRange* rp = &r;
+        auto task = [&, rp]() {
+          lookup_range(*rp);
+          std::lock_guard<std::mutex> lock(done_mu);
+          if (--remaining == 0) done_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, task)) task();
+      }
+      if (!ranges.empty()) {
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+      }
+
+      // Serial in-order append with the precomputed prim indices (identical
+      // list contents/order to the retained link_by_prim loops).
+      auto link_indexed = [&](const std::vector<size_t>& pidx,
+                              std::vector<size_t>& head,
+                              std::vector<size_t>& tail,
+                              std::vector<size_t>& next) {
+        for (size_t i = 0; i < pidx.size(); ++i) {
+          const size_t prim_index = pidx[i];
+          if (prim_index == kNoIndex) continue;
+          if (head[prim_index] == kNoIndex) {
+            head[prim_index] = i;
+            tail[prim_index] = i;
+            next[i] = kNoIndex;
+          } else {
+            const size_t prev_tail = tail[prim_index];
+            next[prev_tail] = i;
+            tail[prim_index] = i;
+            next[i] = kNoIndex;
+          }
+        }
+      };
+      if (!attrs_sorted_by_prim) link_indexed(attr_pidx, attr_head, attr_tail, attr_next);
+      if (!rels_sorted_by_prim) link_indexed(rel_pidx, rel_head, rel_tail, rel_next);
+      if (!variants_sorted_by_prim)
+        link_indexed(variant_pidx, variant_head, variant_tail, variant_next);
+      parallel_index_done = true;
+    }
+  }
+#endif  // TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE
+
+  if (!parallel_index_done) {
   if (!attrs_sorted_by_prim) {
     for (size_t i = 0; i < attr_entries.size(); ++i) {
       link_by_prim(attr_entries[i].first, i, kNoIndex, prim_path_to_index,
@@ -868,6 +969,7 @@ bool CrateReader::Impl::BuildStage() {
                    prim_entries.size(), variant_head, variant_tail, variant_next);
     }
   }
+  }  // !parallel_index_done (retained serial link loops)
   const auto t_index_end = Clock::now();
 
   layer.reserve(prim_entries.size());
