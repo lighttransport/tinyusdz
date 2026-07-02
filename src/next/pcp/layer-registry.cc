@@ -142,6 +142,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     lopts.crate_options.max_specs = options.max_specs;
     lopts.crate_options.max_paths = options.max_paths;
     lopts.crate_options.finalize_stage = options.finalize_usdc_stage;
+    lopts.crate_options.num_threads = options.parse_num_threads;
     lopts.crate_options.enable_timing = options.enable_usdc_timing;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
@@ -211,6 +212,7 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     lopts.crate_options.max_specs = options.max_specs;
     lopts.crate_options.max_paths = options.max_paths;
     lopts.crate_options.finalize_stage = options.finalize_usdc_stage;
+    lopts.crate_options.num_threads = options.parse_num_threads;
     lopts.crate_options.enable_timing = options.enable_usdc_timing;
     lopts.crate_options.max_array_elements = options.max_array_elements;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),

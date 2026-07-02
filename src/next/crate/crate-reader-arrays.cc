@@ -83,8 +83,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // data block to seek to. Otherwise seek to the block and read the count.
   uint64_t count = 0;
   if (rep.payload() != 0) {
-    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read_u64(count)) return false;
+    if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader()->read_u64(count)) return false;
   }
 
   // Bound the file-controlled element count before any allocation.
@@ -105,7 +105,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   {
     const uint64_t stride = CrateArrayElemStride(type_id);
     const uint64_t elem_bytes = stride ? stride : 1;
-    if (!compressed && stride > 0 && !reader_->has_elements(
+    if (!compressed && stride > 0 && !reader()->has_elements(
             static_cast<size_t>(count), static_cast<size_t>(stride))) {
       AddWarning("Array element count exceeds available file bytes");
       return false;
@@ -123,18 +123,18 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // Decode a compressed integer array ([u64 compSize][LZ4(delta) blob]) in place.
   auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
-    if (!reader_->read_u64(comp_size)) return false;
+    if (!reader()->read_u64(comp_size)) return false;
     const size_t comp_bytes = static_cast<size_t>(comp_size);
     if (comp_bytes != comp_size) {
       AddWarning("Compressed integer array size exceeds addressable memory");
       return false;
     }
-    array_scratch_.compressed_data.resize(8 + comp_bytes);
-    std::memcpy(array_scratch_.compressed_data.data(), &comp_size, 8);
-    if (!reader_->read(array_scratch_.compressed_data.data() + 8, comp_bytes)) return false;
+    array_scratch().compressed_data.resize(8 + comp_bytes);
+    std::memcpy(array_scratch().compressed_data.data(), &comp_size, 8);
+    if (!reader()->read(array_scratch().compressed_data.data() + 8, comp_bytes)) return false;
     DecompressResult dr = DecompressCompressedU32(
-        array_scratch_.compressed_data.data(),
-        array_scratch_.compressed_data.size(), dst, n);
+        array_scratch().compressed_data.data(),
+        array_scratch().compressed_data.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress integer array: " + dr.error);
       return false;
@@ -147,18 +147,18 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
 
   auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
-    if (!reader_->read_u64(comp_size)) return false;
+    if (!reader()->read_u64(comp_size)) return false;
     const size_t comp_bytes = static_cast<size_t>(comp_size);
     if (comp_bytes != comp_size) {
       AddWarning("Compressed integer array size exceeds addressable memory");
       return false;
     }
-    array_scratch_.compressed_data.resize(8 + comp_bytes);
-    std::memcpy(array_scratch_.compressed_data.data(), &comp_size, 8);
-    if (!reader_->read(array_scratch_.compressed_data.data() + 8, comp_bytes)) return false;
+    array_scratch().compressed_data.resize(8 + comp_bytes);
+    std::memcpy(array_scratch().compressed_data.data(), &comp_size, 8);
+    if (!reader()->read(array_scratch().compressed_data.data() + 8, comp_bytes)) return false;
     DecompressResult dr = DecompressCompressedU64(
-        array_scratch_.compressed_data.data(),
-        array_scratch_.compressed_data.size(), dst, n);
+        array_scratch().compressed_data.data(),
+        array_scratch().compressed_data.size(), dst, n);
     if (!dr.success) {
       AddWarning("Failed to decompress 64-bit integer array: " + dr.error);
       return false;
@@ -172,8 +172,8 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // Read `count` raw elements of `elem_size` bytes into `dst` (overflow-safe).
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
     if (count == 0) return true;
-    if (!reader_->has_elements(count, elem_size)) return false;
-    return reader_->read(dst, static_cast<size_t>(count) * elem_size);
+    if (!reader()->has_elements(count, elem_size)) return false;
+    return reader()->read(dst, static_cast<size_t>(count) * elem_size);
   };
 
   // Decode a compressed floating-point array (pxrUSD format): [i8 code] then
@@ -182,9 +182,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_floating_n = [&](auto* dst, size_t n) -> bool {
     using T = typename std::remove_pointer<decltype(dst)>::type;
     int8_t code = 0;
-    if (!reader_->read_i8(code)) return false;
+    if (!reader()->read_i8(code)) return false;
     if (code == 'i') {
-      auto& ints = array_scratch_.u32_indices;
+      auto& ints = array_scratch().u32_indices;
       ints.resize(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
@@ -194,30 +194,30 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     if (code == 't') {
       uint32_t lut_size = 0;
-      if (!reader_->read_u32(lut_size)) return false;
+      if (!reader()->read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
       // The LUT holds lut_size elements read directly from the file; bound the
       // count against the remaining file before allocating to avoid a
       // malformed-count huge allocation ahead of the read below.
-      if (!reader_->has_elements(size_t(lut_size), sizeof(T))) return false;
+      if (!reader()->has_elements(size_t(lut_size), sizeof(T))) return false;
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(T), &lut_bytes)) return false;
       if constexpr (std::is_same_v<T, float>) {
-        array_scratch_.float_values.resize(lut_size);
-        if (!reader_->read(array_scratch_.float_values.data(), lut_bytes)) return false;
+        array_scratch().float_values.resize(lut_size);
+        if (!reader()->read(array_scratch().float_values.data(), lut_bytes)) return false;
       } else {
-        array_scratch_.double_values.resize(lut_size);
-        if (!reader_->read(array_scratch_.double_values.data(), lut_bytes)) return false;
+        array_scratch().double_values.resize(lut_size);
+        if (!reader()->read(array_scratch().double_values.data(), lut_bytes)) return false;
       }
-      auto& idxs = array_scratch_.u32_indices;
+      auto& idxs = array_scratch().u32_indices;
       idxs.resize(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
         if (idxs[i] >= lut_size) return false;
         if constexpr (std::is_same_v<T, float>) {
-          dst[i] = array_scratch_.float_values[idxs[i]];
+          dst[i] = array_scratch().float_values[idxs[i]];
         } else {
-          dst[i] = array_scratch_.double_values[idxs[i]];
+          dst[i] = array_scratch().double_values[idxs[i]];
         }
       }
       return true;
@@ -234,9 +234,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // each value as GfHalf(int) and the 't' lookup table holds 2-byte halfs.
   auto read_compressed_half_n = [&](uint16_t* dst, size_t n) -> bool {
     int8_t code = 0;
-    if (!reader_->read_i8(code)) return false;
+    if (!reader()->read_i8(code)) return false;
     if (code == 'i') {
-      auto& ints = array_scratch_.u32_indices;
+      auto& ints = array_scratch().u32_indices;
       ints.resize(n);
       if (!read_compressed_u32_n(ints.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
@@ -246,15 +246,15 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     if (code == 't') {
       uint32_t lut_size = 0;
-      if (!reader_->read_u32(lut_size)) return false;
+      if (!reader()->read_u32(lut_size)) return false;
       if (lut_size == 0 || lut_size > options_.max_array_elements) return false;
-      if (!reader_->has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
-      auto& lut = array_scratch_.half_values;
+      if (!reader()->has_elements(size_t(lut_size), sizeof(uint16_t))) return false;
+      auto& lut = array_scratch().half_values;
       lut.resize(lut_size);
       size_t lut_bytes;
       if (!safe::mul(size_t(lut_size), sizeof(uint16_t), &lut_bytes)) return false;
-      if (!reader_->read(lut.data(), lut_bytes)) return false;
-      auto& idxs = array_scratch_.u32_indices;
+      if (!reader()->read(lut.data(), lut_bytes)) return false;
+      auto& idxs = array_scratch().u32_indices;
       idxs.resize(n);
       if (!read_compressed_u32_n(idxs.data(), n)) return false;
       for (size_t i = 0; i < n; ++i) {
@@ -357,7 +357,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Bool: {
       if (compressed) { AddWarning("Compressed bool arrays not supported"); return false; }
-      auto& bytes = array_scratch_.u8_values;
+      auto& bytes = array_scratch().u8_values;
       bytes.resize(static_cast<size_t>(count));
       if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
       out = Value::MakeBoolArrayFromBytes(std::move(bytes));
@@ -365,7 +365,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Token: {
       const size_t count_value = static_cast<size_t>(count);
-      auto& idxs = array_scratch_.u32_indices;
+      auto& idxs = array_scratch().u32_indices;
       idxs.resize(count_value);
       if (compressed && count >= kMinCompressedArraySize) {
         if (!read_compressed_u32(idxs.data())) return false;
@@ -430,7 +430,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
-      auto& halfs = array_scratch_.half_values;
+      auto& halfs = array_scratch().half_values;
       halfs.resize(scalars);
       if (compressed && count >= kMinCompressedArraySize) {
         if (!read_compressed_half_n(halfs.data(), scalars)) return false;

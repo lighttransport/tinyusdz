@@ -12,6 +12,11 @@
 namespace tinyusdz {
 namespace next {
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+thread_local CrateReader::Impl::ThreadDecodeCtx*
+    CrateReader::Impl::tls_decode_ctx_ = nullptr;
+#endif
+
 // ============================================================
 // Main value unpacker using switch statement
 // ============================================================

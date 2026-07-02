@@ -48,6 +48,10 @@ struct CrateReadOptions {
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
 
+  /// Worker-thread hint for the parallel stage build (0 = auto min(hw,8),
+  /// 1 = serial, >1 = fixed). Ignored without TINYUSDZ_ENABLE_THREAD.
+  int num_threads = 0;
+
   /// When reading from a file path, memory-map the crate read-only instead of
   /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
   /// path automatically when mmap is unavailable (non-posix / WASM) or the

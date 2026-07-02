@@ -14,6 +14,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -97,7 +100,47 @@ class CrateReader::Impl {
 
   // Reusable scratch buffers shared by hot paths (array/lookup decoding) to
   // reduce repeated allocations while building layers for large scenes.
-  ArrayScratch array_scratch_;
+  ArrayScratch array_scratch_storage_;
+
+  // Per-thread execution context for the parallel build_stage: every decode
+  // path reaches the byte stream and the scratch buffers through these
+  // accessors, so a worker thread installs its OWN StreamReader cursor (a
+  // cheap copyable {data,size,pos} view over the same buffer) and scratch via
+  // ScopedThreadDecodeCtx. Single-threaded reads see no override and use the
+  // members directly (identical behavior).
+  struct ThreadDecodeCtx {
+    StreamReader reader;
+    ArrayScratch scratch;
+    explicit ThreadDecodeCtx(const StreamReader& r) : reader(r) {}
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  static thread_local ThreadDecodeCtx* tls_decode_ctx_;
+  class ScopedThreadDecodeCtx {
+   public:
+    explicit ScopedThreadDecodeCtx(ThreadDecodeCtx* ctx)
+        : prev_(tls_decode_ctx_) {
+      tls_decode_ctx_ = ctx;
+    }
+    ~ScopedThreadDecodeCtx() { tls_decode_ctx_ = prev_; }
+
+   private:
+    ThreadDecodeCtx* prev_;
+  };
+  StreamReader* reader() {
+    return tls_decode_ctx_ ? &tls_decode_ctx_->reader : reader_.get();
+  }
+  ArrayScratch& array_scratch() {
+    return tls_decode_ctx_ ? tls_decode_ctx_->scratch : array_scratch_storage_;
+  }
+#else
+  StreamReader* reader() { return reader_.get(); }
+  ArrayScratch& array_scratch() { return array_scratch_storage_; }
+#endif
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Diagnostics can be appended from build_stage worker threads.
+  std::mutex diag_mu_;
+#endif
 
   CrateVersion version_;
   CrateTOC toc_;

@@ -76,7 +76,7 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
 bool CrateReader::Impl::ReadBootstrap() {
   // Check magic
   char magic[8];
-  if (!reader_->read(magic, 8)) {
+  if (!reader()->read(magic, 8)) {
     AddError("Failed to read magic bytes");
     return false;
   }
@@ -87,7 +87,7 @@ bool CrateReader::Impl::ReadBootstrap() {
 
   // Read version
   uint8_t version_bytes[8];
-  if (!reader_->read(version_bytes, 8)) {
+  if (!reader()->read(version_bytes, 8)) {
     AddError("Failed to read version");
     return false;
   }
@@ -102,19 +102,19 @@ bool CrateReader::Impl::ReadBootstrap() {
 
   // Read TOC offset
   int64_t toc_offset;
-  if (!reader_->read_i64(toc_offset)) {
+  if (!reader()->read_i64(toc_offset)) {
     AddError("Failed to read TOC offset");
     return false;
   }
 
   if (toc_offset < static_cast<int64_t>(kCrateBootstrapSize) ||
-      toc_offset >= static_cast<int64_t>(reader_->size())) {
+      toc_offset >= static_cast<int64_t>(reader()->size())) {
     AddError("Invalid TOC offset");
     return false;
   }
 
   // Seek to TOC
-  if (!reader_->seek(static_cast<size_t>(toc_offset))) {
+  if (!reader()->seek(static_cast<size_t>(toc_offset))) {
     AddError("Failed to seek to TOC");
     return false;
   }
@@ -124,7 +124,7 @@ bool CrateReader::Impl::ReadBootstrap() {
 
 bool CrateReader::Impl::ReadTOC() {
   uint64_t num_sections;
-  if (!reader_->read_u64(num_sections)) {
+  if (!reader()->read_u64(num_sections)) {
     AddError("Failed to read section count");
     return false;
   }
@@ -138,22 +138,22 @@ bool CrateReader::Impl::ReadTOC() {
 
   for (size_t i = 0; i < num_sections; i++) {
     CrateSection& s = toc_.sections[i];
-    if (!reader_->read(s.name, 16)) {
+    if (!reader()->read(s.name, 16)) {
       AddError("Failed to read section name");
       return false;
     }
-    if (!reader_->read_i64(s.start)) {
+    if (!reader()->read_i64(s.start)) {
       AddError("Failed to read section start");
       return false;
     }
-    if (!reader_->read_i64(s.size)) {
+    if (!reader()->read_i64(s.size)) {
       AddError("Failed to read section size");
       return false;
     }
 
     // Overflow-safe: s.start + s.size as int64 can wrap. Check each term
     // against the file size with subtraction that cannot overflow.
-    const size_t fsize = reader_->size();
+    const size_t fsize = reader()->size();
     if (s.start < 0 || s.size < 0 ||
         static_cast<size_t>(s.start) > fsize ||
         static_cast<size_t>(s.size) > fsize - static_cast<size_t>(s.start)) {
@@ -172,13 +172,13 @@ bool CrateReader::Impl::ReadTokens() {
     return false;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to TOKENS");
     return false;
   }
 
   uint64_t num_tokens;
-  if (!reader_->read_u64(num_tokens)) {
+  if (!reader()->read_u64(num_tokens)) {
     AddError("Failed to read token count");
     return false;
   }
@@ -189,7 +189,7 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   uint64_t uncompressed_size, compressed_size;
-  if (!reader_->read_u64(uncompressed_size) || !reader_->read_u64(compressed_size)) {
+  if (!reader()->read_u64(uncompressed_size) || !reader()->read_u64(compressed_size)) {
     AddError("Failed to read token compression info");
     return false;
   }
@@ -201,7 +201,7 @@ bool CrateReader::Impl::ReadTokens() {
   // Use the check-before-resize read overload so a bogus compressed_size
   // cannot trigger a huge allocation before the bounds check.
   std::vector<uint8_t> compressed;
-  if (!reader_->read(compressed, static_cast<size_t>(compressed_size))) {
+  if (!reader()->read(compressed, static_cast<size_t>(compressed_size))) {
     AddError("Failed to read compressed tokens");
     return false;
   }
@@ -251,13 +251,13 @@ bool CrateReader::Impl::ReadStrings() {
     return true;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to STRINGS");
     return false;
   }
 
   uint64_t num_strings;
-  if (!reader_->read_u64(num_strings)) {
+  if (!reader()->read_u64(num_strings)) {
     AddError("Failed to read string count");
     return false;
   }
@@ -273,7 +273,7 @@ bool CrateReader::Impl::ReadStrings() {
   string_indices_.resize(static_cast<size_t>(num_strings));
   for (size_t i = 0; i < num_strings; i++) {
     uint32_t idx;
-    if (!reader_->read_u32(idx)) {
+    if (!reader()->read_u32(idx)) {
       AddError("Failed to read string index");
       return false;
     }
@@ -294,13 +294,13 @@ bool CrateReader::Impl::ReadFields() {
     return false;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to FIELDS");
     return false;
   }
 
   uint64_t num_fields;
-  if (!reader_->read_u64(num_fields)) {
+  if (!reader()->read_u64(num_fields)) {
     AddError("Failed to read field count");
     return false;
   }
@@ -324,14 +324,14 @@ bool CrateReader::Impl::ReadFields() {
   }
 
   uint64_t indices_size;
-  if (!reader_->read_u64(indices_size)) {
+  if (!reader()->read_u64(indices_size)) {
     AddError("Failed to read field indices size");
     return false;
   }
   if (!CheckByteAllocation(indices_size, "Field indices")) return false;
 
   std::vector<uint8_t> indices_data;
-  if (!reader_->read(indices_data, static_cast<size_t>(indices_size))) {
+  if (!reader()->read(indices_data, static_cast<size_t>(indices_size))) {
     AddError("Failed to read field indices");
     return false;
   }
@@ -379,7 +379,7 @@ bool CrateReader::Impl::ReadFields() {
   }
 
   uint64_t reps_size;
-  if (!reader_->read_u64(reps_size)) {
+  if (!reader()->read_u64(reps_size)) {
     AddError("Failed to read reps size");
     return false;
   }
@@ -388,7 +388,7 @@ bool CrateReader::Impl::ReadFields() {
   std::vector<uint64_t> value_reps(static_cast<size_t>(num_fields));
 
   std::vector<uint8_t> reps_data;
-  if (!reader_->read(reps_data, static_cast<size_t>(reps_size))) {
+  if (!reader()->read(reps_data, static_cast<size_t>(reps_size))) {
     AddError("Failed to read value reps");
     return false;
   }
@@ -423,13 +423,13 @@ bool CrateReader::Impl::ReadFields() {
         return false;
       }
       if (rep.payload() != 0 &&
-          static_cast<uint64_t>(off) >= static_cast<uint64_t>(reader_->size())) {
+          static_cast<uint64_t>(off) >= static_cast<uint64_t>(reader()->size())) {
         AddError("Field ValueRep payload offset is outside file");
         return false;
       }
       if (rep.payload() != 0) {
         const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep);
-        const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+        const uint64_t file_size = static_cast<uint64_t>(reader()->size());
         if (min_bytes > 0 &&
             (min_bytes > file_size ||
              static_cast<uint64_t>(off) > file_size - min_bytes)) {
@@ -438,17 +438,17 @@ bool CrateReader::Impl::ReadFields() {
         }
       }
       if (rep.is_array() && rep.payload() != 0) {
-        const size_t saved = reader_->position();
-        if (!reader_->seek(static_cast<size_t>(off))) {
+        const size_t saved = reader()->position();
+        if (!reader()->seek(static_cast<size_t>(off))) {
           AddError("Failed to seek to array ValueRep payload");
           return false;
         }
         uint64_t count = 0;
-        if (!reader_->read_u64(count)) {
+        if (!reader()->read_u64(count)) {
           AddError("Failed to read array ValueRep element count");
           return false;
         }
-        if (!reader_->seek(saved)) {
+        if (!reader()->seek(saved)) {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
@@ -476,17 +476,17 @@ bool CrateReader::Impl::ReadFields() {
             tid == CrateTypeId::PathVector ||
             tid == CrateTypeId::VariantSelectionMap;
         if (count_header) {
-          const size_t saved = reader_->position();
-          if (!reader_->seek(static_cast<size_t>(off))) {
+          const size_t saved = reader()->position();
+          if (!reader()->seek(static_cast<size_t>(off))) {
             AddError("Failed to seek to counted ValueRep payload");
             return false;
           }
           uint64_t count = 0;
-          if (!reader_->read_u64(count)) {
+          if (!reader()->read_u64(count)) {
             AddError("Failed to read counted ValueRep payload");
             return false;
           }
-          if (!reader_->seek(saved)) {
+          if (!reader()->seek(saved)) {
             AddError("Failed to restore FIELDS reader position");
             return false;
           }
@@ -495,7 +495,7 @@ bool CrateReader::Impl::ReadFields() {
             return false;
           }
           if (tid == CrateTypeId::Dictionary && count > 0) {
-            const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+            const uint64_t file_size = static_cast<uint64_t>(reader()->size());
             if (count >
                 ((std::numeric_limits<uint64_t>::max)() - 8u) / 20u) {
               AddError("Dictionary ValueRep payload size overflow");
@@ -507,13 +507,13 @@ bool CrateReader::Impl::ReadFields() {
               AddError("Dictionary ValueRep payload is truncated");
               return false;
             }
-            if (!reader_->seek(static_cast<size_t>(off + 8))) {
+            if (!reader()->seek(static_cast<size_t>(off + 8))) {
               AddError("Failed to seek to dictionary ValueRep entries");
               return false;
             }
             for (uint64_t entry = 0; entry < count; ++entry) {
               uint32_t key_index = 0;
-              if (!reader_->read_u32(key_index)) {
+              if (!reader()->read_u32(key_index)) {
                 AddError("Failed to read dictionary key index");
                 return false;
               }
@@ -521,9 +521,9 @@ bool CrateReader::Impl::ReadFields() {
                 AddError("Dictionary key string index out of range");
                 return false;
               }
-              const size_t value_start = reader_->position();
+              const size_t value_start = reader()->position();
               uint64_t recursive_offset_raw = 0;
-              if (!reader_->read_u64(recursive_offset_raw)) {
+              if (!reader()->read_u64(recursive_offset_raw)) {
                 AddError("Failed to read dictionary recursive offset");
                 return false;
               }
@@ -546,12 +546,12 @@ bool CrateReader::Impl::ReadFields() {
               }
               const size_t next_entry_pos = static_cast<size_t>(
                   value_start_u64 + recursive_offset_u64 + sizeof(uint64_t));
-              if (!reader_->seek(next_entry_pos)) {
+              if (!reader()->seek(next_entry_pos)) {
                 AddError("Failed to seek to next dictionary entry");
                 return false;
               }
             }
-            if (!reader_->seek(saved)) {
+            if (!reader()->seek(saved)) {
               AddError("Failed to restore FIELDS reader position");
               return false;
             }
@@ -565,23 +565,23 @@ bool CrateReader::Impl::ReadFields() {
             tid == CrateTypeId::TokenListOp ||
             tid == CrateTypeId::StringListOp;
         if (list_op) {
-          const size_t saved = reader_->position();
-          if (!reader_->seek(static_cast<size_t>(off))) {
+          const size_t saved = reader()->position();
+          if (!reader()->seek(static_cast<size_t>(off))) {
             AddError("Failed to seek to list-op ValueRep payload");
             return false;
           }
           uint8_t bits = 0;
-          if (!reader_->read_u8(bits)) {
+          if (!reader()->read_u8(bits)) {
             AddError("Failed to read list-op ValueRep header");
             return false;
           }
-          if (!reader_->seek(saved)) {
+          if (!reader()->seek(saved)) {
             AddError("Failed to restore FIELDS reader position");
             return false;
           }
           const uint8_t kKnownListOpBits = 0x7e;
           if ((bits & kKnownListOpBits) != 0) {
-            const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+            const uint64_t file_size = static_cast<uint64_t>(reader()->size());
             if (file_size < 9u || static_cast<uint64_t>(off) > file_size - 9u) {
               AddError("List-op ValueRep payload is truncated");
               return false;
@@ -597,17 +597,17 @@ bool CrateReader::Impl::ReadFields() {
                 AddError("List-op ValueRep run is truncated");
                 return false;
               }
-              const size_t saved = reader_->position();
-              if (!reader_->seek(static_cast<size_t>(pos))) {
+              const size_t saved = reader()->position();
+              if (!reader()->seek(static_cast<size_t>(pos))) {
                 AddError("Failed to seek to list-op ValueRep run");
                 return false;
               }
               uint64_t count = 0;
-              if (!reader_->read_u64(count)) {
+              if (!reader()->read_u64(count)) {
                 AddError("Failed to read list-op ValueRep run count");
                 return false;
               }
-              if (!reader_->seek(saved)) {
+              if (!reader()->seek(saved)) {
                 AddError("Failed to restore FIELDS reader position");
                 return false;
               }
@@ -643,13 +643,13 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to FIELDSETS");
     return false;
   }
 
   uint64_t num_fieldsets;
-  if (!reader_->read_u64(num_fieldsets)) {
+  if (!reader()->read_u64(num_fieldsets)) {
     AddError("Failed to read fieldset count");
     return false;
   }
@@ -686,7 +686,7 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
   std::vector<uint8_t> data;
-  if (!reader_->read(data, data_size)) {
+  if (!reader()->read(data, data_size)) {
     AddError("Failed to read fieldset data");
     return false;
   }
@@ -766,13 +766,13 @@ bool CrateReader::Impl::ReadSpecs() {
     return false;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to SPECS");
     return false;
   }
 
   uint64_t num_specs;
-  if (!reader_->read_u64(num_specs)) {
+  if (!reader()->read_u64(num_specs)) {
     AddError("Failed to read spec count");
     return false;
   }
@@ -804,7 +804,7 @@ bool CrateReader::Impl::ReadSpecs() {
       return false;
     }
     uint64_t comp_size;
-    if (!reader_->read_u64(comp_size)) {
+    if (!reader()->read_u64(comp_size)) {
       AddError("Failed to read specs array compressed size");
       return false;
     }
@@ -818,7 +818,7 @@ bool CrateReader::Impl::ReadSpecs() {
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
     std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
     std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
+    if (!reader()->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
       AddError("Failed to read specs compressed data");
       return false;
     }
@@ -867,7 +867,7 @@ bool CrateReader::Impl::ReadSpecs() {
   }
 
   // Fallback: try legacy single-array format
-  if (!reader_->seek(static_cast<size_t>(section->start) + 8)) {
+  if (!reader()->seek(static_cast<size_t>(section->start) + 8)) {
     AddError("Failed to seek to specs data for legacy read");
     return false;
   }
@@ -880,7 +880,7 @@ bool CrateReader::Impl::ReadSpecs() {
     return false;
   }
   std::vector<uint8_t> legacy_data(legacy_size);
-  if (!reader_->read(legacy_data.data(), legacy_size)) {
+  if (!reader()->read(legacy_data.data(), legacy_size)) {
     AddError("Failed to read specs legacy data");
     return false;
   }
@@ -927,13 +927,13 @@ bool CrateReader::Impl::ReadPaths() {
     return false;
   }
 
-  if (!reader_->seek(static_cast<size_t>(section->start))) {
+  if (!reader()->seek(static_cast<size_t>(section->start))) {
     AddError("Failed to seek to PATHS");
     return false;
   }
 
   uint64_t num_paths;
-  if (!reader_->read_u64(num_paths)) {
+  if (!reader()->read_u64(num_paths)) {
     AddError("Failed to read path count");
     return false;
   }
@@ -951,7 +951,7 @@ bool CrateReader::Impl::ReadPaths() {
 
   // pxrUSD writes two u64 values: [total_path_count] [encoded_tree_node_count]
   uint64_t num_encoded = num_paths;  // default: same as total
-  if (!reader_->read_u64(num_encoded)) {
+  if (!reader()->read_u64(num_encoded)) {
     // Might be a single-count format (no encoded count)
     num_encoded = num_paths;
   }
@@ -973,19 +973,19 @@ bool CrateReader::Impl::ReadPaths() {
   // Read 3 compressed integer arrays (delta+LZ4 format)
   auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
     uint64_t comp_size;
-    if (!reader_->read_u64(comp_size)) {
+    if (!reader()->read_u64(comp_size)) {
       AddError(std::string("Failed to read ") + name + " compressed size");
       return false;
     }
     // Bound the compressed size against remaining bytes before allocating.
-    if (comp_size > reader_->remaining()) {
+    if (comp_size > reader()->remaining()) {
       AddError(std::string(name) + " compressed size exceeds remaining data");
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
     std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
     std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader_->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
+    if (!reader()->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
       AddError(std::string("Failed to read ") + name + " compressed data");
       return false;
     }

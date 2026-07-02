@@ -11,6 +11,21 @@
 
 #include <algorithm>
 #include <chrono>
+
+// Parallel stage build (emit phase): prim bodies are decoded into per-worker
+// Layer fragments on the shared parser worker pool, then stitched in authored
+// order with a depth-stack link rebuild identical to the serial emit. The
+// serial implementation below is fully retained and used when this gate is
+// off, when threads are unavailable, or for small layers. Define
+// TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE to force the serial path at
+// compile time.
+#if defined(TINYUSDZ_ENABLE_THREAD) && \
+    !defined(TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE)
+#define TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE 1
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#endif
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -631,6 +646,567 @@ bool CrateReader::Impl::BuildStage() {
   size_t variant_cursor = 0;
 
   const auto t_emit_start = Clock::now();
+  bool parallel_emit_done = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && prim_entries.size() >= 512) {
+      struct EmitChunk {
+        size_t begin = 0;
+        size_t end = 0;
+        std::unique_ptr<Layer> layer;
+      };
+      const size_t chunk_size =
+          std::max<size_t>(256, prim_entries.size() / (static_cast<size_t>(nt) * 8));
+      std::vector<EmitChunk> chunks;
+      chunks.reserve(prim_entries.size() / chunk_size + 2);
+      for (size_t b = 0; b < prim_entries.size(); b += chunk_size) {
+        EmitChunk ck;
+        ck.begin = b;
+        ck.end = std::min(prim_entries.size(), b + chunk_size);
+        chunks.push_back(std::move(ck));
+      }
+
+      // Decode one contiguous prim range into its own Layer fragment. The
+      // per-prim body below is a copy of the retained serial emit body with
+      // three mechanical differences: it targets the worker builder `wb`,
+      // prims are begun/ended flat (hierarchy links are rebuilt after the
+      // stitch with the same depth-stack rule the serial path uses), and the
+      // sorted-mode cursors start from a range-local lower_bound (equivalent
+      // to the serial cursor position when it reaches this range).
+      auto emit_range = [&](EmitChunk& ck) {
+        ThreadDecodeCtx decode_ctx(*reader_);
+        ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
+        ck.layer.reset(new Layer());
+        ck.layer->reserve(ck.end - ck.begin);
+        LayerBuilder wb(*ck.layer);
+
+        const std::string_view range_first_path =
+            prim_entries[ck.begin].full_path;
+        size_t attr_cursor = 0;
+        size_t rel_cursor = 0;
+        size_t variant_cursor = 0;
+        if (attrs_sorted_by_prim) {
+          attr_cursor = static_cast<size_t>(
+              std::lower_bound(attr_entries.begin(), attr_entries.end(),
+                               range_first_path,
+                               [](const std::pair<std::string_view, AttrInfo>& a,
+                                  const std::string_view key) {
+                                 return a.first < key;
+                               }) -
+              attr_entries.begin());
+        }
+        if (rels_sorted_by_prim) {
+          rel_cursor = static_cast<size_t>(
+              std::lower_bound(rel_entries.begin(), rel_entries.end(),
+                               range_first_path,
+                               [](const std::pair<std::string_view, RelInfo>& a,
+                                  const std::string_view key) {
+                                 return a.first < key;
+                               }) -
+              rel_entries.begin());
+        }
+        if (variants_sorted_by_prim) {
+          variant_cursor = static_cast<size_t>(
+              std::lower_bound(variant_sels.begin(), variant_sels.end(),
+                               range_first_path,
+                               [](const VariantSelectionEntry& a,
+                                  const std::string_view key) {
+                                 return a.prim_path < key;
+                               }) -
+              variant_sels.begin());
+        }
+
+        for (size_t prim_index = ck.begin; prim_index < ck.end; ++prim_index) {
+          auto& entry = prim_entries[prim_index];
+          if (!entry.full_path.empty()) {
+            wb.begin_prim(entry.name, entry.type_name, entry.specifier,
+                          entry.full_path);
+          } else {
+            wb.begin_prim(entry.name, entry.type_name, entry.specifier);
+          }
+
+    // wb.current() is valid immediately after begin_prim; capture it once
+    // and guard the metadata derefs (every other current() site is guarded too).
+    PrimSpec* ps = wb.current();
+
+    // Extracts a token-list metadata field (written as a token array, with
+    // single-token / string fallbacks for older encodings). Warns rather than
+    // silently dropping a known arc field that fails to decode.
+    auto append_token_list = [&](const ValueRep& rep,
+                                 std::vector<std::string>& dst,
+                                 const char* field_name,
+                                 bool wrap_bare_paths = false) {
+      Value v;
+      if (!UnpackValue(rep, v)) {
+        AddWarning(std::string("Composition arc field '") + field_name +
+                   "' has unexpected encoding; dropped");
+        return;
+      }
+      if (const std::vector<std::string>* arr = v.as_token_array()) {
+        for (const auto& s : *arr) {
+          if (wrap_bare_paths && !s.empty() && s[0] == '/') {
+            std::string arc;
+            arc.reserve(s.size() + 2);
+            arc.push_back('<');
+            arc.append(s);
+            arc.push_back('>');
+            dst.push_back(std::move(arc));
+          } else {
+            dst.push_back(s);
+          }
+        }
+      } else if (const std::string* s = v.as_token()) {
+        if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
+          std::string arc;
+          arc.reserve(s->size() + 2);
+          arc.push_back('<');
+          arc.append(*s);
+          arc.push_back('>');
+          dst.push_back(std::move(arc));
+        } else {
+          dst.push_back(*s);
+        }
+      } else if (const std::string* s = v.as_string()) {
+        if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
+          std::string arc;
+          arc.reserve(s->size() + 2);
+          arc.push_back('<');
+          arc.append(*s);
+          arc.push_back('>');
+          dst.push_back(std::move(arc));
+        } else {
+          dst.push_back(*s);
+        }
+      } else {
+        AddWarning(std::string("Composition arc field '") + field_name +
+                   "' has unexpected encoding; dropped");
+      }
+    };
+
+    // Phase 7 S5: decode a `<arc>_listOp` companion token[] (marker-delimited
+    // prepend/append/delete/order sublists) into an ArcEdit.
+    auto decode_arc_listop = [&](const ValueRep& rep, ArcEdit& e) {
+      Value v;
+      if (!UnpackValue(rep, v)) return;
+      const std::vector<std::string>* arr = v.as_token_array();
+      if (!arr) return;
+      e.authored = true;
+      e.is_explicit = false;
+      std::vector<std::string>* cur = nullptr;
+      for (const std::string& s : *arr) {
+        if (s == "\x01P") cur = &e.prepended;
+        else if (s == "\x01A") cur = &e.appended;
+        else if (s == "\x01D") cur = &e.deleted;
+        else if (s == "\x01O") cur = &e.ordered;
+        else if (s == "\x01N") cur = nullptr;
+        else if (cur) cur->push_back(s);
+      }
+    };
+
+    // Add properties and extract composition arcs / metadata into PrimSpecMeta
+    visit_fieldset_raw(
+        entry.fieldset_index,
+        [&](std::string_view field_name, const ValueRep& field_value) {
+      if (field_name == "typeName" || field_name == "specifier") return true;
+
+      // Reserved prim metadata stored inline in the prim spec (pxrUSD keeps
+      // these in the prim's fieldset, not as separate property specs). Route
+      // them to PrimSpecMeta so they do not leak in as phantom properties.
+      if (ps) {
+        if (field_name == "active") {
+          bool is_active = false;
+          if (read_field_bool(field_value, &is_active)) ps->meta().active = is_active;
+          return true;
+        }
+        if (field_name == "hidden") {
+          bool is_hidden = false;
+          if (read_field_bool(field_value, &is_hidden)) ps->meta().hidden = is_hidden;
+          return true;
+        }
+        if (field_name == "doc") {
+          std::string_view text;
+          if (read_field_token_or_string(field_value, &text))
+            ps->meta().doc() = text;
+          return true;
+        }
+      }
+
+      // Composition arc + metadata fields: store in PrimSpecMeta, not as
+      // regular properties. (Guarded by ps; if current() were null we simply
+      // skip them rather than crash.)
+      if (ps) {
+        if (field_name == "apiSchemas") {
+          // Applied API schemas. pxrUSD stores this as a TokenListOp; by the
+          // time it reaches this field loop UnpackValue has flattened it to its
+          // effective token list. Route it to PrimSpecMeta (the composed/flatten
+          // form pxr writes as `apiSchemas = [...]` in the metadata block);
+          // otherwise it leaks as a phantom `token[] apiSchemas` body property.
+          append_token_list(field_value, ps->meta().apiSchemas(), "apiSchemas");
+          return true;
+        }
+        if (field_name == "references") {
+          append_token_list(field_value, ps->meta().references, "references");
+          return true;
+        }
+        if (field_name == "payload") {
+          append_token_list(field_value, ps->meta().payloads, "payload");
+          return true;
+        }
+        if (field_name == "inherits") {
+          append_token_list(field_value, ps->meta().inherits, "inherits", true);
+          return true;
+        }
+        if (field_name == "specializes") {
+          append_token_list(field_value, ps->meta().specializes,
+                            "specializes", true);
+          return true;
+        }
+        if (field_name == "references_listOp") {
+          decode_arc_listop(field_value, ps->meta().ensure_arc_edits().references);
+          return true;
+        }
+        if (field_name == "payload_listOp") {
+          decode_arc_listop(field_value, ps->meta().ensure_arc_edits().payloads);
+          return true;
+        }
+        if (field_name == "inherits_listOp") {
+          decode_arc_listop(field_value, ps->meta().ensure_arc_edits().inherits);
+          return true;
+        }
+        if (field_name == "specializes_listOp") {
+          decode_arc_listop(field_value,
+                            ps->meta().ensure_arc_edits().specializes);
+          return true;
+        }
+        if (field_name == "variantSelection") {
+          std::string_view text;
+          if (read_field_token_or_string(field_value, &text))
+            ps->meta().variantSelection = text;
+          return true;
+        }
+        if (field_name == "comment") {
+          std::string_view text;
+          if (read_field_token_or_string(field_value, &text))
+            ps->meta().comment() = text;
+          return true;
+        }
+        if (field_name == "kind") {
+          std::string_view text;
+          if (read_field_token_or_string(field_value, &text))
+            ps->meta().kind() = text;
+          return true;
+        }
+        if (field_name == "displayName") {
+          std::string_view text;
+          if (read_field_token_or_string(field_value, &text))
+            ps->meta().displayName() = text;
+          return true;
+        }
+        if (field_name == "instanceable") {
+          bool instanceable = false;
+          if (read_field_bool(field_value, &instanceable))
+            ps->meta().instanceable = instanceable;
+          return true;
+        }
+        if (field_name == "customData" || field_name == "assetInfo" ||
+            field_name == "sdrMetadata" || field_name == "clips") {
+          // pxr-authored: a binary VtDictionary (already decoded to a Dictionary
+          // Value). next-authored: USDA dict text in a String field.
+          Value d;
+          if (decode_dict_value(field_value, d) && d.is_dictionary()) {
+            if (field_name == "customData")
+              ps->meta().customData() = std::move(d);
+            else if (field_name == "assetInfo")
+              ps->meta().assetInfo() = std::move(d);
+            else if (field_name == "sdrMetadata")
+              ps->meta().sdrMetadata() = std::move(d);
+            else
+              ps->meta().clips() = std::move(d);
+          }
+          return true;
+        }
+        if (field_name == "variantSets") {
+          // Writer stores the variant-set names only; reconstruct name entries.
+          Value vs_v;
+          if (!UnpackValue(field_value, vs_v)) {
+            AddWarning(
+                std::string("Composition arc field 'variantSets' has unexpected "
+                            "encoding; dropped"));
+          } else if (const std::vector<std::string>* arr =
+                         vs_v.as_token_array()) {
+            for (const auto& n : *arr) {
+              ps->meta().variantSets().push_back(VariantSetData{n, "", {}});
+            }
+          } else if (const std::string* s = vs_v.as_token()) {
+            ps->meta().variantSets().push_back(VariantSetData{*s, "", {}});
+          } else if (const std::string* s = vs_v.as_string()) {
+            ps->meta().variantSets().push_back(VariantSetData{*s, "", {}});
+          } else {
+            AddWarning(std::string("Composition arc field 'variantSets' has unexpected encoding; dropped"));
+          }
+          return true;
+        }
+      }
+      // A loose sibling "variability" field cannot be re-associated with a
+      // property here; consume it so it does not surface as a stray property.
+      // Per-property variability is decoded above through Attribute/Relationship
+      // specs and preserved as kFlagUniform.
+        if (field_name == "variability") return true;
+
+      // Reserved Sdf children-key ordering fields. pxrUSD stores prim/property
+      // order in these (SdfChildrenKeys); USDA flatten output does NOT emit them
+      // as body attributes -- order is implicit in the authored child/property
+      // sequence. Composition derives child order from child_indices() directly
+      // (see cache.cc ComposeInto), so consume these so they do not leak as
+      // phantom `token[] primChildren`/`properties` attributes.
+      if (field_name == "primChildren" || field_name == "properties" ||
+          field_name == "propertyChildren" ||
+          field_name == "variantChildren" ||
+          field_name == "variantSetChildren") {
+        return true;
+      }
+
+      // `variantSetNames` (the declared list of variant-set names) likewise must
+      // not leak as a phantom `string[] variantSetNames` body property. The
+      // compositor drives variants from the bracketed-holder specs + the
+      // variantSelection (not from this list), and flatten output drops variant
+      // metadata entirely (see cache.cc ComposeInto), so consume it.
+      if (field_name == "variantSetNames") {
+        return true;
+      }
+
+      uint16_t flags = 0;
+      Value v;
+      if (!UnpackValue(field_value, v)) {
+        AddWarning(std::string("Failed to decode prim property '") +
+                   std::string(field_name) + "'; dropped");
+        return true;
+      }
+      wb.add_property(field_name, std::move(v), flags);
+      return true;
+    });
+
+    // Attach separate Attribute / Relationship specs that belong to this prim.
+    // The dedup guard keeps any inline field authoritative.
+    if (ps) {
+      auto emit_attr = [&](AttrInfo& ai) {
+        const PropNameId prop_name_id = GetPropNameTable().intern(ai.name);
+        if (!prop_name_id.is_valid()) return;
+        if (ps->property(prop_name_id)) return;  // inline opinion wins
+        uint16_t flags = 0;
+        if (ai.uniform) flags |= PropSlot::kFlagUniform;
+        if (ai.custom) flags |= PropSlot::kFlagCustom;
+        if (ai.is_connection) flags |= PropSlot::kFlagConnection;
+        // The writer gates timeSamples emission on the slot flag, so mark a
+        // time-sampled attribute (the value lives in add_time_sample below).
+        const bool has_time_samples =
+            ai.cold && !ai.cold->time_samples.empty();
+        if (has_time_samples) flags |= PropSlot::kFlagTimeSampled;
+        const bool is_array =
+            ai.type_name.size() >= 2 &&
+            ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
+        if (ai.has_default) {
+          ps->add_property(prop_name_id, std::move(ai.default_value), flags);
+        } else {
+          // Connection-only / declared-only / timeSamples-only attribute:
+          // register a typed slot with no authored default so it round-trips.
+          if (is_array) flags |= PropSlot::kFlagArray;
+          TypeId tid = TypeId::Invalid;
+          if (is_array) {
+            const std::string_view base(ai.type_name.data(),
+                                        ai.type_name.size() - 2);
+            tid = GetTypeIdFromName(base);
+          } else {
+            tid = GetTypeIdFromName(ai.type_name);
+          }
+          ps->add_property_slot(prop_name_id, tid, flags);
+        }
+        // Time samples (an attribute may have timeSamples with or without a
+        // default).
+        if (has_time_samples) {
+          for (auto& ts : ai.cold->time_samples) {
+            ps->add_time_sample(prop_name_id, ts.first, std::move(ts.second));
+          }
+        }
+        if (!ai.type_name.empty()) {
+          ps->set_property_type_name(prop_name_id, ai.type_name);
+        }
+        if (ai.cold) {
+          for (auto& t : ai.cold->connection_targets) {
+            ps->add_connection(prop_name_id, std::move(t));
+          }
+        }
+        // Per-property metadata.
+        if (ai.has_interpolation || ai.has_color_space || ai.has_element_size ||
+            (ai.cold && ai.cold->custom_data.is_dictionary())) {
+          PropMeta& pm = ps->ensure_property_meta(prop_name_id);
+          if (ai.has_interpolation) {
+            pm.interpolation = ai.interpolation;
+            pm.authored |= PropMeta::kInterpolation;
+          }
+          if (ai.has_color_space) {
+            pm.colorSpace = ai.color_space;
+            pm.authored |= PropMeta::kColorSpace;
+          }
+          if (ai.has_element_size) {
+            pm.elementSize = ai.element_size;
+            pm.authored |= PropMeta::kElementSize;
+          }
+          if (ai.cold && ai.cold->custom_data.is_dictionary()) {
+            pm.customData = std::move(ai.cold->custom_data);
+            pm.authored |= PropMeta::kCustomData;
+          }
+        }
+      };
+
+      if (attrs_sorted_by_prim) {
+        while (attr_cursor < attr_entries.size() &&
+               attr_entries[attr_cursor].first < entry.full_path) {
+          ++attr_cursor;
+        }
+        size_t i = attr_cursor;
+        while (i < attr_entries.size() &&
+               attr_entries[i].first == entry.full_path) {
+          emit_attr(attr_entries[i].second);
+          ++i;
+        }
+        attr_cursor = i;
+      } else {
+        for (size_t node_index = attr_head[prim_index];
+             node_index != kNoIndex; node_index = attr_next[node_index]) {
+          emit_attr(attr_entries[node_index].second);
+        }
+      }
+    }
+
+    if (ps) {
+      auto emit_rel = [&](RelInfo& ri) {
+        // A target-less relationship is recorded with a single empty Path
+        // marker (the writer emits no targetPaths for it); relationships with
+        // targets push one Path per target.
+        if (ri.targets.empty()) {
+          ps->add_relationship(ri.name, Path());
+        } else {
+          for (auto& t : ri.targets) ps->add_relationship(ri.name, std::move(t));
+        }
+      };
+
+      if (rels_sorted_by_prim) {
+        while (rel_cursor < rel_entries.size() &&
+               rel_entries[rel_cursor].first < entry.full_path) {
+          ++rel_cursor;
+        }
+        size_t i = rel_cursor;
+        while (i < rel_entries.size() && rel_entries[i].first == entry.full_path) {
+          emit_rel(rel_entries[i].second);
+          ++i;
+        }
+        rel_cursor = i;
+      } else {
+        for (size_t node_index = rel_head[prim_index];
+             node_index != kNoIndex; node_index = rel_next[node_index]) {
+          emit_rel(rel_entries[node_index].second);
+        }
+      }
+    }
+
+    // Variant sets: attach a VariantSetData{name, selected} per selected set.
+    // The variant CONTENT (properties + child prims) lives in the layer's
+    // bracketed holder prims, which the compositor reads on selection and the
+    // writer re-emits; the model only carries the selection here.
+    if (ps) {
+      bool has_variant_sel = false;
+      auto emit_variant_sel = [&](const VariantSelectionEntry& sel) {
+        VariantSetData vsd;
+        vsd.name = sel.set_name;
+        vsd.selected = sel.selection;
+        ps->meta().variantSets().push_back(std::move(vsd));
+
+        if (!has_variant_sel) {
+          has_variant_sel = true;
+          std::string variant_selection;
+          variant_selection.reserve(sel.set_name.size() + 1 + sel.selection.size());
+          variant_selection.append(sel.set_name);
+          variant_selection.push_back('=');
+          variant_selection.append(sel.selection);
+          ps->meta().variantSelection = std::move(variant_selection);
+        }
+      };
+
+      if (variants_sorted_by_prim) {
+        while (variant_cursor < variant_sels.size() &&
+               variant_sels[variant_cursor].prim_path < entry.full_path) {
+          ++variant_cursor;
+        }
+        size_t i = variant_cursor;
+        while (i < variant_sels.size() &&
+               variant_sels[i].prim_path == entry.full_path) {
+          emit_variant_sel(variant_sels[i]);
+          ++i;
+        }
+        variant_cursor = i;
+      } else {
+        for (size_t node_index = variant_head[prim_index];
+             node_index != kNoIndex; node_index = variant_next[node_index]) {
+          emit_variant_sel(variant_sels[node_index]);
+        }
+      }
+    }
+          wb.end_prim();
+        }
+      };
+
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      size_t remaining = chunks.size();
+      for (EmitChunk& ck : chunks) {
+        EmitChunk* ckp = &ck;
+        auto task = [&, ckp]() {
+          emit_range(*ckp);
+          std::lock_guard<std::mutex> lock(done_mu);
+          if (--remaining == 0) done_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, task)) {
+          task();  // pool unavailable: run inline (still correct)
+        }
+      }
+      {
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+      }
+
+      // Stitch fragments in range order (final prim order == serial order),
+      // then rebuild hierarchy links with the exact serial depth-stack rule.
+      for (EmitChunk& ck : chunks) {
+        if (ck.layer) layer.adopt_fragment(std::move(*ck.layer));
+      }
+      std::vector<uint32_t> link_stack;
+      const size_t total_prims = layer.prim_count();
+      for (uint32_t i = 0; i < total_prims; ++i) {
+        const std::string& ppath = layer.prim(i)->path().str();
+        const size_t depth =
+            static_cast<size_t>(std::count(ppath.begin(), ppath.end(), '/'));
+        const size_t want = depth > 0 ? depth - 1 : 0;
+        if (link_stack.size() > want) link_stack.resize(want);
+        if (link_stack.empty()) {
+          layer.add_root(static_cast<uint32_t>(i));
+        } else {
+          layer.set_parent(static_cast<uint32_t>(i), link_stack.back());
+        }
+        link_stack.push_back(static_cast<uint32_t>(i));
+      }
+      parallel_emit_done = true;
+    }
+  }
+#endif  // TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE
+
+  if (!parallel_emit_done) {
   for (size_t prim_index = 0; prim_index < prim_entries.size(); ++prim_index) {
     auto& entry = prim_entries[prim_index];
     // Compute depth of this prim (number of '/' in path)
@@ -1085,6 +1661,7 @@ bool CrateReader::Impl::BuildStage() {
     builder.end_prim();
     --prim_depth;
   }
+  }  // !parallel_emit_done (retained serial emit)
   const auto t_emit_end = Clock::now();
 
   // Finalize

@@ -265,17 +265,24 @@ struct TypeNameViewEq {
 };
 
 const std::unordered_map<std::string_view, TypeId, TypeNameViewHash, TypeNameViewEq>& GetTypeNameToIdMap() {
-  static std::unordered_map<std::string_view, TypeId, TypeNameViewHash, TypeNameViewEq> map;
-  static bool initialized = false;
-  if (!initialized) {
-    map.reserve(kTypeCount * 2);
-    for (size_t i = 1; i < kTypeCount; ++i) {
-      if (g_type_info[i].name) {
-        map.emplace(g_type_info[i].name, static_cast<TypeId>(i));
-      }
-    }
-    initialized = true;
-  }
+  // Populate inside the (thread-safe) function-local static initializer:
+  // concurrent first callers (parallel build_stage / subtree-parse workers)
+  // must not observe a half-built map. (The former `static bool initialized`
+  // pattern raced.)
+  static const std::unordered_map<std::string_view, TypeId, TypeNameViewHash,
+                                  TypeNameViewEq>
+      map = [] {
+        std::unordered_map<std::string_view, TypeId, TypeNameViewHash,
+                           TypeNameViewEq>
+            m;
+        m.reserve(kTypeCount * 2);
+        for (size_t i = 1; i < kTypeCount; ++i) {
+          if (g_type_info[i].name) {
+            m.emplace(g_type_info[i].name, static_cast<TypeId>(i));
+          }
+        }
+        return m;
+      }();
   return map;
 }
 

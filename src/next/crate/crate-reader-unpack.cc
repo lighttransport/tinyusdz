@@ -29,9 +29,9 @@ bool CrateReader::Impl::UnpackInt(ValueRep rep, Value& out) {
     out = Value(static_cast<int32_t>(rep.payload()));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t v;
-  if (!reader_->read_i32(v)) return false;
+  if (!reader()->read_i32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -41,9 +41,9 @@ bool CrateReader::Impl::UnpackUInt(ValueRep rep, Value& out) {
     out = Value(static_cast<uint32_t>(rep.payload()));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint32_t v;
-  if (!reader_->read_u32(v)) return false;
+  if (!reader()->read_u32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -53,9 +53,9 @@ bool CrateReader::Impl::UnpackInt64(ValueRep rep, Value& out) {
     out = Value(static_cast<int64_t>(rep.payload_as_offset()));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int64_t v;
-  if (!reader_->read_i64(v)) return false;
+  if (!reader()->read_i64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -65,9 +65,9 @@ bool CrateReader::Impl::UnpackUInt64(ValueRep rep, Value& out) {
     out = Value(static_cast<uint64_t>(rep.payload()));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint64_t v;
-  if (!reader_->read_u64(v)) return false;
+  if (!reader()->read_u64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -80,9 +80,9 @@ bool CrateReader::Impl::UnpackFloat(ValueRep rep, Value& out) {
     out = Value(v);
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float v;
-  if (!reader_->read_f32(v)) return false;
+  if (!reader()->read_f32(v)) return false;
   out = Value(v);
   return true;
 }
@@ -97,9 +97,9 @@ bool CrateReader::Impl::UnpackDouble(ValueRep rep, Value& out) {
     out = Value(static_cast<double>(f));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double v;
-  if (!reader_->read_f64(v)) return false;
+  if (!reader()->read_f64(v)) return false;
   out = Value(v);
   return true;
 }
@@ -129,13 +129,13 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
   }
 
   uint64_t header_offset = rep.payload();
-  if (!reader_->seek(static_cast<size_t>(header_offset))) return false;
+  if (!reader()->seek(static_cast<size_t>(header_offset))) return false;
 
   // Skip fwd1(8) + times_rep(8) + fwd2(8) to reach the sample count.
-  if (!reader_->skip(24)) return false;
+  if (!reader()->skip(24)) return false;
 
   uint64_t num_samples;
-  if (!reader_->read_u64(num_samples)) return false;
+  if (!reader()->read_u64(num_samples)) return false;
   if (num_samples > 1000000) {
     AddWarning("Too many time samples");
     return false;
@@ -160,14 +160,14 @@ bool CrateReader::Impl::DecodeTimeSamples(
   // Each `[i64 off]` is a relative jump: after reading the 8-byte offset at
   // position Q, the target is Q+off (i.e. seek_from_current(off-8)).
   const int64_t P = static_cast<int64_t>(rep.payload());
-  if (P < 0 || !reader_->seek(static_cast<size_t>(P))) return false;
+  if (P < 0 || !reader()->seek(static_cast<size_t>(P))) return false;
 
   int64_t off_t = 0;
-  if (!reader_->read(&off_t, 8)) return false;
+  if (!reader()->read(&off_t, 8)) return false;
   const int64_t times_pos = P + off_t;  // Q=P, target=Q+off_t
-  if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
+  if (times_pos < 0 || !reader()->seek(static_cast<size_t>(times_pos))) return false;
   uint64_t times_rep_raw = 0;
-  if (!reader_->read_u64(times_rep_raw)) return false;
+  if (!reader()->read_u64(times_rep_raw)) return false;
   const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
 
   Value times_val;
@@ -182,16 +182,16 @@ bool CrateReader::Impl::DecodeTimeSamples(
   // Values block: follow the second recursive offset. Read each ValueRep and decode
   // only the number of pairs that are actually needed; if the file carries
   // extra sample entries (or fewer times), still consume all sample records.
-  if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
+  if (!reader()->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
-  if (!reader_->read(&off_v, 8)) {
+  if (!reader()->read(&off_v, 8)) {
     AddWarning("TimeSamples: failed reading value block offset");
     return false;
   }
   const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
-  if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
+  if (vals_pos < 0 || !reader()->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read_u64(n)) {
+  if (!reader()->read_u64(n)) {
     AddWarning("TimeSamples: failed reading sample count");
     return false;
   }
@@ -209,11 +209,11 @@ bool CrateReader::Impl::DecodeTimeSamples(
     AddWarning("TimeSamples: sample list offset overflow");
     return false;
   }
-  if (values_list_end > reader_->size()) {
+  if (values_list_end > reader()->size()) {
     return false;
   }
 
-  auto& sample_raws = array_scratch_.u64_values;
+  auto& sample_raws = array_scratch().u64_values;
   sample_raws.clear();
   if (sample_raws.capacity() < pair_count) {
     sample_raws.reserve(pair_count);
@@ -223,12 +223,12 @@ bool CrateReader::Impl::DecodeTimeSamples(
   // disturb the shared stream cursor.
   for (size_t i = 0; i < pair_count; ++i) {
     uint64_t raw = 0;
-    if (!reader_->read_u64(raw)) return false;
+    if (!reader()->read_u64(raw)) return false;
     sample_raws.push_back(raw);
   }
 
   if (sample_count > pair_count) {
-    if (!reader_->skip((sample_count - pair_count) * 8)) return false;
+    if (!reader()->skip((sample_count - pair_count) * 8)) return false;
   }
 
   for (size_t i = 0; i < pair_count; ++i) {
@@ -239,7 +239,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
     }
     out->emplace_back((*times)[i], std::move(v));
   }
-  if (!reader_->seek(values_list_end)) return false;
+  if (!reader()->seek(values_list_end)) return false;
   return true;
 }
 
@@ -274,9 +274,9 @@ bool CrateReader::Impl::UnpackVec2f(ValueRep rep, Value& out) {
     out = Value::MakeFloat2(float(b[0]), float(b[1]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat2(data[0], data[1]);
   return true;
 }
@@ -291,9 +291,9 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
     out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat3(data[0], data[1], data[2]);
   return true;
 }
@@ -308,9 +308,9 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
     out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeFloat4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -325,9 +325,9 @@ bool CrateReader::Impl::UnpackVec2d(ValueRep rep, Value& out) {
     out = Value::MakeDouble2(double(b[0]), double(b[1]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble2(data[0], data[1]);
   return true;
 }
@@ -342,9 +342,9 @@ bool CrateReader::Impl::UnpackVec3d(ValueRep rep, Value& out) {
     out = Value::MakeDouble3(double(b[0]), double(b[1]), double(b[2]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble3(data[0], data[1], data[2]);
   return true;
 }
@@ -359,9 +359,9 @@ bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
     out = Value::MakeDouble4(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeDouble4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -376,9 +376,9 @@ bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
     out = Value::MakeQuatf(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeQuatf(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -393,9 +393,9 @@ bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
     out = Value::MakeQuatd(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeQuatd(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -410,9 +410,9 @@ bool CrateReader::Impl::UnpackMatrix3d(ValueRep rep, Value& out) {
     double m[9] = {0}; m[0]=b[0]; m[4]=b[1]; m[8]=b[2]; out = Value::MakeMatrix3d(m);
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[9];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix3d(data);
   return true;
 }
@@ -427,9 +427,9 @@ bool CrateReader::Impl::UnpackMatrix4d(ValueRep rep, Value& out) {
     double m[16] = {0}; m[0]=b[0]; m[5]=b[1]; m[10]=b[2]; m[15]=b[3]; out = Value::MakeMatrix4d(m);
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[16];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix4d(data);
   return true;
 }
@@ -450,9 +450,9 @@ bool CrateReader::Impl::UnpackMatrix2d(ValueRep rep, Value& out) {
     out = Value::MakeMatrix2d(m);
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeMatrix2d(data);
   return true;
 }
@@ -481,9 +481,9 @@ bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
 bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
   // 8 bytes — never inlinable (inline payload is 6 bytes).
   if (rep.is_inlined()) return false;
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[2];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt2(data[0], data[1]);
   return true;
 }
@@ -498,9 +498,9 @@ bool CrateReader::Impl::UnpackVec3i(ValueRep rep, Value& out) {
     out = Value::MakeInt3(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[3];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt3(data[0], data[1], data[2]);
   return true;
 }
@@ -515,9 +515,9 @@ bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
     out = Value::MakeInt4(int32_t(b[0]), int32_t(b[1]), int32_t(b[2]), int32_t(b[3]));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[4];
-  if (!reader_->read(data, sizeof(data))) return false;
+  if (!reader()->read(data, sizeof(data))) return false;
   out = Value::MakeInt4(data[0], data[1], data[2], data[3]);
   return true;
 }
@@ -574,10 +574,10 @@ bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
     out = Value(half_to_float(h));
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint16_t h;
   uint8_t hb[2];
-  if (!reader_->read(hb, 2)) return false;
+  if (!reader()->read(hb, 2)) return false;
   h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
   out = Value(half_to_float(h));
   return true;
@@ -591,8 +591,8 @@ bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
     raw[0] = static_cast<uint16_t>(p & 0xFFFF);
     raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
   } else {
-    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read(raw, sizeof(raw))) return false;
+    if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader()->read(raw, sizeof(raw))) return false;
   }
   out = Value::MakeFloat2(half_to_float(raw[0]), half_to_float(raw[1]));
   return true;
@@ -607,8 +607,8 @@ bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
     raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
     raw[2] = static_cast<uint16_t>((p >> 32) & 0xFFFF);
   } else {
-    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read(raw, sizeof(raw))) return false;
+    if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader()->read(raw, sizeof(raw))) return false;
   }
   out = Value::MakeFloat3(half_to_float(raw[0]), half_to_float(raw[1]), half_to_float(raw[2]));
   return true;
@@ -617,9 +617,9 @@ bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
 bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
   // 8 bytes — never inlinable (inline payload is 6 bytes).
   if (rep.is_inlined()) return false;
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint16_t raw[4];
-  if (!reader_->read(raw, sizeof(raw))) return false;
+  if (!reader()->read(raw, sizeof(raw))) return false;
   out = Value::MakeFloat4(half_to_float(raw[0]), half_to_float(raw[1]),
                            half_to_float(raw[2]), half_to_float(raw[3]));
   return true;
@@ -628,9 +628,9 @@ bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
 bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
   // 8 bytes — never inlinable (inline payload is 6 bytes).
   if (rep.is_inlined()) return false;
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint16_t raw[4];
-  if (!reader_->read(raw, sizeof(raw))) return false;
+  if (!reader()->read(raw, sizeof(raw))) return false;
   out = Value::MakeQuatf(half_to_float(raw[0]), half_to_float(raw[1]),
                           half_to_float(raw[2]), half_to_float(raw[3]));
   return true;
