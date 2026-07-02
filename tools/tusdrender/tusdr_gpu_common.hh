@@ -29,11 +29,15 @@ struct GpuTriScene {
 };
 
 // Flatten `geos` (with per-mesh `base_colors`) into a single indexed mesh and
-// build the BVH4 scene. Returns false (with a stderr diagnostic) when there is
-// no geometry or the BVH build fails; on success `out->scene` is non-null.
-bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
+// (when `build_bvh`) build the BVH4 scene honoring opt.quality/opt.threads.
+// Pass build_bvh=false when the caller will trace on a hardware ray-query AS
+// built from flat_verts/flat_idx directly (-vkr): the CPU BVH is unused there
+// and skipping it saves the whole build (many seconds at 10M+ triangles).
+// Returns false (with a stderr diagnostic) when there is no geometry or the
+// BVH build fails; on success `out->scene` is non-null iff build_bvh.
+bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                      GpuTriScene *out);
+                      GpuTriScene *out, bool build_bvh = true);
 
 // --- True two-level (instanced) GPU scene -----------------------------------
 //

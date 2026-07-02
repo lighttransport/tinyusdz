@@ -17,7 +17,7 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                    const std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height) {
   GpuTriScene s;
-  if (!BuildGpuTriScene(base_colors, geos, &s)) return false;
+  if (!BuildGpuTriScene(opt, base_colors, geos, &s)) return false;
 
   // Create the HIP engine (compiles the trace kernel via hiprtc).
   lrt_hip_engine_options hopts;

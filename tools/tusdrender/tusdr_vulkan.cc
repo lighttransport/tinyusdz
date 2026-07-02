@@ -14,10 +14,9 @@ namespace tusdr {
 bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
                       const CameraFrame &camera, int height) {
-  GpuTriScene s;
-  if (!BuildGpuTriScene(base_colors, geos, &s)) return false;
-
-  // Create the Vulkan engine.
+  // Create the Vulkan engine first: whether the device traces via hardware ray
+  // query decides if the CPU BVH is needed at all (the -vkr AS is GPU-built
+  // from the indexed mesh, so the CPU build would be pure waste there).
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
   vopts.device_index = -1;
@@ -27,7 +26,6 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
   if (!vk) {
     std::cerr << "Failed to create LightRT Vulkan engine.\n";
-    lrt_tri_scene_free(s.scene);
     return false;
   }
 
@@ -40,6 +38,13 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
             << ((vk_caps & LRT_VK_CAP_RAY_QUERY) ? " ray_query" : "")
             << "\n";
 
+  GpuTriScene s;
+  const bool use_rt = has_rt && opt.vulkan_rt;
+  if (!BuildGpuTriScene(opt, base_colors, geos, &s, /*build_bvh=*/!use_rt)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+
   // Generate every primary ray and trace the whole frame in ONE batched GPU
   // dispatch (the -vkr ray-query AS is built once, not per pixel).
   const int w = opt.width > 0 ? opt.width : 960;
@@ -51,7 +56,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::vector<lrt_hit> hits(rays.size());
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
-  if (has_rt && opt.vulkan_rt) {
+  if (use_rt) {
     // Build the ray-query acceleration structure directly from the indexed mesh
     // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
     // primitiveIndex == triangle build order == caller index, matching the
@@ -79,7 +84,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   if (ok) {
     std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
     std::cerr << "backend: LightRT VK ("
-              << (has_rt && opt.vulkan_rt ? "ray_query" : "compute trace") << ")\n";
+              << (use_rt ? "ray_query" : "compute trace") << ")\n";
   }
   lrt_tri_scene_free(s.scene);
   lrt_vk_engine_destroy(vk);
