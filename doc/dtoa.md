@@ -106,6 +106,12 @@ Key findings that shaped the design (see `sandbox/dtoa/README.md`):
   as argv[1] to also sweep all 2³² floats.
 - `tests/next/test_writer.cc` (ctest `next_test_writer`): stream-vs-string and
   `dtos_to`-vs-`dtos_append` byte-identity.
+- `tests/fuzzer/next_dtoa_fuzzmain.cc` (`fuzz_next_dtoa`, built with
+  `-DTINYUSDZ_NEXT_BUILD_FUZZERS=ON`): libFuzzer + ASAN/UBSAN. The input bytes are
+  the float/double bit patterns, so it explores nan/inf/subnormal/huge/tiny values
+  directly. Per value it checks: memory safety (formats into an *exact*
+  `kDtoaBufSize` heap buffer, so ASAN's redzone catches any SIMD overshoot),
+  round-trip bit-equality, three-API agreement, and no `+`/NUL in the output.
 
 ## Future enhancements
 
@@ -147,3 +153,4 @@ Ordered roughly by value/effort:
   grown to `kDtoaBufSize`.
 - `sandbox/dtoa/` — the standalone benchmark + exhaustive conformance harness.
 - `tests/next/test_dtoa.cc` — unit test (ctest `next_test_dtoa`).
+- `tests/fuzzer/next_dtoa_fuzzmain.cc` — libFuzzer harness (`fuzz_next_dtoa`).
