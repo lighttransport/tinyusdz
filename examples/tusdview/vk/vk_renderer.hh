@@ -501,6 +501,17 @@ class VulkanRenderer final : public Renderer {
   void* mdiInstColMapped_{nullptr};
   VkBuffer mdiIndirectBuf_{VK_NULL_HANDLE}; VkDeviceMemory mdiIndirectMem_{VK_NULL_HANDLE};
   void* mdiIndirectMapped_{nullptr};
+  // Optional DEVICE-LOCAL mirror of the per-instance o2w + color buffers (island's
+  // MDI frame time is instance-fetch bound: ~2 GB of host-visible transforms are
+  // refetched over PCIe every frame). Cull writes still land in the host-visible
+  // buffers; each rewritten mesh slice is queued here and vkCmdCopyBuffer'd into
+  // the mirror at the top of the next frame, so a settled camera uploads nothing.
+  // Enabled when the VK_EXT_memory_budget headroom check passes (the mirror costs
+  // VRAM -- keep it OFF for tight-VRAM configs); TUSDVIEW_MDI_DEVLOCAL=0/1 forces.
+  VkBuffer mdiInstDevBuf_{VK_NULL_HANDLE};    VkDeviceMemory mdiInstDevMem_{VK_NULL_HANDLE};
+  VkBuffer mdiInstColDevBuf_{VK_NULL_HANDLE}; VkDeviceMemory mdiInstColDevMem_{VK_NULL_HANDLE};
+  bool mdiInstDevLocal_{false};
+  std::vector<VkBufferCopy> mdiInstPendingXf_, mdiInstPendingCol_;
   // One indirect command per (eligible mesh, submesh); meshIndex ties it back to the
   // prototype for the per-frame instanceCount patch + visibility gate.
   struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
