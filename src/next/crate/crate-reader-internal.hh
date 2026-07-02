@@ -18,6 +18,15 @@
 #include <mutex>
 #endif
 
+// Parallel crate reconstruction gate (build_stage collect/emit/index and the
+// PATHS/FIELDS section decodes): compile-time ON when threads are enabled;
+// define TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE to force the retained
+// serial paths everywhere.
+#if defined(TINYUSDZ_ENABLE_THREAD) && \
+    !defined(TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE)
+#define TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE 1
+#endif
+
 namespace tinyusdz {
 namespace next {
 
