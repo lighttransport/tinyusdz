@@ -61,6 +61,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Writers
     writer/dtoa.cc
+    ../external/zmij/zmij.cc  # zmij usdcat SIMD fast path (used by writer/dtoa.cc)
     writer/value-printer.cc
     writer/prim-printer.cc
     writer/usda-writer.cc
@@ -228,8 +229,16 @@ add_library(tinyusdz_next STATIC
 )
 
 # C++17 (matches the parent project). The USDA writer formats floats via the
-# vendored dragonbox dtoa (writer/dtoa.cc).
+# vendored dragonbox dtoa (writer/dtoa.cc), with a zmij SIMD fast path.
 target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
+
+# Silence warnings from the vendored zmij translation unit (third-party code:
+# __int128 pedantic, sign-compare, unused params — not ours to fix).
+if(MSVC)
+    set_source_files_properties(../external/zmij/zmij.cc PROPERTIES COMPILE_FLAGS "/w")
+else()
+    set_source_files_properties(../external/zmij/zmij.cc PROPERTIES COMPILE_FLAGS "-w")
+endif()
 
 # Optional threading: enables std::thread parallel paths in next. Keep this OFF
 # for WASM/browser builds so they do not require Emscripten pthreads /
@@ -329,6 +338,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
     )
     target_link_libraries(test_writer PRIVATE tinyusdz_next)
+
+    add_executable(test_dtoa
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_dtoa.cc
+    )
+    target_link_libraries(test_dtoa PRIVATE tinyusdz_next)
 
     add_executable(test_usdc_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_writer.cc
@@ -544,6 +558,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_pcp_parallel COMMAND test_pcp_parallel
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_writer COMMAND test_writer
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_dtoa COMMAND test_dtoa
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
