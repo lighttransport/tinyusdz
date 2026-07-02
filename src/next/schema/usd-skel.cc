@@ -48,8 +48,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
       val = prim.GetPropertyValue("joints");
     }
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->joints = *toks;
+      if (const std::vector<TfToken>* toks = val->as_token_array()) {
+        out->joints.reserve(toks->size());
+        for (const TfToken& t : *toks) out->joints.push_back(t.str());
       }
     }
   }
@@ -58,8 +59,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("jointNames");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->jointNames = *toks;
+      if (const std::vector<TfToken>* toks = val->as_token_array()) {
+        out->jointNames.reserve(toks->size());
+        for (const TfToken& t : *toks) out->jointNames.push_back(t.str());
       }
     }
   }

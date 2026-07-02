@@ -16,6 +16,7 @@ namespace next {
 using ::tinyusdz::next::Path;
 using ::tinyusdz::next::PrimSpec;
 using ::tinyusdz::next::PropMeta;
+using ::tinyusdz::next::TfToken;
 
 //
 // Prim type checking
@@ -631,12 +632,12 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
 
   // xformOpOrder is uniform (not time-sampled) -> default value.
   const Value* orderv = prim.GetPropertyValue("xformOpOrder");
-  const std::vector<std::string>* order =
+  const std::vector<TfToken>* order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return true;  // no ops -> identity
 
   for (size_t i = 0; i < order->size(); ++i) {
-    std::string tok = (*order)[i];
+    std::string tok = (*order)[i].str();
     bool inverted = false;
     if (tok.rfind("!invert!", 0) == 0) {
       inverted = true;
@@ -790,10 +791,10 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matri
 bool HasResetXformStack(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
   const Value* orderv = prim.GetPropertyValue("xformOpOrder");
-  const std::vector<std::string>* order =
+  const std::vector<TfToken>* order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return false;
-  return (*order)[0] == "!resetXformStack!";
+  return (*order)[0].str() == "!resetXformStack!";
 }
 
 //
@@ -950,7 +951,10 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
                                         const std::string& name) {
   std::vector<std::string> out;
   if (const Value* v = prim.GetPropertyValue(name)) {
-    if (const std::vector<std::string>* toks = v->as_token_array()) out = *toks;
+    if (const std::vector<TfToken>* toks = v->as_token_array()) {
+      out.reserve(toks->size());
+      for (const TfToken& t : *toks) out.push_back(t.str());
+    }
   }
   return out;
 }

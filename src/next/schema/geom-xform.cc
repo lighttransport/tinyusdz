@@ -18,8 +18,9 @@ std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
 
   const Value* v = prim_.GetPropertyValue("xformOpOrder");
   if (!v) return result;
-  if (const std::vector<std::string>* toks = v->as_token_array()) {
-    result = *toks;
+  if (const std::vector<TfToken>* toks = v->as_token_array()) {
+    result.reserve(toks->size());
+    for (const TfToken& t : *toks) result.push_back(t.str());
   }
   return result;
 }

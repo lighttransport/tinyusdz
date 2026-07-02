@@ -84,7 +84,7 @@ static void CheckCore(const Stage& s, const char* via) {
   const Value* joints = mesh.GetPropertyValue("joints");
   assert(joints && joints->as_token_array() &&
          joints->as_token_array()->size() == 2 &&
-         (*joints->as_token_array())[1] == "hip");
+         (*joints->as_token_array())[1].str() == "hip");
 
   const Value* labels = mesh.GetPropertyValue("labels");
   assert(labels && labels->as_token_array() &&

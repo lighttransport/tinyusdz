@@ -1019,23 +1019,30 @@ ParseResult ParseCapturedArrayValue(const char* data, size_t len, bool simple,
     profile_array(true, values.size());
     return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
   }
-  if (element_type == TypeId::Token || element_type == TypeId::String) {
+  if (element_type == TypeId::Token) {
+    // Intern each token as it is parsed, straight into a vector<TfToken> — no
+    // intermediate std::string vector (the token-array storage is interned).
+    std::vector<TfToken> toks;
+    if (!ParseScalarArray<TfToken>(&sp, &toks, [](SliceParser* s, TfToken* v) {
+          std::string tmp;
+          if (!s->parse_token(&tmp)) return false;
+          *v = TfToken(tmp);
+          return true;
+        })) {
+      return ParseResult::Error("Failed to parse token array");
+    }
+    profile_array(false, toks.size());
+    return ParseResult::Ok(Value::MakeTokenArray(std::move(toks)));
+  }
+  if (element_type == TypeId::String) {
     std::vector<std::string> values;
-    auto parse_stringish = [](SliceParser* s, std::string* v) {
-      return s->parse_token(v);
-    };
     auto parse_string = [](SliceParser* s, std::string* v) {
       return s->parse_string(v);
     };
-    // Decay both captureless lambdas to the same function-pointer type before
-    // the conditional operator. GCC/Clang form this common type implicitly, but
-    // MSVC does not (C2446: "no conversion from <lambda> to <lambda>").
     using ParseStringFn = bool (*)(SliceParser*, std::string*);
     if (!ParseScalarArray<std::string>(&sp, &values,
-                                       element_type == TypeId::Token
-                                           ? static_cast<ParseStringFn>(parse_stringish)
-                                           : static_cast<ParseStringFn>(parse_string))) {
-      return ParseResult::Error("Failed to parse string/token array");
+                                       static_cast<ParseStringFn>(parse_string))) {
+      return ParseResult::Error("Failed to parse string array");
     }
     profile_array(false, values.size());
     return ParseResult::Ok(Value::MakeTokenArray(std::move(values)));

@@ -304,7 +304,7 @@ def Xform "W" (
     const Value* tags = w.GetPropertyValue("tags");
     assert(tags && tags->as_token_array());
     assert(tags->as_token_array()->size() == 3);
-    assert((*tags->as_token_array())[1] == "beta");
+    assert((*tags->as_token_array())[1].str() == "beta");
     const Value* names = w.GetPropertyValue("names");
     assert(names && names->as_token_array() &&
            names->as_token_array()->size() == 2);
