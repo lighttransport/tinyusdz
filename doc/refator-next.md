@@ -601,3 +601,26 @@ Corpus gate (`next_corpus_parse`, usd-wg/assets, 280 files): **15 PASS /
 (`--max-fail 220`); the 219 failures are known next parser gaps (list-op
 qualifiers, dictionary metadata, compressed/extra array types — Phases 7-8),
 not crashes. Ratchet down as gaps close.
+
+## 2026-07 parallel parse/load results (branch next-refactor)
+
+Ten commits (`e869ad13`..`206040ac`) rebuilt the USDA parser and USDC crate
+reader around a shared worker pool. All steps byte-identical (rewrite `cmp`/
+sha256 vs serial), 25/25 tests in threaded + no-thread builds, TSan-clean,
+serial fallbacks retained (`--no-async-arrays`, `--no-parallel-prims`,
+compile gate `TINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE`).
+
+| Input (in /dev/shm, 8 threads) | before | after |
+|---|---|---|
+| Caldera flattened USDA 4.25 GB | 12.5 s / 325 MB/s | **2.0 s / ~2.1 GB/s** |
+| Island flattened USDA 9.28 GB | — | **5.5 s / ~1.7 GB/s** |
+| Caldera USDC 285 MB | 2.45 s | **0.85 s** |
+| Island USDC 2.37 GB | 6.8 s | **2.6 s** |
+
+Mechanisms: batched deferred numeric-array parse (placeholder Values filled
+in place by workers); parallel prim-subtree parse (SIMD prim-block capture →
+Layer fragments → placeholder-index stitch); crate build_stage collect/emit/
+index parallelized the same way; RCU-lite name-table snapshots (rwlock
+ping-pong was 38% of cycles); AVX2 runtime-dispatched scans; string_view
+tokens; arena-backed reader path table; direct-write collect with glibc
+arena warm blocks. Details + gotchas: local `resume.md` and the memory note.

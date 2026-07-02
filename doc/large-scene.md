@@ -740,3 +740,16 @@ cd build && ./unit-test-tinyusdz ioutil_asset_path_suffix_candidates_test \
 cd web/js && xvfb-run -a node tests/bench-usdzconvert-browser.mjs --hw \
   --scene <scene-dir> --root <root.usd> --case browser:png:1024
 ```
+
+## 6. 2026-07 next-parser parallel load speeds
+
+The `src/next` loaders (branch `next-refactor`) now parse the flattened
+benchmark scenes at (8 threads, inputs on tmpfs, byte-identical to serial):
+
+- Caldera USDA 4.25 GB: **2.0 s (~2.1 GB/s)**; its 285 MB USDC: **0.85 s**
+- Island USDA 9.28 GB: **5.5 s (~1.7 GB/s)**; its 2.37 GB USDC: **2.6 s**
+- Merged full-geometry ALab: compose+flatten-write 1.31 GB USDA in **5.1 s**
+
+Escape hatches: `--no-async-arrays`, `--no-parallel-prims`,
+`-DTINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE`. See doc/refator-next.md
+(2026-07 section) for the mechanism list.
