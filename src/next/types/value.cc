@@ -309,7 +309,10 @@ bool IsDoubleBackedArray(TypeId id) {
 // Constructors and destructor
 // ============================================================
 
-Value::Value() = default;
+// Bitfield flags have no default-member-initializer (C++17), so init them here;
+// type_id_ / array_size_ keep their in-class initializers. Every typed ctor
+// delegates to this so the flags are always zeroed.
+Value::Value() : is_array_(0), is_lazy_(0), dirty_(0), is_block_(0) {}
 
 Value::~Value() {
   destroy();
@@ -343,47 +346,58 @@ Value& Value::operator=(Value&& other) noexcept {
 // Type-specific constructors
 // ============================================================
 
-Value::Value(bool v) : type_id_(TypeId::Bool) {
+Value::Value(bool v) : Value() {
+  type_id_ = TypeId::Bool;
   std::memcpy(storage_, &v, sizeof(bool));
 }
 
-Value::Value(int32_t v) : type_id_(TypeId::Int) {
+Value::Value(int32_t v) : Value() {
+  type_id_ = TypeId::Int;
   std::memcpy(storage_, &v, sizeof(int32_t));
 }
 
-Value::Value(uint32_t v) : type_id_(TypeId::UInt) {
+Value::Value(uint32_t v) : Value() {
+  type_id_ = TypeId::UInt;
   std::memcpy(storage_, &v, sizeof(uint32_t));
 }
 
-Value::Value(int64_t v) : type_id_(TypeId::Int64) {
+Value::Value(int64_t v) : Value() {
+  type_id_ = TypeId::Int64;
   std::memcpy(storage_, &v, sizeof(int64_t));
 }
 
-Value::Value(uint64_t v) : type_id_(TypeId::UInt64) {
+Value::Value(uint64_t v) : Value() {
+  type_id_ = TypeId::UInt64;
   std::memcpy(storage_, &v, sizeof(uint64_t));
 }
 
-Value::Value(float v) : type_id_(TypeId::Float) {
+Value::Value(float v) : Value() {
+  type_id_ = TypeId::Float;
   std::memcpy(storage_, &v, sizeof(float));
 }
 
-Value::Value(double v) : type_id_(TypeId::Double) {
+Value::Value(double v) : Value() {
+  type_id_ = TypeId::Double;
   std::memcpy(storage_, &v, sizeof(double));
 }
 
-Value::Value(const char* v) : type_id_(TypeId::String) {
+Value::Value(const char* v) : Value() {
+  type_id_ = TypeId::String;
   StringSlot(storage_) = new StringBox(std::string(v ? v : ""));
 }
 
-Value::Value(std::string_view v) : type_id_(TypeId::String) {
+Value::Value(std::string_view v) : Value() {
+  type_id_ = TypeId::String;
   StringSlot(storage_) = new StringBox(std::string(v));
 }
 
-Value::Value(const std::string& v) : type_id_(TypeId::String) {
+Value::Value(const std::string& v) : Value() {
+  type_id_ = TypeId::String;
   StringSlot(storage_) = new StringBox(v);
 }
 
-Value::Value(std::string&& v) : type_id_(TypeId::String) {
+Value::Value(std::string&& v) : Value() {
+  type_id_ = TypeId::String;
   StringSlot(storage_) = new StringBox(std::move(v));
 }
 

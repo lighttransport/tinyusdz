@@ -359,14 +359,21 @@ public:
 
 private:
   TypeId type_id_ = TypeId::Invalid;
-  bool is_array_ = false;
-  bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
-  bool dirty_ = false;    // materialized and possibly mutated (no byte pass-through)
-  bool is_block_ = false; // authored `= None` block: no data, but not is_empty()
+  // Flags packed into one byte. C++17 forbids default-member-initializers on
+  // bitfields, so EVERY constructor initializes them: Value() does directly, the
+  // typed ctors delegate to Value(), and copy/move set them via copy_from/
+  // move_from. Access syntax (`is_array_`, `is_array_ = true`) is unchanged.
+  uint8_t is_array_ : 1;
+  uint8_t is_lazy_ : 1;   // array payload not decoded; storage_ holds LazyArrayRef*
+  uint8_t dirty_ : 1;     // materialized and possibly mutated (no byte pass-through)
+  uint8_t is_block_ : 1;  // authored `= None` block: no data, but not is_empty()
   uint32_t array_size_ = 0;
 
-  // Storage - either inline or heap-allocated
-  alignas(16) char storage_[kSBOSize];
+  // Inline storage. alignas(8): the largest inline type is now double-based
+  // (double / vec2d, 8-byte aligned); oversized doubles/matrices are boxed and
+  // 16-aligned inside their ScalarBox. Packing the header to 8 bytes + this
+  // 16-byte SBO gives sizeof(Value) == 24.
+  alignas(8) char storage_[kSBOSize];
 
   // Helper functions
   bool uses_heap() const;
