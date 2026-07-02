@@ -535,26 +535,26 @@ def Xform "Leaf"
 )";
 
   TEST_CHECK(WriteTextFileForCompositionTest(
-      tinyusdz::io::JoinPath(assets, "sfb_leaf.usda"), leaf_usda));
+      tinyusdz::io::JoinPath(assets, "leaf.usda"), leaf_usda));
   TEST_CHECK(WriteTextFileForCompositionTest(
-      tinyusdz::io::JoinPath(assets, "sfb_leaf2.usda"), leaf_usda));
+      tinyusdz::io::JoinPath(assets, "leaf2.usda"), leaf_usda));
 
   const std::string root_usda = R"(#usda 1.0
 
 def Xform "RefEscape" (
-    prepend references = @../../../../../USD_Exports/SfbScene/Assets/sfb_leaf.usda@
+    prepend references = @../../../../../USD_Exports/SampleScene/Assets/leaf.usda@
 )
 {
 }
 
 def Xform "RefDrive" (
-    prepend references = @F:/USD_Exports/SfbScene/Assets/sfb_leaf2.usda@
+    prepend references = @F:/USD_Exports/SampleScene/Assets/leaf2.usda@
 )
 {
 }
 
 def Xform "RefMissing" (
-    prepend references = @../../sfb_no_such_dir/sfb_nothing.usda@
+    prepend references = @../../missing_dir/missing.usda@
 )
 {
 }
@@ -586,14 +586,14 @@ def Xform "RefMissing" (
     TEST_MSG("CompositeReferences error: %s", err.c_str());
   }
 
-  // Escaping '../' reference rebased onto <dir>/Assets/sfb_leaf.usda.
+  // Escaping '../' reference rebased onto <dir>/Assets/leaf.usda.
   auto escape_it = composited.primspecs().find("RefEscape");
   TEST_CHECK(escape_it != composited.primspecs().end());
   if (escape_it != composited.primspecs().end()) {
     TEST_CHECK(escape_it->second.props().count("marker") == 1);
   }
 
-  // Drive-prefixed reference rebased onto <dir>/Assets/sfb_leaf2.usda.
+  // Drive-prefixed reference rebased onto <dir>/Assets/leaf2.usda.
   auto drive_it = composited.primspecs().find("RefDrive");
   TEST_CHECK(drive_it != composited.primspecs().end());
   if (drive_it != composited.primspecs().end()) {

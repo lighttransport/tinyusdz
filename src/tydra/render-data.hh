@@ -947,6 +947,11 @@ struct AnimationChannel {
   // For AnimationPath::CustomProperty channels.
   bool is_custom_property{false};    ///< true when `path == AnimationPath::CustomProperty`
   std::string property_name;         ///< The custom property name for this channel.
+  std::string target_prim_path;      ///< Optional unresolved/resolved target prim path.
+
+  // For AnimationPath::Weights channels sourced from UsdSkel blendShapeWeights.
+  // Values are stored in this target-name order.
+  std::vector<std::string> blendshape_target_names;
 
   /// Check if channel is valid based on its target type
   bool is_valid() const {
@@ -1641,6 +1646,16 @@ struct RenderLight
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 
+  // Light linking (LightAPI applies CollectionAPI:lightLink / :shadowLink).
+  // Resolved against scene geometry by ResolveLightLinking(). When a link
+  // collection is unauthored the light affects all geometry (the `*_links_all`
+  // default); otherwise `*_link_mesh_indices` lists the affected RenderMesh
+  // indices in `RenderScene::meshes`.
+  bool light_links_all{true};                  ///< true => illuminates all geometry
+  std::vector<int> light_link_mesh_indices;    ///< affected meshes when !light_links_all
+  bool shadow_links_all{true};                 ///< true => casts shadows from all geometry
+  std::vector<int> shadow_link_mesh_indices;   ///< shadow-casting meshes when !shadow_links_all
+
   /// Check if light has spectral emission data
   bool hasSpectralEmission() const {
     return spd_emission.has_value() && spd_emission->has_data();
@@ -1857,6 +1872,23 @@ struct RenderSceneSink {
 
   void *userdata{nullptr};
 };
+
+/// Resolve UsdLux light linking for every light in `scene`.
+///
+/// For each RenderLight, looks up its prim in `stage` and resolves the
+/// `collection:lightLink` / `collection:shadowLink` collections (CollectionAPI
+/// applied by LightAPI) against the scene's meshes. When a link collection is
+/// authored, the light's `light_links_all` / `shadow_links_all` is cleared and
+/// the corresponding `*_link_mesh_indices` is filled with the affected mesh
+/// indices; otherwise the light affects all geometry (the default).
+///
+/// Both relationship-mode (includes/excludes) and expression-mode
+/// (membershipExpression) collections are supported.
+///
+/// @return number of lights whose linking was resolved (had an authored
+///         lightLink/shadowLink collection).
+///
+size_t ResolveLightLinking(const Stage &stage, RenderScene *scene);
 
 ///
 

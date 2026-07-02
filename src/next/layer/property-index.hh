@@ -7,9 +7,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
-#include <deque>
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
@@ -41,6 +42,7 @@ public:
   /// Intern a property name, returning its ID
   /// If name already exists, returns existing ID
   PropNameId intern(const std::string& name);
+  PropNameId intern(std::string_view name);
   PropNameId intern(const char* name);
 
   /// Get name by ID (O(1))
@@ -48,6 +50,7 @@ public:
 
   /// Try to find existing ID without creating (O(1) average)
   PropNameId find(const std::string& name) const;
+  PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
@@ -90,13 +93,25 @@ public:
   PropNameId id_height;       // "height"
   PropNameId id_size;         // "size"
 
+  struct StringViewHash {
+    size_t operator()(std::string_view s) const noexcept {
+      return std::hash<std::string_view>{}(s);
+    }
+  };
+
+  struct StringViewEq {
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+      return a == b;
+    }
+  };
+
 private:
-  // deque, not vector: get() returns a `const std::string&` that a caller may use
-  // after the shared lock is released; a deque never relocates existing elements
-  // on push_back, so a concurrent intern() (parallel composition) cannot dangle
-  // that reference (a vector realloc would).
-  std::deque<std::string> names_;
-  std::unordered_map<std::string, uint32_t> name_to_id_;
+  // Interned property names.
+  // We keep pointers stable by owning names via unique_ptr and storing only string_view
+  // keys in the hash map.
+  std::vector<std::unique_ptr<std::string>> names_;
+  std::unordered_map<std::string_view, uint32_t, StringViewHash, StringViewEq>
+      name_to_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a

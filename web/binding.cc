@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -66,7 +67,6 @@
 #include "usdc-writer.hh"
 #include "usdz-geometry-optimize.hh"
 #include "usdz-material-optimize.hh"
-#include "crate-writer.hh"
 #include "image-writer.hh"
 #include "imageio/png-stream.hh"  // streaming scanline PNG codec
 #include "imageproc/simd.hh"      // SIMD row kernels (channel pack)
@@ -84,6 +84,132 @@
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+
+namespace {
+
+// When binding.cc is compiled with -fno-rtti, embind emits canonical local
+// type IDs instead of std::type_info pointers. Emscripten's builtin embind
+// registration is compiled separately, so register the builtin wire types again
+// with the no-RTTI IDs used by this translation unit.
+template <typename T>
+void RegisterNoRttiInteger(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_integer(TypeID<T>::get(), name, sizeof(T),
+                           std::numeric_limits<T>::min(),
+                           std::numeric_limits<T>::max());
+}
+
+template <typename T>
+void RegisterNoRttiBigInt(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_bigint(TypeID<T>::get(), name, sizeof(T),
+                          std::numeric_limits<T>::min(),
+                          std::numeric_limits<T>::max());
+}
+
+template <typename T>
+void RegisterNoRttiFloat(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_float(TypeID<T>::get(), name, sizeof(T));
+}
+
+enum NoRttiTypedArrayIndex {
+  kNoRttiInt8Array,
+  kNoRttiUint8Array,
+  kNoRttiInt16Array,
+  kNoRttiUint16Array,
+  kNoRttiInt32Array,
+  kNoRttiUint32Array,
+  kNoRttiFloat32Array,
+  kNoRttiFloat64Array,
+  kNoRttiInt64Array,
+  kNoRttiUint64Array,
+};
+
+template <typename T>
+constexpr NoRttiTypedArrayIndex GetNoRttiTypedArrayIndex() {
+  static_assert(emscripten::internal::typeSupportsMemoryView<T>(),
+                "type does not map to a typed array");
+  return std::is_floating_point<T>::value
+             ? (sizeof(T) == 4 ? kNoRttiFloat32Array : kNoRttiFloat64Array)
+             : (sizeof(T) == 1
+                    ? (std::is_signed<T>::value ? kNoRttiInt8Array
+                                                : kNoRttiUint8Array)
+                    : (sizeof(T) == 2
+                           ? (std::is_signed<T>::value ? kNoRttiInt16Array
+                                                       : kNoRttiUint16Array)
+                           : (sizeof(T) == 4
+                                  ? (std::is_signed<T>::value
+                                         ? kNoRttiInt32Array
+                                         : kNoRttiUint32Array)
+                                  : (std::is_signed<T>::value
+                                         ? kNoRttiInt64Array
+                                         : kNoRttiUint64Array))));
+}
+
+template <typename T>
+void RegisterNoRttiMemoryView(const char *name) {
+  using namespace emscripten::internal;
+  _embind_register_memory_view(TypeID<emscripten::memory_view<T>>::get(),
+                               GetNoRttiTypedArrayIndex<T>(), name);
+}
+
+}  // namespace
+
+EMSCRIPTEN_BINDINGS(tinyusdz_no_rtti_builtin_types) {
+  using namespace emscripten::internal;
+
+  _embind_register_void(TypeID<void>::get(), "void");
+  _embind_register_bool(TypeID<bool>::get(), "bool", true, false);
+
+  RegisterNoRttiInteger<char>("char");
+  RegisterNoRttiInteger<signed char>("signed char");
+  RegisterNoRttiInteger<unsigned char>("unsigned char");
+  RegisterNoRttiInteger<signed short>("short");
+  RegisterNoRttiInteger<unsigned short>("unsigned short");
+  RegisterNoRttiInteger<signed int>("int");
+  RegisterNoRttiInteger<unsigned int>("unsigned int");
+#if __wasm64__
+  RegisterNoRttiBigInt<signed long>("long");
+  RegisterNoRttiBigInt<unsigned long>("unsigned long");
+#else
+  RegisterNoRttiInteger<signed long>("long");
+  RegisterNoRttiInteger<unsigned long>("unsigned long");
+#endif
+  RegisterNoRttiBigInt<signed long long>("long long");
+  RegisterNoRttiBigInt<unsigned long long>("unsigned long long");
+
+  RegisterNoRttiFloat<float>("float");
+  RegisterNoRttiFloat<double>("double");
+
+  _embind_register_std_string(TypeID<std::string>::get(), "std::string");
+  _embind_register_emval(TypeID<emscripten::val>::get());
+
+  RegisterNoRttiMemoryView<char>("emscripten::memory_view<char>");
+  RegisterNoRttiMemoryView<signed char>(
+      "emscripten::memory_view<signed char>");
+  RegisterNoRttiMemoryView<unsigned char>(
+      "emscripten::memory_view<unsigned char>");
+  RegisterNoRttiMemoryView<short>("emscripten::memory_view<short>");
+  RegisterNoRttiMemoryView<unsigned short>(
+      "emscripten::memory_view<unsigned short>");
+  RegisterNoRttiMemoryView<int>("emscripten::memory_view<int>");
+  RegisterNoRttiMemoryView<unsigned int>(
+      "emscripten::memory_view<unsigned int>");
+  RegisterNoRttiMemoryView<long>("emscripten::memory_view<long>");
+  RegisterNoRttiMemoryView<unsigned long>(
+      "emscripten::memory_view<unsigned long>");
+  RegisterNoRttiMemoryView<int8_t>("emscripten::memory_view<int8_t>");
+  RegisterNoRttiMemoryView<uint8_t>("emscripten::memory_view<uint8_t>");
+  RegisterNoRttiMemoryView<int16_t>("emscripten::memory_view<int16_t>");
+  RegisterNoRttiMemoryView<uint16_t>("emscripten::memory_view<uint16_t>");
+  RegisterNoRttiMemoryView<int32_t>("emscripten::memory_view<int32_t>");
+  RegisterNoRttiMemoryView<uint32_t>("emscripten::memory_view<uint32_t>");
+  RegisterNoRttiMemoryView<int64_t>("emscripten::memory_view<int64_t>");
+  RegisterNoRttiMemoryView<uint64_t>("emscripten::memory_view<uint64_t>");
+  RegisterNoRttiMemoryView<float>("emscripten::memory_view<float>");
+  RegisterNoRttiMemoryView<double>("emscripten::memory_view<double>");
+}
 
 // EXR detection here is backend-agnostic (a magic-number test). Decoding goes
 // through tinyusdz::image::LoadImageFromMemory, which selects the active EXR
@@ -532,11 +658,7 @@ bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t>
   if (n == 0 || n > kMaxUint8ArrayBytes) {
     return false;
   }
-  try {
-    buf.resize(n);
-  } catch (const std::bad_alloc&) {
-    return false;
-  }
+  buf.resize(n);
 
   // Copy JS typed array -> v (one memcpy under the hood). Length must be a JS
   // Number (double): a C++ size_t marshals to a BigInt under wasm64 and
@@ -704,16 +826,12 @@ struct ZeroCopyStreamingBuffer {
 
   bool allocate(size_t size, const std::string &name = "") {
     if (size == 0) return false;
-    try {
-      buffer.resize(size);
-      total_size = size;
-      bytes_written = 0;
-      finalized = false;
-      asset_name = name;
-      return true;
-    } catch (const std::bad_alloc&) {
-      return false;
-    }
+    buffer.resize(size);
+    total_size = size;
+    bytes_written = 0;
+    finalized = false;
+    asset_name = name;
+    return true;
   }
 
   // Get raw pointer for direct memory access
@@ -774,86 +892,40 @@ struct ZeroCopyStreamingBuffer {
   }
 };
 
-class JSUint8ArrayOutputStream
-    : public tinyusdz::experimental::IOutputStream {
- public:
-  JSUint8ArrayOutputStream(const emscripten::val &buffer, size_t capacity)
-      : buffer_(buffer), capacity_(capacity) {}
-
-  bool Open(std::string *err) override {
-    if (buffer_.isNull() || buffer_.isUndefined() || capacity_ == 0) {
-      if (err) {
-        *err = "JS output buffer is empty.";
-      }
-      return false;
-    }
-    pos_ = 0;
-    max_pos_ = 0;
-    open_ = true;
-    error_.clear();
-    return true;
+bool GetUint8ArrayByteLength(const emscripten::val &buffer, size_t *capacity) {
+  if (!capacity || buffer.isNull() || buffer.isUndefined()) {
+    return false;
   }
-
-  void Close() override { open_ = false; }
-
-  bool IsOpen() const override { return open_; }
-
-  int64_t Tell() override { return static_cast<int64_t>(pos_); }
-
-  bool Seek(int64_t pos) override {
-    if (pos < 0) {
-      error_ = "Negative seek in JS output buffer.";
-      return false;
-    }
-    const size_t next = static_cast<size_t>(pos);
-    if (next > capacity_) {
-      error_ = "Seek exceeds JS output buffer capacity.";
-      return false;
-    }
-    pos_ = next;
-    return true;
+  const emscripten::val byte_length = buffer["byteLength"];
+  if (byte_length.isUndefined() ||
+      byte_length.typeOf().as<std::string>() != "number") {
+    return false;
   }
+  const double n = byte_length.as<double>();
+  if (!std::isfinite(n) || n < 0.0) {
+    return false;
+  }
+  *capacity = static_cast<size_t>(n);
+  return true;
+}
 
-  bool Write(const void *data, size_t size) override {
-    if (!open_) {
-      error_ = "JS output buffer is not open.";
-      return false;
+bool CopyBytesToUint8Array(const std::vector<uint8_t> &bytes,
+                           const emscripten::val &buffer,
+                           size_t capacity,
+                           std::string *err) {
+  if (bytes.size() > capacity) {
+    if (err) {
+      *err = "USDC export output buffer too small.";
     }
-    if (size == 0) {
-      return true;
-    }
-    if (!data) {
-      error_ = "Null write data for JS output buffer.";
-      return false;
-    }
-    if (pos_ > capacity_ || size > capacity_ - pos_) {
-      error_ = "JS output buffer too small for USDC export.";
-      return false;
-    }
-
+    return false;
+  }
+  if (!bytes.empty()) {
     emscripten::val src = emscripten::val(emscripten::typed_memory_view(
-        size, reinterpret_cast<const uint8_t *>(data)));
-    buffer_.call<void>("set", src, emscripten::val(static_cast<double>(pos_)));
-    pos_ += size;
-    if (pos_ > max_pos_) {
-      max_pos_ = pos_;
-    }
-    return true;
+        bytes.size(), bytes.data()));
+    buffer.call<void>("set", src, emscripten::val(0));
   }
-
-  bool Flush() override { return true; }
-
-  size_t written() const { return max_pos_; }
-  const std::string &error() const { return error_; }
-
- private:
-  emscripten::val buffer_;
-  size_t capacity_{0};
-  size_t pos_{0};
-  size_t max_pos_{0};
-  bool open_{false};
-  std::string error_;
-};
+  return true;
+}
 
 struct EMAssetResolutionResolver {
 
@@ -1643,6 +1715,17 @@ json Vec3Json(const tinyusdz::value::vector3f &v) {
   return json::array({v[0], v[1], v[2]});
 }
 
+// Generic vec3 -> JSON for the double-precision / role-typed variants
+// (double3, vector3d, point3d, normal3f/d) that the explicit overloads above
+// don't cover. All expose operator[](0..2). Needed because Blender's USD
+// exporter authors `physics:diagonalInertia` (and other vec3 physics attrs)
+// as `double3`, which previously serialized as {"unsupportedType":"double3"}
+// and dropped body inertia (MuJoCo then rejects moving bodies: mjMINVAL).
+template <typename T>
+json Vec3JsonG(const T &v) {
+  return json::array({v[0], v[1], v[2]});
+}
+
 json QuatJson(const tinyusdz::value::quatf &v) {
   return json::array({v.real, v.imag[0], v.imag[1], v.imag[2]});
 }
@@ -1740,6 +1823,24 @@ bool AddFallbackAttr(json &props, const std::string &name,
   return true;
 }
 
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::point3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::quatf> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = QuatJson(attr.get_value());
+  return true;
+}
+
 template <typename T>
 bool AddAnimatableFallbackAttr(
     json &props, const std::string &name,
@@ -1780,6 +1881,13 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<tinyusdz::value::point3f>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::float3>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::vector3f>()) return Vec3Json(v.value());
+  // Double-precision / role-typed vec3 variants (Blender authors physics
+  // attrs like diagonalInertia / centerOfMass as double3).
+  if (auto v = attr.get_value<tinyusdz::value::double3>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::vector3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::point3d>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::normal3f>()) return Vec3JsonG(v.value());
+  if (auto v = attr.get_value<tinyusdz::value::normal3d>()) return Vec3JsonG(v.value());
   if (auto v = attr.get_value<tinyusdz::value::quatf>()) return QuatJson(v.value());
   if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
   if (auto v = attr.get_value<std::vector<float>>()) return v.value();
@@ -1882,16 +1990,16 @@ void AddJointBaseJson(json &props, json &rels,
                       const tinyusdz::PhysicsJointBase &joint) {
   rels["physics:body0"] = RelationshipTargetsJson(joint.body0);
   rels["physics:body1"] = RelationshipTargetsJson(joint.body1);
-  AddTypedAttr(props, "physics:localPos0", joint.localPos0);
-  AddTypedAttr(props, "physics:localPos1", joint.localPos1);
-  AddTypedAttr(props, "physics:localRot0", joint.localRot0);
-  AddTypedAttr(props, "physics:localRot1", joint.localRot1);
-  AddTypedAttr(props, "physics:jointEnabled", joint.jointEnabled);
-  AddTypedAttr(props, "physics:collisionEnabled", joint.collisionEnabled);
-  AddTypedAttr(props, "physics:breakForce", joint.breakForce);
-  AddTypedAttr(props, "physics:breakTorque", joint.breakTorque);
-  AddTypedAttr(props, "physics:excludeFromArticulation",
-               joint.excludeFromArticulation);
+  AddFallbackAttr(props, "physics:localPos0", joint.localPos0);
+  AddFallbackAttr(props, "physics:localPos1", joint.localPos1);
+  AddFallbackAttr(props, "physics:localRot0", joint.localRot0);
+  AddFallbackAttr(props, "physics:localRot1", joint.localRot1);
+  AddFallbackAttr(props, "physics:jointEnabled", joint.jointEnabled);
+  AddFallbackAttr(props, "physics:collisionEnabled", joint.collisionEnabled);
+  AddFallbackAttr(props, "physics:breakForce", joint.breakForce);
+  AddFallbackAttr(props, "physics:breakTorque", joint.breakTorque);
+  AddFallbackAttr(props, "physics:excludeFromArticulation",
+                  joint.excludeFromArticulation);
   // mjc:* attributes are consumed by the reconstruct path into the typed
   // MjcJointAPI struct (see prim-reconstruct-physics.cc); they no longer
   // appear in joint.props, so re-emit them here from the struct.
@@ -6384,11 +6492,9 @@ class TinyUSDZLoaderNative {
       return "{ \"error\": \"invalid session_id\"}";
     }
 
-    nlohmann::json j_args;
-    try {
-      j_args = nlohmann::json::parse(args);
-    } catch (const std::exception& e) {
-      return std::string("{\"error\": \"Invalid JSON: ") + e.what() + "\"}";
+    nlohmann::json j_args = nlohmann::json::parse(args, nullptr, false);
+    if (j_args.is_discarded()) {
+      return "{\"error\": \"Invalid JSON\"}";
     }
 
     // Per-session context: isolated so one session cannot read/overwrite
@@ -6569,11 +6675,7 @@ class TinyUSDZLoaderNative {
     size_t size = data["byteLength"].as<size_t>();
     constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
     if (size == 0 || size > kMaxLayerBytes) return false;
-    try {
-      out->resize(size);
-    } catch (const std::bad_alloc &) {
-      return false;
-    }
+    out->resize(size);
     emscripten::val view = emscripten::val::global("Uint8Array").new_(
         data["buffer"], data["byteOffset"],
         emscripten::val(static_cast<double>(size)));
@@ -6595,10 +6697,18 @@ class TinyUSDZLoaderNative {
   /// outputBytes, primCount, arraysPassedThrough, arraysReencoded}.
   // Shared: flatten an owned USDC buffer and build the JS result object.
   emscripten::val nextFlattenOwned(std::string &&input, bool lazyArrays) {
+    return nextFlattenOwnedRemap(std::move(input), lazyArrays,
+                                 std::map<std::string, std::string>());
+  }
+
+  emscripten::val nextFlattenOwnedRemap(
+      std::string &&input, bool lazyArrays,
+      const std::map<std::string, std::string> &remap) {
     emscripten::val result = emscripten::val::object();
     std::vector<uint8_t> out;
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
+    opts.asset_path_remap = remap;
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
@@ -6616,6 +6726,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6626,6 +6738,13 @@ class TinyUSDZLoaderNative {
     // One JS->WASM copy into an owned std::string; the pipeline then MOVES it
     // into the retained crate buffer (the single in-heap copy of the input).
     size_t size = data["byteLength"].as<size_t>();
+    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
+    if (size > kMaxLayerBytes) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", std::string("Input exceeds 1 GiB limit"));
+      return result;
+    }
     std::string input;
     input.resize(size);
     if (size > 0) {
@@ -6657,6 +6776,25 @@ class TinyUSDZLoaderNative {
     return nextFlattenOwned(std::move(input), lazyArrays);
   }
 
+  emscripten::val nextFlattenBufferRemap(const std::string &uuid,
+                                         bool lazyArrays,
+                                         emscripten::val remap) {
+    emscripten::val result = emscripten::val::object();
+    std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
+    if (input.empty()) {
+      result.set("success", false);
+      result.set("error", "Unknown or empty zero-copy buffer: " + uuid);
+      return result;
+    }
+    std::map<std::string, std::string> remap_map;
+    if (!parseAssetPathRemap(remap, &remap_map)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
+    return nextFlattenOwnedRemap(std::move(input), lazyArrays, remap_map);
+  }
+
   /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
   /// emitted to `chunkCb(view)` in file order, so the full output crate is never
   /// materialized in the wasm heap (peak stays ~= retained input + small
@@ -6666,6 +6804,14 @@ class TinyUSDZLoaderNative {
   /// chunkCb may return false to abort. Returns stats only (no `data`).
   emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
                                           emscripten::val chunkCb) {
+    return nextFlattenBufferToSinkRemap(
+        uuid, lazyArrays, chunkCb, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenBufferToSinkRemap(const std::string &uuid,
+                                               bool lazyArrays,
+                                               emscripten::val chunkCb,
+                                               emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6676,6 +6822,11 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;
     opts.write.streaming = true;
+    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool aborted = false;
@@ -6702,6 +6853,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6733,6 +6886,15 @@ class TinyUSDZLoaderNative {
       const std::string &uuid, const std::string &rootName, bool lazyArrays,
       emscripten::val chunkCb, emscripten::val layerExistsCb,
       emscripten::val layerFetchCb) {
+    return nextFlattenMultiBufferToSinkFetchRemap(
+        uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb,
+        emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenMultiBufferToSinkFetchRemap(
+      const std::string &uuid, const std::string &rootName, bool lazyArrays,
+      emscripten::val chunkCb, emscripten::val layerExistsCb,
+      emscripten::val layerFetchCb, emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6744,6 +6906,11 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;
     opts.root_anchor_path = rootName;
+    if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
 
     // Resolver: map an arc's asset path to a wasm asset-cache KEY. Cache keys
     // are root-relative forward-slash names, so try the anchor-relative join
@@ -6888,6 +7055,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -6918,6 +7087,14 @@ class TinyUSDZLoaderNative {
   emscripten::val nextFlattenAsyncBegin(const std::string &uuid,
                                         const std::string &rootName,
                                         bool lazyArrays) {
+    return nextFlattenAsyncBeginRemap(
+        uuid, rootName, lazyArrays, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenAsyncBeginRemap(const std::string &uuid,
+                                             const std::string &rootName,
+                                             bool lazyArrays,
+                                             emscripten::val remap) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6931,6 +7108,11 @@ class TinyUSDZLoaderNative {
     session.root = std::move(input);
     session.root_name = rootName;
     session.lazy_arrays = lazyArrays;
+    if (!parseAssetPathRemap(remap, &session.asset_path_remap)) {
+      result.set("success", false);
+      result.set("error", "Invalid asset path remap");
+      return result;
+    }
     next_async_flatten_sessions_[session_id] = std::move(session);
 
     result.set("success", true);
@@ -6984,6 +7166,7 @@ class TinyUSDZLoaderNative {
     opts.read.lazy_arrays = state.lazy_arrays;
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
+    opts.asset_path_remap = state.asset_path_remap;
 
     using tinyusdz::next::AssetResolver;
     AssetResolver resolver;
@@ -7140,6 +7323,8 @@ class TinyUSDZLoaderNative {
     result.set("arraysPassedThrough",
                static_cast<double>(stats.arrays_passed_through));
     result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("assetPathsRemapped",
+               static_cast<double>(stats.asset_paths_remapped));
     result.set("readMs", stats.read_ms);
     result.set("composeMs", stats.compose_ms);
     result.set("writeMs", stats.write_ms);
@@ -7315,9 +7500,7 @@ class TinyUSDZLoaderNative {
     }
 
     size_t capacity = 0;
-    try {
-      capacity = buffer["byteLength"].as<size_t>();
-    } catch (...) {
+    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
       error_ = "USDC export output must be a Uint8Array.";
       result.set("error", error_);
       return result;
@@ -7330,57 +7513,27 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
-        new JSUint8ArrayOutputStream(buffer, capacity));
-    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
-    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
-        std::move(js_stream));
-    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
-
-    tinyusdz::experimental::CrateWriter::Options opts;
-    opts.version_major = 0;
-    opts.version_minor = 8;
-    opts.version_patch = 0;
-    opts.enable_compression = true;
-    opts.enable_deduplication = true;
-    if (usdc_max_file_size_bytes_ > 0) {
-      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
-    }
-    if (usdc_max_memory_bytes_ > 0) {
-      opts.max_memory_bytes = usdc_max_memory_bytes_;
-    }
-    writer.SetOptions(opts);
-
-    std::string open_err;
-    if (!writer.Open(&open_err)) {
-      error_ = "Failed to open CrateWriter: " + open_err;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(curr, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string convert_err;
-    if (!writer.ConvertLayerToSpecs(curr, &convert_err)) {
-      writer.Close();
-      error_ = "Failed to convert Layer to USDC: " + convert_err;
+    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
+      error_ = err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string finalize_err;
-    if (!writer.Finalize(&finalize_err)) {
-      writer.Close();
-      error_ = "Failed to finalize USDC: " + finalize_err;
-      if (!stream_ptr->error().empty()) {
-        error_ += " " + stream_ptr->error();
-      }
-      result.set("error", error_);
-      return result;
-    }
-
-    writer.Close();
-    warn_.clear();
+    warn_ = warn;
     result.set("success", true);
-    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("size", static_cast<double>(output.size()));
     result.set("warn", warn_);
     return result;
   }
@@ -7404,9 +7557,7 @@ class TinyUSDZLoaderNative {
       return result;
     }
     size_t capacity = 0;
-    try {
-      capacity = buffer["byteLength"].as<size_t>();
-    } catch (...) {
+    if (!GetUint8ArrayByteLength(buffer, &capacity)) {
       error_ = "USDC export output must be a Uint8Array.";
       result.set("error", error_);
       return result;
@@ -7423,57 +7574,27 @@ class TinyUSDZLoaderNative {
       return result;
     }
 
-    auto js_stream = std::unique_ptr<JSUint8ArrayOutputStream>(
-        new JSUint8ArrayOutputStream(buffer, capacity));
-    JSUint8ArrayOutputStream *stream_ptr = js_stream.get();
-    std::unique_ptr<tinyusdz::experimental::IOutputStream> out_stream(
-        std::move(js_stream));
-    tinyusdz::experimental::CrateWriter writer(std::move(out_stream));
-
-    tinyusdz::experimental::CrateWriter::Options opts;
-    opts.version_major = 0;
-    opts.version_minor = 8;
-    opts.version_patch = 0;
-    opts.enable_compression = true;
-    opts.enable_deduplication = true;
-    if (usdc_max_file_size_bytes_ > 0) {
-      opts.max_file_size_bytes = usdc_max_file_size_bytes_;
-    }
-    if (usdc_max_memory_bytes_ > 0) {
-      opts.max_memory_bytes = usdc_max_memory_bytes_;
-    }
-    writer.SetOptions(opts);
-
-    std::string open_err;
-    if (!writer.Open(&open_err)) {
-      error_ = "Failed to open CrateWriter: " + open_err;
+    std::vector<uint8_t> output;
+    std::string warn, err;
+    if (!tinyusdz::usdc::SaveAsUSDCToMemory(stage, &output, &warn, &err,
+                                            usdc_max_file_size_bytes_,
+                                            usdc_max_memory_bytes_)) {
+      error_ = "USDC export failed: " + err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string convert_err;
-    if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
-      writer.Close();
-      error_ = "Failed to convert Stage to USDC: " + convert_err;
+    if (!CopyBytesToUint8Array(output, buffer, capacity, &err)) {
+      error_ = err;
+      warn_ = warn;
       result.set("error", error_);
       return result;
     }
 
-    std::string finalize_err;
-    if (!writer.Finalize(&finalize_err)) {
-      writer.Close();
-      error_ = "Failed to finalize USDC: " + finalize_err;
-      if (!stream_ptr->error().empty()) {
-        error_ += " " + stream_ptr->error();
-      }
-      result.set("error", error_);
-      return result;
-    }
-
-    writer.Close();
-    warn_.clear();
+    warn_ = warn;
     result.set("success", true);
-    result.set("size", static_cast<double>(stream_ptr->written()));
+    result.set("size", static_cast<double>(output.size()));
     result.set("warn", warn_);
     return result;
   }
@@ -8509,10 +8630,26 @@ class TinyUSDZLoaderNative {
     std::string root;
     std::string root_name;
     bool lazy_arrays = true;
+    std::map<std::string, std::string> asset_path_remap;
     std::map<std::string, std::string> layers;
     std::map<std::string, std::shared_ptr<tinyusdz::next::Layer>> parsed_layers;
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
+
+  bool parseAssetPathRemap(emscripten::val remap,
+                           std::map<std::string, std::string> *out) {
+    if (!out) return false;
+    out->clear();
+    if (remap.isUndefined() || remap.isNull()) return true;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", remap);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      (*out)[k] = remap[k].as<std::string>();
+    }
+    return true;
+  }
 
   // UDIM: when false, keep UDIM tiles separate (sparse tydra::UDIMTexture)
   // for editing tiles in the web RenderScene. When true (default), combine
@@ -9330,6 +9467,14 @@ class RenderStream {
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
   emscripten::val begin(emscripten::val bytes) {
     const size_t size = bytes["byteLength"].as<size_t>();
+    constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
+    if (size > kMaxLayerBytes) {
+      emscripten::val r = emscripten::val::object();
+      error_ = "Input exceeds 1 GiB limit";
+      r.set("success", false);
+      r.set("error", error_);
+      return r;
+    }
     std::string s;
     s.resize(size);
     if (size > 0) {
@@ -9357,7 +9502,13 @@ class RenderStream {
     }
     const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
-    const bool soup = buildRenderMesh_(prim);  // indexed, or non-indexed soup
+    bool soup = false;  // indexed, or non-indexed soup
+    std::string mesh_err;
+    if (!buildRenderMesh_(prim, &soup, &mesh_err)) {
+      out.set("error", mesh_err.empty() ? std::string("mesh build failed")
+                                        : mesh_err);
+      return out;
+    }
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
@@ -9414,7 +9565,9 @@ class RenderStream {
   //     index + hash-map overhead).
   // The full soup is never materialized in the welded path; at most one mesh is
   // resident at a time either way.
-  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim) {
+  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim, bool *soup_out,
+                        std::string *err) {
+    if (soup_out) *soup_out = false;
     std::vector<float> P = matFloat_(prim, "points");
     std::vector<int32_t> fvc = matInt_(prim, "faceVertexCounts");
     std::vector<int32_t> fvi = matInt_(prim, "faceVertexIndices");
@@ -9442,10 +9595,54 @@ class RenderStream {
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
-      return false;
+      if (soup_out) *soup_out = false;
+      return true;
     }
 
     const bool haveN = (nCount == vtxCount) || nFaceVarying;
+    constexpr size_t kMaxRenderCorners = size_t(1) << 24;
+    constexpr size_t kMaxEmittedVertices = size_t(1) << 24;
+    auto readVec3 = [](const std::vector<float> &src, int32_t idx,
+                       float *x, float *y, float *z) {
+      if (idx < 0) return false;
+      const size_t i = static_cast<size_t>(idx);
+      if (i > (src.size() / 3)) return false;
+      const size_t off = i * 3;
+      if (off + 2 >= src.size()) return false;
+      *x = src[off];
+      *y = src[off + 1];
+      *z = src[off + 2];
+      return true;
+    };
+    auto readVec2 = [](const std::vector<float> &src, int32_t idx,
+                       float *x, float *y) {
+      if (idx < 0) return false;
+      const size_t i = static_cast<size_t>(idx);
+      if (i > (src.size() / 2)) return false;
+      const size_t off = i * 2;
+      if (off + 1 >= src.size()) return false;
+      *x = src[off];
+      *y = src[off + 1];
+      return true;
+    };
+    auto indexFromSlot = [](size_t slot) -> int32_t {
+      return slot <= static_cast<size_t>((std::numeric_limits<int32_t>::max)())
+                 ? static_cast<int32_t>(slot)
+                 : -1;
+    };
+    auto faceSpanAvailable = [](size_t base, int32_t n, size_t total) {
+      if (n < 3) return false;
+      const size_t count = static_cast<size_t>(n);
+      return base <= total && count <= total - base;
+    };
+    auto advanceFaceBase = [](size_t base, int32_t n) {
+      if (n <= 0) return base;
+      const size_t add = static_cast<size_t>(n);
+      if (base > (std::numeric_limits<size_t>::max)() - add) {
+        return (std::numeric_limits<size_t>::max)();
+      }
+      return base + add;
+    };
 
     // Decide weld vs soup by POSITION sharing, not interpolation type: a welded
     // mesh has at least vtxCount vertices, so it can only beat the (index-free)
@@ -9454,46 +9651,67 @@ class RenderStream {
     // matters is the expansion factor. When vtxCount is already close to the
     // corner count, the soup is minimal, so skip welding and keep it.
     size_t triCount = 0;
-    for (int32_t nn : fvc) if (nn >= 3) triCount += static_cast<size_t>(nn - 2);
-    const size_t cornerCount = triCount * 3;
-    const bool doWeld = vtxCount > 0 && vtxCount * 3 < cornerCount;
+    for (int32_t nn : fvc) {
+      if (nn >= 3) {
+        const size_t add = static_cast<size_t>(nn - 2);
+        if (triCount > (std::numeric_limits<size_t>::max)() - add) {
+          triCount = (std::numeric_limits<size_t>::max)();
+          break;
+        }
+        triCount += add;
+      }
+    }
+    const size_t cornerCount =
+        (triCount > (std::numeric_limits<size_t>::max)() / 3)
+            ? (std::numeric_limits<size_t>::max)()
+            : triCount * 3;
+    const bool doWeld = vtxCount > 0 && vtxCount < cornerCount / 3;
 
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
-      std::vector<uint32_t> slots;
+      std::vector<size_t> slots;
       size_t b = 0;
       for (int32_t n : fvc) {
-        if (n >= 3 && b + static_cast<size_t>(n) <= faceVtx) {
+        if (faceSpanAvailable(b, n, faceVtx)) {
           for (int32_t k = 2; k < n; ++k) {
-            slots.push_back(static_cast<uint32_t>(b));
-            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k) - 1));
-            slots.push_back(static_cast<uint32_t>(b + static_cast<size_t>(k)));
+            if (slots.size() > kMaxRenderCorners - 3) {
+              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+              if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
+              return false;
+            }
+            slots.push_back(b);
+            slots.push_back(b + static_cast<size_t>(k) - 1);
+            slots.push_back(b + static_cast<size_t>(k));
           }
         }
-        b += static_cast<size_t>(n < 0 ? 0 : n);
+        b = advanceFaceBase(b, n);
       }
       const size_t corners = slots.size();
       s_points_.resize(corners * 3);
       if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
       if (haveN) s_normals_.resize(corners * 3);
       for (size_t c = 0; c < corners; ++c) {
-        const uint32_t slot = slots[c];
-        const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
-        if (static_cast<size_t>(vi) * 3 + 2 < P.size()) {
-          s_points_[c * 3] = P[vi * 3]; s_points_[c * 3 + 1] = P[vi * 3 + 1]; s_points_[c * 3 + 2] = P[vi * 3 + 2];
+        const size_t slot = slots[c];
+        const int32_t vi = (slot < faceVtx) ? fvi[slot] : -1;
+        float px = 0.0f, py = 0.0f, pz = 0.0f;
+        if (readVec3(P, vi, &px, &py, &pz)) {
+          s_points_[c * 3] = px; s_points_[c * 3 + 1] = py; s_points_[c * 3 + 2] = pz;
         }
         if (!UV.empty()) {
-          const uint32_t ui = uvFaceVarying ? slot : vi;  // st:indices is empty here
-          if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { s_uv_[c * 2] = UV[ui * 2]; s_uv_[c * 2 + 1] = UV[ui * 2 + 1]; }
+          const int32_t ui = uvFaceVarying ? indexFromSlot(slot) : vi;  // st:indices is empty here
+          float u = 0.0f, v = 0.0f;
+          if (readVec2(UV, ui, &u, &v)) { s_uv_[c * 2] = u; s_uv_[c * 2 + 1] = v; }
         }
         if (haveN) {
-          const uint32_t ni = nFaceVarying ? slot : vi;
-          if (static_cast<size_t>(ni) * 3 + 2 < N.size()) {
-            s_normals_[c * 3] = N[ni * 3]; s_normals_[c * 3 + 1] = N[ni * 3 + 1]; s_normals_[c * 3 + 2] = N[ni * 3 + 2];
+          const int32_t ni = nFaceVarying ? indexFromSlot(slot) : vi;
+          float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+          if (readVec3(N, ni, &nx, &ny, &nz)) {
+            s_normals_[c * 3] = nx; s_normals_[c * 3 + 1] = ny; s_normals_[c * 3 + 2] = nz;
           }
         }
       }
       if (s_normals_.empty()) computeNormals_(s_points_, s_indices_, s_normals_);  // empty idx -> flat per-tri
+      if (soup_out) *soup_out = true;
       return true;  // non-indexed soup
     }
 
@@ -9514,50 +9732,65 @@ class RenderStream {
     std::unordered_map<WeldKey, uint32_t, WeldHash> weld;
     // Welded vertices are bounded below by the point count; reserve to cut
     // rehash spikes (which transiently inflate the peak).
-    weld.reserve(vtxCount ? vtxCount * 2 : 1024);
+    constexpr size_t kMaxInitialWeldReserve = size_t(1) << 20;
+    weld.reserve(vtxCount ? std::min(vtxCount, kMaxInitialWeldReserve) : 1024);
 
-    auto emit = [&](uint32_t slot) {
-      const uint32_t vi = (slot < faceVtx) ? static_cast<uint32_t>(fvi[slot]) : 0u;
+    auto emit = [&](size_t slot) -> bool {
+      const int32_t vi = (slot < faceVtx) ? fvi[slot] : -1;
       float px = 0, py = 0, pz = 0, u = 0, v = 0, nx = 0, ny = 0, nz = 0;
-      if (static_cast<size_t>(vi) * 3 + 2 < P.size()) { px = P[vi * 3]; py = P[vi * 3 + 1]; pz = P[vi * 3 + 2]; }
+      (void)readVec3(P, vi, &px, &py, &pz);
       if (!UV.empty()) {
-        const uint32_t ui = (!stIdx.empty() && slot < stIdx.size())
-                                ? static_cast<uint32_t>(stIdx[slot])
-                                : (uvFaceVarying ? slot : vi);
-        if (static_cast<size_t>(ui) * 2 + 1 < UV.size()) { u = UV[ui * 2]; v = UV[ui * 2 + 1]; }
+        const int32_t ui = (!stIdx.empty() && slot < stIdx.size())
+                                ? stIdx[slot]
+                                : (uvFaceVarying ? indexFromSlot(slot) : vi);
+        (void)readVec2(UV, ui, &u, &v);
       }
       if (haveN) {
-        const uint32_t ni = nFaceVarying ? slot : vi;
-        if (static_cast<size_t>(ni) * 3 + 2 < N.size()) { nx = N[ni * 3]; ny = N[ni * 3 + 1]; nz = N[ni * 3 + 2]; }
+        const int32_t ni = nFaceVarying ? indexFromSlot(slot) : vi;
+        (void)readVec3(N, ni, &nx, &ny, &nz);
       }
       WeldKey key;
       std::memcpy(&key.b[0], &px, 4); std::memcpy(&key.b[1], &py, 4); std::memcpy(&key.b[2], &pz, 4);
       std::memcpy(&key.b[3], &u, 4); std::memcpy(&key.b[4], &v, 4);
       std::memcpy(&key.b[5], &nx, 4); std::memcpy(&key.b[6], &ny, 4); std::memcpy(&key.b[7], &nz, 4);
       auto it = weld.find(key);
-      if (it != weld.end()) { s_indices_.push_back(it->second); return; }
-      const uint32_t idx = static_cast<uint32_t>(s_points_.size() / 3);
+      if (it != weld.end()) {
+        s_indices_.push_back(it->second);
+        return true;
+      }
+      const size_t nextIdx = s_points_.size() / 3;
+      if (nextIdx >= kMaxEmittedVertices ||
+          nextIdx > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+        return false;
+      }
+      const uint32_t idx = static_cast<uint32_t>(nextIdx);
       s_points_.push_back(px); s_points_.push_back(py); s_points_.push_back(pz);
       if (!UV.empty()) { s_uv_.push_back(u); s_uv_.push_back(v); }
       if (haveN) { s_normals_.push_back(nx); s_normals_.push_back(ny); s_normals_.push_back(nz); }
       weld.emplace(key, idx);
       s_indices_.push_back(idx);
+      return true;
     };
 
     size_t base = 0;
     for (int32_t n : fvc) {
-      if (n >= 3 && base + static_cast<size_t>(n) <= faceVtx) {
+      if (faceSpanAvailable(base, n, faceVtx)) {
         for (int32_t k = 2; k < n; ++k) {
-          emit(static_cast<uint32_t>(base));
-          emit(static_cast<uint32_t>(base + static_cast<size_t>(k) - 1));
-          emit(static_cast<uint32_t>(base + static_cast<size_t>(k)));
+          if (!emit(base) ||
+              !emit(base + static_cast<size_t>(k) - 1) ||
+              !emit(base + static_cast<size_t>(k))) {
+            s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+            if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+            return false;
+          }
         }
       }
-      base += static_cast<size_t>(n < 0 ? 0 : n);
+      base = advanceFaceBase(base, n);
     }
     // Normals not authored -> smooth normals on the welded indexed mesh.
     if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
-    return false;  // welded result is INDEXED
+    if (soup_out) *soup_out = false;
+    return true;  // welded result is INDEXED
   }
 
   // Resolve a UsdUVTexture connection path ("/.../Tex.outputs:rgb") to its
@@ -9584,18 +9817,40 @@ class RenderStream {
     if (fvi.empty()) return;
     if (fvc.empty()) {  // assume an already-triangulated index list
       out.reserve(fvi.size());
-      for (int32_t v : fvi) out.push_back(static_cast<uint32_t>(v));
+      for (int32_t v : fvi) {
+        if (v >= 0) out.push_back(static_cast<uint32_t>(v));
+      }
       return;
     }
     size_t base = 0;
-    for (int32_t n : fvc) {
-      if (n < 3 || base + static_cast<size_t>(n) > fvi.size()) { base += static_cast<size_t>(n < 0 ? 0 : n); continue; }
-      for (int32_t k = 2; k < n; ++k) {
-        out.push_back(static_cast<uint32_t>(fvi[base]));
-        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k) - 1]));
-        out.push_back(static_cast<uint32_t>(fvi[base + static_cast<size_t>(k)]));
+    auto faceSpanAvailable = [](size_t base, int32_t n, size_t total) {
+      if (n < 3) return false;
+      const size_t count = static_cast<size_t>(n);
+      return base <= total && count <= total - base;
+    };
+    auto advanceFaceBase = [](size_t base, int32_t n) {
+      if (n <= 0) return base;
+      const size_t add = static_cast<size_t>(n);
+      if (base > (std::numeric_limits<size_t>::max)() - add) {
+        return (std::numeric_limits<size_t>::max)();
       }
-      base += static_cast<size_t>(n);
+      return base + add;
+    };
+    for (int32_t n : fvc) {
+      if (!faceSpanAvailable(base, n, fvi.size())) {
+        base = advanceFaceBase(base, n);
+        continue;
+      }
+      for (int32_t k = 2; k < n; ++k) {
+        const int32_t a = fvi[base];
+        const int32_t b = fvi[base + static_cast<size_t>(k) - 1];
+        const int32_t c = fvi[base + static_cast<size_t>(k)];
+        if (a < 0 || b < 0 || c < 0) continue;
+        out.push_back(static_cast<uint32_t>(a));
+        out.push_back(static_cast<uint32_t>(b));
+        out.push_back(static_cast<uint32_t>(c));
+      }
+      base = advanceFaceBase(base, n);
     }
   }
 
@@ -9860,14 +10115,22 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
+      .function("nextFlattenBufferRemap",
+                &TinyUSDZLoaderNative::nextFlattenBufferRemap)
       .function("nextFlattenBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenBufferToSink)
+      .function("nextFlattenBufferToSinkRemap",
+                &TinyUSDZLoaderNative::nextFlattenBufferToSinkRemap)
       .function("nextFlattenMultiBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSink)
       .function("nextFlattenMultiBufferToSinkFetch",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetch)
+      .function("nextFlattenMultiBufferToSinkFetchRemap",
+                &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetchRemap)
       .function("nextFlattenAsyncBegin",
                 &TinyUSDZLoaderNative::nextFlattenAsyncBegin)
+      .function("nextFlattenAsyncBeginRemap",
+                &TinyUSDZLoaderNative::nextFlattenAsyncBeginRemap)
       .function("nextFlattenAsyncProvideLayer",
                 &TinyUSDZLoaderNative::nextFlattenAsyncProvideLayer)
       .function("nextFlattenAsyncStep",

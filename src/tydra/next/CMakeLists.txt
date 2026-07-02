@@ -9,6 +9,7 @@ cmake_minimum_required(VERSION 3.10)
 set(TYDRA_NEXT_SOURCES
     render-data.cc
     scene-access.cc
+    render-extract.cc
     render-converter.cc
 )
 
@@ -16,6 +17,7 @@ set(TYDRA_NEXT_HEADERS
     chunked-array.hh
     render-data.hh
     scene-access.hh
+    render-extract.hh
     render-converter.hh
 )
 

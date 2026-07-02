@@ -823,6 +823,32 @@ bool ReconstructPrim<Scope>(
   return true;
 }
 
+// Placeholder schema prim types (UsdVol / UsdRender): retain all authored
+// properties generically in `prim->props` (no typed schema fields yet).
+#define RECONSTRUCT_PLACEHOLDER_PRIM(__ty)                              \
+  template <>                                                           \
+  bool ReconstructPrim<__ty>(                                           \
+      const Specifier &spec, PropertyMap &properties,                   \
+      const ReferenceList &references, __ty *prim, std::string *warn,   \
+      std::string *err, const PrimReconstructOptions &options) {        \
+    (void)spec;                                                         \
+    (void)references;                                                   \
+    (void)err;                                                          \
+    (void)options;                                                      \
+    std::set<std::string> table;                                        \
+    for (auto &prop : properties) {                                     \
+      ADD_PROPERTY(table, prop, __ty, prim->props)                      \
+      PARSE_PROPERTY_END_MAKE_WARN(table, prop)                         \
+    }                                                                   \
+    return true;                                                        \
+  }
+
+RECONSTRUCT_PLACEHOLDER_PRIM(RenderSettings)
+RECONSTRUCT_PLACEHOLDER_PRIM(RenderProduct)
+RECONSTRUCT_PLACEHOLDER_PRIM(RenderVar)
+RECONSTRUCT_PLACEHOLDER_PRIM(GenerativeProcedural)
+#undef RECONSTRUCT_PLACEHOLDER_PRIM
+
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
@@ -906,6 +932,10 @@ RECONSTRUCT_PRIM_PROPERTYMAP_DECL(BlendShape)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Model)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Scope)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RenderSettings)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RenderProduct)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RenderVar)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GenerativeProcedural)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomMesh)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Volume)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(FieldAsset)

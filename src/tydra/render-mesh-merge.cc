@@ -47,14 +47,49 @@ vec3 TransformPoint(const value::matrix4d &m, const vec3 &p) {
 }
 
 // Helper function to transform a vec3 direction (normal) by a matrix4d
-// Uses the upper-left 3x3 of the inverse-transpose for correct normal transformation
 vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
-  // For normals, we need the inverse transpose of the upper-left 3x3
-  // For now, we use the upper-left 3x3 directly (correct for uniform scale and rotation only)
-  // TODO: Proper inverse-transpose for non-uniform scale
-  double x = m.m[0][0] * double(n[0]) + m.m[1][0] * double(n[1]) + m.m[2][0] * double(n[2]);
-  double y = m.m[0][1] * double(n[0]) + m.m[1][1] * double(n[1]) + m.m[2][1] * double(n[2]);
-  double z = m.m[0][2] * double(n[0]) + m.m[1][2] * double(n[1]) + m.m[2][2] * double(n[2]);
+  const double a00 = m.m[0][0], a01 = m.m[0][1], a02 = m.m[0][2];
+  const double a10 = m.m[1][0], a11 = m.m[1][1], a12 = m.m[1][2];
+  const double a20 = m.m[2][0], a21 = m.m[2][1], a22 = m.m[2][2];
+
+  const double c00 = a11 * a22 - a12 * a21;
+  const double c01 = a02 * a21 - a01 * a22;
+  const double c02 = a01 * a12 - a02 * a11;
+  const double c10 = a12 * a20 - a10 * a22;
+  const double c11 = a00 * a22 - a02 * a20;
+  const double c12 = a02 * a10 - a00 * a12;
+  const double c20 = a10 * a21 - a11 * a20;
+  const double c21 = a01 * a20 - a00 * a21;
+  const double c22 = a00 * a11 - a01 * a10;
+
+  const double det = a00 * c00 + a01 * c10 + a02 * c20;
+
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  if (std::abs(det) > 1.0e-20) {
+    const double inv_det = 1.0 / det;
+    const double inv00 = c00 * inv_det;
+    const double inv01 = c01 * inv_det;
+    const double inv02 = c02 * inv_det;
+    const double inv10 = c10 * inv_det;
+    const double inv11 = c11 * inv_det;
+    const double inv12 = c12 * inv_det;
+    const double inv20 = c20 * inv_det;
+    const double inv21 = c21 * inv_det;
+    const double inv22 = c22 * inv_det;
+
+    // Row-vector convention used by this file: normals transform by the
+    // inverse linear matrix, which is equivalent to inverse-transpose in the
+    // column-vector convention.
+    x = inv00 * double(n[0]) + inv10 * double(n[1]) + inv20 * double(n[2]);
+    y = inv01 * double(n[0]) + inv11 * double(n[1]) + inv21 * double(n[2]);
+    z = inv02 * double(n[0]) + inv12 * double(n[1]) + inv22 * double(n[2]);
+  } else {
+    x = a00 * double(n[0]) + a10 * double(n[1]) + a20 * double(n[2]);
+    y = a01 * double(n[0]) + a11 * double(n[1]) + a21 * double(n[2]);
+    z = a02 * double(n[0]) + a12 * double(n[1]) + a22 * double(n[2]);
+  }
 
   // Normalize the result
   double len = std::sqrt(x*x + y*y + z*z);

@@ -9,6 +9,7 @@
 #include "type-id.hh"
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tinyusdz {
@@ -60,6 +61,7 @@ public:
   explicit Value(float v);
   explicit Value(double v);
   explicit Value(const char* v);
+  explicit Value(std::string_view v);
   explicit Value(const std::string& v);
   explicit Value(std::string&& v);
 
@@ -90,8 +92,12 @@ public:
   static Value MakeMatrix4d(const double* data);  // 16 doubles
 
   static Value MakeToken(const std::string& s);
+  static Value MakeToken(const char* s);
+  static Value MakeToken(std::string_view s);
   static Value MakeToken(std::string&& s);
   static Value MakeAssetPath(const std::string& s);
+  static Value MakeAssetPath(const char* s);
+  static Value MakeAssetPath(std::string_view s);
   static Value MakeAssetPath(std::string&& s);
 
   // Dictionary (recursive key->Value map; insertion-ordered for round-trip).
@@ -144,6 +150,7 @@ public:
   static Value MakeUInt64Array(const std::vector<uint64_t>& data);
   static Value MakeUInt64Array(std::vector<uint64_t>&& data);
   static Value MakeBoolArray(const std::vector<bool>& data);
+  static Value MakeBoolArrayFromBytes(std::vector<uint8_t>&& data);
   static Value MakeTokenArray(const std::vector<std::string>& data);
   static Value MakeTokenArray(std::vector<std::string>&& data);
 

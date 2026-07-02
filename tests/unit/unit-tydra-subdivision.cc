@@ -1355,18 +1355,25 @@ def Xform "Root"
         {
             uniform vector3f[] offsets = [(0, 0, 0.8)]
             uniform int[] pointIndices = [1]
+            uniform vector3f[] inbetweens:half = [(0, 0, 0.4)] (
+                weight = 0.5
+            )
         }
 )";
 
   char usda_a[4096];
   char usda_b[4096];
+  char usda_c[4096];
   // Scene A: base mesh + blendshape moving vertex 1 by (0, 0, 0.8).
   snprintf(usda_a, sizeof(usda_a), mesh_tmpl, "0", blendshape_attrs.c_str());
   // Scene B: mesh with the blendshape fully applied, no blendshape prim.
   snprintf(usda_b, sizeof(usda_b), mesh_tmpl, "0.8", "");
+  // Scene C: mesh with the in-between shape applied, no blendshape prim.
+  snprintf(usda_c, sizeof(usda_c), mesh_tmpl, "0.4", "");
 
   tinyusdz::tydra::RenderScene scene_a;
   tinyusdz::tydra::RenderScene scene_b;
+  tinyusdz::tydra::RenderScene scene_c;
   std::string err;
   bool ret = ConvertSceneWithSubdivision(usda_a, 2, &scene_a, &err);
   TEST_CHECK(ret);
@@ -1380,10 +1387,22 @@ def Xform "Root"
     TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
     return;
   }
+  ret = ConvertSceneWithSubdivision(usda_c, 2, &scene_c, &err);
+  TEST_CHECK(ret);
+  if (!ret || scene_c.meshes.empty()) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
 
   const auto &mesh_a = scene_a.meshes[0];
   const auto &mesh_b = scene_b.meshes[0];
+  const auto &mesh_c = scene_c.meshes[0];
   TEST_CHECK(mesh_a.points.size() == mesh_b.points.size());
+  TEST_CHECK(mesh_a.points.size() == mesh_c.points.size());
+  if (mesh_a.points.size() != mesh_b.points.size() ||
+      mesh_a.points.size() != mesh_c.points.size()) {
+    return;
+  }
 
   auto target = mesh_a.targets.find("bump");
   TEST_CHECK(target != mesh_a.targets.end());
@@ -1393,12 +1412,25 @@ def Xform "Root"
   TEST_CHECK(!target->second.pointIndices.empty());
   TEST_CHECK(target->second.pointOffsets.size() ==
              target->second.pointIndices.size());
+  TEST_CHECK(target->second.inbetweens.size() == 1);
+  if (target->second.inbetweens.empty()) {
+    return;
+  }
+  const auto ib = target->second.inbetweens.begin();
+  TEST_CHECK(std::fabs(ib->first - 0.5f) < 1e-6f);
+  TEST_CHECK(ib->second.pointOffsets.size() ==
+             target->second.pointIndices.size());
+  if (ib->second.pointOffsets.size() != target->second.pointIndices.size()) {
+    return;
+  }
 
   // Apply the refined offsets to scene A points; result must match scene B.
   std::vector<std::array<float, 3>> blended(mesh_a.points.size());
+  std::vector<std::array<float, 3>> inbetween(mesh_a.points.size());
   for (size_t v = 0; v < mesh_a.points.size(); v++) {
     blended[v] = {mesh_a.points[v][0], mesh_a.points[v][1],
                   mesh_a.points[v][2]};
+    inbetween[v] = blended[v];
   }
   for (size_t i = 0; i < target->second.pointIndices.size(); i++) {
     const uint32_t v = target->second.pointIndices[i];
@@ -1409,14 +1441,22 @@ def Xform "Root"
     blended[v][0] += target->second.pointOffsets[i][0];
     blended[v][1] += target->second.pointOffsets[i][1];
     blended[v][2] += target->second.pointOffsets[i][2];
+    inbetween[v][0] += ib->second.pointOffsets[i][0];
+    inbetween[v][1] += ib->second.pointOffsets[i][1];
+    inbetween[v][2] += ib->second.pointOffsets[i][2];
   }
   bool match = true;
+  bool ib_match = true;
   for (size_t v = 0; v < blended.size(); v++) {
     match &= std::fabs(blended[v][0] - mesh_b.points[v][0]) < 1e-5f &&
              std::fabs(blended[v][1] - mesh_b.points[v][1]) < 1e-5f &&
              std::fabs(blended[v][2] - mesh_b.points[v][2]) < 1e-5f;
+    ib_match &= std::fabs(inbetween[v][0] - mesh_c.points[v][0]) < 1e-5f &&
+                std::fabs(inbetween[v][1] - mesh_c.points[v][1]) < 1e-5f &&
+                std::fabs(inbetween[v][2] - mesh_c.points[v][2]) < 1e-5f;
   }
   TEST_CHECK(match);
+  TEST_CHECK(ib_match);
 }
 
 namespace {

@@ -640,6 +640,14 @@ std::ostream &operator<<(std::ostream &ofs,
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::PathExpression &expr) {
+  // SdfPathExpression is authored in USDA as a double-quoted string holding the
+  // canonical expression text (e.g. `"/World/Geom//C*"`).
+  ofs << tinyusdz::quote(tinyusdz::escapeControlSequence(expr.GetText()));
+  return ofs;
+}
+
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
   uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
@@ -1053,10 +1061,7 @@ std::string to_string(const value::token &v) {
   return ss.str();
 }
 std::string to_string(const std::string &s) {
-  // TODO: Escape `"` character.
-
-  // Escape backslash
-  return quote(escapeBackslash(s));
+  return buildEscapedAndQuotedStringForUSDA(s);
 }
 std::string to_string(const value::quath &v) {
   std::stringstream ss;

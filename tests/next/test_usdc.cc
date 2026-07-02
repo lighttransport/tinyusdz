@@ -178,7 +178,37 @@ void test_crate_reader_invalid() {
 void test_read_usdc_file() {
   std::cout << "Testing USDC file reading..." << std::endl;
 
-  // Try to find a test USDC file
+  const char* required_files[] = {
+    "../../../tests/usdc/simple.usdc",
+    "../../tests/usdc/simple.usdc",
+    "../tests/usdc/simple.usdc",
+    "./tests/usdc/simple.usdc",
+  };
+
+  const char* required_file = nullptr;
+  for (const char* path : required_files) {
+    std::ifstream f(path);
+    if (f.good()) {
+      required_file = path;
+      break;
+    }
+  }
+
+  if (required_file) {
+    USDCLoadResult result = LoadUSDCFromFile(required_file);
+    if (!result.success) {
+      std::cout << "  Required fixture parse failed: " << required_file << std::endl;
+      if (!result.errors.empty()) {
+        std::cout << "  Error: " << result.errors[0].message << std::endl;
+      }
+    }
+    assert(result.success);
+    assert(!result.stage.GetRootPrims().empty());
+  } else {
+    std::cout << "  Skipping required fixture assertion (tests/usdc/simple.usdc not found from cwd)" << std::endl;
+  }
+
+  // Try to find an optional larger model for diagnostic coverage.
   const char* test_files[] = {
     "../../../models/suzanne.usdc",
     "../../models/suzanne.usdc",
@@ -209,7 +239,6 @@ void test_read_usdc_file() {
     if (!result.errors.empty()) {
       std::cout << "  Error: " << result.errors[0].message << std::endl;
     }
-    // Don't assert - file might be unsupported version
   } else {
     std::cout << "  Version: " << result.version.to_string() << std::endl;
     auto roots = result.stage.GetRootPrims();
@@ -221,6 +250,55 @@ void test_read_usdc_file() {
   }
 
   std::cout << "  USDC file reading test completed!" << std::endl;
+}
+
+void test_openusd_compressed_value_reps_equal_raw_size() {
+  std::cout << "Testing OpenUSD compressed ValueRep table edge case..." << std::endl;
+
+  const char* paths[] = {
+    "../../../tests/usdc/composition/references-001.usdc",
+    "../../tests/usdc/composition/references-001.usdc",
+    "../tests/usdc/composition/references-001.usdc",
+    "./tests/usdc/composition/references-001.usdc",
+  };
+
+  const char* found = nullptr;
+  for (const char* path : paths) {
+    std::ifstream f(path, std::ios::binary);
+    if (f.good()) {
+      found = path;
+      break;
+    }
+  }
+
+  if (!found) {
+    std::cout << "  Skipping (references-001.usdc fixture not found)" << std::endl;
+    return;
+  }
+
+  std::ifstream ifs(found, std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(ifs)),
+                    std::istreambuf_iterator<char>());
+  assert(!bytes.empty());
+
+  CrateReader reader;
+  CrateReadResult result = reader.ReadOwned(std::move(bytes));
+  if (!result.success) {
+    std::cout << "  Error: "
+              << (result.errors.empty() ? std::string("(none)")
+                                        : result.errors[0].message)
+              << std::endl;
+  }
+  assert(result.success);
+
+  const Layer* layer = result.stage.GetRootLayer();
+  assert(layer);
+  const PrimSpec* sphere = layer->prim_at_path("/sphere1");
+  assert(sphere);
+  assert(sphere->meta().references.size() == 1);
+  assert(sphere->meta().references[0].find("scene-001.usdc") != std::string::npos);
+
+  std::cout << "  OpenUSD compressed ValueRep edge case passed!" << std::endl;
 }
 
 // ============================================================
@@ -239,6 +317,7 @@ int main() {
     test_lz4_decompression();
     test_crate_reader_invalid();
     test_read_usdc_file();
+    test_openusd_compressed_value_reps_equal_raw_size();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

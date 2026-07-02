@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string_view>
 
 namespace tinyusdz {
 namespace next {
@@ -148,6 +149,7 @@ const char* GetTypeName(TypeId id);
 /// Get TypeId from a USD type name string
 /// Returns TypeId::Invalid if the name is not recognized
 TypeId GetTypeIdFromName(const char* name);
+TypeId GetTypeIdFromName(std::string_view name);
 
 /// Get the size in bytes of the type
 /// Returns 0 for variable-size types (String, Dictionary) or Invalid

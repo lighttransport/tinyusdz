@@ -1,7 +1,8 @@
 # refactor-next: src/next Optimization & Hardening Roadmap
 
-Status: **in progress**. Phases land one at a time, each independently, with
-`ctest --test-dir build/next` green at every step.
+Status: **post-roadmap cleanup**. The original 10-phase roadmap has landed.
+Use `scripts/run-next-checks.sh` for a focused standalone validation pass before
+and after follow-up refactors.
 
 Landed so far:
 - **Phase 0** — this plan + `bench_pcp_compose` instrumentation + baselines.
@@ -17,16 +18,22 @@ Landed so far:
   conversion (M3) and GraftSubtree child-walk (M5) deferred/reverted — see
   doc/memory-and-performance.md.
 - **Phase 5 (core)** — stable variant-content instance key (fixes pointer
-  aliasing S4). Strongest-opinion tri-state instanceable, path-translation API,
-  and the PointInstancer compute port remain TODO.
+  aliasing S4). Strongest-opinion tri-state instanceable and path-translation
+  API remain TODO; PointInstancer typed accessors/transform computation and
+  lightweight Tydra draw-reference expansion now exist, including direct and
+  inherited mesh material IDs, prototype-relative mesh transforms, and
+  unresolved-prototype diagnostics on draw refs. Bounds-checked draw view
+  resolution, O(1) per-instancer draw ranges, and draw/prototype binding
+  validators are available; opt-in transformed mesh duplication is available for
+  consumers that cannot use draw refs directly.
 - **Phase 6** — payload LoadRules model (`pcp/load-rules.{hh,cc}`, a
   `UsdStageLoadRules` port); `LoadPayload(With/WithoutDescendants)`,
   `SetLoadRules`; `UnloadPayload` recomposes (S7 fix); BuildStage rebuilds
   prototype maps from scratch (fixes stale-grouping nondeterminism + payload-on-
   instance split).
 - **Phase 7 (E1)** — USDA parser now honors arc list-op qualifiers
-  (prepend→front, append→back, delete→remove, explicit→replace) within a spec.
-  Cross-layer ListOp merging remains TODO.
+  (prepend->front, append->back, delete->remove, explicit->replace) within a
+  spec.
 - **Phase 7 (E4)** — typed composition diagnostics: `Cache::ErrorCode` +
   `Cache::CompositionIssue` accumulated on Impl; all err-emitting sites route
   through `AddIssue` (records a typed code + mirrors the message into the
@@ -121,6 +128,38 @@ Landed so far:
   lifecycle (cleared on Invalidate*/SetLoadRules; `GetCompositionIssues` returns
   by value to avoid a fine-locks dangling ref); `TokenPool` >4 GiB blob guard;
   `DropInstancing` orphans sibling `prototype_of` when a prototype is dropped.
+- **Malformed USDC regression gate** — generated next-only crate fixtures now
+  cover bad magic, truncated bootstrap, invalid TOC offsets/ranges, excessive
+  section counts, missing required sections, allocation caps, and malformed
+  FIELD/FIELDSET/SPECS payloads. These live alongside crash replay fixtures and
+  assert returned errors rather than crashes or unbounded allocation.
+- **Crate reader TU split** — public `CrateReader` API wrappers and source
+  selection moved to `crate-reader-api.cc`; stage reconstruction moved to
+  `crate-reader-stage.cc`; array decode/lazy-array probing moved to
+  `crate-reader-arrays.cc`; scalar-vector decode moved to
+  `crate-reader-vectors.cc`; scalar/non-array value dispatch stays in
+  `crate-reader.cc` behind `crate-reader-internal.hh`.
+- **ASCII parser TU split** — private parser implementation declarations moved
+  to `ascii-parser-internal.hh`; stage/layer metadata parsing moved to
+  `ascii-parser-metadata.cc`; namespaced-name parsing, skip helpers, property
+  metadata, and parser diagnostics moved to `ascii-parser-utils.cc`;
+  prim/property/relationship parsing moved to `ascii-parser-prim.cc`;
+  `timeSamples` and variant parsing moved to dedicated TUs.
+- **Writer/PCP helper split** — crate lazy-array pass-through policy moved to
+  `crate-writer-passthrough.inc`; crate property/spec emission moved to
+  `crate-writer-properties.inc`; PCP stage opinion fill, worker merge helpers,
+  and arc list-op merge moved to focused includes.
+- **Comprehensive generated USDC fixture** — `next_test_usdc_roundtrip` now
+  builds a dense in-memory layer and writes/reads it through Crate. The fixture
+  covers layer metadata, `customLayerData`, prim `customData`/`assetInfo`/
+  `apiSchemas`, composition arcs, mesh arrays, per-property metadata,
+  relationships, connection-flagged properties, Shader/Material connections,
+  PointInstancer prototype/array data, `ids`/`invisibleIds`, and time samples.
+- **Focused split-regression tests** — `next_test_usdc_writer` now pins
+  `EncodeValue` fallback roundtrips for non-inline scalars/vectors/matrix,
+  string/token/asset, and nested dictionaries; `next_test_pcp` now pins
+  extracted-prototype collision handling, internal relationship remapping, and
+  original-instance subtree orphaning.
 
 `apply_list_ops` is now **default ON** (set false for legacy strong-first
 concatenation). The decision rests on three checks:
@@ -142,14 +181,59 @@ double-consume bug, now fixed — and that the Release test build compiled out
 `assert()`; tests now build with `-UNDEBUG`.) **The 10-phase roadmap is
 complete.** The sections below are the original spec.
 
+## Current Cleanup Backlog
+
+The 10-phase roadmap is complete. The active work is now cleanup, validation,
+and behavior-neutral split work:
+
+1. **Docs/status hygiene** — keep this file, `src/next/README.md`, and
+   `doc/memory-and-performance.md` aligned with landed behavior and benchmark
+   deltas. When changing next test coverage, also update `doc/testing-cpp.md`.
+2. **Standalone validation polish** — `scripts/run-next-checks.sh` is the
+   canonical next smoke/regression entrypoint. Keep `next` outside the main
+   regression gate until the assert-based tests are fully converted or otherwise
+   hardened, even though the standalone CMake now forces asserts on for test
+   targets.
+3. **Behavior-neutral TU split** — the high-value split pass is complete:
+   `crate-reader` API/source/stage/array/vector helpers, parser implementation/
+   metadata/property/timeSamples/variant helpers, writer pass-through/property
+   helpers, PCP helper/opinion-fill/merge/list-op includes, and value-parser
+   helper include units are separated. Remaining cleanup is opportunistic only:
+   smaller `EncodeValue` scalar/array subhelpers, deeper PCP instance-flatten
+   extraction, or further parser arc/metadata refinements if future edits touch
+   those sections.
+4. **Memory observability** — make benchmark output stable enough to diff:
+   struct sizes, `Layer::stats()`, RSS, lazy/eager clone RSS, crate write
+   pass-through/reencode counts, and mmap-vs-heap attribution. Current
+   `benchmark_next memstats` / `memstats-file` output covers these basics,
+   including public `source_was_mmap` / `input_was_mmap` result fields.
+5. **Format parity** — maintain the dense generated USDC fixture and focused
+   malformed-crate fixtures. Continue adding next USDA/USDC writer parity tests
+   and optional pxrUSD `usdcat` comparison when available.
+6. **Remaining feature gaps** — keep broadening low-memory flatten coverage for
+   mixed USDA/USDC/USDZ dependency graphs. Basic filesystem USDA sublayers and
+   references are supported and covered. Compressed bool arrays are explicitly
+   rejected by policy and covered by regression tests.
+
+Recently closed cleanup items:
+
+- Blender/nanobind experimental bindings were deprecated out of the active next
+  plan.
+- PointInstancer support now includes typed accessors, extracted instance data,
+  Tydra draw references, prototype material/transform bindings, validation, and
+  opt-in transformed mesh duplication.
+- Malformed USDC coverage now includes generated TOC/table/payload edge cases
+  plus crash replay fixtures.
+- A broad generated USDC roundtrip fixture now covers cross-feature read/write
+  reconstruction instead of relying only on small single-feature tests.
+
 Goals, in priority order:
 
 1. **Secure** — no segfault/UB/stack-overflow on malformed or adversarial input
    (the module builds with `-fno-exceptions`; every failure must be a returned error).
 2. **Low memory** — extend the lazy-ValueRep architecture; eliminate avoidable copies.
 3. **Faster** — remove redundant work and quadratic algorithms in composition/flatten.
-4. **Instancing** — complete the instance-key model, add consumer APIs, port the
-   PointInstancer compute API from the legacy tree.
+4. **Instancing** — complete the instance-key model and add consumer APIs.
 5. **Lazy loading** — a real load-rules model for payloads (OpenUSD `UsdStageLoadRules`).
 6. **Multithread-ready** — replace the single big lock with minimal, provably-safe
    locking; zero overhead when `TINYUSDZ_ENABLE_THREAD` is OFF.
@@ -188,7 +272,7 @@ All file:line evidence below was verified by reading the code at HEAD `59801312`
 | M5 | `Compositor::GraftSubtree` scans **all prims of the source layer** with string-prefix compares per graft call → O(layer_prims × graft_count) on the flatten path (the one WASM uses). | `composition/composition.cc:344-364`; call sites `:251,271,303,331,413` |
 | M6 | Crate reading copies the whole file to one heap `std::string`; `Read(ptr,len)` double-copies; **no mmap** path exists in src/next. | `crate/crate-reader.cc:886-938`; `crate/crate-data-source.hh:68` |
 | M7 | Tokens: LZ4 blob → one `std::string` per token, then re-copied into Values and into `PropNameTable` (3 copies of the token table). | `crate/crate-reader.cc:1058-1117, 275-280, 864-875` |
-| M8 | Lazy array coverage excludes Vec4f, all half types, Vec2d/3d/4d, and Matrix2d/3d/4d — all of which are never LZ4-compressed in crate, so they could be lazy verbatim. Crate TimeSamples are skipped entirely (laziness moot until decode lands). | `crate/crate-reader.cc:702-718, 234-273` |
+| M8 | Lazy array coverage now includes Vec4f/Quatf, half arrays, Vec2-4d/Quatd/Matrix2-4d, and crate TimeSamples sample values. Remaining risk is regressions in unsupported/unknown crate array layouts, which must keep `block_len=0` so writer pass-through never copies guessed bytes. | `crate/crate-reader.cc`, `crate/crate-data-source.cc`, `tests/next/test_lazy_array.cc`, `tests/next/test_crate_alloc_guard.cc` |
 | M9 | `BuildStage` materializes the entire composed stage eagerly; read-only consumers pay O(scene) RSS. | `pcp/cache.cc:766-835` |
 
 ### 1.3 Threading
@@ -206,7 +290,7 @@ All file:line evidence below was verified by reading the code at HEAD `59801312`
 | I1 | Instance key omits accumulated variant selections and layer offsets; variant content contributes a pointer-derived stack id (S4). OpenUSD's `PcpInstanceKey` includes all authored variant selections from every node; `Usd_InstanceKey` additionally hashes load rules relative to the instance. | `pcp/cache.cc:315-336`; `pxr/usd/pcp/instanceKey.cpp:54-68`, `pxr/usd/usd/instanceKey.cpp:42-106` |
 | I2 | Instanceable predicate = "any spec authored `instanceable=true`" instead of strongest-opinion; authored `false` is indistinguishable from unauthored (`bool`, not tri-state). | `pcp/cache.cc:302-310`; `layer/prim-spec.hh` |
 | I3 | No instance↔prototype path-translation API for consumers (Tydra); nested instancing structurally works but is untested. | `pcp/cache.hh:67-101` |
-| I4 | PointInstancer compute API (`ComputeInstanceTransformsAtTime`/`ComputeMaskAtTime` + Tydra expansion) exists only in the legacy tree; next interns the type name only. | `src/usdGeom-accessors.cc:309`, `src/tydra/render-data-instancer.cc:41` (commit `59801312`); `src/next/layer/prim-spec.hh:60` |
+| I4 | PointInstancer typed accessors, transform/mask-style data extraction, prototype mesh bindings, lightweight Tydra draw refs, prototype-relative transforms, per-draw material IDs, unresolved-prototype diagnostics, bounds-checked draw view resolution, O(1) per-instancer draw ranges, draw/prototype binding validators, and opt-in transformed mesh duplication now exist. | `src/next/schema/geom-point-instancer.hh`; `src/tydra/next/render-extract.hh`; `src/tydra/next/render-data.hh` |
 
 ---
 
@@ -398,11 +482,11 @@ rules with ancestor/descendant resolution) + `PcpCache::_includedPayloads`.
    bounds-checked, so the reader body is untouched; lazy values hold
    `shared_ptr<CrateDataSource>` so lifetime is already correct. WASM keeps the
    owned-string path. Bounds checks must remain (hostile concurrent writer).
-4. Extend `IsLazyArrayType` to Vec4f / half / Vec2d/3d/4d / Matrix*d (never
-   compressed in crate) via a generic `PodArrayStorage{vector<uint8_t>, stride}`
-   or per-type storages. String/token arrays stay eager (need tables; item 2 helps).
-   When crate TimeSamples decoding lands, design it lazily from day one
-   (`(time, ValueRep)` pairs reusing `LazyArrayRef`).
+4. Preserve the expanded lazy-array surface (Vec4f/Quatf, half arrays,
+   Vec2-4d/Quatd/Matrix2-4d, and TimeSamples sample values) with regression
+   tests. String/token arrays stay eager because they require table remapping;
+   unsupported compressed/unknown layouts must remain non-pass-through
+   (`block_len=0`) until their exact byte layout is implemented.
 
 ### Phase 9 — Multithread-readiness: minimal locking (T1–T3; land last)
 

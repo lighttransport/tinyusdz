@@ -7,6 +7,15 @@
 namespace tinyusdz {
 namespace next {
 
+/// Options for reading USDZ/ZIP archives.
+struct USDZReadOptions {
+  /// Maximum archive byte size accepted by Open/OpenFile (0 = no limit).
+  size_t max_archive_size = 0;
+
+  /// Maximum uncompressed byte size for any single entry (0 = no limit).
+  size_t max_entry_size = 0;
+};
+
 /// Minimal USDZ/ZIP reader for the next library.
 /// Handles store-only ZIP archives with 64-byte alignment.
 class USDZReader {
@@ -15,8 +24,11 @@ public:
 
   /// Open and parse a USDZ file.
   /// Returns false if the file is not a valid USDZ archive.
-  bool Open(const uint8_t* data, size_t size);
-  bool OpenFile(const std::string& filename);
+  bool Open(const uint8_t* data, size_t size, const USDZReadOptions& options = {});
+  bool OpenFile(const std::string& filename, const USDZReadOptions& options = {});
+
+  /// Last parse/open error. Empty when the previous Open/OpenFile succeeded.
+  const std::string& Error() const { return error_; }
 
   /// Get the number of entries in the archive.
   size_t NumEntries() const { return entries_.size(); }
@@ -43,6 +55,7 @@ private:
   std::vector<uint8_t> file_data_;  // if reading from file
   const uint8_t* data_ = nullptr;
   size_t data_size_ = 0;
+  std::string error_;
 };
 
 } // namespace next

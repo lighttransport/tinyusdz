@@ -69,17 +69,27 @@ ctest --output-on-failure
 cd ..
 
 # 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+#    Build it once with: scripts/build-openusd-usdcat.sh
+#    For headless environments lacking PySide, `--full` will retry with a reduced
+#    full-core profile unless OPENUSD_RETRY_NO_PYSIDE=0 is set.
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
 `tests/run-usdcat-compare.sh` requires Node.js and a working OpenUSD v26.05
-`usdcat`. Prefer a sibling OpenUSD v26.05 install at
-`../OpenUSD/dist/bin/usdcat`. The script falls back to
-`~/local/USD/dist/bin/usdcat` when the sibling install is not present, but full
-regression results should use v26.05 unless a test intentionally targets
-another OpenUSD release. Set `USDCAT_PATH` explicitly when needed.
+`usdcat`. Prefer the repo-local helper install at `ref/dist/bin/usdcat`,
+created by `scripts/build-openusd-usdcat.sh`. Use
+`scripts/build-openusd-usdcat.sh --prepare-only` when you only need to clone or
+refresh the local `ref/openusd` checkout on OpenUSD v26.05 without building
+`usdcat`; use `OPENUSD_FETCH=0` to skip network fetches when the ref is already
+present locally, and `scripts/build-openusd-usdcat.sh --full` when you need a full
+OpenUSD release build rather than the default minimal usdcat/tool install. The
+comparison script falls back to a sibling
+`../OpenUSD/dist/bin/usdcat` and then `~/local/USD/dist/bin/usdcat` when the
+repo-local install is not present, but full regression results should use v26.05
+unless a test intentionally targets another OpenUSD release. Set `USDCAT_PATH`
+explicitly when needed.
 
 The comparison runner writes detailed logs to `tests/comparison-results/` and
 prints a failure/warning summary. It continues across individual files so one
@@ -92,19 +102,19 @@ Useful variants:
 # Quieter comparison logs.
 SHOW_DETAILED_DIFF=false \
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Longer per-file timeout for slow debug/ASan builds.
 TIMEOUT_MS=120000 \
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Single-file comparison through the Node.js runner.
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
@@ -213,12 +223,12 @@ These checks catch cross-version serialization or compatibility drift:
 
 ```bash
 # Batch script for broad coverage
-USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=ref/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
   bash tests/run-usdcat-compare.sh
 
 # Per-file diff for regression investigation
 node tests/compare-usda.js --detailed-diff \
-  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  --tusdcat ./build/tusdcat --usdcat ref/dist/bin/usdcat \
   tests/usda/somefile.usda
 ```
 
@@ -471,11 +481,30 @@ out of the main regression suite:
 - Treat its results as informational only — **not** a merge/regression gate.
   Do not wire `next` into the full regression gate until the suite is hardened.
 
-Build and run them on demand in a separate build directory:
+Build and run them on demand in a separate build directory. The preferred
+entrypoint is:
+
+```bash
+scripts/run-next-checks.sh
+```
+
+Useful environment overrides:
+
+```bash
+scripts/run-next-checks.sh --help
+BUILD_DIR=build-next-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+```
+
+The equivalent manual commands are:
 
 ```bash
 # Configure the standalone next project with its tests enabled.
-cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake -S src/next -B build-next \
+  -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
+  -DTINYUSDZ_NEXT_ENABLE_THREAD=ON \
+  -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
 ```
@@ -487,6 +516,22 @@ ctest --test-dir build-next --output-on-failure
 > null-dereference SIGSEGV in `test_usdc_roundtrip` when the `toc`-populating
 > `ParseUSDCBinary()` call was compiled out). Build with `-DCMAKE_BUILD_TYPE=Debug`
 > for meaningful validation, and keep side-effecting calls out of `assert()`.
+
+Current USDC-focused next coverage:
+
+- `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
+  magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
+  counts, missing required sections, allocation caps, and malformed
+  FIELD/FIELDSET/SPECS payloads. Prefer adding compact generated cases here when
+  a malformed input can be described structurally.
+- `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
+  from `tests/next/crash_regressions/`. Prefer this only when the exact byte
+  sequence matters.
+- `next_test_usdc_roundtrip` includes focused roundtrip cases plus a dense
+  generated fixture covering layer metadata, dictionaries, composition arcs,
+  mesh arrays, per-property metadata, relationships, connection-flagged
+  properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
+  time samples.
 
 ### CMake targets not in ctest
 
@@ -556,7 +601,7 @@ Short form:
 
 ```bash
 TUSDCAT_PATH=./build/tusdcat \
-USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
+USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
@@ -565,7 +610,7 @@ Single-file mode through the Node.js comparator:
 ```bash
 node tests/compare-usda.js \
   --tusdcat ./build/tusdcat \
-  --usdcat ../OpenUSD/dist/bin/usdcat \
+  --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
 ```

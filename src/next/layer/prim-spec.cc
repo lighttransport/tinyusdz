@@ -10,11 +10,35 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+std::string NormalizeAssetPathForRemap(std::string path) {
+  for (char& c : path) {
+    if (c == '\\') c = '/';
+  }
+  while (path.rfind("./", 0) == 0) path = path.substr(2);
+  while (!path.empty() && path[0] == '/') path = path.substr(1);
+  return path;
+}
+
+const std::string* FindAssetPathRemap(
+    const std::map<std::string, std::string>& remap,
+    const std::string& path) {
+  auto it = remap.find(path);
+  if (it != remap.end()) return &it->second;
+  const std::string norm = NormalizeAssetPathForRemap(path);
+  it = remap.find(norm);
+  if (it != remap.end()) return &it->second;
+  return nullptr;
+}
+
+}  // namespace
+
 // ============================================================
 // TypeNameTable
 // ============================================================
 
-TypeNameId TypeNameTable::intern(const std::string& name) {
+TypeNameId TypeNameTable::intern(std::string_view name) {
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -25,18 +49,45 @@ TypeNameId TypeNameTable::intern(const std::string& name) {
   }
 
   uint16_t id = static_cast<uint16_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
+  names_.push_back(std::make_unique<std::string>(name));
+  const std::string& key = *names_.back();
+  name_to_id_[key] = id;
   return TypeNameId{id};
+}
+
+TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
+  if (base_name.empty()) {
+    return intern("");
+  }
+
+  TypeNameId base_id = intern(base_name);
+  if (!base_id.is_valid()) {
+    return TypeNameId{};
+  }
+
+  auto it = base_to_array_type_id_.find(base_id.id);
+  if (it != base_to_array_type_id_.end()) {
+    return TypeNameId{it->second};
+  }
+
+  std::string array_name(base_name);
+  array_name.reserve(base_name.size() + 2);
+  array_name.push_back('[');
+  array_name.push_back(']');
+  TypeNameId array_id = intern(array_name);
+  if (array_id.is_valid()) {
+    base_to_array_type_id_[base_id.id] = array_id.id;
+  }
+  return array_id;
 }
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
   if (!id.is_valid() || id.id >= names_.size()) return empty;
-  return names_[id.id];
+  return *names_[id.id];
 }
 
-TypeNameId TypeNameTable::find(const std::string& name) const {
+TypeNameId TypeNameTable::find(std::string_view name) const {
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -45,6 +96,12 @@ TypeNameId TypeNameTable::find(const std::string& name) const {
 }
 
 void TypeNameTable::register_common_types() {
+  if (names_.empty()) {
+    names_.reserve(128);
+    name_to_id_.reserve(256);
+    base_to_array_type_id_.reserve(64);
+  }
+
   // Empty string for typeless prims
   intern("");
 
@@ -100,6 +157,21 @@ void TypeNameTable::register_common_types() {
   intern("Group");
   intern("Assembly");
   intern("Component");
+
+  // Pre-register common array type names so parser/type-name hot paths
+  // avoid first-touch allocations for frequently-used built-in types.
+  const char* array_type_bases[] = {
+      "bool", "int", "uint", "int64", "uint64", "half", "float", "double",
+      "string", "token", "asset", "int2", "int3", "int4", "uint2", "uint3", "uint4",
+      "half2", "half3", "half4", "float2", "float3", "float4", "double2", "double3", "double4",
+      "quath", "quatf", "quatd", "point3h", "point3f", "point3d",
+      "vector3h", "vector3f", "vector3d", "normal3h", "normal3f", "normal3d",
+      "color3h", "color3f", "color3d", "color4h", "color4f", "color4d",
+      "matrix2d", "matrix3d", "matrix4d", "texCoord2h", "texCoord2f", "texCoord2d",
+      "texCoord3h", "texCoord3f", "texCoord3d", "timecode", "dictionary"};
+  for (const char* base : array_type_bases) {
+    (void)intern_array(base);
+  }
 }
 
 TypeNameTable& GetTypeNameTable() {
@@ -232,6 +304,21 @@ const Value* TimeSampleStorage::value(uint32_t offset) const {
   return &values_[offset];
 }
 
+size_t TimeSampleStorage::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (Value& value : values_) {
+    const std::string* path = value.as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    value = Value::MakeAssetPath(*mapped);
+    ++count;
+  }
+  return count;
+}
+
 bool TimeSampleStorage::has(PropNameId name_id) const {
   return samples_.find(name_id.id) != samples_.end();
 }
@@ -313,9 +400,9 @@ TimeSampleStorage::Stats TimeSampleStorage::stats() const {
 // per prim dominated the per-prim fixed cost on high-prim-count layers.
 PrimSpec::PrimSpec() {}
 
-PrimSpec::PrimSpec(const std::string& name) : name_(name) {}
+PrimSpec::PrimSpec(std::string_view name) : name_(name) {}
 
-PrimSpec::PrimSpec(const std::string& name, const std::string& type_name)
+PrimSpec::PrimSpec(std::string_view name, std::string_view type_name)
     : name_(name) {
   set_type_name(type_name);
 }
@@ -386,6 +473,10 @@ const std::string& PrimSpec::type_name() const {
 }
 
 void PrimSpec::set_type_name(const std::string& name) {
+  set_type_name(std::string_view(name));
+}
+
+void PrimSpec::set_type_name(std::string_view name) {
   type_id_ = GetTypeNameTable().intern(name);
 }
 
@@ -393,8 +484,8 @@ const PropSlot* PrimSpec::property(PropNameId name_id) const {
   return props_.find(name_id);
 }
 
-const PropSlot* PrimSpec::property(const std::string& name) const {
-  return props_.find(name);
+const PropSlot* PrimSpec::property(std::string_view name) const {
+  return props_.find(GetPropNameTable().find(name));
 }
 
 const Value* PrimSpec::property_value(PropNameId name_id) const {
@@ -403,18 +494,18 @@ const Value* PrimSpec::property_value(PropNameId name_id) const {
   return values_->get(slot->value_offset);
 }
 
-const Value* PrimSpec::property_value(const std::string& name) const {
+const Value* PrimSpec::property_value(std::string_view name) const {
   const PropSlot* slot = property(name);
   if (!slot || !values_) return nullptr;
   return values_->get(slot->value_offset);
 }
 
-void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags) {
-  PropNameId name_id = GetPropNameTable().intern(name);
-  add_property(name_id, std::move(value), flags);
+void PrimSpec::add_property(std::string_view name, Value value, uint16_t flags) {
+  add_property(GetPropNameTable().intern(name), std::move(value), flags);
 }
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
+  if (!name_id.is_valid()) return;
   // Store value
   if (!values_) values_ = std::make_unique<ValueStorage>();
   uint32_t offset = values_->store(std::move(value));
@@ -435,6 +526,79 @@ void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   }
 
   props_.add(slot);
+}
+
+void PrimSpec::add_relationship(std::string_view name, const Path& target) {
+  if (name.empty()) return;
+  relationships_[std::string(name)].push_back(target);
+}
+
+void PrimSpec::add_relationship(std::string_view name, Path&& target) {
+  if (name.empty()) return;
+  relationships_[std::string(name)].push_back(std::move(target));
+}
+
+void PrimSpec::add_connection(std::string_view prop_name, const Path& target) {
+  if (prop_name.empty()) return;
+  PropNameId id = GetPropNameTable().intern(prop_name);
+  if (!id.is_valid()) return;
+  connections_[id.id].push_back(target);
+}
+
+void PrimSpec::add_connection(std::string_view prop_name, Path&& target) {
+  if (prop_name.empty()) return;
+  PropNameId id = GetPropNameTable().intern(prop_name);
+  if (!id.is_valid()) return;
+  connections_[id.id].push_back(std::move(target));
+}
+
+void PrimSpec::add_connection(PropNameId prop_name_id, const Path& target) {
+  if (!prop_name_id.is_valid()) return;
+  connections_[prop_name_id.id].push_back(target);
+}
+
+void PrimSpec::add_connection(PropNameId prop_name_id, Path&& target) {
+  if (!prop_name_id.is_valid()) return;
+  connections_[prop_name_id.id].push_back(std::move(target));
+}
+
+const PropMeta* PrimSpec::property_meta(std::string_view prop_name) const {
+  return property_meta(GetPropNameTable().find(prop_name));
+}
+
+const std::string* PrimSpec::property_type_name(std::string_view prop_name) const {
+  PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  return property_type_name(id);
+}
+
+const std::string* PrimSpec::property_type_name(PropNameId prop_name_id) const {
+  if (!prop_name_id.is_valid()) return nullptr;
+  auto it = prop_type_names_.find(prop_name_id.id);
+  if (it == prop_type_names_.end()) return nullptr;
+  PropNameId tn_id;
+  tn_id.id = it->second;
+  return &GetPropNameTable().get(tn_id);
+}
+
+void PrimSpec::set_property_type_name(std::string_view prop_name,
+                                     std::string_view type_name) {
+  // Intern both name and typeName; typeNames are few and highly shared.
+  PropNameId prop_id = GetPropNameTable().intern(prop_name);
+  if (!prop_id.is_valid()) return;
+  set_property_type_name(prop_id, type_name);
+}
+
+void PrimSpec::set_property_type_name(PropNameId prop_name_id,
+                                     std::string_view type_name) {
+  if (!prop_name_id.is_valid()) return;
+  PropNameId tn_id = GetPropNameTable().intern(type_name);
+  if (!tn_id.is_valid()) return;
+  prop_type_names_[prop_name_id.id] = tn_id.id;
+}
+
+PropMeta& PrimSpec::ensure_property_meta(std::string_view prop_name) {
+  return ensure_property_meta(GetPropNameTable().intern(prop_name));
 }
 
 void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t flags) {
@@ -461,6 +625,42 @@ bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
     if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
   }
   return true;
+}
+
+bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot || slot->value_offset == UINT32_MAX) return false;
+  if (!values_) return false;
+  uint32_t offset = values_->store(std::move(value));
+  const Value* stored = values_->get(offset);
+  slot->value_offset = offset;
+  if (stored && stored->type_id() != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(stored->type_id());
+    if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
+    else slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagArray);
+  }
+  return true;
+}
+
+size_t PrimSpec::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (const PropSlot& slot : props_.slots()) {
+    const Value* value = property_value(slot.name_id);
+    if (!value) continue;
+    const std::string* path = value->as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    if (set_property_value(slot.name_id, Value::MakeAssetPath(*mapped))) {
+      ++count;
+    }
+  }
+  if (time_samples_) {
+    count += time_samples_->remap_asset_paths(remap);
+  }
+  return count;
 }
 
 void PrimSpec::reserve_properties(size_t count) {
@@ -526,14 +726,48 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
   return interpolate_time_sample(name_id, time, mode);
 }
 
-void PrimSpec::add_relationship(const std::string& name, const Path& target) {
-  relationships_[name].push_back(target);
+void PrimSpec::apply_relationship_list_op(const std::string& name,
+                                          const std::vector<Path>& targets,
+                                          RelationshipListOp op) {
+  if (targets.empty()) return;
+  std::vector<Path>& dst = relationships_[name];
+
+  switch (op) {
+    case RelationshipListOp::Prepend:
+      dst.insert(dst.begin(), targets.begin(), targets.end());
+      break;
+    case RelationshipListOp::Add:
+      for (const Path& t : targets) {
+        if (std::find(dst.begin(), dst.end(), t) == dst.end()) {
+          dst.push_back(t);
+        }
+      }
+      break;
+    case RelationshipListOp::Delete:
+      dst.erase(std::remove_if(dst.begin(), dst.end(),
+                               [&](const Path& p) {
+                                 return std::find(targets.begin(), targets.end(),
+                                                  p) != targets.end();
+                               }),
+                dst.end());
+      if (dst.empty()) relationships_.erase(name);
+      break;
+    case RelationshipListOp::Append:
+    default:
+      dst.insert(dst.end(), targets.begin(), targets.end());
+      break;
+  }
 }
 
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   auto it = relationships_.find(name);
   if (it == relationships_.end()) return nullptr;
   return &it->second;
+}
+
+const std::vector<Path>* PrimSpec::relationship(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  return PrimSpec::relationship(GetPropNameTable().get(name_id));
 }
 
 std::vector<std::string> PrimSpec::relationship_names() const {
@@ -548,14 +782,17 @@ std::vector<std::string> PrimSpec::relationship_names() const {
   return names;
 }
 
-void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
-  connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
-}
-
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
   PropNameId id = GetPropNameTable().find(prop_name);
   if (!id.is_valid()) return nullptr;
   auto it = connections_.find(id.id);
+  if (it == connections_.end()) return nullptr;
+  return &it->second;
+}
+
+const std::vector<Path>* PrimSpec::connection(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = connections_.find(name_id.id);
   if (it == connections_.end()) return nullptr;
   return &it->second;
 }
@@ -578,23 +815,6 @@ void PrimSpec::remap_target_prefix(const std::string& old_prefix,
   for (auto& kv : connections_) remap(kv.second);
 }
 
-void PrimSpec::set_property_type_name(const std::string& prop_name,
-                                      const std::string& type_name) {
-  // Intern both name and typeName; typeNames are few and highly shared.
-  prop_type_names_[GetPropNameTable().intern(prop_name).id] =
-      GetPropNameTable().intern(type_name).id;
-}
-
-const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {
-  PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
-  auto it = prop_type_names_.find(id.id);
-  if (it == prop_type_names_.end()) return nullptr;
-  PropNameId tn_id;
-  tn_id.id = it->second;
-  return &GetPropNameTable().get(tn_id);
-}
-
 const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
   auto it = prop_metas_.find(name_id.id);
@@ -602,18 +822,10 @@ const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
   return it->second.get();
 }
 
-const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
-  return property_meta(GetPropNameTable().find(prop_name));
-}
-
 PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
   std::unique_ptr<PropMeta>& slot = prop_metas_[name_id.id];
   if (!slot) slot = std::make_unique<PropMeta>();
   return *slot;
-}
-
-PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
-  return ensure_property_meta(GetPropNameTable().intern(prop_name));
 }
 
 void PrimSpec::add_child_index(uint32_t index) {

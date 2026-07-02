@@ -48,6 +48,7 @@
 #include "prim-type-macros.inc"
 #include "core/prim.hh"
 #include "core/model-scope.hh"  // Model, Scope
+#include "core/path-expression.hh"  // ParsedPathExpression
 #include "stage.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"
@@ -445,10 +446,27 @@ bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps,
 ///
 bool GetCollection(const Prim &prim, const Collection **collection);
 
+// Resolved membership rules for one collection instance, in either mode.
 class CollectionMembershipQuery {
  public:
- private:
-  std::map<Path, CollectionInstance::ExpansionRule> _expansionRuleMap;
+  enum class Mode { Empty, Relationship, Expression };
+
+  Mode mode{Mode::Empty};
+
+  // Anchor prim path (predicate context / relative-expression base).
+  std::string owner_prim_path;
+
+  // Relationship mode (`includes`/`excludes`/`includeRoot`).
+  std::vector<Path> includes;
+  std::vector<Path> excludes;
+  bool include_root{false};
+  CollectionInstance::ExpansionRule expansion_rule{
+      CollectionInstance::ExpansionRule::ExpandPrims};
+
+  // Expression mode (`membershipExpression`).
+  ParsedPathExpression membership_expression;
+
+  bool valid() const { return mode != Mode::Empty; }
 };
 
 ///
@@ -605,12 +623,23 @@ bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
 /// CollectionMembershipQuery contains empty info(i.e, all query will fail)
 ///
 CollectionMembershipQuery BuildCollectionMembershipQuery(
-    const Stage &stage, const CollectionInstance &seedCollectionInstance);
+    const Stage &stage, const CollectionInstance &seedCollectionInstance,
+    const std::string &owner_prim_path = "");
 
 bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
                     const Path &abs_path,
                     const CollectionInstance::ExpansionRule expansionRule =
                         CollectionInstance::ExpansionRule::ExpandPrims);
+
+///
+/// Evaluate an SdfPathExpression predicate (the raw text inside `{...}`, e.g.
+/// "defined", "model", "kind:component", "isa:Mesh", "hasAPI:SkelBindingAPI")
+/// against the prim at `prim_path` in `stage`. Used by expression-mode
+/// collection membership and exposed for reuse.
+///
+bool EvalPathExpressionPredicate(const Stage &stage,
+                                 const std::string &predicate,
+                                 const std::string &prim_path);
 
 // TODO: Layer version
 // bool IsPathIncluded(const Layer &layer, const Path &abs_path, const

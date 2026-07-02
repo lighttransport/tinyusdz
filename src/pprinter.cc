@@ -176,8 +176,12 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     ss << pprint::Indent(indent) << "relocates = {\n";
     for (size_t i = 0; i < metas.layerRelocates.size(); i++) {
       const auto &entry = metas.layerRelocates[i];
+      // A relocate target may be the empty path (`<>`), denoting a deletion
+      // relocate. Emit `<>` rather than the invalid-path placeholder.
+      const std::string target =
+          entry.second.is_valid() ? entry.second.full_path_name() : "";
       ss << pprint::Indent(indent + 1) << "<" << entry.first.full_path_name()
-         << "> : " << "<" << entry.second.full_path_name() << ">";
+         << "> : " << "<" << target << ">";
       if (i + 1 < metas.layerRelocates.size()) {
         ss << ",";
       }

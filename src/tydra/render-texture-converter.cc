@@ -87,7 +87,6 @@ bool DefaultTextureImageLoaderFunction(
 
   DCOUT("Resolved asset path = " << resolvedPath);
 
-  // TODO: user-defined image loader handler.
   auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
@@ -135,9 +134,9 @@ bool DefaultTextureImageLoaderFunction(
       return false;
     }
   } else {
-    DCOUT("TODO: bpp = " << result.value().image.bpp);
+    DCOUT("Unsupported bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) += "TODO or unsupported bpp: " +
+      (*err) += "Unsupported bpp: " +
                std::to_string(result.value().image.bpp) + "\n";
     }
     return false;
