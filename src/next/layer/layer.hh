@@ -79,8 +79,11 @@ public:
   /// Add a root prim index
   void add_root(uint32_t index);
 
-  /// Finalize layer (build path index, sort properties)
-  void finalize();
+  /// Finalize layer (build path index, sort properties). When
+  /// `path_index_prebuilt` is true the caller already ran build_path_index()
+  /// (e.g. overlapped on a worker while properties pre-sorted) and it is
+  /// skipped here.
+  void finalize(bool path_index_prebuilt = false);
 
   /// (Re)build only the path->index map from current prim paths. Unlike
   /// finalize() this is not guarded and does not sort properties, so it can be
@@ -221,7 +224,7 @@ public:
   void set_hidden(bool hidden);
 
   /// Finalize the layer
-  void finalize();
+  void finalize(bool path_index_prebuilt = false);
 
   /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
   /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose

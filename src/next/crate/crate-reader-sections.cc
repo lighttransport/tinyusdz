@@ -725,6 +725,7 @@ bool CrateReader::Impl::ReadFieldsets() {
     AddError("Fieldset index byte size overflow");
     return false;
   }
+  (void)fieldset_index_bytes;  // early overflow validation; decode recomputes
 
   if (section->size < 8) {
     AddError("FIELDSETS section too small");
@@ -740,6 +741,70 @@ bool CrateReader::Impl::ReadFieldsets() {
     return false;
   }
 
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && num_fieldsets >= 65536) {
+      // The fieldset payload decode (decompress + span/index builds) touches
+      // only fieldset members, which nothing reads until BuildStage — run it
+      // on the pool overlapped with the SPECS/PATHS section reads and join in
+      // ParseFromSource right before BuildStage.
+      fieldsets_pending_ = std::make_unique<PendingFieldsetsDecode>();
+      PendingFieldsetsDecode* pd = fieldsets_pending_.get();
+      auto data_ptr = std::make_shared<std::vector<uint8_t>>(std::move(data));
+      const uint64_t nfs = num_fieldsets;
+      // Snapshot the stream view NOW (main thread): the live reader_ cursor
+      // keeps moving through SPECS/PATHS while the decode runs, and copying
+      // it from the worker would race on the position field.
+      const StreamReader reader_snapshot = *reader_;
+      const bool submitted = SubmitPoolTask(
+          options_.num_threads, [this, pd, data_ptr, nfs, reader_snapshot]() {
+            ThreadDecodeCtx decode_ctx(reader_snapshot);
+            ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
+            const bool ok = DecodeFieldsetsPayload(*data_ptr, nfs);
+            std::lock_guard<std::mutex> lock(pd->mu);
+            pd->ok = ok;
+            pd->done = true;
+            pd->cv.notify_all();
+          });
+      if (submitted) return true;  // decode in flight
+      fieldsets_pending_.reset();
+      data = std::move(*data_ptr);
+    }
+  }
+#endif
+  return DecodeFieldsetsPayload(data, num_fieldsets);
+}
+
+bool CrateReader::Impl::JoinFieldsetsDecode() {
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  if (fieldsets_pending_) {
+    PendingFieldsetsDecode* pd = fieldsets_pending_.get();
+    bool ok = false;
+    {
+      std::unique_lock<std::mutex> lock(pd->mu);
+      pd->cv.wait(lock, [pd]() { return pd->done; });
+      ok = pd->ok;
+    }
+    fieldsets_pending_.reset();
+    return ok;
+  }
+#endif
+  return true;
+}
+
+bool CrateReader::Impl::DecodeFieldsetsPayload(
+    const std::vector<uint8_t>& data, uint64_t num_fieldsets) {
+  size_t fieldset_index_bytes = 0;
+  if (!safe::mul(num_fieldsets, sizeof(uint32_t), &fieldset_index_bytes)) {
+    AddError("Fieldset index byte size overflow");
+    return false;
+  }
   fieldset_indices_.resize(static_cast<size_t>(num_fieldsets));
   DecompressResult dr = DecompressCompressedU32(data.data(), data.size(),
                                                  fieldset_indices_.data(),

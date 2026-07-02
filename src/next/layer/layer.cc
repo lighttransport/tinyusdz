@@ -124,11 +124,13 @@ void Layer::resolve_pending_indices(const std::vector<uint32_t>& resolved) {
   }
 }
 
-void Layer::finalize() {
+void Layer::finalize(bool path_index_prebuilt) {
   if (finalized_) return;
 
   // Build path-to-index map
-  build_path_index();
+  if (!path_index_prebuilt) {
+    build_path_index();
+  }
 
   // Finalize each prim's properties (sort for binary search)
   for (auto& prim : prims_) {
@@ -364,8 +366,8 @@ void LayerBuilder::set_hidden(bool hidden) {
   }
 }
 
-void LayerBuilder::finalize() {
-  layer_.finalize();
+void LayerBuilder::finalize(bool path_index_prebuilt) {
+  layer_.finalize(path_index_prebuilt);
 }
 
 }  // namespace next

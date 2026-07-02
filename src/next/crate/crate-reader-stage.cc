@@ -984,6 +984,8 @@ bool CrateReader::Impl::BuildStage() {
 
   const auto t_emit_start = Clock::now();
   bool parallel_emit_done = false;
+  bool path_index_prebuilt = false;
+  (void)path_index_prebuilt;
 #if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
   {
     int nt = options_.num_threads;
@@ -1549,9 +1551,18 @@ bool CrateReader::Impl::BuildStage() {
             std::max<size_t>(2048, total_prims / (static_cast<size_t>(nt) * 4));
         std::mutex fin_mu;
         std::condition_variable fin_cv;
-        size_t fin_remaining = 0;
+        size_t fin_remaining = 1;  // +1: the path-index build task below
         for (size_t b = 0; b < total_prims; b += fchunk) fin_remaining++;
-        size_t launched = 0;
+        // Overlap the (serial hash build) path index with the property
+        // pre-sort chunks; Layer::finalize(path_index_prebuilt=true) then
+        // skips its rebuild. Prim paths are immutable at this point, and the
+        // sort touches a different PrimSpec member.
+        auto pidx_task = [&]() {
+          layer.build_path_index();
+          std::lock_guard<std::mutex> lock(fin_mu);
+          if (--fin_remaining == 0) fin_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, pidx_task)) pidx_task();
         for (size_t b = 0; b < total_prims; b += fchunk) {
           const size_t e = std::min(total_prims, b + fchunk);
           auto task = [&, b, e]() {
@@ -1561,13 +1572,13 @@ bool CrateReader::Impl::BuildStage() {
             std::lock_guard<std::mutex> lock(fin_mu);
             if (--fin_remaining == 0) fin_cv.notify_all();
           };
-          launched++;
           if (!SubmitPoolTask(options_.num_threads, task)) task();
         }
-        if (launched) {
+        {
           std::unique_lock<std::mutex> lock(fin_mu);
           fin_cv.wait(lock, [&]() { return fin_remaining == 0; });
         }
+        path_index_prebuilt = true;
       }
       parallel_emit_done = true;
     }
@@ -2035,7 +2046,7 @@ bool CrateReader::Impl::BuildStage() {
   // Finalize
   const auto t_finalize_start = Clock::now();
   if (options_.finalize_stage) {
-    builder.finalize();
+    builder.finalize(path_index_prebuilt);
   }
   const auto t_finalize_end = Clock::now();
 
