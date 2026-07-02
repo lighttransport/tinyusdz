@@ -447,7 +447,7 @@
           break;
         }
         case TypeId::Token: {
-          const std::vector<std::string>* arr = val.as_token_array();
+          const std::vector<TfToken>* arr = val.as_token_array();
           if (arr) {
             count = arr->size();
             // Store token indices
@@ -455,7 +455,7 @@
               return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
             }
             for (size_t k = 0; k < count; ++k) {
-              uint32_t idx = InternToken((*arr)[k]);
+              uint32_t idx = InternToken((*arr)[k].sv());
               std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
             }
           }

@@ -159,8 +159,8 @@ int main() {
     const Value* tags = DictFind(ai, "tags");
     assert(tags && tags->as_token_array());
     assert(tags->as_token_array()->size() == 2);
-    assert((*tags->as_token_array())[0] == "a");
-    assert((*tags->as_token_array())[1] == "b");
+    assert((*tags->as_token_array())[0].str() == "a");
+    assert((*tags->as_token_array())[1].str() == "b");
   }
 
   // Property-level customData dict.

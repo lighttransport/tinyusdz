@@ -308,7 +308,7 @@ void test_array_range_split_parity() {
   // Non-chunkable types report false.
   {
     PrintOptions opts;
-    assert(!IsChunkableArray(Value::MakeTokenArray({"a", "b"}), opts));
+    assert(!IsChunkableArray(Value::MakeTokenArray(std::vector<std::string>{"a", "b"}), opts));
     assert(!IsChunkableArray(Value::MakeBoolArray({true, false}), opts));
     assert(!IsChunkableArray(Value(42), opts));  // scalar
     PrintOptions trunc;

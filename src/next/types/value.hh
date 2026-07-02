@@ -7,6 +7,7 @@
 #pragma once
 
 #include "type-id.hh"
+#include "token.hh"
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -158,6 +159,9 @@ public:
   static Value MakeBoolArrayFromBytes(std::vector<uint8_t>&& data);
   static Value MakeTokenArray(const std::vector<std::string>& data);
   static Value MakeTokenArray(std::vector<std::string>&& data);
+  // Direct overload for callers that already hold interned tokens (the USDA
+  // token-array parser), avoiding an intermediate std::string vector.
+  static Value MakeTokenArray(std::vector<TfToken>&& data);
 
   /// Generic flat-buffer array factories for vector/quat/matrix element types
   /// (e.g. Vec4f, Matrix4d, Quatf). `data` is the flat scalar buffer and
@@ -316,7 +320,9 @@ public:
   const std::vector<uint32_t>* as_uint_array() const;
   const std::vector<uint64_t>* as_uint64_array() const;
   const std::vector<uint8_t>* as_bool_array() const;   // 0/1 values
-  const std::vector<std::string>* as_token_array() const;
+  // Token arrays are interned: elements are TfToken (call .str() for the text).
+  // MakeTokenArray still accepts std::vector<std::string> and interns.
+  const std::vector<TfToken>* as_token_array() const;
   std::vector<float>* as_float_array();
   std::vector<int32_t>* as_int_array();
   std::vector<double>* as_double_array();

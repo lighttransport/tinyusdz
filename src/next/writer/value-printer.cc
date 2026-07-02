@@ -296,7 +296,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         tmp = value.materialized_copy();
         src = &tmp;
       }
-      const std::vector<std::string>* a = src->as_token_array();
+      const std::vector<TfToken>* a = src->as_token_array();
       if (!a) return false;
       out.append('[');
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
@@ -304,10 +304,10 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         if (i) out.append(", ");
         if (type_id == TypeId::AssetPath) {
           out.append('@');
-          out.append((*a)[i]);
+          out.append((*a)[i].str());
           out.append('@');
         } else {
-          out.append(EscapeString((*a)[i]));
+          out.append(EscapeString((*a)[i].str()));
         }
       }
       if (limit < a->size()) out.append(", ...");
@@ -470,8 +470,8 @@ void PrintValueInto(std::string& out, const Value& value,
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) {
             if (i) out += ", ";
-            if (type_id == TypeId::AssetPath) { out += '@'; out += (*a)[i]; out += '@'; }
-            else out += EscapeString((*a)[i]);
+            if (type_id == TypeId::AssetPath) { out += '@'; out += (*a)[i].str(); out += '@'; }
+            else out += EscapeString((*a)[i].str());
           }
           if (limit < a->size()) out += ", ...";
         }

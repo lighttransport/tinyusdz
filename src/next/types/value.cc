@@ -74,7 +74,7 @@ using Int64ArrayStorage = VecArrayStorage<int64_t>;
 using UIntArrayStorage = VecArrayStorage<uint32_t>;
 using UInt64ArrayStorage = VecArrayStorage<uint64_t>;
 using BoolArrayStorage = VecArrayStorage<uint8_t>;  // 0/1 values
-using TokenArrayStorage = VecArrayStorage<std::string>;
+using TokenArrayStorage = VecArrayStorage<TfToken>;  // interned token elements
 
 inline void array_box_retain(ArrayBox* b) {
   if (b) b->rc.fetch_add(1, std::memory_order_relaxed);
@@ -772,15 +772,31 @@ Value Value::MakeBoolArrayFromBytes(std::vector<uint8_t>&& data) {
   for (uint8_t& b : data) b = b ? uint8_t{1} : uint8_t{0};
   new (v.storage_) ArrayHandle(new BoolArrayStorage(std::move(data))); return v;
 }
+// Both overloads intern each element into a TfToken (dedup + no per-element
+// std::string). The std::vector<std::string> input API is unchanged.
+static std::vector<TfToken> InternTokenVec(const std::vector<std::string>& data) {
+  std::vector<TfToken> toks;
+  toks.reserve(data.size());
+  for (const std::string& s : data) toks.emplace_back(s);
+  return toks;
+}
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(new TokenArrayStorage(data)); return v;
+  new (v.storage_) ArrayHandle(new TokenArrayStorage(InternTokenVec(data)));
+  return v;
 }
 Value Value::MakeTokenArray(std::vector<std::string>&& data) {
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
-  new (v.storage_) ArrayHandle(new TokenArrayStorage(std::move(data))); return v;
+  new (v.storage_) ArrayHandle(new TokenArrayStorage(InternTokenVec(data)));
+  return v;
+}
+Value Value::MakeTokenArray(std::vector<TfToken>&& data) {
+  Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  new (v.storage_) ArrayHandle(new TokenArrayStorage(std::move(data)));
+  return v;
 }
 
 Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
@@ -1313,7 +1329,7 @@ const std::vector<uint8_t>* Value::as_bool_array() const {
   ArrayBox* ptr = ArraySlot(storage_)->get();
   return &static_cast<BoolArrayStorage*>(ptr)->data;
 }
-const std::vector<std::string>* Value::as_token_array() const {
+const std::vector<TfToken>* Value::as_token_array() const {
   ensure_materialized();
   if (type_id_ != TypeId::Token || !is_array_) return nullptr;
   ArrayBox* ptr = ArraySlot(storage_)->get();
@@ -1462,7 +1478,9 @@ uint64_t Value::hash() const {
     } else if (type_id_ == TypeId::Token) {
       const auto* arr = as_token_array();
       if (arr) {
-        for (const std::string& s : *arr) {
+        // Hash the token strings (unchanged hash vs. the former string array).
+        for (const TfToken& t : *arr) {
+          const std::string& s = t.str();
           h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(s.data()),
                           s.size());
           h *= 1099511628211ULL;

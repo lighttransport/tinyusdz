@@ -379,9 +379,9 @@ bool CrateReader::Impl::BuildStage() {
                   layer.meta().comment = text;
               } else if (field_name == "subLayers") {
                 if (UnpackValue(field_value, v)) {
-                  const std::vector<std::string>* arr = v.as_token_array();
+                  const std::vector<TfToken>* arr = v.as_token_array();
                   if (arr) {
-                    for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
+                    for (const auto& s : *arr) layer.meta().subLayers.push_back(s.str());
                   } else if (const std::string* s = v.as_string()) {
                     layer.meta().subLayers.push_back(*s);
                   } else if (const std::string* s = v.as_token()) {
@@ -1294,8 +1294,9 @@ bool CrateReader::Impl::BuildStage() {
                    "' has unexpected encoding; dropped");
         return;
       }
-      if (const std::vector<std::string>* arr = v.as_token_array()) {
-        for (const auto& s : *arr) {
+      if (const std::vector<TfToken>* arr = v.as_token_array()) {
+        for (const TfToken& t : *arr) {
+          const std::string& s = t.str();
           if (wrap_bare_paths && !s.empty() && s[0] == '/') {
             std::string arc;
             arc.reserve(s.size() + 2);
@@ -1340,12 +1341,13 @@ bool CrateReader::Impl::BuildStage() {
     auto decode_arc_listop = [&](const ValueRep& rep, ArcEdit& e) {
       Value v;
       if (!UnpackValue(rep, v)) return;
-      const std::vector<std::string>* arr = v.as_token_array();
+      const std::vector<TfToken>* arr = v.as_token_array();
       if (!arr) return;
       e.authored = true;
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
-      for (const std::string& s : *arr) {
+      for (const TfToken& t : *arr) {
+        const std::string& s = t.str();
         if (s == "\x01P") cur = &e.prepended;
         else if (s == "\x01A") cur = &e.appended;
         else if (s == "\x01D") cur = &e.deleted;
@@ -1484,10 +1486,10 @@ bool CrateReader::Impl::BuildStage() {
             AddWarning(
                 std::string("Composition arc field 'variantSets' has unexpected "
                             "encoding; dropped"));
-          } else if (const std::vector<std::string>* arr =
+          } else if (const std::vector<TfToken>* arr =
                          vs_v.as_token_array()) {
             for (const auto& n : *arr) {
-              ps->meta().variantSets().push_back(VariantSetData{n, "", {}});
+              ps->meta().variantSets().push_back(VariantSetData{n.str(), "", {}});
             }
           } else if (const std::string* s = vs_v.as_token()) {
             ps->meta().variantSets().push_back(VariantSetData{*s, "", {}});
@@ -1830,8 +1832,9 @@ bool CrateReader::Impl::BuildStage() {
                    "' has unexpected encoding; dropped");
         return;
       }
-      if (const std::vector<std::string>* arr = v.as_token_array()) {
-        for (const auto& s : *arr) {
+      if (const std::vector<TfToken>* arr = v.as_token_array()) {
+        for (const TfToken& t : *arr) {
+          const std::string& s = t.str();
           if (wrap_bare_paths && !s.empty() && s[0] == '/') {
             std::string arc;
             arc.reserve(s.size() + 2);
@@ -1876,12 +1879,13 @@ bool CrateReader::Impl::BuildStage() {
     auto decode_arc_listop = [&](const ValueRep& rep, ArcEdit& e) {
       Value v;
       if (!UnpackValue(rep, v)) return;
-      const std::vector<std::string>* arr = v.as_token_array();
+      const std::vector<TfToken>* arr = v.as_token_array();
       if (!arr) return;
       e.authored = true;
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
-      for (const std::string& s : *arr) {
+      for (const TfToken& t : *arr) {
+        const std::string& s = t.str();
         if (s == "\x01P") cur = &e.prepended;
         else if (s == "\x01A") cur = &e.appended;
         else if (s == "\x01D") cur = &e.deleted;
@@ -2020,10 +2024,10 @@ bool CrateReader::Impl::BuildStage() {
             AddWarning(
                 std::string("Composition arc field 'variantSets' has unexpected "
                             "encoding; dropped"));
-          } else if (const std::vector<std::string>* arr =
+          } else if (const std::vector<TfToken>* arr =
                          vs_v.as_token_array()) {
             for (const auto& n : *arr) {
-              ps->meta().variantSets().push_back(VariantSetData{n, "", {}});
+              ps->meta().variantSets().push_back(VariantSetData{n.str(), "", {}});
             }
           } else if (const std::string* s = vs_v.as_token()) {
             ps->meta().variantSets().push_back(VariantSetData{*s, "", {}});
