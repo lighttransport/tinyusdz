@@ -21,6 +21,7 @@
 #include <thread>
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -416,66 +417,130 @@ bool CrateReader::Impl::BuildStage() {
         }
       }
 
-      // Per-worker sinks: each chunk collects a contiguous spec range into
-      // local vectors; concatenating chunks in range order reproduces the
-      // serial append order exactly. The per-spec body below is a copy of the
-      // retained serial body with the sinks redirected to `lc`.
+      // Direct-write collect: workers decode a contiguous spec range straight
+      // into the final entry vectors at precomputed per-chunk offsets (an
+      // upper-bound spec-type pre-scan), so no per-chunk sink vectors, no
+      // single-threaded move-concatenation afterwards. Filling chunks in range
+      // order reproduces the serial append order exactly; rarely-skipped specs
+      // leave gaps that a (normally no-op) compaction pass closes. The
+      // per-spec body below is a copy of the retained serial body with
+      // appends redirected to the preassigned slots.
       struct CollectChunk {
         size_t begin = 0;
         size_t end = 0;
-        std::vector<PrimEntry> prims;
-        std::vector<std::pair<std::string_view, AttrInfo>> attrs;
-        std::vector<std::pair<std::string_view, RelInfo>> rels;
+        // Slot bases into the final vectors (prefix sums of the upper-bound
+        // per-chunk spec-type counts) and actual emitted counts.
+        size_t prim_base = 0;
+        size_t attr_base = 0;
+        size_t rel_base = 0;
+        size_t n_prims = 0;
+        size_t n_attrs = 0;
+        size_t n_rels = 0;
         std::vector<VariantSelectionEntry> variants;
         std::vector<std::pair<std::string_view, std::string_view>> vbuf;
+        // glibc arena-warming blocks (see end of collect_range); freed after
+        // the join, returning the memory to the owning worker's arena.
+        std::vector<char*> warm_blocks;
+        CollectChunk() = default;
+        CollectChunk(CollectChunk&& o) = default;
+        CollectChunk& operator=(CollectChunk&&) = default;
+        ~CollectChunk() {
+          for (char* p : warm_blocks) std::free(p);
+        }
       };
       const size_t chunk_size =
           std::max<size_t>(512, specs_.size() / (static_cast<size_t>(nt) * 8));
       std::vector<CollectChunk> chunks;
       chunks.reserve(specs_.size() / chunk_size + 2);
-      for (size_t b = 0; b < specs_.size(); b += chunk_size) {
-        CollectChunk ck;
-        ck.begin = b;
-        ck.end = std::min(specs_.size(), b + chunk_size);
-        chunks.push_back(std::move(ck));
-      }
-
-      auto collect_range = [&](CollectChunk& lc) {
-        ThreadDecodeCtx decode_ctx(*reader_);
-        ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
-        // Exact-reserve the local sinks (one cheap enum scan): growth
-        // reallocations move ~136-byte AttrInfo entries and were a measurable
-        // slice of the allocator churn.
-        {
-          size_t n_prims = 0, n_attrs = 0, n_rels = 0;
-          for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
+      {
+        size_t prim_total = 0, attr_total = 0, rel_total = 0;
+        for (size_t b = 0; b < specs_.size(); b += chunk_size) {
+          CollectChunk ck;
+          ck.begin = b;
+          ck.end = std::min(specs_.size(), b + chunk_size);
+          ck.prim_base = prim_total;
+          ck.attr_base = attr_total;
+          ck.rel_base = rel_total;
+          for (size_t spec_i = ck.begin; spec_i < ck.end; ++spec_i) {
             switch (specs_[spec_i].spec_type) {
               case SpecType::Prim:
               case SpecType::Variant:
               case SpecType::VariantSet:
-                ++n_prims;
+                ++prim_total;
                 break;
               case SpecType::Attribute:
-                ++n_attrs;
+                ++attr_total;
                 break;
               case SpecType::Relationship:
-                ++n_rels;
+                ++rel_total;
                 break;
               default:
                 break;
             }
           }
-          lc.prims.reserve(n_prims);
-          lc.attrs.reserve(n_attrs);
-          lc.rels.reserve(n_rels);
+          chunks.push_back(std::move(ck));
         }
+        // Fault-in the destination pages in parallel before resize()
+        // constructs the elements: the reserve left the capacity unmapped,
+        // and single-threaded first-touch inside resize() was a ~300ms
+        // serial stall on multi-GB crates (0.5GB+ of attr entries).
+        {
+          struct PrefaultRange {
+            char* base;
+            size_t len;
+          };
+          std::vector<PrefaultRange> ranges;
+          auto add_ranges = [&](char* base, size_t len) {
+            if (!base || !len) return;
+            const size_t kSlice = 64u * 1024u * 1024u;
+            for (size_t off = 0; off < len; off += kSlice) {
+              ranges.push_back({base + off, std::min(kSlice, len - off)});
+            }
+          };
+          add_ranges(reinterpret_cast<char*>(prim_entries.data()),
+                     prim_total * sizeof(prim_entries[0]));
+          add_ranges(reinterpret_cast<char*>(attr_entries.data()),
+                     attr_total * sizeof(attr_entries[0]));
+          add_ranges(reinterpret_cast<char*>(rel_entries.data()),
+                     rel_total * sizeof(rel_entries[0]));
+          std::mutex pf_mu;
+          std::condition_variable pf_cv;
+          size_t pf_remaining = ranges.size();
+          for (const PrefaultRange& r : ranges) {
+            const PrefaultRange* rp = &r;
+            auto task = [&, rp]() {
+              for (size_t off = 0; off < rp->len; off += 4096) {
+                rp->base[off] = 0;
+              }
+              std::lock_guard<std::mutex> lock(pf_mu);
+              if (--pf_remaining == 0) pf_cv.notify_all();
+            };
+            if (!SubmitPoolTask(options_.num_threads, task)) {
+              task();
+            }
+          }
+          {
+            std::unique_lock<std::mutex> lock(pf_mu);
+            pf_cv.wait(lock, [&]() { return pf_remaining == 0; });
+          }
+        }
+        // Size to the upper bound; workers fill disjoint [base, base+count)
+        // slot ranges. Value's default ctor leaves the SBO payload
+        // uninitialized, so this is a cheap header-only init pass over
+        // now-mapped pages.
+        prim_entries.resize(prim_total);
+        attr_entries.resize(attr_total);
+        rel_entries.resize(rel_total);
+      }
+
+      auto collect_range = [&](CollectChunk& lc) {
+        ThreadDecodeCtx decode_ctx(*reader_);
+        ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
         for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
           const auto& spec = specs_[spec_i];
           if (spec.path_index.value >= paths_.size()) continue;
           const std::string_view full_path =
               paths_.view(spec.path_index.value);
-          const bool bracketed =
-              full_path.find('{') != std::string_view::npos;
 
           // Handled in the main-thread pre-pass above.
           if (spec.spec_type == SpecType::PseudoRoot) continue;
@@ -499,7 +564,9 @@ bool CrateReader::Impl::BuildStage() {
       }
 
       if (is_rel) {
-        RelInfo ri;
+        auto& slot = rel_entries[lc.rel_base + lc.n_rels];
+        slot.first = prim_path;
+        RelInfo& ri = slot.second;
         ri.name = prop_name;
         visit_fieldset_raw(
             spec.fieldset_index.value,
@@ -514,9 +581,11 @@ bool CrateReader::Impl::BuildStage() {
               }
               return true;
             });
-        lc.rels.push_back({prim_path, std::move(ri)});
+        ++lc.n_rels;
       } else {
-        AttrInfo ai;
+        auto& slot = attr_entries[lc.attr_base + lc.n_attrs];
+        slot.first = prim_path;
+        AttrInfo& ai = slot.second;
         ai.name = prop_name;
         visit_fieldset_raw(
             spec.fieldset_index.value,
@@ -525,10 +594,13 @@ bool CrateReader::Impl::BuildStage() {
                 if (read_field_token_or_string(field_value, &ai.type_name)) {
                 }
               } else if (field_name == "default") {
-                Value v;
-                if (UnpackValue(field_value, v)) {
-                  ai.default_value = std::move(v);
+                // Unpack straight into the slot (skips a 136-byte SBO move
+                // per attribute); the slot is default-constructed/empty, and
+                // a rare failed unpack resets it to that same empty state.
+                if (UnpackValue(field_value, ai.default_value)) {
                   ai.has_default = true;
+                } else {
+                  ai.default_value = Value();
                 }
               } else if (field_name == "timeSamples") {
                 DecodeTimeSamples(field_value, &ensure_attr_cold(ai).time_samples);
@@ -583,12 +655,14 @@ bool CrateReader::Impl::BuildStage() {
               }
               return true;
             });
-        lc.attrs.push_back({prim_path, std::move(ai)});
+        ++lc.n_attrs;
       }
       continue;
     }
 
-    // Build Prim specs and variant namespaces.
+    // Build Prim specs and variant namespaces. The '{' scan is only needed
+    // for prim/variant specs, so it runs after the (hot) attr/rel branch.
+    const bool bracketed = full_path.find('{') != std::string_view::npos;
     if (is_variant && !bracketed) continue;
 
     const size_t last_slash = full_path.rfind('/');
@@ -598,7 +672,7 @@ bool CrateReader::Impl::BuildStage() {
             : full_path;
     if (prim_name.empty()) continue;
 
-    PrimEntry entry;
+    PrimEntry& entry = prim_entries[lc.prim_base + lc.n_prims];
     entry.full_path = full_path;
     entry.name = prim_name;
     entry.fieldset_index = spec.fieldset_index.value;
@@ -608,7 +682,33 @@ bool CrateReader::Impl::BuildStage() {
     // Mesh definition; the writer already skips empty type names).
     entry.specifier = PrimSpecifier::Def;
     decode_prim_header(entry, spec, !bracketed, lc.vbuf, lc.variants);
-    lc.prims.push_back(std::move(entry));
+    ++lc.n_prims;
+        }
+
+        // Warm this worker's malloc arena for the emit phase. The former
+        // per-chunk sink vectors left this many freed-but-mapped bytes in
+        // each worker's glibc arena, which the (allocation-heavy, same pool
+        // threads) emit phase then reused; without that, emit stalls on
+        // concurrent arena growth (mprotect + page faults under mmap_lock).
+        // Recreate the warmth at page-touch cost: allocate sub-mmap-threshold
+        // blocks, touch one byte per page, and free them after the join.
+        {
+          size_t warm_bytes =
+              lc.n_attrs * sizeof(attr_entries[0]) +
+              lc.n_rels * sizeof(rel_entries[0]) +
+              lc.n_prims * sizeof(prim_entries[0]);
+          constexpr size_t kWarmBlock = 64 * 1024;  // < glibc mmap threshold
+          lc.warm_blocks.reserve(warm_bytes / kWarmBlock + 1);
+          while (warm_bytes > 0) {
+            const size_t sz = warm_bytes < kWarmBlock ? warm_bytes : kWarmBlock;
+            char* p = static_cast<char*>(std::malloc(sz));
+            if (!p) break;
+            for (size_t off = 0; off < sz; off += 4096) {
+              p[off] = 0;
+            }
+            lc.warm_blocks.push_back(p);
+            warm_bytes -= sz;
+          }
         }
       };
 
@@ -631,12 +731,39 @@ bool CrateReader::Impl::BuildStage() {
         done_cv.wait(lock, [&]() { return remaining == 0; });
       }
 
-      // Concatenate in range order == serial append order.
-      for (CollectChunk& ck : chunks) {
-        for (auto& e : ck.prims) prim_entries.push_back(std::move(e));
-        for (auto& e : ck.attrs) attr_entries.push_back(std::move(e));
-        for (auto& e : ck.rels) rel_entries.push_back(std::move(e));
-        for (auto& e : ck.variants) variant_sels.push_back(std::move(e));
+      // Close the gaps left by skipped specs (invalid path / bad property
+      // path / non-bracketed variant holders). In the common case every
+      // chunk fills its slot range exactly and this is a scan with zero
+      // moves; chunk range order == serial append order either way.
+      {
+        size_t w_prims = 0, w_attrs = 0, w_rels = 0;
+        for (CollectChunk& ck : chunks) {
+          if (ck.n_prims && w_prims != ck.prim_base) {
+            std::move(prim_entries.begin() + static_cast<ptrdiff_t>(ck.prim_base),
+                      prim_entries.begin() +
+                          static_cast<ptrdiff_t>(ck.prim_base + ck.n_prims),
+                      prim_entries.begin() + static_cast<ptrdiff_t>(w_prims));
+          }
+          w_prims += ck.n_prims;
+          if (ck.n_attrs && w_attrs != ck.attr_base) {
+            std::move(attr_entries.begin() + static_cast<ptrdiff_t>(ck.attr_base),
+                      attr_entries.begin() +
+                          static_cast<ptrdiff_t>(ck.attr_base + ck.n_attrs),
+                      attr_entries.begin() + static_cast<ptrdiff_t>(w_attrs));
+          }
+          w_attrs += ck.n_attrs;
+          if (ck.n_rels && w_rels != ck.rel_base) {
+            std::move(rel_entries.begin() + static_cast<ptrdiff_t>(ck.rel_base),
+                      rel_entries.begin() +
+                          static_cast<ptrdiff_t>(ck.rel_base + ck.n_rels),
+                      rel_entries.begin() + static_cast<ptrdiff_t>(w_rels));
+          }
+          w_rels += ck.n_rels;
+          for (auto& e : ck.variants) variant_sels.push_back(std::move(e));
+        }
+        prim_entries.resize(w_prims);
+        attr_entries.resize(w_attrs);
+        rel_entries.resize(w_rels);
       }
       parallel_collect_done = true;
     }
@@ -647,7 +774,6 @@ bool CrateReader::Impl::BuildStage() {
   for (const auto& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) continue;
     const std::string_view full_path = paths_.view(spec.path_index.value);
-    const bool bracketed = full_path.find('{') != std::string_view::npos;
 
     if (!saw_pseudo_root && spec.spec_type == SpecType::PseudoRoot) {
       decode_pseudo_root_meta(spec);
@@ -699,10 +825,13 @@ bool CrateReader::Impl::BuildStage() {
                 if (read_field_token_or_string(field_value, &ai.type_name)) {
                 }
               } else if (field_name == "default") {
-                Value v;
-                if (UnpackValue(field_value, v)) {
-                  ai.default_value = std::move(v);
+                // Unpack straight into the destination (skips a 136-byte SBO
+                // move per attribute); `ai.default_value` is empty here, and
+                // a rare failed unpack resets it to that same empty state.
+                if (UnpackValue(field_value, ai.default_value)) {
                   ai.has_default = true;
+                } else {
+                  ai.default_value = Value();
                 }
               } else if (field_name == "timeSamples") {
                 DecodeTimeSamples(field_value, &ensure_attr_cold(ai).time_samples);
@@ -762,7 +891,9 @@ bool CrateReader::Impl::BuildStage() {
       continue;
     }
 
-    // Build Prim specs and variant namespaces.
+    // Build Prim specs and variant namespaces. The '{' scan is only needed
+    // for prim/variant specs, so it runs after the (hot) attr/rel branch.
+    const bool bracketed = full_path.find('{') != std::string_view::npos;
     if (is_variant && !bracketed) continue;
 
     const size_t last_slash = full_path.rfind('/');
