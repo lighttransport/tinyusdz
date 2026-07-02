@@ -55,12 +55,12 @@ void HipRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dMatTex_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
-  F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
+  F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
   numMats_ = 0;
   numTextures_ = 0;
-  outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
+  outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
 
@@ -200,6 +200,15 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     dOut_ = reinterpret_cast<uintptr_t>(p);
     outCap_ = bytes;
   }
+  // Supersample accumulator (float per channel), only for spp > 1.
+  const size_t accumBytes = (spp > 1) ? bytes * sizeof(float) : 0;
+  if (accumBytes && accumCap_ < accumBytes) {
+    if (dAccum_) hipFree(reinterpret_cast<void*>(dAccum_));
+    void* p = nullptr;
+    CU_OK(hipMalloc(&p, accumBytes), "hipMalloc(accum)");
+    dAccum_ = reinterpret_cast<uintptr_t>(p);
+    accumCap_ = accumBytes;
+  }
   Cam cam{};
   std::memcpy(cam.invVP, invViewProj, 16 * sizeof(float));
   std::memcpy(cam.vp, viewProj, 16 * sizeof(float));  // world->clip (wireframe projection)
@@ -226,24 +235,28 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   int numMats = numMats_;
   int numTextures = numTextures_;
   int numVols = numVols_;
+  const int samples = spp < 1 ? 1 : spp;
+  void* dAcc = (samples > 1) ? reinterpret_cast<void*>(dAccum_) : nullptr;
+  int sampleIdx = 0;
+  int numSamples = samples;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
   // matTex,texels,textures,numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
-  // volDens,volParams,numVols,emask.
+  // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
   void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dMT, &dTx,
                   &dTD, &numTextures, &dU, &dU1, &dIn, &dF,  &dDw, &dDj,
                   &dBl, &dTl, &dI, &dO, &w, &h, &cam,
-                  &dVD, &dVP, &numVols, &dEm};
+                  &dVD, &dVP, &numVols, &dEm, &dAcc, &sampleIdx, &numSamples};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
-  const int samples = spp < 1 ? 1 : spp;
   rgba->resize(bytes);
-  // 1 spp: launch once, read straight back. >1 spp: accumulate Halton-jittered
-  // samples on the host and average (anti-aliasing for the screenshot path).
-  std::vector<float> accum;
-  std::vector<uint8_t> frame;
-  if (samples > 1) { accum.assign(bytes, 0.0f); frame.resize(bytes); }
+  // Launch one kernel per Halton-jittered sample; the kernel accumulates on the
+  // device (float per channel, same math as the old host loop -- byte-identical)
+  // and resolves into the RGBA8 output on the last sample. One readback for the
+  // whole frame instead of one per sample.
+  //
   // TUSDVIEW_RT_TIMING=1: report the isolated per-pass GPU trace time (launch +
   // blocking sync, excluding the DtoH readback) -- the cost an interactive
-  // per-frame retrace would pay once the scene is already built/uploaded.
+  // per-frame retrace would pay once the scene is already built/uploaded. The
+  // per-pass sync exists only for that timing; the untimed path syncs once.
   const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
   double traceMsTotal = 0.0;
   for (int s = 0; s < samples; ++s) {
@@ -251,32 +264,23 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     RtPixelJitter(s, samples, &jx, &jy);
     cam.sceneMin[3] = jx;
     cam.sceneExtent[3] = jy;
+    sampleIdx = s;
     auto t0 = std::chrono::steady_clock::now();
     CU_OK(hipModuleLaunchKernel(reinterpret_cast<hipFunction_t>(kernel_), gx, gy, 1,
                                 8, 8, 1, 0, nullptr, args, nullptr),
           "hipModuleLaunchKernel");
-    CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
     if (rtTiming) {
+      CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
       auto t1 = std::chrono::steady_clock::now();
       double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
       traceMsTotal += ms;
       std::fprintf(stderr, "[hip_raytracer] trace pass %d/%d: %.1f ms (%dx%d)\n",
                    s + 1, samples, ms, w, h);
     }
-    if (samples == 1) {
-      CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
-            "hipMemcpyDtoH");
-    } else {
-      CU_OK(hipMemcpyDtoH(frame.data(), reinterpret_cast<void*>(dOut_), bytes),
-            "hipMemcpyDtoH");
-      for (size_t i = 0; i < bytes; ++i) accum[i] += float(frame[i]);
-    }
   }
-  if (samples > 1) {
-    for (size_t i = 0; i < bytes; ++i)
-      (*rgba)[i] = uint8_t(accum[i] / float(samples) + 0.5f);
-    for (size_t i = 3; i < bytes; i += 4) (*rgba)[i] = 255;  // keep alpha opaque
-  }
+  CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
+  CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
+        "hipMemcpyDtoH");
   if (rtTiming) {
     std::fprintf(stderr,
                  "[hip_raytracer] %d pass(es): %.1f ms total, %.1f ms/pass (%dx%d)\n",
