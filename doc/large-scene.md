@@ -251,12 +251,13 @@ the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
 - tusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
   (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
 
-**Known limitations (follow-ups).** tusdview's VK **ray-query** (`--rt`) and
-**CUDA** paths build a single GPU acceleration structure over the *flattened*
-scene; at Caldera's ~24 M-triangle proxy this is blank/very slow on a 16 GB GPU
-(both render small scenes fine). The VK-raster flat shading wants the
-smooth-normal + headlight treatment the tusdrender preview already uses. For
-full LOD, see §2.6.2.
+**Known limitations (follow-ups).** ~~tusdview's VK ray-query (`--rt`) is
+blank on Caldera~~ — **fixed**: the RT TLAS included *every* USD purpose, so
+Caldera's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
+camera; the TLAS now skips purposes hidden in the UI and the mine district
+ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
+shading still wants the smooth-normal + headlight treatment the tusdrender
+preview already uses. For full LOD, see §2.6.2.
 
 ### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
 
@@ -690,6 +691,90 @@ also reduced native material conversion from roughly second-scale to
 double-digit milliseconds in that workload. Treat these as shape-of-improvement
 numbers rather than a portable benchmark; exact results depend on material
 duplication, mesh compatibility, and hierarchy depth.
+
+---
+
+### 2.8 Validated VRAM-fit configs: Island + Caldera on 6 GiB / 15 GiB (2026-07)
+
+GPU-backend review outcome (NVIDIA RTX 5060 Ti 16 GiB, driver-reported
+15.57 GiB device-local budget). Every row below was measured with
+`scripts/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
+idle baseline — earlier "VRAM" numbers in this doc that came from RSS are
+host RAM, not VRAM). The **6 GiB rows additionally completed unchanged under
+a 10 GiB VRAM ballast** (`scripts/vram_ballast.py 10`), i.e. with only
+~5.5 GiB of the card actually available. Cameras: island `shotCam`, caldera
+`phospate_mine_overview`. tusdview headless default 1469×1284; tusdrender
+1280×720.
+
+Perf/VRAM changes this round (all image-neutral — byte-identical or
+pass the cross-backend tolerance test):
+
+- **LightRT VK BLAS compaction** (default ON, `LRT_VK_BLAS_COMPACT=0` opts
+  out): caldera `-vkInstanced` 1051→525 MiB; island full instance set
+  7153→5408 MiB **and** 49.6→31.7 s (the compaction rebuild batches BLAS
+  builds in ≤512-proto waves — two submits per wave instead of one per
+  prototype).
+- **tusdview Caldera `--rt` fixed** (purpose-filtered TLAS, see §2.6.1):
+  BLAS build 1907→901 ms, RT VRAM 2.73→1.23 GiB, mine district now traces.
+- **tusdview device-local MDI instance mirror** (auto when
+  VK_EXT_memory_budget shows ≥20 % headroom; `TUSDVIEW_MDI_DEVLOCAL=0/1`
+  forces): island no-LOD 843→766 ms/frame. No effect with `--raster-lod`
+  (that frame is primitive-bound: 55 M drawn tris of non-instanced unique
+  geometry, 63 visible instances). Costs 1.37 GB VRAM on island — the auto
+  headroom check keeps it off in tight-VRAM situations.
+- **tusdrender flat GPU paths**: `-vkr` skips the unused CPU BVH (15.4→6.6 s
+  on caldera), `-vk` builds it threaded (15.2→8.5 s); shade/write is
+  row-parallel; `-stats` prints per-stage `[gpu-stats]` timings.
+- **CUDA/HIP `--rt-samples`**: device-side accumulation, one readback at the
+  end (was one `cuMemcpyDtoH` + host byte-loop per sample).
+- Live VRAM: tusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
+  lines (VK_EXT_memory_budget).
+
+**tusdview** (`T=./build/tusdview`, `ISL=/mnt/disk1/data/island/usd/island.usda`,
+`CAL=/mnt/disk01/data/caldera/caldera.usda`):
+
+| Config | Recipe | VRAM peak | Steady frame | Fits |
+|---|---|---|---|---|
+| Island raster, 15 GiB | `--next --camera shotCam` (mirror auto-on) | 1.55 GiB | 766 ms | 15 GiB |
+| Island raster, 6 GiB | `--next --camera shotCam --max-gpu-mem 4 --raster-lod --raster-lod-full-px 32 --raster-lod-cull-px 3` + `TUSDVIEW_MDI_DEVLOCAL=0` | 0.25 GiB | ~362 ms | both |
+| Island RT, 15 GiB | `--next --rt --rt-lod --rt-lod-full-px 96 --rt-lod-cull-px 1 --camera shotCam` | 4.29 GiB | — | both |
+| Island RT, 6 GiB | `--next --rt --rt-lod --rt-lod-full-px 48 --rt-lod-cull-px 3 --camera shotCam` | 4.19 GiB | — | both (ballast-verified) |
+| Caldera raster | `--next --camera phospate_mine_overview --max-tris 40000000` | 0.18 GiB | — | both |
+| Caldera RT | raster recipe + `--rt` | 1.40 GiB | — | both (ballast-verified) |
+| Caldera CUDA, 15 GiB | raster recipe + `--cuda` | 7.48 GiB | — | 15 GiB only |
+| Caldera CUDA, 6 GiB | `--cuda --max-tris 8000000` | 1.98 GiB | — | both (ballast-verified) |
+| Island CUDA | `--next --cuda --camera shotCam` | 2.39 GiB | — | both (ballast-verified) |
+
+Notes: the island RT rt-lod px knobs barely move VRAM (4.19 vs 4.29 GiB —
+the grid + LOD-bound BLAS set is the resident cost); both fit 6 GiB but with
+little margin — the P2 tusdview BLAS-compaction port is the next lever. The
+caldera CUDA cliff between `--max-tris 13000000` (5.53 GiB, marginal) and
+`8000000` (1.98 GiB) is one huge district mesh crossing the cap; the 8 M cap
+renders the same visible content at this camera (identical image stats).
+
+**tusdrender** (`B=./build/tools/tusdrender/tusdrender`):
+
+| Config | Recipe | VRAM peak | Wall | Fits |
+|---|---|---|---|---|
+| Island full set, 15 GiB | `TUSDR_INST_BUDGET=45000000 $B $ISL out.png -vkInstanced -camera shotCam -w 1280 -height 720 -maxMem 24` | 5.41 GiB | 31.7 s | 15 GiB (6 GiB too marginal) |
+| Island, 6 GiB | `TUSDR_INST_BUDGET=16777216 LRT_VK_TLAS_SLICE=8388608 $B $ISL out.png -vkInstanced -rtLod -rtLodFullPx 48 -rtLodCullPx 3 -camera shotCam -w 1280 -height 720 -maxMem 14` | 0.40 GiB | 19.3 s | both (ballast-verified) |
+| Caldera | `$B $CAL out.png -vkInstanced -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14` | 0.52 GiB | 5.8 s | both (ballast-verified) |
+
+Avoid flat `-vkr` on caldera when `-vkInstanced` works (0.95 vs 0.52 GiB);
+its win this round is speed (6.6 s total after the CPU-BVH skip). The island
+full-set row is the compaction headline: 42.8 M instances now render in
+5.41 GiB VRAM (uncompacted: 7.15 GiB) — it even *passes* the nominal
+5.5 GiB bar, but leaves no margin for a real desktop, so it is listed as the
+15 GiB config.
+
+**Remaining follow-ons (P2, unimplemented):** tusdview BLAS-compaction port
+(island RT 4.2 → est. ~2.7 GiB); device-local node/block buffers for the
+`-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
+settle rebuilds; a `--vram-budget <GiB>` umbrella flag deriving
+`--max-gpu-mem`/texture budgets/auto `--rt-lod` from the memory-budget query;
+raster LOD for *non-instanced* meshes (the island `--raster-lod` frame is
+bound by 55 M non-instanced drawn tris — the instanced side is already
+solved).
 
 ---
 
