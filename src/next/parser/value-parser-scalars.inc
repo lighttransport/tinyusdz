@@ -7,14 +7,14 @@
 ParseResult ParseBool(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type == TokenType::True) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(true));
   } else if (tok.type == TokenType::False) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
-    lexer.next();
-    return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value) != 0.0));
+    lexer.consume();
+    return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.text) != 0.0));
   }
   return ParseResult::Error("Expected boolean value");
 }
@@ -28,8 +28,8 @@ ParseResult ParseInt(Lexer& lexer) {
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected integer value");
   }
-  lexer.next();
-  int32_t value = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
+  lexer.consume();
+  int32_t value = static_cast<int32_t>(DecimalToI64(tok.text));
   return ParseResult::Ok(Value(value));
 }
 
@@ -38,8 +38,8 @@ ParseResult ParseUInt(Lexer& lexer) {
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected unsigned integer value");
   }
-  lexer.next();
-  uint32_t value = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
+  lexer.consume();
+  uint32_t value = static_cast<uint32_t>(DecimalToU64(tok.text));
   return ParseResult::Ok(Value(value));
 }
 
@@ -48,8 +48,8 @@ ParseResult ParseInt64(Lexer& lexer) {
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
-  lexer.next();
-  int64_t value = DecimalToI64(tok.value.c_str());
+  lexer.consume();
+  int64_t value = DecimalToI64(tok.text);
   return ParseResult::Ok(Value(value));
 }
 
@@ -58,8 +58,8 @@ ParseResult ParseUInt64(Lexer& lexer) {
   if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
-  lexer.next();
-  uint64_t value = DecimalToU64(tok.value.c_str());
+  lexer.consume();
+  uint64_t value = DecimalToU64(tok.text);
   return ParseResult::Ok(Value(value));
 }
 
@@ -68,16 +68,23 @@ ParseResult ParseUInt64(Lexer& lexer) {
 // bare forms (inf / infinity / nan) as an Identifier token, so a numeric-value
 // context accepts both while an attribute literally named `inf` (always read in
 // identifier context) is never misclassified. strtof/strtod parse all of these.
-bool IsFloatSpecialWord(const std::string& v) {
-  std::string s = v;
-  if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.erase(s.begin());
-  for (auto& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  return s == "inf" || s == "infinity" || s == "nan";
+bool IsFloatSpecialWord(std::string_view s) {
+  if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.remove_prefix(1);
+  auto ieq = [&](const char* lit, size_t n) {
+    if (s.size() != n) return false;
+    for (size_t i = 0; i < n; i++) {
+      const char c = s[i];
+      const char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+      if (lc != lit[i]) return false;
+    }
+    return true;
+  };
+  return ieq("inf", 3) || ieq("infinity", 8) || ieq("nan", 3);
 }
 
 bool IsNumberToken(const Token& tok) {
   return tok.type == TokenType::Number ||
-         (tok.type == TokenType::Identifier && IsFloatSpecialWord(tok.value));
+         (tok.type == TokenType::Identifier && IsFloatSpecialWord(tok.text));
 }
 
 ParseResult ParseFloat(Lexer& lexer) {
@@ -85,8 +92,8 @@ ParseResult ParseFloat(Lexer& lexer) {
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected float value");
   }
-  lexer.next();
-  return ParseResult::Ok(Value(FastFloatParseToken<float>(tok.value)));
+  lexer.consume();
+  return ParseResult::Ok(Value(FastFloatParseToken<float>(tok.text)));
 }
 
 ParseResult ParseDouble(Lexer& lexer) {
@@ -94,8 +101,8 @@ ParseResult ParseDouble(Lexer& lexer) {
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected double value");
   }
-  lexer.next();
-  return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
+  lexer.consume();
+  return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.text)));
 }
 
 ParseResult ParseString(Lexer& lexer) {
@@ -103,7 +110,7 @@ ParseResult ParseString(Lexer& lexer) {
   if (tok.type != TokenType::String) {
     return ParseResult::Error("Expected string value");
   }
-  lexer.next();
+  lexer.consume();
   return ParseResult::Ok(Value(tok.value));
 }
 
@@ -112,7 +119,12 @@ ParseResult ParseToken(Lexer& lexer) {
   if (tok.type != TokenType::String && tok.type != TokenType::Identifier) {
     return ParseResult::Error("Expected token value");
   }
-  lexer.next();
+  lexer.consume();
+  // String tokens carry escape-processed `value`; Identifier tokens carry a
+  // raw `text` view into the input.
+  if (tok.type == TokenType::Identifier) {
+    return ParseResult::Ok(Value::MakeToken(std::string(tok.text)));
+  }
   return ParseResult::Ok(Value::MakeToken(tok.value));
 }
 
@@ -121,7 +133,7 @@ ParseResult ParseAssetPath(Lexer& lexer) {
   if (tok.type != TokenType::String) {
     return ParseResult::Error("Expected asset path value");
   }
-  lexer.next();
+  lexer.consume();
   return ParseResult::Ok(Value::MakeAssetPath(tok.value));
 }
 
@@ -135,8 +147,8 @@ bool ParseFloatTuple(Lexer& lexer, float* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = FastFloatParseToken<float>(tok.value);
-    lexer.next();
+    out[i] = FastFloatParseToken<float>(tok.text);
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -157,8 +169,8 @@ bool ParseDoubleTuple(Lexer& lexer, double* out, size_t count) {
       lexer.set_error("Expected number in tuple");
       return false;
     }
-    out[i] = FastFloatParseToken<double>(tok.value);
-    lexer.next();
+    out[i] = FastFloatParseToken<double>(tok.text);
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -179,8 +191,8 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
-    lexer.next();
+    out[i] = static_cast<int32_t>(DecimalToI64(tok.text));
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -200,12 +212,12 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       lexer.set_error("Expected unsigned integer in tuple");
       return false;
     }
-    if (!tok.value.empty() && tok.value[0] == '-') {
+    if (!tok.text.empty() && tok.text[0] == '-') {
       lexer.set_error("Expected non-negative unsigned integer in tuple");
       return false;
     }
-    out[i] = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
-    lexer.next();
+    out[i] = static_cast<uint32_t>(DecimalToU64(tok.text));
+    lexer.consume();
 
     if (i < count - 1) {
       if (!lexer.expect(TokenType::Comma)) return false;
@@ -245,8 +257,8 @@ ParseResult ParseHalf(Lexer& lexer) {
   if (!IsNumberToken(tok)) {
     return ParseResult::Error("Expected half value");
   }
-  lexer.next();
-  uint16_t bits = FloatToHalf(FastFloatParseToken<float>(tok.value));
+  lexer.consume();
+  uint16_t bits = FloatToHalf(FastFloatParseToken<float>(tok.text));
   return ParseResult::Ok(Value::MakeFromRaw(TypeId::Half, &bits));
 }
 

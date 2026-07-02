@@ -15,20 +15,25 @@ namespace next {
 
 namespace {
 
-bool IsIdentifierStart(char c) {
-  return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+// Inline ASCII character classes. USDA identifiers/numbers are ASCII; the
+// locale-aware libc is* functions are real (PLT) calls on glibc and showed up
+// hot in the lexer loops.
+inline bool IsIdentifierStart(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 
-bool IsIdentifierContinue(char c) {
-  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+inline bool IsIdentifierContinue(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_';
 }
 
-bool IsDigit(char c) {
-  return std::isdigit(static_cast<unsigned char>(c));
+inline bool IsDigit(char c) {
+  return c >= '0' && c <= '9';
 }
 
-bool IsHexDigit(char c) {
-  return std::isxdigit(static_cast<unsigned char>(c));
+inline bool IsHexDigit(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+         (c >= 'A' && c <= 'F');
 }
 
 // Length of an `inf` / `infinity` / `nan` special-float word (case-insensitive)
@@ -100,7 +105,17 @@ const Keyword kKeywords[] = {
   {"rel", TokenType::Rel},
 };
 
-TokenType LookupKeyword(const std::string& name) {
+TokenType LookupKeyword(std::string_view name) {
+  // First-char dispatch: most identifiers (property/prim/type names) match no
+  // keyword, so reject without touching the table when the first letter can't
+  // start one. Keyword first letters: a c d f N o p r t u v.
+  switch (name.empty() ? '\0' : name[0]) {
+    case 'a': case 'c': case 'd': case 'f': case 'N': case 'o':
+    case 'p': case 'r': case 't': case 'u': case 'v':
+      break;
+    default:
+      return TokenType::Identifier;
+  }
   for (const auto& kw : kKeywords) {
     if (name == kw.name) {
       return kw.type;
@@ -136,16 +151,34 @@ char Lexer::peek_char(size_t offset) const {
 }
 
 void Lexer::skip_whitespace() {
-  while (pos_ < length_) {
-    char c = current_char();
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-      advance();
+  // Raw pointer loop with explicit line/column bookkeeping — this runs before
+  // every token, and advance()'s per-char function call + '\n' branch was
+  // measurable on multi-GB inputs.
+  const char* p = data_ + pos_;
+  const char* const end = data_ + length_;
+  size_t line = line_;
+  size_t column = column_;
+  for (;;) {
+    if (p >= end) break;
+    const char c = *p;
+    if (c == ' ' || c == '\t' || c == '\r') {
+      ++p;
+      ++column;
+    } else if (c == '\n') {
+      ++p;
+      ++line;
+      column = 1;
     } else if (c == '#') {
-      skip_comment();
+      while (p < end && *p != '\n') ++p;  // comment: skip to end of line
+      // column position within the comment is irrelevant (next iteration
+      // handles the newline / EOF).
     } else {
       break;
     }
   }
+  pos_ = static_cast<size_t>(p - data_);
+  line_ = line;
+  column_ = column;
 }
 
 void Lexer::skip_comment() {
@@ -287,9 +320,20 @@ const Token& Lexer::peek() {
 Token Lexer::next() {
   if (has_current_) {
     has_current_ = false;
+    // MUST copy, not move: parser code holds `const Token& tok = peek()`
+    // references across the consuming next() call (moving out current_.value
+    // was tried and broke five test suites).
     return current_;
   }
   return scan_token();
+}
+
+void Lexer::consume() {
+  if (has_current_) {
+    has_current_ = false;
+    return;
+  }
+  (void)scan_token();
 }
 
 bool Lexer::expect(TokenType type) {
@@ -309,7 +353,9 @@ bool Lexer::expect(TokenType type, std::string& out_value) {
               ", got " + std::string(TokenTypeName(tok.type)));
     return false;
   }
-  out_value = std::move(tok.value);
+  // Identifier/Number/PathRef tokens carry their text as a view; String
+  // tokens as owned (escape-processed) value.
+  out_value = tok.text.empty() ? std::move(tok.value) : std::string(tok.text);
   return true;
 }
 
@@ -327,10 +373,19 @@ Token Lexer::make_token(TokenType type, size_t start_line, size_t start_col) {
   return tok;
 }
 
-Token Lexer::make_token(TokenType type, const std::string& value, size_t start_line, size_t start_col) {
+Token Lexer::make_token(TokenType type, std::string value, size_t start_line, size_t start_col) {
   Token tok;
   tok.type = type;
-  tok.value = value;
+  tok.value = std::move(value);
+  tok.line = start_line;
+  tok.column = start_col;
+  return tok;
+}
+
+Token Lexer::make_token(TokenType type, std::string_view text, size_t start_line, size_t start_col) {
+  Token tok;
+  tok.type = type;
+  tok.text = text;
   tok.line = start_line;
   tok.column = start_col;
   return tok;
@@ -400,16 +455,21 @@ Token Lexer::scan_token() {
 Token Lexer::scan_identifier() {
   size_t start_line = line_;
   size_t start_col = column_;
-  size_t start = pos_;
+  const size_t start = pos_;
 
-  while (IsIdentifierContinue(current_char())) {
-    advance();
-  }
+  // Identifiers contain no newline: scan with a raw pointer loop and bump
+  // pos_/column_ in bulk (advance() pays a '\n' branch per char).
+  const char* p = data_ + pos_;
+  const char* const end = data_ + length_;
+  while (p < end && IsIdentifierContinue(*p)) ++p;
+  const size_t n = static_cast<size_t>(p - (data_ + start));
+  pos_ += n;
+  column_ += n;
 
-  std::string value(data_ + start, pos_ - start);
-  TokenType type = LookupKeyword(value);
+  const std::string_view text(data_ + start, n);
+  TokenType type = LookupKeyword(text);
 
-  return make_token(type, value, start_line, start_col);
+  return make_token(type, text, start_line, start_col);
 }
 
 Token Lexer::scan_number() {
@@ -426,45 +486,45 @@ Token Lexer::scan_number() {
   // Number token; strtof/strtod/fast_float parse these directly.
   if (size_t special = MatchFloatSpecial(data_ + pos_, data_ + length_)) {
     for (size_t i = 0; i < special; i++) advance();
-    std::string value(data_ + start, pos_ - start);
-    return make_token(TokenType::Number, value, start_line, start_col);
+    return make_token(TokenType::Number,
+                      std::string_view(data_ + start, pos_ - start),
+                      start_line, start_col);
   }
 
+  // Number text contains no newline: scan with a raw pointer and bump
+  // pos_/column_ in bulk (advance() pays a '\n' branch per char).
+  const char* p = data_ + pos_;
+  const char* const end = data_ + length_;
+
   // Check for hex
-  if (current_char() == '0' && (peek_char() == 'x' || peek_char() == 'X')) {
-    advance();  // '0'
-    advance();  // 'x'
-    while (IsHexDigit(current_char())) {
-      advance();
-    }
+  if (p < end && *p == '0' && p + 1 < end && (p[1] == 'x' || p[1] == 'X')) {
+    p += 2;
+    while (p < end && IsHexDigit(*p)) ++p;
   } else {
     // Integer part
-    while (IsDigit(current_char())) {
-      advance();
-    }
+    while (p < end && IsDigit(*p)) ++p;
 
     // Decimal part
-    if (current_char() == '.' && IsDigit(peek_char())) {
-      advance();  // '.'
-      while (IsDigit(current_char())) {
-        advance();
-      }
+    if (p < end && *p == '.' && p + 1 < end && IsDigit(p[1])) {
+      ++p;
+      while (p < end && IsDigit(*p)) ++p;
     }
 
     // Exponent
-    if (current_char() == 'e' || current_char() == 'E') {
-      advance();
-      if (current_char() == '+' || current_char() == '-') {
-        advance();
-      }
-      while (IsDigit(current_char())) {
-        advance();
-      }
+    if (p < end && (*p == 'e' || *p == 'E')) {
+      ++p;
+      if (p < end && (*p == '+' || *p == '-')) ++p;
+      while (p < end && IsDigit(*p)) ++p;
     }
   }
 
-  std::string value(data_ + start, pos_ - start);
-  return make_token(TokenType::Number, value, start_line, start_col);
+  const size_t n = static_cast<size_t>(p - (data_ + pos_));
+  pos_ += n;
+  column_ += n;
+
+  return make_token(TokenType::Number,
+                    std::string_view(data_ + start, pos_ - start),
+                    start_line, start_col);
 }
 
 Token Lexer::scan_string() {
@@ -572,7 +632,7 @@ Token Lexer::scan_string() {
     }
   }
 
-  return make_token(TokenType::String, value, start_line, start_col);
+  return make_token(TokenType::String, std::move(value), start_line, start_col);
 }
 
 Token Lexer::scan_path_ref() {
@@ -581,11 +641,11 @@ Token Lexer::scan_path_ref() {
 
   advance();  // '<'
 
-  std::string value;
+  const size_t start = pos_;
   while (!at_end() && current_char() != '>') {
-    value += current_char();
     advance();
   }
+  const std::string_view text(data_ + start, pos_ - start);
 
   if (current_char() == '>') {
     advance();
@@ -593,7 +653,7 @@ Token Lexer::scan_path_ref() {
     set_error("Unterminated path reference");
   }
 
-  return make_token(TokenType::PathRef, value, start_line, start_col);
+  return make_token(TokenType::PathRef, text, start_line, start_col);
 }
 
 Token Lexer::scan_asset_ref() {
@@ -633,7 +693,7 @@ Token Lexer::scan_asset_ref() {
   }
 
   // Return as a string token (asset references are essentially strings)
-  return make_token(TokenType::String, value, start_line, start_col);
+  return make_token(TokenType::String, std::move(value), start_line, start_col);
 }
 
 const char* TokenTypeName(TokenType type) {

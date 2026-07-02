@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 namespace tinyusdz {
@@ -63,7 +64,15 @@ enum class TokenType : uint8_t {
 /// Token with source location
 struct Token {
   TokenType type = TokenType::Invalid;
-  std::string value;     // The actual text content
+  /// Raw token text as a slice of the lexer's input buffer (valid for the
+  /// whole parse — the input outlives the token stream). Set for Identifier,
+  /// Number, PathRef and keyword tokens, which never need un-escaping; empty
+  /// for String tokens (see `value`). Avoids a std::string construction per
+  /// token on the multi-million-token hot path.
+  std::string_view text;
+  /// Owned, escape-processed content — String tokens (and asset refs, which
+  /// lex as String) only.
+  std::string value;
   size_t line = 0;       // 1-based line number
   size_t column = 0;     // 1-based column number
 
@@ -92,6 +101,11 @@ public:
 
   /// Get current token and advance
   Token next();
+
+  /// Advance past the current token without returning it. Equivalent to
+  /// calling next() and discarding the result, minus the Token (and value
+  /// string) copy — use for the common peek-then-consume pattern.
+  void consume();
 
   /// Check if at end of input
   bool at_end() const { return pos_ >= length_; }
@@ -162,7 +176,8 @@ private:
   Token scan_asset_ref();
 
   Token make_token(TokenType type, size_t start_line, size_t start_col);
-  Token make_token(TokenType type, const std::string& value, size_t start_line, size_t start_col);
+  Token make_token(TokenType type, std::string value, size_t start_line, size_t start_col);
+  Token make_token(TokenType type, std::string_view text, size_t start_line, size_t start_col);
 };
 
 /// Get string name for token type (for debugging)

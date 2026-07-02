@@ -25,10 +25,10 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     const Token& t = lexer.peek();
     if (t.type == TokenType::String) {
       key = t.value;
-      lexer.next();
+      lexer.consume();
     } else if (t.type == TokenType::Identifier) {
-      std::string first = t.value;
-      lexer.next();
+      std::string first(t.text);
+      lexer.consume();
       const Token& t2 = lexer.peek();
       if (t2.type == TokenType::Identifier || t2.type == TokenType::String ||
           t2.type == TokenType::OpenBracket) {
@@ -36,14 +36,14 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
         type_name = first;
         have_type = true;
         if (lexer.peek().type == TokenType::OpenBracket) {
-          lexer.next();
+          lexer.consume();
           lexer.expect(TokenType::CloseBracket);
           type_name += "[]";
         }
         const Token& kt = lexer.peek();
         if (kt.type == TokenType::String || kt.type == TokenType::Identifier) {
-          key = kt.value;
-          lexer.next();
+          key = (kt.type == TokenType::String) ? kt.value : std::string(kt.text);
+          lexer.consume();
         } else {
           return ParseResult::Error("Expected dictionary key after type name");
         }
@@ -51,7 +51,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
         key = first;  // bare key, no type name
       }
     } else {
-      lexer.next();  // unexpected token: skip to avoid an infinite loop
+      lexer.consume();  // unexpected token: skip to avoid an infinite loop
       continue;
     }
 
@@ -80,7 +80,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     if (!val.success) return val;
     d->set(std::move(key), std::move(val.value));
 
-    if (lexer.peek().type == TokenType::Comma) lexer.next();
+    if (lexer.peek().type == TokenType::Comma) lexer.consume();
   }
 
   if (!lexer.expect(TokenType::CloseBrace)) {
