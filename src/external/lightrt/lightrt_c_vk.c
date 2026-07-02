@@ -1524,19 +1524,39 @@ typedef struct vk_accel {
     uint64_t address;
 } vk_accel;
 
+/* BLAS compaction (default ON, LRT_VK_BLAS_COMPACT=0 opts out): build with
+ * ALLOW_COMPACTION into transient full-size storage, read the compacted size
+ * from a query, then vkCmdCopyAccelerationStructureKHR (COMPACT) into
+ * right-sized storage. Triangle BLAS typically compact to ~50-60%, which is the
+ * dominant resident VRAM of large ray-query scenes. Requires the query/copy
+ * entry points (device-loaded with VK_KHR_acceleration_structure). */
+static int rtx_compact_enabled(void) {
+    const char *env = getenv("LRT_VK_BLAS_COMPACT");
+    if (env && env[0] == '0') return 0;
+    return vkCmdWriteAccelerationStructuresPropertiesKHR != NULL &&
+           vkCmdCopyAccelerationStructureKHR != NULL && vkCreateQueryPool != NULL &&
+           vkDestroyQueryPool != NULL && vkGetQueryPoolResults != NULL &&
+           vkCmdResetQueryPool != NULL;
+}
+
 /* Build one acceleration structure (BLAS or TLAS) on the device from a single
  * geometry. Allocates the AS backing store + a transient scratch buffer, records
- * the build, and resolves the AS device address. */
+ * the build, and resolves the AS device address. BLAS builds are compacted (see
+ * rtx_compact_enabled): the full-size storage is transient and only the
+ * compacted copy stays resident. */
 static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
                           const VkAccelerationStructureGeometryKHR *geom,
                           uint32_t prim_count, uint32_t prim_offset,
                           uint32_t first_vertex, vk_accel *out) {
     memset(out, 0, sizeof(*out));
+    const int compact = (type == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR) &&
+                        rtx_compact_enabled();
     VkAccelerationStructureBuildGeometryInfoKHR bgi;
     memset(&bgi, 0, sizeof(bgi));
     bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     bgi.type = type;
     bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    if (compact) bgi.flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
     bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     bgi.geometryCount = 1;
     bgi.pGeometries = geom;
@@ -1548,22 +1568,26 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
         e->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
         &prim_count, &sizes);
 
+    /* Full-size storage: resident (non-compact) or transient (compact). */
+    vk_buffer full_store;
+    memset(&full_store, 0, sizeof(full_store));
+    VkAccelerationStructureKHR full_as = 0;
     if (!vk_buffer_create_ex(e, sizes.accelerationStructureSize,
                              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-                             0, 0, &out->storage))
+                             0, 0, &full_store))
         return 0;
 
     VkAccelerationStructureCreateInfoKHR ci;
     memset(&ci, 0, sizeof(ci));
     ci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    ci.buffer = out->storage.buf;
+    ci.buffer = full_store.buf;
     ci.offset = 0;
     ci.size = sizes.accelerationStructureSize;
     ci.type = type;
-    VkResult r = vkCreateAccelerationStructureKHR(e->device, &ci, NULL, &out->as);
+    VkResult r = vkCreateAccelerationStructureKHR(e->device, &ci, NULL, &full_as);
     if (r != VK_SUCCESS) {
         vk_set_errf(e, "vkCreateAccelerationStructureKHR", r);
-        vk_buffer_destroy(e, &out->storage);
+        vk_buffer_destroy(e, &full_store);
         return 0;
     }
 
@@ -1572,14 +1596,24 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
     vk_buffer scratch;
     if (!vk_buffer_create_ex(e, sizes.buildScratchSize + 256u,
                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0, 1, &scratch)) {
-        vkDestroyAccelerationStructureKHR(e->device, out->as, NULL);
-        vk_buffer_destroy(e, &out->storage);
+        vkDestroyAccelerationStructureKHR(e->device, full_as, NULL);
+        vk_buffer_destroy(e, &full_store);
         return 0;
     }
     uint64_t scratch_addr = vk_device_address(e, &scratch);
     scratch_addr = (scratch_addr + 255u) & ~(uint64_t)255u;
 
-    bgi.dstAccelerationStructure = out->as;
+    VkQueryPool qp = 0;
+    if (compact) {
+        VkQueryPoolCreateInfo qci;
+        memset(&qci, 0, sizeof(qci));
+        qci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qci.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+        qci.queryCount = 1;
+        if (vkCreateQueryPool(e->device, &qci, NULL, &qp) != VK_SUCCESS) qp = 0;
+    }
+
+    bgi.dstAccelerationStructure = full_as;
     bgi.scratchData.deviceAddress = scratch_addr;
     VkAccelerationStructureBuildRangeInfoKHR range;
     range.primitiveCount = prim_count;
@@ -1602,15 +1636,83 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
                              VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                              0, 1, &mb, 0, NULL, 0, NULL);
+        if (compact && qp) {
+            vkCmdResetQueryPool(cb, qp, 0, 1);
+            vkCmdWriteAccelerationStructuresPropertiesKHR(
+                cb, 1, &full_as,
+                VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, qp, 0);
+        }
         ok = vk_cmd_end_submit(e, cb);
     }
     vk_buffer_destroy(e, &scratch);
+
+    /* Compact: read the compacted size and copy into right-sized storage; the
+     * full-size AS + storage are destroyed either way. Any compact-path failure
+     * falls back to keeping the (valid) full-size build. */
+    if (ok && compact && qp) {
+        uint64_t csize = 0;
+        VkResult qr = vkGetQueryPoolResults(
+            e->device, qp, 0, 1, sizeof(csize), &csize, sizeof(csize),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        if (qr == VK_SUCCESS && csize > 0 &&
+            csize < sizes.accelerationStructureSize) {
+            vk_buffer cstore;
+            memset(&cstore, 0, sizeof(cstore));
+            VkAccelerationStructureKHR cas = 0;
+            if (vk_buffer_create_ex(
+                    e, csize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                    0, 0, &cstore)) {
+                ci.buffer = cstore.buf;
+                ci.size = csize;
+                if (vkCreateAccelerationStructureKHR(e->device, &ci, NULL, &cas) ==
+                    VK_SUCCESS) {
+                    VkCommandBuffer ccb = vk_cmd_begin(e);
+                    int cok = ccb != VK_NULL_HANDLE;
+                    if (cok) {
+                        VkCopyAccelerationStructureInfoKHR cpi;
+                        memset(&cpi, 0, sizeof(cpi));
+                        cpi.sType =
+                            VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+                        cpi.src = full_as;
+                        cpi.dst = cas;
+                        cpi.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+                        vkCmdCopyAccelerationStructureKHR(ccb, &cpi);
+                        VkMemoryBarrier mb2;
+                        memset(&mb2, 0, sizeof(mb2));
+                        mb2.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                        mb2.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                        mb2.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+                        vkCmdPipelineBarrier(
+                            ccb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &mb2, 0, NULL, 0, NULL);
+                        cok = vk_cmd_end_submit(e, ccb);
+                    }
+                    if (cok) {
+                        vkDestroyAccelerationStructureKHR(e->device, full_as, NULL);
+                        vk_buffer_destroy(e, &full_store);
+                        full_as = cas;
+                        full_store = cstore;
+                        memset(&cstore, 0, sizeof(cstore));
+                        cas = 0;
+                    }
+                }
+                if (cas) vkDestroyAccelerationStructureKHR(e->device, cas, NULL);
+                if (cstore.buf) vk_buffer_destroy(e, &cstore);
+            }
+        }
+    }
+    if (qp) vkDestroyQueryPool(e->device, qp, NULL);
+
     if (!ok) {
         vk_set_err(e, "acceleration-structure build submit failed");
-        vkDestroyAccelerationStructureKHR(e->device, out->as, NULL);
-        vk_buffer_destroy(e, &out->storage);
+        vkDestroyAccelerationStructureKHR(e->device, full_as, NULL);
+        vk_buffer_destroy(e, &full_store);
         return 0;
     }
+    out->as = full_as;
+    out->storage = full_store;
 
     VkAccelerationStructureDeviceAddressInfoKHR ai;
     memset(&ai, 0, sizeof(ai));
@@ -2087,6 +2189,299 @@ static void vk_subpool_free(lrt_vk_engine *e, vk_subpool *p) {
     memset(p, 0, sizeof(*p));
 }
 
+/* Compaction variant of build_protos_pooled (used when rtx_compact_enabled()):
+ * prototypes are built in waves into one reused transient full-size buffer, the
+ * compacted sizes are read back from a query pool, and the BLAS are tight-packed
+ * into the resident store pool with vkCmdCopyAccelerationStructureKHR (COMPACT).
+ * Two submits per wave instead of one per prototype, and only the compacted BLAS
+ * (typically ~50-60% of full size) stay resident; transient VRAM overhead is one
+ * wave (~WAVE_BYTES) of full-size storage plus its scratch. Same ownership shape
+ * as build_protos_pooled: blas[p].as owns only the handle, storage is pool-owned. */
+static int build_protos_pooled_compact(lrt_vk_engine *e, const lrt_vk_proto *protos,
+                                       uint32_t nprotos, lrt_vk_rtx_scene *s) {
+    const VkDeviceSize BLOCK = 128u * 1024u * 1024u;
+    const uint32_t WAVE_MAX = 512u;        /* also the query-pool capacity */
+    const VkDeviceSize WAVE_BYTES = BLOCK; /* full-size AS / scratch budget per wave */
+
+    s->blas_input_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
+    s->blas_store_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
+    if (!s->blas_input_pool || !s->blas_store_pool) return 0;
+    vk_subpool_init(
+        s->blas_input_pool,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        /*host_visible=*/1, /*device_addr=*/1, BLOCK);
+    vk_subpool_init(s->blas_store_pool,
+                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                    /*host_visible=*/0, /*device_addr=*/0, BLOCK);
+
+    VkAccelerationStructureGeometryKHR *geoms =
+        (VkAccelerationStructureGeometryKHR *)calloc(WAVE_MAX, sizeof(*geoms));
+    VkAccelerationStructureBuildGeometryInfoKHR *bgis =
+        (VkAccelerationStructureBuildGeometryInfoKHR *)calloc(WAVE_MAX, sizeof(*bgis));
+    VkAccelerationStructureBuildRangeInfoKHR *ranges =
+        (VkAccelerationStructureBuildRangeInfoKHR *)calloc(WAVE_MAX, sizeof(*ranges));
+    const VkAccelerationStructureBuildRangeInfoKHR **prange =
+        (const VkAccelerationStructureBuildRangeInfoKHR **)calloc(WAVE_MAX,
+                                                                  sizeof(*prange));
+    VkAccelerationStructureKHR *full_as =
+        (VkAccelerationStructureKHR *)calloc(WAVE_MAX, sizeof(*full_as));
+    VkDeviceSize *as_off = (VkDeviceSize *)calloc(WAVE_MAX, sizeof(*as_off));
+    VkDeviceSize *as_size = (VkDeviceSize *)calloc(WAVE_MAX, sizeof(*as_size));
+    VkDeviceSize *sc_off = (VkDeviceSize *)calloc(WAVE_MAX, sizeof(*sc_off));
+    uint64_t *csize = (uint64_t *)calloc(WAVE_MAX, sizeof(*csize));
+    vk_buffer full_store = {0};  // transient full-size storage, reused across waves
+    vk_buffer scratch = {0};     // reused across waves, grown on demand
+    VkQueryPool qp = 0;
+    int ok = geoms && bgis && ranges && prange && full_as && as_off && as_size &&
+             sc_off && csize;
+
+    if (ok) {
+        VkQueryPoolCreateInfo qci;
+        memset(&qci, 0, sizeof(qci));
+        qci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qci.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+        qci.queryCount = WAVE_MAX;
+        if (vkCreateQueryPool(e->device, &qci, NULL, &qp) != VK_SUCCESS) {
+            qp = 0;
+            ok = 0;
+        }
+    }
+
+    uint32_t p = 0;
+    while (ok && p < nprotos) {
+        /* Plan the wave from size queries only (build-sizes ignores the data
+         * addresses), stopping at the full-size/scratch budget. The first
+         * prototype is always taken, so one BLAS bigger than WAVE_BYTES still
+         * works -- the transient buffers just grow for that wave. */
+        uint32_t count = 0;
+        VkDeviceSize full_top = 0, sc_top = 0;
+        while (p + count < nprotos && count < WAVE_MAX) {
+            const lrt_vk_proto *pr = &protos[p + count];
+            VkAccelerationStructureGeometryKHR *g = &geoms[count];
+            memset(g, 0, sizeof(*g));
+            g->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+            g->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            g->flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            g->geometry.triangles.sType =
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            g->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            g->geometry.triangles.vertexStride = 3u * sizeof(float);
+            g->geometry.triangles.maxVertex = pr->nverts - 1u;
+            g->geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+
+            VkAccelerationStructureBuildGeometryInfoKHR *bg = &bgis[count];
+            memset(bg, 0, sizeof(*bg));
+            bg->sType =
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+            bg->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            bg->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                        VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+            bg->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            bg->geometryCount = 1;
+            bg->pGeometries = g;
+
+            VkAccelerationStructureBuildSizesInfoKHR sizes;
+            memset(&sizes, 0, sizeof(sizes));
+            sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+            vkGetAccelerationStructureBuildSizesKHR(
+                e->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, bg,
+                &pr->ntris, &sizes);
+
+            VkDeviceSize aoff = (full_top + 255u) & ~(VkDeviceSize)255u;
+            VkDeviceSize soff = (sc_top + 255u) & ~(VkDeviceSize)255u;
+            if (count && (aoff + sizes.accelerationStructureSize > WAVE_BYTES ||
+                          soff + sizes.buildScratchSize > WAVE_BYTES))
+                break;
+            as_off[count] = aoff;
+            as_size[count] = sizes.accelerationStructureSize;
+            sc_off[count] = soff;
+            full_top = aoff + sizes.accelerationStructureSize;
+            sc_top = soff + sizes.buildScratchSize;
+            ranges[count].primitiveCount = pr->ntris;
+            ranges[count].primitiveOffset = 0;
+            ranges[count].firstVertex = 0;
+            ranges[count].transformOffset = 0;
+            prange[count] = &ranges[count];
+            count++;
+        }
+
+        /* Upload this wave's inputs and patch the geometry addresses. */
+        for (uint32_t i = 0; i < count && ok; i++) {
+            const lrt_vk_proto *pr = &protos[p + i];
+            VkDeviceSize vbytes = (VkDeviceSize)pr->nverts * 3u * sizeof(float);
+            VkDeviceSize ibytes = (VkDeviceSize)pr->ntris * 3u * sizeof(uint32_t);
+            VkBuffer vbuf, ibuf;
+            VkDeviceSize voff, ioff;
+            void *vmap, *imap;
+            uint64_t vaddr, iaddr;
+            if (!vk_subpool_alloc(e, s->blas_input_pool, vbytes, 16, &vbuf, &voff,
+                                  &vmap, &vaddr) ||
+                !vk_subpool_alloc(e, s->blas_input_pool, ibytes, 16, &ibuf, &ioff,
+                                  &imap, &iaddr)) {
+                ok = 0;
+                break;
+            }
+            memcpy(vmap, pr->vertices, (size_t)vbytes);
+            memcpy(imap, pr->indices, (size_t)ibytes);
+            geoms[i].geometry.triangles.vertexData.deviceAddress = vaddr;
+            geoms[i].geometry.triangles.indexData.deviceAddress = iaddr;
+        }
+        if (!ok) break;
+
+        /* Transient full-size + scratch buffers, grown on demand. */
+        if (full_store.size < full_top) {
+            vk_buffer_destroy(e, &full_store);
+            if (!vk_buffer_create_ex(
+                    e, full_top,
+                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, 0, 0,
+                    &full_store)) {
+                ok = 0;
+                break;
+            }
+        }
+        if (scratch.size < sc_top + 256u) {
+            vk_buffer_destroy(e, &scratch);
+            if (!vk_buffer_create_ex(e, sc_top + 256u,
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0, 1,
+                                     &scratch)) {
+                ok = 0;
+                break;
+            }
+        }
+        uint64_t sbase = (vk_device_address(e, &scratch) + 255u) & ~(uint64_t)255u;
+
+        for (uint32_t i = 0; i < count && ok; i++) {
+            VkAccelerationStructureCreateInfoKHR ci;
+            memset(&ci, 0, sizeof(ci));
+            ci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+            ci.buffer = full_store.buf;
+            ci.offset = as_off[i];
+            ci.size = as_size[i];
+            ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            if (vkCreateAccelerationStructureKHR(e->device, &ci, NULL,
+                                                 &full_as[i]) != VK_SUCCESS) {
+                ok = 0;
+                break;
+            }
+            bgis[i].dstAccelerationStructure = full_as[i];
+            bgis[i].scratchData.deviceAddress = sbase + sc_off[i];
+        }
+
+        /* Submit 1: batched build of the wave + compacted-size query writes. */
+        if (ok) {
+            VkCommandBuffer cb = vk_cmd_begin(e);
+            ok = cb != VK_NULL_HANDLE;
+            if (ok) {
+                vkCmdBuildAccelerationStructuresKHR(cb, count, bgis, prange);
+                VkMemoryBarrier mb;
+                memset(&mb, 0, sizeof(mb));
+                mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+                vkCmdPipelineBarrier(
+                    cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &mb,
+                    0, NULL, 0, NULL);
+                vkCmdResetQueryPool(cb, qp, 0, count);
+                vkCmdWriteAccelerationStructuresPropertiesKHR(
+                    cb, count, full_as,
+                    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, qp, 0);
+                ok = vk_cmd_end_submit(e, cb);
+            }
+        }
+        if (ok && vkGetQueryPoolResults(
+                      e->device, qp, 0, count, (size_t)count * sizeof(uint64_t),
+                      csize, sizeof(uint64_t),
+                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS)
+            ok = 0;
+
+        /* Submit 2: tight-pack the compacted BLAS into the resident store pool. */
+        VkCommandBuffer ccb = VK_NULL_HANDLE;
+        if (ok) {
+            ccb = vk_cmd_begin(e);
+            ok = ccb != VK_NULL_HANDLE;
+        }
+        for (uint32_t i = 0; i < count && ok; i++) {
+            if (csize[i] == 0 || csize[i] > as_size[i]) {
+                ok = 0;
+                break;
+            }
+            VkBuffer sbuf;
+            VkDeviceSize soff;
+            if (!vk_subpool_alloc(e, s->blas_store_pool, csize[i], 256, &sbuf, &soff,
+                                  NULL, NULL)) {
+                ok = 0;
+                break;
+            }
+            VkAccelerationStructureCreateInfoKHR ci;
+            memset(&ci, 0, sizeof(ci));
+            ci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+            ci.buffer = sbuf;
+            ci.offset = soff;
+            ci.size = csize[i];
+            ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            if (vkCreateAccelerationStructureKHR(e->device, &ci, NULL,
+                                                 &s->blas[p + i].as) != VK_SUCCESS) {
+                ok = 0;
+                break;
+            }
+            VkCopyAccelerationStructureInfoKHR cpi;
+            memset(&cpi, 0, sizeof(cpi));
+            cpi.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+            cpi.src = full_as[i];
+            cpi.dst = s->blas[p + i].as;
+            cpi.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+            vkCmdCopyAccelerationStructureKHR(ccb, &cpi);
+        }
+        if (ok) {
+            VkMemoryBarrier mb;
+            memset(&mb, 0, sizeof(mb));
+            mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+            mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            vkCmdPipelineBarrier(
+                ccb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0, 1, &mb, 0, NULL, 0, NULL);
+            ok = vk_cmd_end_submit(e, ccb);
+        } else if (ccb && !e->device_lost) {
+            vkEndCommandBuffer(ccb);
+            vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &ccb);
+        }
+
+        /* The full-size builds are transient -- drop the wave's handles. */
+        for (uint32_t i = 0; i < count; i++) {
+            if (full_as[i] && !e->device_lost)
+                vkDestroyAccelerationStructureKHR(e->device, full_as[i], NULL);
+            full_as[i] = 0;
+        }
+        for (uint32_t i = 0; i < count && ok; i++) {
+            VkAccelerationStructureDeviceAddressInfoKHR ai;
+            memset(&ai, 0, sizeof(ai));
+            ai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+            ai.accelerationStructure = s->blas[p + i].as;
+            s->blas[p + i].address =
+                vkGetAccelerationStructureDeviceAddressKHR(e->device, &ai);
+        }
+        p += count;
+    }
+
+    if (qp && !e->device_lost) vkDestroyQueryPool(e->device, qp, NULL);
+    vk_buffer_destroy(e, &full_store);
+    vk_buffer_destroy(e, &scratch);
+    free(geoms);
+    free(bgis);
+    free(ranges);
+    free(prange);
+    free(full_as);
+    free(as_off);
+    free(as_size);
+    free(sc_off);
+    free(csize);
+    return ok;
+}
+
 /* Build all prototype BLAS through two suballocation pools (vertex/index INPUT and
  * AS STORAGE) plus one reused scratch buffer, instead of ~6 vkAllocateMemory + 2
  * submits per prototype. On a ~100k-prototype scene (full Moana island) the naive
@@ -2097,6 +2492,8 @@ static void vk_subpool_free(lrt_vk_engine *e, vk_subpool *p) {
  * pool-owned; blas[p].storage stays empty). Returns 1 on success. */
 static int build_protos_pooled(lrt_vk_engine *e, const lrt_vk_proto *protos,
                                uint32_t nprotos, lrt_vk_rtx_scene *s) {
+    if (rtx_compact_enabled())
+        return build_protos_pooled_compact(e, protos, nprotos, s);
     const VkDeviceSize BLOCK = 128u * 1024u * 1024u;  // 128 MiB blocks
     s->blas_input_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
     s->blas_store_pool = (vk_subpool *)calloc(1, sizeof(vk_subpool));
