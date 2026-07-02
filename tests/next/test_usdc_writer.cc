@@ -643,6 +643,56 @@ void test_usdc_value_block_roundtrip() {
   std::cout << "  USDC ValueBlock roundtrip test passed!\n\n";
 }
 
+void test_usdc_thread_count_parity() {
+  std::cout << "Testing USDC writer thread-count parity...\n";
+
+  StageBuilder stage_builder;
+  stage_builder.SetDefaultPrim("P0");
+  LayerBuilder& layer = stage_builder.GetLayerBuilder();
+
+  // Large enough to exercise the threaded structural-section preparation path,
+  // while keeping the unit test cheap. The older per-prim map-reduce writer path
+  // is intentionally disabled; this test locks byte identity for the remaining
+  // supported threaded writer work.
+  constexpr int kPrimCount = 3000;
+  for (int i = 0; i < kPrimCount; ++i) {
+    const std::string name = "P" + std::to_string(i);
+    layer.begin_prim(name, "Xform");
+    layer.add_property("id", Value(i));
+    layer.add_property("purpose", Value::MakeToken((i % 2) ? "proxy" : "render"));
+    layer.end_prim();
+  }
+  layer.finalize();
+  Stage stage = stage_builder.Build();
+
+  USDCWriteOptions serial_opts;
+  serial_opts.crate_options.num_threads = 1;
+  std::vector<uint8_t> serial;
+  USDCWriteResult serial_result = WriteUSDCToMemory(serial, stage, serial_opts);
+  assert(serial_result.success);
+  assert(serial_result.bytes_written == serial.size());
+
+  USDCWriteOptions threaded_opts;
+  threaded_opts.crate_options.num_threads = 8;
+  std::vector<uint8_t> threaded;
+  USDCWriteResult threaded_result = WriteUSDCToMemory(threaded, stage, threaded_opts);
+  assert(threaded_result.success);
+  assert(threaded_result.bytes_written == threaded.size());
+
+  assert(threaded == serial);
+
+  USDCLoadResult read_result =
+      LoadUSDCFromMemoryBorrowed(threaded.data(), threaded.size());
+  assert(read_result.success);
+  assert(read_result.stage.GetPrimCount() == static_cast<size_t>(kPrimCount));
+  UsdPrim last = read_result.stage.GetPrimAtPath("/P2999");
+  assert(last.IsValid());
+  const Value* id = last.GetPropertyValue("id");
+  assert(id && id->as_int() && *id->as_int() == 2999);
+
+  std::cout << "  USDC writer thread-count parity test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
 
@@ -659,6 +709,7 @@ int main() {
     test_usdc_relationship_connection_roundtrip();
     test_usdc_encode_value_fallback_roundtrip();
     test_usdc_value_block_roundtrip();
+    test_usdc_thread_count_parity();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;

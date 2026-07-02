@@ -8,6 +8,35 @@
   // Section writing
   // ============================================================
 
+  static void WriteCompressedBytes(StreamWriter& out, const uint8_t* data,
+                                   size_t size) {
+    CompressResult cr = CompressCrateBlob(data, size);
+    if (!cr.success) {
+      out.write_u64(size);
+      if (size) out.write_bytes(data, size);
+    } else {
+      out.write_u64(cr.data.size());
+      if (!cr.data.empty()) out.write_bytes(cr.data.data(), cr.data.size());
+    }
+  }
+
+  static void WriteCompressedDeltaU32Bytes(StreamWriter& out,
+                                           const uint32_t* vals,
+                                           size_t count,
+                                           bool force_common = false,
+                                           uint32_t common = 0) {
+    std::vector<uint8_t> delta = force_common
+        ? EncodeDeltaU32WithCommon(vals, count, common)
+        : EncodeDeltaU32(vals, count);
+    WriteCompressedBytes(out, delta.data(), delta.size());
+  }
+
+  void AppendSectionPayload(const std::vector<uint8_t>& payload) {
+    if (!payload.empty()) {
+      writer_.write_bytes(payload.data(), payload.size());
+    }
+  }
+
   void WriteBootstrap(int64_t toc_offset) {
     // Bootstrap is exactly 64 bytes: [ident(8)][version(8)][tocOffset(8)][reserved(40)]
     size_t pos = 0;
@@ -23,7 +52,9 @@
     while (pos < 64) buffer_[pos++] = 0;
   }
 
-  void WriteTokensSection() {
+  std::vector<uint8_t> BuildTokensSectionPayload() {
+    std::vector<uint8_t> payload;
+    StreamWriter out(payload);
     // Build uncompressed token data: concatenated null-terminated strings
     std::vector<uint8_t> raw;
     size_t total = 0;
@@ -34,23 +65,20 @@
       raw.push_back(0);  // null terminator
     }
 
-    writer_.write_u64(tokens_.size());
-    writer_.write_u64(raw.size());  // uncompressed_size
+    out.write_u64(tokens_.size());
+    out.write_u64(raw.size());  // uncompressed_size
 
     if (raw.empty()) {
-      writer_.write_u64(0);  // compressed_size = 0
-      return;
+      out.write_u64(0);  // compressed_size = 0
+      return payload;
     }
 
-    CompressResult cr = CompressCrateBlob(raw.data(), raw.size());
-    if (!cr.success) {
-      // Fall back to storing uncompressed
-      writer_.write_u64(raw.size());
-      writer_.write_bytes(raw.data(), raw.size());
-    } else {
-      writer_.write_u64(cr.data.size());
-      writer_.write_bytes(cr.data.data(), cr.data.size());
-    }
+    WriteCompressedBytes(out, raw.data(), raw.size());
+    return payload;
+  }
+
+  void WriteTokensSection() {
+    AppendSectionPayload(BuildTokensSectionPayload());
   }
 
   void WriteStringsSection() {
@@ -60,9 +88,11 @@
     }
   }
 
-  void WriteFieldsSection() {
+  std::vector<uint8_t> BuildFieldsSectionPayload(std::string* error) {
+    std::vector<uint8_t> payload;
+    StreamWriter out(payload);
     uint64_t num_fields = fields_.size();
-    writer_.write_u64(num_fields);
+    out.write_u64(num_fields);
 
     // Encode token indices using Usd_IntegerCompression (delta + LZ4)
     {
@@ -70,42 +100,31 @@
       for (size_t i = 0; i < num_fields; i++) {
         indices[i] = fields_[i].token_index.value;
       }
-      // Delta-encode
-      std::vector<uint8_t> delta_encoded = EncodeDeltaU32(indices.data(), num_fields);
-      // LZ4-compress (TfFastCompression format)
-      CompressResult cr = CompressCrateBlob(delta_encoded.data(), delta_encoded.size());
-      if (cr.success) {
-        writer_.write_u64(cr.data.size());
-        writer_.write_bytes(cr.data.data(), cr.data.size());
-      } else {
-        // Fallback: store raw delta-encoded data
-        writer_.write_u64(delta_encoded.size());
-        writer_.write_bytes(delta_encoded.data(), delta_encoded.size());
-      }
+      WriteCompressedDeltaU32Bytes(out, indices.data(), num_fields);
     }
 
     // Write compressed value reps (TfFastCompression LZ4 format)
     size_t value_rep_bytes = 0;
     if (!safe::mul(static_cast<size_t>(num_fields), size_t(8), &value_rep_bytes)) {
-      result_.error = "Field value-rep byte size overflow";
-      return;
+      if (error) *error = "Field value-rep byte size overflow";
+      return payload;
     }
     std::vector<uint8_t> raw_reps(value_rep_bytes);
     for (size_t i = 0; i < num_fields; i++) {
       uint64_t v = fields_[i].value_rep.raw();
       std::memcpy(raw_reps.data() + i * 8, &v, 8);
     }
-    CompressResult cr_reps = CompressCrateBlob(raw_reps.data(), raw_reps.size());
-    if (!cr_reps.success) {
-      writer_.write_u64(raw_reps.size());
-      writer_.write_bytes(raw_reps.data(), raw_reps.size());
-    } else {
-      writer_.write_u64(cr_reps.data.size());
-      writer_.write_bytes(cr_reps.data.data(), cr_reps.data.size());
-    }
+    WriteCompressedBytes(out, raw_reps.data(), raw_reps.size());
+    return payload;
   }
 
-  void WriteFieldsetsSection() {
+  void WriteFieldsSection() {
+    AppendSectionPayload(BuildFieldsSectionPayload(&result_.error));
+  }
+
+  std::vector<uint8_t> BuildFieldsetsSectionPayload() {
+    std::vector<uint8_t> payload;
+    StreamWriter out(payload);
     // Build flat array: for each fieldset, write its field indices then a
     // 0xFFFFFFFF sentinel (matching pxrUSD and the old tinyusdz writer).
     std::vector<uint32_t> flat;
@@ -118,18 +137,15 @@
     }
 
     uint64_t flat_count = flat.size();
-    writer_.write_u64(flat_count);
+    out.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    std::vector<uint8_t> delta_encoded =
-        EncodeDeltaU32WithCommon(flat.data(), static_cast<size_t>(flat_count), 1);
-    CompressResult cr = CompressCrateBlob(delta_encoded.data(), delta_encoded.size());
-    if (cr.success) {
-      writer_.write_u64(cr.data.size());
-      writer_.write_bytes(cr.data.data(), cr.data.size());
-    } else {
-      writer_.write_u64(delta_encoded.size());
-      writer_.write_bytes(delta_encoded.data(), delta_encoded.size());
-    }
+    WriteCompressedDeltaU32Bytes(out, flat.data(), static_cast<size_t>(flat_count),
+                                 true, 1);
+    return payload;
+  }
+
+  void WriteFieldsetsSection() {
+    AppendSectionPayload(BuildFieldsetsSectionPayload());
   }
 
   void WritePathsSection() {
@@ -462,9 +478,11 @@
     timing_.paths_compress_ms = MsSince(path_phase_t0);
   }
 
-  void WriteSpecsSection() {
+  std::vector<uint8_t> BuildSpecsSectionPayload() {
+    std::vector<uint8_t> payload;
+    StreamWriter out(payload);
     uint64_t num_specs = specs_.size();
-    writer_.write_u64(num_specs);
+    out.write_u64(num_specs);
 
     // Convert fieldset numbers to flat array offsets (matching pxrUSD format).
     // Build offset mapping: for each fieldset, its offset in the flat array
@@ -493,24 +511,14 @@
       spec_types[i] = static_cast<uint32_t>(specs_[i].spec_type);
     }
 
-    auto write_comp = [&](const uint32_t* vals, size_t count,
-                          bool force_common_zero = false) {
-      std::vector<uint8_t> delta = force_common_zero
-          ? EncodeDeltaU32WithCommon(vals, count, 0)
-          : EncodeDeltaU32(vals, count);
-      CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
-      if (cr.success) {
-        writer_.write_u64(cr.data.size());
-        writer_.write_bytes(cr.data.data(), cr.data.size());
-      } else {
-        writer_.write_u64(delta.size());
-        writer_.write_bytes(delta.data(), delta.size());
-      }
-    };
+    WriteCompressedDeltaU32Bytes(out, path_indices.data(), num_specs);
+    WriteCompressedDeltaU32Bytes(out, fieldset_indices.data(), num_specs);
+    WriteCompressedDeltaU32Bytes(out, spec_types.data(), num_specs, true, 0);
+    return payload;
+  }
 
-    write_comp(path_indices.data(), num_specs);
-    write_comp(fieldset_indices.data(), num_specs);
-    write_comp(spec_types.data(), num_specs, true);
+  void WriteSpecsSection() {
+    AppendSectionPayload(BuildSpecsSectionPayload());
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {
@@ -554,7 +562,6 @@
 
       uint64_t payload = vrep.payload();
       if (payload != 0 && payload < value_offsets_.size()) {
-        uint64_t raw_before = vrep_raw;
         uint64_t abs_offset = value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
         vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
                                    vrep.is_array(), false,

@@ -167,18 +167,98 @@
       timing_.value_emit_ms = MsSince(t0);
     }
 
-    // TOKENS section
-    {
+    struct PreparedSection {
+      std::vector<uint8_t> bytes;
+      double ms = 0.0;
+      std::string error;
+    };
+    PreparedSection tokens_payload;
+    PreparedSection fields_payload;
+    PreparedSection fieldsets_payload;
+    PreparedSection specs_payload;
+    auto prepare_payloads_serial = [&]() {
+      t0 = Clock::now();
+      tokens_payload.bytes = BuildTokensSectionPayload();
+      tokens_payload.ms = MsSince(t0);
+
+      t0 = Clock::now();
+      fields_payload.bytes = BuildFieldsSectionPayload(&fields_payload.error);
+      fields_payload.ms = MsSince(t0);
+
+      t0 = Clock::now();
+      fieldsets_payload.bytes = BuildFieldsetsSectionPayload();
+      fieldsets_payload.ms = MsSince(t0);
+
+      t0 = Clock::now();
+      specs_payload.bytes = BuildSpecsSectionPayload();
+      specs_payload.ms = MsSince(t0);
+    };
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    const bool parallel_section_prepare =
+        ResolveThreads() > 1 &&
+        (tokens_.size() + fields_.size() + FieldsetCount() + specs_.size()) >=
+            4096;
+    if (parallel_section_prepare) {
+      auto run_tokens = [&]() {
+        auto s0 = Clock::now();
+        tokens_payload.bytes = BuildTokensSectionPayload();
+        tokens_payload.ms = MsSince(s0);
+      };
+      auto run_fields = [&]() {
+        auto s0 = Clock::now();
+        fields_payload.bytes = BuildFieldsSectionPayload(&fields_payload.error);
+        fields_payload.ms = MsSince(s0);
+      };
+      auto run_fieldsets = [&]() {
+        auto s0 = Clock::now();
+        fieldsets_payload.bytes = BuildFieldsetsSectionPayload();
+        fieldsets_payload.ms = MsSince(s0);
+      };
+      auto run_specs = [&]() {
+        auto s0 = Clock::now();
+        specs_payload.bytes = BuildSpecsSectionPayload();
+        specs_payload.ms = MsSince(s0);
+      };
+
+      std::thread th_tokens(run_tokens);
+      std::thread th_fields(run_fields);
+      std::thread th_fieldsets(run_fieldsets);
+      std::thread th_specs(run_specs);
+      th_tokens.join();
+      th_fields.join();
+      th_fieldsets.join();
+      th_specs.join();
+    } else {
+      prepare_payloads_serial();
+    }
+#else
+    prepare_payloads_serial();
+#endif
+
+    if (!fields_payload.error.empty()) {
+      result_.error = fields_payload.error;
+      result_.success = false;
+      return result_;
+    }
+
+    auto append_prepared_section = [&](const char* name,
+                                       const std::vector<uint8_t>& bytes,
+                                       double ms,
+                                       double* timing_slot) {
       CrateSection sec;
       std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "TOKENS", sizeof(sec.name) - 1);
+      std::strncpy(sec.name, name, sizeof(sec.name) - 1);
       sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      t0 = Clock::now();
-      WriteTokensSection();
-      timing_.tokens_ms = MsSince(t0);
+      AppendSectionPayload(bytes);
+      if (timing_slot) *timing_slot = ms;
       sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
       sections.push_back(sec);
-    }
+    };
+
+    // TOKENS section
+    append_prepared_section("TOKENS", tokens_payload.bytes, tokens_payload.ms,
+                            &timing_.tokens_ms);
 
     // STRINGS section
     {
@@ -194,34 +274,12 @@
     }
 
     // FIELDS section (written before VALUE so we know the offsets)
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "FIELDS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      t0 = Clock::now();
-      WriteFieldsSection();
-      timing_.fields_ms = MsSince(t0);
-      if (!result_.error.empty()) {
-        result_.success = false;
-        return result_;
-      }
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    append_prepared_section("FIELDS", fields_payload.bytes, fields_payload.ms,
+                            &timing_.fields_ms);
 
     // FIELDSETS section
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "FIELDSETS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      t0 = Clock::now();
-      WriteFieldsetsSection();
-      timing_.fieldsets_ms = MsSince(t0);
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    append_prepared_section("FIELDSETS", fieldsets_payload.bytes,
+                            fieldsets_payload.ms, &timing_.fieldsets_ms);
 
     // PATHS section
     {
@@ -237,17 +295,8 @@
     }
 
     // SPECS section
-    {
-      CrateSection sec;
-      std::memset(sec.name, 0, sizeof(sec.name));
-      std::strncpy(sec.name, "SPECS", sizeof(sec.name) - 1);
-      sec.start = static_cast<int64_t>(buffer_.size() + struct_base);
-      t0 = Clock::now();
-      WriteSpecsSection();
-      timing_.specs_ms = MsSince(t0);
-      sec.size = static_cast<int64_t>(buffer_.size() + struct_base) - sec.start;
-      sections.push_back(sec);
-    }
+    append_prepared_section("SPECS", specs_payload.bytes, specs_payload.ms,
+                            &timing_.specs_ms);
 
     // Write TOC at the end (VALUE section is NOT included in TOC)
     int64_t toc_offset = static_cast<int64_t>(buffer_.size() + struct_base);
