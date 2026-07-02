@@ -189,6 +189,19 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
     uint32_t instanceCount{0};
     uint32_t drawInstanceCount{0};
+    // Multi-draw-indirect (MDI) placement. When mdiEligible (device supports MDI
+    // and this prototype is non-morph), the instance-rate buffers above point into
+    // the renderer's ONE global instance buffer rather than a per-mesh allocation:
+    // instVbo/instColorBuf are the shared handles and instVboMapped/instColorMapped
+    // address this mesh's slice, so the existing cull writes land in the global
+    // buffer unchanged. mdiInstFirst is the mesh's base instance index (the indirect
+    // command's firstInstance); mdiVertBase/mdiIdxBase are its base into the shared
+    // geometry/index buffers (vertexOffset/firstIndex). Morph prototypes stay on the
+    // per-mesh path (MDI can't switch morph descriptor sets per draw).
+    bool mdiEligible{false};
+    uint32_t mdiInstFirst{0};
+    uint32_t mdiVertBase{0};
+    uint32_t mdiIdxBase{0};
     // Coarse per-prototype instance grid for RT LOD cell rejection (P5). Built
     // lazily on the first LOD-enabled rebuild; instance transforms are static.
     RtLodGrid lodGrid;
@@ -235,6 +248,11 @@ class VulkanRenderer final : public Renderer {
   VkDeviceAddress bufferDeviceAddress(VkBuffer buf) const;
   bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
+  // Device-local buffer initialized from `data` via a one-shot staging copy (no
+  // device address). For static geometry that the GPU reads every frame -- keeps
+  // it in VRAM instead of host-visible memory fetched over PCIe per draw.
+  bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                               const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void buildBlas(VkMeshGPU& m);
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
@@ -360,6 +378,10 @@ class VulkanRenderer final : public Renderer {
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  // multiDrawIndirect + drawIndirectFirstInstance + shaderDrawParameters all
+  // present -> the instanced raster pass can draw via vkCmdDrawIndexedIndirect
+  // batches (per-draw meshId/flags come from a gl_DrawIDARB-indexed SSBO).
+  bool mdiSupported_{false};
   VkPipeline tessPipeline_{VK_NULL_HANDLE};
   VkShaderStageFlags pushStages_{VK_SHADER_STAGE_VERTEX_BIT |
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
@@ -442,6 +464,62 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
+  // Set 6 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
+  // entry per mesh plus a trailing slot for the shared box proxy. The fragment
+  // shader indexes it by (baseDraw + gl_DrawIDARB), so a multi-draw-indirect batch
+  // needs no per-draw push. Contents are static per mesh -> (re)built by
+  // ensureDrawMeta() only when the mesh count changes. Host-visible SSBO.
+  VkDescriptorSetLayout drawMetaSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool drawMetaPool_{VK_NULL_HANDLE};
+  VkDescriptorSet drawMetaSet_{VK_NULL_HANDLE};
+  VkBuffer drawMetaBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory drawMetaBufMem_{VK_NULL_HANDLE};
+  uint32_t drawMetaCount_{0};    // slots currently populated (meshes + 1 box slot)
+  uint32_t drawMetaCap_{0};      // slots the buffer can hold
+  uint32_t boxMetaSlot_{0};      // DrawMeta slot the box-proxy draw pushes as baseDraw
+  uint32_t mdiMeshMetaBase_{0};  // per-mesh DrawMeta region base for the fallback loop
+  void ensureDrawMeta();         // rebuild drawMetaBuf_ when meshes_ changes (non-MDI)
+  // (Re)create drawMetaBuf_ to hold `meta` and repoint drawMetaSet_ at it. Shared by
+  // ensureDrawMeta (per-mesh layout) and buildInstMdi (per-command layout).
+  struct DrawMetaCPU { int32_t ids[4]; };
+  void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
+
+  // ---- Multi-draw-indirect instanced path (large-scene --next) ----
+  // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
+  // vkCmdDrawIndexedIndirect batches over shared buffers instead of ~83k per-mesh
+  // bind+draw calls. Geometry (positions/normals, per-vertex color, morph-zero,
+  // indices) is concatenated once; per-instance o2w + color live in ONE global
+  // buffer whose slices the meshes' instVboMapped point into (so cull fills it).
+  // The indirect command list is patched each frame with per-mesh drawInstanceCount.
+  VkBuffer mdiVbo_{VK_NULL_HANDLE};        VkDeviceMemory mdiVboMem_{VK_NULL_HANDLE};
+  VkBuffer mdiVtxColBuf_{VK_NULL_HANDLE};  VkDeviceMemory mdiVtxColMem_{VK_NULL_HANDLE};
+  VkBuffer mdiMorphBuf_{VK_NULL_HANDLE};   VkDeviceMemory mdiMorphMem_{VK_NULL_HANDLE};
+  VkBuffer mdiEbo_{VK_NULL_HANDLE};        VkDeviceMemory mdiEboMem_{VK_NULL_HANDLE};
+  VkBuffer mdiInstBuf_{VK_NULL_HANDLE};    VkDeviceMemory mdiInstMem_{VK_NULL_HANDLE};
+  void* mdiInstMapped_{nullptr};
+  VkBuffer mdiInstColBuf_{VK_NULL_HANDLE}; VkDeviceMemory mdiInstColMem_{VK_NULL_HANDLE};
+  void* mdiInstColMapped_{nullptr};
+  VkBuffer mdiIndirectBuf_{VK_NULL_HANDLE}; VkDeviceMemory mdiIndirectMem_{VK_NULL_HANDLE};
+  void* mdiIndirectMapped_{nullptr};
+  // One indirect command per (eligible mesh, submesh); meshIndex ties it back to the
+  // prototype for the per-frame instanceCount patch + visibility gate.
+  struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
+  std::vector<MdiCmd> mdiCmds_;
+  // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
+  std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
+  std::vector<float> mdiInstColStage_;     // 3 floats / instance
+  std::vector<float> mdiVtxStage_;         // DrawVertex floats (positions+normals+...)
+  std::vector<float> mdiVtxColStage_;      // 3 floats / vertex (per-vertex proto color)
+  std::vector<uint32_t> mdiMorphStage_;    // 2 uint / vertex (morph offset,count = 0)
+  std::vector<uint32_t> mdiIdxStage_;      // concatenated local indices
+  uint32_t mdiInstTotal_{0};               // running instance count during staging
+  uint32_t mdiVertTotal_{0};               // running vertex count during staging
+  uint32_t mdiDrawCount_{0};               // number of indirect commands
+  bool mdiBuilt_{false};                   // buffers built for the current scene
+  bool mdiActive_{false};                  // any eligible mesh -> use the indirect draw
+  void buildInstMdi();                     // upload staging -> shared buffers (once)
+  void patchMdiIndirect();                 // refresh per-frame instanceCount + meta
+  void destroyMdiBuffers();                // free shared buffers (reload/shutdown)
   // Sets 7 & 8: per-mesh GPU blendshape morph (delta SSBO + per-frame coeff SSBO).
   // Both are "readonly SSBO, vertex stage, binding 0", so they share one layout.
   // Non-morph meshes bind shared 1-element dummy descriptors (the shader statically

@@ -332,7 +332,6 @@ static void ChunkProto(const GpuInstProto &src, uint32_t chunk,
 // the flat path. Geometry is stored ONCE per prototype regardless of instance
 // count (the memory-sharing win over the flat world-space soup).
 static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
-                              const std::vector<MeshJobNext> &mesh_jobs,
                               const Options &opt) {
   GpuInstancedScene scene;
   // Each source prim maps to one OR MORE sub-prototype indices (a huge prototype
@@ -372,16 +371,22 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     return idx;
   };
 
-  for (const MeshJobNext &job : mesh_jobs) {
-    if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
-    const std::string key = job.prim.GetPath().str();
+  // Group each placement into (prototype, per-instance transform) on the fly. The
+  // streaming collector calls this sink once per placement (prim, world, purpose)
+  // WITHOUT materializing a MeshJobNext per instance, so a huge instanced scene
+  // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
+  // memory per placement instead of a ~392 B MeshJobNext.
+  auto place = [&](const tinyusdz::next::UsdPrim &prim, const matrix4d &world,
+                   tinyusdz::Purpose purpose) {
+    if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
+    const std::string key = prim.GetPath().str();
     auto it = proto_id.find(key);
     const std::vector<uint32_t> *subs = nullptr;
     if (it == proto_id.end()) {
       GpuInstProto pr;
-      if (!ExtractProtoGeo(stage, opt, tc, job.prim, &pr)) {
+      if (!ExtractProtoGeo(stage, opt, tc, prim, &pr)) {
         proto_id.emplace(key, std::vector<uint32_t>{});  // empty = bad prim
-        continue;
+        return;
       }
       std::vector<uint32_t> indices;
       if (pr.ntris <= chunk) {
@@ -393,17 +398,39 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
       }
       subs = &proto_id.emplace(key, std::move(indices)).first->second;
     } else {
-      if (it->second.empty()) continue;  // known-bad prim
+      if (it->second.empty()) return;  // known-bad prim
       subs = &it->second;
     }
     GpuInstPlacement pl;
-    Mat4ToObj2World(job.world, pl.o2w);
+    Mat4ToObj2World(world, pl.o2w);
     NormalMatrixFromO2W(pl.o2w, pl.n2w);
     for (uint32_t sp : *subs) {
       pl.proto = sp;
       scene.insts.push_back(pl);
     }
+  };
+
+  // Placement budget: bound host memory on scenes with tens of millions of
+  // instances. Default 16M -- one TLAS slice, so the default takes the single-TLAS
+  // fast path and stays well within GPU memory (Moana island's full ~42.8M
+  // instances / ~110k prototype BLAS exceed VRAM; raise TUSDR_INST_BUDGET to fan
+  // out across multiple TLASes, memory permitting). Env-overridable.
+  size_t budget = 16000000u;
+  if (const char *e = std::getenv("TUSDR_INST_BUDGET")) {
+    long v = std::atol(e);
+    if (v > 0) budget = size_t(v);
   }
+  size_t emitted = 0;
+  for (const auto &root : stage.GetRootPrims()) {
+    if (emitted >= budget) break;
+    emitted += CollectRTInstancePlacementsNext(
+        stage, root, matrix4d::identity(), tinyusdz::Purpose::Default,
+        opt.timecode, opt.mask, place, budget - emitted);
+  }
+  if (emitted >= budget)
+    std::cerr << "[vkInstanced] instance budget " << budget
+              << " reached; rendering a bounded subset (raise via "
+                 "TUSDR_INST_BUDGET).\n";
   if (scene.protos.empty() || scene.insts.empty()) return false;
 
   // World bounds = union of each instance's prototype AABB under its o2w.
@@ -523,6 +550,49 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     }
   }
 
+  // Graceful instance cap. The wide multi-TLAS builder splits the placements into
+  // ceil(N / 16M) TLAS slices (sharing one BLAS set), so a scene past the device
+  // TLAS maxInstanceCount (2^24) still renders in full -- the whole ~42.8M-instance
+  // Moana island fits. Cap only at a generous multi-slice ceiling (to bound VRAM /
+  // the K sequential dispatches) and keep the CAMERA-NEAREST placements past it.
+  // In practice the TUSDR_INST_BUDGET host-memory budget below binds first.
+  const uint64_t max_inst = 8ull * 16000000ull;  // 8 TLAS slices (~128M instances)
+  if (scene.insts.size() > max_inst) {
+    const Vec3 eye = camera.origin, fwd = camera.forward;
+    auto depth = [&](const GpuInstPlacement &p) {  // view-space depth of o2w origin
+      return (p.o2w[3] - eye.x) * fwd.x + (p.o2w[7] - eye.y) * fwd.y +
+             (p.o2w[11] - eye.z) * fwd.z;
+    };
+    std::nth_element(scene.insts.begin(), scene.insts.begin() + size_t(max_inst),
+                     scene.insts.end(),
+                     [&](const GpuInstPlacement &a, const GpuInstPlacement &b) {
+                       return depth(a) < depth(b);
+                     });
+    std::cerr << "[vkInstanced] capping " << scene.insts.size() << " -> " << max_inst
+              << " instances to fit the TLAS maxInstanceCount; keeping the "
+                 "camera-nearest subset.\n";
+    scene.insts.resize(size_t(max_inst));
+  }
+
+  // Prune prototypes no instance references (the cap / LOD can orphan many), so we
+  // don't build a BLAS per unused prototype. Remap the survivors compactly.
+  {
+    std::vector<uint32_t> remap(scene.protos.size(), 0xFFFFFFFFu);
+    std::vector<GpuInstProto> kept;
+    kept.reserve(scene.protos.size());
+    for (GpuInstPlacement &in : scene.insts) {
+      if (remap[in.proto] == 0xFFFFFFFFu) {
+        remap[in.proto] = uint32_t(kept.size());
+        kept.push_back(std::move(scene.protos[in.proto]));
+      }
+      in.proto = remap[in.proto];
+    }
+    if (kept.size() < scene.protos.size() && opt.stats)
+      std::cerr << "[vkInstanced] pruned " << scene.protos.size() << " -> "
+                << kept.size() << " referenced prototypes\n";
+    scene.protos.swap(kept);
+  }
+
   return RunVulkanLightRTInstanced(opt, scene, camera, out_height);
 }
 #endif  // HAVE_VULKAN
@@ -631,16 +701,12 @@ int main(int argc, char **argv) {
 
 #if defined(HAVE_VULKAN)
     // -vkInstanced: true two-level GPU TLAS (per-prototype BLAS shared across
-    // instances). Collect the expanded jobs, group by source prim into shared
-    // prototypes + placements, and render. On any failure (no shares, ray query
-    // unavailable, encoding overflow) fall through to the flat GPU path below.
+    // instances). TryRunInstancedVk STREAMS the expanded placements (grouping each
+    // by source prim into shared prototypes + per-instance transforms as it goes,
+    // no per-instance MeshJobNext), then renders. On any failure (no shares, ray
+    // query unavailable) it falls through to the flat GPU path below.
     if (opt.vulkan_instanced && opt.vulkan_rt) {
-      std::vector<MeshJobNext> mjobs;
-      for (const auto &root : stage.GetRootPrims())
-        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   tinyusdz::Purpose::Default, opt.timecode,
-                                   opt.mask, &mjobs, /*expand_instancers=*/true);
-      if (TryRunInstancedVk(stage, mjobs, opt)) return EXIT_SUCCESS;
+      if (TryRunInstancedVk(stage, opt)) return EXIT_SUCCESS;
       std::cerr << "[vkInstanced] falling back to the flat GPU path.\n";
     }
 #endif
