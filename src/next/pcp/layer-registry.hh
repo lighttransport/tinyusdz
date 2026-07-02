@@ -23,6 +23,7 @@
 
 namespace tinyusdz {
 namespace next {
+struct USDAParseProfile;
 namespace pcp {
 
 struct LayerLoadOptions {
@@ -39,6 +40,13 @@ struct LayerLoadOptions {
 
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
+
+  /// USDA batched async worker-pool parse for simple numeric arrays
+  /// (attribute defaults and timeSample values). Bit-identical output.
+  bool parse_async_arrays = true;
+
+  /// Optional USDA parser profile accumulator.
+  USDAParseProfile* usda_profile = nullptr;
 
   /// USDC crate-reader limits (for nested crate input and self-contained `.usdc`
   /// stages). Shared with `--parse-usdc-*` benching where very large scenes

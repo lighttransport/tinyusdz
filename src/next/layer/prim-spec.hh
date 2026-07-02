@@ -651,8 +651,11 @@ public:
   // TimeSamples (stored separately for efficiency)
   // ============================================================
 
-  /// Add a time sample for a property
-  void add_time_sample(PropNameId name_id, double time, Value value);
+  /// Add a time sample for a property. `dedup=false` skips content-hash
+  /// deduplication — required for deferred-fill values whose payload arrives
+  /// later (async USDA array parse).
+  void add_time_sample(PropNameId name_id, double time, Value value,
+                       bool dedup = true);
 
   /// Get time samples for a property (returns vector of (time, value_offset))
   const std::vector<std::pair<double, uint32_t>>* time_samples(PropNameId name_id) const;

@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
+#include "next/parser/ascii-parser.hh"
 #include "next/pcp/cache.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -153,6 +154,38 @@ static void emit_lines(const std::string &msgs, const char *prefix) {
   }
 }
 
+static void PrintUSDAParseProfile(const USDAParseProfile& p) {
+  std::fprintf(stderr,
+               "[next_usda_profile] input=%llu mmap=%d open=%.1fms read=%.1fms "
+               "parse=%.1fms metadata=%.1fms prims=%.1fms finalize=%.1fms\n",
+               static_cast<unsigned long long>(p.input_bytes),
+               p.used_mmap ? 1 : 0, p.file_open_ms, p.file_read_ms,
+               p.parser_ms, p.stage_metadata_ms, p.prims_ms, p.finalize_ms);
+  std::fprintf(stderr,
+               "[next_usda_profile] prims=%llu properties=%llu timeSamples=%llu "
+               "arrays=%llu simple=%llu arrayBytes=%llu\n",
+               static_cast<unsigned long long>(p.prims),
+               static_cast<unsigned long long>(p.properties),
+               static_cast<unsigned long long>(p.time_samples),
+               static_cast<unsigned long long>(p.arrays),
+               static_cast<unsigned long long>(p.simple_arrays),
+               static_cast<unsigned long long>(p.array_bytes));
+  std::fprintf(stderr,
+               "[next_usda_profile] numericArrays=%llu numericScalars=%llu "
+               "numericBytes=%llu parallelArrays=%llu parallelScalars=%llu "
+               "parallelBytes=%llu parallelFallbacks=%llu "
+               "deferredArrays=%llu deferredBytes=%llu\n",
+               static_cast<unsigned long long>(p.numeric_arrays),
+               static_cast<unsigned long long>(p.numeric_array_scalars),
+               static_cast<unsigned long long>(p.numeric_array_bytes),
+               static_cast<unsigned long long>(p.parallel_arrays),
+               static_cast<unsigned long long>(p.parallel_array_scalars),
+               static_cast<unsigned long long>(p.parallel_array_bytes),
+               static_cast<unsigned long long>(p.parallel_array_fallbacks),
+               static_cast<unsigned long long>(p.deferred_arrays),
+               static_cast<unsigned long long>(p.deferred_array_bytes));
+}
+
 int main(int argc, char **argv) {
   bool flatten = false;
   // Compose-free parse->write: LoadLayerFromFile (parse only, no composition) ->
@@ -161,6 +194,7 @@ int main(int argc, char **argv) {
   bool rewrite_layer = false;
   bool parse_usdc_memory = false;
   bool parse_usdc_tempfs = false;
+  bool parse_only = false;
   bool finalize_usdc_stage = true;
   bool openusd_compat = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
@@ -175,6 +209,8 @@ int main(int argc, char **argv) {
   // default. Independent from write/thread flags below.
   int compose_threads = 1;
   bool timing = false;
+  bool parse_profile = false;
+  bool async_arrays = true;
   bool write_usdc_memory = false;
   USDCReadCaps read_caps;
   bool usdc_caps_explicit = false;
@@ -194,6 +230,8 @@ int main(int argc, char **argv) {
       parse_usdc_memory = true;
     } else if (std::strcmp(argv[i], "--parse-usdc-tempfs") == 0) {
       parse_usdc_tempfs = true;
+    } else if (std::strcmp(argv[i], "--parse-only") == 0) {
+      parse_only = true;
     } else if (std::strcmp(argv[i], "--no-stage-finalize") == 0) {
       finalize_usdc_stage = false;
     } else if (std::strcmp(argv[i], "-l") == 0) {
@@ -236,6 +274,12 @@ int main(int argc, char **argv) {
       if (compose_threads < 1) compose_threads = 1;
     } else if (std::strcmp(argv[i], "--timing") == 0) {
       timing = true;
+    } else if (std::strcmp(argv[i], "--parse-profile") == 0) {
+      parse_profile = true;
+    } else if (std::strcmp(argv[i], "--async-arrays") == 0) {
+      async_arrays = true;
+    } else if (std::strcmp(argv[i], "--no-async-arrays") == 0) {
+      async_arrays = false;
     } else if (std::strcmp(argv[i], "--parse-threads") == 0 && i + 1 < argc) {
       if (!ParseIntArg(argv[++i], &parse_threads) || parse_threads < 0) {
         std::fprintf(stderr,
@@ -328,10 +372,12 @@ int main(int argc, char **argv) {
                          "[--write-usdc-memory] "
                          "[--parse-usdc-memory] "
                          "[--parse-usdc-tempfs] "
+                         "[--parse-only] "
                          "[--write-usdc-out <path.usdc>] "
                          "[--temp-dir <dir>] "
                          "[--no-stage-finalize] "
-                         "[--timing] "
+                         "[--timing] [--parse-profile] "
+                         "[--no-async-arrays] "
                          "[--usdc-max N] "
                          "[--usdc-max-fields N] [--usdc-max-specs N] [--usdc-max-paths N] "
                          "[--usdc-max-tokens N] [--usdc-max-strings N] [--usdc-max-array-elements N] "
@@ -348,6 +394,10 @@ int main(int argc, char **argv) {
   if (rewrite_layer && flatten) {
     std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
                          "(rewrite-layer is a compose-free parse->write).\n");
+    return 2;
+  }
+  if (parse_only && !rewrite_layer) {
+    std::fprintf(stderr, "--parse-only requires --rewrite-layer.\n");
     return 2;
   }
 
@@ -469,7 +519,10 @@ int main(int argc, char **argv) {
     // Parse-thread hint (large-array parallel parse): explicit arg to the library
     // (which no longer reads the environment itself). 0 = auto, 1 = serial.
     pcp::LayerLoadOptions lopts;
+    USDAParseProfile usda_profile;
     lopts.parse_num_threads = parse_threads;
+    lopts.parse_async_arrays = async_arrays;
+    lopts.usda_profile = parse_profile ? &usda_profile : nullptr;
     lopts.finalize_usdc_stage = finalize_usdc_stage;
     lopts.enable_usdc_timing = timing;
     ApplyReadCapsFromValues(read_caps, &lopts, nullptr);
@@ -481,6 +534,28 @@ int main(int argc, char **argv) {
       return 1;
     }
     if (!err.empty()) emit_lines(err, "WARN : ");
+    if (parse_profile) {
+      PrintUSDAParseProfile(usda_profile);
+    }
+    if (parse_only) {
+      if (timing) {
+        const double pms = ms(t_parsed - t_start);
+        std::fprintf(stderr,
+                     "[next_usdcat] parse=%.1fms total=%.1fms\n",
+                     pms, ms(t_parsed - t_start));
+        long insz = 0;
+        if (std::FILE* inf = std::fopen(filename, "rb")) {
+          std::fseek(inf, 0, SEEK_END);
+          insz = std::ftell(inf);
+          std::fclose(inf);
+        }
+        if (insz > 0 && pms > 0.0) {
+          std::fprintf(stderr, "[next_usdcat] parsed %ld bytes = %.0f MB/s\n",
+                       insz, double(insz) / 1048576.0 / (pms / 1000.0));
+        }
+      }
+      return 0;
+    }
 
     if (parse_usdc_memory || parse_usdc_tempfs || write_usdc_out_path) {
       USDCWriteOptions wopts_usdc;

@@ -72,6 +72,9 @@ bool AsciiParser::Impl::ParsePrim() {
   }
 
   builder_->end_prim();
+  if (options_.profile) {
+    options_.profile->prims++;
+  }
   return true;
 }
 
@@ -238,7 +241,7 @@ bool AsciiParser::Impl::ParseAttribute() {
     } else {
       ParseResult result;
       if (is_array) {
-        result = ParseArrayValue(*lexer_, type_id);
+        result = ParseArrayValueMaybeDeferred(type_id, nullptr);
       } else {
         result = ParseValue(*lexer_, type_id);
       }
@@ -317,6 +320,9 @@ bool AsciiParser::Impl::ParseAttribute() {
     builder_->add_property(attr_name, Value(), flags);
   }
 
+  if (options_.profile) {
+    options_.profile->properties++;
+  }
   return true;
 }
 

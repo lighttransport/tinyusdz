@@ -12,6 +12,8 @@
 namespace tinyusdz {
 namespace next {
 
+struct USDAParseProfile;
+
 /// Token types
 enum class TokenType : uint8_t {
   Invalid,
@@ -109,9 +111,13 @@ public:
   /// array contains ONLY "plain" bytes (no comment `#`, string/asset quote, or
   /// nested `[` ) — i.e. all commas/parens are pure structural separators, which
   /// lets a numeric array be safely split at separator boundaries for parallel
-  /// parsing.
+  /// parsing. When `out_commas` is non-null it receives the number of commas
+  /// seen in the SIMD-scanned (plain) bytes; trustworthy ONLY when the array is
+  /// simple, where it predicts the scalar count (scalars = commas + 1) so the
+  /// parser can pre-size its output.
   bool capture_bracketed_literal(const char** out_data, size_t* out_len,
-                                 bool* out_simple = nullptr);
+                                 bool* out_simple = nullptr,
+                                 size_t* out_commas = nullptr);
 
   /// Get error message if in error state
   const std::string& error() const { return error_; }
@@ -127,6 +133,9 @@ public:
   /// the lexer because the stateless value-parser array helpers receive only the
   /// lexer; replaces the former TINYUSDZ_NEXT_NUM_THREADS env read.
   int num_threads = 0;
+
+  /// Optional parser profiling sink.
+  USDAParseProfile* profile = nullptr;
 
 private:
   const char* data_;

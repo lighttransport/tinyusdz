@@ -362,6 +362,29 @@ void test_value_parser() {
     assert((*arr)[0] == 1.0f);
   }
 
+  // Numeric arrays use fast_float and accept USD special float literals.
+  {
+    const char* input = "[+1.25, inf, -inf, nan]";
+    Lexer lexer(input, std::strlen(input));
+    ParseResult result = ParseArrayValue(lexer, TypeId::Float);
+    assert(result.success);
+    const std::vector<float>* arr = result.value.as_float_array();
+    assert(arr != nullptr);
+    assert(arr->size() == 4);
+    assert((*arr)[0] == 1.25f);
+    assert(std::isinf((*arr)[1]) && (*arr)[1] > 0.0f);
+    assert(std::isinf((*arr)[2]) && (*arr)[2] < 0.0f);
+    assert(std::isnan((*arr)[3]));
+  }
+
+  // Prefix-only numeric parses must be rejected (`1foo` is not `1`).
+  {
+    const char* input = "[1foo]";
+    Lexer lexer(input, std::strlen(input));
+    ParseResult result = ParseArrayValue(lexer, TypeId::Float);
+    assert(!result.success);
+  }
+
   std::cout << "  ValueParser tests passed!" << std::endl;
 }
 
@@ -410,6 +433,89 @@ def Xform "World" {
   assert(cube.IsValid());
   assert(cube.GetTypeName() == "Mesh");
   assert(cube.HasProperty("points"));
+
+  // Exercise the batched async array parse (attribute defaults + timeSamples)
+  // when thread support is enabled. Non-threaded builds keep the same option
+  // as a no-op.
+  {
+    std::string points;
+    points.reserve(32000);
+    points += "[";
+    for (int i = 0; i < 2048; i++) {
+      if (i) points += ", ";
+      points += "(" + std::to_string(i) + ", " + std::to_string(i + 1) +
+                ", " + std::to_string(i + 2) + ")";
+    }
+    points += "]";
+    std::string indices = "[";
+    for (int i = 0; i < 2048; i++) {
+      if (i) indices += ", ";
+      indices += std::to_string(i);
+    }
+    indices += "]";
+    std::string async_input =
+        "#usda 1.0\n"
+        "def Mesh \"AnimMesh\" {\n"
+        "  float3[] points = " + points + "\n"
+        "  int[] faceVertexIndices = " + indices + "\n"
+        "  float3[] points.timeSamples = {\n"
+        "    0: " + points + ",\n"
+        "    1: " + points + "\n"
+        "  }\n"
+        "}\n";
+    ParseOptions async_opts;
+    async_opts.num_threads = 2;
+    async_opts.async_arrays = true;
+    AsciiParser async_parser(async_opts);
+    bool async_success = async_parser.Parse(async_input.data(),
+                                            async_input.size());
+    if (!async_success) {
+      std::cout << "Async array parse errors:" << std::endl;
+      for (const auto& err : async_parser.GetErrors()) {
+        std::cout << "  Line " << err.line << ": " << err.message << std::endl;
+      }
+    }
+    assert(async_success);
+    Stage async_stage = async_parser.TakeStage();
+    UsdPrim anim_mesh = async_stage.GetPrimAtPath("/AnimMesh");
+    assert(anim_mesh.IsValid());
+    assert(anim_mesh.HasProperty("points"));
+    assert(anim_mesh.HasProperty("faceVertexIndices"));
+    // Deferred payloads must be fully filled after Parse() returns.
+    {
+      const PrimSpec* spec = anim_mesh.GetPrimSpec();
+      assert(spec);
+      const PropNameId pid = GetPropNameTable().intern("points");
+      const PropSlot* slot = spec->property(pid);
+      assert(slot);
+      const Value* pv = spec->property_value(pid);
+      assert(pv);
+      assert(pv->is_array());
+      assert(pv->array_size() == 2048);
+      const std::vector<float>* fa = pv->as_float_array();
+      assert(fa);
+      assert(fa->size() == 2048 * 3);
+      assert((*fa)[0] == 0.0f && (*fa)[1] == 1.0f && (*fa)[2] == 2.0f);
+      assert((*fa)[3 * 2047 + 0] == 2047.0f);
+      const PropNameId iid = GetPropNameTable().intern("faceVertexIndices");
+      const Value* iv = spec->property_value(iid);
+      assert(iv);
+      const std::vector<int32_t>* ia = iv->as_int_array();
+      assert(ia && ia->size() == 2048);
+      assert((*ia)[0] == 0 && (*ia)[2047] == 2047);
+    }
+
+    // A malformed array inside a deferred batch must fail the load.
+    std::string bad_input =
+        "#usda 1.0\n"
+        "def Mesh \"Bad\" {\n"
+        "  int[] faceVertexIndices = " + indices.substr(0, indices.size() - 1) +
+        ",]\n"
+        "}\n";
+    AsciiParser bad_parser(async_opts);
+    bool bad_success = bad_parser.Parse(bad_input.data(), bad_input.size());
+    assert(!bad_success);
+  }
 
   std::cout << "  AsciiParser tests passed!" << std::endl;
 }

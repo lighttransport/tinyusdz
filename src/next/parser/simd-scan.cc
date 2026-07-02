@@ -56,17 +56,22 @@ inline bool IsStructural(char c) {
 
 // Scalar reference (also the SSE2/NEON path's <16-byte tail handler and the
 // non-x86/non-AArch64 path, so it is always compiled).
-const char* ScanScalar(const char* p, const char* end, size_t* newlines) {
+const char* ScanScalar(const char* p, const char* end, size_t* newlines,
+                       size_t* commas) {
   size_t nl = 0;
+  size_t cm = 0;
   for (; p < end; ++p) {
     const char c = *p;
     if (IsStructural(c)) {
       *newlines += nl;
+      *commas += cm;
       return p;
     }
     if (c == '\n') ++nl;
+    if (c == ',') ++cm;
   }
   *newlines += nl;
+  *commas += cm;
   return end;
 }
 
@@ -100,7 +105,7 @@ inline unsigned LowestSetBit(unsigned x) {
 }  // namespace
 
 const char* ScanArrayStructural(const char* p, const char* end,
-                                size_t* newlines) {
+                                size_t* newlines, size_t* commas) {
   const __m128i lb = _mm_set1_epi8('[');
   const __m128i rb = _mm_set1_epi8(']');
   const __m128i dq = _mm_set1_epi8('"');
@@ -108,8 +113,10 @@ const char* ScanArrayStructural(const char* p, const char* end,
   const __m128i at = _mm_set1_epi8('@');
   const __m128i hs = _mm_set1_epi8('#');
   const __m128i nlv = _mm_set1_epi8('\n');
+  const __m128i cmv = _mm_set1_epi8(',');
 
   size_t nl = 0;
+  size_t cm = 0;
   while (end - p >= 16) {
     const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
     __m128i m = _mm_or_si128(_mm_cmpeq_epi8(v, lb), _mm_cmpeq_epi8(v, rb));
@@ -122,18 +129,26 @@ const char* ScanArrayStructural(const char* p, const char* end,
     const unsigned nlmask =
         static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(v, nlv))) &
         0xFFFFu;
+    const unsigned cmmask =
+        static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(v, cmv))) &
+        0xFFFFu;
     if (mask) {
       const unsigned idx = LowestSetBit(mask);
-      // newlines strictly before the structural byte
-      nl += PopCount16(nlmask & ((1u << idx) - 1u));
+      // newlines/commas strictly before the structural byte
+      const unsigned before = (1u << idx) - 1u;
+      nl += PopCount16(nlmask & before);
+      cm += PopCount16(cmmask & before);
       *newlines += nl;
+      *commas += cm;
       return p + idx;
     }
     if (nlmask) nl += PopCount16(nlmask);
+    if (cmmask) cm += PopCount16(cmmask);
     p += 16;
   }
   *newlines += nl;
-  return ScanScalar(p, end, newlines);  // <16-byte tail
+  *commas += cm;
+  return ScanScalar(p, end, newlines, commas);  // <16-byte tail
 }
 
 const char* Backend() { return "sse2"; }
@@ -141,7 +156,7 @@ const char* Backend() { return "sse2"; }
 #elif defined(TINYUSDZ_SIMDSCAN_NEON)
 
 const char* ScanArrayStructural(const char* p, const char* end,
-                                size_t* newlines) {
+                                size_t* newlines, size_t* commas) {
   const uint8x16_t lb = vdupq_n_u8('[');
   const uint8x16_t rb = vdupq_n_u8(']');
   const uint8x16_t dq = vdupq_n_u8('"');
@@ -149,9 +164,11 @@ const char* ScanArrayStructural(const char* p, const char* end,
   const uint8x16_t at = vdupq_n_u8('@');
   const uint8x16_t hs = vdupq_n_u8('#');
   const uint8x16_t nlv = vdupq_n_u8('\n');
+  const uint8x16_t cmv = vdupq_n_u8(',');
   const uint8x16_t one = vdupq_n_u8(1);
 
   size_t nl = 0;
+  size_t cm = 0;
   while (end - p >= 16) {
     const uint8x16_t v = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
     uint8x16_t m = vorrq_u8(vceqq_u8(v, lb), vceqq_u8(v, rb));
@@ -168,20 +185,24 @@ const char* ScanArrayStructural(const char* p, const char* end,
         vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0);
     if (mmask) {
       const int idx = static_cast<int>(__builtin_ctzll(mmask) >> 2);
-      // newlines strictly before the structural byte (scalar; idx < 16)
+      // newlines/commas strictly before the structural byte (scalar; idx < 16)
       for (int i = 0; i < idx; ++i) {
         if (p[i] == '\n') ++nl;
+        if (p[i] == ',') ++cm;
       }
       *newlines += nl;
+      *commas += cm;
       return p + idx;
     }
-    // No structural byte in this block: add every newline in it. vaddvq_u8 of the
-    // {0,1} per-byte mask is the byte popcount (<=16, fits in u8).
+    // No structural byte in this block: add every newline/comma in it. vaddvq_u8
+    // of the {0,1} per-byte mask is the byte popcount (<=16, fits in u8).
     nl += vaddvq_u8(vandq_u8(vceqq_u8(v, nlv), one));
+    cm += vaddvq_u8(vandq_u8(vceqq_u8(v, cmv), one));
     p += 16;
   }
   *newlines += nl;
-  return ScanScalar(p, end, newlines);  // <16-byte tail
+  *commas += cm;
+  return ScanScalar(p, end, newlines, commas);  // <16-byte tail
 }
 
 const char* Backend() { return "neon"; }
@@ -189,8 +210,8 @@ const char* Backend() { return "neon"; }
 #else  // no SIMD backend: scalar (WASM / disabled / other archs; identical result)
 
 const char* ScanArrayStructural(const char* p, const char* end,
-                                size_t* newlines) {
-  return ScanScalar(p, end, newlines);
+                                size_t* newlines, size_t* commas) {
+  return ScanScalar(p, end, newlines, commas);
 }
 
 const char* Backend() { return "scalar"; }

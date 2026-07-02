@@ -187,8 +187,10 @@ public:
   /// Add property to current prim
   void add_property(std::string_view name, Value value, uint16_t flags = 0);
 
-  /// Add time sample to current prim
-  void add_time_sample(std::string_view prop_name, double time, Value value);
+  /// Add time sample to current prim. `dedup=false` skips content-hash dedup
+  /// (deferred-fill values from the async USDA array parse; see PrimSpec).
+  void add_time_sample(std::string_view prop_name, double time, Value value,
+                       bool dedup = true);
 
   /// Add relationship to current prim
   void add_relationship(std::string_view name, const Path& target);
