@@ -59,6 +59,15 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 
   reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
 
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  // The async fieldsets decode must be joined on EVERY exit (it writes Impl
+  // members and installs a decode ctx over the source buffer).
+  struct FieldsetsJoinGuard {
+    Impl* impl;
+    ~FieldsetsJoinGuard() { impl->JoinFieldsetsDecode(); }
+  } fieldsets_join_guard{this};
+#endif
+
   auto t0 = Clock::now();
   if (!ReadBootstrap()) return std::move(result_);
   auto t1 = Clock::now();
@@ -92,6 +101,7 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   if (!ReadPaths()) return std::move(result_);
   t1 = Clock::now();
   log_phase("paths", t0, t1);
+  if (!JoinFieldsetsDecode()) return std::move(result_);
   t0 = Clock::now();
   if (!BuildStage()) return std::move(result_);
   t1 = Clock::now();

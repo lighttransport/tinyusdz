@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
+#include <condition_variable>
 #include <mutex>
 #endif
 
@@ -150,6 +151,15 @@ class CrateReader::Impl {
   // Diagnostics can be appended from build_stage worker threads.
   std::mutex diag_mu_;
 #endif
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  struct PendingFieldsetsDecode {
+    std::mutex mu;
+    std::condition_variable cv;
+    bool done = false;
+    bool ok = false;
+  };
+  std::unique_ptr<PendingFieldsetsDecode> fieldsets_pending_;
+#endif
 
   CrateVersion version_;
   CrateTOC toc_;
@@ -172,6 +182,12 @@ class CrateReader::Impl {
   bool ReadStrings();
   bool ReadFields();
   bool ReadFieldsets();
+  // Fieldset payload decode, split out so the parallel gate can run it on the
+  // pool overlapped with the SPECS/PATHS section reads (nothing reads the
+  // fieldset members until BuildStage). Join before BuildStage / any return.
+  bool DecodeFieldsetsPayload(const std::vector<uint8_t>& data,
+                              uint64_t num_fieldsets);
+  bool JoinFieldsetsDecode();
   bool ReadSpecs();
   bool ReadPaths();
   bool BuildStage();

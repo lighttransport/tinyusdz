@@ -533,6 +533,8 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
 
   // Finalize the layer
   const auto t_finalize_start = ProfileClock::now();
+  bool path_index_prebuilt = false;
+  (void)path_index_prebuilt;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // Pre-sort property indices in parallel (finalize_properties is idempotent,
   // so the serial finalize() sweep below no-ops per prim). Only when the
@@ -551,9 +553,14 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
             std::max<size_t>(2048, total_prims / (static_cast<size_t>(nt) * 4));
         std::mutex fin_mu;
         std::condition_variable fin_cv;
-        size_t fin_remaining = 0;
+        size_t fin_remaining = 1;  // +1: path-index build task
         for (size_t b = 0; b < total_prims; b += fchunk) fin_remaining++;
-        size_t launched = 0;
+        auto pidx_task = [&]() {
+          layer_->build_path_index();
+          std::lock_guard<std::mutex> lock(fin_mu);
+          if (--fin_remaining == 0) fin_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, pidx_task)) pidx_task();
         for (size_t b = 0; b < total_prims; b += fchunk) {
           const size_t e = std::min(total_prims, b + fchunk);
           auto task = [&, b, e]() {
@@ -564,18 +571,18 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
             std::lock_guard<std::mutex> lock(fin_mu);
             if (--fin_remaining == 0) fin_cv.notify_all();
           };
-          launched++;
           if (!SubmitPoolTask(options_.num_threads, task)) task();
         }
-        if (launched) {
+        {
           std::unique_lock<std::mutex> lock(fin_mu);
           fin_cv.wait(lock, [&]() { return fin_remaining == 0; });
         }
+        path_index_prebuilt = true;
       }
     }
   }
 #endif
-  builder_->finalize();
+  builder_->finalize(path_index_prebuilt);
   const auto t_finalize_end = ProfileClock::now();
 
   // Create stage from layer
