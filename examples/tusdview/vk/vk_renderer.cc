@@ -4126,6 +4126,11 @@ void VulkanRenderer::rebuildTlas() {
       d.nrm2[k] = m.normalMat[2 * 3 + k];
     }
     if (m.indexCount < 3) continue;
+    // Hidden purposes stay out of the TLAS entirely (no BLAS, no instances):
+    // matches the raster visibility default and keeps e.g. Caldera's 26M-tri
+    // guide breadcrumb planes from engulfing the RT camera.
+    if (!((rtPurposeMask_ >> (static_cast<uint32_t>(m.purposeId) & 3u)) & 1u))
+      continue;
     RtLodProto p;
     p.instanceCount = static_cast<uint32_t>(m.instanceXforms.size() / 12);
     p.instanceXforms = p.instanceCount ? m.instanceXforms.data() : nullptr;
@@ -4185,11 +4190,22 @@ void VulkanRenderer::rebuildTlas() {
 
   insts.reserve(sel.size());
   instInfos.reserve(sel.size());
+  uint32_t skippedNoBlas = 0;
   for (const RtLodInstance& s : sel) {
     const bool proxy = (s.level == RtLod::Proxy);
     const VkDeviceAddress blasRef =
         proxy ? boxMesh_.blasAddr : meshes_[s.meshId].blasAddr;
-    if (blasRef == 0) continue;  // BLAS build failed -> skip this instance
+    if (blasRef == 0) {  // BLAS build failed -> skip this instance (and say so)
+      if (skippedNoBlas++ == 0 || rtTiming) {
+        std::fprintf(stderr,
+                     "[vk_rt] WARNING: mesh %u has no BLAS (%u tris, vbo=%d "
+                     "vboAddr=%d) -- instance dropped from the TLAS\n",
+                     s.meshId, meshes_[s.meshId].indexCount / 3,
+                     meshes_[s.meshId].vbo != VK_NULL_HANDLE,
+                     meshes_[s.meshId].vboAddr != 0);
+      }
+      continue;
+    }
     VkAccelerationStructureInstanceKHR inst{};
     inst.instanceCustomIndex = s.meshId & 0xFFFFFFu;
     inst.mask = 0xFF;
@@ -4813,6 +4829,14 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
                         params.meshVisible + params.meshVisibleCount);
   } else {
     meshVisible_.clear();
+  }
+
+  // Purpose visibility for the RT path: meshes of hidden purposes are left out
+  // of the TLAS (rebuildTlas), so a toggle needs a rebuild + accumulation reset.
+  if (params.purposeVisibleMask != rtPurposeMask_) {
+    rtPurposeMask_ = params.purposeVisibleMask;
+    tlasDirty_ = true;
+    ++rtAccumGen_;
   }
 }
 

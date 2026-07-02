@@ -3359,6 +3359,12 @@ void Gui::renderViewportScene(FramePacket* packet) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
   }
+  // Purpose visibility for the RT TLAS (PurposeId bit order: default, render,
+  // proxy, guide). Raster gets the same filtering via viewVisible_.
+  p.purposeVisibleMask = (showPurposeDefault_ ? 1u : 0u) |
+                         (showPurposeRender_ ? 2u : 0u) |
+                         (showPurposeProxy_ ? 4u : 0u) |
+                         (showPurposeGuide_ ? 8u : 0u);
   buildHelpers();
   p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
   p.helperLineVertexCount = static_cast<int>(helperLines_.size());
