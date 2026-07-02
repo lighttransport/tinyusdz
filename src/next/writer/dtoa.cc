@@ -12,9 +12,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 #include "../../external/dragonbox/dragonbox.h"
+#include "../../external/zmij/zmij.h"
 
 // GCC's optimizer mis-analyses the inlined two-digit writes below and reports a
 // bogus out-of-bounds (offset ~2^32 into a 32-byte buffer). The buffer is always
@@ -214,11 +216,22 @@ char* dtoa_impl_t(const Float f, char* buf, int max_digits) {
   return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
 }
 
+// Escape hatch: TINYUSDZ_NO_ZMIJ_DTOA=1 forces the dragonbox-only path (the fast
+// path is proven byte-identical, so this is only for A/B timing or platform
+// safety). Read once at load time -> a plain global load in the hot path (no
+// per-call magic-static guard).
+const bool g_zmij_fast_dtoa = (std::getenv("TINYUSDZ_NO_ZMIJ_DTOA") == nullptr);
+
 char* dtoa_impl(const double f, char* buf) {
-  uint64_t bits;
-  std::memcpy(&bits, &f, sizeof(double));
-  if (bits == 0x3FF0000000000000ULL) { *buf++ = '1'; return buf; }
-  if (bits == 0xBFF0000000000000ULL) { *buf++ = '-'; *buf++ = '1'; return buf; }
+  // Fast path: zmij's fixed-notation SIMD block emits usdcat notation directly
+  // for the common leading-exponent window (~all authored coords/normals/uvs);
+  // returns nullptr for special / scientific / out-of-window values, which fall
+  // through to the dragonbox renderer. Proven byte-identical to that fallback
+  // across all 2^32 floats + 1e9 doubles (sandbox/dtoa exhaustive gate). ~2x on
+  // realistic data. REQUIRES buf capacity >= kDtoaBufSize (SIMD 16-byte stores).
+  if (g_zmij_fast_dtoa) {
+    if (char* e = zmij::write_usd_fast(buf, f)) return e;
+  }
   return dtoa_impl_t(f, buf, /*max_digits=*/17);
 }
 
@@ -312,23 +325,23 @@ char* dtoa_g_impl(double f, char* buf, int precision) {
 }
 
 char* dtoa_impl(const float f, char* buf) {
-  uint32_t bits;
-  std::memcpy(&bits, &f, sizeof(float));
-  if (bits == 0x3F800000U) { *buf++ = '1'; return buf; }
-  if (bits == 0xBF800000U) { *buf++ = '-'; *buf++ = '1'; return buf; }
+  // See dtoa_impl(double): zmij usdcat fast path, dragonbox fallback.
+  if (g_zmij_fast_dtoa) {
+    if (char* e = zmij::write_usd_fast(buf, f)) return e;
+  }
   return dtoa_impl_t(f, buf, /*max_digits=*/9);
 }
 
 }  // namespace
 
 std::string dtos(float v) {
-  char buffer[24];
+  char buffer[kDtoaBufSize];
   char* end = dtoa_impl(v, buffer);
   return std::string(buffer, end);
 }
 
 std::string dtos(double v) {
-  char buffer[32];
+  char buffer[kDtoaBufSize];
   char* end = dtoa_impl(v, buffer);
   return std::string(buffer, end);
 }
@@ -351,12 +364,12 @@ size_t dtos_to(char* dst, double v) {
 // Append variants: format straight into `out` with no intermediate std::string,
 // reusing the exact same dtoa_impl as dtos() (byte-for-byte identical result).
 void dtos_append(std::string& out, float v) {
-  char buffer[24];
+  char buffer[kDtoaBufSize];
   out.append(buffer, dtos_to(buffer, v));
 }
 
 void dtos_append(std::string& out, double v) {
-  char buffer[32];
+  char buffer[kDtoaBufSize];
   out.append(buffer, dtos_to(buffer, v));
 }
 

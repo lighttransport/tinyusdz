@@ -101,12 +101,12 @@ class ChunkedStream {
     append(t, n < sizeof(t) ? n : sizeof(t));
   }
   void append_float(float v) {
-    char t[32];
+    char t[kDtoaBufSize];  // >= dtos_to's SIMD-overshoot requirement
     size_t n = dtos_to(t, v);
     append(t, n < sizeof(t) ? n : sizeof(t));
   }
   void append_double(double v) {
-    char t[32];
+    char t[kDtoaBufSize];
     size_t n = dtos_to(t, v);
     append(t, n < sizeof(t) ? n : sizeof(t));
   }
