@@ -554,7 +554,6 @@
 
       uint64_t payload = vrep.payload();
       if (payload != 0 && payload < value_offsets_.size()) {
-        uint64_t raw_before = vrep_raw;
         uint64_t abs_offset = value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
         vrep_raw = ValueRep::Make(vrep.type_id(), abs_offset,
                                    vrep.is_array(), false,
