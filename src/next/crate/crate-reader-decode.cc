@@ -189,16 +189,16 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
 
   auto read_run = [&]() -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
+    auto& idxs = array_scratch().u32_indices;
     idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
+    if (!reader()->read_u32_array(idxs, static_cast<size_t>(n))) return false;
     for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
       const uint32_t idx = idxs[i];
       if (idx < paths_.size()) {
@@ -236,7 +236,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   //   0x20 prepended, 0x40 appended. Read order matches the legacy reader:
   //   explicit, added, prepended, appended, deleted, ordered.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
   if ((bits & kHasExplicit) && !read_run()) return false;
@@ -260,7 +260,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
 
   auto append_path_index = [&](uint32_t idx) -> bool {
     if (idx >= paths_.size()) {
@@ -290,12 +290,12 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
 
   auto read_run = [&]() -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
+    auto& idxs = array_scratch().u32_indices;
     idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
+    if (!reader()->read_u32_array(idxs, static_cast<size_t>(n))) return false;
     for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
       if (!append_path_index(idxs[i])) return false;
     }
@@ -311,7 +311,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   //   0x20 prepended, 0x40 appended. Read order matches the legacy reader:
   //   explicit, added, prepended, appended, deleted, ordered.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
   if ((bits & kHasExplicit) && !read_run()) return false;
@@ -330,7 +330,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
 
   // Payload items carry a LayerOffset only from crate 0.8.0 on.
   const bool payload_has_offset =
@@ -338,16 +338,16 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
   auto read_run = [&](bool keep) -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     if (n == 0) return true;
 
     const size_t run_count = static_cast<size_t>(n);
-    auto& idxs = array_scratch_.u32_indices;
+    auto& idxs = array_scratch().u32_indices;
     size_t pair_count = 0;
     if (!safe::mul(run_count, size_t(2), &pair_count)) return false;
     idxs.resize(pair_count);
-    if (!reader_->read_u32_array(idxs, pair_count)) return false;
+    if (!reader()->read_u32_array(idxs, pair_count)) return false;
 
     if (payload_has_offset) {
       if (keep) {
@@ -358,13 +358,13 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
           uint32_t asset_idx = idxs[base];
           uint32_t path_idx = idxs[base + 1];
           uint64_t dict_count = 0;
-          if (!reader_->read_u64(dict_count)) return false;
+          if (!reader()->read_u64(dict_count)) return false;
           if (!is_payload && dict_count != 0) {
             AddWarning("Reference customData is not supported; arc dropped");
             return false;
           }
           double offset = 0.0, scale = 1.0;
-          if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+          if (!reader()->read_f64(offset) || !reader()->read_f64(scale)) {
             return false;
           }
 
@@ -408,19 +408,19 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
         if (!is_payload) {
           for (size_t i = 0; i < run_count; ++i) {
             uint64_t dict_count = 0;
-            if (!reader_->read_u64(dict_count)) return false;
+            if (!reader()->read_u64(dict_count)) return false;
             if (dict_count != 0) {
               AddWarning("Reference customData is not supported; arc dropped");
               return false;
             }
-            if (!reader_->skip(sizeof(double) * 2)) return false;
+            if (!reader()->skip(sizeof(double) * 2)) return false;
           }
         } else {
           const size_t bytes_per_item =
               sizeof(uint64_t) + sizeof(double) * 2;
           size_t skip_bytes = 0;
           if (!safe::mul(run_count, bytes_per_item, &skip_bytes)) return false;
-          if (!reader_->skip(skip_bytes)) return false;
+          if (!reader()->skip(skip_bytes)) return false;
         }
       }
     } else {
@@ -430,7 +430,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
         const size_t base = i * 2;
         if (!is_payload) {
           uint64_t dict_count = 0;
-          if (!reader_->read_u64(dict_count)) return false;
+          if (!reader()->read_u64(dict_count)) return false;
           if (dict_count != 0) {
             AddWarning("Reference customData is not supported; arc dropped");
             return false;
@@ -466,7 +466,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
   // ListOpHeader bits / read order match DecodePathTargets.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
   if ((bits & kHasExplicit) && !read_run(true)) return false;
@@ -485,18 +485,18 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     out.clear();
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
+  if (!reader()->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
 
   out.clear();
   out.reserve(static_cast<size_t>(count));
-  auto& idxs = array_scratch_.u32_indices;
+  auto& idxs = array_scratch().u32_indices;
   size_t pair_count = 0;
   if (!safe::mul(static_cast<size_t>(count), size_t(2), &pair_count)) return false;
   idxs.resize(pair_count);
-  if (!reader_->read_u32_array(idxs, pair_count)) return false;
+  if (!reader()->read_u32_array(idxs, pair_count)) return false;
   for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
     const uint32_t k = idxs[(i * 2)];
     const uint32_t v = idxs[(i * 2) + 1];
@@ -517,17 +517,17 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     out->clear();
     return true;  // empty map
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
+  if (!reader()->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
   out->clear();
   out->reserve(out->size() + static_cast<size_t>(count));
-  auto& idxs = array_scratch_.u32_indices;
+  auto& idxs = array_scratch().u32_indices;
   size_t pair_count = 0;
   if (!safe::mul(static_cast<size_t>(count), size_t(2), &pair_count)) return false;
   idxs.resize(pair_count);
-  if (!reader_->read_u32_array(idxs, pair_count)) return false;
+  if (!reader()->read_u32_array(idxs, pair_count)) return false;
   for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
     std::string_view key;
     std::string_view val;
@@ -547,18 +547,18 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
 
   const bool is_token = (tid == CrateTypeId::TokenListOp);
   // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
   auto read_run = [&](bool keep) -> bool {
     uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
+    if (!reader()->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
     out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
+    auto& idxs = array_scratch().u32_indices;
     idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
+    if (!reader()->read_u32_array(idxs, static_cast<size_t>(n))) return false;
     if (!keep) return true;
     for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
       const uint32_t idx = idxs[i];
@@ -576,7 +576,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
 
   // ListOpHeader bits / read order match DecodeReferenceListOp.
   uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
+  if (!reader()->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
   if ((bits & kHasExplicit) && !read_run(true)) return false;
@@ -595,9 +595,9 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     out = Value::MakeDictionary();
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!reader()->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
+  if (!reader()->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
 
   // pxr WriteMap layout: [u64 count] then per entry [u32 keyStringIdx] followed
@@ -610,20 +610,20 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   Dict* d = dv.as_dictionary();
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t kidx = 0;
-    if (!reader_->read_u32(kidx)) return false;
+    if (!reader()->read_u32(kidx)) return false;
     std::string_view key;
     if (!GetString(kidx, &key)) return false;
 
-    const size_t val_start = reader_->position();
+    const size_t val_start = reader()->position();
     uint64_t rec_off_raw = 0;
-    if (!reader_->read_u64(rec_off_raw)) return false;
+    if (!reader()->read_u64(rec_off_raw)) return false;
     const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
     const size_t rep_pos =
         static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
-    if (!reader_->seek(rep_pos)) return false;
+    if (!reader()->seek(rep_pos)) return false;
     uint64_t vrep_raw = 0;
-    if (!reader_->read_u64(vrep_raw)) return false;
-    const size_t next_entry_pos = reader_->position();  // rep_pos + 8
+    if (!reader()->read_u64(vrep_raw)) return false;
+    const size_t next_entry_pos = reader()->position();  // rep_pos + 8
 
     ValueRep vr(vrep_raw);
     Value cv;
@@ -634,7 +634,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     }
     d->set(std::string(key), std::move(cv));
 
-    if (!reader_->seek(next_entry_pos)) return false;  // resume after this value
+    if (!reader()->seek(next_entry_pos)) return false;  // resume after this value
   }
   out = std::move(dv);
   return true;
@@ -652,7 +652,7 @@ bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
   // multi-GB array/section and exhaust memory). The +slack admits small files
   // with legitimately larger decoded buffers.
   if (reader_) {
-    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    const uint64_t file_size = static_cast<uint64_t>(reader()->size());
     constexpr uint64_t kMaxRatio = 256;  // LZ4-ish worst-case headroom
     constexpr uint64_t kSlack = 64ull * 1024 * 1024;  // 64 MiB
     constexpr uint64_t kU64Max = (std::numeric_limits<uint64_t>::max)();
@@ -730,12 +730,18 @@ bool CrateReader::Impl::GetString(uint32_t index, std::string& out) {
 
 void CrateReader::Impl::AddError(const std::string& msg) {
   CrateError err;
-  err.offset = reader_ ? reader_->position() : 0;
+  err.offset = reader_ ? reader()->position() : 0;
   err.message = msg;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(diag_mu_);
+#endif
   result_.errors.push_back(err);
 }
 
 void CrateReader::Impl::AddWarning(const std::string& msg) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(diag_mu_);
+#endif
   result_.warnings.push_back(msg);
 }
 

@@ -259,12 +259,16 @@ void PropNameTable::register_common_names() {
 
 // Global singleton
 PropNameTable& GetPropNameTable() {
+  // Registration runs inside a (thread-safe) function-local static init:
+  // concurrent first callers (parallel build_stage / subtree-parse workers)
+  // must not observe a half-registered table. (The former `static bool
+  // initialized` pattern raced.)
   static PropNameTable table;
-  static bool initialized = false;
-  if (!initialized) {
+  static const bool initialized = [] {
     table.register_common_names();
-    initialized = true;
-  }
+    return true;
+  }();
+  (void)initialized;
   return table;
 }
 
