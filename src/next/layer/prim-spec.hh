@@ -621,6 +621,7 @@ public:
   /// Get path (set during layer building)
   const Path& path() const { return path_; }
   void set_path(const Path& path) { path_ = path; }
+  void set_path(Path&& path) { path_ = std::move(path); }
 
   // ============================================================
   // Properties (O(1) lookup for common names)

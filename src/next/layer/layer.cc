@@ -280,7 +280,7 @@ uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_n
         path_str.append(name);
       }
     }
-    spec.set_path(Path(path_str));
+    spec.set_path(Path(std::move(path_str)));
   } else {
     spec.set_path(Path(std::string(full_path)));
   }

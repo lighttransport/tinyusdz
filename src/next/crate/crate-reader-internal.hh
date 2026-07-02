@@ -75,6 +75,66 @@ class TokenPool {
   std::vector<Span> spans_;
 };
 
+// Arena storage for the crate PATHS table (same idea as TokenPool): one blob
+// plus {off,len} spans, so reconstructing millions of path strings does not
+// cost one std::string allocation each.
+//
+// Two fill modes:
+//   - serial:   resize(n) then set(i, sv). set() appends to the blob, so blob
+//     growth may REALLOCATE — string_views returned by view() before further
+//     set() calls are invalidated.
+//   - parallel: resize(n), compute total bytes, resize_blob(total) ONCE, then
+//     workers write raw bytes through blob_at(off) into disjoint windows and
+//     record spans with place(). The blob never grows after resize_blob(), so
+//     views are stable while only place()/blob_at() are used.
+class PathPool {
+ public:
+  void clear() {
+    blob_.clear();
+    spans_.clear();
+  }
+  // (Re)size the span table; every slot becomes the empty span {0,0}. Also
+  // drops previously appended blob bytes.
+  void resize(size_t n) {
+    blob_.clear();
+    spans_.assign(n, Span{0, 0});
+  }
+  size_t size() const { return spans_.size(); }
+  std::string_view view(size_t i) const {
+    const Span& s = spans_[i];
+    return std::string_view(blob_.data() + s.off, s.len);
+  }
+  bool empty_at(size_t i) const { return spans_[i].len == 0; }
+  // Serial fill: append to the blob (may invalidate earlier views).
+  void set(size_t i, std::string_view sv) {
+    spans_[i] = Span{static_cast<uint64_t>(blob_.size()),
+                     static_cast<uint32_t>(sv.size())};
+    blob_.append(sv.data(), sv.size());
+  }
+  // Parallel fill: pre-size the blob, then record spans / write windows.
+  void resize_blob(size_t total_bytes) { blob_.resize(total_bytes); }
+  void place(size_t i, uint64_t off, uint32_t len) {
+    spans_[i] = Span{off, len};
+  }
+  char* blob_at(uint64_t off) { return &blob_[0] + off; }
+  std::vector<std::string> to_vector() const {
+    std::vector<std::string> out;
+    out.reserve(spans_.size());
+    for (size_t i = 0; i < spans_.size(); ++i) {
+      out.emplace_back(view(i));
+    }
+    return out;
+  }
+
+ private:
+  struct Span {
+    uint64_t off;
+    uint32_t len;
+  };
+  std::string blob_;
+  std::vector<Span> spans_;
+};
+
 class CrateReader::Impl {
  public:
   explicit Impl(const CrateReadOptions& options) : options_(options) {}
@@ -85,7 +145,9 @@ class CrateReader::Impl {
   CrateReadResult ReadFile(const char* filename);
 
   std::vector<std::string> tokens() const { return tokens_.to_vector(); }
-  const std::vector<std::string>& paths() const { return paths_; }
+  // Materialized copy (diagnostics only; the reader stores paths pooled, see
+  // PathPool above).
+  std::vector<std::string> paths() const { return paths_.to_vector(); }
   const std::vector<CrateField>& fields() const { return fields_; }
   const std::vector<CrateSpec>& specs() const { return specs_; }
   const std::vector<uint32_t>& fieldset_indices() const {
@@ -171,7 +233,7 @@ class CrateReader::Impl {
   std::vector<uint32_t> fieldset_counts_;
   std::vector<CrateSpec> specs_;
   std::vector<uint32_t> fieldset_index_to_id_;
-  std::vector<std::string> paths_;
+  PathPool paths_;
 
   CrateReadResult ReadFromString(std::string&& bytes);
   CrateReadResult ParseFromSource();

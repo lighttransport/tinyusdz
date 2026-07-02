@@ -245,7 +245,7 @@ std::vector<std::string> CrateReader::tokens() const {
   return impl_->tokens();
 }
 
-const std::vector<std::string>& CrateReader::paths() const {
+std::vector<std::string> CrateReader::paths() const {
   return impl_->paths();
 }
 

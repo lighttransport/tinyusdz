@@ -1054,7 +1054,7 @@ bool CrateReader::Impl::ReadPaths() {
 
   if (num_paths == 0) {
     paths_.resize(1);
-    paths_[0] = "/";
+    paths_.set(0, "/");
     return true;
   }
 
@@ -1080,7 +1080,7 @@ bool CrateReader::Impl::ReadPaths() {
   }
   paths_.resize(static_cast<size_t>(num_paths));
   if (paths_.size() > 0) {
-    paths_[0] = "/";
+    paths_.set(0, "/");
   }
   size_t n = static_cast<size_t>(num_encoded);
 
@@ -1234,7 +1234,7 @@ bool CrateReader::Impl::ReadPaths() {
   // (every path got longer) and corrupted/colliding paths. Passing the parent
   // path down the recursion and following the jump offset to each sibling is
   // O(num_nodes) and correct.
-  paths_.assign(static_cast<size_t>(num_paths), std::string());
+  paths_.resize(static_cast<size_t>(num_paths));  // all slots -> empty span
 
   auto element_for = [&](size_t i, bool& is_prop, std::string_view& elem) -> bool {
     int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
@@ -1347,6 +1347,22 @@ bool CrateReader::Impl::ReadPaths() {
         }
       }
 
+      // Per-node blob windows: serial prefix sum over encoded (visited)
+      // nodes; property paths carry one extra byte for the '.' prefix. After
+      // the single resize_blob() below the arena never grows, so workers can
+      // write bytes straight into their disjoint windows (no per-path
+      // std::string at all) and record spans with place() — views handed out
+      // later stay stable (see PathPool).
+      std::vector<uint64_t> node_off(n, 0);
+      uint64_t total_path_bytes = 0;
+      for (size_t i = 0; i < n; ++i) {
+        if (!visited[i]) continue;
+        node_off[i] = total_path_bytes;
+        const bool is_prop = static_cast<int32_t>(element_tokens[i]) < 0;
+        total_path_bytes += plen[i] + (is_prop ? 1 : 0);
+      }
+      paths_.resize_blob(static_cast<size_t>(total_path_bytes));
+
       const size_t chunk = std::max<size_t>(
           16384, n / (static_cast<size_t>(nt) * 4));
       struct FillRange {
@@ -1364,35 +1380,37 @@ bool CrateReader::Impl::ReadPaths() {
           const int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
           const bool is_prop = elem_token < 0;
           const size_t L = plen[i];
-          std::string out;
-          out.resize(L + (is_prop ? 1 : 0));
-          char* buf = &out[0];
+          const uint32_t span_len =
+              static_cast<uint32_t>(L + (is_prop ? 1 : 0));
+          char* buf = paths_.blob_at(node_off[i]);
           if (is_prop) {
             buf[0] = '.';
             ++buf;
           }
           // Fast path: pre-order visitation gives strong tree locality, so a
-          // node's parent usually sits EARLIER IN THE SAME RANGE — its string
-          // is already built and can be block-copied (one sequential memcpy
-          // instead of an ancestor-chain walk of cache misses). Parents are
-          // never property nodes (properties are path-tree leaves), but check
-          // anyway: a '.'-prefixed parent string would corrupt the copy.
+          // node's parent usually sits EARLIER IN THE SAME RANGE — a range is
+          // filled sequentially and parent_of[i] < i always, so the parent's
+          // blob window is already written and can be block-copied (one
+          // sequential memcpy instead of an ancestor-chain walk of cache
+          // misses). Parents are never property nodes (properties are
+          // path-tree leaves), but check anyway: a '.'-prefixed parent window
+          // would corrupt the copy.
           const uint32_t par_i = parent_of[i];
           if (par_i != kNoParent && par_i >= r.begin && !rootish[i] &&
               static_cast<int32_t>(element_tokens[par_i]) >= 0) {
-            const std::string& pstr = paths_[path_indices[par_i]];
+            const char* pstr = paths_.blob_at(node_off[par_i]);
             const size_t base = plen[par_i];
-            if (pstr.size() == base && base >= 1) {
+            if (base >= 1) {
               const std::string_view ei = elem_of(i);
               if (base == 1) {  // parent is "/"
                 buf[0] = '/';
                 std::memcpy(buf + 1, ei.data(), ei.size());
               } else {
-                std::memcpy(buf, pstr.data(), base);
+                std::memcpy(buf, pstr, base);
                 buf[base] = '/';
                 std::memcpy(buf + base + 1, ei.data(), ei.size());
               }
-              paths_[store_idx] = std::move(out);
+              paths_.place(store_idx, node_off[i], span_len);
               continue;
             }
           }
@@ -1415,7 +1433,7 @@ bool CrateReader::Impl::ReadPaths() {
             std::memcpy(buf + base + 1, ej.data(), ej.size());
             j = par;
           }
-          paths_[store_idx] = std::move(out);
+          paths_.place(store_idx, node_off[i], span_len);
         }
       };
 
@@ -1452,6 +1470,7 @@ bool CrateReader::Impl::ReadPaths() {
   size_t i = 0;
   size_t depth = 0;
   std::string parent_path;
+  std::string prop_scratch;  // reused ".<primpath>/<prop>" build buffer
   while (i < n) {
     bool is_prop = false;
     std::string_view elem;
@@ -1474,14 +1493,14 @@ bool CrateReader::Impl::ReadPaths() {
 
     const uint32_t store_idx = path_indices[i];
     if (store_idx < num_paths) {
-      std::string& out = paths_[store_idx];
       if (is_prop) {
-        out.clear();
-        out.reserve(parent_path.size() + 1);
-        out.push_back('.');
-        out.append(parent_path);
+        prop_scratch.clear();
+        prop_scratch.reserve(parent_path.size() + 1);
+        prop_scratch.push_back('.');
+        prop_scratch.append(parent_path);
+        paths_.set(store_idx, prop_scratch);
       } else {
-        out = parent_path;
+        paths_.set(store_idx, parent_path);
       }
     }
 
@@ -1519,7 +1538,7 @@ bool CrateReader::Impl::ReadPaths() {
       AddError("Spec path index out of range");
       return false;
     }
-    if (paths_[spec.path_index.value].empty()) {
+    if (paths_.empty_at(spec.path_index.value)) {
       AddError("Spec path index references an empty path slot");
       return false;
     }
