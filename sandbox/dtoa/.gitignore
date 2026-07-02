@@ -1,0 +1,5 @@
+# Built benchmark/conformance binaries (produced by `make`).
+/bench
+/bench_native
+/bench_dev
+/conformance
