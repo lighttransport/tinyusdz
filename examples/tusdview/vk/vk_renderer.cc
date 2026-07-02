@@ -3817,6 +3817,12 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
     const size_t bytes = size_t(count) * 12 * sizeof(float);
     if (m.instVboMapped) {
       std::memcpy(m.instVboMapped, xforms, bytes);
+      if (mdiInstDevLocal_ && m.mdiEligible) {
+        // Queue the rewritten slice for the host->device mirror copy at the top
+        // of the next frame (recorded before the render pass in renderFrame).
+        const VkDeviceSize off = VkDeviceSize(m.mdiInstFirst) * 12 * sizeof(float);
+        mdiInstPendingXf_.push_back({off, off, bytes});
+      }
     } else if (m.instVboMem) {
       void* p = nullptr;
       if (vkMapMemory(device_, m.instVboMem, 0, bytes, 0, &p) == VK_SUCCESS) {
@@ -3829,6 +3835,10 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
     const size_t bytes = size_t(count) * 3 * sizeof(float);
     if (m.instColorMapped) {
       std::memcpy(m.instColorMapped, colors, bytes);
+      if (mdiInstDevLocal_ && m.mdiEligible) {
+        const VkDeviceSize off = VkDeviceSize(m.mdiInstFirst) * 3 * sizeof(float);
+        mdiInstPendingCol_.push_back({off, off, bytes});
+      }
     } else if (m.instColorMem) {
       void* p = nullptr;
       if (vkMapMemory(device_, m.instColorMem, 0, bytes, 0, &p) == VK_SUCCESS) {
@@ -4978,6 +4988,11 @@ void VulkanRenderer::destroyMdiBuffers() {
   kill(mdiVbo_, mdiVboMem_);       kill(mdiVtxColBuf_, mdiVtxColMem_);
   kill(mdiMorphBuf_, mdiMorphMem_); kill(mdiEbo_, mdiEboMem_);
   kill(mdiInstBuf_, mdiInstMem_);   kill(mdiInstColBuf_, mdiInstColMem_);
+  kill(mdiInstDevBuf_, mdiInstDevMem_);
+  kill(mdiInstColDevBuf_, mdiInstColDevMem_);
+  mdiInstDevLocal_ = false;
+  mdiInstPendingXf_.clear();
+  mdiInstPendingCol_.clear();
   kill(mdiIndirectBuf_, mdiIndirectMem_);
   mdiIndirectMapped_ = nullptr;
   mdiCmds_.clear();
@@ -5015,16 +5030,57 @@ void VulkanRenderer::buildInstMdi() {
                                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                                      mdiIdxStage_.data(), &mdiEbo_, &mdiEboMem_);
   // Global per-instance o2w + color, persistently mapped so the cull path writes the
-  // visible subset straight into each mesh's slice.
+  // visible subset straight into each mesh's slice. TRANSFER_SRC so the slices can
+  // be mirrored into the optional device-local copy below.
   allocOk &= createHostBuffer(mdiInstXfStage_.size() * sizeof(float),
-                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                               mdiInstXfStage_.data(), &mdiInstBuf_, &mdiInstMem_);
   if (allocOk) vkMapMemory(device_, mdiInstMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstMapped_);
   allocOk &= createHostBuffer(mdiInstColStage_.size() * sizeof(float),
-                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                               mdiInstColStage_.data(), &mdiInstColBuf_, &mdiInstColMem_);
   if (allocOk)
     vkMapMemory(device_, mdiInstColMem_, 0, VK_WHOLE_SIZE, 0, &mdiInstColMapped_);
+
+  // Device-local mirror of the instance buffers (see header). Failure to fit is
+  // never fatal: the draw simply keeps binding the host-visible buffers.
+  mdiInstDevLocal_ = false;
+  if (allocOk) {
+    const char* env = getenv("TUSDVIEW_MDI_DEVLOCAL");
+    const VkDeviceSize xfBytes = mdiInstXfStage_.size() * sizeof(float);
+    const VkDeviceSize colBytes = mdiInstColStage_.size() * sizeof(float);
+    bool want = !(env && env[0] == '0');
+    if (want && !(env && env[0] == '1')) {
+      // Auto mode: require the mirror to leave >=20% of the device-local budget
+      // free. No budget info (extension missing) -> stay host-visible.
+      uint64_t used = 0, budget = 0;
+      want = memoryBudget(&used, &budget) && budget > 0 &&
+             used + xfBytes + colBytes < budget - budget / 5;
+    }
+    if (want) {
+      bool mirrorOk =
+          createDeviceLocalBuffer(xfBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  mdiInstXfStage_.data(), &mdiInstDevBuf_,
+                                  &mdiInstDevMem_) &&
+          createDeviceLocalBuffer(colBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  mdiInstColStage_.data(), &mdiInstColDevBuf_,
+                                  &mdiInstColDevMem_);
+      if (mirrorOk) {
+        mdiInstDevLocal_ = true;
+        LOGI("[mdi] device-local instance mirror: %.2f GB",
+             double(xfBytes + colBytes) / 1e9);
+      } else {
+        LOGI("[mdi] device-local instance mirror failed to allocate; "
+             "keeping host-visible instance buffers");
+        if (mdiInstDevBuf_) { vkDestroyBuffer(device_, mdiInstDevBuf_, nullptr); mdiInstDevBuf_ = VK_NULL_HANDLE; }
+        if (mdiInstDevMem_) { vkFreeMemory(device_, mdiInstDevMem_, nullptr); mdiInstDevMem_ = VK_NULL_HANDLE; }
+        if (mdiInstColDevBuf_) { vkDestroyBuffer(device_, mdiInstColDevBuf_, nullptr); mdiInstColDevBuf_ = VK_NULL_HANDLE; }
+        if (mdiInstColDevMem_) { vkFreeMemory(device_, mdiInstColDevMem_, nullptr); mdiInstColDevMem_ = VK_NULL_HANDLE; }
+      }
+    }
+  }
 
   if (!allocOk) {
     // A shared MDI buffer failed to allocate -- this path targets the largest scenes
@@ -5206,6 +5262,31 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   VkCommandBufferBeginInfo bi{};
   bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   vkBeginCommandBuffer(cb, &bi);
+
+  // Refresh the device-local instance mirror from the cull's host writes (queued in
+  // updateInstanceVisibility). Outside any render pass; the in-flight fence already
+  // guaranteed the previous frame's vertex reads finished. A settled camera queues
+  // nothing, so steady-state frames record no copies at all.
+  if (mdiInstDevLocal_ &&
+      (!mdiInstPendingXf_.empty() || !mdiInstPendingCol_.empty())) {
+    if (!mdiInstPendingXf_.empty())
+      vkCmdCopyBuffer(cb, mdiInstBuf_, mdiInstDevBuf_,
+                      static_cast<uint32_t>(mdiInstPendingXf_.size()),
+                      mdiInstPendingXf_.data());
+    if (!mdiInstPendingCol_.empty())
+      vkCmdCopyBuffer(cb, mdiInstColBuf_, mdiInstColDevBuf_,
+                      static_cast<uint32_t>(mdiInstPendingCol_.size()),
+                      mdiInstPendingCol_.data());
+    VkMemoryBarrier mb{};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &mb, 0, nullptr,
+                         0, nullptr);
+    mdiInstPendingXf_.clear();
+    mdiInstPendingCol_.clear();
+  }
 
   // ---- Offscreen 3D pass: ray query (compute) or rasterization ----
   if (externalColorValid_) {
@@ -5552,8 +5633,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdPushConstants(cb, instPipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(InstPushC), &ipc);
-        VkBuffer bufs[5] = {mdiVbo_, mdiInstBuf_, mdiInstColBuf_, mdiVtxColBuf_,
-                            mdiMorphBuf_};
+        VkBuffer bufs[5] = {mdiVbo_,
+                            mdiInstDevLocal_ ? mdiInstDevBuf_ : mdiInstBuf_,
+                            mdiInstDevLocal_ ? mdiInstColDevBuf_ : mdiInstColBuf_,
+                            mdiVtxColBuf_, mdiMorphBuf_};
         VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
         vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
         VkDescriptorSet dm[3] = {dummyMorphDesc_, dummyMorphDesc_, dummyMorphDesc_};
