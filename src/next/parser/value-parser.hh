@@ -9,6 +9,10 @@
 #include "../types/value.hh"
 #include <memory>
 #include <string>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <functional>
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -66,6 +70,11 @@ bool GetDeferredArrayInfo(TypeId element_type, Value::ArrayScalarKind* out_kind,
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 
+/// Submit an arbitrary task to the shared parser worker pool (the same pool
+/// the deferred-array batches run on). Returns false — task NOT taken — when
+/// the pool is unavailable (num_threads == 1 / no hardware parallelism).
+bool SubmitPoolTask(int num_threads, std::function<void()> task);
+
 /// One captured simple numeric array awaiting deferred (worker-pool) parsing.
 /// `data` points into the parser's input buffer (alive until the parse's drain
 /// barrier); `fill` is the pre-committed Value's payload (see
@@ -79,10 +88,11 @@ struct DeferredArrayItem {
 };
 
 /// Batches deferred array parses onto the shared USDA value worker pool so
-/// numeric conversion overlaps the main thread's lexing. Per-array tasks are
-/// far too fine (millions of ~3KB arrays); items are accumulated into
-/// multi-hundred-KB batches before submission. Single-threaded producer
-/// (the parser main thread); Drain() is the join barrier.
+/// numeric conversion overlaps lexing. Per-array tasks are far too fine
+/// (millions of ~3KB arrays); items are accumulated into multi-hundred-KB
+/// batches before submission. Thread-safe producers (the parser main thread
+/// AND parallel prim-subtree sub-parsers enqueue concurrently); Drain() is
+/// the join barrier.
 class DeferredArrayScheduler {
  public:
   /// Returns nullptr when the worker pool is unavailable (num_threads == 1 or
@@ -97,20 +107,23 @@ class DeferredArrayScheduler {
 
   /// Submit any partial batch and wait for all in-flight batches to finish.
   /// Returns false (with *error set) if any deferred array failed to parse.
-  /// Idempotent.
+  /// Idempotent. Call only when no producer can still Enqueue.
   bool Drain(std::string* error);
 
-  /// Cheap failure probe so the producer can stop deferring early.
+  /// Cheap failure probe so producers can stop deferring early.
   bool failed() const;
 
  private:
   explicit DeferredArrayScheduler(int num_threads);
-  void SubmitBatch();
+  void DispatchBatch(std::vector<DeferredArrayItem> batch);
 
   struct Shared;
   std::shared_ptr<Shared> shared_;
   int num_threads_ = 0;
   size_t max_inflight_ = 0;
+  // Producer-side accumulation, guarded for concurrent producers. The lock is
+  // held only for the push/swap (never across a batch parse or pool submit).
+  std::mutex enqueue_mu_;
   std::vector<DeferredArrayItem> current_;
   size_t current_bytes_ = 0;
 };

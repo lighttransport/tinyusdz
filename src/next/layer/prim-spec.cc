@@ -6,6 +6,9 @@
 #include "prim-spec.hh"
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -49,6 +52,18 @@ uint16_t ApplySchemaPropertyFlags(PropNameId name_id, uint16_t flags) {
 // ============================================================
 
 TypeNameId TypeNameTable::intern(std::string_view name) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Read-mostly: try a shared-lock lookup first (the common-type set is
+  // pre-registered, so almost every parse-time intern is a hit).
+  {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto it = name_to_id_.find(name);
+    if (it != name_to_id_.end()) {
+      return TypeNameId{it->second};
+    }
+  }
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -75,9 +90,14 @@ TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
     return TypeNameId{};
   }
 
-  auto it = base_to_array_type_id_.find(base_id.id);
-  if (it != base_to_array_type_id_.end()) {
-    return TypeNameId{it->second};
+  {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
+    auto it = base_to_array_type_id_.find(base_id.id);
+    if (it != base_to_array_type_id_.end()) {
+      return TypeNameId{it->second};
+    }
   }
 
   std::string array_name(base_name);
@@ -86,6 +106,9 @@ TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
   array_name.push_back(']');
   TypeNameId array_id = intern(array_name);
   if (array_id.is_valid()) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::unique_lock<std::shared_mutex> wlk(mu_);
+#endif
     base_to_array_type_id_[base_id.id] = array_id.id;
   }
   return array_id;
@@ -93,11 +116,17 @@ TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   if (!id.is_valid() || id.id >= names_.size()) return empty;
-  return *names_[id.id];
+  return *names_[id.id];  // unique_ptr storage: stable after unlock
 }
 
 TypeNameId TypeNameTable::find(std::string_view name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -185,12 +214,15 @@ void TypeNameTable::register_common_types() {
 }
 
 TypeNameTable& GetTypeNameTable() {
+  // Registration runs inside a (thread-safe) function-local static init, so
+  // concurrent first callers cannot observe a half-registered table. The
+  // table itself is constructed in place (shared_mutex member: immovable).
   static TypeNameTable table;
-  static bool initialized = false;
-  if (!initialized) {
+  static const bool initialized = [] {
     table.register_common_types();
-    initialized = true;
-  }
+    return true;
+  }();
+  (void)initialized;
   return table;
 }
 

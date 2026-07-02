@@ -57,6 +57,13 @@ inline bool IsStructural(char c) {
   return c == '[' || c == ']' || c == '"' || c == '\'' || c == '@' || c == '#';
 }
 
+// Is `c` one of the prim-block-structural bytes (brace/paren matching plus the
+// skip-region starters)?
+inline bool IsPrimStructural(char c) {
+  return c == '{' || c == '}' || c == '(' || c == ')' || c == '[' ||
+         c == ']' || c == '"' || c == '\'' || c == '@' || c == '#';
+}
+
 // Scalar reference (also the SSE2/NEON path's <16-byte tail handler and the
 // non-x86/non-AArch64 path, so it is always compiled).
 const char* ScanScalar(const char* p, const char* end, size_t* newlines,
@@ -75,6 +82,20 @@ const char* ScanScalar(const char* p, const char* end, size_t* newlines,
   }
   *newlines += nl;
   *commas += cm;
+  return end;
+}
+
+const char* ScanPrimScalar(const char* p, const char* end, size_t* newlines) {
+  size_t nl = 0;
+  for (; p < end; ++p) {
+    const char c = *p;
+    if (IsPrimStructural(c)) {
+      *newlines += nl;
+      return p;
+    }
+    if (c == '\n') ++nl;
+  }
+  *newlines += nl;
   return end;
 }
 
@@ -215,6 +236,102 @@ const char* ScanArrayStructural(const char* p, const char* end,
   return ScanScalar(p, end, newlines, commas);  // <16-byte tail
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("avx2,popcnt")))
+static const char* ScanPrimStructuralAvx2(const char* p, const char* end,
+                                          size_t* newlines) {
+  const __m256i ob = _mm256_set1_epi8('{');
+  const __m256i cb = _mm256_set1_epi8('}');
+  const __m256i op = _mm256_set1_epi8('(');
+  const __m256i cp = _mm256_set1_epi8(')');
+  const __m256i lb = _mm256_set1_epi8('[');
+  const __m256i rb = _mm256_set1_epi8(']');
+  const __m256i dq = _mm256_set1_epi8('"');
+  const __m256i sq = _mm256_set1_epi8('\'');
+  const __m256i at = _mm256_set1_epi8('@');
+  const __m256i hs = _mm256_set1_epi8('#');
+  const __m256i nlv = _mm256_set1_epi8('\n');
+
+  size_t nl = 0;
+  while (end - p >= 32) {
+    const __m256i v =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+    __m256i m = _mm256_or_si256(_mm256_cmpeq_epi8(v, ob),
+                                _mm256_cmpeq_epi8(v, cb));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, op));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, cp));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, lb));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, rb));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, dq));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, sq));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, at));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, hs));
+    const unsigned mask = static_cast<unsigned>(_mm256_movemask_epi8(m));
+    const unsigned nlmask =
+        static_cast<unsigned>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, nlv)));
+    if (mask) {
+      const unsigned idx = static_cast<unsigned>(__builtin_ctz(mask));
+      const unsigned before = (1u << idx) - 1u;
+      nl += static_cast<unsigned>(__builtin_popcount(nlmask & before));
+      *newlines += nl;
+      return p + idx;
+    }
+    nl += static_cast<unsigned>(__builtin_popcount(nlmask));
+    p += 32;
+  }
+  *newlines += nl;
+  return ScanPrimScalar(p, end, newlines);  // <32-byte tail
+}
+#endif  // __GNUC__ || __clang__
+
+const char* ScanPrimStructural(const char* p, const char* end,
+                               size_t* newlines) {
+#if defined(TINYUSDZ_SIMDSCAN_AVX2_DISPATCH)
+  static const bool use_avx2 = __builtin_cpu_supports("avx2");
+  if (use_avx2) return ScanPrimStructuralAvx2(p, end, newlines);
+#endif
+  const __m128i ob = _mm_set1_epi8('{');
+  const __m128i cb = _mm_set1_epi8('}');
+  const __m128i op = _mm_set1_epi8('(');
+  const __m128i cp = _mm_set1_epi8(')');
+  const __m128i lb = _mm_set1_epi8('[');
+  const __m128i rb = _mm_set1_epi8(']');
+  const __m128i dq = _mm_set1_epi8('"');
+  const __m128i sq = _mm_set1_epi8('\'');
+  const __m128i at = _mm_set1_epi8('@');
+  const __m128i hs = _mm_set1_epi8('#');
+  const __m128i nlv = _mm_set1_epi8('\n');
+
+  size_t nl = 0;
+  while (end - p >= 16) {
+    const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+    __m128i m = _mm_or_si128(_mm_cmpeq_epi8(v, ob), _mm_cmpeq_epi8(v, cb));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, op));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, cp));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, lb));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, rb));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, dq));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, sq));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, at));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, hs));
+    const unsigned mask =
+        static_cast<unsigned>(_mm_movemask_epi8(m)) & 0xFFFFu;
+    const unsigned nlmask =
+        static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(v, nlv))) &
+        0xFFFFu;
+    if (mask) {
+      const unsigned idx = LowestSetBit(mask);
+      nl += PopCount16(nlmask & ((1u << idx) - 1u));
+      *newlines += nl;
+      return p + idx;
+    }
+    if (nlmask) nl += PopCount16(nlmask);
+    p += 16;
+  }
+  *newlines += nl;
+  return ScanPrimScalar(p, end, newlines);  // <16-byte tail
+}
+
 const char* Backend() { return "sse2"; }
 
 #elif defined(TINYUSDZ_SIMDSCAN_NEON)
@@ -269,6 +386,50 @@ const char* ScanArrayStructural(const char* p, const char* end,
   return ScanScalar(p, end, newlines, commas);  // <16-byte tail
 }
 
+const char* ScanPrimStructural(const char* p, const char* end,
+                               size_t* newlines) {
+  const uint8x16_t ob = vdupq_n_u8('{');
+  const uint8x16_t cb = vdupq_n_u8('}');
+  const uint8x16_t op = vdupq_n_u8('(');
+  const uint8x16_t cp = vdupq_n_u8(')');
+  const uint8x16_t lb = vdupq_n_u8('[');
+  const uint8x16_t rb = vdupq_n_u8(']');
+  const uint8x16_t dq = vdupq_n_u8('"');
+  const uint8x16_t sq = vdupq_n_u8('\'');
+  const uint8x16_t at = vdupq_n_u8('@');
+  const uint8x16_t hs = vdupq_n_u8('#');
+  const uint8x16_t nlv = vdupq_n_u8('\n');
+  const uint8x16_t one = vdupq_n_u8(1);
+
+  size_t nl = 0;
+  while (end - p >= 16) {
+    const uint8x16_t v = vld1q_u8(reinterpret_cast<const uint8_t*>(p));
+    uint8x16_t m = vorrq_u8(vceqq_u8(v, ob), vceqq_u8(v, cb));
+    m = vorrq_u8(m, vceqq_u8(v, op));
+    m = vorrq_u8(m, vceqq_u8(v, cp));
+    m = vorrq_u8(m, vceqq_u8(v, lb));
+    m = vorrq_u8(m, vceqq_u8(v, rb));
+    m = vorrq_u8(m, vceqq_u8(v, dq));
+    m = vorrq_u8(m, vceqq_u8(v, sq));
+    m = vorrq_u8(m, vceqq_u8(v, at));
+    m = vorrq_u8(m, vceqq_u8(v, hs));
+    const uint64_t mmask = vget_lane_u64(
+        vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0);
+    if (mmask) {
+      const int idx = static_cast<int>(__builtin_ctzll(mmask) >> 2);
+      for (int i = 0; i < idx; ++i) {
+        if (p[i] == '\n') ++nl;
+      }
+      *newlines += nl;
+      return p + idx;
+    }
+    nl += vaddvq_u8(vandq_u8(vceqq_u8(v, nlv), one));
+    p += 16;
+  }
+  *newlines += nl;
+  return ScanPrimScalar(p, end, newlines);  // <16-byte tail
+}
+
 const char* Backend() { return "neon"; }
 
 #else  // no SIMD backend: scalar (WASM / disabled / other archs; identical result)
@@ -276,6 +437,11 @@ const char* Backend() { return "neon"; }
 const char* ScanArrayStructural(const char* p, const char* end,
                                 size_t* newlines, size_t* commas) {
   return ScanScalar(p, end, newlines, commas);
+}
+
+const char* ScanPrimStructural(const char* p, const char* end,
+                               size_t* newlines) {
+  return ScanPrimScalar(p, end, newlines);
 }
 
 const char* Backend() { return "scalar"; }

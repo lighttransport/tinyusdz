@@ -133,6 +133,35 @@ public:
                                  bool* out_simple = nullptr,
                                  size_t* out_commas = nullptr);
 
+  /// Capture and consume one complete prim block
+  ///   def|over|class [Type] "name" [(meta)] { ...body... }
+  /// starting at the current specifier token, without tokenizing its contents
+  /// (SIMD brace/paren matching; strings/assets/comments skipped). On success
+  /// the whole block is consumed and the returned span (a slice of the input,
+  /// including the specifier through the closing '}') can be re-parsed
+  /// independently — the basis of the parallel prim-subtree parse. `out_line`
+  /// receives the 1-based line of the block start so a sub-parser can report
+  /// correct error locations.
+  ///
+  /// If more than `max_bytes` would be scanned, the lexer state is fully
+  /// restored and false is returned with *out_too_big = true (caller parses
+  /// the prim inline and its CHILDREN get their own capture attempts). Blocks
+  /// smaller than `min_bytes` are also restored (false, *out_too_big = false):
+  /// tiny prims are cheaper to parse inline than to dispatch. Malformed input
+  /// (unterminated block) restores likewise, leaving the inline parser to
+  /// produce its usual error.
+  bool capture_prim_block(size_t min_bytes, size_t max_bytes,
+                          const char** out_block, size_t* out_len,
+                          size_t* out_line, bool* out_too_big);
+
+  /// Override the 1-based source location the lexer reports (line/column of
+  /// the FIRST input byte). Used by sub-parsers running on a slice of a larger
+  /// file so their diagnostics carry file-absolute locations.
+  void set_source_location(size_t line, size_t column) {
+    line_ = line;
+    column_ = column;
+  }
+
   /// Get error message if in error state
   const std::string& error() const { return error_; }
 

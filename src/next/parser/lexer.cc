@@ -309,6 +309,235 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
   return true;
 }
 
+bool Lexer::capture_prim_block(size_t min_bytes, size_t max_bytes,
+                               const char** out_block, size_t* out_len,
+                               size_t* out_line, bool* out_too_big) {
+  if (out_too_big) *out_too_big = false;
+  if (!out_block || !out_len) return false;
+
+  const Token& tok = peek();
+  if (tok.type != TokenType::Def && tok.type != TokenType::Over &&
+      tok.type != TokenType::Class) {
+    return false;
+  }
+  // Keyword tokens carry their text as a slice of the input: its data pointer
+  // is the block start.
+  const char* block_start = tok.text.data();
+  const size_t start_line = tok.line;
+
+  // Full state snapshot for restore on too-big/malformed.
+  const size_t saved_pos = pos_;
+  const size_t saved_line = line_;
+  const size_t saved_column = column_;
+  const Token saved_current = current_;
+  const bool saved_has_current = has_current_;
+
+  has_current_ = false;
+
+  // Scan for the body '{' (first open brace at paren depth 0 — metadata dicts
+  // live inside the '(...)' block so their braces are at paren depth >= 1),
+  // then match braces to the block end. Strings / asset refs / comments are
+  // skipped so separator bytes inside them are inert; the SIMD scan jumps over
+  // everything else.
+  int paren_depth = 0;
+  int brace_depth = 0;
+  bool body_seen = false;
+  bool ok = false;
+  const size_t scan_limit =
+      max_bytes > 0 ? (pos_ + max_bytes) : static_cast<size_t>(-1);
+
+  while (pos_ < length_) {
+    {
+      const char* base = data_ + pos_;
+      size_t nl = 0;
+      const char* hit = simdscan::ScanPrimStructural(base, data_ + length_, &nl);
+      pos_ += static_cast<size_t>(hit - base);
+      line_ += nl;  // column_ approximate inside the block (error cosmetics)
+      if (pos_ >= length_) break;
+    }
+    if (pos_ > scan_limit) break;
+    const char c = current_char();
+
+    if (c == '#') {
+      skip_comment();
+      continue;
+    }
+    if (c == '"' || c == '\'') {
+      const char quote = c;
+      advance();
+      bool triple = false;
+      if (current_char() == quote && peek_char() == quote) {
+        triple = true;
+        advance();
+        advance();
+      }
+      while (pos_ < length_) {
+        if (current_char() == '\\') {
+          advance();
+          if (pos_ < length_) advance();
+          continue;
+        }
+        if (triple) {
+          if (current_char() == quote && peek_char() == quote &&
+              peek_char(2) == quote) {
+            advance();
+            advance();
+            advance();
+            break;
+          }
+        } else if (current_char() == quote) {
+          advance();
+          break;
+        }
+        advance();
+      }
+      continue;
+    }
+    if (c == '@') {
+      advance();
+      while (pos_ < length_) {
+        if (current_char() == '\\') {
+          advance();
+          if (pos_ < length_) advance();
+          continue;
+        }
+        if (current_char() == '@') {
+          advance();
+          break;
+        }
+        advance();
+      }
+      continue;
+    }
+
+    if (c == '[') {
+      // Skip the whole bracketed literal with the ARRAY scanner: numeric
+      // tuple arrays are full of parens, and stopping at each one here made
+      // the prim scan quadratic-slow (~400M paren stops on big scenes). The
+      // array scan treats parens/braces as boring bytes; strings/assets/
+      // comments inside arrays are handled per the same skip rules.
+      advance();  // '['
+      int bracket_depth = 1;
+      while (pos_ < length_ && bracket_depth > 0) {
+        {
+          const char* base = data_ + pos_;
+          size_t nl = 0;
+          size_t commas_unused = 0;
+          const char* hit = simdscan::ScanArrayStructural(
+              base, data_ + length_, &nl, &commas_unused);
+          pos_ += static_cast<size_t>(hit - base);
+          line_ += nl;
+          if (pos_ >= length_) break;
+        }
+        if (pos_ > scan_limit) break;
+        const char ac = current_char();
+        if (ac == '#') {
+          skip_comment();
+          continue;
+        }
+        if (ac == '"' || ac == '\'') {
+          const char q = ac;
+          advance();
+          bool triple3 = false;
+          if (current_char() == q && peek_char() == q) {
+            triple3 = true;
+            advance();
+            advance();
+          }
+          while (pos_ < length_) {
+            if (current_char() == '\\') {
+              advance();
+              if (pos_ < length_) advance();
+              continue;
+            }
+            if (triple3) {
+              if (current_char() == q && peek_char() == q &&
+                  peek_char(2) == q) {
+                advance();
+                advance();
+                advance();
+                break;
+              }
+            } else if (current_char() == q) {
+              advance();
+              break;
+            }
+            advance();
+          }
+          continue;
+        }
+        if (ac == '@') {
+          advance();
+          while (pos_ < length_) {
+            if (current_char() == '\\') {
+              advance();
+              if (pos_ < length_) advance();
+              continue;
+            }
+            if (current_char() == '@') {
+              advance();
+              break;
+            }
+            advance();
+          }
+          continue;
+        }
+        if (ac == '[') {
+          bracket_depth++;
+        } else if (ac == ']') {
+          bracket_depth--;
+        }
+        advance();
+      }
+      if (pos_ > scan_limit) break;
+      continue;
+    }
+
+    if (c == '(') {
+      paren_depth++;
+    } else if (c == ')') {
+      if (paren_depth > 0) paren_depth--;
+    } else if (c == '{') {
+      if (paren_depth == 0) {
+        body_seen = true;
+        brace_depth++;
+      }
+      // braces inside metadata parens (dict values) are matched by the paren
+      // skip: they cannot open the prim body.
+    } else if (c == '}') {
+      if (paren_depth == 0 && body_seen) {
+        brace_depth--;
+        if (brace_depth == 0) {
+          advance();  // consume the closing '}'
+          ok = true;
+          break;
+        }
+      }
+    }
+    advance();  // stray ']' (malformed) is skipped like any other byte
+  }
+
+  const size_t block_len =
+      ok ? static_cast<size_t>((data_ + pos_) - block_start) : 0;
+  if (!ok || block_len < min_bytes) {
+    // Too big, too small, or malformed: restore and let the caller parse
+    // inline.
+    if (out_too_big && !ok && pos_ > scan_limit) *out_too_big = true;
+    pos_ = saved_pos;
+    line_ = saved_line;
+    column_ = saved_column;
+    current_ = saved_current;
+    has_current_ = saved_has_current;
+    return false;
+  }
+
+  *out_block = block_start;
+  *out_len = block_len;
+  if (out_line) *out_line = start_line;
+  has_current_ = false;
+  return true;
+}
+
 const Token& Lexer::peek() {
   if (!has_current_) {
     current_ = scan_token();

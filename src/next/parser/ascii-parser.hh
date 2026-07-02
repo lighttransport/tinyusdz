@@ -68,6 +68,13 @@ struct ParseOptions {
   /// num_threads != 1; ignored (synchronous) otherwise.
   bool async_arrays = true;
 
+  /// Parse mid-size prim subtrees on the parser worker pool: the main thread
+  /// captures each prim block (SIMD brace matching) and workers parse blocks
+  /// into layer fragments that are stitched (authored order preserved) before
+  /// finalize. Semantically identical output. Requires TINYUSDZ_ENABLE_THREAD
+  /// and num_threads != 1; ignored otherwise.
+  bool parallel_prims = true;
+
   /// Optional profiling destination. Null keeps profiling disabled.
   USDAParseProfile* profile = nullptr;
 };

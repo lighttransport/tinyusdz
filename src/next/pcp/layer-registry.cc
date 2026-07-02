@@ -150,6 +150,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     LoadOptions lopts;
     lopts.parse_options.num_threads = options.parse_num_threads;
     lopts.parse_options.async_arrays = options.parse_async_arrays;
+    lopts.parse_options.parallel_prims = options.parse_parallel_prims;
     lopts.parse_options.max_file_size = options.max_memory;
     lopts.parse_options.profile = options.usda_profile;
     return ConvertLoadedUSDA(
@@ -194,6 +195,7 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     LoadOptions lopts;
     lopts.parse_options.num_threads = options.parse_num_threads;
     lopts.parse_options.async_arrays = options.parse_async_arrays;
+    lopts.parse_options.parallel_prims = options.parse_parallel_prims;
     lopts.parse_options.max_file_size = options.max_memory;
     lopts.parse_options.profile = options.usda_profile;
     return ConvertLoadedUSDA(LoadUSDAFromFile(resolved_path, lopts),

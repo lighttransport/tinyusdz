@@ -28,6 +28,16 @@ namespace simdscan {
 const char* ScanArrayStructural(const char* p, const char* end,
                                 size_t* newlines, size_t* commas);
 
+// Scan [p, end) for the first byte in the prim-block-structural set
+//   { '{' , '}' , '(' , ')' , '"' , '\'' , '@' , '#' }
+// and return a pointer to it, or `end` if none. Adds the number of '\n' bytes
+// in the scanned-over prefix to *newlines. Used by the prim-block capture
+// (parallel subtree parse) to skip property/value bytes at SIMD speed; parens
+// are structural so the capture can tell a metadata-dict '{' (inside parens)
+// from the prim body '{'.
+const char* ScanPrimStructural(const char* p, const char* end,
+                               size_t* newlines);
+
 // Name of the active scan backend ("sse2" / "scalar" / ...), for logging.
 const char* Backend();
 

@@ -13,6 +13,9 @@
 #include <cstdio>
 #include <fstream>
 #include <system_error>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 
 #if defined(_WIN32)
 #define TINYUSDZ_NEXT_HAVE_MMAP 0
@@ -145,6 +148,128 @@ bool IsNameToken(const Token& tok) {
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 namespace {
+// Parallel prim-subtree window. Blocks below the floor are cheaper to parse
+// inline than to dispatch (fragment + task + stitch overhead); blocks above
+// the ceiling are descended inline so their CHILDREN are dispatched
+// individually (keeps worker granularity bounded and the drain tail short).
+constexpr size_t kSubtreeMinBytes = size_t(16) << 10;   // 16 KiB
+constexpr size_t kSubtreeMaxBytes = size_t(64) << 20;   // 64 MiB
+}  // namespace
+
+void AsciiParser::Impl::RunSubtreeParse(
+    const ParseOptions& base_options,
+    std::shared_ptr<DeferredArrayScheduler> arrays, SubtreeParseState* st,
+    const char* data, size_t len, size_t start_line, size_t base_depth,
+    const std::string& parent_path, SubtreeFragment* fragment) {
+  USDAParseProfile local_profile;
+  ParseOptions opts = base_options;
+  opts.profile = base_options.profile ? &local_profile : nullptr;
+
+  Impl sub(opts);
+  sub.layer_ = std::make_unique<Layer>();
+  sub.builder_ = std::make_unique<LayerBuilder>(*sub.layer_);
+  if (!parent_path.empty()) {
+    sub.builder_->set_path_prefix(parent_path);
+  }
+  sub.lexer_ = std::make_unique<Lexer>(data, len);
+  sub.lexer_->num_threads = opts.num_threads;
+  sub.lexer_->profile = opts.profile;
+  sub.lexer_->set_source_location(start_line, 1);
+  sub.deferred_arrays_ = std::move(arrays);
+  sub.depth_ = base_depth;
+
+  const bool ok = sub.ParsePrim();
+  if (!ok || sub.HasErrors()) {
+    std::lock_guard<std::mutex> lock(st->mu);
+    if (!st->failed) {
+      st->failed = true;
+      if (!sub.errors_.empty()) {
+        st->first_error = sub.errors_.front();
+      } else {
+        st->first_error =
+            ParseError{start_line, 1, "Failed to parse prim subtree"};
+      }
+    }
+  } else {
+    fragment->layer = std::move(sub.layer_);
+  }
+
+  if (opts.profile) {
+    const USDAParseProfile& p = local_profile;
+    std::lock_guard<std::mutex> lock(st->mu);
+    USDAParseProfile& m = st->merged_profile;
+    m.prims += p.prims;
+    m.properties += p.properties;
+    m.time_samples += p.time_samples;
+    m.arrays += p.arrays;
+    m.array_bytes += p.array_bytes;
+    m.simple_arrays += p.simple_arrays;
+    m.numeric_arrays += p.numeric_arrays;
+    m.numeric_array_bytes += p.numeric_array_bytes;
+    m.numeric_array_scalars += p.numeric_array_scalars;
+    m.parallel_arrays += p.parallel_arrays;
+    m.parallel_array_bytes += p.parallel_array_bytes;
+    m.parallel_array_scalars += p.parallel_array_scalars;
+    m.parallel_array_fallbacks += p.parallel_array_fallbacks;
+    m.deferred_arrays += p.deferred_arrays;
+    m.deferred_array_bytes += p.deferred_array_bytes;
+  }
+}
+
+bool AsciiParser::Impl::JoinSubtreeTasks() {
+  if (!subtree_state_) return true;
+  SubtreeParseState* st = subtree_state_.get();
+  {
+    std::unique_lock<std::mutex> lock(st->mu);
+    st->cv.wait(lock, [st]() { return st->inflight == 0; });
+  }
+  if (options_.profile) {
+    const USDAParseProfile& m = st->merged_profile;
+    USDAParseProfile& p = *options_.profile;
+    p.prims += m.prims;
+    p.properties += m.properties;
+    p.time_samples += m.time_samples;
+    p.arrays += m.arrays;
+    p.array_bytes += m.array_bytes;
+    p.simple_arrays += m.simple_arrays;
+    p.numeric_arrays += m.numeric_arrays;
+    p.numeric_array_bytes += m.numeric_array_bytes;
+    p.numeric_array_scalars += m.numeric_array_scalars;
+    p.parallel_arrays += m.parallel_arrays;
+    p.parallel_array_bytes += m.parallel_array_bytes;
+    p.parallel_array_scalars += m.parallel_array_scalars;
+    p.parallel_array_fallbacks += m.parallel_array_fallbacks;
+    p.deferred_arrays += m.deferred_arrays;
+    p.deferred_array_bytes += m.deferred_array_bytes;
+    // Merge exactly once (JoinSubtreeTasks runs again on error paths).
+    st->merged_profile = USDAParseProfile{};
+  }
+  if (st->failed) {
+    errors_.push_back(st->first_error);
+    st->failed = false;  // reported once
+    return false;
+  }
+  // Stitch fragments in dispatch (= authored) order, then resolve the
+  // placeholder child/root indices in one pass. Reserve the exact total once
+  // so adoption never reallocates the (PrimSpec-move-expensive) main vector.
+  size_t total_prims = layer_->prim_count();
+  for (const auto& f : st->fragments) {
+    if (f->layer) total_prims += f->layer->prim_count();
+  }
+  layer_->reserve(total_prims);
+  std::vector<uint32_t> resolved(st->fragments.size(), UINT32_MAX);
+  for (size_t i = 0; i < st->fragments.size(); i++) {
+    if (st->fragments[i]->layer) {
+      resolved[i] = layer_->adopt_fragment(std::move(*st->fragments[i]->layer));
+      st->fragments[i]->layer.reset();
+    }
+  }
+  layer_->resolve_pending_indices(resolved);
+  st->fragments.clear();
+  return true;
+}
+
+namespace {
 // Deferral window. Below the floor, per-item bookkeeping beats the parse cost.
 // Huge arrays are deferred too — one worker parses the whole array serially
 // into the exactly-pre-sized payload while the main thread keeps lexing. That
@@ -157,9 +282,88 @@ namespace {
 // worker parsing alone after lexing finishes, so it stays on the synchronous
 // split path.
 constexpr size_t kDeferredArrayMinBytes = 256;
-constexpr size_t kDeferredArrayMaxBytes = size_t(1) << 30;  // 1 GiB
+constexpr size_t kDeferredArrayMaxBytes = size_t(2) << 30;  // 2 GiB
 }  // namespace
 #endif
+
+bool AsciiParser::Impl::ParsePrimMaybeParallel() {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Variant content builds into a swapped-in variant builder; its prims must
+  // not be dispatched (fragment stitching targets the main layer).
+  if (subtree_state_ && variant_depth_ == 0) {
+    SubtreeParseState* st = subtree_state_.get();
+    bool already_failed;
+    {
+      std::lock_guard<std::mutex> lock(st->mu);
+      already_failed = st->failed;
+    }
+    const char* block = nullptr;
+    size_t len = 0;
+    size_t line = 0;
+    bool too_big = false;
+    if (!already_failed &&
+        lexer_->capture_prim_block(kSubtreeMinBytes, kSubtreeMaxBytes, &block,
+                                   &len, &line, &too_big)) {
+      const uint32_t frag_id = static_cast<uint32_t>(st->fragments.size());
+      st->fragments.push_back(std::make_unique<SubtreeFragment>());
+      SubtreeFragment* frag = st->fragments.back().get();
+
+      // Placeholder in authored position (resolved after the join).
+      std::string parent_path;
+      if (PrimSpec* parent = builder_->current()) {
+        parent->mutable_child_indices().push_back(Layer::kPendingIndexBit |
+                                                  frag_id);
+        parent_path = parent->path().str();
+      } else {
+        layer_->add_root_pending(frag_id);
+      }
+
+      bool run_inline = false;
+      {
+        std::lock_guard<std::mutex> lock(st->mu);
+        if (st->inflight >= st->max_inflight) {
+          run_inline = true;  // backpressure: bound pending fragment memory
+        } else {
+          st->inflight++;
+        }
+      }
+      if (run_inline) {
+        RunSubtreeParse(options_, deferred_arrays_, st, block, len, line,
+                        depth_, parent_path, frag);
+      } else {
+        const ParseOptions opts = options_;
+        std::shared_ptr<SubtreeParseState> stp = subtree_state_;
+        std::shared_ptr<DeferredArrayScheduler> arrays = deferred_arrays_;
+        const size_t base_depth = depth_;
+        const bool submitted = SubmitPoolTask(
+            options_.num_threads,
+            [opts, arrays, stp, block, len, line, base_depth, parent_path,
+             frag]() {
+              RunSubtreeParse(opts, arrays, stp.get(), block, len, line,
+                              base_depth, parent_path, frag);
+              std::lock_guard<std::mutex> lock(stp->mu);
+              stp->inflight--;
+              if (stp->inflight == 0) stp->cv.notify_all();
+            });
+        if (!submitted) {
+          RunSubtreeParse(options_, deferred_arrays_, st, block, len, line,
+                          depth_, parent_path, frag);
+          std::lock_guard<std::mutex> lock(st->mu);
+          st->inflight--;
+          if (st->inflight == 0) st->cv.notify_all();
+        }
+      }
+      // Worker errors surface at the join barrier; keep the main thread
+      // streaming (matches the sync parser's fail-at-that-point semantics
+      // closely enough: the load still fails with the worker's error).
+      return true;
+    }
+    // Not captured (tiny / too big / malformed): parse inline. too_big blocks
+    // recurse here for their children.
+  }
+#endif
+  return ParsePrim();
+}
 
 ParseResult AsciiParser::Impl::ParseArrayValueMaybeDeferred(TypeId type_id,
                                                             bool* out_deferred) {
@@ -249,10 +453,45 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   // every exit from Parse (including early error returns) MUST join them
   // before the input buffer and the layer can die. The destructor's Drain is
   // idempotent, so the explicit success-path Drain below is unaffected.
+  // Guard ORDER matters: subtree workers Enqueue into the array scheduler and
+  // reference the input buffer, so the join guard (declared LAST, destroyed
+  // FIRST) must run before the drain guard releases the scheduler.
   struct DrainGuard {
-    std::unique_ptr<DeferredArrayScheduler>& scheduler;
+    std::shared_ptr<DeferredArrayScheduler>& scheduler;
     ~DrainGuard() { scheduler.reset(); }  // ~DeferredArrayScheduler drains
   } drain_guard{deferred_arrays_};
+
+  if (options_.parallel_prims && options_.num_threads != 1) {
+    // Requires the worker pool; probe with a no-op-free check by creating the
+    // state only when the array scheduler (same pool) could be created, or
+    // the pool answers a direct submit probe below on first dispatch.
+    subtree_state_ = std::make_shared<SubtreeParseState>();
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt <= 1) {
+      subtree_state_.reset();
+    } else {
+      subtree_state_->max_inflight = static_cast<size_t>(4 * nt);
+    }
+  }
+  struct SubtreeJoinGuard {
+    Impl* impl;
+    ~SubtreeJoinGuard() {
+      // Wait out in-flight subtree workers on EVERY exit path (they reference
+      // the input buffer and fragment slots), then release the state.
+      if (impl->subtree_state_) {
+        SubtreeParseState* st = impl->subtree_state_.get();
+        std::unique_lock<std::mutex> lock(st->mu);
+        st->cv.wait(lock, [st]() { return st->inflight == 0; });
+        lock.unlock();
+        impl->subtree_state_.reset();
+      }
+    }
+  } subtree_join_guard{this};
 #endif
 
   // Parse stage metadata (header block)
@@ -265,10 +504,18 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   // Parse root prims
   const auto t_prims_start = ProfileClock::now();
   while (!AtEnd()) {
-    if (!ParsePrim()) {
+    if (!ParsePrimMaybeParallel()) {
       return false;
     }
   }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Join + stitch parallel prim subtrees (placeholder indices resolved) before
+  // anything reads the tree. A worker-side parse failure fails the load.
+  if (!JoinSubtreeTasks()) {
+    return false;
+  }
+#endif
   const auto t_prims_end = ProfileClock::now();
 
 #if defined(TINYUSDZ_ENABLE_THREAD)

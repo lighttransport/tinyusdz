@@ -100,6 +100,27 @@ public:
   Layer Clone() const;
 
   // ============================================================
+  // Parallel-subtree stitch support (USDA parallel prim parse)
+  // ============================================================
+
+  /// Placeholder marker bit: root/child index entries carrying this bit refer
+  /// to a not-yet-stitched worker fragment (low 31 bits = fragment id). All
+  /// placeholders are resolved by resolve_pending_indices() before finalize.
+  static constexpr uint32_t kPendingIndexBit = 0x80000000u;
+
+  /// Append a pending root marker (fragment id), preserving authored order.
+  void add_root_pending(uint32_t fragment_id);
+
+  /// Move every prim of `fragment` into this layer, rebasing the fragment's
+  /// internal child indices. Returns the new absolute index of the fragment's
+  /// single root prim (UINT32_MAX if the fragment has no root).
+  uint32_t adopt_fragment(Layer&& fragment);
+
+  /// Replace every pending index in root and child lists with
+  /// resolved[fragment_id].
+  void resolve_pending_indices(const std::vector<uint32_t>& resolved);
+
+  // ============================================================
   // Access
   // ============================================================
 
@@ -202,10 +223,17 @@ public:
   /// Finalize the layer
   void finalize();
 
+  /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
+  /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose
+  /// fragment root is not a real layer root. Empty (default) keeps the normal
+  /// root behavior.
+  void set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
+
 private:
   Layer& layer_;
   std::vector<uint32_t> prim_stack_;  // Stack of parent indices
   uint32_t current_index_ = UINT32_MAX;
+  std::string path_prefix_;
 };
 
 }  // namespace next

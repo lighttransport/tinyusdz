@@ -18,6 +18,9 @@
 #include <functional>
 #include <map>
 #include <string_view>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -99,6 +102,13 @@ private:
   std::unordered_map<std::string_view, uint16_t, StringViewHash, StringViewEq>
       name_to_id_;
   std::unordered_map<uint16_t, uint16_t> base_to_array_type_id_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // The global table is interned into concurrently when prim subtrees (and
+  // referenced layers) are parsed on worker threads — same read-mostly pattern
+  // as PropNameTable. `get()` returns stable string storage (names_ owns via
+  // unique_ptr), so returned references stay valid across rehash/growth.
+  mutable std::shared_mutex mu_;
+#endif
 };
 
 TypeNameTable& GetTypeNameTable();
@@ -785,6 +795,10 @@ public:
 
   /// Get child indices
   const std::vector<uint32_t>& child_indices() const { return child_indices_; }
+
+  /// Mutable child-index storage — used by Layer stitching (parallel subtree
+  /// parse resolves placeholder indices in one pass after joining workers).
+  std::vector<uint32_t>& mutable_child_indices() { return child_indices_; }
 
   /// Add child index
   void add_child_index(uint32_t index);
