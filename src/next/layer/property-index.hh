@@ -113,6 +113,23 @@ private:
   std::unordered_map<std::string_view, uint32_t, StringViewHash, StringViewEq>
       name_to_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // RCU-lite read path: an immutable snapshot of the table, republished under
+  // mu_ after every insert (inserts are rare — the unique-name set is small
+  // and mostly pre-registered). Readers that HIT the snapshot never touch the
+  // rwlock; profiled at ~38% of ALL cycles as rdlock/unlock cache-line
+  // ping-pong during the parallel crate build_stage before this. Old
+  // snapshots are retired (kept alive) so in-flight readers stay valid; total
+  // retained memory is bounded by the number of unique-name inserts.
+  struct Snapshot {
+    std::unordered_map<std::string_view, uint32_t, StringViewHash, StringViewEq>
+        map;
+    std::vector<const std::string*> by_id;
+  };
+  void publish_snapshot_locked();  // caller holds mu_ exclusively
+  mutable std::atomic<const Snapshot*> snapshot_{nullptr};
+  std::vector<std::unique_ptr<Snapshot>> retired_;  // guarded by mu_
+#endif
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
   // lookup takes a shared lock, the rare new-name insert an exclusive one.

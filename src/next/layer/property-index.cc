@@ -34,8 +34,24 @@ PropNameId PropNameTable::intern(const std::string& name) {
   return intern(std::string_view(name));
 }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+void PropNameTable::publish_snapshot_locked() {
+  auto snap = std::make_unique<Snapshot>();
+  snap->map = name_to_id_;
+  snap->by_id.reserve(names_.size());
+  for (const auto& n : names_) snap->by_id.push_back(n.get());
+  snapshot_.store(snap.get(), std::memory_order_release);
+  retired_.push_back(std::move(snap));
+}
+#endif
+
 PropNameId PropNameTable::intern(std::string_view name) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free hit path against the latest immutable snapshot.
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    auto sit = snap->map.find(name);
+    if (sit != snap->map.end()) return PropNameId{sit->second};
+  }
   if (frozen_.load(std::memory_order_acquire)) {
     // Frozen fast path: the common compose-time intern is a HIT (every property
     // name was interned at parse), so resolve it lock-free against the immutable
@@ -65,6 +81,7 @@ PropNameId PropNameTable::intern(std::string_view name) {
   const std::string_view key(*interned_name);
   names_.push_back(std::move(interned_name));
   name_to_id_.emplace(key, id);
+  publish_snapshot_locked();
   return PropNameId{id};
 #else
   auto it = name_to_id_.find(name);
@@ -88,6 +105,11 @@ PropNameId PropNameTable::intern(const char* name) {
 const std::string& PropNameTable::get(PropNameId id) const {
   static const std::string empty;
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free only on a covering snapshot; an id newer than the loaded
+  // snapshot falls through to the locked authoritative read.
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    if (id.id < snap->by_id.size()) return *snap->by_id[id.id];
+  }
   if (!frozen_.load(std::memory_order_acquire)) {
     // Shared lock: a concurrent intern() on another thread may push_back names_
     // (parallel composition warms referenced layers on workers). When frozen the
@@ -115,6 +137,12 @@ PropNameId PropNameTable::find(const std::string& name) const {
 
 PropNameId PropNameTable::find(std::string_view name) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free HIT only; a miss falls through (the name may have been
+  // interned after this snapshot was published).
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    auto sit = snap->map.find(name);
+    if (sit != snap->map.end()) return PropNameId{sit->second};
+  }
   if (!frozen_.load(std::memory_order_acquire)) {
     // Shared lock vs. a concurrent intern() rehash of name_to_id_. When frozen
     // the map is immutable, so concurrent lookups need no lock -- this removes
