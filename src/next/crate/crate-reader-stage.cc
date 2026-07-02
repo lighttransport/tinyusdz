@@ -1285,7 +1285,7 @@ bool CrateReader::Impl::BuildStage() {
     // single-token / string fallbacks for older encodings). Warns rather than
     // silently dropping a known arc field that fails to decode.
     auto append_token_list = [&](const ValueRep& rep,
-                                 std::vector<std::string>& dst,
+                                 auto& dst,
                                  const char* field_name,
                                  bool wrap_bare_paths = false) {
       Value v;
@@ -1302,9 +1302,9 @@ bool CrateReader::Impl::BuildStage() {
             arc.push_back('<');
             arc.append(s);
             arc.push_back('>');
-            dst.push_back(std::move(arc));
+            dst.emplace_back(std::move(arc));
           } else {
-            dst.push_back(s);
+            dst.emplace_back(s);
           }
         }
       } else if (const std::string* s = v.as_token()) {
@@ -1314,9 +1314,9 @@ bool CrateReader::Impl::BuildStage() {
           arc.push_back('<');
           arc.append(*s);
           arc.push_back('>');
-          dst.push_back(std::move(arc));
+          dst.emplace_back(std::move(arc));
         } else {
-          dst.push_back(*s);
+          dst.emplace_back(*s);
         }
       } else if (const std::string* s = v.as_string()) {
         if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
@@ -1325,9 +1325,9 @@ bool CrateReader::Impl::BuildStage() {
           arc.push_back('<');
           arc.append(*s);
           arc.push_back('>');
-          dst.push_back(std::move(arc));
+          dst.emplace_back(std::move(arc));
         } else {
-          dst.push_back(*s);
+          dst.emplace_back(*s);
         }
       } else {
         AddWarning(std::string("Composition arc field '") + field_name +
@@ -1445,7 +1445,7 @@ bool CrateReader::Impl::BuildStage() {
         if (field_name == "kind") {
           std::string_view text;
           if (read_field_token_or_string(field_value, &text))
-            ps->meta().kind() = text;
+            ps->meta().set_kind(text);
           return true;
         }
         if (field_name == "displayName") {
@@ -1821,7 +1821,7 @@ bool CrateReader::Impl::BuildStage() {
     // single-token / string fallbacks for older encodings). Warns rather than
     // silently dropping a known arc field that fails to decode.
     auto append_token_list = [&](const ValueRep& rep,
-                                 std::vector<std::string>& dst,
+                                 auto& dst,
                                  const char* field_name,
                                  bool wrap_bare_paths = false) {
       Value v;
@@ -1838,9 +1838,9 @@ bool CrateReader::Impl::BuildStage() {
             arc.push_back('<');
             arc.append(s);
             arc.push_back('>');
-            dst.push_back(std::move(arc));
+            dst.emplace_back(std::move(arc));
           } else {
-            dst.push_back(s);
+            dst.emplace_back(s);
           }
         }
       } else if (const std::string* s = v.as_token()) {
@@ -1850,9 +1850,9 @@ bool CrateReader::Impl::BuildStage() {
           arc.push_back('<');
           arc.append(*s);
           arc.push_back('>');
-          dst.push_back(std::move(arc));
+          dst.emplace_back(std::move(arc));
         } else {
-          dst.push_back(*s);
+          dst.emplace_back(*s);
         }
       } else if (const std::string* s = v.as_string()) {
         if (wrap_bare_paths && !s->empty() && (*s)[0] == '/') {
@@ -1861,9 +1861,9 @@ bool CrateReader::Impl::BuildStage() {
           arc.push_back('<');
           arc.append(*s);
           arc.push_back('>');
-          dst.push_back(std::move(arc));
+          dst.emplace_back(std::move(arc));
         } else {
-          dst.push_back(*s);
+          dst.emplace_back(*s);
         }
       } else {
         AddWarning(std::string("Composition arc field '") + field_name +
@@ -1981,7 +1981,7 @@ bool CrateReader::Impl::BuildStage() {
         if (field_name == "kind") {
           std::string_view text;
           if (read_field_token_or_string(field_value, &text))
-            ps->meta().kind() = text;
+            ps->meta().set_kind(text);
           return true;
         }
         if (field_name == "displayName") {

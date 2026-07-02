@@ -7,10 +7,22 @@
 cmake_minimum_required(VERSION 3.10)
 project(tinyusdz_next C CXX)
 
-# Define source files
-set(TINYUSDZ_NEXT_SOURCES
+# Define source files.
+#
+# next-core is intentionally split into groups so a lean "core" library
+# (`next_core`: IO + composition + PCP, plus the schema/eval convenience layer
+# by default) can be built and gated into the main TinyUSDZ build, while the
+# C API / Python bindings stay layered on top as `tinyusdz_next`. The
+# TINYUSDZ_NEXT_CORE_MINIMAL option (below) drops the schema/eval layer for the
+# smallest possible library (WASM / embedded).
+
+# Core: value types, layer/stage, USDA + USDC (crate) read/write, PCP +
+# composition, low-memory flatten, asset resolution, and the high-level API.
+# This is the irreducible IO + composition core (always in next_core).
+set(NEXT_CORE_SOURCES
     # Type system
     types/type-info.cc
+    types/token.cc
     types/value.cc
     types/value-view.cc
     types/interpolation.cc
@@ -68,6 +80,28 @@ set(TINYUSDZ_NEXT_SOURCES
     writer/usdc-writer.cc
     writer/usdz-writer.cc
 
+    # Asset resolution (used by the high-level load API)
+    resolver/asset-resolver.cc
+
+    # Composition
+    composition/composition.cc
+
+    # Low-memory flatten pipeline
+    pipeline/flatten.cc
+
+    # PCP-style lazy composition cache (native to next)
+    pcp/layer-registry.cc
+    pcp/load-rules.cc
+    pcp/cache.cc
+
+    # High-level API
+    tinyusdz-next.cc
+)
+
+# Schema convenience APIs + attribute evaluation. Included in next_core by
+# default; dropped when TINYUSDZ_NEXT_CORE_MINIMAL is ON. Only the umbrella
+# header (tinyusdz-next.hh) and the C API reference these.
+set(NEXT_CORE_SCHEMA_EVAL_SOURCES
     # Schema convenience APIs
     schema/geom-mesh.cc
     schema/geom-point-instancer.cc
@@ -86,31 +120,31 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Attribute evaluation
     eval/attribute-eval.cc
+)
 
-    # Asset resolution
-    resolver/asset-resolver.cc
-
-    # Composition
-    composition/composition.cc
-
-    # Low-memory flatten pipeline
-    pipeline/flatten.cc
-
-    # PCP-style lazy composition cache (native to next)
-    pcp/layer-registry.cc
-    pcp/load-rules.cc
-    pcp/cache.cc
-
-    # High-level API
-    tinyusdz-next.cc
+# C API. Layered on top of the core + schema/eval; not part of next_core.
+set(NEXT_CAPI_SOURCES
     c-tinyusd-next.cc
 )
 
+# next_core: IO + composition (+ schema/eval unless minimal). This is the
+# library the main TinyUSDZ build links when TINYUSDZ_WITH_NEXT_CORE is ON.
+option(TINYUSDZ_NEXT_CORE_MINIMAL
+    "next_core: IO + composition only (drop the schema/eval convenience layer); smallest lib / WASM" OFF)
+if(NOT TINYUSDZ_NEXT_CORE_MINIMAL)
+    list(APPEND NEXT_CORE_SOURCES ${NEXT_CORE_SCHEMA_EVAL_SOURCES})
+endif()
+
 # Define header files (for IDE project generation)
 set(TINYUSDZ_NEXT_HEADERS
+    # Support (C-style allocators / containers)
+    support/arena.hh
+    support/small_vector.hh
+
     # Type system
     types/type-id.hh
     types/type-info.hh
+    types/token.hh
     types/value.hh
     types/value-view.hh
     types/interpolation.hh
@@ -218,19 +252,56 @@ set(LZ4_SOURCES
 )
 
 # Prepend source directory to all files
-list(TRANSFORM TINYUSDZ_NEXT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM NEXT_CORE_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM NEXT_CAPI_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 list(TRANSFORM TINYUSDZ_NEXT_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
-# Create static library
-add_library(tinyusdz_next STATIC
-    ${TINYUSDZ_NEXT_SOURCES}
+# Common per-target C++ flags for the next libraries: no RTTI, no exceptions
+# (C++ sources only so the vendored C code does not warn), and warning level.
+# TINYUSDZ_CXX_RTTI / _EXCEPTIONS are inherited from the parent project when
+# built as a subdirectory, and undefined (-> disabled) when built standalone.
+function(_next_apply_cxx_flags target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    if(NOT TINYUSDZ_CXX_RTTI)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+        else()
+            target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+        endif()
+    endif()
+    if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+        else()
+            target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+        endif()
+    endif()
+endfunction()
+
+# ------------------------------------------------------------------
+# next_core: the lean IO + composition core (this is what the main
+# TinyUSDZ build links behind TINYUSDZ_WITH_NEXT_CORE).
+# ------------------------------------------------------------------
+add_library(next_core STATIC
+    ${NEXT_CORE_SOURCES}
     ${TINYUSDZ_NEXT_HEADERS}
     ${LZ4_SOURCES}
 )
 
-# C++17 (matches the parent project). The USDA writer formats floats via the
-# vendored dragonbox dtoa (writer/dtoa.cc), with a zmij SIMD fast path.
-target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
+# C++17 (matches the parent project). The coding style inside next_core is
+# deliberately C-like (POD data + free functions, minimal std::string/std::vector
+# churn), but C++17 is retained for surrounding/helper/external code such as the
+# vendored dragonbox dtoa (writer/dtoa.cc), which has a zmij SIMD fast path.
+target_compile_features(next_core PUBLIC cxx_std_17)
+
+if(TINYUSDZ_NEXT_CORE_MINIMAL)
+    # Umbrella header (tinyusdz-next.hh) guards its schema/eval includes on this.
+    target_compile_definitions(next_core PUBLIC TINYUSDZ_NEXT_CORE_MINIMAL)
+endif()
 
 # Silence warnings from the vendored zmij translation unit (third-party code:
 # __int128 pedantic, sign-compare, unused params — not ours to fix).
@@ -240,53 +311,43 @@ else()
     set_source_files_properties(../external/zmij/zmij.cc PROPERTIES COMPILE_FLAGS "-w")
 endif()
 
+target_include_directories(next_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+    $<INSTALL_INTERFACE:include>
+)
+target_include_directories(next_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lz4
+)
+_next_apply_cxx_flags(next_core)
+if(NOT MSVC)
+    # Disable some warnings for LZ4 C code
+    set_source_files_properties(${LZ4_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
+endif()
+
 # Optional threading: enables std::thread parallel paths in next. Keep this OFF
 # for WASM/browser builds so they do not require Emscripten pthreads /
 # SharedArrayBuffer.
 option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next (default OFF; not for default WASM)" OFF)
 if(TINYUSDZ_NEXT_ENABLE_THREAD)
     find_package(Threads REQUIRED)
-    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)
-    target_link_libraries(tinyusdz_next PUBLIC Threads::Threads)
+    target_compile_definitions(next_core PUBLIC TINYUSDZ_ENABLE_THREAD)
+    target_link_libraries(next_core PUBLIC Threads::Threads)
 endif()
 
-# Set include directories
-target_include_directories(tinyusdz_next PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
-    $<INSTALL_INTERFACE:include>
-)
-
-# Include LZ4 header directory
-target_include_directories(tinyusdz_next PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lz4
-)
-
-# Compiler warnings
-if(MSVC)
-    target_compile_options(tinyusdz_next PRIVATE /W4)
+# ------------------------------------------------------------------
+# tinyusdz_next: the full library (core + C API). This retains the historical
+# target name that the tests, tydra_next, and the Python module link against.
+# The C API depends on the schema/eval convenience layer, so it is only built
+# when that layer is present (non-minimal). When minimal, tinyusdz_next is an
+# interface alias for next_core so existing link references keep working.
+# ------------------------------------------------------------------
+if(TINYUSDZ_NEXT_CORE_MINIMAL)
+    add_library(tinyusdz_next INTERFACE)
+    target_link_libraries(tinyusdz_next INTERFACE next_core)
 else()
-    target_compile_options(tinyusdz_next PRIVATE -Wall -Wextra -Wpedantic)
-    # Disable some warnings for LZ4 C code
-    set_source_files_properties(${LZ4_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
-endif()
-
-# tinyusdz_next uses no C++ RTTI and no C++ exceptions; disable both (C++ sources
-# only so the vendored C code does not warn). TINYUSDZ_CXX_RTTI / _EXCEPTIONS are
-# inherited from the parent project when built as a subdirectory, and undefined
-# (-> disabled) when built standalone.
-if(NOT TINYUSDZ_CXX_RTTI)
-    if(MSVC)
-        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
-    else()
-        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
-    endif()
-endif()
-if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-    if(MSVC)
-        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
-    else()
-        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-    endif()
+    add_library(tinyusdz_next STATIC ${NEXT_CAPI_SOURCES})
+    target_link_libraries(tinyusdz_next PUBLIC next_core)
+    _next_apply_cxx_flags(tinyusdz_next)
 endif()
 
 # Optional: Create test executables.
@@ -313,6 +374,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc.cc
     )
     target_link_libraries(test_usdc_reader PRIVATE tinyusdz_next)
+
+    add_executable(test_arena
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_arena.cc
+    )
+    target_link_libraries(test_arena PRIVATE tinyusdz_next)
+
+    add_executable(test_token
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_token.cc
+    )
+    target_link_libraries(test_token PRIVATE tinyusdz_next)
 
     add_executable(test_layer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer.cc
@@ -458,6 +529,9 @@ if(TINYUSDZ_NEXT_BUILD_FUZZERS)
     # variant), otherwise only the tiny harness body is explored.
     set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
     set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+    # The bulk of the code lives in next_core now; instrument it (and the thin
+    # C API in tinyusdz_next) so coverage-guided fuzzing explores the whole lib.
+    target_compile_options(next_core PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
     target_compile_options(tinyusdz_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
     foreach(fz next_usdc next_usda next_compose next_dtoa)
         add_executable(fuzz_${fz}
@@ -549,6 +623,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
 
     add_test(NAME next_test_tinyusdz COMMAND test_tinyusdz_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_arena COMMAND test_arena
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_token COMMAND test_token
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_layer COMMAND test_layer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_stage COMMAND test_stage
@@ -600,6 +678,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
 
     set(TINYUSDZ_NEXT_SMOKE_TESTS
         next_test_tinyusdz
+        next_test_arena
+        next_test_token
         next_test_layer
         next_test_stage
         next_test_pcp

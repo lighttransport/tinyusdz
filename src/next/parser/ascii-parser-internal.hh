@@ -9,9 +9,11 @@
 #include "lexer.hh"
 #include "value-parser.hh"
 #include "../layer/layer.hh"
+#include "../support/arena.hh"
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <condition_variable>
@@ -68,6 +70,10 @@ private:
   std::unique_ptr<Lexer> lexer_;
   std::unique_ptr<Layer> layer_;
   std::unique_ptr<LayerBuilder> builder_;
+  // Per-parse bump arena for transient property/relationship name assembly (see
+  // ParseNamespacedNameView). Reset per property so it stays tiny; one arena per
+  // Impl keeps the parallel subtree sub-parsers (each own Impl) independent.
+  Arena name_scratch_;
   size_t depth_ = 0;
   // Nonzero while parsing prims inside a variant block (builder_ is swapped to
   // a variant-content builder there — subtree dispatch must stay off).
@@ -105,7 +111,7 @@ private:
   bool ParseRelationship(PrimSpec::RelationshipListOp op =
                          PrimSpec::RelationshipListOp::Append);
   bool ParseMetadataBlock();
-  bool ParseTimeSamples(const std::string& prop_name, TypeId type_id,
+  bool ParseTimeSamples(std::string_view prop_name, TypeId type_id,
                         bool is_array);
   // Array-value parse for attribute defaults and timeSamples: captures the
   // bracketed span and either hands it to the deferred-array scheduler
@@ -121,10 +127,17 @@ private:
   // prim-metadata arcs and variant-option arcs. Returns false if no arc token.
   bool ReadArcRef(std::string* out);
   bool ParseNamespacedName(std::string* out, const char* what);
+  // Like ParseNamespacedName, but returns a non-owning view instead of building
+  // a std::string. A plain (non-namespaced) name is returned as a slice of the
+  // lexer input directly (zero allocation); a namespaced "a:b:c" name is
+  // assembled into the per-parse `name_scratch_` arena. The returned view is
+  // valid until the next name_scratch_.reset() (done per property/relationship).
+  // On failure *ok is set false and an empty view is returned.
+  std::string_view ParseNamespacedNameView(const char* what, bool* ok);
   bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
   void SkipPropertyMetadata();
-  void ParsePropertyMetadata(const std::string& prop_name);
+  void ParsePropertyMetadata(std::string_view prop_name);
 
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);

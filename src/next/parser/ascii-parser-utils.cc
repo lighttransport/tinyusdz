@@ -6,9 +6,66 @@
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 #include "../strfmt.hh"
+#include "../support/small_vector.hh"
+
+#include <cstring>
 
 namespace tinyusdz {
 namespace next {
+
+std::string_view AsciiParser::Impl::ParseNamespacedNameView(const char* what,
+                                                            bool* ok) {
+  *ok = false;
+
+  const Token& first = lexer_->peek();
+  if (!IsNameToken(first)) {
+    AddError(std::string("Expected ") + what);
+    return {};
+  }
+  const std::string_view head = first.text;
+  lexer_->consume();
+
+  if (!Check(TokenType::Colon)) {
+    // Common case: a plain name. Return a slice of the lexer input directly —
+    // no allocation (the input outlives the whole parse). This also avoids the
+    // std::string that the owning ParseNamespacedName() built for long names.
+    *ok = true;
+    return head;
+  }
+
+  // Namespaced name ("a:b:c"): collect the pieces (inline for typical depth),
+  // then assemble once into the per-parse arena.
+  small_vector<std::string_view, 8> parts;
+  parts.push_back(head);
+  size_t total = head.size();
+  while (Check(TokenType::Colon)) {
+    lexer_->consume();
+    const Token& suffix = lexer_->peek();
+    if (!IsNameToken(suffix)) {
+      AddError(std::string("Expected namespaced suffix for ") + what);
+      return {};
+    }
+    parts.push_back(suffix.text);
+    total += 1 + suffix.text.size();  // ':' + suffix
+    lexer_->consume();
+  }
+
+  char* buf = name_scratch_.alloc_uninitialized<char>(total + 1);
+  if (!buf) {
+    return {};  // allocation failure
+  }
+  size_t off = 0;
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i) {
+      buf[off++] = ':';
+    }
+    std::memcpy(buf + off, parts[i].data(), parts[i].size());
+    off += parts[i].size();
+  }
+  buf[off] = '\0';
+  *ok = true;
+  return std::string_view(buf, total);
+}
 
 bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) {
   if (!out) return false;
@@ -114,7 +171,7 @@ void AsciiParser::Impl::SkipPropertyMetadata() {
   }
 }
 
-void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
+void AsciiParser::Impl::ParsePropertyMetadata(std::string_view prop_name) {
   if (!Check(TokenType::OpenParen)) return;
   lexer_->consume();  // consume '('
   PrimSpec* prim = builder_->current();

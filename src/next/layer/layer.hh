@@ -7,6 +7,7 @@
 #pragma once
 
 #include "prim-spec.hh"
+#include "../support/small_vector.hh"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -234,7 +235,9 @@ public:
 
 private:
   Layer& layer_;
-  std::vector<uint32_t> prim_stack_;  // Stack of parent indices
+  // Stack of parent indices during a build. USD nesting is shallow, so 16
+  // inline slots keep the whole parse stack off the heap in the common case.
+  small_vector<uint32_t, 16> prim_stack_;
   uint32_t current_index_ = UINT32_MAX;
   std::string path_prefix_;
 };

@@ -174,7 +174,7 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
     os << "apiSchemas = [";
     for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
       if (i > 0) os << ", ";
-      os << "\"" << meta.apiSchemas()[i] << "\"";
+      os << "\"" << meta.apiSchemas()[i].str() << "\"";
     }
     os << "]\n";
   }

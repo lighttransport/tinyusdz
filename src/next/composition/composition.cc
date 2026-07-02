@@ -394,7 +394,7 @@ void Compositor::CopyLocalOpinions(
     target.meta().comment() = source.meta().comment();
   }
   if (!source.meta().kind().empty() && target.meta().kind().empty()) {
-    target.meta().kind() = source.meta().kind();
+    target.meta().set_kind(source.meta().kind());
   }
   if (!source.meta().displayName().empty() &&
       target.meta().displayName().empty()) {

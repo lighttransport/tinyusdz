@@ -9,6 +9,7 @@
 
 #include "property-index.hh"
 #include "../types/value.hh"
+#include "../types/token.hh"
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <string>
@@ -219,12 +220,12 @@ struct ArcListOpEdits {
 struct PrimSpecMetaExt {
   std::string doc;
   std::string comment;
-  std::string kind;         // model kind (component/group/assembly/...)
+  TfToken kind;             // model kind (component/group/assembly/...), interned
   std::string displayName;  // UI display name
   // When non-empty (set by composition), this prim is an instance whose
   // children come from the prototype prim at this path (no duplicated subtree).
   std::string instance_prototype;
-  std::vector<std::string> apiSchemas;
+  std::vector<TfToken> apiSchemas;  // interned: schema names are long + repeated
   // Variant set definitions.
   std::vector<VariantSetData> variantSets;
   // Multiple variant selections (set -> selection); composed in addition to the
@@ -336,13 +337,17 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->comment;
   }
+  // `kind` is an interned Token (highly repeated: component/group/assembly/...).
+  // The reader accessor still returns a stable std::string (Token::str() is
+  // table-owned) so callers and the writer are unchanged. Empty when unauthored.
   const std::string &kind() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->kind : kEmpty;
+    return ext_ ? ext_->kind.str() : kEmpty;
   }
-  std::string &kind() {
+  TfToken kind_token() const { return ext_ ? ext_->kind : TfToken(); }
+  void set_kind(std::string_view v) {
     ensure_ext();
-    return ext_->kind;
+    ext_->kind = TfToken(v);
   }
   const std::string &displayName() const {
     static const std::string kEmpty;
@@ -360,11 +365,14 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->instance_prototype;
   }
-  const std::vector<std::string> &apiSchemas() const {
-    static const std::vector<std::string> kEmpty;
+  // apiSchemas are interned TfTokens (schema names are long — mostly >15 chars,
+  // i.e. past std::string SSO — and highly repeated across prims). Callers that
+  // need the string call `.str()` on each element.
+  const std::vector<TfToken> &apiSchemas() const {
+    static const std::vector<TfToken> kEmpty;
     return ext_ ? ext_->apiSchemas : kEmpty;
   }
-  std::vector<std::string> &apiSchemas() {
+  std::vector<TfToken> &apiSchemas() {
     ensure_ext();
     return ext_->apiSchemas;
   }

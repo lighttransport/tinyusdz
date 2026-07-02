@@ -998,8 +998,8 @@ void test_roundtrip_api_schemas() {
   Layer layer;
   LayerBuilder b(layer);
   b.begin_prim("P", "Mesh");
-  b.current()->meta().apiSchemas().push_back("MaterialBindingAPI");
-  b.current()->meta().apiSchemas().push_back("PhysicsCollisionAPI");
+  b.current()->meta().apiSchemas().emplace_back("MaterialBindingAPI");
+  b.current()->meta().apiSchemas().emplace_back("PhysicsCollisionAPI");
   b.end_prim();
   b.finalize();
 
@@ -1018,8 +1018,8 @@ void test_roundtrip_api_schemas() {
   // NOT leak back as a phantom `token[] apiSchemas` body property.
   assert(p->meta().apiSchemas().size() == 2 &&
          "apiSchemas did not round-trip into PrimSpecMeta");
-  assert(p->meta().apiSchemas()[0] == "MaterialBindingAPI");
-  assert(p->meta().apiSchemas()[1] == "PhysicsCollisionAPI");
+  assert(p->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
+  assert(p->meta().apiSchemas()[1].str() == "PhysicsCollisionAPI");
   assert(p->property("apiSchemas") == nullptr &&
          "apiSchemas leaked as a phantom body property");
   std::cout << "  apiSchemas crate roundtrip passed!\n\n";
@@ -1052,7 +1052,7 @@ void test_comprehensive_usdc_fixture() {
     PrimSpec* world = b.current();
     assert(world);
     world->meta().doc() = "fixture root";
-    world->meta().apiSchemas().push_back("MaterialBindingAPI");
+    world->meta().apiSchemas().emplace_back("MaterialBindingAPI");
     world->meta().references.push_back("@asset.usda@</Asset>");
     world->meta().payloads.push_back("@payload.usda@</Payload>");
     world->meta().inherits.push_back("</_class_Model>");
@@ -1190,7 +1190,7 @@ void test_comprehensive_usdc_fixture() {
   const PrimSpec* world = MustPrim(rl, "/World");
   assert(world->type_name() == "Xform");
   assert(world->meta().apiSchemas().size() == 1);
-  assert(world->meta().apiSchemas()[0] == "MaterialBindingAPI");
+  assert(world->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
   assert(world->meta().references.size() == 1);
   assert(world->meta().payloads.size() == 1);
   assert(world->meta().inherits.size() == 1);

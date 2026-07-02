@@ -962,7 +962,7 @@ size_t PrimSpec::memory_usage() const {
     size += ext->doc.capacity();
     size += ext->comment.capacity();
     size += ext->instance_prototype.capacity();
-    for (const auto& s : ext->apiSchemas) size += s.capacity();
+    size += ext->apiSchemas.size() * sizeof(TfToken);  // interned: id only
   }
 
   return size;
