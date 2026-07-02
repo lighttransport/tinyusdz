@@ -230,8 +230,13 @@ bool CrateReader::Impl::BuildStage() {
   std::vector<PrimEntry> prim_entries;
   prim_entries.reserve(estimated_prims + estimated_variants + 64);
 
+  // `vbuf`/`variant_out` are passed in so parallel-collect workers can use
+  // thread-local buffers; the serial path passes the shared ones below.
   auto decode_prim_header = [&](PrimEntry& entry, const CrateSpec& spec,
-                               const bool decode_variant) {
+                               const bool decode_variant,
+                               std::vector<std::pair<std::string_view,
+                                                     std::string_view>>& vbuf,
+                               std::vector<VariantSelectionEntry>& variant_out) {
     bool got_type_name = false;
     bool got_specifier = false;
     bool got_variant_selection = !decode_variant;
@@ -248,11 +253,11 @@ bool CrateReader::Impl::BuildStage() {
         read_field_specifier(field_value, &entry.specifier);
         got_specifier = true;
       } else if (decode_variant && field_name == "variantSelection") {
-        variant_buf.clear();
-        if (DecodeVariantSelectionMap(field_value, &variant_buf) &&
-            !variant_buf.empty()) {
-          for (const auto& kv : variant_buf) {
-            variant_sels.push_back({entry.full_path, kv.first, kv.second});
+        vbuf.clear();
+        if (DecodeVariantSelectionMap(field_value, &vbuf) &&
+            !vbuf.empty()) {
+          for (const auto& kv : vbuf) {
+            variant_out.push_back({entry.full_path, kv.first, kv.second});
           }
         }
         got_variant_selection = true;
@@ -314,7 +319,311 @@ bool CrateReader::Impl::BuildStage() {
     return !prim_path.empty() && !prop_name.empty();
   };
 
+  // Decode the pseudo-root fieldset into layer metadata. Main-thread only in
+  // BOTH modes (the parallel collect handles the first PseudoRoot spec in a
+  // pre-pass; the retained serial loop calls this at the spec's position).
+  auto decode_pseudo_root_meta = [&](const CrateSpec& spec) {
+    if (!visit_fieldset_raw(
+            spec.fieldset_index.value,
+            [&](std::string_view field_name, const ValueRep& field_value) {
+              Value v;
+              if (field_name == "defaultPrim") {
+                std::string_view token;
+                if (read_field_token_or_string(field_value, &token))
+                  layer.meta().defaultPrim = token;
+              } else if (field_name == "upAxis") {
+                std::string_view token;
+                if (read_field_token_or_string(field_value, &token))
+                  layer.meta().upAxis = token;
+              } else if (field_name == "metersPerUnit") {
+                double v_double;
+                if (read_field_double(field_value, &v_double))
+                  layer.meta().metersPerUnit = v_double;
+              } else if (field_name == "timeCodesPerSecond") {
+                double v_double;
+                if (read_field_double(field_value, &v_double))
+                  layer.meta().timeCodesPerSecond = v_double;
+              } else if (field_name == "startTimeCode") {
+                double v_double;
+                if (read_field_double(field_value, &v_double))
+                  layer.meta().startTimeCode = v_double;
+              } else if (field_name == "endTimeCode") {
+                double v_double;
+                if (read_field_double(field_value, &v_double))
+                  layer.meta().endTimeCode = v_double;
+              } else if (field_name == "framesPerSecond") {
+                double v_double;
+                if (read_field_double(field_value, &v_double)) {
+                  layer.meta().framesPerSecond = v_double;
+                  layer.meta().framesPerSecond_set = true;
+                }
+              } else if (field_name == "kilogramsPerUnit") {
+                double v_double;
+                if (read_field_double(field_value, &v_double)) {
+                  layer.meta().kilogramsPerUnit = v_double;
+                  layer.meta().kilogramsPerUnit_set = true;
+                }
+              } else if (field_name == "customLayerData" ||
+                         field_name == "expressionVariables") {
+                // pxr-authored: binary VtDictionary; next-authored: USDA dict text.
+                Value d;
+                if (!decode_dict_value(field_value, d)) return true;
+                if (d.is_dictionary()) {
+                  if (field_name == "customLayerData")
+                    layer.meta().customLayerData = std::move(d);
+                  else
+                    layer.meta().expressionVariables = std::move(d);
+                }
+              } else if (field_name == "doc") {
+                std::string_view text;
+                if (read_field_token_or_string(field_value, &text))
+                  layer.meta().doc = text;
+              } else if (field_name == "comment") {
+                std::string_view text;
+                if (read_field_token_or_string(field_value, &text))
+                  layer.meta().comment = text;
+              } else if (field_name == "subLayers") {
+                if (UnpackValue(field_value, v)) {
+                  const std::vector<std::string>* arr = v.as_token_array();
+                  if (arr) {
+                    for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
+                  } else if (const std::string* s = v.as_string()) {
+                    layer.meta().subLayers.push_back(*s);
+                  } else if (const std::string* s = v.as_token()) {
+                    layer.meta().subLayers.push_back(*s);
+                  }
+                }
+              }
+              return true;
+            })) {
+      AddWarning("Failed to resolve pseudo-root fieldset");
+    }
+  };
+
   const auto t_collect_start = Clock::now();
+  bool parallel_collect_done = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && specs_.size() >= 1024) {
+      // The pseudo-root spec writes layer metadata; handle the FIRST one on
+      // the main thread up front (the serial loop processes only the first,
+      // and its effects are independent of the other collected entries).
+      for (const auto& spec : specs_) {
+        if (spec.spec_type == SpecType::PseudoRoot) {
+          decode_pseudo_root_meta(spec);
+          saw_pseudo_root = true;
+          break;
+        }
+      }
+
+      // Per-worker sinks: each chunk collects a contiguous spec range into
+      // local vectors; concatenating chunks in range order reproduces the
+      // serial append order exactly. The per-spec body below is a copy of the
+      // retained serial body with the sinks redirected to `lc`.
+      struct CollectChunk {
+        size_t begin = 0;
+        size_t end = 0;
+        std::vector<PrimEntry> prims;
+        std::vector<std::pair<std::string_view, AttrInfo>> attrs;
+        std::vector<std::pair<std::string_view, RelInfo>> rels;
+        std::vector<VariantSelectionEntry> variants;
+        std::vector<std::pair<std::string_view, std::string_view>> vbuf;
+      };
+      const size_t chunk_size =
+          std::max<size_t>(512, specs_.size() / (static_cast<size_t>(nt) * 8));
+      std::vector<CollectChunk> chunks;
+      chunks.reserve(specs_.size() / chunk_size + 2);
+      for (size_t b = 0; b < specs_.size(); b += chunk_size) {
+        CollectChunk ck;
+        ck.begin = b;
+        ck.end = std::min(specs_.size(), b + chunk_size);
+        chunks.push_back(std::move(ck));
+      }
+
+      auto collect_range = [&](CollectChunk& lc) {
+        ThreadDecodeCtx decode_ctx(*reader_);
+        ScopedThreadDecodeCtx scoped_ctx(&decode_ctx);
+        for (size_t spec_i = lc.begin; spec_i < lc.end; ++spec_i) {
+          const auto& spec = specs_[spec_i];
+          if (spec.path_index.value >= paths_.size()) continue;
+          const std::string& full_path_ref = paths_[spec.path_index.value];
+          const std::string_view full_path = full_path_ref;
+          const bool bracketed =
+              full_path.find('{') != std::string_view::npos;
+
+          // Handled in the main-thread pre-pass above.
+          if (spec.spec_type == SpecType::PseudoRoot) continue;
+
+
+    const bool is_prim = spec.spec_type == SpecType::Prim;
+    const bool is_variant =
+        spec.spec_type == SpecType::Variant || spec.spec_type == SpecType::VariantSet;
+    const bool is_attr = spec.spec_type == SpecType::Attribute;
+    const bool is_rel = spec.spec_type == SpecType::Relationship;
+
+    if (!is_prim && !is_variant && !is_attr && !is_rel) continue;
+
+    if (full_path.empty() || full_path == "/") continue;
+
+    if (is_attr || is_rel) {
+      std::string_view prim_path;
+      std::string_view prop_name;
+      if (!split_prop_path(full_path, prim_path, prop_name)) {
+        continue;
+      }
+
+      if (is_rel) {
+        RelInfo ri;
+        ri.name = prop_name;
+        visit_fieldset_raw(
+            spec.fieldset_index.value,
+            [&](std::string_view field_name, const ValueRep& field_value) {
+              if (field_name == "targetPaths") {
+                DecodePathTargets(field_value, ri.targets);
+              } else if (field_name == "variability") {
+                std::string_view text;
+                if (read_field_token_or_string(field_value, &text)) {
+                  ri.uniform = (text == "uniform");
+                }
+              }
+              return true;
+            });
+        lc.rels.push_back({prim_path, std::move(ri)});
+      } else {
+        AttrInfo ai;
+        ai.name = prop_name;
+        visit_fieldset_raw(
+            spec.fieldset_index.value,
+            [&](std::string_view field_name, const ValueRep& field_value) {
+              if (field_name == "typeName") {
+                if (read_field_token_or_string(field_value, &ai.type_name)) {
+                }
+              } else if (field_name == "default") {
+                Value v;
+                if (UnpackValue(field_value, v)) {
+                  ai.default_value = std::move(v);
+                  ai.has_default = true;
+                }
+              } else if (field_name == "timeSamples") {
+                DecodeTimeSamples(field_value, &ensure_attr_cold(ai).time_samples);
+              } else if (field_name == "connectionPaths") {
+                AttrInfoCold& cold = ensure_attr_cold(ai);
+                if (DecodePathTargets(field_value, cold.connection_targets) &&
+                    !cold.connection_targets.empty()) {
+                  ai.is_connection = true;
+                }
+              } else if (field_name == "variability") {
+                std::string_view text;
+                if (read_field_token_or_string(field_value, &text)) {
+                  ai.uniform = (text == "uniform");
+                }
+              } else if (field_name == "custom") {
+                // The legacy `custom` qualifier (pxr stores a bool field). Preserved on
+                // read; the USDA writer only re-emits it under emit_custom/--openusd-compat.
+                Value v;
+                if (UnpackValue(field_value, v)) {
+                  if (const bool* b = v.as_bool()) {
+                    ai.custom = *b;
+                  }
+                }
+              } else if (field_name == "interpolation") {
+                if (read_field_token_or_string(field_value, &ai.interpolation)) {
+                  ai.has_interpolation = true;
+                }
+              } else if (field_name == "colorSpace") {
+                if (read_field_token_or_string(field_value, &ai.color_space)) {
+                  ai.has_color_space = true;
+                }
+              } else if (field_name == "elementSize") {
+                Value v;
+                if (UnpackValue(field_value, v)) {
+                  if (const int32_t* i = v.as_int()) {
+                    ai.element_size = *i;
+                    ai.has_element_size = true;
+                  }
+                }
+              } else if (field_name == "customData") {
+                Value v;
+                if (UnpackValue(field_value, v)) {
+                  AttrInfoCold& cold = ensure_attr_cold(ai);
+                  if (v.is_dictionary()) {
+                    cold.custom_data = std::move(v);
+                  } else if (const std::string* s = v.as_string()) {
+                    cold.custom_data = ParseDictText(*s);
+                  } else if (const std::string* s = v.as_token()) {
+                    cold.custom_data = ParseDictText(*s);
+                  }
+                }
+              }
+              return true;
+            });
+        lc.attrs.push_back({prim_path, std::move(ai)});
+      }
+      continue;
+    }
+
+    // Build Prim specs and variant namespaces.
+    if (is_variant && !bracketed) continue;
+
+    const size_t last_slash = full_path.rfind('/');
+    const std::string_view prim_name =
+        (last_slash != std::string::npos && last_slash < full_path.size() - 1)
+            ? full_path.substr(last_slash + 1)
+            : full_path;
+    if (prim_name.empty()) continue;
+
+    PrimEntry entry;
+    entry.full_path = full_path;
+    entry.name = prim_name;
+    entry.fieldset_index = spec.fieldset_index.value;
+
+    // Untyped prims stay untyped: composition fills the type from the
+    // referenced prim (a forced "Xform" default would mask e.g. a referenced
+    // Mesh definition; the writer already skips empty type names).
+    entry.specifier = PrimSpecifier::Def;
+    decode_prim_header(entry, spec, !bracketed, lc.vbuf, lc.variants);
+    lc.prims.push_back(std::move(entry));
+        }
+      };
+
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      size_t remaining = chunks.size();
+      for (CollectChunk& ck : chunks) {
+        CollectChunk* ckp = &ck;
+        auto task = [&, ckp]() {
+          collect_range(*ckp);
+          std::lock_guard<std::mutex> lock(done_mu);
+          if (--remaining == 0) done_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, task)) {
+          task();  // pool unavailable: run inline (still correct)
+        }
+      }
+      {
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+      }
+
+      // Concatenate in range order == serial append order.
+      for (CollectChunk& ck : chunks) {
+        for (auto& e : ck.prims) prim_entries.push_back(std::move(e));
+        for (auto& e : ck.attrs) attr_entries.push_back(std::move(e));
+        for (auto& e : ck.rels) rel_entries.push_back(std::move(e));
+        for (auto& e : ck.variants) variant_sels.push_back(std::move(e));
+      }
+      parallel_collect_done = true;
+    }
+  }
+#endif  // TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE
+
+  if (!parallel_collect_done)
   for (const auto& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) continue;
     const std::string& full_path_ref = paths_[spec.path_index.value];
@@ -322,81 +631,7 @@ bool CrateReader::Impl::BuildStage() {
     const bool bracketed = full_path.find('{') != std::string_view::npos;
 
     if (!saw_pseudo_root && spec.spec_type == SpecType::PseudoRoot) {
-      if (!visit_fieldset_raw(
-              spec.fieldset_index.value,
-              [&](std::string_view field_name, const ValueRep& field_value) {
-                Value v;
-                if (field_name == "defaultPrim") {
-                  std::string_view token;
-                  if (read_field_token_or_string(field_value, &token))
-                    layer.meta().defaultPrim = token;
-                } else if (field_name == "upAxis") {
-                  std::string_view token;
-                  if (read_field_token_or_string(field_value, &token))
-                    layer.meta().upAxis = token;
-                } else if (field_name == "metersPerUnit") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double))
-                    layer.meta().metersPerUnit = v_double;
-                } else if (field_name == "timeCodesPerSecond") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double))
-                    layer.meta().timeCodesPerSecond = v_double;
-                } else if (field_name == "startTimeCode") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double))
-                    layer.meta().startTimeCode = v_double;
-                } else if (field_name == "endTimeCode") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double))
-                    layer.meta().endTimeCode = v_double;
-                } else if (field_name == "framesPerSecond") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double)) {
-                    layer.meta().framesPerSecond = v_double;
-                    layer.meta().framesPerSecond_set = true;
-                  }
-                } else if (field_name == "kilogramsPerUnit") {
-                  double v_double;
-                  if (read_field_double(field_value, &v_double)) {
-                    layer.meta().kilogramsPerUnit = v_double;
-                    layer.meta().kilogramsPerUnit_set = true;
-                  }
-                } else if (field_name == "customLayerData" ||
-                           field_name == "expressionVariables") {
-                  // pxr-authored: binary VtDictionary; next-authored: USDA dict text.
-                  Value d;
-                  if (!decode_dict_value(field_value, d)) return true;
-                  if (d.is_dictionary()) {
-                    if (field_name == "customLayerData")
-                      layer.meta().customLayerData = std::move(d);
-                    else
-                      layer.meta().expressionVariables = std::move(d);
-                  }
-                } else if (field_name == "doc") {
-                  std::string_view text;
-                  if (read_field_token_or_string(field_value, &text))
-                    layer.meta().doc = text;
-                } else if (field_name == "comment") {
-                  std::string_view text;
-                  if (read_field_token_or_string(field_value, &text))
-                    layer.meta().comment = text;
-                } else if (field_name == "subLayers") {
-                  if (UnpackValue(field_value, v)) {
-                    const std::vector<std::string>* arr = v.as_token_array();
-                    if (arr) {
-                      for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
-                    } else if (const std::string* s = v.as_string()) {
-                      layer.meta().subLayers.push_back(*s);
-                    } else if (const std::string* s = v.as_token()) {
-                      layer.meta().subLayers.push_back(*s);
-                    }
-                  }
-                }
-                return true;
-              })) {
-        AddWarning("Failed to resolve pseudo-root fieldset");
-      }
+      decode_pseudo_root_meta(spec);
       saw_pseudo_root = true;
       continue;
     }
@@ -527,7 +762,7 @@ bool CrateReader::Impl::BuildStage() {
     // referenced prim (a forced "Xform" default would mask e.g. a referenced
     // Mesh definition; the writer already skips empty type names).
     entry.specifier = PrimSpecifier::Def;
-    decode_prim_header(entry, spec, !bracketed);
+    decode_prim_header(entry, spec, !bracketed, variant_buf, variant_sels);
     prim_entries.push_back(std::move(entry));
   }
   const auto t_collect_end = Clock::now();
